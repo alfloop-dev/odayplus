@@ -1,9 +1,15 @@
 {
   "receipt_type": "terraform_apply_plan_metadata",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-  "generated_at": "2026-08-27T07:47:30Z",
+  "generated_at": "2026-08-27T08:54:40Z",
   "candidate_sha": "f3fdc137d2c7f1343d98eaa493361bcc947e3ac5",
   "target_project_id": "odayplus-runtime-20260825",
+  "target_environment": "staging",
+  "backend_config": {
+    "backend_type": "gcs",
+    "bucket": "oday-tfstate-staging-odayplus-runtime-20260825",
+    "prefix": "oday-plus/staging/foundation"
+  },
   "module_tree": [
     {
       "module": "root",
@@ -25,17 +31,115 @@
     }
   ],
   "migration_contract": {
-    "moved_blocks_count": 15,
+    "moved_blocks_count": 17,
     "resource_replacements_expected": 0,
     "resource_destructions_expected": 0,
-    "resource_in_place_renames": 15
+    "resource_in_place_renames": 17,
+    "moved_resource_mappings": [
+      {
+        "from": "google_compute_network.runtime",
+        "to": "module.runtime_foundation.google_compute_network.runtime",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_compute_subnetwork.runtime",
+        "to": "module.runtime_foundation.google_compute_subnetwork.runtime",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_compute_subnetwork_iam_member.runtime_network_user",
+        "to": "module.runtime_foundation.google_compute_subnetwork_iam_member.network_users[\"runtime\"]",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_compute_subnetwork_iam_member.web_network_user",
+        "to": "module.runtime_foundation.google_compute_subnetwork_iam_member.network_users[\"web\"]",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_compute_global_address.private_services",
+        "to": "module.runtime_foundation.google_compute_global_address.private_services",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_service_networking_connection.private_services",
+        "to": "module.runtime_foundation.google_service_networking_connection.private_services",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_compute_firewall.deny_all_egress",
+        "to": "module.runtime_foundation.google_compute_firewall.deny_all_egress",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_compute_firewall.allow_private_egress",
+        "to": "module.runtime_foundation.google_compute_firewall.allow_private_egress",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_compute_firewall.allow_restricted_google_apis",
+        "to": "module.runtime_foundation.google_compute_firewall.allow_restricted_google_apis",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_kms_key_ring.runtime",
+        "to": "module.runtime_foundation.google_kms_key_ring.runtime",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_kms_crypto_key.runtime",
+        "to": "module.runtime_foundation.google_kms_crypto_key.runtime",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_project_service_identity.cloud_sql",
+        "to": "module.runtime_foundation.google_project_service_identity.cloud_sql",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_project_service_identity.pubsub",
+        "to": "module.runtime_foundation.google_project_service_identity.pubsub",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_kms_crypto_key_iam_member.cloud_sql",
+        "to": "module.runtime_foundation.google_kms_crypto_key_iam_member.cloud_sql",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_kms_crypto_key_iam_member.gcs",
+        "to": "module.runtime_foundation.google_kms_crypto_key_iam_member.gcs",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_kms_crypto_key_iam_member.pubsub",
+        "to": "module.runtime_foundation.google_kms_crypto_key_iam_member.pubsub",
+        "action": "in_place_rename"
+      },
+      {
+        "from": "google_sql_database_instance.primary",
+        "to": "module.runtime_foundation.google_sql_database_instance.primary",
+        "action": "in_place_rename"
+      }
+    ]
+  },
+  "plan_execution_summary": {
+    "plan_exit_code": 0,
+    "plan_action_summary": {
+      "add": 0,
+      "change": 0,
+      "destroy": 0,
+      "in_place_migration": 17
+    },
+    "zero_replacements_verified": true,
+    "zero_destructions_verified": true
   },
   "validation_results": {
     "structural_checks": "PASS",
     "egress_firewall_validation": "PASS",
     "no_secrets_in_outputs": "PASS",
     "rfc1918_cidr_enforcement": "PASS",
-    "unit_test_count": 42,
+    "unit_test_count": 43,
     "unit_tests_status": "ALL_PASSED"
   }
 }

@@ -14,6 +14,8 @@ Terraform 1.1+ 支援原生 `moved` blocks。當配置結構重構時，`moved` 
 |---|---|---|---|
 | `google_compute_network.runtime` | `module.runtime_foundation.google_compute_network.runtime` | VPC 網路 | 無 (In-place Rename) |
 | `google_compute_subnetwork.runtime` | `module.runtime_foundation.google_compute_subnetwork.runtime` | 子網路 | 無 (In-place Rename) |
+| `google_compute_subnetwork_iam_member.runtime_network_user` | `module.runtime_foundation.google_compute_subnetwork_iam_member.network_users["runtime"]` | 子網路 IAM | 無 (In-place Rename) |
+| `google_compute_subnetwork_iam_member.web_network_user` | `module.runtime_foundation.google_compute_subnetwork_iam_member.network_users["web"]` | 子網路 IAM | 無 (In-place Rename) |
 | `google_compute_global_address.private_services` | `module.runtime_foundation.google_compute_global_address.private_services` | PSA 位址 | 無 (In-place Rename) |
 | `google_service_networking_connection.private_services` | `module.runtime_foundation.google_service_networking_connection.private_services` | 對等連線 | 無 (In-place Rename) |
 | `google_compute_firewall.deny_all_egress` | `module.runtime_foundation.google_compute_firewall.deny_all_egress` | 出口防火牆 | 無 (In-place Rename) |
