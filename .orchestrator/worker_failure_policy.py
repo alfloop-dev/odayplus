@@ -1771,6 +1771,12 @@ def reassign_tasks_after_review_churn(
     changes ownership, regardless of which LLM owned the task. It deliberately
     uses the existing reassignment candidates and viability checks rather than
     introducing a second scheduler.
+
+    To prevent churn bounce (來回彈跳), all owners who have failed during the
+    current review churn epoch are remembered and excluded from reassignment
+    until a successful merge or an explicit reset clears the epoch history.
+    If no healthy alternative owner is available, the task fails closed to
+    'blocked' with an auditable reason.
     """
     settings = review_churn_settings(config)
     if not settings.get("enabled", True):
@@ -1795,23 +1801,68 @@ def reassign_tasks_after_review_churn(
             continue
         try:
             reopen_count = max(0, int(snapshot.get("review_reopen_count", 0) or 0))
-            last_reassigned_count = max(0, int(snapshot.get("review_churn_reassigned_at_count", 0) or 0))
+            raw_last_reassigned = max(0, int(snapshot.get("review_churn_reassigned_at_count", 0) or 0))
+            # If reopen_count was reset below the previous reassignment count, start a new epoch with last_reassigned_count=0
+            last_reassigned_count = raw_last_reassigned if raw_last_reassigned <= reopen_count else 0
         except (TypeError, ValueError):
             continue
-        if reopen_count < threshold or reopen_count - last_reassigned_count < threshold:
-            continue
-
         owner = str(snapshot.get("owner") or "").strip()
         reviewer = str(snapshot.get("reviewer") or "").strip()
         if not owner or is_human_gate_agent(owner):
             continue
+
+        # Collect failed owners in the current review churn epoch to avoid bouncing.
+        # An explicit reset (e.g. reopen_count < raw_last_reassigned or reopen_count == 0) resets epoch history.
+        is_reset = raw_last_reassigned > reopen_count or reopen_count == 0
+        if is_reset and (
+            raw_last_reassigned > 0
+            or bool(snapshot.get("review_churn_previous_owner"))
+            or bool(snapshot.get("review_churn_last_reassigned_at"))
+            or bool(snapshot.get("review_churn_epoch_failed_owners"))
+        ):
+            if reopen_count < threshold:
+                if persist_task_reassignment(
+                    config,
+                    task_id=task_id,
+                    new_owner=owner,
+                    new_reviewer=reviewer,
+                    message=str(snapshot.get("assignment_note") or snapshot.get("next") or ""),
+                    task_updates={
+                        "review_churn_reassigned_at_count": 0,
+                        "review_churn_previous_owner": None,
+                        "review_churn_last_reassigned_at": None,
+                        "review_churn_epoch_failed_owners": [],
+                    },
+                ):
+                    clear_task_failure_streaks_for_task(state, task_id)
+                    changed = True
+                continue
+
+        if reopen_count < threshold or reopen_count - last_reassigned_count < threshold:
+            continue
+
+        raw_epoch_failed = snapshot.get("review_churn_epoch_failed_owners") if not is_reset else []
+        epoch_failed_owners: list[str] = []
+        if isinstance(raw_epoch_failed, list):
+            for item in raw_epoch_failed:
+                name = str(item or "").strip()
+                if name and name not in epoch_failed_owners:
+                    epoch_failed_owners.append(name)
+
+        prev_owner = str(snapshot.get("review_churn_previous_owner") or "").strip()
+        if prev_owner and not is_reset and prev_owner not in epoch_failed_owners:
+            epoch_failed_owners.append(prev_owner)
+
+        if owner and owner not in epoch_failed_owners:
+            epoch_failed_owners.append(owner)
+
         owner_pool = agent_account_pool_id(config, owner)
         excluded_pools = {owner_pool} if settings.get("require_different_account_pool", True) and owner_pool else set()
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=snapshot)
         new_owner = first_viable_agent(
             config,
             owner_candidates,
-            exclude={owner, reviewer},
+            exclude=set(epoch_failed_owners) | {owner, reviewer},
             state=state,
             task=snapshot,
             provider_report=provider_report,
@@ -1820,6 +1871,41 @@ def reassign_tasks_after_review_churn(
             exclude_pools=excluded_pools,
         )
         if not new_owner or is_human_gate_agent(new_owner):
+            # Fail closed: no viable alternative owner available in this review churn epoch
+            blocked_message = (
+                f"Review churn fail-closed: no viable alternative owner available after {reopen_count} reviewer reopens "
+                f"(failed in current review epoch: {', '.join(epoch_failed_owners)}). "
+                "Task marked blocked for human intervention."
+            )
+            if persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=owner,
+                new_reviewer=reviewer,
+                message=blocked_message,
+                new_status="blocked",
+                new_waiting_for="Human/Ops",
+                task_updates={
+                    "review_churn_reassigned_at_count": reopen_count,
+                    "review_churn_previous_owner": owner,
+                    "review_churn_last_reassigned_at": utc_now(),
+                    "review_churn_epoch_failed_owners": list(epoch_failed_owners),
+                },
+            ):
+                write_activity_log(
+                    config,
+                    {
+                        "type": "review_churn_blocked",
+                        "task_id": task_id,
+                        "message": blocked_message,
+                        "review_reopen_count": reopen_count,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                        "failed_owners": list(epoch_failed_owners),
+                    },
+                )
+                clear_task_failure_streaks_for_task(state, task_id)
+                changed = True
             continue
 
         if is_human_gate_agent(reviewer):
@@ -1857,6 +1943,40 @@ def reassign_tasks_after_review_churn(
                     exclude_pools={agent_account_pool_id(config, new_owner)},
                 )
         if not new_reviewer:
+            # Fail closed: no viable reviewer available for new owner
+            blocked_message = (
+                f"Review churn fail-closed: no viable reviewer available for new owner {new_owner} after "
+                f"{reopen_count} reviewer reopens. Task marked blocked for human intervention."
+            )
+            if persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=owner,
+                new_reviewer=reviewer,
+                message=blocked_message,
+                new_status="blocked",
+                new_waiting_for="Human/Ops",
+                task_updates={
+                    "review_churn_reassigned_at_count": reopen_count,
+                    "review_churn_previous_owner": owner,
+                    "review_churn_last_reassigned_at": utc_now(),
+                    "review_churn_epoch_failed_owners": list(epoch_failed_owners),
+                },
+            ):
+                write_activity_log(
+                    config,
+                    {
+                        "type": "review_churn_blocked",
+                        "task_id": task_id,
+                        "message": blocked_message,
+                        "review_reopen_count": reopen_count,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                        "failed_owners": list(epoch_failed_owners),
+                    },
+                )
+                clear_task_failure_streaks_for_task(state, task_id)
+                changed = True
             continue
 
         message = (
@@ -1876,6 +1996,7 @@ def reassign_tasks_after_review_churn(
                 "review_churn_reassigned_at_count": reopen_count,
                 "review_churn_previous_owner": owner,
                 "review_churn_last_reassigned_at": utc_now(),
+                "review_churn_epoch_failed_owners": list(epoch_failed_owners),
             },
         ):
             continue
@@ -1891,6 +2012,7 @@ def reassign_tasks_after_review_churn(
                 "from_owner_pool": owner_pool,
                 "to_owner_pool": agent_account_pool_id(config, new_owner),
                 "reviewer": new_reviewer,
+                "epoch_failed_owners": list(epoch_failed_owners),
             },
         )
         clear_task_failure_streaks_for_task(state, task_id)
