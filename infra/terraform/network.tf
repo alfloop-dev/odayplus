@@ -16,14 +16,23 @@ module "runtime_foundation" {
   cloud_sql_transaction_log_retention_days = var.cloud_sql_transaction_log_retention_days
   cloud_sql_maintenance_day                = var.cloud_sql_maintenance_day
   cloud_sql_maintenance_hour               = var.cloud_sql_maintenance_hour
-  enable_deletion_protection               = local.is_prod
+  # Staging foundation SQL is long-lived even though release resources are
+  # ephemeral. Keep its live deletion guard enabled; dev remains unchanged and
+  # production continues to use the existing production guard.
+  enable_deletion_protection = local.is_prod || var.environment == "staging"
   network_user_members = {
-    runtime = "serviceAccount:${local.name_prefix}-runtime@${var.project_id}.iam.gserviceaccount.com"
-    web     = "serviceAccount:${local.name_prefix}-web@${var.project_id}.iam.gserviceaccount.com"
+    # Resolve the principals from Terraform-managed service accounts instead of
+    # synthesising email strings. This makes the subnet IAM bindings depend on
+    # the real staging identities and prevents a first-apply race from leaving
+    # only the runtime binding in remote state.
+    runtime = "serviceAccount:${google_service_account.runtime.email}"
+    web     = "serviceAccount:${google_service_account.web.email}"
   }
 
   depends_on = [
     google_project_service.required,
+    google_service_account.runtime,
+    google_service_account.web,
     terraform_data.production_contract,
   ]
 }

@@ -16,7 +16,7 @@
 4. **預設拒絕出向流量 (Default-Deny Egress)**：
    - VPC 出口防火牆優先級 `65534` 阻斷全部對外連線 (`0.0.0.0/0`)。
    - 僅放行 RFC1918 私有網段與受限 Google API (`199.36.153.4/30`, `199.36.153.8/30`)。
-   - Cloud Run 服務設定 `egress = "ALL_TRAFFIC"` 確保流量全數經過受控 VPC。
+   - Root Cloud Run API/Web contract 設定 `egress = "ALL_TRAFFIC"` 確保發布時流量全數經過受控 VPC；foundation readback 不得把尚未部署的 API/Web 標為 live。
 
 ---
 
@@ -39,7 +39,7 @@
 ```bash
 # backend 設定必須由 live bootstrap readback 取得，不能填 placeholder
 cat >/secure/path/staging_foundation.backend.hcl <<'EOF'
-bucket = "<LIVE_STATE_BUCKET_FROM_BOOTSTRAP_READBACK>"
+bucket = "oday-tfstate-staging-odayplus-runtime-20260825"
 prefix = "oday-plus/staging/foundation"
 EOF
 
@@ -52,10 +52,16 @@ terraform -chdir=infra/terraform apply /secure/path/staging_foundation.tfplan
 ```
 
 `staging_foundation.tfvars` 必須包含 release packet 提供的 exact SHA 與 immutable
-image digest；不可使用 `env/staging.tfvars.example` 的 placeholder。若 live
+image digest；不可使用 placeholder。若 live
 已有同名但不相容的 legacy Cloud SQL，先保留該 instance，改用新的明確
 `cloud_sql_instance_name`，並在 migration receipt 記錄 state-only import/remove
 與 zero-replacement plan。
+
+本次 staging live foundation 的實際 identity 由 Terraform 建立或採用：
+`oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com` 與
+`oday-staging-web@odayplus-runtime-20260825.iam.gserviceaccount.com` 均以
+Terraform resource email 接合 subnet `roles/compute.networkUser`；不得以
+手寫 email 或不存在的 smoke/operator principal 取代。
 
 ### 對接 Ephemeral Staging Lifecycle
 
@@ -75,7 +81,7 @@ image digest；不可使用 `env/staging.tfvars.example` 的 placeholder。若 l
 - [x] GCS State Bucket 啟用 Object Versioning
 - [x] GCS State Bucket 啟用 Uniform Bucket-Level Access 與 Public Access Prevention (enforced)
 - [x] State Bucket 及 KMS Key 具備 `prevent_destroy = true` 銷毀防護
-- [ ] Cloud Run 採 Direct VPC `ALL_TRAFFIC` 導流（須待 Cloud Run service live readback；本 foundation apply 未部署 API/Web）
+- [ ] Cloud Run API/Web 採 Direct VPC `ALL_TRAFFIC` 導流（Terraform contract 已確認；API/Web 尚待 ephemeral release live readback；既有 MLflow connector 的 `PRIVATE_RANGES_ONLY` 不算本項證據）
 - [x] VPC 無 Cloud NAT，出口防火牆為 default-deny（以 live gcloud readback 驗證）
 - [x] 絕不向外部或一般 artifact 上傳 Terraform state（state prefix 與 release prefix 分離）
 - [x] 輸出變數絕無任何 plaintext 密碼或敏感金鑰（contract test 通過）

@@ -1,7 +1,7 @@
 {
   "receipt_type": "terraform_apply_plan_metadata",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-  "generated_at": "2026-08-27T09:12:00Z",
+  "generated_at": "2026-08-27T09:27:25Z",
   "candidate_sha": "1fdec6cbed15660bdf89531cb1bb69d4c36aa00b",
   "target_project_id": "odayplus-runtime-20260825",
   "target_environment": "staging",
@@ -11,12 +11,17 @@
     "prefix": "oday-plus/staging/foundation"
   },
   "saved_plan_artifact": {
-    "plan_file": "tfplan-staging-foundation-1fdec6cb.binary",
-    "plan_digest": "sha256:d8c5417ae417936a29e4d070624bc68db30f576e828d17962450ef7582b1239c",
-    "plan_sha256": "d8c5417ae417936a29e4d070624bc68db30f576e828d17962450ef7582b1239c",
-    "artifact_uri": "gs://oday-tfstate-staging-odayplus-runtime-20260825/oday-plus/staging/plans/tfplan-staging-foundation-1fdec6cb.binary",
+    "plan_file": "tfplan-staging-foundation-1fdec6cbed15660bdf89531cb1bb69d4c36aa00b-e46221085ffe1fe7243b7857d38191189443f9ea31bd970719687cc07e3404a6.binary",
+    "plan_digest": "sha256:e46221085ffe1fe7243b7857d38191189443f9ea31bd970719687cc07e3404a6",
+    "plan_sha256": "e46221085ffe1fe7243b7857d38191189443f9ea31bd970719687cc07e3404a6",
+    "artifact_uri": "gs://oday-tfstate-staging-odayplus-runtime-20260825/oday-plus/staging/plans/tfplan-staging-foundation-1fdec6cbed15660bdf89531cb1bb69d4c36aa00b-e46221085ffe1fe7243b7857d38191189443f9ea31bd970719687cc07e3404a6.binary",
     "plan_mode": "remote_state_convergence",
-    "lock_digest": "sha256:91bc40e79124067efad9684c4e7ab96683501a3cf8d4be605ce0dfba2e53ef71"
+    "lock_digest": "sha256:62248832494b32771c5f4c213548f133188a452d423e3018f46a9d9dd9b82c28",
+    "object_generation": "1787822664931431",
+    "object_size_bytes": 45662,
+    "object_content_type": "application/octet-stream",
+    "object_cache_control": "no-cache",
+    "immutable_object_name": true
   },
   "module_tree": [
     {
@@ -132,15 +137,55 @@
     ]
   },
   "plan_execution_summary": {
-    "plan_exit_code": 0,
-    "plan_action_summary": {
-      "add": 0,
-      "change": 0,
+    "adoption_apply": {
+      "command": "terraform apply -input=false <saved-target-plan>",
+      "exit_code": 0,
+      "add": 2,
+      "change": 3,
       "destroy": 0,
-      "in_place_migration": 17
+      "resources_added": 2,
+      "resources_changed": 3,
+      "resources_destroyed": 0
     },
-    "zero_replacements_verified": true,
-    "zero_destructions_verified": true
+    "convergence_plan": {
+      "command": "terraform plan -input=false -detailed-exitcode -out=<saved-plan> -target=google_service_account.web -target=module.runtime_foundation.google_compute_subnetwork_iam_member.network_users[web] -target=module.runtime_foundation.google_sql_database_instance.primary",
+      "exit_code": 0,
+      "plan_action_summary": {
+        "add": 0,
+        "change": 0,
+        "destroy": 0,
+        "no_op": 21
+      },
+      "zero_replacements_verified": true,
+      "zero_destructions_verified": true
+    }
+  },
+  "state_adoption": {
+    "remote_state_object": "oday-plus/staging/foundation/default.tfstate",
+    "remote_state_generation": "1787822614666629",
+    "remote_state_serial": 10,
+    "adopted_existing_resources": [
+      {
+        "address": "google_service_account.runtime",
+        "id": "projects/odayplus-runtime-20260825/serviceAccounts/oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "action": "terraform_import_state_adoption"
+      },
+      {
+        "address": "module.runtime_foundation.google_sql_database_instance.primary",
+        "id": "projects/odayplus-runtime-20260825/instances/oday-staging-foundation-sql",
+        "action": "terraform_import_state_adoption"
+      }
+    ],
+    "terraform_created_resources": [
+      {
+        "address": "google_service_account.web",
+        "id": "projects/odayplus-runtime-20260825/serviceAccounts/oday-staging-web@odayplus-runtime-20260825.iam.gserviceaccount.com"
+      },
+      {
+        "address": "module.runtime_foundation.google_compute_subnetwork_iam_member.network_users[\"web\"]",
+        "id": "projects/odayplus-runtime-20260825/regions/asia-east1/subnetworks/oday-staging-runtime/roles/compute.networkUser/serviceAccount:oday-staging-web@odayplus-runtime-20260825.iam.gserviceaccount.com"
+      }
+    ]
   },
   "validation_results": {
     "structural_checks": "PASS",

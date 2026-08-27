@@ -17,6 +17,7 @@
 - **Cloud SQL 執行個體**：`oday-staging-foundation-sql` (PostgreSQL 16, Private IP Only, CMEK 加密, 啟用 PITR)。既有 `oday-staging-sql` 掛在 default VPC 且 CMEK/private network 不可 in-place 變更，保留為 legacy，不得在本任務刪除。
 - **State Backend**：`oday-tfstate-staging-${PROJECT_ID}` (CMEK 加密, 版本控制, 保留政策)
 - **Deployer 權限**：`github-deployer@${PROJECT_ID}.iam.gserviceaccount.com` (經由 Workload Identity Federation 認證)
+- **Staging runtime identities**：`oday-staging-runtime@${PROJECT_ID}.iam.gserviceaccount.com` 與 `oday-staging-web@${PROJECT_ID}.iam.gserviceaccount.com`；兩者由 Terraform resource email 接合 subnet IAM。
 
 ### 1.2 短生命週期發布資源 (Ephemeral Staging Per-Release)
 - 由 `infra/terraform/modules/ephemeral_staging` 與 `product_ops/deployment/staging_lifecycle.py` 動態建立與銷毀。
@@ -70,7 +71,7 @@ cp /secure/path/live/staging_foundation.backend.hcl /secure/path/staging_foundat
 ## 4. 驗證與健康檢查
 
 1. **網路出口防護驗證**：
-   - 確認 Cloud Run 服務設定 `egress = "ALL_TRAFFIC"`。
+   - Root Terraform 的 Cloud Run API/Web contract 設定 `egress = "ALL_TRAFFIC"`；foundation live readback 目前只確認既有 MLflow 為 `PRIVATE_RANGES_ONLY`，不得把它當成 API/Web 的 ALL_TRAFFIC 證據。
    - 驗證防火牆規則 `oday-staging-deny-all-egress` 優先級為 `65534`，阻絕所有對外流量。
    - 驗證 `oday-staging-allow-private-egress` 與 `oday-staging-allow-restricted-google-apis` 限制在受保護範圍。
 2. **CMEK 靜態加密驗證**：
@@ -78,20 +79,25 @@ cp /secure/path/live/staging_foundation.backend.hcl /secure/path/staging_foundat
    - 檢查 State Bucket 及 Ephemeral Storage Buckets 皆設定 `default_kms_key_name`。
 3. **無憑證與無機密暴露驗證**：
    - 執行 `python3 infra/terraform/validate_contract.py`，確認無任何 plaintext secret 或 password 輸出。
-   - 只有 `gcloud`/Terraform readback 已確認存在且在 remote state 中收斂之資源，才可在 receipt 標記 `LIVE_APPLIED_AND_VERIFIED` 與 `CONVERGED_WITH_REMOTE_STATE`；Cloud Run API/Web 完成 Direct VPC ALL_TRAFFIC 規格驗證，並於 ephemeral release 部署時動態接合。
+   - 只有 `gcloud`/Terraform readback 已確認存在且在 remote state 中收斂之資源，才可在 receipt 標記 `LIVE_APPLIED_AND_VERIFIED` 與 `CONVERGED_WITH_REMOTE_STATE`；本次 receipt 對 API/Web 保留 pending，僅記錄 Terraform Direct VPC ALL_TRAFFIC contract。
 
 ## 5. Migration、Rollback 與 Destroy Guard
 
 1. Root foundation 的 17 個 legacy resource address（含兩個 subnet IAM
-   identity）以 `moved` blocks 映射到 module；在任何 apply 前，saved plan 必須
-   顯示 replacement、destroy 均為 `0`。
-2. 對既有 immutable Cloud SQL，`terraform import` 只用於 readback/比對；若
-   plan 顯示 CMEK 或 private network replacement，執行 state-only remove，保留
-   GCP legacy instance，另以明確 instance name 建立新 foundation。不得使用
-   `terraform destroy` 取代 migration。
-3. Apply 前保存 binary plan SHA256、candidate SHA、backend prefix 與 action
-   summary；apply 只接受同一 saved plan。失敗時保留 state、operation 與 evidence，
-   不解除 KMS/State Bucket 的 `prevent_destroy`。
+   identity）以 `moved` blocks 映射到 module；本次既有專用 SQL 以
+   `terraform import module.runtime_foundation.google_sql_database_instance.primary`
+   採用進 governed state，最終 convergence plan 的 replacement、destroy 均為 `0`。
+2. 若 live 有不相容的 legacy SQL，保留 `oday-staging-sql`，只對新 foundation
+   instance `oday-staging-foundation-sql` 做 state adoption；不得修改或刪除
+   legacy instance，也不得使用 `terraform destroy` 取代 migration。
+3. Apply 前保存 binary plan SHA256、candidate SHA、backend prefix、state
+   generation 與 action summary；apply 只接受同一 saved plan。失敗時保留 state、
+   operation 與 evidence，不解除 KMS/State Bucket 的 `prevent_destroy`。
 4. State bucket 與 runtime KMS 永久設定 `prevent_destroy = true`、bucket
    `force_destroy = false`；任何 destroy plan 必須停止並由 owner/reviewer 明確
    處理。Ephemeral release 的 cleanup 只能使用 release label/prefix 精確清理。
+
+本次最終 plan artifact 已放在受治理 state bucket 的 `oday-plus/staging/plans/`
+prefix；該 prefix 只存 reviewable Terraform plan，不得拿 state bucket 上傳一般
+release artifact。完整雜湊、object generation、state serial 與 live readback 見
+同目錄的兩份 JSON receipt。

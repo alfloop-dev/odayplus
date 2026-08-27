@@ -9,6 +9,16 @@
 4. **Staging 專屬 Foundation 規格與生命週期對接**：提供 staging project 獨立之 VPC、Subnet、KMS、Private Cloud SQL 與 Deployer SA 規格，資源命名與 `product_ops/deployment/staging_lifecycle.py` 及 `modules/ephemeral_staging` 完全吻合。
 5. **符合 fail-closed 與單一部署管線原則**：Cloud Run 強制使用 Direct VPC Egress (`ALL_TRAFFIC`) 導入 VPC；Firewall 預設阻斷所有公開連線 (`0.0.0.0/0`)，僅允許 RFC1918 私有網段與受限 Google API (`199.36.153.4/30`, `199.36.153.8/30`)；絕不修改 Runtime Release workflow，不另建部署 pipeline。
 
+## 本次 live 證據範圍
+
+專用 VPC、subnet、三條 egress firewall、CMEK、private Cloud SQL、兩個
+staging runtime identities 與 governed GCS state 已由 Terraform apply 及
+GCP readback 確認，且 SQL 已採用至同一 remote state。既有
+`oday-staging-sql` 保留不動。當前 live 的 `oday-staging-mlflow` 仍是舊的
+Serverless VPC connector `PRIVATE_RANGES_ONLY` 並連接 legacy SQL；API/Web
+尚未由 ephemeral release 部署，因此 receipts 只把 API/Web 的
+Direct VPC `ALL_TRAFFIC` 記為 Terraform contract，維持 live readback pending。
+
 ## 產出檔案清單
 
 - `infra/terraform/modules/runtime_foundation/`

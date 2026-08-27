@@ -267,6 +267,24 @@ class TerraformProductionContractTests(unittest.TestCase):
         for target in expected_moved_targets[4:]:
             self.assertIn(f"to   = module.runtime_foundation.{target}", network_tf)
 
+    def test_foundation_subnet_iam_uses_managed_staging_identities(self) -> None:
+        network_tf = (ROOT / "network.tf").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'runtime = "serviceAccount:${google_service_account.runtime.email}"',
+            network_tf,
+        )
+        self.assertIn(
+            'web     = "serviceAccount:${google_service_account.web.email}"',
+            network_tf,
+        )
+        self.assertIn("google_service_account.runtime,", network_tf)
+        self.assertIn("google_service_account.web,", network_tf)
+        self.assertIn(
+            'enable_deletion_protection = local.is_prod || var.environment == "staging"',
+            network_tf,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
