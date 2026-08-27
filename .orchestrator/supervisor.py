@@ -191,6 +191,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "_deferred_tool_use_receipt",
 "_dispatch_pause_bucket",
 "_failure_streak_key",
+"_has_explicit_failure_evidence",
 "_load_runtime_marker",
 "_lookup_worker_record",
 "_parse_iso_utc",
