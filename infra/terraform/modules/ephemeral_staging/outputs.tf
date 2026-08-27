@@ -133,6 +133,11 @@ output "release_id" {
   description = "The release_id that scopes this ephemeral staging instance."
 }
 
+output "staging_project_id" {
+  value       = var.project_id
+  description = "The GCP project that owns this release-scoped staging instance."
+}
+
 output "created_at" {
   value       = local.created_at
   description = "Timestamp when this staging instance was created."
