@@ -151,14 +151,52 @@ def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
 
 
 @_entrypoint
+def _has_explicit_failure_evidence(worker: dict[str, Any] | None) -> bool:
+    if not isinstance(worker, dict):
+        return False
+    try:
+        if "exit_code" in worker and worker.get("exit_code") is not None and int(worker["exit_code"]) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status in {"failed", "error", "failure"}:
+        return True
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    if status_path:
+        status_payload = _load_runtime_marker(status_path)
+        if isinstance(status_payload, dict):
+            try:
+                if (
+                    "exit_code" in status_payload
+                    and status_payload.get("exit_code") is not None
+                    and int(status_payload["exit_code"]) > 0
+                ):
+                    return True
+            except (TypeError, ValueError):
+                pass
+            status_val = str(status_payload.get("status") or "").strip().lower()
+            if status_val in {"failed", "error", "failure"}:
+                return True
+    return False
+
+
+@_entrypoint
 def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
     """Whether failure detection must ignore unstructured worker log text."""
     if not isinstance(worker, dict):
         return False
+    if worker_was_terminated(worker):
+        return True
+    if _has_explicit_failure_evidence(worker):
+        return False
+    if is_structured_successful_worker(worker):
+        return True
     lifecycle_status = str(worker.get("status") or "").strip().lower()
     if lifecycle_status in {"completed", "success", "succeeded"}:
         return True
-    return worker_was_terminated(worker) or is_structured_successful_worker(worker)
+    return False
 
 
 @_entrypoint

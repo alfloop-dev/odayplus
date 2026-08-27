@@ -212,6 +212,82 @@ class WorkerFailurePolicyAuthorityTests(unittest.TestCase):
         finally:
             tmpdir.cleanup()
 
+    def test_completed_with_failed_nonzero_exit_real_cli_quota_detects_and_fences(self) -> None:
+        """Worker with lifecycle status completed but explicit failed/exit1 must still detect real CLI quota and fence pool."""
+        tmpdir, worker = self._make_worker_log(
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage.\n"
+        )
+        try:
+            worker.update(
+                {
+                    "run_id": "run-comp-failed",
+                    "task_id": "TASK-COMP-FAIL",
+                    "provider": "codex",
+                    "status": "completed",
+                    "runner_status": "failed",
+                    "exit_code": 1,
+                }
+            )
+            self.assertFalse(worker_failure_policy.worker_log_scan_should_be_skipped(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "quota_terminal")
+            state: dict[str, Any] = {}
+            paused = worker_failure_policy.mark_provider_dispatch_paused(
+                self.config,
+                state,
+                "codex",
+                reason,
+                failure_kind=str(failure["kind"]),
+                pause_kind=str(failure["kind"]),
+                worker=worker,
+            )
+            self.assertTrue(paused)
+            self.assertIn("codex", state["provider_guardrails"]["dispatch_pauses"])
+            self.assertEqual(state["account_pool_runtime"]["codex"]["state"], "cooldown")
+        finally:
+            tmpdir.cleanup()
+
+    def test_status_file_failed_nonzero_exit_real_cli_quota_detects_and_fences(self) -> None:
+        """Worker with status file indicating failed exit 1 must detect real CLI quota and fence pool."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "runner_status.json"
+            status_path.write_text('{"status": "failed", "exit_code": 1}', encoding="utf-8")
+            log_path = Path(tmpdir) / "worker.log"
+            log_path.write_text(
+                "API Error: quota exceeded for current billing cycle\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "run_id": "run-stat-file-failed",
+                "task_id": "TASK-STAT-FAIL",
+                "provider": "codex",
+                "status": "completed",
+                "runner_status_path": str(status_path),
+                "log_path": str(log_path),
+            }
+            self.assertFalse(worker_failure_policy.worker_log_scan_should_be_skipped(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "quota_terminal")
+            state: dict[str, Any] = {}
+            paused = worker_failure_policy.mark_provider_dispatch_paused(
+                self.config,
+                state,
+                "codex",
+                reason,
+                failure_kind=str(failure["kind"]),
+                pause_kind=str(failure["kind"]),
+                worker=worker,
+            )
+            self.assertTrue(paused)
+            self.assertIn("codex", state["provider_guardrails"]["dispatch_pauses"])
+            self.assertEqual(state["account_pool_runtime"]["codex"]["state"], "cooldown")
+
     def test_cloud_run_quota_exceeded_not_detected_as_worker_failure(self) -> None:
         """Task log containing Cloud Run API quota exceeded string must not be detected as worker failure."""
         for text in (
