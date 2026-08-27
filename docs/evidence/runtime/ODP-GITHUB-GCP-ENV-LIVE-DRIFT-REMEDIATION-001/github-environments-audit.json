@@ -1,13 +1,13 @@
 {
   "evidence_kind": "github-environments-audit",
   "task_id": "ODP-GITHUB-GCP-ENV-LIVE-DRIFT-REMEDIATION-001",
-  "timestamp_utc": "2026-08-27T05:32:24.163966+00:00",
+  "timestamp_utc": "2026-08-27T05:40:00Z",
   "repository": "alfloop-dev/odayplus",
   "api_pagination_notice": "GitHub API /environments/{environment}/variables endpoint paginates by default (10-30 items per page). Full live readback requires --paginate flag (e.g. gh api --paginate repos/alfloop-dev/odayplus/environments/{env}/variables?per_page=100).",
   "environments": {
     "dev": {
       "name": "dev",
-      "total_variables": 41,
+      "total_variables": 38,
       "required_reviewers": [],
       "variables": [
         {
@@ -83,12 +83,6 @@
           "classification": "secret_reference"
         },
         {
-          "name": "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
-          "present": true,
-          "value_sha256": "0157d40dd1bc17d9c0d16ea1ced7da2d4b78cd3bbda5d37aacf05d4a55ad1af2",
-          "classification": "auth_and_iam"
-        },
-        {
           "name": "ODP_CLOUD_RUN_API_SERVICE",
           "present": true,
           "value_sha256": "994bc598a9f87d10257688c395bfc0da060918ba22694e49a2a0e0e566d0c19b",
@@ -149,12 +143,6 @@
           "classification": "endpoints_and_deploy"
         },
         {
-          "name": "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
-          "present": true,
-          "value_sha256": "a416ea84421fa7e1351582da48235bac88380a337ec5cb5a9239dc7d57908b4b",
-          "classification": "runtime_config"
-        },
-        {
           "name": "ODP_FORECAST_ENGINE",
           "present": true,
           "value_sha256": "0dfda32cc7d56f2f2cb1f50dfc610107df455686397cd06fd0e3b7f6ebd8603d",
@@ -182,12 +170,6 @@
           "name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
           "present": true,
           "value_sha256": "7957c4185434170243f3d36c630f74daa5db1b97e40b8ec224edc0b7e9cd9868",
-          "classification": "auth_and_iam"
-        },
-        {
-          "name": "ODP_OPERATOR_SMOKE_SUBJECT",
-          "present": true,
-          "value_sha256": "c68da243d6d0a7663a6b3a45249e805601c16bb4b36798d37324abfda4da9aaf",
           "classification": "auth_and_iam"
         },
         {
@@ -260,7 +242,7 @@
     },
     "staging": {
       "name": "staging",
-      "total_variables": 47,
+      "total_variables": 44,
       "required_reviewers": [
         "Alien-alfaloop",
         "ajoe734"
@@ -339,12 +321,6 @@
           "classification": "secret_reference"
         },
         {
-          "name": "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
-          "present": true,
-          "value_sha256": "0157d40dd1bc17d9c0d16ea1ced7da2d4b78cd3bbda5d37aacf05d4a55ad1af2",
-          "classification": "auth_and_iam"
-        },
-        {
           "name": "ODP_CLOUD_RUN_API_SERVICE",
           "present": true,
           "value_sha256": "a6cdc27a54d69e51e3784bacce90427cad290dde8dbe5d21ce4ee58aa972df4a",
@@ -411,12 +387,6 @@
           "classification": "cloud_scheduler"
         },
         {
-          "name": "ODP_EXTERNAL_PROVIDER_MODE",
-          "present": true,
-          "value_sha256": "17eb3c0168d0d7b21ede5481150f17233427d89833ec121b4dbc4fb96cfab71e",
-          "classification": "runtime_config"
-        },
-        {
           "name": "ODP_FORECAST_ENGINE",
           "present": true,
           "value_sha256": "0dfda32cc7d56f2f2cb1f50dfc610107df455686397cd06fd0e3b7f6ebd8603d",
@@ -459,12 +429,6 @@
           "classification": "auth_and_iam"
         },
         {
-          "name": "ODP_OPERATOR_SMOKE_SUBJECT",
-          "present": true,
-          "value_sha256": "c68da243d6d0a7663a6b3a45249e805601c16bb4b36798d37324abfda4da9aaf",
-          "classification": "auth_and_iam"
-        },
-        {
           "name": "ODP_RELEASE_LEASE_PUBLIC_KEY",
           "present": true,
           "value_sha256": "06be9e93ea7b9f70993f5781f4fcab7a88836f9e3f2b4bb839c5b36b2c2e422e",
@@ -503,7 +467,7 @@
         {
           "name": "ODP_STAGING_API_URL",
           "present": true,
-          "value_sha256": "478640b64ea2529a233ba1a7a3a21ef69980c828932471f5830bfdfc881bce9a",
+          "value_sha256": "6403a7052ec6637c7ac72bdd474541d572e8070161d7115681f80f76559d8e96",
           "classification": "endpoints_and_deploy"
         },
         {
@@ -552,7 +516,7 @@
     },
     "production": {
       "name": "production",
-      "total_variables": 44,
+      "total_variables": 41,
       "required_reviewers": [
         "Alien-alfaloop",
         "ajoe734"
@@ -631,12 +595,6 @@
           "classification": "secret_reference"
         },
         {
-          "name": "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
-          "present": true,
-          "value_sha256": "50d7859ed661eba90a73dbd603cbefac4e92774b6876d8ad7436ae114e596818",
-          "classification": "auth_and_iam"
-        },
-        {
           "name": "ODP_CLOUD_RUN_API_SERVICE",
           "present": true,
           "value_sha256": "994bc598a9f87d10257688c395bfc0da060918ba22694e49a2a0e0e566d0c19b",
@@ -691,12 +649,6 @@
           "classification": "cloud_scheduler"
         },
         {
-          "name": "ODP_EXTERNAL_PROVIDER_MODE",
-          "present": true,
-          "value_sha256": "17eb3c0168d0d7b21ede5481150f17233427d89833ec121b4dbc4fb96cfab71e",
-          "classification": "runtime_config"
-        },
-        {
           "name": "ODP_FORECAST_ENGINE",
           "present": true,
           "value_sha256": "0dfda32cc7d56f2f2cb1f50dfc610107df455686397cd06fd0e3b7f6ebd8603d",
@@ -739,15 +691,9 @@
           "classification": "auth_and_iam"
         },
         {
-          "name": "ODP_OPERATOR_SMOKE_SUBJECT",
-          "present": true,
-          "value_sha256": "513461310f602d296236e2a8a7c3b5284b0fb7af1978b437a82466bdd72f97f6",
-          "classification": "auth_and_iam"
-        },
-        {
           "name": "ODP_PROD_API_URL",
           "present": true,
-          "value_sha256": "6d151893fbfa04a0b2523ea9307f64af41f9773217105dc4735128799638d97c",
+          "value_sha256": "3a9cceacab4bfc203188f67499c4e2d0106e39f84138c8bbb024da9f03abf581",
           "classification": "endpoints_and_deploy"
         },
         {
