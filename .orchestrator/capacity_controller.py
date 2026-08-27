@@ -101,6 +101,51 @@ def _count_runnable_tasks(
     return 0
 
 
+def _extract_runnable_task_ids(
+    config: dict[str, Any],
+    runnable_tasks: int | list[Any] | tuple[Any, ...] | set[Any] | None = None,
+) -> set[str] | None:
+    """Extract canonical runnable task IDs if passed as a collection.
+
+    Returns None for int-only or missing inputs to signal conservative fallback.
+    """
+    if isinstance(runnable_tasks, int) or runnable_tasks is None:
+        return None
+    task_id_field = (config.get("schema", {}) or {}).get("task_id_field", "id")
+    canonical_ids: set[str] = set()
+    for item in runnable_tasks:
+        if isinstance(item, str):
+            tid = item.strip()
+            if tid:
+                canonical_ids.add(tid)
+        elif isinstance(item, dict):
+            tid = str(item.get(task_id_field) or item.get("id") or "").strip()
+            if tid:
+                canonical_ids.add(tid)
+    return canonical_ids
+
+
+def _worker_task_id(worker: dict[str, Any], task_id_field: str = "id") -> str:
+    """Extract assigned task ID from a worker record."""
+    if not isinstance(worker, dict):
+        return ""
+    if worker.get("task_id"):
+        return str(worker["task_id"]).strip()
+    if worker.get(task_id_field):
+        return str(worker[task_id_field]).strip()
+    req_task = worker.get("request_snapshot", {}).get("metadata", {}).get("task", {})
+    if isinstance(req_task, dict):
+        tid = str(req_task.get(task_id_field) or req_task.get("id") or "").strip()
+        if tid:
+            return tid
+    metadata = worker.get("metadata", {})
+    if isinstance(metadata, dict):
+        tid = str(metadata.get(task_id_field) or metadata.get("task_id") or "").strip()
+        if tid:
+            return tid
+    return ""
+
+
 def capacity_snapshot(
     config: dict[str, Any],
     runtime_state: dict[str, Any],
@@ -126,9 +171,23 @@ def capacity_snapshot(
         == "sidecar"
     )
     active_count = len(active_workers)
+
+    task_id_field = (config.get("schema", {}) or {}).get("task_id_field", "id")
+    runnable_ids = _extract_runnable_task_ids(config, runnable_tasks)
+    if runnable_ids is not None:
+        active_runnable_count = sum(
+            1
+            for worker in active_workers
+            if _worker_task_id(worker, task_id_field) in runnable_ids
+        )
+    else:
+        # int-only legacy input: conservative fallback, must not over-dispatch
+        active_runnable_count = active_count
+
     return {
         "slot_total": slot_total,
         "active_workers": active_count,
+        "active_runnable_workers": active_runnable_count,
         "available_slots": max(0, slot_total - active_count),
         "runnable_tasks": runnable_count,
         "active_sidecars": active_sidecars,
@@ -224,7 +283,7 @@ def evaluate_chair(
         "valid_until": _iso(now + timedelta(seconds=float(cfg["chair_interval_seconds"]))),
         "reasons": reasons,
         "approve_helper_wave": bool(
-            snapshot["runnable_tasks"] > snapshot["active_workers"]
+            snapshot["runnable_tasks"] > snapshot.get("active_runnable_workers", snapshot["active_workers"])
             and snapshot["available_slots"] > 0
         ),
         "max_helper_claims": min(snapshot["available_slots"], 4),
