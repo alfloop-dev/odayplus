@@ -7,7 +7,7 @@
 | Environment | Live variables | Build twin | 端點政策 |
 |---|---:|---|---|
 | `dev` | 38 | `dev-build` 的 9 個 build vars 完全一致 | Web 使用 Cloud Run 平台網址，不建立 DNS、自訂網域或憑證 |
-| `staging` | 44 | `staging-build` 的 9 個 build vars 完全一致 | Web 使用 `console-staging.oday-plus.com.tw`；IAM API 使用 Cloud Run service URL |
+| `staging` | 43 | `staging-build` 的 9 個 build vars 完全一致 | Web 使用 `console-staging.oday-plus.com.tw`；IAM API 使用 Cloud Run service URL |
 | `production` | 41 | `production-build` 的 9 個 build vars 完全一致 | Web 使用 `console.oday-plus.com.tw`；IAM API 使用 Cloud Run service URL |
 
 官方網站 `www.oday-plus.com.tw` 未修改。
@@ -20,6 +20,7 @@
 - 移除 9 個在所有 GitHub workflows 都無 caller 的舊變數：
   - dev：`ODP_AUTH_SUBJECT_ROLE_BINDINGS`、`ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS`、`ODP_OPERATOR_SMOKE_SUBJECT`
   - staging／production：`ODP_AUTH_SUBJECT_ROLE_BINDINGS`、`ODP_EXTERNAL_PROVIDER_MODE`、`ODP_OPERATOR_SMOKE_SUBJECT`
+- staging 依審查要求移除 `ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT`（變數數更新為 43），標記 `FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE`，等待 `ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` 作為唯一 release-scoped identity 整合，避免 staging 指向 dev smoke operator 破壞環境隔離；dev/prod 維持各自獨立 SA，不另建靜態平行 identity。
 - 第三方 provider 的唯一權威來源仍是 Runtime Release 內的 `ODP_EXTERNAL_PROVIDER_MODE: disabled`，未建立第二個開關。
 - staging 與 production 的 required reviewers 均維持 2 人，未更動保護規則。
 
@@ -30,7 +31,7 @@
 - [`gcp-metadata-live-audit.json`](gcp-metadata-live-audit.json) 保存本次 GCP live readback；pre-existing dependencies 逐項為 `PASS`，rollout 尚未建立的 Cloud Run services/jobs 與 Scheduler targets 逐項標為 `ABSENT_PREDEPLOY`。
 
 - dev、staging、production 的 project、region、Artifact Registry、RUNNABLE Cloud SQL。
-- deploy service account、runtime service account、scheduler service account、operator smoke service account。
+- deploy service account、runtime service account、scheduler service account、operator smoke service account（dev 與 production 各自獨立；staging 的 operator smoke service account 則移除並標記 `FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE`，等待 release-scoped lifecycle 整合）。
 - Workload Identity Federation provider。
 - snapshot bucket 與 durable release lease bucket。
 - staging VPC connector 為 `READY`。

@@ -6,7 +6,8 @@
   "status_vocabulary": {
     "PASS": "The live resource or metadata dependency was found and read back.",
     "ABSENT_PREDEPLOY": "The configured rollout target is intentionally not deployed yet; this receipt does not claim deployment.",
-    "FAIL_CLOSED_WAITING_HUMAN_OPS": "The OAuth gate remains intentionally incomplete until Human/Ops supplies the client material."
+    "FAIL_CLOSED_WAITING_HUMAN_OPS": "The OAuth gate remains intentionally incomplete until Human/Ops supplies the client material.",
+    "FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE": "Staging operator smoke identity is intentionally removed from GitHub environment to fail closed until ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 provisions release-scoped identity; no static parallel identity created."
   },
   "environments": {
     "dev": {
@@ -212,8 +213,9 @@
         },
         {
           "variable": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
-          "email": "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com",
-          "status": "PASS"
+          "email": null,
+          "status": "FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE",
+          "note": "Removed from staging environment to ensure preflight fails closed until ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 integrates release-scoped identity. Dev/prod values unchanged; no static parallel identity created."
         }
       ],
       "workload_identity_provider": {
@@ -542,6 +544,12 @@
         "ajoe734"
       ],
       "status": "PASS_UNCHANGED"
+    },
+    "staging_operator_smoke_identity": {
+      "variable": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+      "present_in_staging": false,
+      "status": "FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE",
+      "note": "Staging smoke operator SA was previously pointing to dev smoke operator; removed to fail closed until ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 provisions release-scoped identity."
     }
   }
 }

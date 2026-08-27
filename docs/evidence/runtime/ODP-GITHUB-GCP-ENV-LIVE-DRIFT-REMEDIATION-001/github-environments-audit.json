@@ -242,7 +242,7 @@
     },
     "staging": {
       "name": "staging",
-      "total_variables": 44,
+      "total_variables": 43,
       "required_reviewers": [
         "Alien-alfaloop",
         "ajoe734"
@@ -420,12 +420,6 @@
           "name": "ODP_OPERATOR_SMOKE_ROLE",
           "present": true,
           "value_sha256": "e452f329ff950c53bec6534a7a25006db015a0db327b009dac0037699535eb07",
-          "classification": "auth_and_iam"
-        },
-        {
-          "name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
-          "present": true,
-          "value_sha256": "7957c4185434170243f3d36c630f74daa5db1b97e40b8ec224edc0b7e9cd9868",
           "classification": "auth_and_iam"
         },
         {
@@ -950,6 +944,14 @@
       "name": "ODP_WEB_OIDC_CLIENT_ID",
       "present": false,
       "status": "FAIL_CLOSED_MISSING_PENDING_HUMAN_OPS"
+    }
+  },
+  "staging_operator_smoke_service_account_status": {
+    "staging": {
+      "name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+      "present": false,
+      "status": "FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE",
+      "reason": "Removed from staging environment to ensure preflight fails closed until ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 integrates release-scoped identity. Dev/prod values unchanged; no static parallel identity created."
     }
   },
   "hash_contract": "SHA256 of the exact UTF-8 variable value bytes returned by GitHub API (jq -j .value); no TSV or newline canonicalization"
