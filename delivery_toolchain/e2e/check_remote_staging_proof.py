@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -47,8 +48,32 @@ def normalize_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def get_json(url: str, correlation_id: str, timeout: float) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers={"x-correlation-id": correlation_id})
+def fetch_identity_token(audience: str) -> str:
+    """Obtain an identity token from the current WIF-backed gcloud identity."""
+    cmd = ["gcloud", "auth", "print-identity-token", f"--audiences={audience}"]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    except Exception as exc:
+        raise RuntimeError("Failed to invoke gcloud identity-token minting") from exc
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"gcloud identity-token minting failed with exit status {proc.returncode}"
+        )
+
+    token = proc.stdout.strip()
+    if not token:
+        raise RuntimeError("gcloud identity-token minting returned empty output")
+    return token
+
+
+def get_json(
+    url: str, correlation_id: str, timeout: float, *, token: str | None = None
+) -> dict[str, Any]:
+    headers = {"x-correlation-id": correlation_id}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - operator-provided URL
         payload = response.read().decode("utf-8")
     return json.loads(payload)
@@ -94,8 +119,30 @@ def run_checks(args: argparse.Namespace) -> tuple[list[CheckResult], dict[str, A
         return checks, report
 
     api_url = normalize_url(env["ODP_STAGING_API_URL"])
+    audience = api_url
+
+    token = None
     try:
-        health = get_json(f"{api_url}/platform/health", correlation_id, args.timeout)
+        token = fetch_identity_token(audience)
+        checks.append(
+            CheckResult(
+                ok=True,
+                name="auth:identity_token",
+                detail=f"audience={audience}",
+            )
+        )
+    except Exception:
+        checks.append(
+            CheckResult(
+                ok=False,
+                name="auth:identity_token",
+                detail="failed to mint identity token",
+            )
+        )
+        return checks, report
+
+    try:
+        health = get_json(f"{api_url}/platform/health", correlation_id, args.timeout, token=token)
         checks.append(
             CheckResult(
                 ok=health.get("status") == "ok" and health.get("correlation_id") == correlation_id,
@@ -108,7 +155,7 @@ def run_checks(args: argparse.Namespace) -> tuple[list[CheckResult], dict[str, A
         checks.append(CheckResult(ok=False, name="smoke:/platform/health", detail=str(exc)))
 
     try:
-        version = get_json(f"{api_url}/platform/version", correlation_id, args.timeout)
+        version = get_json(f"{api_url}/platform/version", correlation_id, args.timeout, token=token)
         actual_sha = str(version.get("release_sha") or "")
         checks.append(
             CheckResult(
@@ -126,8 +173,12 @@ def run_checks(args: argparse.Namespace) -> tuple[list[CheckResult], dict[str, A
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expected-sha", required=True, help="Release PR headRefOid expected on staging.")
-    parser.add_argument("--correlation-id", default="", help="Correlation id for staging smoke requests.")
+    parser.add_argument(
+        "--expected-sha", required=True, help="Release PR headRefOid expected on staging."
+    )
+    parser.add_argument(
+        "--correlation-id", default="", help="Correlation id for staging smoke requests."
+    )
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="JSON report path.")
     args = parser.parse_args()
