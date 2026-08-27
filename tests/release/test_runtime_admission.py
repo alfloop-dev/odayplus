@@ -38,7 +38,7 @@ RELEASE_ID = "odp-20260824-001"
 
 def build_manifest(candidate_sha: str = SHA) -> dict:
     manifest = {
-        "schema_version": 1,
+        "schema_version": 2,
         "release_id": RELEASE_ID,
         "candidate_sha": candidate_sha,
         "components": {
@@ -52,6 +52,29 @@ def build_manifest(candidate_sha: str = SHA) -> dict:
         "signature_refs": ["oci://ghcr.io/example/sig@sha256:" + "8" * 64],
         "created_at": "2026-08-24T12:00:00+00:00",
         "created_by_workflow": "github://example/actions/runtime-release.yml/run-1",
+        "data_snapshot": {
+            "id": "snap-test-001",
+            "uri": "gs://odayplus-snapshots/masked/snap-test-001.tar.gz",
+            "content_sha256": "sha256:" + "d" * 64,
+            "data_contract_digest": "sha256:" + "b" * 64,
+            "masked": True,
+        },
+        "rollback_release": {
+            "release_id": "odp-prev-001",
+            "candidate_sha": "0" * 40,
+            "manifest_digest": "sha256:" + "e" * 64,
+            "components": {
+                "api": {"image": "ghcr.io/example/api@sha256:" + "2" * 64},
+                "web": {"image": "ghcr.io/example/web@sha256:" + "3" * 64},
+            },
+            "data_snapshot": {
+                "id": "snap-prev-001",
+                "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+                "content_sha256": "sha256:" + "f" * 64,
+                "data_contract_digest": "sha256:" + "b" * 64,
+                "masked": True,
+            },
+        },
     }
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
     return manifest

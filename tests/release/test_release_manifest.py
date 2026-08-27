@@ -15,9 +15,12 @@ from delivery_toolchain.release.migrate_gate_registry import (
 )
 from delivery_toolchain.release.release_manifest import (
     build_release_manifest,
+    compute_data_contract_digest,
     compute_manifest_digest,
+    extract_rollback_release_binding,
     validate_manifest,
     validate_release_admission,
+    validate_rollback_manifest,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,6 +34,36 @@ def load_manifest() -> dict:
 
 def load_registry() -> dict:
     return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+
+
+def valid_data_snapshot(contract_digest: str | None = None) -> dict:
+    return {
+        "id": "snap-test-001",
+        "uri": "gs://odayplus-snapshots/masked/snap-test-001.tar.gz",
+        "content_sha256": "sha256:" + "d" * 64,
+        "data_contract_digest": contract_digest or compute_data_contract_digest(root=ROOT),
+        "masked": True,
+    }
+
+
+def valid_rollback_release(current_sha: str = "1" * 40) -> dict:
+    prev_sha = "0" * 40 if current_sha != "0" * 40 else "9" * 40
+    return {
+        "release_id": "odp-test-prev",
+        "candidate_sha": prev_sha,
+        "manifest_digest": "sha256:" + "e" * 64,
+        "components": {
+            "api": {"image": "registry.example.invalid/odayplus/api@sha256:" + "f" * 64},
+            "web": {"image": "registry.example.invalid/odayplus/web@sha256:" + "a" * 64},
+        },
+        "data_snapshot": {
+            "id": "snap-prev-001",
+            "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+            "content_sha256": "sha256:" + "b" * 64,
+            "data_contract_digest": "sha256:" + "c" * 64,
+            "masked": True,
+        },
+    }
 
 
 def blocked_manifest() -> dict:
@@ -84,9 +117,8 @@ def test_committed_manifest_is_honest_about_whether_it_has_an_artifact() -> None
     """Whichever state the candidate of the day is in, it must be consistent.
 
     ``ready`` means the build really published immutable images plus SBOM and
-    signature references, so admission must fail for no artifact-shaped reason.
-    ``blocked`` means the opposite and must name why.  Nothing in between is a
-    representable release identity.
+    signature references. Legacy v1 remains readable for historical audit, but
+    admission fails closed without snapshot and rollback bindings.
     """
 
     manifest = load_manifest()
@@ -95,33 +127,44 @@ def test_committed_manifest_is_honest_about_whether_it_has_an_artifact() -> None
         assert manifest["components"], "a ready manifest must have something to deploy"
         assert manifest["sbom_refs"]
         assert manifest["signature_refs"]
-        assert validate_release_admission(manifest) == []
+        assert validate_manifest(manifest) == []
+        # Committed v1 manifest lacks snapshot and rollback bindings, so admission fails closed
+        assert validate_release_admission(manifest)
     else:
         assert manifest["blockers"], "a blocked manifest must record why it is blocked"
         assert validate_release_admission(manifest)
 
 
 def built_manifest(**overrides) -> dict:
-    """Build a self-sealed manifest that carries one immutable component.
+    """Build a self-sealed manifest that carries immutable components and bindings.
 
-    The committed manifest is whatever the current candidate happens to be, and
-    a blocked candidate legitimately has no components at all.  Component-level
-    mutation coverage therefore builds its own subject instead of borrowing the
-    release of the day.
+    Component-level mutation coverage builds its own subject instead of
+    borrowing the release of the day.
     """
 
+    candidate_sha = overrides.pop("candidate_sha", "1" * 40)
+    data_snapshot = overrides.pop("data_snapshot", valid_data_snapshot())
+    rollback_release = overrides.pop("rollback_release", valid_rollback_release(candidate_sha))
     manifest = build_release_manifest(
-        release_id="odp-test-0001",
-        candidate_sha="1" * 40,
-        components={
-            "api": {
-                "image": "registry.example.invalid/odayplus/api@sha256:" + "a" * 64
-            }
-        },
-        sbom_refs=["oci://registry.example.invalid/odayplus/sbom@sha256:" + "b" * 64],
-        signature_refs=["oci://registry.example.invalid/odayplus/api@sha256:" + "c" * 64],
-        created_at="2026-08-26T00:00:00Z",
-        created_by_workflow="github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml",
+        release_id=overrides.pop("release_id", "odp-test-0001"),
+        candidate_sha=candidate_sha,
+        components=overrides.pop(
+            "components",
+            {
+                "api": {
+                    "image": "registry.example.invalid/odayplus/api@sha256:" + "a" * 64
+                },
+                "web": {
+                    "image": "registry.example.invalid/odayplus/web@sha256:" + "9" * 64
+                },
+            },
+        ),
+        sbom_refs=overrides.pop("sbom_refs", ["oci://registry.example.invalid/odayplus/sbom@sha256:" + "b" * 64]),
+        signature_refs=overrides.pop("signature_refs", ["oci://registry.example.invalid/odayplus/api@sha256:" + "c" * 64]),
+        created_at=overrides.pop("created_at", "2026-08-26T00:00:00Z"),
+        created_by_workflow=overrides.pop("created_by_workflow", "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml"),
+        data_snapshot=data_snapshot,
+        rollback_release=rollback_release,
     )
     manifest.update(overrides)
     return manifest
@@ -256,3 +299,174 @@ def test_legacy_migration_rejects_manifest_for_another_candidate() -> None:
 
     with pytest.raises(RegistryMigrationError):
         migrate_registry(legacy, manifest)
+
+
+def test_v1_manifest_is_structurally_valid_for_audit_but_admission_fails_closed() -> None:
+    manifest = built_manifest(schema_version=1)
+    manifest.pop("data_snapshot", None)
+    manifest.pop("rollback_release", None)
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    # v1 manifest is structurally valid for audit
+    assert validate_manifest(manifest) == []
+
+    # but staging/production admission fails closed without snapshot and rollback
+    errors = validate_release_admission(manifest)
+    assert any("manifest.data_snapshot" in err for err in errors)
+    assert any("manifest.rollback_release" in err for err in errors)
+
+
+def test_v2_manifest_requires_data_snapshot_and_rollback_release() -> None:
+    manifest_no_snap = built_manifest(schema_version=2)
+    manifest_no_snap.pop("data_snapshot", None)
+    manifest_no_snap["manifest_digest"] = compute_manifest_digest(manifest_no_snap)
+    assert any("data_snapshot" in err for err in validate_manifest(manifest_no_snap))
+
+    manifest_no_rb = built_manifest(schema_version=2)
+    manifest_no_rb.pop("rollback_release", None)
+    manifest_no_rb["manifest_digest"] = compute_manifest_digest(manifest_no_rb)
+    assert any("rollback_release" in err for err in validate_manifest(manifest_no_rb))
+
+
+def test_data_snapshot_unmasked_fails_closed() -> None:
+    snap = valid_data_snapshot()
+    snap["masked"] = False
+    manifest = built_manifest(data_snapshot=snap)
+    errors = validate_manifest(manifest)
+    assert any("masked must be True" in err for err in errors)
+
+
+def test_data_snapshot_invalid_sha256_fails_closed() -> None:
+    snap = valid_data_snapshot()
+    snap["content_sha256"] = "invalid_hash"
+    manifest = built_manifest(data_snapshot=snap)
+    errors = validate_manifest(manifest)
+    assert any("content_sha256 must be a sha256:" in err for err in errors)
+
+
+def test_data_snapshot_contract_digest_mismatch_fails_closed() -> None:
+    snap = valid_data_snapshot()
+    snap["data_contract_digest"] = "sha256:" + "0" * 64
+    manifest = built_manifest(data_snapshot=snap)
+    errors = validate_manifest(manifest)
+    assert any("data_contract_digest does not match" in err for err in errors)
+
+
+def test_rollback_release_same_candidate_sha_fails_closed() -> None:
+    rb = valid_rollback_release("1" * 40)
+    rb["candidate_sha"] = "1" * 40
+    manifest = built_manifest(candidate_sha="1" * 40, rollback_release=rb)
+    errors = validate_manifest(manifest)
+    assert any("must not match current candidate_sha" in err for err in errors)
+
+
+def test_rollback_release_mutable_tag_fails_closed() -> None:
+    rb = valid_rollback_release("1" * 40)
+    rb["components"]["api"]["image"] = "registry.example.invalid/odayplus/api:latest"
+    manifest = built_manifest(candidate_sha="1" * 40, rollback_release=rb)
+    errors = validate_manifest(manifest)
+    assert any("immutable image reference with @sha256 digest" in err for err in errors)
+
+
+def test_rollback_release_missing_web_or_api_fails_closed() -> None:
+    rb = valid_rollback_release("1" * 40)
+    rb["components"].pop("web", None)
+    manifest = built_manifest(candidate_sha="1" * 40, rollback_release=rb)
+    errors = validate_manifest(manifest)
+    assert any("missing required component: 'web'" in err for err in errors)
+
+
+def test_rollback_release_missing_snapshot_pointer_fails_closed() -> None:
+    rb = valid_rollback_release("1" * 40)
+    rb.pop("data_snapshot", None)
+    manifest = built_manifest(candidate_sha="1" * 40, rollback_release=rb)
+    errors = validate_manifest(manifest)
+    assert any("missing required data_snapshot pointer" in err for err in errors)
+
+
+def test_byte_determinism_and_tampering_detection() -> None:
+    m1 = built_manifest()
+    m2 = built_manifest()
+    assert m1 == m2
+    assert m1["manifest_digest"] == m2["manifest_digest"]
+    assert validate_manifest(m1) == []
+    assert validate_release_admission(m1) == []
+
+    # Tampering with snapshot id breaks digest
+    tampered_snap = copy.deepcopy(m1)
+    tampered_snap["data_snapshot"]["id"] = "tampered-id"
+    errors = validate_manifest(tampered_snap)
+    assert any("manifest_digest" in err for err in errors)
+
+    # Tampering with rollback digest breaks digest
+    tampered_rb = copy.deepcopy(m1)
+    tampered_rb["rollback_release"]["manifest_digest"] = "sha256:" + "0" * 64
+    errors = validate_manifest(tampered_rb)
+    assert any("manifest_digest" in err for err in errors)
+
+    # Tampering with component image breaks digest
+    tampered_comp = copy.deepcopy(m1)
+    tampered_comp["components"]["api"]["image"] = "registry.example.invalid/odayplus/api@sha256:" + "0" * 64
+    errors = validate_manifest(tampered_comp)
+    assert any("manifest_digest" in err for err in errors)
+
+
+def test_validate_rollback_manifest_valid_manifest() -> None:
+    prev = built_manifest(candidate_sha="0" * 40, release_id="odp-prev-001")
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert errors == []
+
+
+def test_validate_rollback_manifest_forged_digest_fails_closed() -> None:
+    prev = built_manifest(candidate_sha="0" * 40)
+    prev["manifest_digest"] = "sha256:" + "f" * 64
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("manifest_digest" in err for err in errors)
+
+
+def test_validate_rollback_manifest_tampered_component_fails_closed() -> None:
+    prev = built_manifest(candidate_sha="0" * 40)
+    prev["components"]["api"]["image"] = "registry.example.invalid/odayplus/api@sha256:" + "f" * 64
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("manifest_digest" in err for err in errors)
+
+
+def test_validate_rollback_manifest_legacy_v1_fails_closed() -> None:
+    prev = built_manifest(schema_version=1)
+    prev.pop("data_snapshot", None)
+    prev.pop("rollback_release", None)
+    prev["manifest_digest"] = compute_manifest_digest(prev)
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("data_snapshot" in err for err in errors)
+
+
+def test_validate_rollback_manifest_blocked_fails_closed() -> None:
+    prev = blocked_manifest()
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("release_status='ready'" in err for err in errors)
+
+
+def test_validate_rollback_manifest_same_candidate_fails_closed() -> None:
+    prev = built_manifest(candidate_sha="1" * 40)
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("must not match current candidate_sha" in err for err in errors)
+
+
+def test_validate_rollback_manifest_same_release_id_fails_closed() -> None:
+    prev = built_manifest(candidate_sha="0" * 40, release_id="odp-current-001")
+    errors = validate_rollback_manifest(
+        prev,
+        current_candidate_sha="1" * 40,
+        current_release_id="odp-current-001",
+    )
+    assert any("must not match current release_id" in error for error in errors)
+
+
+def test_extract_rollback_release_binding_retains_exact_identity() -> None:
+    prev = built_manifest(candidate_sha="0" * 40, release_id="odp-prev-001")
+    binding = extract_rollback_release_binding(prev)
+    assert binding["release_id"] == "odp-prev-001"
+    assert binding["candidate_sha"] == "0" * 40
+    assert binding["manifest_digest"] == prev["manifest_digest"]
+    assert binding["components"]["api"]["image"] == prev["components"]["api"]["image"]
+    assert binding["data_snapshot"] == prev["data_snapshot"]
