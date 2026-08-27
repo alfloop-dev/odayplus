@@ -35,7 +35,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            database = copy_root / "database.tf"
+            database = copy_root / "modules" / "runtime_foundation" / "database.tf"
             database.write_text(
                 database.read_text(encoding="utf-8").replace("POSTGRES_16", "POSTGRES_15"),
                 encoding="utf-8",
@@ -102,7 +102,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8")
                 + '\nresource "google_compute_router_nat" "nat" { name = "nat" }\n',
@@ -119,7 +119,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8").replace("priority  = 65534", "priority  = 100"),
                 encoding="utf-8",
@@ -135,7 +135,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8").replace('"10.0.0.0/8",', '"10.0.0.0/8",\n    "0.0.0.0/0",'),
                 encoding="utf-8",
@@ -151,7 +151,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8").replace('ports    = ["443"]', 'ports    = ["80", "443"]'),
                 encoding="utf-8",
@@ -167,7 +167,7 @@ class TerraformProductionContractTests(unittest.TestCase):
                 destination = copy_root / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-            network = copy_root / "network.tf"
+            network = copy_root / "modules" / "runtime_foundation" / "network.tf"
             network.write_text(
                 network.read_text(encoding="utf-8")
                 + '\nresource "google_compute_firewall" "allow_all" {\n  name = "allow-all"\n  direction = "EGRESS"\n  priority = 10\n  allow { protocol = "all" }\n}\n',
@@ -232,6 +232,29 @@ class TerraformProductionContractTests(unittest.TestCase):
         public_cidrs = ["8.8.8.0/24", "1.1.1.0/24", "172.15.0.0/16", "172.32.0.0/16", "192.169.0.0/16", "203.0.113.0/24"]
         for cidr in public_cidrs:
             self.assertFalse(bool(pattern.match(cidr)), f"{cidr} must NOT match RFC1918 pattern")
+
+    def test_moved_blocks_cover_all_extracted_foundation_resources(self) -> None:
+        network_tf = (ROOT / "network.tf").read_text(encoding="utf-8")
+        expected_moved_targets = [
+            "google_compute_network.runtime",
+            "google_compute_subnetwork.runtime",
+            "google_compute_global_address.private_services",
+            "google_service_networking_connection.private_services",
+            "google_compute_firewall.deny_all_egress",
+            "google_compute_firewall.allow_private_egress",
+            "google_compute_firewall.allow_restricted_google_apis",
+            "google_kms_key_ring.runtime",
+            "google_kms_crypto_key.runtime",
+            "google_project_service_identity.cloud_sql",
+            "google_project_service_identity.pubsub",
+            "google_kms_crypto_key_iam_member.cloud_sql",
+            "google_kms_crypto_key_iam_member.gcs",
+            "google_kms_crypto_key_iam_member.pubsub",
+            "google_sql_database_instance.primary",
+        ]
+        for target in expected_moved_targets:
+            self.assertIn(f"from = {target}", network_tf, f"Missing moved block for {target}")
+            self.assertIn(f"to   = module.runtime_foundation.{target}", network_tf)
 
 
 if __name__ == "__main__":

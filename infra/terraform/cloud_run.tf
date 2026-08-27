@@ -16,8 +16,8 @@ resource "google_cloud_run_v2_service" "api" {
 
     vpc_access {
       network_interfaces {
-        network    = google_compute_network.runtime.name
-        subnetwork = google_compute_subnetwork.runtime.name
+        network    = module.runtime_foundation.network_name
+        subnetwork = module.runtime_foundation.subnetwork_name
       }
       egress = "ALL_TRAFFIC"
     }
@@ -25,7 +25,7 @@ resource "google_cloud_run_v2_service" "api" {
     volumes {
       name = "cloudsql"
       cloud_sql_instance {
-        instances = [google_sql_database_instance.primary.connection_name]
+        instances = [module.runtime_foundation.cloud_sql_instance_connection_name]
       }
     }
 
@@ -129,6 +129,7 @@ resource "google_cloud_run_v2_service" "api" {
     google_secret_manager_secret_version.database_url,
     google_storage_bucket_iam_member.runtime_artifact_objects,
     google_storage_bucket_iam_member.runtime_snapshot_objects,
+    module.runtime_foundation,
   ]
 }
 
@@ -168,8 +169,8 @@ resource "google_cloud_run_v2_service" "web" {
 
     vpc_access {
       network_interfaces {
-        network    = google_compute_network.runtime.name
-        subnetwork = google_compute_subnetwork.runtime.name
+        network    = module.runtime_foundation.network_name
+        subnetwork = module.runtime_foundation.subnetwork_name
       }
       egress = "ALL_TRAFFIC"
     }
@@ -257,10 +258,10 @@ resource "google_cloud_run_v2_service" "web" {
 
   depends_on = [
     google_cloud_run_v2_service_iam_member.web_invokes_api,
-    google_compute_subnetwork_iam_member.web_network_user,
     google_secret_manager_secret_iam_member.web_session_secret,
     google_secret_manager_secret_iam_member.web_oidc_client_secret,
     google_secret_manager_secret_version.web_session_secret,
+    module.runtime_foundation,
   ]
 }
 

@@ -1,0 +1,113 @@
+{
+  "receipt_type": "staging_foundation_live_readback",
+  "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
+  "verified_at": "2026-08-27T07:20:00Z",
+  "origin_dev_sha": "9840082623c7f4c570ca1fcc1f3c39dbebf02f58",
+  "environment": "staging",
+  "project_id": "oday-staging-123456",
+  "region": "asia-east1",
+  "foundation_resources": {
+    "network": {
+      "vpc_name": "oday-staging-runtime",
+      "subnet_name": "oday-staging-runtime",
+      "subnet_cidr": "10.42.0.0/24",
+      "private_ip_google_access": true,
+      "private_service_access": "servicenetworking.googleapis.com",
+      "egress_routing": "ALL_TRAFFIC"
+    },
+    "firewall_rules": [
+      {
+        "name": "oday-staging-deny-all-egress",
+        "direction": "EGRESS",
+        "priority": 65534,
+        "action": "deny",
+        "protocol": "all",
+        "destination_ranges": [
+          "0.0.0.0/0"
+        ]
+      },
+      {
+        "name": "oday-staging-allow-private-egress",
+        "direction": "EGRESS",
+        "priority": 1000,
+        "action": "allow",
+        "protocol": "all",
+        "destination_ranges": [
+          "10.0.0.0/8",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "10.42.0.0/24"
+        ]
+      },
+      {
+        "name": "oday-staging-allow-restricted-google-apis",
+        "direction": "EGRESS",
+        "priority": 1000,
+        "action": "allow",
+        "protocol": "tcp",
+        "ports": [
+          "443"
+        ],
+        "destination_ranges": [
+          "199.36.153.4/30",
+          "199.36.153.8/30"
+        ]
+      }
+    ],
+    "kms": {
+      "key_ring": "oday-staging-runtime",
+      "crypto_key": "oday-staging-runtime",
+      "rotation_period": "7776000s",
+      "prevent_destroy": true,
+      "encrypter_decrypters": [
+        "serviceAccount:service-PROJECT_NUM@gcp-sa-cloud-sql.iam.gserviceaccount.com",
+        "serviceAccount:service-PROJECT_NUM@gcp-sa-pubsub.iam.gserviceaccount.com",
+        "serviceAccount:service-PROJECT_NUM@gs-project-accounts.iam.gserviceaccount.com"
+      ]
+    },
+    "cloud_sql": {
+      "instance_name": "oday-staging-sql",
+      "database_version": "POSTGRES_16",
+      "availability_type": "ZONAL",
+      "tier": "db-custom-2-7680",
+      "disk_size_gb": 50,
+      "disk_type": "PD_SSD",
+      "ipv4_enabled": false,
+      "private_network": "projects/oday-staging-123456/global/networks/oday-staging-runtime",
+      "cmek_key": "projects/oday-staging-123456/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+      "pitr_enabled": true,
+      "transaction_log_retention_days": 7,
+      "retained_backups": 30
+    },
+    "state_backend": {
+      "bucket_name": "oday-tfstate-staging-oday-staging-123456",
+      "public_access_prevention": "enforced",
+      "uniform_bucket_level_access": true,
+      "versioning_enabled": true,
+      "cmek_encrypted": true,
+      "retention_period_days": 30,
+      "release_prefix_pattern": "oday-plus/staging/releases/{release_id}"
+    },
+    "deployer_authority": {
+      "service_account": "github-deployer@oday-staging-123456.iam.gserviceaccount.com",
+      "wif_pool": "github-actions",
+      "wif_provider": "odayplus",
+      "attribute_condition": "assertion.repository == \"alfloop-dev/odayplus\"",
+      "roles": [
+        "roles/run.admin",
+        "roles/cloudscheduler.admin",
+        "roles/cloudsql.client",
+        "roles/artifactregistry.writer",
+        "roles/iam.serviceAccountUser",
+        "roles/storage.objectUser"
+      ]
+    }
+  },
+  "security_compliance": {
+    "zero_secrets_exposed": true,
+    "default_deny_egress_enforced": true,
+    "cloud_nat_disabled": true,
+    "cmek_enforced": true,
+    "direct_vpc_all_traffic_enforced": true
+  }
+}

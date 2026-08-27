@@ -1,103 +1,104 @@
-resource "google_compute_network" "runtime" {
-  name                    = "${local.name_prefix}-runtime"
-  auto_create_subnetworks = false
-  routing_mode            = "REGIONAL"
+module "runtime_foundation" {
+  source = "./modules/runtime_foundation"
 
-  depends_on = [google_project_service.required]
-}
+  project_id                               = var.project_id
+  region                                   = var.region
+  environment                              = var.environment
+  name_prefix                              = local.name_prefix
+  labels                                   = local.labels
+  network_cidr                             = var.network_cidr
+  private_service_prefix_length            = var.private_service_prefix_length
+  cloud_sql_tier                           = var.cloud_sql_tier
+  cloud_sql_disk_gb                        = var.cloud_sql_disk_gb
+  cloud_sql_backup_start_time              = var.cloud_sql_backup_start_time
+  cloud_sql_retained_backups               = var.cloud_sql_retained_backups
+  cloud_sql_transaction_log_retention_days = var.cloud_sql_transaction_log_retention_days
+  cloud_sql_maintenance_day                = var.cloud_sql_maintenance_day
+  cloud_sql_maintenance_hour               = var.cloud_sql_maintenance_hour
+  enable_deletion_protection               = local.is_prod
+  network_user_members = [
+    "serviceAccount:${google_service_account.runtime.email}",
+    "serviceAccount:${google_service_account.web.email}",
+  ]
 
-resource "google_compute_subnetwork" "runtime" {
-  name                     = "${local.name_prefix}-runtime"
-  region                   = var.region
-  network                  = google_compute_network.runtime.id
-  ip_cidr_range            = var.network_cidr
-  private_ip_google_access = true
-
-  log_config {
-    aggregation_interval = "INTERVAL_5_SEC"
-    flow_sampling        = 0.5
-    metadata             = "INCLUDE_ALL_METADATA"
-  }
-}
-
-resource "google_compute_global_address" "private_services" {
-  name          = "${local.name_prefix}-private-services"
-  purpose       = "VPC_PEERING"
-  address_type  = "INTERNAL"
-  prefix_length = var.private_service_prefix_length
-  network       = google_compute_network.runtime.id
-
-  depends_on = [google_project_service.required]
-}
-
-resource "google_service_networking_connection" "private_services" {
-  network                 = google_compute_network.runtime.id
-  service                 = "servicenetworking.googleapis.com"
-  reserved_peering_ranges = [google_compute_global_address.private_services.name]
-
-  depends_on = [google_project_service.required]
-}
-
-resource "google_compute_subnetwork_iam_member" "runtime_network_user" {
-  project    = var.project_id
-  region     = var.region
-  subnetwork = google_compute_subnetwork.runtime.name
-  role       = "roles/compute.networkUser"
-  member     = "serviceAccount:${google_service_account.runtime.email}"
-}
-
-resource "google_compute_subnetwork_iam_member" "web_network_user" {
-  project    = var.project_id
-  region     = var.region
-  subnetwork = google_compute_subnetwork.runtime.name
-  role       = "roles/compute.networkUser"
-  member     = "serviceAccount:${google_service_account.web.email}"
-}
-
-resource "google_compute_firewall" "deny_all_egress" {
-  name      = "${local.name_prefix}-deny-all-egress"
-  network   = google_compute_network.runtime.name
-  direction = "EGRESS"
-  priority  = 65534
-
-  deny {
-    protocol = "all"
-  }
-
-  destination_ranges = ["0.0.0.0/0"]
-}
-
-resource "google_compute_firewall" "allow_private_egress" {
-  name      = "${local.name_prefix}-allow-private-egress"
-  network   = google_compute_network.runtime.name
-  direction = "EGRESS"
-  priority  = 1000
-
-  allow {
-    protocol = "all"
-  }
-
-  destination_ranges = [
-    "10.0.0.0/8",
-    "172.16.0.0/12",
-    "192.168.0.0/16",
-    var.network_cidr,
+  depends_on = [
+    google_project_service.required,
+    terraform_data.production_contract,
   ]
 }
 
-resource "google_compute_firewall" "allow_restricted_google_apis" {
-  name      = "${local.name_prefix}-allow-restricted-google-apis"
-  network   = google_compute_network.runtime.name
-  direction = "EGRESS"
-  priority  = 1000
+# Preserve Terraform resource identity for zero-replacement refactoring
+moved {
+  from = google_compute_network.runtime
+  to   = module.runtime_foundation.google_compute_network.runtime
+}
 
-  allow {
-    protocol = "tcp"
-    ports    = ["443"]
-  }
+moved {
+  from = google_compute_subnetwork.runtime
+  to   = module.runtime_foundation.google_compute_subnetwork.runtime
+}
 
-  destination_ranges = [
-    "199.36.153.4/30",
-    "199.36.153.8/30",
-  ]
+moved {
+  from = google_compute_global_address.private_services
+  to   = module.runtime_foundation.google_compute_global_address.private_services
+}
+
+moved {
+  from = google_service_networking_connection.private_services
+  to   = module.runtime_foundation.google_service_networking_connection.private_services
+}
+
+moved {
+  from = google_compute_firewall.deny_all_egress
+  to   = module.runtime_foundation.google_compute_firewall.deny_all_egress
+}
+
+moved {
+  from = google_compute_firewall.allow_private_egress
+  to   = module.runtime_foundation.google_compute_firewall.allow_private_egress
+}
+
+moved {
+  from = google_compute_firewall.allow_restricted_google_apis
+  to   = module.runtime_foundation.google_compute_firewall.allow_restricted_google_apis
+}
+
+moved {
+  from = google_kms_key_ring.runtime
+  to   = module.runtime_foundation.google_kms_key_ring.runtime
+}
+
+moved {
+  from = google_kms_crypto_key.runtime
+  to   = module.runtime_foundation.google_kms_crypto_key.runtime
+}
+
+moved {
+  from = google_project_service_identity.cloud_sql
+  to   = module.runtime_foundation.google_project_service_identity.cloud_sql
+}
+
+moved {
+  from = google_project_service_identity.pubsub
+  to   = module.runtime_foundation.google_project_service_identity.pubsub
+}
+
+moved {
+  from = google_kms_crypto_key_iam_member.cloud_sql
+  to   = module.runtime_foundation.google_kms_crypto_key_iam_member.cloud_sql
+}
+
+moved {
+  from = google_kms_crypto_key_iam_member.gcs
+  to   = module.runtime_foundation.google_kms_crypto_key_iam_member.gcs
+}
+
+moved {
+  from = google_kms_crypto_key_iam_member.pubsub
+  to   = module.runtime_foundation.google_kms_crypto_key_iam_member.pubsub
+}
+
+moved {
+  from = google_sql_database_instance.primary
+  to   = module.runtime_foundation.google_sql_database_instance.primary
 }
