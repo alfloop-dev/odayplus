@@ -383,3 +383,178 @@ def test_sidecar_candidates_fail_closed_when_runnable_work_appears_during_valid_
         now=NOW,
     )
     assert candidates == []
+
+
+def test_reviewer_active_does_not_offset_unrelated_owner_runnable_task() -> None:
+    """Regression test: 1 reviewer active + 1 unrelated owner runnable must approve helper wave.
+
+    Slot accounting keeps counting the reviewer towards available_slots and
+    utilization_ratio, but helper backlog ignores the reviewer since its task_id
+    is not in the canonical runnable set.
+    """
+    cfg = config(slot_count=8)
+    tasks = [
+        {"id": "TASK-REVIEW-001", "status": "review", "owner": "Claude", "reviewer": "Codex"},
+        {"id": "TASK-RUNNABLE-002", "status": "todo", "owner": "Claude2"},
+    ]
+    runtime_state = {
+        "workers": {
+            "run-reviewer": {
+                "task_id": "TASK-REVIEW-001",
+                "status": "running",
+                "agent_id": "Codex",
+            }
+        }
+    }
+    runnable_ids = canonical_runnable_ids(cfg, tasks)
+    assert runnable_ids == {"TASK-RUNNABLE-002"}
+
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg, runtime_state, tasks, runnable_tasks=runnable_ids
+    )
+    assert snapshot["slot_total"] == 8
+    assert snapshot["active_workers"] == 1
+    assert snapshot["active_runnable_workers"] == 0
+    assert snapshot["available_slots"] == 7
+    assert snapshot["runnable_tasks"] == 1
+    assert snapshot["utilization_ratio"] == 0.125
+
+    controller, changed = capacity_controller.evaluate_chair(
+        cfg, runtime_state, tasks, runnable_tasks=runnable_ids, now=NOW
+    )
+    assert changed is True
+    decision = controller["chair_decision"]
+    assert decision["approve_helper_wave"] is True
+    assert decision["max_helper_claims"] == 4
+
+
+def test_finalizer_active_does_not_offset_unrelated_owner_runnable_task() -> None:
+    """A finalizer active on a review_approved task must not offset an unrelated owner runnable."""
+    cfg = config(slot_count=8)
+    tasks = [
+        {"id": "TASK-APPROVED-001", "status": "review_approved", "owner": "Claude", "reviewer": "Codex"},
+        {"id": "TASK-RUNNABLE-002", "status": "todo", "owner": "Claude2"},
+    ]
+    runtime_state = {
+        "workers": {
+            "run-finalizer": {
+                "task_id": "TASK-APPROVED-001",
+                "status": "running",
+                "agent_id": "Claude",
+            }
+        }
+    }
+    runnable_ids = canonical_runnable_ids(cfg, tasks)
+    assert runnable_ids == {"TASK-RUNNABLE-002"}
+
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg, runtime_state, tasks, runnable_tasks=runnable_ids
+    )
+    assert snapshot["active_workers"] == 1
+    assert snapshot["active_runnable_workers"] == 0
+    assert snapshot["available_slots"] == 7
+
+    controller, _ = capacity_controller.evaluate_chair(
+        cfg, runtime_state, tasks, runnable_tasks=runnable_ids, now=NOW
+    )
+    assert controller["chair_decision"]["approve_helper_wave"] is True
+
+
+def test_active_worker_on_runnable_task_suppresses_helper_wave() -> None:
+    """An active worker executing the only runnable task satisfies backlog and suppresses helper wave."""
+    cfg = config(slot_count=8)
+    tasks = [
+        {"id": "TASK-RUNNABLE-001", "status": "in_progress", "owner": "Claude"},
+    ]
+    runtime_state = {
+        "workers": {
+            "run-executing": {
+                "task_id": "TASK-RUNNABLE-001",
+                "status": "running",
+                "agent_id": "Claude",
+            }
+        }
+    }
+    runnable_ids = canonical_runnable_ids(cfg, tasks)
+    assert runnable_ids == {"TASK-RUNNABLE-001"}
+
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg, runtime_state, tasks, runnable_tasks=runnable_ids
+    )
+    assert snapshot["active_workers"] == 1
+    assert snapshot["active_runnable_workers"] == 1
+    assert snapshot["runnable_tasks"] == 1
+
+    controller, _ = capacity_controller.evaluate_chair(
+        cfg, runtime_state, tasks, runnable_tasks=runnable_ids, now=NOW
+    )
+    assert controller["chair_decision"]["approve_helper_wave"] is False
+
+
+def test_int_only_legacy_runnable_tasks_conservative_fallback() -> None:
+    """When runnable_tasks is passed as int, conservative fallback assumes all active workers are executing."""
+    cfg = config(slot_count=8)
+    runtime_state = {
+        "workers": {
+            "run-1": {"task_id": "TASK-A", "status": "running"},
+            "run-2": {"task_id": "TASK-B", "status": "running"},
+        }
+    }
+    # runnable_tasks=2 with 2 active workers: conservative fallback sets active_runnable_workers=2
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg, runtime_state, [], runnable_tasks=2
+    )
+    assert snapshot["runnable_tasks"] == 2
+    assert snapshot["active_workers"] == 2
+    assert snapshot["active_runnable_workers"] == 2
+
+    controller, _ = capacity_controller.evaluate_chair(
+        cfg, runtime_state, [], runnable_tasks=2, now=NOW
+    )
+    assert controller["chair_decision"]["approve_helper_wave"] is False
+
+    # runnable_tasks=3 with 2 active workers: 3 > 2 approves helper wave
+    runtime_state3 = {
+        "workers": {
+            "run-1": {"task_id": "TASK-A", "status": "running"},
+            "run-2": {"task_id": "TASK-B", "status": "running"},
+        }
+    }
+    controller3, _ = capacity_controller.evaluate_chair(
+        cfg, runtime_state3, [], runnable_tasks=3, now=NOW
+    )
+    assert controller3["chair_decision"]["approve_helper_wave"] is True
+
+
+def test_custom_schema_active_worker_task_id_matching() -> None:
+    """Active worker task ID extraction respects custom schema and matches against runnable set."""
+    cfg = config(slot_count=8)
+    cfg["schema"] = {
+        "tasks_path": "items",
+        "task_id_field": "taskId",
+        "assignee_field": "assignee",
+    }
+    tasks = [
+        {"taskId": "T-REV", "status": "review", "assignee": "Claude", "reviewer": "Codex"},
+        {"taskId": "T-RUN", "status": "todo", "assignee": "Claude2"},
+    ]
+    runtime_state = {
+        "workers": {
+            "run-rev": {"taskId": "T-REV", "status": "running"},
+            "run-run": {"taskId": "T-RUN", "status": "running"},
+        }
+    }
+    runnable_ids = canonical_runnable_ids(cfg, tasks)
+    assert runnable_ids == {"T-RUN"}
+
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg, runtime_state, tasks, runnable_tasks=runnable_ids
+    )
+    assert snapshot["active_workers"] == 2
+    assert snapshot["runnable_tasks"] == 1
+    assert snapshot["active_runnable_workers"] == 1
+
+    controller, _ = capacity_controller.evaluate_chair(
+        cfg, runtime_state, tasks, runnable_tasks=runnable_ids, now=NOW
+    )
+    assert controller["chair_decision"]["approve_helper_wave"] is False
