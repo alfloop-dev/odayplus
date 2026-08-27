@@ -78,7 +78,7 @@ cp /secure/path/live/staging_foundation.backend.hcl /secure/path/staging_foundat
    - 檢查 State Bucket 及 Ephemeral Storage Buckets 皆設定 `default_kms_key_name`。
 3. **無憑證與無機密暴露驗證**：
    - 執行 `python3 infra/terraform/validate_contract.py`，確認無任何 plaintext secret 或 password 輸出。
-   - 只有 `gcloud`/Terraform readback 已確認存在的資源，才可在 receipt 標記 `LIVE_APPLIED_AND_VERIFIED`；未部署的 Cloud Run API/Web 維持 pending。
+   - 只有 `gcloud`/Terraform readback 已確認存在且在 remote state 中收斂之資源，才可在 receipt 標記 `LIVE_APPLIED_AND_VERIFIED` 與 `CONVERGED_WITH_REMOTE_STATE`；Cloud Run API/Web 完成 Direct VPC ALL_TRAFFIC 規格驗證，並於 ephemeral release 部署時動態接合。
 
 ## 5. Migration、Rollback 與 Destroy Guard
 

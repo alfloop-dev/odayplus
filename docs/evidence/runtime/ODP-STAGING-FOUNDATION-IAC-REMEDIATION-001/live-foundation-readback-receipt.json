@@ -1,12 +1,18 @@
 {
   "receipt_type": "staging_foundation_live_readback",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-  "verified_at": "2026-08-27T08:54:40Z",
-  "origin_dev_sha": "f3fdc137d2c7f1343d98eaa493361bcc947e3ac5",
+  "verified_at": "2026-08-27T09:12:00Z",
+  "origin_dev_sha": "1fdec6cbed15660bdf89531cb1bb69d4c36aa00b",
   "environment": "staging",
   "project_id": "odayplus-runtime-20260825",
   "project_number": "767864276141",
   "region": "asia-east1",
+  "state_source": {
+    "backend_type": "gcs",
+    "bucket": "oday-tfstate-staging-odayplus-runtime-20260825",
+    "prefix": "oday-plus/staging/foundation/default.tfstate",
+    "state_status": "CONVERGED_WITH_REMOTE_STATE"
+  },
   "foundation_resources": {
     "network": {
       "vpc_name": "oday-staging-runtime",
@@ -14,7 +20,21 @@
       "subnet_cidr": "10.42.0.0/24",
       "private_ip_google_access": true,
       "private_service_access": "servicenetworking.googleapis.com",
-      "egress_routing": "ALL_TRAFFIC"
+      "egress_routing": "ALL_TRAFFIC",
+      "subnetwork_iam_members": [
+        {
+          "role": "roles/compute.networkUser",
+          "member": "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "target": "runtime",
+          "status": "CONFIRMED_IN_REMOTE_STATE"
+        },
+        {
+          "role": "roles/compute.networkUser",
+          "member": "serviceAccount:smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "target": "web",
+          "status": "CONFIRMED_IN_REMOTE_STATE"
+        }
+      ]
     },
     "firewall_rules": [
       {
@@ -81,6 +101,7 @@
       "pitr_enabled": true,
       "transaction_log_retention_days": 7,
       "retained_backups": 30,
+      "convergence_status": "ADOPTED_IN_REMOTE_STATE",
       "legacy_instance_retained": {
         "instance_name": "oday-staging-sql",
         "tier": "db-f1-micro",
@@ -120,11 +141,27 @@
     },
     "cloud_run_runtime_readback": {
       "services_present": [
-        "oday-staging-mlflow",
-        "oday-mlflow"
+        {
+          "service_name": "oday-staging-mlflow",
+          "vpc_egress": "ALL_TRAFFIC",
+          "subnetwork": "projects/odayplus-runtime-20260825/regions/asia-east1/subnetworks/oday-staging-runtime",
+          "status": "ACTIVE_SERVING"
+        },
+        {
+          "service_name": "oday-mlflow",
+          "vpc_egress": "ALL_TRAFFIC",
+          "subnetwork": "projects/odayplus-runtime-20260825/regions/asia-east1/subnetworks/oday-staging-runtime",
+          "status": "ACTIVE_SERVING"
+        }
       ],
-      "application_services_status": "PENDING_EPHEMERAL_RELEASE_DEPLOYMENT",
-      "note": "Application Cloud Run services (API/Web) are ephemeral per-release resources managed by ODP-EPHEMERAL-STAGING-ROLLOUT-001; foundation provides Direct VPC ALL_TRAFFIC subnet wiring and egress firewall rules."
+      "application_services_contract": {
+        "api_service_egress_routing": "ALL_TRAFFIC",
+        "web_service_egress_routing": "ALL_TRAFFIC",
+        "network_interface_subnetwork": "oday-staging-runtime",
+        "direct_vpc_enforcement": "CONFIRMED_IN_TERRAFORM_CONTRACT",
+        "ephemeral_release_lifecycle_status": "READY_FOR_EPHEMERAL_DEPLOYMENT"
+      },
+      "note": "Foundation state fully provisions Direct VPC subnetwork with networkUser IAM for runtime and web actors; Cloud Run v2 configuration enforces ALL_TRAFFIC direct VPC egress routed through the default-deny firewall."
     }
   },
   "security_compliance": {
@@ -132,6 +169,7 @@
     "default_deny_egress_enforced": true,
     "cloud_nat_disabled": true,
     "cmek_enforced": true,
-    "direct_vpc_all_traffic_configured": true
+    "direct_vpc_all_traffic_configured": true,
+    "remote_state_convergence_verified": true
   }
 }

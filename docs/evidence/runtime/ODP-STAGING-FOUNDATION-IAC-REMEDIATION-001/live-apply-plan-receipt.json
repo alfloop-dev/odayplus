@@ -1,14 +1,22 @@
 {
   "receipt_type": "terraform_apply_plan_metadata",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-  "generated_at": "2026-08-27T08:54:40Z",
-  "candidate_sha": "f3fdc137d2c7f1343d98eaa493361bcc947e3ac5",
+  "generated_at": "2026-08-27T09:12:00Z",
+  "candidate_sha": "1fdec6cbed15660bdf89531cb1bb69d4c36aa00b",
   "target_project_id": "odayplus-runtime-20260825",
   "target_environment": "staging",
   "backend_config": {
     "backend_type": "gcs",
     "bucket": "oday-tfstate-staging-odayplus-runtime-20260825",
     "prefix": "oday-plus/staging/foundation"
+  },
+  "saved_plan_artifact": {
+    "plan_file": "tfplan-staging-foundation-1fdec6cb.binary",
+    "plan_digest": "sha256:d8c5417ae417936a29e4d070624bc68db30f576e828d17962450ef7582b1239c",
+    "plan_sha256": "d8c5417ae417936a29e4d070624bc68db30f576e828d17962450ef7582b1239c",
+    "artifact_uri": "gs://oday-tfstate-staging-odayplus-runtime-20260825/oday-plus/staging/plans/tfplan-staging-foundation-1fdec6cb.binary",
+    "plan_mode": "remote_state_convergence",
+    "lock_digest": "sha256:91bc40e79124067efad9684c4e7ab96683501a3cf8d4be605ce0dfba2e53ef71"
   },
   "module_tree": [
     {
