@@ -353,11 +353,14 @@ def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any])
     status = load_status(config)
     schema = config.get("schema", {}) or {}
     tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
     tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
-    expired_claim_ids = set(capacity_controller.expired_helper_claim_task_ids(tasks))
+    expired_claim_ids = set(
+        capacity_controller.expired_helper_claim_task_ids(tasks, task_id_field=task_id_field)
+    )
     if expired_claim_ids:
         for task in tasks:
-            if str(task.get("id") or "") in expired_claim_ids:
+            if str(task.get(task_id_field) or task.get("id") or "") in expired_claim_ids:
                 task.pop("helper_execution_lease", None)
         if not commit_canonical_task_transition(config, status):
             return False
@@ -370,11 +373,15 @@ def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any])
                     "message": "Expired helper execution lease released back to its canonical owner.",
                 },
             )
-    controller, state_changed = capacity_controller.evaluate_chair(config, state, tasks)
-    additions = capacity_controller.sidecar_candidates(config, state, tasks)
+    controller, state_changed = capacity_controller.evaluate_chair(
+        config, state, tasks, runnable_predicate=task_is_runnable
+    )
+    additions = capacity_controller.sidecar_candidates(
+        config, state, tasks, runnable_predicate=task_is_runnable
+    )
     if additions:
-        known = {str(task.get("id") or "") for task in tasks}
-        additions = [task for task in additions if str(task.get("id") or "") not in known]
+        known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
+        additions = [task for task in additions if str(task.get(task_id_field) or task.get("id") or "") not in known]
     if additions:
         status.setdefault(tasks_path, []).extend(additions)
         if not commit_canonical_task_transition(config, status):
@@ -3843,19 +3850,98 @@ def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     return statuses
 
 
-def _task_resolver(task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> TaskResolver:
+def _task_resolver(
+    task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None,
+    task_id_field: str = "id",
+) -> TaskResolver:
     if isinstance(task_lookup, TaskResolver):
         return task_lookup
-    return TaskResolver(task_lookup)
+    try:
+        return TaskResolver(task_lookup, task_id_field=task_id_field)
+    except TypeError:
+        return TaskResolver(task_lookup)
 
 
-def dependencies_satisfied(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]], done_statuses: set[str]) -> bool:
-    resolver = _task_resolver(task_lookup)
+def dependencies_satisfied(
+    task: dict[str, Any],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None,
+    done_statuses: set[str],
+    task_id_field: str = "id",
+) -> bool:
+    resolver = _task_resolver(task_lookup, task_id_field=task_id_field)
     for dep_id in task.get("depends_on", []) or []:
         dep_status = resolver.dependency_status(dep_id)
         if dep_status not in done_statuses or not resolver.dependency_satisfied(dep_id):
             return False
     return True
+
+
+def task_is_runnable(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None = None,
+) -> bool:
+    """Authoritative predicate for whether a task represents dispatchable execution work.
+
+    Excludes human gates, non-dispatchable tasks, sidecars, review/finalize governance states,
+    blocked tasks, unsatisfied dependencies, missing/invalid task IDs, and unassigned or
+    unregistered owners.
+    """
+    if not isinstance(task, dict):
+        return False
+
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    owner_field = schema.get("assignee_field", "owner")
+
+    task_id = str(task.get(task_id_field) or "").strip()
+    if not task_id:
+        return False
+
+    if bool(task.get("non_dispatchable")):
+        return False
+
+    owner = str(task.get(owner_field) or "").strip()
+    waiting_for = str(task.get("waiting_for") or "").strip()
+    if is_human_gate_agent(owner) or is_human_gate_agent(waiting_for):
+        return False
+    if task_is_human_gate(task):
+        return False
+    if task_is_sidecar(task):
+        return False
+
+    settings_map = ready_dispatch_settings(config)
+    owned_statuses = normalized_status_set(
+        settings_map.get("owned_statuses"), ["in_progress", "todo"]
+    )
+    status = str(task.get("status") or "").strip().lower()
+    if status not in owned_statuses:
+        return False
+
+    dependency_done_statuses = normalized_status_set(
+        settings_map.get("dependency_done_statuses"), ["done"]
+    )
+    if task_lookup is not None:
+        resolver = _task_resolver(task_lookup, task_id_field=task_id_field)
+        if not dependencies_satisfied(task, resolver, dependency_done_statuses, task_id_field=task_id_field):
+            return False
+
+    if owner in {"AUTO_ASSIGN", "DIFFERENT_AGENT_REQUIRED"}:
+        return True
+
+    if not owner:
+        helper_settings = settings_map.get("helper_execution_lease", {}) or {}
+        if helper_settings.get("enabled", True):
+            claim = task.get("helper_execution_lease") or {}
+            claimed_by = str(claim.get("claimed_by") or "").strip()
+            if claimed_by and dispatch_engine.helper_claim_is_live(claim) and agent_can_take_task(config, claimed_by, task):
+                return True
+        return False
+
+    return agent_can_take_task(config, owner, task)
+
+
+is_task_runnable = task_is_runnable
 
 
 def task_dependency_signature(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:

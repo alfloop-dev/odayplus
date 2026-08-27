@@ -14850,7 +14850,57 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             decision = controller.get("chair_decision", {})
             self.assertTrue(decision.get("approve_helper_wave"))
 
+    def test_task_is_runnable_respects_custom_schema_and_excludes_invalid_id_or_owner(self) -> None:
+        config = self._config()
+        config["schema"] = {
+            "tasks_path": "items",
+            "task_id_field": "taskId",
+            "assignee_field": "assignee",
+        }
+        # Valid task
+        task_valid = {"taskId": "T-001", "status": "todo", "assignee": "claude"}
+        self.assertTrue(supervisor.task_is_runnable(config, task_valid))
+
+        # Missing or empty task ID
+        self.assertFalse(supervisor.task_is_runnable(config, {"status": "todo", "assignee": "claude"}))
+        self.assertFalse(supervisor.task_is_runnable(config, {"taskId": "", "status": "todo", "assignee": "claude"}))
+
+        # Human/Ops assignee
+        self.assertFalse(supervisor.task_is_runnable(config, {"taskId": "T-002", "status": "todo", "assignee": "Human/Ops"}))
+
+        # Unknown assignee not in agents
+        self.assertFalse(supervisor.task_is_runnable(config, {"taskId": "T-003", "status": "todo", "assignee": "UnknownWorker"}))
+
+        # Missing assignee
+        self.assertFalse(supervisor.task_is_runnable(config, {"taskId": "T-004", "status": "todo"}))
+
+    def test_task_is_runnable_excludes_non_execution_states_and_unsatisfied_dependencies(self) -> None:
+        config = self._config()
+        task_map = {
+            "DEP-DONE": {"id": "DEP-DONE", "status": "done"},
+            "DEP-TODO": {"id": "DEP-TODO", "status": "todo", "owner": "claude"},
+        }
+        # Non-dispatchable
+        self.assertFalse(supervisor.task_is_runnable(config, {"id": "ND-1", "status": "todo", "owner": "claude", "non_dispatchable": True}))
+
+        # Human gate and sidecars
+        self.assertFalse(supervisor.task_is_runnable(config, {"id": "HG-1", "status": "todo", "owner": "claude", "task_class": "human_gate"}))
+        self.assertFalse(supervisor.task_is_runnable(config, {"id": "SC-1", "status": "todo", "owner": "claude", "task_class": "sidecar"}))
+
+        # Review and review_approved states
+        self.assertFalse(supervisor.task_is_runnable(config, {"id": "REV-1", "status": "review", "owner": "claude", "reviewer": "codex"}))
+        self.assertFalse(supervisor.task_is_runnable(config, {"id": "APP-1", "status": "review_approved", "owner": "claude"}))
+
+        # Blocked state
+        self.assertFalse(supervisor.task_is_runnable(config, {"id": "BLK-1", "status": "blocked", "owner": "claude"}))
+
+        # Dependency satisfaction
+        task_with_done_dep = {"id": "T-1", "status": "todo", "owner": "claude", "depends_on": ["DEP-DONE"]}
+        self.assertTrue(supervisor.task_is_runnable(config, task_with_done_dep, task_lookup=task_map))
+
+        task_with_pending_dep = {"id": "T-2", "status": "todo", "owner": "claude", "depends_on": ["DEP-TODO"]}
+        self.assertFalse(supervisor.task_is_runnable(config, task_with_pending_dep, task_lookup=task_map))
+
 
 if __name__ == "__main__":
     unittest.main()
-

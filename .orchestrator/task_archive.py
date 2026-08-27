@@ -318,7 +318,11 @@ def archive_task_snapshot(
 
 
 class TaskResolver:
-    def __init__(self, active_tasks: Iterable[dict[str, Any]] | dict[str, dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        active_tasks: Iterable[dict[str, Any]] | dict[str, dict[str, Any]] | None = None,
+        task_id_field: str = "id",
+    ) -> None:
         if isinstance(active_tasks, dict):
             self._active = {
                 normalize_task_id(task_id): deepcopy(task)
@@ -327,9 +331,9 @@ class TaskResolver:
             }
         else:
             self._active = {
-                normalize_task_id(task.get("id")): deepcopy(task)
+                normalize_task_id(task.get(task_id_field) or task.get("id")): deepcopy(task)
                 for task in (active_tasks or [])
-                if isinstance(task, dict) and normalize_task_id(task.get("id"))
+                if isinstance(task, dict) and normalize_task_id(task.get(task_id_field) or task.get("id"))
             }
         self._archive_task_cache: dict[str, dict[str, Any] | None] = {}
         self._archive_snapshot_cache: dict[str, dict[str, Any] | None] = {}
