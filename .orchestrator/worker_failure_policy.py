@@ -58,6 +58,13 @@ def _entrypoint(func):
 
 @_entrypoint
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
+    if worker.get("status") == "completed" or worker.get("runner_status") in {"completed", "success", "succeeded"}:
+        return None
+    try:
+        if "exit_code" in worker and int(worker.get("exit_code")) == 0 and not worker.get("runner_signal"):
+            return None
+    except (TypeError, ValueError):
+        pass
     log_path_value = worker.get("log_path")
     if not log_path_value:
         return None
@@ -213,7 +220,6 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "exhausted your capacity",
         "no quota",
         "you have no quota",
-        "quota exceeded",
         "free daily quota has been reached",
         "free tier quota exceeded",
         "quota will reset after",
@@ -782,6 +788,15 @@ def mark_provider_dispatch_paused(
     raw_ref: str | None = None,
     worker: dict[str, Any] | None = None,
 ) -> bool:
+    worker_obj = worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
+    if isinstance(worker_obj, dict):
+        if worker_obj.get("status") == "completed" or str(worker_obj.get("runner_status") or "").lower() in {"completed", "success", "succeeded"}:
+            return False
+        try:
+            if "exit_code" in worker_obj and int(worker_obj.get("exit_code")) == 0 and not worker_obj.get("runner_signal"):
+                return False
+        except (TypeError, ValueError):
+            pass
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:

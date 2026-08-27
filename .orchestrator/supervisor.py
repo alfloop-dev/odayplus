@@ -461,8 +461,8 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r'"error"\s*:\s*"rate_limit"', re.IGNORECASE),
     re.compile(r'"type"\s*:\s*"rate_limit_event"', re.IGNORECASE),
     re.compile(r'"error"\s*:\s*"authentication_failed"', re.IGNORECASE),
-    re.compile(r"quota exceeded", re.IGNORECASE),
     re.compile(r"free daily quota has been reached", re.IGNORECASE),
+    re.compile(r"free tier quota exceeded", re.IGNORECASE),
     re.compile(r"you have no quota", re.IGNORECASE),
     re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
     re.compile(r"\bnot authenticated\b", re.IGNORECASE),
@@ -494,6 +494,11 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     ),
     re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
     re.compile(r"\bauto-reassigned\b.*\bafter repeated\b", re.IGNORECASE),
+    re.compile(r"\bcloud\s+run\b.*\bquota\b", re.IGNORECASE),
+    re.compile(r"\bgoogle\.api_core\b", re.IGNORECASE),
+    re.compile(r"\bResourceExhausted\b", re.IGNORECASE),
+    re.compile(r"^[+-]\s+.*"),
+    re.compile(r"^\s*(?:raise|assert|except|def|return|self\.assert)\b", re.IGNORECASE),
 )
 SEARCH_RESULT_JSON_FIELD_PATTERN = re.compile(
     r"^(?:[^:\s][^:]*:)?\d+[:-]\s*\"[A-Za-z0-9_]+\"\s*:\s*",
@@ -3121,7 +3126,11 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "Worker process missing during supervisor boot reconciliation."
         )
-        runner_succeeded = worker_runner_succeeded(worker)
+        runner_succeeded = (
+            worker_runner_succeeded(worker)
+            or int(worker.get("exit_code", -1)) == 0
+            or worker.get("status") == "completed"
+        )
         if runner_succeeded and (worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
@@ -3148,16 +3157,12 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
         }
         current_task = task_map.get(str(worker.get("task_id") or ""), {})
-        success_outcome = (
-            successful_worker_exit_outcome(
-                worker,
-                current_task,
-                terminal_statuses=terminal_statuses,
-            )
-            if runner_succeeded
-            else None
+        success_outcome = successful_worker_exit_outcome(
+            worker,
+            current_task,
+            terminal_statuses=terminal_statuses,
         )
-        if runner_succeeded and success_outcome in {
+        if success_outcome in {
             "lifecycle_complete",
             "review_decided",
             "incremental_progress",

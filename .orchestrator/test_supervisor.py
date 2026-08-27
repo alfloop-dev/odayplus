@@ -896,6 +896,35 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_cloud_run_api_quota_exceeded_in_source_or_diff_ignored(self) -> None:
+        """Regression test: Cloud Run API quota exceeded from test/source/diff must not be detected as worker failure."""
+        for text in (
+            "Cloud Run API quota exceeded\n",
+            "+ raise Exception('Cloud Run API quota exceeded')\n",
+            "assert 'Cloud Run API quota exceeded' in str(exc)\n",
+            "google.api_core.exceptions.ResourceExhausted: 429 Quota exceeded for quota metric 'Cloud Run API quota exceeded'\n",
+        ):
+            worker = self._worker_for_log(text)
+            self.assertIsNone(supervisor.detect_worker_failure(worker), f"Failed for: {text}")
+
+    def test_completed_and_zero_exit_worker_ignores_log_tail(self) -> None:
+        """Completed or exit_code 0 worker must return None and never establish provider pause."""
+        worker = self._worker_for_log("402 You have no quota\nERROR: You've hit your usage limit.\n")
+        worker["status"] = "completed"
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+        worker["status"] = "running"
+        worker["exit_code"] = 0
+        worker["runner_status"] = "completed"
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_classifies_cloud_run_quota_exceeded_as_terminal_not_provider_quota(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "codex"}
+        res = supervisor.classify_worker_failure(config, worker, "Cloud Run API quota exceeded")
+        self.assertEqual(res["kind"], "terminal")
+        self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(res["kind"]))
+
     def test_classifies_gemini_capacity_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
