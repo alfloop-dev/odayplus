@@ -49,35 +49,22 @@ def normalize_url(value: str) -> str:
 
 
 def fetch_identity_token(audience: str) -> str:
-    """Obtain an identity token for the target Cloud Run API audience using WIF / google-auth."""
-    explicit_token = os.environ.get("ODP_STAGING_BEARER_TOKEN") or os.environ.get(
-        "ODP_IDENTITY_TOKEN"
-    )
-    if explicit_token:
-        token = explicit_token.strip()
-        if not token:
-            raise ValueError("Provided explicit identity token is empty")
-        return token
-
+    """Obtain an identity token from the current WIF-backed gcloud identity."""
+    cmd = ["gcloud", "auth", "print-identity-token", f"--audiences={audience}"]
     try:
-        from google.auth.transport.requests import Request as GoogleAuthRequest
-        from google.oauth2.id_token import fetch_id_token
-
-        token = fetch_id_token(GoogleAuthRequest(), audience)
-        if not token or not str(token).strip():
-            raise RuntimeError("Google workload identity returned an empty ID token")
-        return str(token).strip()
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except Exception as exc:
-        try:
-            cmd = ["gcloud", "auth", "print-identity-token", f"--audiences={audience}"]
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            if proc.returncode == 0 and proc.stdout.strip():
-                return proc.stdout.strip()
-        except Exception:
-            pass
+        raise RuntimeError("Failed to invoke gcloud identity-token minting") from exc
+
+    if proc.returncode != 0:
         raise RuntimeError(
-            f"Failed to obtain identity token for audience {audience}: {exc}"
-        ) from exc
+            f"gcloud identity-token minting failed with exit status {proc.returncode}"
+        )
+
+    token = proc.stdout.strip()
+    if not token:
+        raise RuntimeError("gcloud identity-token minting returned empty output")
+    return token
 
 
 def get_json(
@@ -132,7 +119,7 @@ def run_checks(args: argparse.Namespace) -> tuple[list[CheckResult], dict[str, A
         return checks, report
 
     api_url = normalize_url(env["ODP_STAGING_API_URL"])
-    audience = os.environ.get("ODP_STAGING_API_AUDIENCE", "").strip() or api_url
+    audience = api_url
 
     token = None
     try:

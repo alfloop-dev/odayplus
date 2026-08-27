@@ -7,7 +7,7 @@
 - **API Service (oday-api)**: 由原先 `--allow-unauthenticated` 調整為 `--no-allow-unauthenticated`，明確要求 Cloud Run IAM 身分驗證。
 - **Web Service (oday-web)**: 維持 `--allow-unauthenticated`，作為 Google OIDC 應用程式登入公開入口。
 - **Web BFF -> API 調用架構**: 維持既有 Web BFF service account 呼叫 IAM 保護 API 機制，透過 `ODP_API_BASE_URL` 與 `ODP_API_SERVICE_AUDIENCE` 簽發 ID token 存取 API。
-- **Staging Proof Checker (check_remote_staging_proof.py)**: 升級為以目前 WIF 身分取得綁定 API service audience 之 identity token，並在呼叫 `/platform/health` 與 `/platform/version` 時帶入 `Authorization: Bearer <token>`；在 token 缺失或 mint 失敗時明確 fail closed，且不洩漏 token 或 secret 內容。
+- **Staging Proof Checker (check_remote_staging_proof.py)**: 升級為透過目前 WIF 身分唯一呼叫 `gcloud auth print-identity-token --audiences=<API origin>` 取得綁定 API service audience 之 identity token，並在呼叫 `/platform/health` 與 `/platform/version` 時帶入 `Authorization: Bearer <token>`；在 token 缺失或 mint 失敗時明確 fail closed，且不洩漏 token 或 secret 內容。
 - **唯一發布路徑**: 沿用現有 `product_ops/deployment/deploy_cloud_run_waji.sh`，未建立第二套 deploy script、wrapper 或 workflow。
 - **第三方資料來源**: 16 個外部 provider 仍保持 disabled。
 
@@ -59,7 +59,7 @@
   ```
 
 ### 2.2 `delivery_toolchain/e2e/check_remote_staging_proof.py`
-- 新增 `fetch_identity_token(audience: str)`，透過 WIF / `google-auth` (`google.oauth2.id_token.fetch_id_token`) 取得對應 API service audience 的 identity token。
+- 新增 `fetch_identity_token(audience: str)`，唯一透過目前 WIF-backed `gcloud auth print-identity-token --audiences=<API origin>` 取得對應 API service audience 的 identity token；不接受環境 token，也不使用 `google-auth` fallback。
 - `get_json` 支援帶入 `Authorization: Bearer <token>` 請求 `/platform/health` 與 `/platform/version`。
 - 新增 `auth:identity_token` 門禁檢查；在 token 取得失敗時記錄失敗並提早 fail closed 返回，報告保留 `secret_values_redacted: True` 且不輸出任何 token 值。
 
@@ -82,7 +82,7 @@
 ### 3.1 語法與型態檢查
 - `bash -n product_ops/deployment/deploy_cloud_run_waji.sh` -> 0 errors.
 - `uv run ruff check delivery_toolchain/e2e/check_remote_staging_proof.py tests/e2e/test_remote_staging_proof_checker.py tests/ops/test_cloud_run_live_deployment.py` -> All checks passed!
-- `uv run ruff format --check delivery_toolchain/e2e/check_remote_staging_proof.py tests/e2e/test_remote_staging_proof_checker.py tests/ops/test_cloud_run_live_deployment.py` -> 3 files already formatted.
+- `uv run ruff format --check delivery_toolchain/e2e/check_remote_staging_proof.py tests/e2e/test_remote_staging_proof_checker.py` -> 2 files already formatted.
 - `uv run python delivery_toolchain/governance/check_code_boundaries.py` -> Code boundary checks passed for 982 files.
 
 ### 3.2 測試執行
@@ -90,4 +90,4 @@
   ```bash
   uv run pytest tests/ops/test_cloud_run_live_deployment.py tests/e2e/test_remote_staging_proof_checker.py -q
   ```
-- 結果：`397 passed` in full suite (100% pass rate).
+- 結果：`399 passed` in full suite (100% pass rate).
