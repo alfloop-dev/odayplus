@@ -3855,25 +3855,26 @@ def _task_resolver(
     task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None,
     task_id_field: str = "id",
 ) -> TaskResolver:
+    if task_lookup is None or task_id_field == "id":
+        return task_lookup if isinstance(task_lookup, TaskResolver) else TaskResolver(task_lookup)
+
+    # TaskResolver's iterable and mapping constructors are intentionally
+    # legacy-id based. Rebuild the same canonical map the Dispatcher builds
+    # from the payload values for every lookup shape, including an already
+    # constructed resolver, so a legacy ``id`` cannot satisfy a custom
+    # ``taskId`` dependency.
     if isinstance(task_lookup, TaskResolver):
-        return task_lookup
-    if task_id_field != "id" and task_lookup is not None:
-        # TaskResolver's iterable form is intentionally legacy-id based. Build
-        # the same canonical map the Dispatcher builds before handing it the
-        # lookup, so a legacy ``id`` cannot satisfy a custom ``taskId`` dep.
-        if isinstance(task_lookup, dict):
-            task_lookup = {
-                str(task_id).strip(): task
-                for task_id, task in task_lookup.items()
-                if str(task_id).strip() and isinstance(task, dict)
-            }
-        else:
-            task_lookup = {
-                str(task.get(task_id_field) or "").strip(): task
-                for task in task_lookup
-                if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
-            }
-    return TaskResolver(task_lookup)
+        source_tasks = task_lookup.active_task_map().values()
+    elif isinstance(task_lookup, dict):
+        source_tasks = task_lookup.values()
+    else:
+        source_tasks = task_lookup
+    canonical_map = {
+        str(task.get(task_id_field) or "").strip(): task
+        for task in source_tasks
+        if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
+    }
+    return TaskResolver(canonical_map)
 
 
 def dependencies_satisfied(
@@ -3971,25 +3972,9 @@ def task_is_runnable(
     if not task_id:
         return False
 
-    if task_lookup is None:
-        task_map = {task_id: task}
-    elif isinstance(task_lookup, TaskResolver):
-        task_map = task_lookup.active_task_map()
-        task_map.setdefault(task_id, task)
-    elif isinstance(task_lookup, dict):
-        task_map = {
-            str(key).strip(): value
-            for key, value in task_lookup.items()
-            if str(key).strip() and isinstance(value, dict)
-        }
-        task_map.setdefault(task_id, task)
-    else:
-        task_map = {
-            str(item.get(task_id_field) or "").strip(): item
-            for item in task_lookup
-            if isinstance(item, dict) and str(item.get(task_id_field) or "").strip()
-        }
-        task_map.setdefault(task_id, task)
+    resolver = _task_resolver(task_lookup, task_id_field=task_id_field)
+    task_map = resolver.active_task_map()
+    task_map.setdefault(task_id, task)
 
     return _dispatcher_owner_execution_priority(config, task, task_map) is not None
 

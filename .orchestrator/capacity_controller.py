@@ -306,7 +306,7 @@ def sidecar_candidates(
         if not kind:
             continue
         for parent in tasks:
-            parent_id = str(parent.get(task_id_field) or parent.get("id") or "")
+            parent_id = str(parent.get(task_id_field) or "")
             parent_status = str(parent.get("status") or "").lower()
             signature = f"{parent_id}:{kind}"
             if not parent_id or signature in existing_signatures:

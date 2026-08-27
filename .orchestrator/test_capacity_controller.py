@@ -323,7 +323,13 @@ def test_custom_schema_dependency_requires_canonical_dependency_id() -> None:
     legacy_dependency = {"id": "DEP", "status": "done"}
     tasks = [runnable, legacy_dependency]
 
-    assert supervisor.task_is_runnable(cfg, runnable, task_lookup=tasks) is False
+    lookup_variants = [
+        supervisor.TaskResolver(tasks),
+        tasks,
+        {"RUN": runnable, "DEP": legacy_dependency},
+    ]
+    for task_lookup in lookup_variants:
+        assert supervisor.task_is_runnable(cfg, runnable, task_lookup=task_lookup) is False
     assert canonical_runnable_ids(cfg, tasks) == set()
     snapshot = capacity_controller.capacity_snapshot(
         cfg,
@@ -332,3 +338,30 @@ def test_custom_schema_dependency_requires_canonical_dependency_id() -> None:
         runnable_tasks=canonical_runnable_ids(cfg, tasks),
     )
     assert snapshot["runnable_tasks"] == 0
+
+
+def test_custom_schema_sidecar_parent_requires_canonical_task_id() -> None:
+    cfg = config()
+    cfg["schema"] = {"tasks_path": "items", "task_id_field": "taskId"}
+    tasks = [
+        {
+            "id": "LEGACY-PARENT",
+            "status": "blocked",
+            "blocked_reason": "upstream API defect",
+        }
+    ]
+    runtime_state = {
+        "capacity_controller": {
+            "chair_decision": {
+                "valid_until": "2026-08-20T12:30:00Z",
+                "sidecar_wave": {"approved": True},
+            }
+        }
+    }
+
+    assert (
+        capacity_controller.sidecar_candidates(
+            cfg, runtime_state, tasks, runnable_tasks=set(), now=NOW
+        )
+        == []
+    )

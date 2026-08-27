@@ -36,7 +36,7 @@
    - `supervisor.canonical_dispatchable_task_ids` 呼叫既有 `dispatch_engine.dispatch_priority_for_task`，只投影 Dispatcher 的 owner `in_progress`/`todo` 優先級 2/3，不複製第三套 eligibility 規則。
    - 支援動態 schema 設定：`task_id_field = schema.get("task_id_field", "id")` 與 `owner_field = schema.get("assignee_field", "owner")`。
    - 在投影邊界排除無效或空白 task ID、`non_dispatchable`、Human/Ops gate、sidecar 與治理/阻塞狀態；owner eligibility 仍由既有 `agent_can_take_task` 與 Dispatcher 判斷。
-   - 自訂 schema 的 active task lookup 先以 canonical task ID 建 map，再交給 `TaskResolver`；缺少 `taskId` 的 legacy `id` 不得滿足依賴。
+   - 自訂 schema 的 active task lookup（`TaskResolver`、dict、list）一律從 task payload 的 canonical task ID 建 map，再交給 `TaskResolver`；缺少 `taskId` 的 legacy `id` 不得滿足依賴。
 
 2. **Capacity Chair 純消費模式（Zero Duplicate Rules / No Reverse Imports）**：
    - `capacity_controller.py` 徹底移除 `_supervisor_module()` 與任何對 `supervisor.py` 的反向匯入。
@@ -69,13 +69,14 @@
 10. `CapacityControllerReconciliationTests`：驗證 Supervisor 層級的 `reconcile_capacity_controller` 狀態與決策寫入一致性。
 11. `test_task_is_runnable_respects_custom_schema_and_excludes_invalid_id_or_owner`：驗證 Supervisor 權威述詞在自訂 schema 與未知 owner 下的精確行為。
 12. `test_task_is_runnable_excludes_non_execution_states_and_unsatisfied_dependencies`：驗證非執行狀態與未滿足依賴在 Supervisor Dispatcher-backed predicate 下的排除。
-13. `test_custom_schema_dependency_requires_canonical_dependency_id`：驗證 custom `taskId` schema 下缺少 `taskId` 的 legacy dependency 不得滿足依賴。
+13. `test_custom_schema_dependency_requires_canonical_dependency_id`：驗證 custom `taskId` schema 下 `TaskResolver`、list、dict 三種 lookup 都不接受缺少 `taskId` 的 legacy dependency。
+14. `test_custom_schema_sidecar_parent_requires_canonical_task_id`：驗證 custom `taskId` schema 下 sidecar parent 不會 fallback 到 legacy `id`。
 
 ### 3.3 測試輸出實錄
 ```text
-.orchestrator/test_capacity_controller.py ..........                      [100%]
+.orchestrator/test_capacity_controller.py ...........                     [100%]
 .orchestrator/test_supervisor.py ............                             [100%]
 
-============================== 22 passed ==============================
+============================== 23 passed ==============================
 ```
-全部 22 項相關測試 100% 通過；code boundary checks 982 個檔案通過，`git diff --check` 亦通過，未修改 forbidden 的 Dispatcher 實作檔。
+全部 23 項相關測試 100% 通過；code boundary checks（982 個檔案）與 `git diff --check` 亦通過，未修改 forbidden 的 Dispatcher 實作檔。
