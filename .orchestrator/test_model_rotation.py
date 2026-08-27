@@ -106,6 +106,123 @@ def test_sidecar_and_finalize_stay_on_flash_high(tmp_path):
     assert reopened_docs["selection_reason"] == "review_reopened_1_time(s)"
 
 
+def test_p0_and_p1_with_docs_preserve_high_risk_priority_precedence(tmp_path):
+    _isolate(tmp_path)
+    # Live proof regression: P0 task with docs/ artifact must NOT be downgraded to Flash
+    live_proof_task = {
+        "id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+        "title": "Staging lifecycle release integration",
+        "priority": "P0",
+        "artifacts": [
+            ".orchestrator/runtime/lifecycle.py",
+            "docs/release-staging-lifecycle.md",
+        ],
+    }
+    selection = mr.resolve_active_selection(CFG, "antigravity5", task=live_proof_task)
+    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["risk_tier"] == "high"
+    assert selection["selection_reason"] == "business_priority_P0"
+
+    p1_docs_task = {
+        "id": "ODP-P1-DOCS-1",
+        "title": "P1 critical documentation update",
+        "priority": "P1",
+        "artifacts": ["docs/architecture.md"],
+    }
+    p1_selection = mr.resolve_active_selection(CFG, "antigravity5", task=p1_docs_task)
+    assert p1_selection["model"] == "claude-opus-4-6-thinking"
+    assert p1_selection["risk_tier"] == "high"
+    assert p1_selection["selection_reason"] == "business_priority_P1"
+
+
+def test_p2_docs_only_uses_standard_model(tmp_path):
+    _isolate(tmp_path)
+    docs_only = {
+        "id": "ODP-DOCS-ONLY-1",
+        "title": "Update operational documentation",
+        "priority": "P2",
+        "artifacts": ["docs/operations.md", "docs/guide.md"],
+    }
+    selection = mr.resolve_active_selection(CFG, "antigravity5", task=docs_only)
+    assert selection["model"] == "gemini-3.7-flash-high"
+    assert selection["risk_tier"] == "standard"
+    assert selection["selection_reason"] == "bounded_docs_or_lint"
+
+
+def test_mixed_workflow_and_docs_uses_high_risk_model(tmp_path):
+    _isolate(tmp_path)
+    # Mixed workflow + docs must be treated as sensitive high-risk scope
+    workflow_docs = {
+        "id": "ODP-WORKFLOW-DOCS-1",
+        "title": "CI workflow automation update",
+        "priority": "P2",
+        "artifacts": [
+            ".github/workflows/deploy.yml",
+            "docs/deploy-guide.md",
+        ],
+    }
+    selection = mr.resolve_active_selection(CFG, "antigravity5", task=workflow_docs)
+    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["risk_tier"] == "high"
+    assert selection["selection_reason"] == "sensitive_scope:workflow"
+
+    iac_docs = {
+        "id": "ODP-IAC-DOCS-1",
+        "title": "Terraform IaC deployment scripts",
+        "priority": "P2",
+        "artifacts": [
+            "infra/iac/main.tf",
+            "docs/infrastructure.md",
+        ],
+    }
+    iac_selection = mr.resolve_active_selection(CFG, "antigravity5", task=iac_docs)
+    assert iac_selection["model"] == "claude-opus-4-6-thinking"
+    assert iac_selection["risk_tier"] == "high"
+    assert iac_selection["selection_reason"] == "sensitive_scope:iac"
+
+
+def test_reopen_with_docs_preserves_high_risk_reopen_precedence(tmp_path):
+    _isolate(tmp_path)
+    reopen_task = {
+        "id": "ODP-REOPEN-DOCS-1",
+        "title": "Fix rejected documentation PR",
+        "priority": "P2",
+        "review_reopen_count": 2,
+        "artifacts": ["docs/release.md"],
+    }
+    selection = mr.resolve_active_selection(CFG, "antigravity5", task=reopen_task)
+    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["risk_tier"] == "high"
+    assert selection["selection_reason"] == "review_reopened_2_time(s)"
+
+
+def test_summary_zh_and_summary_compatibility_in_task_corpus(tmp_path):
+    _isolate(tmp_path)
+    zh_sensitive_task = {
+        "id": "ODP-ZH-1",
+        "title": "更新服務設定",
+        "summary_zh": "重構 core/ 核心資料庫 schema 遷移流程與權限檢查",
+        "priority": "P2",
+        "artifacts": ["docs/changelog.md"],
+    }
+    selection = mr.resolve_active_selection(CFG, "antigravity5", task=zh_sensitive_task)
+    assert selection["model"] == "claude-opus-4-6-thinking"
+    assert selection["risk_tier"] == "high"
+    assert selection["selection_reason"] == "sensitive_scope:core/"
+
+    zh_docs_task = {
+        "id": "ODP-ZH-DOCS-1",
+        "title": "純繁中文件修訂",
+        "summary_zh": "格式整理與 docs/ 文件更新",
+        "priority": "P2",
+        "artifacts": ["docs/readme.md"],
+    }
+    docs_selection = mr.resolve_active_selection(CFG, "antigravity5", task=zh_docs_task)
+    assert docs_selection["model"] == "gemini-3.7-flash-high"
+    assert docs_selection["risk_tier"] == "standard"
+    assert docs_selection["selection_reason"] == "bounded_docs_or_lint"
+
+
 def test_quota_rotation_overrides_risk_model_but_keeps_audit_reason(tmp_path):
     _isolate(tmp_path)
     mr.record_exhaustion(CFG, "antigravity5", 900, pool="gemini")
