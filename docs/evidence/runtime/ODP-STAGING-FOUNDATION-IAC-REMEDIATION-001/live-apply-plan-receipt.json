@@ -2,7 +2,7 @@
   "receipt_type": "terraform_apply_plan_metadata",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
   "generated_at": "2026-08-27T07:47:30Z",
-  "candidate_sha": "9840082623c7f4c570ca1fcc1f3c39dbebf02f58",
+  "candidate_sha": "9b0845d73cc3a3e6c1322f4fc2c7e6f4e0ebe1fb",
   "target_project_id": "odayplus-runtime-20260825",
   "module_tree": [
     {
