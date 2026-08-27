@@ -91,3 +91,14 @@
   uv run pytest tests/ops/test_cloud_run_live_deployment.py tests/e2e/test_remote_staging_proof_checker.py -q
   ```
 - 結果：`399 passed` in full suite (100% pass rate).
+
+### 3.3 PR performance-gate disposition
+
+- Reviewer 回報的既有 `performance-gate` load endpoint 404 不屬於本任務的
+  touched path；`git diff origin/dev...HEAD` 未包含 `tests/performance`、load
+  endpoint 或其 implementation，因此本任務沒有改動該既有負載測試邊界。
+- 在 exact PR head `265324d094c4f787b7586ff40e7c4a9a388fe60f` 重新執行的
+  CI run [33043436890](https://github.com/alfloop-dev/odayplus/actions/runs/33043436890)
+  中，`performance-gate` job [98421981162](https://github.com/alfloop-dev/odayplus/actions/runs/33043436890/job/98421981162)
+  已成功通過；因此先前 404 未在 exact head 重現，無需為本 task 修改
+  load endpoint 或放寬 performance gate。
