@@ -48,6 +48,13 @@ All 166 config keys are read by production code.
 ```bash
 $ python3 delivery_toolchain/governance/check_code_boundaries.py
 Code boundary checks passed for 982 files.
+- archived: 14
+- development_delivery_tooling: 66
+- development_platform_system: 63
+- evidence_artifact: 22
+- product_operations_tooling: 29
+- product_system: 485
+- verification: 303
 ```
 
 ### 4. Git Diff Cleanliness
@@ -56,9 +63,27 @@ $ git diff --check origin/dev
 (clean exit 0)
 ```
 
+### 5. Supervisor Runtime Restart & Post-Update Worker Argv Verification
+- **Supervisor Watchdog Restart Log**: `/home/lupin/odayplus/.orchestrator/logs/supervisor-watchdog-restart-20260827T024528Z.log`
+  ```text
+  [2026-08-27 10:45:30] starting supervisor pid=3978295 poll_interval=180.0s source=config config=None
+  ```
+- **Post-Update Worker Delivery Argv Verification**:
+  ```python
+  cfg = load_config("/home/lupin/odayplus/.orchestrator/config.json")
+  adapter = AntigravityAdapter(config=cfg, provider_capabilities={})
+  # antigravity
+  adapter.deliver(DeliveryRequest(agent_id="antigravity", provider="antigravity", ...))
+  # -> ['.../bin/agy', '--model', 'gemini-3.7-flash-high', '--print-timeout', '2h', '--dangerously-skip-permissions', ...]
+  # antigravity2
+  adapter.deliver(DeliveryRequest(agent_id="antigravity2", provider="antigravity2", ...))
+  # -> ['.../bin/agy', '--model', 'gemini-3.7-flash-high', '--print-timeout', '2h', '--dangerously-skip-permissions', ...]
+  ```
+
 ## Acceptance Criteria Checklist
 - [x] Tracked authoritative config (`config.example.json`) has `hard_print_timeout: "2h"` for both Agy providers.
 - [x] Live config (`/home/lupin/odayplus/.orchestrator/config.json`) has `hard_print_timeout: "2h"` for both Agy providers.
 - [x] Adapter (`antigravity.py`) and rotation tests (`test_model_rotation.py`) verify `--print-timeout 2h`.
 - [x] No second timeout or inactivity mechanism added (clean single `hard_print_timeout`).
 - [x] Atomic update and non-disruption of executing workers preserved.
+- [x] Post-update supervisor runtime reloaded live config and worker argv confirmed with `--print-timeout 2h`.
