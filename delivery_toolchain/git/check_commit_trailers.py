@@ -117,12 +117,14 @@ def validate_message(
     if allow_maintenance_skip and subject.startswith(SKIP_SUBJECT_PREFIXES):
         return []
 
-    if len(subject) > SUBJECT_MAX:
-        errors.append(f"subject is {len(subject)} chars, limit is {SUBJECT_MAX}: {subject!r}")
+    trailers = parse_trailers(body)
+    eff_task_id = (task_id or trailers.get("task-id", "")).strip()
+    subject_max = max(SUBJECT_MAX, len(eff_task_id) + 40) if eff_task_id else SUBJECT_MAX
+    if len(subject) > subject_max:
+        errors.append(f"subject is {len(subject)} chars, limit is {subject_max}: {subject!r}")
     if ":" not in subject:
         errors.append(f"subject must be '<TASK-ID>: <summary>', got {subject!r}")
 
-    trailers = parse_trailers(body)
     for name in REQUIRED_TRAILERS:
         if not trailers.get(name.lower()):
             errors.append(f"missing required trailer '{name}:'")
