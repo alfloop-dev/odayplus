@@ -500,6 +500,66 @@ def build_release_manifest(
     return manifest
 
 
+def extract_rollback_release_binding(prev_manifest: dict[str, Any]) -> dict[str, Any]:
+    """Extract verifiable rollback release binding from an approved previous manifest."""
+    components = prev_manifest.get("components", {})
+    rb_components = {}
+    for name, comp in components.items():
+        if isinstance(comp, dict):
+            item = {"image": comp.get("image", "")}
+            if "shares_image_with" in comp:
+                item["shares_image_with"] = comp["shares_image_with"]
+            rb_components[name] = item
+        else:
+            rb_components[name] = {"image": str(comp)}
+
+    prev_snapshot = (
+        prev_manifest.get("data_snapshot")
+        or prev_manifest.get("snapshot_pointer")
+        or prev_manifest.get("snapshot")
+    )
+    if not isinstance(prev_snapshot, dict):
+        raise ValueError("Cannot extract rollback binding from manifest without data_snapshot")
+
+    return {
+        "release_id": prev_manifest["release_id"],
+        "candidate_sha": prev_manifest["candidate_sha"],
+        "manifest_digest": prev_manifest["manifest_digest"],
+        "components": rb_components,
+        "data_snapshot": copy.deepcopy(prev_snapshot),
+    }
+
+
+def validate_rollback_manifest(
+    prev_manifest: Any,
+    *,
+    current_candidate_sha: str | None = None,
+) -> list[str]:
+    """Validate that a previous release manifest is structurally sound, admissible, and distinct."""
+    if not isinstance(prev_manifest, dict):
+        return ["rollback manifest must be a JSON object"]
+
+    errors = validate_manifest(prev_manifest)
+    errors.extend(
+        err for err in validate_release_admission(prev_manifest) if err not in errors
+    )
+
+    candidate_sha = prev_manifest.get("candidate_sha")
+    if current_candidate_sha and candidate_sha == current_candidate_sha:
+        errors.append(
+            "rollback candidate_sha must not match current candidate_sha; "
+            "rollback target must be a distinct release candidate"
+        )
+
+    snap = prev_manifest.get("data_snapshot")
+    if not isinstance(snap, dict) or not snap:
+        errors.append(
+            "rollback manifest missing required data_snapshot; "
+            "cannot use legacy or snapshot-less manifest as rollback evidence"
+        )
+    return errors
+
+
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "RELEASE_ID_PATTERN",
@@ -516,11 +576,13 @@ __all__ = [
     "compute_manifest_digest",
     "compute_migration_digest",
     "compute_source_policy_digest",
+    "extract_rollback_release_binding",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
     "validate_manifest",
     "validate_release_admission",
+    "validate_rollback_manifest",
 ]
 
 

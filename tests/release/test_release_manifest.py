@@ -17,8 +17,10 @@ from delivery_toolchain.release.release_manifest import (
     build_release_manifest,
     compute_data_contract_digest,
     compute_manifest_digest,
+    extract_rollback_release_binding,
     validate_manifest,
     validate_release_admission,
+    validate_rollback_manifest,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -408,3 +410,53 @@ def test_byte_determinism_and_tampering_detection() -> None:
     errors = validate_manifest(tampered_comp)
     assert any("manifest_digest" in err for err in errors)
 
+
+def test_validate_rollback_manifest_valid_manifest() -> None:
+    prev = built_manifest(candidate_sha="0" * 40, release_id="odp-prev-001")
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert errors == []
+
+
+def test_validate_rollback_manifest_forged_digest_fails_closed() -> None:
+    prev = built_manifest(candidate_sha="0" * 40)
+    prev["manifest_digest"] = "sha256:" + "f" * 64
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("manifest_digest" in err for err in errors)
+
+
+def test_validate_rollback_manifest_tampered_component_fails_closed() -> None:
+    prev = built_manifest(candidate_sha="0" * 40)
+    prev["components"]["api"]["image"] = "registry.example.invalid/odayplus/api@sha256:" + "f" * 64
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("manifest_digest" in err for err in errors)
+
+
+def test_validate_rollback_manifest_legacy_v1_fails_closed() -> None:
+    prev = built_manifest(schema_version=1)
+    prev.pop("data_snapshot", None)
+    prev.pop("rollback_release", None)
+    prev["manifest_digest"] = compute_manifest_digest(prev)
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("data_snapshot" in err for err in errors)
+
+
+def test_validate_rollback_manifest_blocked_fails_closed() -> None:
+    prev = blocked_manifest()
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("release_status='ready'" in err for err in errors)
+
+
+def test_validate_rollback_manifest_same_candidate_fails_closed() -> None:
+    prev = built_manifest(candidate_sha="1" * 40)
+    errors = validate_rollback_manifest(prev, current_candidate_sha="1" * 40)
+    assert any("must not match current candidate_sha" in err for err in errors)
+
+
+def test_extract_rollback_release_binding_retains_exact_identity() -> None:
+    prev = built_manifest(candidate_sha="0" * 40, release_id="odp-prev-001")
+    binding = extract_rollback_release_binding(prev)
+    assert binding["release_id"] == "odp-prev-001"
+    assert binding["candidate_sha"] == "0" * 40
+    assert binding["manifest_digest"] == prev["manifest_digest"]
+    assert binding["components"]["api"]["image"] == prev["components"]["api"]["image"]
+    assert binding["data_snapshot"] == prev["data_snapshot"]

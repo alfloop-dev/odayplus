@@ -206,9 +206,11 @@ def test_an_unknown_release_sha_cannot_be_dated() -> None:
     assert any("無法讀取" in error for error in excinfo.value.errors)
 
 
-def _snapshot_and_rollback_args() -> list[str]:
+def _snapshot_and_rollback_args(tmp_path: Path) -> list[str]:
     snap = valid_snapshot()
-    rb = valid_rollback()
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "FIXTURE_PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
     return [
         "--data-snapshot-id",
         snap["id"],
@@ -216,22 +218,8 @@ def _snapshot_and_rollback_args() -> list[str]:
         snap["uri"],
         "--data-snapshot-sha256",
         snap["content_sha256"],
-        "--rollback-release-id",
-        rb["release_id"],
-        "--rollback-candidate-sha",
-        rb["candidate_sha"],
-        "--rollback-manifest-digest",
-        rb["manifest_digest"],
-        "--rollback-component",
-        f"api={rb['components']['api']['image']}",
-        "--rollback-component",
-        f"web={rb['components']['web']['image']}",
-        "--rollback-snapshot-id",
-        rb["data_snapshot"]["id"],
-        "--rollback-snapshot-uri",
-        rb["data_snapshot"]["uri"],
-        "--rollback-snapshot-sha256",
-        rb["data_snapshot"]["content_sha256"],
+        "--rollback-manifest",
+        str(prev_manifest_path),
     ]
 
 
@@ -263,7 +251,7 @@ def test_the_cli_writes_both_halves_of_the_handoff(tmp_path: Path) -> None:
     code, images_path, manifest_path = _cli(
         tmp_path,
         *_component_args(),
-        *_snapshot_and_rollback_args(),
+        *_snapshot_and_rollback_args(tmp_path),
         "--sbom-ref",
         ref("api", "5"),
         "--signature-ref",
@@ -284,7 +272,7 @@ def test_the_cli_reports_the_manifest_digest_to_the_workflow(tmp_path: Path) -> 
     code, _, manifest_path = _cli(
         tmp_path,
         *_component_args(),
-        *_snapshot_and_rollback_args(),
+        *_snapshot_and_rollback_args(tmp_path),
         "--sbom-ref",
         ref("api", "5"),
         "--signature-ref",
@@ -334,8 +322,8 @@ def test_missing_rollback_release_refuses_to_write_a_handoff() -> None:
 
 
 def test_rollback_manifest_cli_option(tmp_path: Path) -> None:
-    # First build a previous release manifest
-    prev_images, prev_manifest = handoff(release_sha="0" * 40)
+    # Build a previous release manifest
+    _, prev_manifest = handoff(release_sha="0" * 40)
     prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
     prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
 
@@ -361,3 +349,137 @@ def test_rollback_manifest_cli_option(tmp_path: Path) -> None:
     assert manifest["rollback_release"]["manifest_digest"] == prev_manifest["manifest_digest"]
     assert validate_release_admission(manifest) == []
 
+
+def test_rollback_release_file_option(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, _, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-current-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-release-file",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["rollback_release"]["manifest_digest"] == prev_manifest["manifest_digest"]
+
+
+def test_rollback_manifest_legacy_v1_fails_closed_no_synthetic_snapshot(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40, schema_version=1)
+    prev_manifest.pop("data_snapshot", None)
+    prev_manifest.pop("rollback_release", None)
+    prev_manifest["manifest_digest"] = compute_manifest_digest(prev_manifest)
+    v1_path = tmp_path / "V1_RELEASE_MANIFEST.json"
+    v1_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-current-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        str(v1_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_rollback_manifest_forged_digest_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest["manifest_digest"] = "sha256:" + "f" * 64
+    forged_path = tmp_path / "FORGED_PREV_MANIFEST.json"
+    forged_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-current-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        str(forged_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_rollback_manifest_tampered_fields_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest["components"]["api"]["image"] = ref("api", "9")
+    tampered_path = tmp_path / "TAMPERED_PREV_MANIFEST.json"
+    tampered_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-current-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        str(tampered_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_rollback_manifest_same_candidate_sha_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha=SHA)
+    same_sha_path = tmp_path / "SAME_SHA_MANIFEST.json"
+    same_sha_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-current-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        str(same_sha_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
