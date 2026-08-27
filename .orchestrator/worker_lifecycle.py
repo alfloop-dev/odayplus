@@ -1178,11 +1178,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if runner_succeeded
             else None
         )
-        is_success = bool(
-            runner_succeeded
-            and success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}
-        )
-        failure_reason = None if is_success else detect_worker_failure(worker)
+        # A structured zero-exit runner may legitimately skip log-based failure
+        # detection even when it has not satisfied the task postcondition yet.
+        # Keep failure-scan eligibility separate from the completion outcome so
+        # the no-progress path below can still record and reassign the task.
+        failure_reason = None if runner_succeeded else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
