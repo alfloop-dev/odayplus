@@ -692,3 +692,203 @@ def test_sidecar_candidates_with_long_parent_preserves_authoritative_fields_and_
         assert candidate["artifacts"] == [f"support/sidecars/{parent_id}/{sid}.md"]
         assert parent_id in candidate["title"]
         assert parent_id in candidate["summary_zh"]
+
+
+def test_capacity_snapshot_excludes_unauthenticated_or_inbox_fallback_slots_from_effective_capacity() -> None:
+    """When a provider's auth is false or fallback to inbox, its slots are excluded from effective slot_total and available_slots."""
+    cfg = config(slot_count=8)
+    provider_report = {
+        "providers": {
+            "claude": {
+                "auth_ready": False,
+                "local_cli_worker_supported": False,
+                "supports_auto_approve": False,
+            },
+            "antigravity": {
+                "auth_ready": True,
+                "local_cli_worker_supported": True,
+                "supports_auto_approve": True,
+            },
+            "codex": {
+                "auth_ready": True,
+                "local_cli_worker_supported": True,
+                "supports_auto_approve": True,
+            },
+        },
+        "agent_adapters": {
+            "Claude": {"can_auto_deliver": False, "supported": True, "notes": "Claude CLI is installed but not authenticated, so delivery falls back to the workspace inbox path."},
+            "Claude2": {"can_auto_deliver": False, "supported": True, "notes": "Claude CLI is installed but not authenticated, so delivery falls back to the workspace inbox path."},
+        },
+    }
+    # 8 configured slots in config(): Claude (slot-0), Codex (slot-1), Claude2 (slot-2), Antigravity2 (slot-3),
+    # Antigravity5 (slot-4), Antigravity7 (slot-5), Codex2 (slot-6), slot-7.
+    # Claude and Claude2 are unauthenticated (2 slots), so effective slot_total is 6.
+    tasks: list[dict] = []
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg,
+        {},
+        tasks,
+        runnable_tasks=canonical_runnable_ids(cfg, tasks),
+        provider_report=provider_report,
+    )
+    assert snapshot["configured_slot_total"] == 8
+    assert snapshot["slot_total"] == 6
+    assert snapshot["available_slots"] == 6
+    assert snapshot["active_workers"] == 0
+    assert snapshot["utilization_ratio"] == 0.0
+
+
+def test_capacity_snapshot_and_evaluate_chair_no_false_underutilization_when_provider_auth_false() -> None:
+    """When all configured slots belong to an unauthenticated provider, effective capacity is 0 and does not trigger false underutilization."""
+    cfg = {
+        "agents": {
+            "claude_slot_1": {"provider": "claude", "slot_id": "claude_slot_1", "account_pool": "claude_main"},
+            "claude_slot_2": {"provider": "claude", "slot_id": "claude_slot_2", "account_pool": "claude_main"},
+        },
+        "account_pools": {
+            "claude_main": {"max_concurrent": 2, "state": "healthy"},
+        },
+        "capacity_controller": {
+            "underutilization_threshold_ratio": 0.5,
+            "underutilization_window_seconds": 600,
+            "stall_window_seconds": 300,
+            "chair_interval_seconds": 1800,
+            "coordination_reserved_slots": 1,
+            "sidecars": {"max_new_per_wave": 3, "max_active": 4, "max_capacity_ratio": 0.25, "ttl_seconds": 7200},
+        },
+    }
+    provider_report = {
+        "providers": {
+            "claude": {
+                "auth_ready": False,
+                "local_cli_worker_supported": False,
+                "supports_auto_approve": False,
+            }
+        },
+        "agent_adapters": {
+            "claude_slot_1": {"can_auto_deliver": False, "notes": "inbox fallback"},
+            "claude_slot_2": {"can_auto_deliver": False, "notes": "inbox fallback"},
+        },
+    }
+    tasks = [{"id": "BLOCKED-1", "status": "blocked", "blocked_reason": "upstream bug", "owner": "claude_slot_1"}]
+    runtime_state = {
+        "capacity_controller": {
+            "underutilization_since": "2026-08-20T11:40:00Z",
+        }
+    }
+
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg,
+        runtime_state,
+        tasks,
+        runnable_tasks=set(),
+        provider_report=provider_report,
+    )
+    assert snapshot["configured_slot_total"] == 2
+    assert snapshot["slot_total"] == 0
+    assert snapshot["available_slots"] == 0
+    assert snapshot["utilization_ratio"] == 0.0
+
+    controller, changed = capacity_controller.evaluate_chair(
+        cfg,
+        runtime_state,
+        tasks,
+        runnable_tasks=set(),
+        provider_report=provider_report,
+        now=NOW,
+    )
+    decision = controller.get("chair_decision") or {}
+    # With effective slot_total == 0, underutilization is not true, so sidecars must NOT be approved
+    assert decision.get("sidecar_wave", {}).get("approved") is False
+    assert capacity_controller.sidecar_candidates(
+        cfg,
+        runtime_state,
+        tasks,
+        runnable_tasks=set(),
+        provider_report=provider_report,
+        now=NOW,
+    ) == []
+
+
+def test_capacity_automatically_restores_next_tick_on_relogin_without_clearing_state() -> None:
+    """When provider report updates to authenticated on next tick, capacity snapshot restores automatically without manual state clearing."""
+    cfg = config(slot_count=8)
+    report_unauth = {
+        "providers": {"claude": {"auth_ready": False, "local_cli_worker_supported": False}},
+        "agent_adapters": {
+            "Claude": {"can_auto_deliver": False},
+            "Claude2": {"can_auto_deliver": False},
+        },
+    }
+    report_auth = {
+        "providers": {"claude": {"auth_ready": True, "local_cli_worker_supported": True, "supports_auto_approve": True}},
+        "agent_adapters": {
+            "Claude": {"can_auto_deliver": True, "supported": True},
+            "Claude2": {"can_auto_deliver": True, "supported": True},
+        },
+    }
+    runtime_state = {"capacity_controller": {}}
+
+    # Tick 1: unauthenticated
+    snap1 = capacity_controller.capacity_snapshot(
+        cfg, runtime_state, [], runnable_tasks=set(), provider_report=report_unauth
+    )
+    assert snap1["configured_slot_total"] == 8
+    assert snap1["slot_total"] == 6
+
+    # Tick 2: user logs in and provider report refreshed without changing runtime_state
+    snap2 = capacity_controller.capacity_snapshot(
+        cfg, runtime_state, [], runnable_tasks=set(), provider_report=report_auth
+    )
+    assert snap2["configured_slot_total"] == 8
+    assert snap2["slot_total"] == 8
+    assert snap2["available_slots"] == 8
+
+
+def test_claude_auth_status_logged_in_but_oauth_inference_expired_regression() -> None:
+    """Regression test: claude auth status says loggedIn=true, but OAuth inference/expiry makes auth_ready=False.
+
+    Ensures capacity snapshot excludes Claude slots from effective capacity while keeping configured_slot_total.
+    """
+    cfg = config(slot_count=8)
+    # Simulates provider_capabilities output when claude auth status returned loggedIn=true
+    # but token expiration check determined OAuth is expired / inference failed.
+    provider_report = {
+        "providers": {
+            "claude": {
+                "auth_ready": False,
+                "local_cli_worker_supported": False,
+                "supports_auto_approve": False,
+                "notes": [
+                    "Claude CLI is installed but not authenticated; inbox fallback is disabled for this provider.",
+                ],
+            }
+        },
+        "agent_adapters": {
+            "Claude": {
+                "can_auto_deliver": False,
+                "supported": True,
+                "delivery_mode": "file_inbox",
+                "notes": "Claude CLI is installed but not authenticated, so delivery falls back to the workspace inbox path.",
+            },
+            "Claude2": {
+                "can_auto_deliver": False,
+                "supported": True,
+                "delivery_mode": "file_inbox",
+                "notes": "Claude CLI is installed but not authenticated, so delivery falls back to the workspace inbox path.",
+            },
+        },
+    }
+    tasks = [{"id": "T-1", "status": "todo", "owner": "Claude"}]
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg,
+        {},
+        tasks,
+        runnable_tasks={"T-1"},
+        provider_report=provider_report,
+    )
+    # 2 Claude slots excluded from effective slot_total (6 instead of 8)
+    assert snapshot["configured_slot_total"] == 8
+    assert snapshot["slot_total"] == 6
+    assert snapshot["available_slots"] == 6
+

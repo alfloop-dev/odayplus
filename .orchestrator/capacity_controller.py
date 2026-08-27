@@ -109,6 +109,42 @@ def configured_slots(config: dict[str, Any]) -> int:
     )
 
 
+def effective_slots(
+    config: dict[str, Any],
+    runtime_state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+) -> int:
+    """Count dispatch slots that are currently eligible for automated execution.
+
+    Consumes agent_auto_dispatch_block_reason and provider_report as the single
+    authority on provider health and dispatch eligibility. Configured slots that
+    cannot execute automated tasks (e.g. auth failure, inbox fallback, disabled
+    or cooling-down account pool) are excluded so that slot_total and available_slots
+    reflect real executable capacity rather than dead configured declarations.
+    """
+    from supervisor import provider_capability_block_reason
+    from worker_failure_policy import agent_auto_dispatch_block_reason
+
+    slot_check_state = dict(runtime_state or {})
+    # Clear active worker map so that currently executing workers do not falsely
+    # mark a healthy slot as unviable or capacity-depleted in the total count.
+    slot_check_state["workers"] = {}
+    count = 0
+    for slot_id, agent in (config.get("agents", {}) or {}).items():
+        if not (isinstance(agent, dict) and agent.get("slot_id")):
+            continue
+        if agent_auto_dispatch_block_reason(
+            config, slot_check_state, slot_id, provider_report=provider_report
+        ):
+            continue
+        if provider_report and provider_capability_block_reason(
+            config, slot_id, provider_report=provider_report
+        ):
+            continue
+        count += 1
+    return count
+
+
 def _count_runnable_tasks(
     _config: dict[str, Any],
     _tasks: list[dict[str, Any]],
@@ -179,8 +215,12 @@ def capacity_snapshot(
     tasks: list[dict[str, Any]],
     *,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    slot_total = configured_slots(config)
+    cfg_slot_total = configured_slots(config)
+    slot_total = effective_slots(
+        config, runtime_state=runtime_state, provider_report=provider_report
+    )
     active_workers = [
         worker
         for worker in (runtime_state.get("workers", {}) or {}).values()
@@ -213,6 +253,7 @@ def capacity_snapshot(
 
     return {
         "slot_total": slot_total,
+        "configured_slot_total": cfg_slot_total,
         "active_workers": active_count,
         "active_runnable_workers": active_runnable_count,
         "available_slots": max(0, slot_total - active_count),
@@ -248,6 +289,7 @@ def evaluate_chair(
     tasks: list[dict[str, Any]],
     *,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], bool]:
     now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -257,6 +299,7 @@ def evaluate_chair(
         runtime_state,
         tasks,
         runnable_tasks=runnable_tasks,
+        provider_report=provider_report,
     )
     controller = runtime_state.setdefault("capacity_controller", {})
     changed = controller.get("snapshot") != snapshot
@@ -336,6 +379,7 @@ def sidecar_candidates(
     tasks: list[dict[str, Any]],
     *,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -357,6 +401,7 @@ def sidecar_candidates(
         runtime_state,
         tasks,
         runnable_tasks=runnable_tasks,
+        provider_report=provider_report,
     )
     if snapshot["runnable_tasks"] > 0:
         return []
