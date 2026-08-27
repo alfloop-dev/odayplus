@@ -49,10 +49,11 @@
 ## 3. 驗證與測試結果
 
 ### 3.1 測試套件執行
-執行指令：
+執行指令（使用 repository `.venv`）：
 ```bash
-python3 -m pytest .orchestrator/test_capacity_controller.py -q
-python3 -m pytest .orchestrator/test_supervisor.py -k capacity -q
+.venv/bin/python3 -m pytest .orchestrator/test_capacity_controller.py -q
+.venv/bin/python3 -m pytest .orchestrator/test_supervisor.py -k capacity -q
+.venv/bin/python3 delivery_toolchain/governance/check_code_boundaries.py
 ```
 
 ### 3.2 測試項目清單
@@ -77,4 +78,4 @@ python3 -m pytest .orchestrator/test_supervisor.py -k capacity -q
 
 ============================== 22 passed ==============================
 ```
-全部 22 項相關測試 100% 通過；另已確認 `git diff --check` 通過，未修改 forbidden 的 Dispatcher 實作檔。
+全部 22 項相關測試 100% 通過；code boundary checks 982 個檔案通過，`git diff --check` 亦通過，未修改 forbidden 的 Dispatcher 實作檔。
