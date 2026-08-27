@@ -21,9 +21,7 @@ TRAFFIC_HELPER_PATH = ROOT / "product_ops/deployment/cloud_run_traffic.py"
 TRAFFIC_SHELL_HELPER = ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
 SCHEDULER_HELPER_PATH = ROOT / "product_ops/deployment/cloud_scheduler_trigger.py"
 DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
-WORKFLOWS = (
-    ROOT / ".github/workflows/deploy-dev.yml",
-)
+WORKFLOWS = (ROOT / ".github/workflows/deploy-dev.yml",)
 EXPECTED_SHA = "a" * 40
 
 spec = importlib.util.spec_from_file_location("cloud_run_live_validator", VALIDATOR_PATH)
@@ -706,99 +704,131 @@ def test_is_safe_protected_redirect_contract() -> None:
     web_url = "https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
 
     # Absolute HTTPS safe redirect
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"{web_url}/login?returnTo=%2Foperator"
-    ) is True
+    assert (
+        validator._is_safe_protected_redirect(web_url, 307, f"{web_url}/login?returnTo=%2Foperator")
+        is True
+    )
 
     # Relative safe redirect
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login?returnTo=%2Foperator"
-    ) is True
+    assert (
+        validator._is_safe_protected_redirect(web_url, 307, "/login?returnTo=%2Foperator") is True
+    )
 
     # Hostile scheme downgrade rejection (HTTPS base -> HTTP target must fail)
     http_web_url = "http://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"{http_web_url}/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, f"{http_web_url}/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # Hostile port mismatch rejection (default port 443 vs nondefault port 8443)
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"{web_url}:8443/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, f"{web_url}:8443/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # Malformed non-numeric port rejection (must fail closed, not raise ValueError)
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"{web_url}:bad/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, f"{web_url}:bad/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # Out-of-range port rejection (must fail closed, not raise ValueError)
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"{web_url}:99999/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, f"{web_url}:99999/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # Hostile userinfo rejection
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "https://user:pass@candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url,
+            307,
+            "https://user:pass@candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app/login?returnTo=%2Foperator",
+        )
+        is False
+    )
 
     # Hostile fragment rejection
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"{web_url}/login?returnTo=%2Foperator#hostile-fragment"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, f"{web_url}/login?returnTo=%2Foperator#hostile-fragment"
+        )
+        is False
+    )
 
     # Hostile external returnTo parameter rejection
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login?returnTo=https%3A%2F%2Fattacker.com"
-    ) is False
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login?returnTo=%2Fevil-path"
-    ) is False
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login?returnTo=%2Foperator%2Fextra"
-    ) is False
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login?returnTo=%252Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, "/login?returnTo=https%3A%2F%2Fattacker.com"
+        )
+        is False
+    )
+    assert (
+        validator._is_safe_protected_redirect(web_url, 307, "/login?returnTo=%2Fevil-path") is False
+    )
+    assert (
+        validator._is_safe_protected_redirect(web_url, 307, "/login?returnTo=%2Foperator%2Fextra")
+        is False
+    )
+    assert (
+        validator._is_safe_protected_redirect(web_url, 307, "/login?returnTo=%252Foperator")
+        is False
+    )
 
     # Hostile external origin rejection
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "https://attacker.com/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, "https://attacker.com/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # Hostile protocol-relative origin rejection
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "//attacker.com/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, "//attacker.com/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # Fail-closed: 200 OK (no redirect performed)
-    assert validator._is_safe_protected_redirect(
-        web_url, 200, None
-    ) is False
+    assert validator._is_safe_protected_redirect(web_url, 200, None) is False
 
     # Fail-closed: 200 OK carrying an otherwise valid login Location. Only the
     # status guard can reject this, unlike the (200, None) case above.
-    assert validator._is_safe_protected_redirect(
-        web_url, 200, "/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(web_url, 200, "/login?returnTo=%2Foperator") is False
+    )
 
     # Hostile scheme downgrade at a matching effective port. Only the scheme
     # guard can reject this, unlike the http:// case above (port 80 vs 443).
-    assert validator._is_safe_protected_redirect(
-        web_url,
-        307,
-        "http://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app:443"
-        "/login?returnTo=%2Foperator",
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url,
+            307,
+            "http://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app:443"
+            "/login?returnTo=%2Foperator",
+        )
+        is False
+    )
 
     # Redirect to wrong target path
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/dashboard?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(web_url, 307, "/dashboard?returnTo=%2Foperator")
+        is False
+    )
 
     # Redirect to /login without returnTo parameter
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login"
-    ) is False
+    assert validator._is_safe_protected_redirect(web_url, 307, "/login") is False
 
 
 def test_is_safe_protected_redirect_requires_a_redirect_status() -> None:
@@ -831,14 +861,20 @@ def test_is_safe_protected_redirect_rejects_scheme_downgrade_at_matching_port() 
     host = "candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app"
     web_url = f"https://{host}"
 
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"http://{host}:443/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, f"http://{host}:443/login?returnTo=%2Foperator"
+        )
+        is False
+    )
     # Control: identical URL over https is accepted, so the rejection above is
     # attributable to the scheme and nothing else.
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"https://{host}:443/login?returnTo=%2Foperator"
-    ) is True
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, f"https://{host}:443/login?returnTo=%2Foperator"
+        )
+        is True
+    )
 
 
 def test_is_safe_protected_redirect_accepts_default_ports_and_padded_headers() -> None:
@@ -854,19 +890,28 @@ def test_is_safe_protected_redirect_accepts_default_ports_and_padded_headers() -
     # Mutation target: _effective_port's http default. Every other case in this
     # file uses an https base, where both sides get the same default, so only an
     # http origin with an explicit :80 distinguishes 80 from any other value.
-    assert validator._is_safe_protected_redirect(
-        f"http://{host}:80", 307, "/login?returnTo=%2Foperator"
-    ) is True
-    assert validator._is_safe_protected_redirect(
-        f"http://{host}", 307, f"http://{host}:80/login?returnTo=%2Foperator"
-    ) is True
+    assert (
+        validator._is_safe_protected_redirect(
+            f"http://{host}:80", 307, "/login?returnTo=%2Foperator"
+        )
+        is True
+    )
+    assert (
+        validator._is_safe_protected_redirect(
+            f"http://{host}", 307, f"http://{host}:80/login?returnTo=%2Foperator"
+        )
+        is True
+    )
 
     # Mutation target: the location.strip() before urljoin. Surrounding
     # whitespace is legal header framing, and urlsplit does not strip a trailing
     # run inside the query, so an unstripped value loses the returnTo match.
-    assert validator._is_safe_protected_redirect(
-        f"https://{host}", 307, "  /login?returnTo=%2Foperator  "
-    ) is True
+    assert (
+        validator._is_safe_protected_redirect(
+            f"https://{host}", 307, "  /login?returnTo=%2Foperator  "
+        )
+        is True
+    )
 
 
 def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() -> None:
@@ -876,24 +921,34 @@ def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() 
     web_url = f"https://{host}"
 
     # Duplicate returnTo: the intended target is ambiguous, so reject.
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login?returnTo=%2Foperator&returnTo=%2Foperator"
-    ) is False
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login?returnTo=%2Foperator&returnTo=%2Fevil-path"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, "/login?returnTo=%2Foperator&returnTo=%2Foperator"
+        )
+        is False
+    )
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, "/login?returnTo=%2Foperator&returnTo=%2Fevil-path"
+        )
+        is False
+    )
 
     # A blank first returnTo smuggles the real one past a parser that drops
     # empty values: without keep_blank_values this collapses to a single valid
     # returnTo and the ambiguity guard never fires.
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "/login?returnTo=&returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(web_url, 307, "/login?returnTo=&returnTo=%2Foperator")
+        is False
+    )
 
     # Bare "@" delimiter with empty username/password still signals userinfo.
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, f"https://@{host}/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, f"https://@{host}/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # Missing / empty / whitespace-only Location header on a redirect status.
     assert validator._is_safe_protected_redirect(web_url, 307, None) is False
@@ -901,36 +956,44 @@ def test_is_safe_protected_redirect_rejects_ambiguous_or_unparsable_locations() 
     assert validator._is_safe_protected_redirect(web_url, 307, "   ") is False
 
     # Unparsable IPv6 literal must be caught, not raised.
-    assert validator._is_safe_protected_redirect(
-        web_url, 307, "https://[::1/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            web_url, 307, "https://[::1/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # A base web_url without a usable origin fails closed rather than matching
     # a same-shaped relative Location.
-    assert validator._is_safe_protected_redirect(
-        "candidate-host-without-scheme", 307, "/login?returnTo=%2Foperator"
-    ) is False
-    assert validator._is_safe_protected_redirect(
-        "", 307, "/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            "candidate-host-without-scheme", 307, "/login?returnTo=%2Foperator"
+        )
+        is False
+    )
+    assert validator._is_safe_protected_redirect("", 307, "/login?returnTo=%2Foperator") is False
 
     # Only http/https origins have a defined effective port, so a non-web
     # scheme fails closed even when scheme, host and path all agree.
-    assert validator._is_safe_protected_redirect(
-        f"ftp://{host}", 307, f"ftp://{host}/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(
+            f"ftp://{host}", 307, f"ftp://{host}/login?returnTo=%2Foperator"
+        )
+        is False
+    )
 
     # A base with a scheme but no host: base and target hostnames are both
     # empty, so only the explicit empty-host guard rejects this.
-    assert validator._is_safe_protected_redirect(
-        "https:", 307, "/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect("https:", 307, "/login?returnTo=%2Foperator") is False
+    )
 
     # A base with a host and an explicit port but no scheme: host and effective
     # port both match, so only the explicit empty-scheme guard rejects this.
-    assert validator._is_safe_protected_redirect(
-        f"//{host}:8443", 307, "/login?returnTo=%2Foperator"
-    ) is False
+    assert (
+        validator._is_safe_protected_redirect(f"//{host}:8443", 307, "/login?returnTo=%2Foperator")
+        is False
+    )
 
 
 def test_redact_location_masks_credentials_and_parameter_values() -> None:
@@ -980,9 +1043,10 @@ def test_redact_location_masks_credentials_and_parameter_values() -> None:
     )
 
     # Fragments are dropped to a marker; their presence stays diagnosable.
-    assert validator._redact_location(
-        f"https://{host}/login?returnTo=%2Foperator#token=leak"
-    ) == f"https://{host}/login?returnTo=%2Foperator#<redacted>"
+    assert (
+        validator._redact_location(f"https://{host}/login?returnTo=%2Foperator#token=leak")
+        == f"https://{host}/login?returnTo=%2Foperator#<redacted>"
+    )
 
     # Missing / malformed inputs render as markers instead of raising.
     assert validator._redact_location(None) == "<missing>"
@@ -1007,9 +1071,7 @@ def test_smoke_report_never_carries_a_raw_location_header(monkeypatch) -> None:
     def offline_json_request(url, *, headers, timeout):
         raise OSError("network disabled in this test")
 
-    monkeypatch.setattr(
-        validator, "_request_without_redirect", fake_request_without_redirect
-    )
+    monkeypatch.setattr(validator, "_request_without_redirect", fake_request_without_redirect)
     monkeypatch.setattr(validator, "_json_request", offline_json_request)
 
     checks, report = validator.smoke_checks(
@@ -1029,8 +1091,7 @@ def test_smoke_report_never_carries_a_raw_location_header(monkeypatch) -> None:
     assert "location" not in redirect_report
     assert redirect_report["protected_redirect"] is False
     assert redirect_report["location_redacted"] == (
-        "https://<redacted>@candidate-host.example/login"
-        "?returnTo=%2Foperator&session=<redacted>"
+        "https://<redacted>@candidate-host.example/login?returnTo=%2Foperator&session=<redacted>"
     )
 
     serialized = json.dumps(
@@ -2207,8 +2268,7 @@ fi
     fake_gcloud.chmod(0o755)
 
     command = (
-        f'source "{TRAFFIC_SHELL_HELPER}"\n'
-        f'restore_service_traffic "api-service" "{snapshot}"\n'
+        f'source "{TRAFFIC_SHELL_HELPER}"\nrestore_service_traffic "api-service" "{snapshot}"\n'
     )
     result = subprocess.run(
         ["bash", "-c", command],
@@ -2258,11 +2318,11 @@ def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
         'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
         f'  cat "{snapshot}"\n'
-        'fi\n',
+        "fi\n",
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2330,11 +2390,11 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
         'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
         f'  cat "{snapshot}"\n'
-        'fi\n',
+        "fi\n",
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2361,15 +2421,17 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     call = gcloud_log.read_text(encoding="utf-8")
     assert "--oidc-service-account-email=scheduler-sa@example.test" in call
-    assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run" in call
+    assert (
+        "--oidc-token-audience=https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run"
+        in call
+    )
     assert "--max-retry-attempts=3" in call
     assert "--min-backoff=10s" in call
     assert "--max-backoff=600s" in call
     # gcloud keeps only the last occurrence of the header dict flag, so every
     # restored header must arrive as one comma-separated map.
     assert (
-        "--update-headers=Content-Type=application/json,User-Agent=Google-Cloud-Scheduler"
-        in call
+        "--update-headers=Content-Type=application/json,User-Agent=Google-Cloud-Scheduler" in call
     )
     assert "--headers=Content-Type=application/json" not in call
 
@@ -2397,11 +2459,11 @@ def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
         'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
         f'  cat "{snapshot}"\n'
-        'fi\n',
+        "fi\n",
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
@@ -2503,25 +2565,25 @@ def test_scheduler_trigger_restore_partial_failure_continues_and_reports_diagnos
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'if [[ "$*" == *"trigger1"* && "$*" == *"update"* ]]; then\n'
         '  echo "Simulated error on trigger1" >&2\n'
-        '  exit 1\n'
-        'fi\n'
+        "  exit 1\n"
+        "fi\n"
         'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n'
         'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
         '  if [[ "$*" == *"trigger2"* ]]; then\n'
         f'    cat "{snap2}"\n'
-        '  else\n'
+        "  else\n"
         f'    cat "{snap1}"\n'
-        '  fi\n'
-        'fi\n',
+        "  fi\n"
+        "fi\n",
         encoding="utf-8",
     )
     fake_gcloud.chmod(0o755)
     command = (
         f'source "{TRAFFIC_SHELL_HELPER}"\n'
-        f'rollback_status=0\n'
+        f"rollback_status=0\n"
         f'restore_scheduler_trigger "trigger1" "{snap1}" || rollback_status=$?\n'
         f'restore_scheduler_trigger "trigger2" "{snap2}" || rollback_status=$?\n'
         f'exit "${{rollback_status}}"\n'
@@ -2570,11 +2632,11 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
         '  echo "gcloud describe error" >&2\n'
-        '  exit 1\n'
-        'fi\n'
+        "  exit 1\n"
+        "fi\n"
         'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
         encoding="utf-8",
     )
@@ -2600,7 +2662,10 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_describe_fails(
     )
 
     assert result.returncode != 0
-    assert "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger 'worker-trigger'." in result.stderr
+    assert (
+        "Error: failed to capture or validate readback snapshot for Cloud Scheduler trigger 'worker-trigger'."
+        in result.stderr
+    )
 
 
 def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
@@ -2639,11 +2704,11 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
     fake_bin.mkdir()
     fake_gcloud = fake_bin / "gcloud"
     fake_gcloud.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'if [[ "$*" == *"scheduler jobs describe"* && "$*" == *"--format=json"* ]]; then\n'
         f'  cat "{drifted_snapshot}"\n'
-        '  exit 0\n'
-        'fi\n'
+        "  exit 0\n"
+        "fi\n"
         'printf \'%s\\n\' "$*" >>"${GCLOUD_LOG}"\n',
         encoding="utf-8",
     )
@@ -2670,7 +2735,6 @@ def test_scheduler_trigger_restore_fails_closed_when_readback_drift_detected(
 
     assert result.returncode != 0
     assert "Error: trigger 'worker-trigger' readback configuration drift detected." in result.stderr
-
 
 
 def test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift() -> None:
@@ -2735,7 +2799,6 @@ def test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift(
 def test_web_image_carries_release_and_live_binding_metadata() -> None:
     dockerfile = (ROOT / "infra/docker/web.Dockerfile").read_text(encoding="utf-8")
 
-
     for token in (
         "ARG ODAY_RELEASE_SHA",
         "ARG ODP_REQUIRE_LIVE_DATA",
@@ -2754,7 +2817,8 @@ def test_worker_and_scheduler_images_use_bounded_job_entrypoint() -> None:
 
     for dockerfile in (worker, scheduler):
         assert (
-            'ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]' in dockerfile
+            'ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]'
+            in dockerfile
         )
         assert '"alembic>=1.13"' in dockerfile
         assert '"psycopg[binary,pool]>=3.2"' in dockerfile
@@ -5391,9 +5455,7 @@ def test_real_app_health_data_mode_matches_unchanged_deploy_validator(
         assert payload["status"] == "ok"
         assert payload["data_mode"] == "fixture"
         assert validator._declared_data_mode(payload) == "fixture"
-        assert not (
-            payload["status"] == "ok" and validator._declared_data_mode(payload) == "live"
-        )
+        assert not (payload["status"] == "ok" and validator._declared_data_mode(payload) == "live")
 
 
 def test_deploy_dev_workflow_documents_smoke_principal_least_privilege_composite_roles() -> None:
@@ -5442,7 +5504,9 @@ def test_preflight_rejects_projected_provider_secrets() -> None:
     by_name = {c.name: c for c in checks}
     assert "runtime:no_provider_secrets_projected" in by_name
     assert by_name["runtime:no_provider_secrets_projected"].ok is False
-    assert "ODP_POI_PROVIDER_API_KEY_SECRET" in by_name["runtime:no_provider_secrets_projected"].detail
+    assert (
+        "ODP_POI_PROVIDER_API_KEY_SECRET" in by_name["runtime:no_provider_secrets_projected"].detail
+    )
 
 
 def test_preflight_rejects_projected_provider_endpoints() -> None:
@@ -5591,7 +5655,10 @@ def test_preflight_dynamically_rejects_all_registered_provider_env_vars() -> Non
             )
             by_name = {c.name: c for c in checks}
             assert by_name["runtime:no_provider_endpoints_projected"].ok is False
-            assert provider.endpoint_env_var in by_name["runtime:no_provider_endpoints_projected"].detail
+            assert (
+                provider.endpoint_env_var
+                in by_name["runtime:no_provider_endpoints_projected"].detail
+            )
 
         for cred in provider.credentials:
             if cred.env_var:
@@ -5618,11 +5685,17 @@ def test_preflight_dynamically_rejects_all_registered_provider_env_vars() -> Non
                 )
                 by_name = {c.name: c for c in checks}
                 assert by_name["runtime:no_provider_auth_status_projected"].ok is False
-                assert cred.status_env_var in by_name["runtime:no_provider_auth_status_projected"].detail
+                assert (
+                    cred.status_env_var
+                    in by_name["runtime:no_provider_auth_status_projected"].detail
+                )
 
 
-def test_preflight_fails_closed_when_provider_registry_cannot_be_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preflight_fails_closed_when_provider_registry_cannot_be_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight fails closed and early-returns when PROVIDER_REGISTRY cannot be loaded."""
+
     def _failing_inventory(*_args: object, **_kwargs: object):
         raise RuntimeError("simulated PROVIDER_REGISTRY load failure")
 
@@ -5637,7 +5710,10 @@ def test_preflight_fails_closed_when_provider_registry_cannot_be_loaded(monkeypa
     by_name = {c.name: c for c in checks}
     assert "repository:provider_registry_inventory" in by_name
     assert by_name["repository:provider_registry_inventory"].ok is False
-    assert "simulated PROVIDER_REGISTRY load failure" in by_name["repository:provider_registry_inventory"].detail
+    assert (
+        "simulated PROVIDER_REGISTRY load failure"
+        in by_name["repository:provider_registry_inventory"].detail
+    )
     assert not all(c.ok for c in checks)
     assert checks[-1].name == "repository:provider_registry_inventory"
     # Verify early-return fail-closed behavior: downstream provider-off checks are not evaluated
@@ -5670,3 +5746,120 @@ def test_dynamic_provider_env_inventory_returns_exact_general_keys_and_registry_
     assert "ODP_POI_PROVIDER_API_KEY" in inv["secrets"]
     assert "ODP_POI_PROVIDER_URL" in inv["endpoints"]
     assert "ODP_POI_PROVIDER_AUTH_STATUS" in inv["auth_statuses"]
+
+
+# --- ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001 tests ---
+
+
+def _extract_cloud_run_service_deploy_block(script_text: str, service_var: str) -> str:
+    """Extract the gcloud run deploy command block for a specific service."""
+    marker = f'gcloud run deploy "${{{service_var}}}"'
+    start = script_text.find(marker)
+    if start == -1:
+        raise ValueError(f"Could not find deploy block for ${{{service_var}}}")
+    lines = script_text[start:].splitlines()
+    block_lines: list[str] = []
+    for line in lines:
+        block_lines.append(line)
+        if not line.rstrip().endswith("\\"):
+            break
+    return "\n".join(block_lines)
+
+
+def test_deploy_script_api_and_web_authentication_boundary_contract() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    - API deployment must explicitly use --no-allow-unauthenticated and must not use --allow-unauthenticated.
+    - Web deployment must use --allow-unauthenticated (as public entrypoint for OIDC login) and must not use --no-allow-unauthenticated.
+    - Both services deploy with --no-traffic and explicit revision tags.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    api_block = _extract_cloud_run_service_deploy_block(text, "API_SERVICE")
+    assert "--no-allow-unauthenticated" in api_block
+    assert "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
+    assert "--no-traffic" in api_block
+    assert '--tag="${API_REVISION_TAG}"' in api_block
+
+    web_block = _extract_cloud_run_service_deploy_block(text, "WEB_SERVICE")
+    assert "--allow-unauthenticated" in web_block
+    assert "--no-allow-unauthenticated" not in web_block
+    assert "--no-traffic" in web_block
+    assert '--tag="${WEB_REVISION_TAG}"' in web_block
+
+    # Across the entire script, exactly one service uses --no-allow-unauthenticated (API)
+    # and exactly one service uses --allow-unauthenticated (Web).
+    assert text.count("--no-allow-unauthenticated") == 1
+    assert text.count("--allow-unauthenticated") == 1
+
+
+@pytest.mark.parametrize(
+    "mutated_api_flag,mutated_web_flag,should_pass",
+    [
+        ("--no-allow-unauthenticated", "--allow-unauthenticated", True),
+        ("--allow-unauthenticated", "--allow-unauthenticated", False),
+        ("--no-allow-unauthenticated", "--no-allow-unauthenticated", False),
+        ("", "--allow-unauthenticated", False),
+        ("--no-allow-unauthenticated", "", False),
+    ],
+)
+def test_deploy_script_invoker_boundary_fails_closed_when_flags_tampered(
+    mutated_api_flag: str,
+    mutated_web_flag: str,
+    should_pass: bool,
+) -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Contract validation fails closed if either API or Web authentication flag is tampered with.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    mutated_text = text.replace(
+        "  --no-allow-unauthenticated \\\n",
+        f"  {mutated_api_flag} \\\n" if mutated_api_flag else "",
+        1,
+    ).replace(
+        "  --allow-unauthenticated \\\n",
+        f"  {mutated_web_flag} \\\n" if mutated_web_flag else "",
+        1,
+    )
+
+    api_block = _extract_cloud_run_service_deploy_block(mutated_text, "API_SERVICE")
+    web_block = _extract_cloud_run_service_deploy_block(mutated_text, "WEB_SERVICE")
+
+    api_ok = (
+        "--no-allow-unauthenticated" in api_block
+        and "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
+    )
+    web_ok = (
+        "--allow-unauthenticated" in web_block and "--no-allow-unauthenticated" not in web_block
+    )
+    is_valid = api_ok and web_ok
+    assert is_valid is should_pass
+
+
+def test_web_bff_iam_protected_api_audience_wiring_intact() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Web BFF service invokes IAM-protected API candidate using ODP_API_SERVICE_AUDIENCE and ODP_API_BASE_URL.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"' in text
+    assert 'python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<\'PY\'' in text
+    assert '"ODP_API_BASE_URL": sys.argv[2],' in text
+    assert '"ODP_API_SERVICE_AUDIENCE": sys.argv[3],' in text
+
+
+def test_no_duplicate_or_additional_deployment_entrypoints() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Deployments must go strictly through the single Runtime Release entrypoint.
+    No second deploy script or workflow may exist.
+    """
+    deploy_scripts = list((ROOT / "product_ops/deployment").glob("deploy_*.sh"))
+    assert len(deploy_scripts) == 1
+    assert deploy_scripts[0].name == "deploy_cloud_run_waji.sh"
+
+    workflows = list((ROOT / ".github/workflows").glob("deploy-*.yml"))
+    assert len(workflows) == 1
+    assert workflows[0].name == "deploy-dev.yml"

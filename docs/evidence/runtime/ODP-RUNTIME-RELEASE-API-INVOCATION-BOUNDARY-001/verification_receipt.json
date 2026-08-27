@@ -1,0 +1,28 @@
+{
+  "task_id": "ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001",
+  "timestamp": "2026-08-27T05:13:30Z",
+  "owner": "Antigravity",
+  "reviewer": "Codex",
+  "phase": "Wave 3 - OAuth-independent deployment hardening",
+  "artifacts": [
+    "product_ops/deployment/deploy_cloud_run_waji.sh",
+    "tests/ops/test_cloud_run_live_deployment.py",
+    "docs/evidence/runtime/ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001/README.md",
+    "docs/evidence/runtime/ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001/verification_receipt.json"
+  ],
+  "acceptance": {
+    "api_deployment_uses_no_allow_unauthenticated": "PASS",
+    "api_deployment_no_allow_unauthenticated_removed": "PASS",
+    "web_deployment_maintains_allow_unauthenticated": "PASS",
+    "web_bff_iam_protected_api_audience_wiring": "PASS",
+    "fail_closed_tamper_tests": "PASS",
+    "no_duplicate_or_second_deploy_path": "PASS"
+  },
+  "verification": {
+    "command": "uv run pytest tests/ops/test_cloud_run_live_deployment.py -q",
+    "result": "392 passed",
+    "ruff_check": "PASS",
+    "ruff_format": "PASS",
+    "bash_syntax_check": "PASS"
+  }
+}
