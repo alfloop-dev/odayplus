@@ -1,0 +1,1476 @@
+=== Cloud SQL dev/staging ===
+$ gcloud sql instances list --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "backendType": "SECOND_GEN",
+    "connectionName": "odayplus-runtime-20260825:asia-east1:oday-dev-sql",
+    "createTime": "2026-08-25T00:37:16.094Z",
+    "databaseInstalledVersion": "POSTGRES_16_14",
+    "databaseVersion": "POSTGRES_16",
+    "etag": "b2039ec8fc19e4381a554deb9b54debe17f03c395056d8f93077a00baa2e4b06",
+    "gceZone": "asia-east1-a",
+    "geminiConfig": {
+      "activeQueryEnabled": false,
+      "entitled": false,
+      "googleVacuumMgmtEnabled": false,
+      "indexAdvisorEnabled": false,
+      "oomSessionCancelEnabled": true
+    },
+    "includeReplicasForMajorVersionUpgrade": false,
+    "instanceType": "CLOUD_SQL_INSTANCE",
+    "ipAddresses": [
+      {
+        "ipAddress": "35.201.171.208",
+        "type": "PRIMARY"
+      },
+      {
+        "ipAddress": "34.80.15.39",
+        "type": "OUTGOING"
+      },
+      {
+        "ipAddress": "10.50.0.3",
+        "type": "PRIVATE"
+      }
+    ],
+    "kind": "sql#instance",
+    "maintenanceVersion": "POSTGRES_16_14.R20260712.01_06",
+    "name": "oday-dev-sql",
+    "project": "odayplus-runtime-20260825",
+    "region": "asia-east1",
+    "satisfiesPzi": false,
+    "selfLink": "https://sqladmin.googleapis.com/sql/v1beta4/projects/odayplus-runtime-20260825/instances/oday-dev-sql",
+    "serverCaCert": {
+      "cert": "-----BEGIN CERTIFICATE-----\nMIIDcTCCAlmgAwIBAgIBADANBgkqhkiG9w0BAQsFADBwMS0wKwYDVQQuEyQ4MTE1\nNzU4ZS0wOGZmLTQ0ZGMtYjY3Mi1mN2E5YzA4MzA0MWYxHDAaBgNVBAMTE0Nsb3Vk\nIFNRTCBTZXJ2ZXIgQ0ExFDASBgNVBAoTC0dvb2dsZSwgSW5jMQswCQYDVQQGEwJV\nUzAeFw0yNjA4MjUwMDM4MDZaFw0zNjA4MjIwMDM5MDZaMHAxLTArBgNVBC4TJDgx\nMTU3NThlLTA4ZmYtNDRkYy1iNjcyLWY3YTljMDgzMDQxZjEcMBoGA1UEAxMTQ2xv\ndWQgU1FMIFNlcnZlciBDQTEUMBIGA1UEChMLR29vZ2xlLCBJbmMxCzAJBgNVBAYT\nAlVTMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuUm2AThNGYqMD86J\nn89EYAShvyHKFZzaynV1JQfIX7gfRllugxUhLOE/N+TwNdZtwq92YKjEZhZNlP6o\ngbVB7haeZCjS1g60bRqM36XeamivgksYzFWnVMgh7quNHsilIflbnGVhJth+N2kV\n5J93ZOYWaHMF+C3BNIACKMCB8BkNngWrpaICOBeAgNlyFh6AViVuvkcwgU0qvW1R\noIbeWYi0z9a4XF7U6zyEkUxFdkr3oIC5fO0Ygr2AHpwflfQrE9XWsePBU8vy1bjF\nFECfffsvOSI7Xm9PXodc6d3omG2ap7ZUC5Npgcv59l5Np9MDo4Gf3a2C/TvkZwAv\nwnspsQIDAQABoxYwFDASBgNVHRMBAf8ECDAGAQH/AgEAMA0GCSqGSIb3DQEBCwUA\nA4IBAQC5GlNifwJKIrYyW1hfQCEJegnu1Qs6RXKvZYZy2T+JynBH75BDnnUx7OnD\nuXa9WbSj/6imrbiKSGimZbQMGVIBVX3eQHamEVXxW6S3iRRzFWuJ57wMqFS1/lwo\nmiPjRO54dlbBCxGc9oyQ+DK3z68/1LA7R2OJiZSU+KpOj/lELCxkUHmAS7Ictz1S\nGFFtKDXz09WzTn03+7snxVKXL3GMf0pNi6WyoOqVlFMTLbrRHaMVYir3Kk+HB8xX\niCOuTzG22httI7uPwOP1Z5+7GA+ZkJX99j6v9a/tF++qFD+PPyOwynrTJTpxlavV\n1wHBzSdiJI+JUmz7w8gIUiPMqv3A\n-----END CERTIFICATE-----",
+      "certSerialNumber": "0",
+      "commonName": "C=US,O=Google\\, Inc,CN=Cloud SQL Server CA,dnQualifier=8115758e-08ff-44dc-b672-f7a9c083041f",
+      "createTime": "2026-08-25T00:38:06.225Z",
+      "expirationTime": "2036-08-22T00:39:06.225Z",
+      "instance": "oday-dev-sql",
+      "kind": "sql#sslCert",
+      "sha1Fingerprint": "d6ddcab5f04deb4e188fcb3d74e004734c845b6e"
+    },
+    "serviceAccountEmailAddress": "p767864276141-1z0csp@gcp-sa-cloud-sql.iam.gserviceaccount.com",
+    "settings": {
+      "activationPolicy": "ALWAYS",
+      "availabilityType": "ZONAL",
+      "backupConfiguration": {
+        "backupRetentionSettings": {
+          "retainedBackups": 7,
+          "retentionUnit": "COUNT"
+        },
+        "backupTier": "STANDARD",
+        "enabled": true,
+        "kind": "sql#backupConfiguration",
+        "pointInTimeRecoveryEnabled": true,
+        "replicationLogArchivingEnabled": true,
+        "startTime": "18:00",
+        "transactionLogRetentionDays": 7,
+        "transactionalLogStorageState": "CLOUD_STORAGE"
+      },
+      "connectorEnforcement": "NOT_REQUIRED",
+      "dataDiskSizeGb": "10",
+      "dataDiskType": "PD_SSD",
+      "deletionProtectionEnabled": false,
+      "edition": "ENTERPRISE",
+      "enableDataplexIntegration": true,
+      "ipConfiguration": {
+        "ipv4Enabled": true,
+        "privateNetwork": "projects/odayplus-runtime-20260825/global/networks/default",
+        "requireSsl": false,
+        "serverCaMode": "GOOGLE_MANAGED_INTERNAL_CA",
+        "serverCertificateRotationMode": "SERVER_CERTIFICATE_ROTATION_MODE_UNSPECIFIED",
+        "sslMode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
+      },
+      "kind": "sql#settings",
+      "locationPreference": {
+        "kind": "sql#locationPreference",
+        "zone": "asia-east1-a"
+      },
+      "pricingPlan": "PER_USE",
+      "replicationLagMaxSeconds": 31536000,
+      "replicationType": "SYNCHRONOUS",
+      "settingsVersion": "11",
+      "storageAutoResize": true,
+      "storageAutoResizeLimit": "0",
+      "tier": "db-f1-micro"
+    },
+    "sqlNetworkArchitecture": "NEW_NETWORK_ARCHITECTURE",
+    "state": "RUNNABLE"
+  },
+  {
+    "backendType": "SECOND_GEN",
+    "connectionName": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
+    "createTime": "2026-08-26T00:51:14.754Z",
+    "databaseInstalledVersion": "POSTGRES_16_14",
+    "databaseVersion": "POSTGRES_16",
+    "etag": "3ec5fb9110aacb1fc75f761f31ff3233bd86a008bc3ad1145d69e991b7b81b70",
+    "gceZone": "asia-east1-a",
+    "geminiConfig": {
+      "activeQueryEnabled": false,
+      "entitled": false,
+      "googleVacuumMgmtEnabled": false,
+      "indexAdvisorEnabled": false,
+      "oomSessionCancelEnabled": true
+    },
+    "includeReplicasForMajorVersionUpgrade": false,
+    "instanceType": "CLOUD_SQL_INSTANCE",
+    "ipAddresses": [
+      {
+        "ipAddress": "10.50.0.5",
+        "type": "PRIVATE"
+      }
+    ],
+    "kind": "sql#instance",
+    "maintenanceVersion": "POSTGRES_16_14.R20260712.01_06",
+    "name": "oday-staging-sql",
+    "project": "odayplus-runtime-20260825",
+    "region": "asia-east1",
+    "satisfiesPzi": true,
+    "selfLink": "https://sqladmin.googleapis.com/sql/v1beta4/projects/odayplus-runtime-20260825/instances/oday-staging-sql",
+    "serverCaCert": {
+      "cert": "-----BEGIN CERTIFICATE-----\nMIIDcTCCAlmgAwIBAgIBADANBgkqhkiG9w0BAQsFADBwMS0wKwYDVQQuEyRiN2Ex\nYjU1OS04YjRkLTQyOTEtOWVhMC1mZDk1OTI5MmQ4ZTAxHDAaBgNVBAMTE0Nsb3Vk\nIFNRTCBTZXJ2ZXIgQ0ExFDASBgNVBAoTC0dvb2dsZSwgSW5jMQswCQYDVQQGEwJV\nUzAeFw0yNjA4MjYwMDUyNDZaFw0zNjA4MjMwMDUzNDZaMHAxLTArBgNVBC4TJGI3\nYTFiNTU5LThiNGQtNDI5MS05ZWEwLWZkOTU5MjkyZDhlMDEcMBoGA1UEAxMTQ2xv\ndWQgU1FMIFNlcnZlciBDQTEUMBIGA1UEChMLR29vZ2xlLCBJbmMxCzAJBgNVBAYT\nAlVTMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoyeW//a7d8C+iYkk\nkmFtxIt+zhGxAOUJv575Ksf61U45spnKsGP8I4WpXLj7Gu5NAzeP2X72bPDrD1Dx\nL5j6hToYKd3Dss/lnHTToFEGGl7QlvdvryIBLfuAOzt9vcjgFpnUvpvu6vdivlLo\nP7qJi8lhc4HOmStY9Har2eRHbZm+7W8oMYQNIAlNu/C1Kuf55Q+VvOPPV1PzXbq8\nhpyG+scVcZtvVvusok+/I32I4TZ1SktTjm/2Z+OMo4A/ZVrSr87+wheARqxL7Geq\nt4ATfWRlGvxNfde21/rxW8qMO2ZiU42CvE2bK12L1VjWGAdTVE1vtSQILkWV5J7S\neUF0aQIDAQABoxYwFDASBgNVHRMBAf8ECDAGAQH/AgEAMA0GCSqGSIb3DQEBCwUA\nA4IBAQCetAnXedTzhWIdWOnzsK6NnQhOSNe/P1EOpuiGJLMZybOx7j9KGAAf7l0v\nu2Zp0UHAQPA43hJcs+9ntPasMiIjwZz39bPa1YaULZLfxOfQZzqZAFqCNAlO93bY\nZOBWmpEUws1hU2rwO/YHvfDfQFM4wKnXOmgOfISVqIx4C8rRWX8hoQc4jk6jKPDF\noJrWdXaOhC6pB8Fayiu96Efd18DpuFTrtG1EqTUrXavN/dxRvIvtDPtTVQt79XC0\nai4snO8PtLBySoaQPZDtUP1p6+xMb22ROrBI4tGNCEniavhU/nCakAGTFrGdLFQr\nQX3r/bofOpGdPB9glqL6SSRROURl\n-----END CERTIFICATE-----",
+      "certSerialNumber": "0",
+      "commonName": "C=US,O=Google\\, Inc,CN=Cloud SQL Server CA,dnQualifier=b7a1b559-8b4d-4291-9ea0-fd959292d8e0",
+      "createTime": "2026-08-26T00:52:46.855Z",
+      "expirationTime": "2036-08-23T00:53:46.855Z",
+      "instance": "oday-staging-sql",
+      "kind": "sql#sslCert",
+      "sha1Fingerprint": "a73157888e6ba5c2cc04097d3b30035965ffa8a1"
+    },
+    "serviceAccountEmailAddress": "p767864276141-tyo52a@gcp-sa-cloud-sql.iam.gserviceaccount.com",
+    "settings": {
+      "activationPolicy": "ALWAYS",
+      "availabilityType": "ZONAL",
+      "backupConfiguration": {
+        "backupRetentionSettings": {
+          "retainedBackups": 7,
+          "retentionUnit": "COUNT"
+        },
+        "backupTier": "STANDARD",
+        "enabled": true,
+        "kind": "sql#backupConfiguration",
+        "pointInTimeRecoveryEnabled": true,
+        "replicationLogArchivingEnabled": true,
+        "startTime": "19:00",
+        "transactionLogRetentionDays": 7,
+        "transactionalLogStorageState": "CLOUD_STORAGE"
+      },
+      "connectorEnforcement": "NOT_REQUIRED",
+      "dataDiskSizeGb": "20",
+      "dataDiskType": "PD_SSD",
+      "deletionProtectionEnabled": false,
+      "edition": "ENTERPRISE",
+      "enableDataplexIntegration": true,
+      "ipConfiguration": {
+        "ipv4Enabled": false,
+        "privateNetwork": "projects/odayplus-runtime-20260825/global/networks/default",
+        "requireSsl": false,
+        "serverCaMode": "GOOGLE_MANAGED_INTERNAL_CA",
+        "serverCertificateRotationMode": "SERVER_CERTIFICATE_ROTATION_MODE_UNSPECIFIED",
+        "sslMode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
+      },
+      "kind": "sql#settings",
+      "locationPreference": {
+        "kind": "sql#locationPreference",
+        "zone": "asia-east1-a"
+      },
+      "pricingPlan": "PER_USE",
+      "replicationLagMaxSeconds": 31536000,
+      "replicationType": "SYNCHRONOUS",
+      "settingsVersion": "5",
+      "storageAutoResize": true,
+      "storageAutoResizeLimit": "0",
+      "tier": "db-f1-micro"
+    },
+    "sqlNetworkArchitecture": "NEW_NETWORK_ARCHITECTURE",
+    "state": "RUNNABLE"
+  }
+]
+
+
+=== Cloud SQL prod ===
+$ gcloud sql instances list --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "backendType": "SECOND_GEN",
+    "connectionName": "odayplus-prod-20260826:asia-east1:oday-prod-sql",
+    "createTime": "2026-08-26T01:54:27.493Z",
+    "databaseInstalledVersion": "POSTGRES_16_14",
+    "databaseVersion": "POSTGRES_16",
+    "etag": "d8b935c4c3fa4738ba3532739494df1fb9ba0d8eaa2262cd34f34b8929616338",
+    "gceZone": "asia-east1-a",
+    "geminiConfig": {
+      "activeQueryEnabled": false,
+      "entitled": false,
+      "googleVacuumMgmtEnabled": false,
+      "indexAdvisorEnabled": false,
+      "oomSessionCancelEnabled": true
+    },
+    "includeReplicasForMajorVersionUpgrade": false,
+    "instanceType": "CLOUD_SQL_INSTANCE",
+    "ipAddresses": [
+      {
+        "ipAddress": "34.81.148.88",
+        "type": "PRIMARY"
+      },
+      {
+        "ipAddress": "34.80.196.123",
+        "type": "OUTGOING"
+      }
+    ],
+    "kind": "sql#instance",
+    "maintenanceVersion": "POSTGRES_16_14.R20260712.01_06",
+    "name": "oday-prod-sql",
+    "project": "odayplus-prod-20260826",
+    "region": "asia-east1",
+    "satisfiesPzi": true,
+    "selfLink": "https://sqladmin.googleapis.com/sql/v1beta4/projects/odayplus-prod-20260826/instances/oday-prod-sql",
+    "serverCaCert": {
+      "cert": "-----BEGIN CERTIFICATE-----\nMIIDcTCCAlmgAwIBAgIBADANBgkqhkiG9w0BAQsFADBwMS0wKwYDVQQuEyQ4NTI2\nOTM0OC02ZTU2LTRhYTQtYmQ2Yy1jZjQyZTQ1MzJmYzcxHDAaBgNVBAMTE0Nsb3Vk\nIFNRTCBTZXJ2ZXIgQ0ExFDASBgNVBAoTC0dvb2dsZSwgSW5jMQswCQYDVQQGEwJV\nUzAeFw0yNjA4MjYwMTU1MjJaFw0zNjA4MjMwMTU2MjJaMHAxLTArBgNVBC4TJDg1\nMjY5MzQ4LTZlNTYtNGFhNC1iZDZjLWNmNDJlNDUzMmZjNzEcMBoGA1UEAxMTQ2xv\ndWQgU1FMIFNlcnZlciBDQTEUMBIGA1UEChMLR29vZ2xlLCBJbmMxCzAJBgNVBAYT\nAlVTMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxRLkPRGDMHECJD1K\nV1soMoqBOVCsUGwnXUxwOeomnC/n3NLC8HQiI7Dk8YZ7RAJ9tDuze5C84rHKd+tx\n6NBkr7Tc0Sk3PUYCe2vk3sfeOp39+dpUPUXrQirZjcwBdfMSWiTKeigaOBjd5ljl\nyp0K8lmdJNyJ4STEwHHPa2TXvQZzYQQYkcS9O/Q1Z2PK7VEAtGoVCdb0qOcJq10G\nscDU2F9+PxE3CHLQc3yx2OzoRwgXLZ0E0Z5XBAgXBUCYgTkD1/nCIScoMO55+twu\nqPyQEI32p4r0PZv8eC8JNPkpMyojBhbeBEAXmW0P4YtdvEX7ok3d0a3kBOe5/ykN\nvdulbwIDAQABoxYwFDASBgNVHRMBAf8ECDAGAQH/AgEAMA0GCSqGSIb3DQEBCwUA\nA4IBAQAzkkid402t6y3eanUa8zg1JX1g+oHYSNhWo3Ypq0jcM1nhwm6YpWUBJGIu\ngHHB4bljKkcrBebCShkP2kMNUYUeze/S4LpUMIz/k3VRp8JvZ+b2EbJzCfjhj62C\ncLU3wzFNd5yDrrKpxZwgNr0XiC/XFoRspyY40Nq94BCfE4Omtuq1IsI2JjeI4jvW\nTqAWmghtPJNnZ9lI97jbQ/fH5JJl7Ssp9knSuIVeBjobiFvFTu1rKeFldS4TnYug\n7UmjI8zq9lL78KRve2fCO+e8gg4lu6OodGzSvQOmUXIVuauQVSn7DHCasiQwD5PI\nhh33ShAoyfmnfCZu4n6ylZDM4dAY\n-----END CERTIFICATE-----",
+      "certSerialNumber": "0",
+      "commonName": "C=US,O=Google\\, Inc,CN=Cloud SQL Server CA,dnQualifier=85269348-6e56-4aa4-bd6c-cf42e4532fc7",
+      "createTime": "2026-08-26T01:55:22.004Z",
+      "expirationTime": "2036-08-23T01:56:22.004Z",
+      "instance": "oday-prod-sql",
+      "kind": "sql#sslCert",
+      "sha1Fingerprint": "791629155d523eaa8a9f4409d43966c3581c928a"
+    },
+    "serviceAccountEmailAddress": "p365886461656-12o7o3@gcp-sa-cloud-sql.iam.gserviceaccount.com",
+    "settings": {
+      "activationPolicy": "ALWAYS",
+      "availabilityType": "ZONAL",
+      "backupConfiguration": {
+        "backupRetentionSettings": {
+          "retainedBackups": 7,
+          "retentionUnit": "COUNT"
+        },
+        "backupTier": "STANDARD",
+        "enabled": true,
+        "kind": "sql#backupConfiguration",
+        "pointInTimeRecoveryEnabled": true,
+        "replicationLogArchivingEnabled": true,
+        "startTime": "03:00",
+        "transactionLogRetentionDays": 7,
+        "transactionalLogStorageState": "CLOUD_STORAGE"
+      },
+      "connectorEnforcement": "NOT_REQUIRED",
+      "dataDiskSizeGb": "10",
+      "dataDiskType": "PD_SSD",
+      "deletionProtectionEnabled": false,
+      "edition": "ENTERPRISE",
+      "enableDataplexIntegration": true,
+      "ipConfiguration": {
+        "ipv4Enabled": true,
+        "requireSsl": false,
+        "serverCaMode": "GOOGLE_MANAGED_INTERNAL_CA",
+        "serverCertificateRotationMode": "SERVER_CERTIFICATE_ROTATION_MODE_UNSPECIFIED",
+        "sslMode": "ALLOW_UNENCRYPTED_AND_ENCRYPTED"
+      },
+      "kind": "sql#settings",
+      "locationPreference": {
+        "kind": "sql#locationPreference",
+        "zone": "asia-east1-a"
+      },
+      "pricingPlan": "PER_USE",
+      "replicationLagMaxSeconds": 31536000,
+      "replicationType": "SYNCHRONOUS",
+      "settingsVersion": "5",
+      "storageAutoResize": true,
+      "storageAutoResizeLimit": "0",
+      "tier": "db-f1-micro"
+    },
+    "sqlNetworkArchitecture": "NEW_NETWORK_ARCHITECTURE",
+    "state": "RUNNABLE"
+  }
+]
+
+
+=== Cloud Run services dev/staging ===
+$ gcloud run services list --project=odayplus-runtime-20260825 --region=asia-east1 --format=json
+[
+  {
+    "apiVersion": "serving.knative.dev/v1",
+    "kind": "Service",
+    "metadata": {
+      "annotations": {
+        "run.googleapis.com/client-name": "gcloud",
+        "run.googleapis.com/client-version": "580.0.0",
+        "run.googleapis.com/ingress": "all",
+        "run.googleapis.com/ingress-status": "all",
+        "run.googleapis.com/maxScale": "2",
+        "run.googleapis.com/operation-id": "51071aeb-5baa-4659-8c60-8501643102b1",
+        "run.googleapis.com/urls": "[\"https://oday-mlflow-767864276141.asia-east1.run.app\",\"https://oday-mlflow-2l6wuyl67q-de.a.run.app\"]",
+        "serving.knative.dev/creator": "deborah.lu@dev.cctech-support.com",
+        "serving.knative.dev/lastModifier": "deborah.lu@dev.cctech-support.com"
+      },
+      "creationTimestamp": "2026-08-25T10:28:00.218501Z",
+      "generation": 3,
+      "labels": {
+        "cloud.googleapis.com/location": "asia-east1"
+      },
+      "name": "oday-mlflow",
+      "namespace": "767864276141",
+      "resourceVersion": "AAZZ3JzuIIQ",
+      "selfLink": "/apis/serving.knative.dev/v1/namespaces/767864276141/services/oday-mlflow",
+      "uid": "073c6252-4286-4471-ad6d-a0fc5b3a42b3"
+    },
+    "spec": {
+      "template": {
+        "metadata": {
+          "annotations": {
+            "autoscaling.knative.dev/maxScale": "20",
+            "run.googleapis.com/client-name": "gcloud",
+            "run.googleapis.com/client-version": "580.0.0",
+            "run.googleapis.com/cloudsql-instances": "odayplus-runtime-20260825:asia-east1:oday-dev-sql",
+            "run.googleapis.com/startup-cpu-boost": "true"
+          },
+          "labels": {
+            "client.knative.dev/nonce": "cpslufatcd",
+            "run.googleapis.com/startupProbeType": "Default"
+          }
+        },
+        "spec": {
+          "containerConcurrency": 80,
+          "containers": [
+            {
+              "env": [
+                {
+                  "name": "MLFLOW_DEFAULT_ARTIFACT_ROOT",
+                  "value": "gs://odayplus-runtime-20260825-model-artifacts/mlflow"
+                },
+                {
+                  "name": "MLFLOW_ALLOWED_HOSTS",
+                  "value": "oday-mlflow-767864276141.asia-east1.run.app,oday-mlflow-2l6wuyl67q-de.a.run.app"
+                },
+                {
+                  "name": "MLFLOW_TRACKING_URI",
+                  "value": "https://oday-mlflow-767864276141.asia-east1.run.app"
+                },
+                {
+                  "name": "ODP_MLFLOW_CLOUD_SQL_INSTANCE",
+                  "value": "odayplus-runtime-20260825:asia-east1:oday-dev-sql"
+                },
+                {
+                  "name": "MLFLOW_WORKERS",
+                  "value": "2"
+                },
+                {
+                  "name": "MLFLOW_BACKEND_STORE_URI",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "latest",
+                      "name": "oday-plus-dev-mlflow-backend-uri"
+                    }
+                  }
+                }
+              ],
+              "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow@sha256:da3cbc2b0625f3a398901db30fd1e45d416cbcd2d9981f6072234a673c65fbf9",
+              "ports": [
+                {
+                  "containerPort": 5000,
+                  "name": "http1"
+                }
+              ],
+              "resources": {
+                "limits": {
+                  "cpu": "1",
+                  "memory": "1Gi"
+                }
+              },
+              "startupProbe": {
+                "failureThreshold": 1,
+                "periodSeconds": 240,
+                "tcpSocket": {
+                  "port": 5000
+                },
+                "timeoutSeconds": 240
+              }
+            }
+          ],
+          "serviceAccountName": "gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "timeoutSeconds": 300
+        }
+      },
+      "traffic": [
+        {
+          "latestRevision": true,
+          "percent": 100
+        }
+      ]
+    },
+    "status": {
+      "address": {
+        "url": "https://oday-mlflow-2l6wuyl67q-de.a.run.app"
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-08-25T10:32:00.792708Z",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-08-25T10:31:30.174892Z",
+          "status": "True",
+          "type": "ConfigurationsReady"
+        },
+        {
+          "lastTransitionTime": "2026-08-25T10:32:00.762639Z",
+          "status": "True",
+          "type": "RoutesReady"
+        }
+      ],
+      "latestCreatedRevisionName": "oday-mlflow-00003-h4p",
+      "latestReadyRevisionName": "oday-mlflow-00003-h4p",
+      "observedGeneration": 3,
+      "traffic": [
+        {
+          "latestRevision": true,
+          "percent": 100,
+          "revisionName": "oday-mlflow-00003-h4p"
+        }
+      ],
+      "url": "https://oday-mlflow-2l6wuyl67q-de.a.run.app"
+    }
+  },
+  {
+    "apiVersion": "serving.knative.dev/v1",
+    "kind": "Service",
+    "metadata": {
+      "annotations": {
+        "run.googleapis.com/client-name": "gcloud",
+        "run.googleapis.com/client-version": "580.0.0",
+        "run.googleapis.com/ingress": "all",
+        "run.googleapis.com/ingress-status": "all",
+        "run.googleapis.com/maxScale": "2",
+        "run.googleapis.com/operation-id": "b54051c9-ff7c-4d63-8bc2-a1a9751f0346",
+        "run.googleapis.com/urls": "[\"https://oday-staging-mlflow-767864276141.asia-east1.run.app\",\"https://oday-staging-mlflow-2l6wuyl67q-de.a.run.app\"]",
+        "serving.knative.dev/creator": "deborah.lu@dev.cctech-support.com",
+        "serving.knative.dev/lastModifier": "deborah.lu@dev.cctech-support.com"
+      },
+      "creationTimestamp": "2026-08-26T02:26:02.961213Z",
+      "generation": 3,
+      "labels": {
+        "cloud.googleapis.com/location": "asia-east1"
+      },
+      "name": "oday-staging-mlflow",
+      "namespace": "767864276141",
+      "resourceVersion": "AAZZ6g3TRtY",
+      "selfLink": "/apis/serving.knative.dev/v1/namespaces/767864276141/services/oday-staging-mlflow",
+      "uid": "e106cd4e-dbbe-4eea-afd3-68f0f93c8091"
+    },
+    "spec": {
+      "template": {
+        "metadata": {
+          "annotations": {
+            "autoscaling.knative.dev/maxScale": "20",
+            "run.googleapis.com/client-name": "gcloud",
+            "run.googleapis.com/client-version": "580.0.0",
+            "run.googleapis.com/cloudsql-instances": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
+            "run.googleapis.com/startup-cpu-boost": "true",
+            "run.googleapis.com/vpc-access-connector": "oday-staging-vpc",
+            "run.googleapis.com/vpc-access-egress": "private-ranges-only"
+          },
+          "labels": {
+            "client.knative.dev/nonce": "axczaazwtm",
+            "run.googleapis.com/startupProbeType": "Default"
+          }
+        },
+        "spec": {
+          "containerConcurrency": 80,
+          "containers": [
+            {
+              "env": [
+                {
+                  "name": "MLFLOW_BACKEND_STORE_URI",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "1",
+                      "name": "oday-staging-mlflow-backend-uri"
+                    }
+                  }
+                },
+                {
+                  "name": "MLFLOW_DEFAULT_ARTIFACT_ROOT",
+                  "value": "gs://odayplus-runtime-20260825-staging-mlflow-artifacts/mlflow"
+                },
+                {
+                  "name": "MLFLOW_TRACKING_URI",
+                  "value": "https://oday-staging-mlflow-767864276141.asia-east1.run.app"
+                },
+                {
+                  "name": "MLFLOW_ALLOWED_HOSTS",
+                  "value": "oday-staging-mlflow-767864276141.asia-east1.run.app"
+                },
+                {
+                  "name": "ODP_MLFLOW_CLOUD_SQL_INSTANCE",
+                  "value": "odayplus-runtime-20260825:asia-east1:oday-staging-sql"
+                },
+                {
+                  "name": "MLFLOW_WORKERS",
+                  "value": "2"
+                }
+              ],
+              "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6",
+              "ports": [
+                {
+                  "containerPort": 5000,
+                  "name": "http1"
+                }
+              ],
+              "resources": {
+                "limits": {
+                  "cpu": "1",
+                  "memory": "2Gi"
+                }
+              },
+              "startupProbe": {
+                "failureThreshold": 1,
+                "periodSeconds": 240,
+                "tcpSocket": {
+                  "port": 5000
+                },
+                "timeoutSeconds": 240
+              }
+            }
+          ],
+          "serviceAccountName": "oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "timeoutSeconds": 300
+        }
+      },
+      "traffic": [
+        {
+          "latestRevision": true,
+          "percent": 100
+        }
+      ]
+    },
+    "status": {
+      "address": {
+        "url": "https://oday-staging-mlflow-2l6wuyl67q-de.a.run.app"
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-08-26T02:34:09.433302Z",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-08-26T02:33:33.065946Z",
+          "status": "True",
+          "type": "ConfigurationsReady"
+        },
+        {
+          "lastTransitionTime": "2026-08-26T02:34:09.410741Z",
+          "status": "True",
+          "type": "RoutesReady"
+        }
+      ],
+      "latestCreatedRevisionName": "oday-staging-mlflow-00003-bm6",
+      "latestReadyRevisionName": "oday-staging-mlflow-00003-bm6",
+      "observedGeneration": 3,
+      "traffic": [
+        {
+          "latestRevision": true,
+          "percent": 100,
+          "revisionName": "oday-staging-mlflow-00003-bm6"
+        }
+      ],
+      "url": "https://oday-staging-mlflow-2l6wuyl67q-de.a.run.app"
+    }
+  }
+]
+
+
+=== Cloud Run services prod ===
+$ gcloud run services list --project=odayplus-prod-20260826 --region=asia-east1 --format=json
+[
+  {
+    "apiVersion": "serving.knative.dev/v1",
+    "kind": "Service",
+    "metadata": {
+      "annotations": {
+        "run.googleapis.com/client-name": "gcloud",
+        "run.googleapis.com/client-version": "580.0.0",
+        "run.googleapis.com/ingress": "all",
+        "run.googleapis.com/ingress-status": "all",
+        "run.googleapis.com/maxScale": "2",
+        "run.googleapis.com/operation-id": "84a91a5e-7958-40b5-b8e7-b0f572792b84",
+        "run.googleapis.com/urls": "[\"https://oday-prod-mlflow-365886461656.asia-east1.run.app\",\"https://oday-prod-mlflow-icm6xhajsa-de.a.run.app\"]",
+        "serving.knative.dev/creator": "deborah.lu@dev.cctech-support.com",
+        "serving.knative.dev/lastModifier": "deborah.lu@dev.cctech-support.com"
+      },
+      "creationTimestamp": "2026-08-26T02:21:37.224832Z",
+      "generation": 3,
+      "labels": {
+        "cloud.googleapis.com/location": "asia-east1"
+      },
+      "name": "oday-prod-mlflow",
+      "namespace": "365886461656",
+      "resourceVersion": "AAZZ6esweOM",
+      "selfLink": "/apis/serving.knative.dev/v1/namespaces/365886461656/services/oday-prod-mlflow",
+      "uid": "ecafcb7c-4d9a-4f74-8531-1f547533ae71"
+    },
+    "spec": {
+      "template": {
+        "metadata": {
+          "annotations": {
+            "autoscaling.knative.dev/maxScale": "20",
+            "run.googleapis.com/client-name": "gcloud",
+            "run.googleapis.com/client-version": "580.0.0",
+            "run.googleapis.com/cloudsql-instances": "odayplus-prod-20260826:asia-east1:oday-prod-sql",
+            "run.googleapis.com/startup-cpu-boost": "true"
+          },
+          "labels": {
+            "client.knative.dev/nonce": "vubuqcklio",
+            "run.googleapis.com/startupProbeType": "Default"
+          }
+        },
+        "spec": {
+          "containerConcurrency": 80,
+          "containers": [
+            {
+              "env": [
+                {
+                  "name": "MLFLOW_BACKEND_STORE_URI",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "1",
+                      "name": "oday-prod-mlflow-backend-uri"
+                    }
+                  }
+                },
+                {
+                  "name": "MLFLOW_DEFAULT_ARTIFACT_ROOT",
+                  "value": "gs://odayplus-prod-20260826-mlflow-artifacts/mlflow"
+                },
+                {
+                  "name": "MLFLOW_TRACKING_URI",
+                  "value": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"
+                },
+                {
+                  "name": "MLFLOW_ALLOWED_HOSTS",
+                  "value": "oday-prod-mlflow-icm6xhajsa-de.a.run.app"
+                },
+                {
+                  "name": "ODP_MLFLOW_CLOUD_SQL_INSTANCE",
+                  "value": "odayplus-prod-20260826:asia-east1:oday-prod-sql"
+                },
+                {
+                  "name": "MLFLOW_WORKERS",
+                  "value": "2"
+                }
+              ],
+              "image": "asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6",
+              "ports": [
+                {
+                  "containerPort": 5000,
+                  "name": "http1"
+                }
+              ],
+              "resources": {
+                "limits": {
+                  "cpu": "1",
+                  "memory": "2Gi"
+                }
+              },
+              "startupProbe": {
+                "failureThreshold": 1,
+                "periodSeconds": 240,
+                "tcpSocket": {
+                  "port": 5000
+                },
+                "timeoutSeconds": 240
+              }
+            }
+          ],
+          "serviceAccountName": "oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com",
+          "timeoutSeconds": 300
+        }
+      },
+      "traffic": [
+        {
+          "latestRevision": true,
+          "percent": 100
+        }
+      ]
+    },
+    "status": {
+      "address": {
+        "url": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"
+      },
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-08-26T02:24:28.338403Z",
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "lastTransitionTime": "2026-08-26T02:23:56.306047Z",
+          "status": "True",
+          "type": "ConfigurationsReady"
+        },
+        {
+          "lastTransitionTime": "2026-08-26T02:24:28.310720Z",
+          "status": "True",
+          "type": "RoutesReady"
+        }
+      ],
+      "latestCreatedRevisionName": "oday-prod-mlflow-00003-pf8",
+      "latestReadyRevisionName": "oday-prod-mlflow-00003-pf8",
+      "observedGeneration": 3,
+      "traffic": [
+        {
+          "latestRevision": true,
+          "percent": 100,
+          "revisionName": "oday-prod-mlflow-00003-pf8"
+        }
+      ],
+      "url": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"
+    }
+  }
+]
+
+
+=== Storage buckets dev/staging ===
+$ gcloud storage buckets list --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "creation_time": "2026-08-25T00:35:22+0000",
+    "default_storage_class": "STANDARD",
+    "generation": 1787618121696374664,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 3,
+    "name": "oday-dev-source-snapshots-odayplus-runtime-20260825",
+    "public_access_prevention": "inherited",
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-25T00:35:22.348000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://oday-dev-source-snapshots-odayplus-runtime-20260825/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-25T00:36:55+0000",
+    "versioning_enabled": true
+  },
+  {
+    "creation_time": "2026-08-26T01:07:21+0000",
+    "default_kms_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
+    "default_storage_class": "STANDARD",
+    "generation": 1787706440705960472,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 4,
+    "name": "oday-staging-source-snapshots-odayplus-runtime-20260825",
+    "public_access_prevention": "enforced",
+    "retention_policy": {
+      "effectiveTime": "2026-08-26T01:08:23.061000+00:00",
+      "retentionPeriod": "86400"
+    },
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-26T01:07:21.402000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://oday-staging-source-snapshots-odayplus-runtime-20260825/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-26T01:10:32+0000",
+    "versioning_enabled": true
+  },
+  {
+    "creation_time": "2026-08-25T11:10:48+0000",
+    "default_storage_class": "STANDARD",
+    "generation": 1787656247526922408,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 6,
+    "name": "odayplus-runtime-20260825-emgi",
+    "public_access_prevention": "inherited",
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-25T11:10:48.254000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://odayplus-runtime-20260825-emgi/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-25T11:41:52+0000"
+  },
+  {
+    "creation_time": "2026-08-25T00:43:59+0000",
+    "default_storage_class": "STANDARD",
+    "generation": 1787618638808845451,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 3,
+    "name": "odayplus-runtime-20260825-model-artifacts",
+    "public_access_prevention": "inherited",
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-25T00:43:59.488000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://odayplus-runtime-20260825-model-artifacts/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-25T00:44:03+0000",
+    "versioning_enabled": true
+  },
+  {
+    "creation_time": "2026-08-26T02:14:33+0000",
+    "default_storage_class": "STANDARD",
+    "generation": 1787710473164500893,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 3,
+    "name": "odayplus-runtime-20260825-release-leases",
+    "public_access_prevention": "enforced",
+    "retention_policy": {
+      "effectiveTime": "2026-08-26T02:15:35.550000+00:00",
+      "retentionPeriod": "604800"
+    },
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-26T02:14:33.835000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://odayplus-runtime-20260825-release-leases/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-26T02:14:37+0000",
+    "versioning_enabled": true
+  },
+  {
+    "creation_time": "2026-08-26T02:25:27+0000",
+    "default_storage_class": "STANDARD",
+    "generation": 1787711126931127822,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 3,
+    "name": "odayplus-runtime-20260825-staging-mlflow-artifacts",
+    "public_access_prevention": "enforced",
+    "retention_policy": {
+      "effectiveTime": "2026-08-26T02:26:29.367000+00:00",
+      "retentionPeriod": "86400"
+    },
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-26T02:25:27.616000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://odayplus-runtime-20260825-staging-mlflow-artifacts/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-26T02:25:31+0000",
+    "versioning_enabled": true
+  }
+]
+
+
+=== Storage buckets prod ===
+$ gcloud storage buckets list --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "creation_time": "2026-08-26T01:03:37+0000",
+    "default_kms_key": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
+    "default_storage_class": "STANDARD",
+    "generation": 1787706217014218586,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 3,
+    "name": "odayplus-prod-20260826-artifacts",
+    "public_access_prevention": "enforced",
+    "retention_policy": {
+      "effectiveTime": "2026-08-26T01:04:47.379000+00:00",
+      "retentionPeriod": "604800"
+    },
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-26T01:03:37.180000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://odayplus-prod-20260826-artifacts/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-26T02:48:18+0000",
+    "versioning_enabled": true
+  },
+  {
+    "creation_time": "2026-08-26T02:20:45+0000",
+    "default_storage_class": "STANDARD",
+    "generation": 1787710844866447853,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 3,
+    "name": "odayplus-prod-20260826-mlflow-artifacts",
+    "public_access_prevention": "enforced",
+    "retention_policy": {
+      "effectiveTime": "2026-08-26T02:21:47.213000+00:00",
+      "retentionPeriod": "86400"
+    },
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-26T02:20:45.431000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://odayplus-prod-20260826-mlflow-artifacts/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-26T02:20:49+0000",
+    "versioning_enabled": true
+  },
+  {
+    "creation_time": "2026-08-26T02:14:42+0000",
+    "default_storage_class": "STANDARD",
+    "generation": 1787710481896161439,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 3,
+    "name": "odayplus-prod-20260826-release-leases",
+    "public_access_prevention": "enforced",
+    "retention_policy": {
+      "effectiveTime": "2026-08-26T02:15:44.111000+00:00",
+      "retentionPeriod": "604800"
+    },
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-26T02:14:42.494000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://odayplus-prod-20260826-release-leases/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-26T02:14:46+0000",
+    "versioning_enabled": true
+  },
+  {
+    "creation_time": "2026-08-26T01:03:53+0000",
+    "default_kms_key": "projects/odayplus-prod-20260826/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
+    "default_storage_class": "STANDARD",
+    "generation": 1787706232357623539,
+    "location": "ASIA-EAST1",
+    "location_type": "region",
+    "metageneration": 3,
+    "name": "odayplus-prod-20260826-source-snapshots",
+    "public_access_prevention": "enforced",
+    "retention_policy": {
+      "effectiveTime": "2026-08-26T01:04:54.794000+00:00",
+      "retentionPeriod": "604800"
+    },
+    "soft_delete_policy": {
+      "effectiveTime": "2026-08-26T01:03:53.107000+00:00",
+      "retentionDurationSeconds": "604800"
+    },
+    "storage_url": "gs://odayplus-prod-20260826-source-snapshots/",
+    "uniform_bucket_level_access": true,
+    "update_time": "2026-08-26T02:48:16+0000",
+    "versioning_enabled": true
+  }
+]
+
+
+=== VPC access connector dev/staging ===
+$ gcloud compute networks vpc-access connectors list --region=asia-east1 --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "connectedProjects": [
+      "odayplus-runtime-20260825"
+    ],
+    "ipCidrRange": "10.8.0.0/28",
+    "machineType": "e2-micro",
+    "maxInstances": 3,
+    "maxThroughput": 300,
+    "minInstances": 2,
+    "minThroughput": 200,
+    "name": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc",
+    "network": "default",
+    "state": "READY"
+  }
+]
+
+
+=== Service accounts dev/staging ===
+$ gcloud iam service-accounts list --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "disabled": false,
+    "displayName": "ODay Plus staging Cloud Scheduler",
+    "email": "oday-staging-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/oday-staging-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "100615004683314674379",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "100615004683314674379"
+  },
+  {
+    "disabled": false,
+    "displayName": "Default compute service account",
+    "email": "767864276141-compute@developer.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/767864276141-compute@developer.gserviceaccount.com",
+    "oauth2ClientId": "111720118495590906744",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "111720118495590906744"
+  },
+  {
+    "disabled": false,
+    "displayName": "EMGI GKE runtime",
+    "email": "gke-oday-emgi-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/gke-oday-emgi-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "104521550963315919521",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "104521550963315919521"
+  },
+  {
+    "disabled": false,
+    "displayName": "GitHub data platform image publisher",
+    "email": "ci-image-publisher@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/ci-image-publisher@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "116415333534290810380",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "116415333534290810380"
+  },
+  {
+    "disabled": false,
+    "displayName": "GitHub Actions deployer",
+    "email": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "105055954881480121269",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "105055954881480121269"
+  },
+  {
+    "disabled": false,
+    "displayName": "ODay Plus staging runtime",
+    "email": "oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "113458678939942503753",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "113458678939942503753"
+  },
+  {
+    "disabled": false,
+    "displayName": "GitHub EMGI GKE deployer",
+    "email": "cd-gke-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/cd-gke-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "102759212801447452375",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "102759212801447452375"
+  },
+  {
+    "disabled": false,
+    "displayName": "ODay Plus dev scheduler",
+    "email": "oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "102048349936136555411",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "102048349936136555411"
+  },
+  {
+    "disabled": false,
+    "displayName": "ODay Plus dev runtime",
+    "email": "gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "114367830586860243914",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "114367830586860243914"
+  },
+  {
+    "disabled": false,
+    "displayName": "ODay Plus dev smoke operator",
+    "email": "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-runtime-20260825/serviceAccounts/oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "oauth2ClientId": "106898637126232088368",
+    "projectId": "odayplus-runtime-20260825",
+    "uniqueId": "106898637126232088368"
+  }
+]
+
+
+=== Service accounts prod ===
+$ gcloud iam service-accounts list --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "disabled": false,
+    "displayName": "ODay Plus production scheduler",
+    "email": "oday-prod-scheduler@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-prod-20260826/serviceAccounts/oday-prod-scheduler@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "oauth2ClientId": "110342625425960413640",
+    "projectId": "odayplus-prod-20260826",
+    "uniqueId": "110342625425960413640"
+  },
+  {
+    "disabled": false,
+    "displayName": "Default compute service account",
+    "email": "365886461656-compute@developer.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-prod-20260826/serviceAccounts/365886461656-compute@developer.gserviceaccount.com",
+    "oauth2ClientId": "103202334724980969899",
+    "projectId": "odayplus-prod-20260826",
+    "uniqueId": "103202334724980969899"
+  },
+  {
+    "disabled": false,
+    "displayName": "ODay Plus GitHub Actions deployer",
+    "email": "github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-prod-20260826/serviceAccounts/github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "oauth2ClientId": "104088866381097513494",
+    "projectId": "odayplus-prod-20260826",
+    "uniqueId": "104088866381097513494"
+  },
+  {
+    "disabled": false,
+    "displayName": "ODay Plus production smoke operator",
+    "email": "oday-prod-smoke-operator@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-prod-20260826/serviceAccounts/oday-prod-smoke-operator@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "oauth2ClientId": "115219773121101906030",
+    "projectId": "odayplus-prod-20260826",
+    "uniqueId": "115219773121101906030"
+  },
+  {
+    "disabled": false,
+    "displayName": "ODay Plus production runtime",
+    "email": "oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "etag": "MDEwMjE5MjA=",
+    "name": "projects/odayplus-prod-20260826/serviceAccounts/oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com",
+    "oauth2ClientId": "108855015049322612433",
+    "projectId": "odayplus-prod-20260826",
+    "uniqueId": "108855015049322612433"
+  }
+]
+
+
+=== Artifact Registry repos dev/staging ===
+$ gcloud artifacts repositories list --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "createTime": "2026-08-25T00:35:33.651836Z",
+    "description": "ODay Plus dev release images",
+    "format": "DOCKER",
+    "mode": "STANDARD_REPOSITORY",
+    "name": "projects/odayplus-runtime-20260825/locations/asia-east1/repositories/oday-plus-dev",
+    "satisfiesPzi": true,
+    "sizeBytes": "5095005873",
+    "updateTime": "2026-08-26T19:21:10.488424Z",
+    "vulnerabilityScanningConfig": {
+      "enablementState": "SCANNING_DISABLED",
+      "enablementStateReason": "API containerscanning.googleapis.com is not enabled.",
+      "lastEnableTime": "2026-08-25T00:35:21.008587346Z"
+    }
+  }
+]
+
+
+=== Artifact Registry repos prod ===
+$ gcloud artifacts repositories list --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "createTime": "2026-08-26T00:47:44.220637Z",
+    "description": "ODay Plus immutable runtime images",
+    "format": "DOCKER",
+    "mode": "STANDARD_REPOSITORY",
+    "name": "projects/odayplus-prod-20260826/locations/asia-east1/repositories/oday-plus",
+    "satisfiesPzi": true,
+    "sizeBytes": "1693727267",
+    "updateTime": "2026-08-26T02:21:11.818608Z",
+    "vulnerabilityScanningConfig": {
+      "enablementState": "SCANNING_DISABLED",
+      "enablementStateReason": "API containerscanning.googleapis.com is not enabled.",
+      "lastEnableTime": "2026-08-26T00:47:29.230486763Z"
+    }
+  }
+]
+
+
+=== WIF dev/staging ===
+$ gcloud iam workload-identity-pools providers list --workload-identity-pool=github-actions --location=global --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "attributeCondition": "assertion.repository == 'alfloop-dev/oday-data-platform'",
+    "attributeMapping": {
+      "attribute.actor": "assertion.actor",
+      "attribute.repository": "assertion.repository",
+      "google.subject": "assertion.sub"
+    },
+    "name": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/oday-data-platform",
+    "oidc": {
+      "issuerUri": "https://token.actions.githubusercontent.com"
+    },
+    "state": "ACTIVE"
+  },
+  {
+    "attributeCondition": "assertion.repository == 'alfloop-dev/odayplus'",
+    "attributeMapping": {
+      "attribute.actor": "assertion.actor",
+      "attribute.aud": "assertion.aud",
+      "attribute.repository": "assertion.repository",
+      "google.subject": "assertion.sub"
+    },
+    "displayName": "ODay Plus GitHub provider",
+    "name": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+    "oidc": {
+      "issuerUri": "https://token.actions.githubusercontent.com"
+    },
+    "state": "ACTIVE"
+  }
+]
+
+
+=== WIF prod ===
+$ gcloud iam workload-identity-pools providers list --workload-identity-pool=github-actions --location=global --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "attributeCondition": "assertion.repository == 'alfloop-dev/odayplus'",
+    "attributeMapping": {
+      "attribute.actor": "assertion.actor",
+      "attribute.ref": "assertion.ref",
+      "attribute.repository": "assertion.repository",
+      "google.subject": "assertion.sub"
+    },
+    "displayName": "ODay Plus GitHub provider",
+    "name": "projects/365886461656/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+    "oidc": {
+      "issuerUri": "https://token.actions.githubusercontent.com"
+    },
+    "state": "ACTIVE"
+  }
+]
+
+
+=== Secret versions dev/staging: oday-dev-web-oidc-client-secret ===
+$ gcloud secrets versions list oday-dev-web-oidc-client-secret --project=odayplus-runtime-20260825 --format=json
+[]
+
+
+=== Secret versions dev/staging: oday-plus-dev-api-database-url-pg16 ===
+$ gcloud secrets versions list oday-plus-dev-api-database-url-pg16 --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-25T00:44:13.311021Z",
+    "etag": "\"1659d466d3102d\"",
+    "name": "projects/767864276141/secrets/oday-plus-dev-api-database-url-pg16/versions/1",
+    "replicationStatus": {
+      "automatic": {}
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions dev/staging: oday-plus-dev-auth-principal-map ===
+$ gcloud secrets versions list oday-plus-dev-auth-principal-map --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-25T00:37:35.906729Z",
+    "etag": "\"1659d44f2327a9\"",
+    "name": "projects/767864276141/secrets/oday-plus-dev-auth-principal-map/versions/1",
+    "replicationStatus": {
+      "automatic": {}
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions dev/staging: oday-plus-dev-mlflow-backend-uri ===
+$ gcloud secrets versions list oday-plus-dev-mlflow-backend-uri --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-25T00:44:16.317173Z",
+    "etag": "\"1659d46700eef5\"",
+    "name": "projects/767864276141/secrets/oday-plus-dev-mlflow-backend-uri/versions/1",
+    "replicationStatus": {
+      "automatic": {}
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions dev/staging: oday-plus-dev-web-session-secret ===
+$ gcloud secrets versions list oday-plus-dev-web-session-secret --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-25T00:37:38.175832Z",
+    "etag": "\"1659d44f45c758\"",
+    "name": "projects/767864276141/secrets/oday-plus-dev-web-session-secret/versions/1",
+    "replicationStatus": {
+      "automatic": {}
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions dev/staging: oday-staging-auth-principal-map ===
+$ gcloud secrets versions list oday-staging-auth-principal-map --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-26T01:00:15.930434Z",
+    "etag": "\"1659e8be0ad842\"",
+    "name": "projects/767864276141/secrets/oday-staging-auth-principal-map/versions/1",
+    "replicationStatus": {
+      "userManaged": {
+        "replicas": [
+          {
+            "location": "asia-east1"
+          }
+        ]
+      }
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions dev/staging: oday-staging-database-url ===
+$ gcloud secrets versions list oday-staging-database-url --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-26T00:59:32.406654Z",
+    "etag": "\"1659e8bb72b97e\"",
+    "name": "projects/767864276141/secrets/oday-staging-database-url/versions/1",
+    "replicationStatus": {
+      "userManaged": {
+        "replicas": [
+          {
+            "location": "asia-east1"
+          }
+        ]
+      }
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions dev/staging: oday-staging-mlflow-backend-uri ===
+$ gcloud secrets versions list oday-staging-mlflow-backend-uri --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-26T02:25:22.723100Z",
+    "etag": "\"1659e9ee6e511c\"",
+    "name": "projects/767864276141/secrets/oday-staging-mlflow-backend-uri/versions/1",
+    "replicationStatus": {
+      "automatic": {}
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions dev/staging: oday-staging-web-oidc-client-secret ===
+$ gcloud secrets versions list oday-staging-web-oidc-client-secret --project=odayplus-runtime-20260825 --format=json
+[]
+
+
+=== Secret versions dev/staging: oday-staging-web-session-secret ===
+$ gcloud secrets versions list oday-staging-web-session-secret --project=odayplus-runtime-20260825 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-26T01:00:33.838880Z",
+    "etag": "\"1659e8bf1c1b20\"",
+    "name": "projects/767864276141/secrets/oday-staging-web-session-secret/versions/1",
+    "replicationStatus": {
+      "userManaged": {
+        "replicas": [
+          {
+            "location": "asia-east1"
+          }
+        ]
+      }
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions prod: oday-prod-auth-principal-map ===
+$ gcloud secrets versions list oday-prod-auth-principal-map --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-26T02:03:57.924245Z",
+    "etag": "\"1659e9a1d9d795\"",
+    "name": "projects/365886461656/secrets/oday-prod-auth-principal-map/versions/1",
+    "replicationStatus": {
+      "userManaged": {
+        "replicas": [
+          {
+            "location": "asia-east1"
+          }
+        ]
+      }
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions prod: oday-prod-database-url ===
+$ gcloud secrets versions list oday-prod-database-url --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-26T02:07:36.113761Z",
+    "etag": "\"1659e9aedb2661\"",
+    "name": "projects/365886461656/secrets/oday-prod-database-url/versions/1",
+    "replicationStatus": {
+      "userManaged": {
+        "replicas": [
+          {
+            "location": "asia-east1"
+          }
+        ]
+      }
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions prod: oday-prod-mlflow-backend-uri ===
+$ gcloud secrets versions list oday-prod-mlflow-backend-uri --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-26T02:20:41.186782Z",
+    "etag": "\"1659e9dda669de\"",
+    "name": "projects/365886461656/secrets/oday-prod-mlflow-backend-uri/versions/1",
+    "replicationStatus": {
+      "automatic": {}
+    },
+    "state": "ENABLED"
+  }
+]
+
+
+=== Secret versions prod: oday-prod-web-oidc-client-secret ===
+$ gcloud secrets versions list oday-prod-web-oidc-client-secret --project=odayplus-prod-20260826 --format=json
+[]
+
+
+=== Secret versions prod: oday-prod-web-session-secret ===
+$ gcloud secrets versions list oday-prod-web-session-secret --project=odayplus-prod-20260826 --format=json
+[
+  {
+    "clientSpecifiedPayloadChecksum": true,
+    "createTime": "2026-08-26T02:04:02.656717Z",
+    "etag": "\"1659e9a2220dcd\"",
+    "name": "projects/365886461656/secrets/oday-prod-web-session-secret/versions/1",
+    "replicationStatus": {
+      "userManaged": {
+        "replicas": [
+          {
+            "location": "asia-east1"
+          }
+        ]
+      }
+    },
+    "state": "ENABLED"
+  }
+]
+
