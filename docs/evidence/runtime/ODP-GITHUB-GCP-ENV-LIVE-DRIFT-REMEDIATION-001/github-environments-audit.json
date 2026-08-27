@@ -175,7 +175,7 @@
         {
           "name": "ODP_RELEASE_LEASE_PUBLIC_KEY",
           "present": true,
-          "value_sha256": "b0f424eee9b56e4ab9650cc7ab868b11cc906680ee9840832e99fe4e42607550",
+          "value_sha256": "06be9e93ea7b9f70993f5781f4fcab7a88836f9e3f2b4bb839c5b36b2c2e422e",
           "classification": "storage_and_state"
         },
         {
@@ -431,7 +431,7 @@
         {
           "name": "ODP_RELEASE_LEASE_PUBLIC_KEY",
           "present": true,
-          "value_sha256": "b0f424eee9b56e4ab9650cc7ab868b11cc906680ee9840832e99fe4e42607550",
+          "value_sha256": "06be9e93ea7b9f70993f5781f4fcab7a88836f9e3f2b4bb839c5b36b2c2e422e",
           "classification": "storage_and_state"
         },
         {
@@ -705,7 +705,7 @@
         {
           "name": "ODP_RELEASE_LEASE_PUBLIC_KEY",
           "present": true,
-          "value_sha256": "b0f424eee9b56e4ab9650cc7ab868b11cc906680ee9840832e99fe4e42607550",
+          "value_sha256": "06be9e93ea7b9f70993f5781f4fcab7a88836f9e3f2b4bb839c5b36b2c2e422e",
           "classification": "storage_and_state"
         },
         {
