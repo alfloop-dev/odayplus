@@ -587,7 +587,7 @@ def test_adapter_persists_dispatched_pool_in_worker_metadata(tmp_path):
     assert result.metadata[mr.WORKER_MODEL_REASON_KEY] == "ordinary_single_module_or_unclassified"
     assert spawn.call_args.args[0][spawn.call_args.args[0].index("--model") + 1] == "gemini-3.7-flash-high"
     command = spawn.call_args.args[0]
-    assert command[command.index("--print-timeout") + 1] == "168h"
+    assert command[command.index("--print-timeout") + 1] == "2h"
 
     mr.record_exhaustion(config, "antigravity5", 900, pool="gemini")
     result, spawn = _deliver(config, tmp_path)
@@ -633,6 +633,20 @@ def test_adapter_hard_print_timeout_wins_and_legacy_key_remains_compatible(tmp_p
     settings.pop("hard_print_timeout")
     _, spawn = _deliver(config, tmp_path)
     command = spawn.call_args.args[0]
+    assert command[command.index("--print-timeout") + 1] == "2h"
+
+    settings.pop("print_timeout", None)
+    _, spawn = _deliver(config, tmp_path)
+    command = spawn.call_args.args[0]
+    assert command[command.index("--print-timeout") + 1] == "2h"
+
+
+def test_adapter_default_hard_print_timeout_is_2h(tmp_path):
+    _isolate(tmp_path)
+    config = _adapter_config(tmp_path)
+    _, spawn = _deliver(config, tmp_path)
+    command = spawn.call_args.args[0]
+    assert "--print-timeout" in command
     assert command[command.index("--print-timeout") + 1] == "2h"
 
 
