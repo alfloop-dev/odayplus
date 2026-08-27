@@ -2774,6 +2774,17 @@ def test_docker_python_runtime_images_install_from_frozen_uv_lock() -> None:
         assert path.is_file(), f"Missing live Dockerfile for {role}: {path}"
         content = path.read_text(encoding="utf-8")
 
+        # Must copy uv from an immutable digest, rejecting mutable :latest
+        assert "COPY --from=ghcr.io/astral-sh/uv" in content, (
+            f"{role}.Dockerfile must copy uv binary from ghcr.io/astral-sh/uv"
+        )
+        assert ":latest" not in content, (
+            f"{role}.Dockerfile must not use mutable :latest tag for uv or base images"
+        )
+        assert "@sha256:" in content, (
+            f"{role}.Dockerfile must pin uv to an explicit immutable digest"
+        )
+
         # Must copy both pyproject.toml and uv.lock
         assert "COPY pyproject.toml uv.lock ./" in content, (
             f"{role}.Dockerfile must copy pyproject.toml and uv.lock"
@@ -2784,9 +2795,16 @@ def test_docker_python_runtime_images_install_from_frozen_uv_lock() -> None:
             f"{role}.Dockerfile must export dependencies with --frozen from uv.lock"
         )
 
-        # Must use locked install with require-hashes
-        assert "--require-hashes" in content or "pip install --no-cache-dir -r" in content, (
-            f"{role}.Dockerfile must install with hash verification"
+        # Must use canonical locked install with require-hashes
+        assert (
+            "uv pip install --no-cache --system --require-hashes -r" in content
+        ), (
+            f"{role}.Dockerfile must install via canonical 'uv pip install --no-cache --system --require-hashes -r'"
+        )
+
+        # Must clean up temporary requirements file
+        assert "rm -f /tmp/requirements.txt" in content, (
+            f"{role}.Dockerfile must clean up temporary /tmp/requirements.txt"
         )
 
         # Must not parse pyproject.toml at build time directly or hand-pin individual packages
