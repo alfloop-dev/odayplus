@@ -2754,12 +2754,56 @@ def test_worker_and_scheduler_images_use_bounded_job_entrypoint() -> None:
 
     for dockerfile in (worker, scheduler):
         assert (
-            'ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]' in dockerfile
+            'ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]'
+            in dockerfile
         )
-        assert '"alembic>=1.13"' in dockerfile
-        assert '"psycopg[binary,pool]>=3.2"' in dockerfile
     assert 'CMD ["worker", "--max-jobs", "100"]' in worker
     assert 'CMD ["scheduler"]' in scheduler
+
+
+def test_docker_python_runtime_images_install_from_frozen_uv_lock() -> None:
+    """Contract: API, worker, scheduler runtime images only install from uv.lock frozen resolution."""
+    live_dockerfiles = {
+        "api": ROOT / "infra/docker/api.Dockerfile",
+        "worker": ROOT / "infra/docker/worker.Dockerfile",
+        "scheduler": ROOT / "infra/docker/scheduler.Dockerfile",
+    }
+
+    # Verify canonical three live Python Dockerfiles exist
+    for role, path in live_dockerfiles.items():
+        assert path.is_file(), f"Missing live Dockerfile for {role}: {path}"
+        content = path.read_text(encoding="utf-8")
+
+        # Must copy both pyproject.toml and uv.lock
+        assert "COPY pyproject.toml uv.lock ./" in content, (
+            f"{role}.Dockerfile must copy pyproject.toml and uv.lock"
+        )
+
+        # Must use frozen export from uv.lock
+        assert "uv export --frozen --no-dev --no-emit-project" in content, (
+            f"{role}.Dockerfile must export dependencies with --frozen from uv.lock"
+        )
+
+        # Must use locked install with require-hashes
+        assert "--require-hashes" in content or "pip install --no-cache-dir -r" in content, (
+            f"{role}.Dockerfile must install with hash verification"
+        )
+
+        # Must not parse pyproject.toml at build time directly or hand-pin individual packages
+        assert "tomllib.load" not in content, (
+            f"{role}.Dockerfile must not parse pyproject.toml dependencies dynamically"
+        )
+        assert '"alembic>=' not in content, (
+            f"{role}.Dockerfile must not hand-pin alembic; uv.lock is authority"
+        )
+        assert '"psycopg[binary,pool]>=' not in content, (
+            f"{role}.Dockerfile must not hand-pin psycopg; uv.lock is authority"
+        )
+
+    # No parallel requirements files maintained in infra/docker
+    docker_dir = ROOT / "infra/docker"
+    parallel_reqs = list(docker_dir.glob("*requirements*.txt"))
+    assert not parallel_reqs, f"Found parallel requirements files: {parallel_reqs}"
 
 
 # Deploy Dev run 30376737123 selected exactly these three providers, so

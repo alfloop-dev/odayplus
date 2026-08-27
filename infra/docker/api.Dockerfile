@@ -10,14 +10,14 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
-# Runtime deps are installed straight from pyproject's [project] dependencies so
-# this image can never drift out of sync with the code. A hand-maintained list
-# here previously omitted deps that product code imported (e.g. httpx via the
-# listing-feed adapter), crashing the API on boot and failing the E2E gate.
-COPY pyproject.toml ./
-RUN python -c "import tomllib, pathlib; deps = tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; pathlib.Path('/tmp/req.txt').write_text(chr(10).join(deps))" \
-    && pip install --no-cache-dir -r /tmp/req.txt \
-    && rm -f /tmp/req.txt
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Runtime deps are resolved and locked strictly from uv.lock frozen resolution
+# so this image is deterministic and cannot drift across builds.
+COPY pyproject.toml uv.lock ./
+RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt \
+    && uv pip install --no-cache --system --require-hashes -r /tmp/requirements.txt \
+    && rm -f /tmp/requirements.txt
 
 # App source (node_modules/.next/etc. excluded via .dockerignore).
 COPY . .

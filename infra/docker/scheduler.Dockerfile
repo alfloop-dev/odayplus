@@ -6,10 +6,14 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONPATH=/app
 
-COPY pyproject.toml ./
-RUN python -c "import tomllib, pathlib; deps = tomllib.load(open('pyproject.toml','rb'))['project']['dependencies']; pathlib.Path('/tmp/req.txt').write_text(chr(10).join(deps))" \
-    && pip install --no-cache-dir -r /tmp/req.txt "alembic>=1.13" "psycopg[binary,pool]>=3.2" \
-    && rm -f /tmp/req.txt
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Runtime deps are resolved and locked strictly from uv.lock frozen resolution
+# so this image is deterministic and cannot drift across builds.
+COPY pyproject.toml uv.lock ./
+RUN uv export --frozen --no-dev --no-emit-project -o /tmp/requirements.txt \
+    && uv pip install --no-cache --system --require-hashes -r /tmp/requirements.txt \
+    && rm -f /tmp/requirements.txt
 
 COPY . .
 
