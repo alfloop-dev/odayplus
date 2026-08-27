@@ -5670,3 +5670,121 @@ def test_dynamic_provider_env_inventory_returns_exact_general_keys_and_registry_
     assert "ODP_POI_PROVIDER_API_KEY" in inv["secrets"]
     assert "ODP_POI_PROVIDER_URL" in inv["endpoints"]
     assert "ODP_POI_PROVIDER_AUTH_STATUS" in inv["auth_statuses"]
+
+
+# --- ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001 tests ---
+
+
+def _extract_cloud_run_service_deploy_block(script_text: str, service_var: str) -> str:
+    """Extract the gcloud run deploy command block for a specific service."""
+    marker = f'gcloud run deploy "${{{service_var}}}"'
+    start = script_text.find(marker)
+    if start == -1:
+        raise ValueError(f"Could not find deploy block for ${{{service_var}}}")
+    lines = script_text[start:].splitlines()
+    block_lines: list[str] = []
+    for line in lines:
+        block_lines.append(line)
+        if not line.rstrip().endswith("\\"):
+            break
+    return "\n".join(block_lines)
+
+
+def test_deploy_script_api_and_web_authentication_boundary_contract() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    - API deployment must explicitly use --no-allow-unauthenticated and must not use --allow-unauthenticated.
+    - Web deployment must use --allow-unauthenticated (as public entrypoint for OIDC login) and must not use --no-allow-unauthenticated.
+    - Both services deploy with --no-traffic and explicit revision tags.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    api_block = _extract_cloud_run_service_deploy_block(text, "API_SERVICE")
+    assert "--no-allow-unauthenticated" in api_block
+    assert "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
+    assert "--no-traffic" in api_block
+    assert '--tag="${API_REVISION_TAG}"' in api_block
+
+    web_block = _extract_cloud_run_service_deploy_block(text, "WEB_SERVICE")
+    assert "--allow-unauthenticated" in web_block
+    assert "--no-allow-unauthenticated" not in web_block
+    assert "--no-traffic" in web_block
+    assert '--tag="${WEB_REVISION_TAG}"' in web_block
+
+    # Across the entire script, exactly one service uses --no-allow-unauthenticated (API)
+    # and exactly one service uses --allow-unauthenticated (Web).
+    assert text.count("--no-allow-unauthenticated") == 1
+    assert text.count("--allow-unauthenticated") == 1
+
+
+@pytest.mark.parametrize(
+    "mutated_api_flag,mutated_web_flag,should_pass",
+    [
+        ("--no-allow-unauthenticated", "--allow-unauthenticated", True),
+        ("--allow-unauthenticated", "--allow-unauthenticated", False),
+        ("--no-allow-unauthenticated", "--no-allow-unauthenticated", False),
+        ("", "--allow-unauthenticated", False),
+        ("--no-allow-unauthenticated", "", False),
+    ],
+)
+def test_deploy_script_invoker_boundary_fails_closed_when_flags_tampered(
+    mutated_api_flag: str,
+    mutated_web_flag: str,
+    should_pass: bool,
+) -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Contract validation fails closed if either API or Web authentication flag is tampered with.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    mutated_text = text.replace(
+        "  --no-allow-unauthenticated \\\n",
+        f"  {mutated_api_flag} \\\n" if mutated_api_flag else "",
+        1,
+    ).replace(
+        "  --allow-unauthenticated \\\n",
+        f"  {mutated_web_flag} \\\n" if mutated_web_flag else "",
+        1,
+    )
+
+    api_block = _extract_cloud_run_service_deploy_block(mutated_text, "API_SERVICE")
+    web_block = _extract_cloud_run_service_deploy_block(mutated_text, "WEB_SERVICE")
+
+    api_ok = (
+        "--no-allow-unauthenticated" in api_block
+        and "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
+    )
+    web_ok = (
+        "--allow-unauthenticated" in web_block and "--no-allow-unauthenticated" not in web_block
+    )
+    is_valid = api_ok and web_ok
+    assert is_valid is should_pass
+
+
+def test_web_bff_iam_protected_api_audience_wiring_intact() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Web BFF service invokes IAM-protected API candidate using ODP_API_SERVICE_AUDIENCE and ODP_API_BASE_URL.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"' in text
+    assert 'python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<\'PY\'' in text
+    assert '"ODP_API_BASE_URL": sys.argv[2],' in text
+    assert '"ODP_API_SERVICE_AUDIENCE": sys.argv[3],' in text
+
+
+def test_no_duplicate_or_additional_deployment_entrypoints() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Deployments must go strictly through the single Runtime Release entrypoint.
+    No second deploy script or workflow may exist.
+    """
+    deploy_scripts = list((ROOT / "product_ops/deployment").glob("deploy_*.sh"))
+    assert len(deploy_scripts) == 1
+    assert deploy_scripts[0].name == "deploy_cloud_run_waji.sh"
+
+    workflows = list((ROOT / ".github/workflows").glob("deploy-*.yml"))
+    assert len(workflows) == 1
+    assert workflows[0].name == "deploy-dev.yml"
+
