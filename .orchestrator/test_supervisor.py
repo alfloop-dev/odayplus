@@ -15229,5 +15229,51 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             self.assertEqual(len(sidecar_tasks), 0)
 
 
+class WorkerPromptContractTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+
+    def test_worker_prompt_forbids_root_wide_scan_and_requires_declared_verification(self) -> None:
+        event = {
+            "task_id": "OPS-WORKER-NO-ROOT-SCAN-001",
+            "reason": "owned_in_progress_dispatch",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {
+                "artifacts": [".orchestrator/supervisor.py"],
+                "verification": ["python3 -m pytest .orchestrator/test_supervisor.py -k worker_prompt -q"],
+            },
+        }
+        rendered = supervisor.render_wakeup_message(self.config, event, "antigravity4")
+        self.assertIn("find /", rendered)
+        self.assertIn("rg /", rendered)
+        self.assertIn("全系統", rendered)
+        self.assertIn("root-wide", rendered)
+        self.assertIn("uv run", rendered)
+        self.assertIn("verification", rendered)
+        self.assertIn("不自行掃描主機", rendered)
+
+    def test_worker_prompt_root_scan_prohibition_applies_across_dispatch_reasons(self) -> None:
+        dispatch_reasons = [
+            "owned_ready_dispatch",
+            "owned_in_progress_dispatch",
+            "review_ready_dispatch",
+            "owned_finalize_dispatch",
+            "helper_claim_dispatch",
+        ]
+        for reason in dispatch_reasons:
+            with self.subTest(reason=reason):
+                event = {
+                    "task_id": "OPS-WORKER-NO-ROOT-SCAN-001",
+                    "reason": reason,
+                    "context_files": ["AI_COLLABORATION_GUIDE.md"],
+                    "task": {"artifacts": [".orchestrator/supervisor.py"]},
+                }
+                rendered = supervisor.render_wakeup_message(self.config, event, "antigravity4")
+                self.assertIn("find /", rendered)
+                self.assertIn("rg /", rendered)
+                self.assertIn("uv run", rendered)
+                self.assertIn("不自行掃描主機", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

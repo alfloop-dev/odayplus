@@ -434,6 +434,7 @@ from task_archive import TaskResolver
 from watch_events import (
     enqueue_runtime_events_enabled,
     queue_delivery_event,
+    render_wakeup_message,
     run_scan,
     trim_seen_events,
 )
