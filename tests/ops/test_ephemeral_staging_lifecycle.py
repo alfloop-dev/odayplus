@@ -2709,6 +2709,151 @@ class IncompleteReleaseIdentityBundleTests(unittest.TestCase):
         self.assertTrue(any(UNVERIFIABLE_STATE_PREFIX in err for err in receipt.errors), receipt.errors)
 
 
+class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.release_id = "odp-20260824-001"
+        self.candidate_sha = "a" * 40
+        self.manifest_digest = "sha256:" + "b" * 64
+        self.project_id = "oday-staging-proj"
+        self.now = datetime(2026, 8, 27, 6, 0, 0, tzinfo=UTC)
+
+    def test_verify_ephemeral_staging_success(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            REHEARSAL_STAGE_NAMES,
+            verify_ephemeral_staging,
+        )
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            dry_run=True,
+            now=self.now,
+        )
+
+        self.assertTrue(receipt.success)
+        self.assertEqual(receipt.action, "verify")
+        self.assertEqual(receipt.release_id, self.release_id)
+        self.assertEqual(receipt.candidate_sha, self.candidate_sha)
+        self.assertTrue(receipt.metadata.get("secret_values_redacted"))
+        self.assertEqual(receipt.metadata.get("external_sources_expected_enabled"), [])
+        self.assertEqual(receipt.metadata.get("public_egress"), "default_deny")
+        self.assertEqual(receipt.metadata.get("identity_scope"), "release_scoped_least_privilege")
+        self.assertEqual(len(receipt.resources), len(REHEARSAL_STAGE_NAMES))
+        self.assertTrue(all(r["success"] for r in receipt.resources))
+
+    def test_verify_ephemeral_staging_stage_failure(self) -> None:
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        def failing_executor(stage: str, context: Mapping[str, Any]) -> bool:
+            if stage == "worker_idempotency":
+                return False
+            return True
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            dry_run=True,
+            stage_executor=failing_executor,
+            now=self.now,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(receipt.remediation_required)
+        self.assertTrue(any("worker_idempotency failed" in err for err in receipt.errors))
+
+    def test_verify_ephemeral_staging_dev_identity_rejection(self) -> None:
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            operator_identity="dev-smoke-operator@oday-dev-proj.iam.gserviceaccount.com",
+            now=self.now,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(any("dev smoke operator identity impersonation" in err for err in receipt.errors))
+
+    def test_hold_ephemeral_staging_success(self) -> None:
+        from product_ops.deployment.staging_lifecycle import hold_ephemeral_staging
+
+        receipt = hold_ephemeral_staging(
+            release_id=self.release_id,
+            project_id=self.project_id,
+            owner_task_id="ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            reason="Investigation of staging migration rehearsal failure",
+            ttl_hours=24,
+            now=self.now,
+        )
+
+        self.assertTrue(receipt.success)
+        self.assertEqual(receipt.action, "hold")
+        self.assertEqual(receipt.release_id, self.release_id)
+        self.assertEqual(len(receipt.resources), 1)
+        self.assertEqual(receipt.resources[0]["status"], "retained_for_debugging")
+        self.assertEqual(receipt.resources[0]["ttl_hours"], 24)
+        self.assertEqual(receipt.resources[0]["expires_at"], "2026-08-28T06:00:00Z")
+        self.assertTrue(receipt.metadata.get("secret_values_redacted"))
+
+    def test_hold_ephemeral_staging_missing_reason(self) -> None:
+        from product_ops.deployment.staging_lifecycle import hold_ephemeral_staging
+
+        receipt = hold_ephemeral_staging(
+            release_id=self.release_id,
+            project_id=self.project_id,
+            owner_task_id="ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            reason="",
+            now=self.now,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(any("reason" in err.lower() for err in receipt.errors))
+
+    def test_cli_verify_and_hold_commands(self) -> None:
+        import tempfile
+        from product_ops.deployment.staging_lifecycle import main
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            verify_receipt = Path(tmpdir) / "staging-verify.json"
+            hold_receipt = Path(tmpdir) / "staging-hold.json"
+
+            code = main([
+                "verify",
+                "--release-id", self.release_id,
+                "--candidate-sha", self.candidate_sha,
+                "--manifest-digest", self.manifest_digest,
+                "--project-id", self.project_id,
+                "--dry-run",
+                "--receipt", str(verify_receipt),
+            ])
+            self.assertEqual(code, 0)
+            self.assertTrue(verify_receipt.is_file())
+            data = json.loads(verify_receipt.read_text(encoding="utf-8"))
+            self.assertEqual(data["action"], "verify")
+            self.assertTrue(data["success"])
+
+            code = main([
+                "hold",
+                "--release-id", self.release_id,
+                "--project-id", self.project_id,
+                "--owner-task-id", "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+                "--reason", "Test hold retention",
+                "--ttl-hours", "48",
+                "--receipt", str(hold_receipt),
+            ])
+            self.assertEqual(code, 0)
+            self.assertTrue(hold_receipt.is_file())
+            data = json.loads(hold_receipt.read_text(encoding="utf-8"))
+            self.assertEqual(data["action"], "hold")
+            self.assertTrue(data["success"])
+
+
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
     d = obj.to_dict()
     d.update(changes)
@@ -2717,3 +2862,4 @@ def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
 
 if __name__ == "__main__":
     unittest.main()
+

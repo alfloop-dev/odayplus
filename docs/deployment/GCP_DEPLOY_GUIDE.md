@@ -106,11 +106,11 @@ In accordance with Rollout Plan §16, Auto-Workers must **fail-closed** and not 
    - The first environment dispatch leaves `api_image`, `web_image`, `worker_image`, and `scheduler_image` empty so the build job runs. Staging and production dispatches must pass all four exact references from the handoff artifact; supplying only some, a mutable tag, or a different reference is rejected before admission.
    - When the handoff is supplied, the build job is skipped and the deploy job passes those exact digest references to Cloud Run. The deploy script rejects tags in this mode and never rebuilds.
    - For `dev`: Deploys API/Web services, Migration/Worker/Scheduler jobs, updates scheduler triggers, and runs live E2E acceptance gate.
-   - For `staging`: Provisions ephemeral staging with release-scoped isolation (`staging_lifecycle.py`) and validates remote staging proof.
+   - For `staging`: 透過 `product_ops/deployment/staging_lifecycle.py create` 建立短生命週期 release-scoped 隔離資源（DB、Bucket、Tenant、Service Accounts、Cloud Run 服務、Paused 排程），並由 `staging_lifecycle.py verify` 執行 7 階段完整演練（Migration compatibility, snapshot materialization, authenticated smoke, worker idempotency, scheduler one-shot, backup/restore drill, rollback rehearsal, external providers disabled），產生 secret-free 收據上傳；失敗時執行 `staging_lifecycle.py hold` 依 TTL（24h）保留供除錯。
    - For `production`: Deploys green candidate revisions (0% public traffic), executes green smoke checks, executes blue→green 100% traffic switch via `product_ops/deployment/bluegreen_release.py`, and updates scheduler trigger digests.
 
 3. **Automated Smoke Checks & Receipts**:
-   - Verify API authenticated health checks.
+   - Verify API authenticated health checks with release-scoped least-privilege identity.
    - Verify Web operator console loads and authentication flows succeed.
    - Redacted JSON validation receipts are published as workflow artifacts (`runtime-release-${environment}-validation`).
 

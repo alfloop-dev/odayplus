@@ -126,7 +126,10 @@ DEPLOY_WORKFLOWS = (
         workflow_name="Runtime Release",
         job_id="deploy",
         artifact_name="runtime-release-${{ inputs.environment }}-validation",
-        extra_report_roots=(".odp_data/remote-staging-proof/",),
+        extra_report_roots=(
+            ".odp_data/remote-staging-proof/",
+            ".odp_data/staging-lifecycle/",
+        ),
     ),
 )
 
@@ -268,7 +271,7 @@ def _workflow_written_reports(workflow: DeployWorkflow) -> list[str]:
         run = step.get("run")
         if not isinstance(run, str):
             continue
-        for match in re.findall(r'--output[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
+        for match in re.findall(r'(?:--output|--receipt)[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
             normalized = _normalize_run_id(match)
             if normalized not in written:
                 written.append(normalized)
@@ -593,6 +596,60 @@ def test_staging_proof_checker_gated_on_staging_environment() -> None:
     assert "ODP_STAGING_DEPLOY_URL" in step.get("env", {})
     assert "ODP_STAGING_API_URL" in step.get("env", {})
     assert "ODP_STAGING_SECRET_OWNER" in step.get("env", {})
+
+
+def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
+    """Runtime Release directly invokes staging lifecycle create and verify in the staging deploy branch."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+
+    create_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py create" in str(step.get("run", ""))
+    ]
+    assert len(create_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py create step"
+    create_step = create_steps[0]
+    assert create_step.get("if") == "${{ inputs.environment == 'staging' }}"
+    create_run = str(create_step.get("run", ""))
+    assert "--release-id" in create_run
+    assert "--candidate-sha" in create_run
+    assert "--api-image" in create_run
+    assert "--web-image" in create_run
+    assert "--owner-task-id" in create_run
+    assert "--receipt" in create_run
+    assert ".odp_data/staging-lifecycle/staging-lifecycle-create.json" in create_run
+
+    verify_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py verify" in str(step.get("run", ""))
+    ]
+    assert len(verify_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py verify step"
+    verify_step = verify_steps[0]
+    assert verify_step.get("if") == "${{ inputs.environment == 'staging' }}"
+    verify_run = str(verify_step.get("run", ""))
+    assert "--release-id" in verify_run
+    assert "--candidate-sha" in verify_run
+    assert "--manifest-digest" in verify_run
+    assert "--receipt" in verify_run
+    assert ".odp_data/staging-lifecycle/staging-rehearsal-receipt.json" in verify_run
+
+
+def test_staging_identity_rejects_dev_operator_impersonation() -> None:
+    """Staging verification must enforce release-scoped identity and reject dev operator impersonation."""
+    from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+    receipt = verify_ephemeral_staging(
+        release_id="odp-test-001",
+        candidate_sha="a" * 40,
+        manifest_digest="sha256:" + "b" * 64,
+        project_id="oday-staging-proj",
+        operator_identity="dev-smoke-operator@oday-dev-proj.iam.gserviceaccount.com",
+    )
+    assert not receipt.success
+    assert any("dev smoke operator identity impersonation" in err for err in receipt.errors)
+
 
 
 def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:

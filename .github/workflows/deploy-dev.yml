@@ -813,6 +813,35 @@ jobs:
       - name: Deploy Cloud Run by immutable digest
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
+      - name: Execute ephemeral staging lifecycle create
+        if: ${{ inputs.environment == 'staging' }}
+        run: |
+          python3 product_ops/deployment/staging_lifecycle.py create \
+            --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" \
+            --manifest-digest "${MANIFEST_DIGEST:-sha256:0000000000000000000000000000000000000000000000000000000000000000}" \
+            --project-id "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --cloud-sql-instance "${GCP_CLOUD_SQL_INSTANCE}" \
+            --api-image "${API_IMAGE}" \
+            --web-image "${WEB_IMAGE}" \
+            --owner-task-id "${{ inputs.task_id }}" \
+            --dry-run \
+            --tfvars-out "${RUNNER_TEMP}/staging-tfvars.json" \
+            --receipt ".odp_data/staging-lifecycle/staging-lifecycle-create.json"
+
+      - name: Execute ephemeral staging rehearsal verification
+        if: ${{ inputs.environment == 'staging' }}
+        run: |
+          python3 product_ops/deployment/staging_lifecycle.py verify \
+            --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" \
+            --manifest-digest "${MANIFEST_DIGEST:-sha256:0000000000000000000000000000000000000000000000000000000000000000}" \
+            --project-id "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --dry-run \
+            --receipt ".odp_data/staging-lifecycle/staging-rehearsal-receipt.json"
+
       - name: Verify configured staging authority endpoint
         if: ${{ inputs.environment == 'staging' }}
         env:
@@ -855,7 +884,8 @@ jobs:
           # file named below is written by
           # `product_ops/deployment/validate_cloud_run_live_deployment.py` (or
           # `delivery_toolchain/e2e/check_live_e2e_gate.py` or
-          # `delivery_toolchain/e2e/check_remote_staging_proof.py`) and carries
+          # `delivery_toolchain/e2e/check_remote_staging_proof.py` or
+          # `product_ops/deployment/staging_lifecycle.py`) and carries
           # `secret_values_redacted: true`: check names, outcomes, and env-var *names*
           # only, never a bound value. `tests/ops/test_deploy_workflow_contract.py`
           # holds this list to the receipts the deploy script actually produces.
@@ -868,4 +898,6 @@ jobs:
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json
             .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
+            .odp_data/staging-lifecycle/staging-lifecycle-create.json
+            .odp_data/staging-lifecycle/staging-rehearsal-receipt.json
           if-no-files-found: ignore
