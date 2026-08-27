@@ -62,3 +62,41 @@ def test_canonical_ai_status_launcher_is_tooling() -> None:
 
     assert result["scope"] == "development_tooling"
     assert result["non_tooling_paths"] == []
+
+
+def test_execution_control_evidence_and_orchestrator_are_tooling() -> None:
+    manifest = scope.load_manifest()
+
+    result = scope.classify_paths(
+        [
+            ".orchestrator/supervisor.py",
+            "docs/evidence/execution-control/2026-08-27-supervisor-health.md",
+        ],
+        manifest,
+    )
+
+    assert result["scope"] == "development_tooling"
+    assert result["non_tooling_paths"] == []
+
+
+def test_execution_control_evidence_with_product_path_requires_product_review() -> None:
+    manifest = scope.load_manifest()
+
+    result = scope.classify_paths(
+        [
+            ".orchestrator/supervisor.py",
+            "docs/evidence/execution-control/2026-08-27-supervisor-health.md",
+            "services/order-service/main.py",
+        ],
+        manifest,
+    )
+
+    assert result == {
+        "scope": "product_or_mixed",
+        "paths": [
+            ".orchestrator/supervisor.py",
+            "docs/evidence/execution-control/2026-08-27-supervisor-health.md",
+            "services/order-service/main.py",
+        ],
+        "non_tooling_paths": ["services/order-service/main.py"],
+    }
