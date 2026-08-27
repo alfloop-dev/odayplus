@@ -56,6 +56,8 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('variable "manifest_digest"', vars_tf)
         self.assertIn('variable "api_image"', vars_tf)
         self.assertIn('variable "web_image"', vars_tf)
+        self.assertIn('variable "worker_image"', vars_tf)
+        self.assertIn('variable "scheduler_image"', vars_tf)
         self.assertIn('variable "ttl_hours"', vars_tf)
         self.assertIn('variable "created_at"', vars_tf)
         self.assertIn('var.ttl_hours >= 1 && var.ttl_hours <= 168', vars_tf)
@@ -183,6 +185,8 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             "manifest_digest": "sha256:" + "0" * 64,
             "api_image": "asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
             "web_image": "asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
+            "worker_image": "asia-east1-docker.pkg.dev/test/repo/worker@sha256:" + "0" * 64,
+            "scheduler_image": "asia-east1-docker.pkg.dev/test/repo/scheduler@sha256:" + "0" * 64,
             "ttl_hours": 24,
             "owner_task_id": "ODP_TASK_001",
             "tenant_id": "custom_tenant",
@@ -295,6 +299,8 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             owner_task_id="ODP_TASK_001",
             api_image="asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
             web_image="asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
+            worker_image="asia-east1-docker.pkg.dev/test/repo/worker@sha256:" + "0" * 64,
+            scheduler_image="asia-east1-docker.pkg.dev/test/repo/scheduler@sha256:" + "0" * 64,
             cloud_sql_instance_name="test-db",
             cloud_sql_connection_name="test:asia-east1:test-db",
             network_name="test-vpc",

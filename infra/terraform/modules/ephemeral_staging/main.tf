@@ -138,6 +138,10 @@ resource "terraform_data" "staging_ownership" {
       web_service_acct     = local.sa_web_id
       worker_service_acct  = local.sa_worker_id
       name_prefix          = local.name_prefix
+      api_image            = var.api_image
+      web_image            = var.web_image
+      worker_image         = var.worker_image
+      scheduler_image      = var.scheduler_image
     }
   }
 
@@ -157,6 +161,10 @@ resource "terraform_data" "staging_ownership" {
     local.tenant_id,
     var.candidate_sha,
     var.manifest_digest,
+    var.api_image,
+    var.web_image,
+    var.worker_image,
+    var.scheduler_image,
     var.created_at,
     local.expires_at,
   ]

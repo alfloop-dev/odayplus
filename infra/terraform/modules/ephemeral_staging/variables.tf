@@ -64,6 +64,26 @@ variable "web_image" {
   }
 }
 
+variable "worker_image" {
+  type        = string
+  description = "Immutable Worker image reference with @sha256 digest."
+
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.worker_image))
+    error_message = "worker_image must use an immutable @sha256 digest."
+  }
+}
+
+variable "scheduler_image" {
+  type        = string
+  description = "Immutable Scheduler image reference with @sha256 digest."
+
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.scheduler_image))
+    error_message = "scheduler_image must use an immutable @sha256 digest."
+  }
+}
+
 variable "ttl_hours" {
   type        = number
   description = "Maximum hours before staging resources are eligible for cleanup."

@@ -603,6 +603,15 @@ def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     deploy_steps = parsed["jobs"]["deploy"]["steps"]
 
+    # Static deploy script MUST NOT run when environment is staging
+    static_deploy_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "deploy_cloud_run_waji.sh" in str(step.get("run", ""))
+    ]
+    assert len(static_deploy_steps) == 1
+    assert static_deploy_steps[0].get("if") == "${{ inputs.environment != 'staging' }}"
+
     create_steps = [
         step
         for step in deploy_steps
@@ -614,11 +623,15 @@ def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
     create_run = str(create_step.get("run", ""))
     assert "--release-id" in create_run
     assert "--candidate-sha" in create_run
+    assert "--manifest-digest" in create_run
     assert "--api-image" in create_run
     assert "--web-image" in create_run
+    assert "--worker-image" in create_run
+    assert "--scheduler-image" in create_run
     assert "--owner-task-id" in create_run
     assert "--receipt" in create_run
     assert ".odp_data/staging-lifecycle/staging-lifecycle-create.json" in create_run
+    assert "--dry-run" not in create_run, "Staging create must execute live without --dry-run"
 
     verify_steps = [
         step
@@ -632,8 +645,34 @@ def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
     assert "--release-id" in verify_run
     assert "--candidate-sha" in verify_run
     assert "--manifest-digest" in verify_run
+    assert "--worker-image" in verify_run
+    assert "--scheduler-image" in verify_run
+    assert "--operator-identity" in verify_run
     assert "--receipt" in verify_run
     assert ".odp_data/staging-lifecycle/staging-rehearsal-receipt.json" in verify_run
+    assert "--dry-run" not in verify_run, "Staging verify must execute live without --dry-run"
+
+
+def test_staging_hold_on_failure_invoked_on_error() -> None:
+    """Staging deploy failure triggers staging_lifecycle.py hold to retain resources for debugging."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+
+    hold_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py hold" in str(step.get("run", ""))
+    ]
+    assert len(hold_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py hold step"
+    hold_step = hold_steps[0]
+    assert hold_step.get("if") == "${{ failure() && inputs.environment == 'staging' }}"
+    hold_run = str(hold_step.get("run", ""))
+    assert "--release-id" in hold_run
+    assert "--project-id" in hold_run
+    assert "--owner-task-id" in hold_run
+    assert "--reason" in hold_run
+    assert "--receipt" in hold_run
+    assert ".odp_data/staging-lifecycle/staging-lifecycle-hold.json" in hold_run
 
 
 def test_staging_identity_rejects_dev_operator_impersonation() -> None:

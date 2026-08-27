@@ -66,6 +66,8 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
             api_image="asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
             web_image="asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+            worker_image="asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+            scheduler_image="asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
             ttl_hours=24,
             owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
@@ -97,6 +99,15 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         # Invalid image (missing digest)
         bad_cfg = dataclasses_replace(self.valid_config, api_image="gcr.io/repo/api:latest")
         self.assertTrue(any("api_image" in err for err in validate_staging_config(bad_cfg)))
+
+        bad_cfg = dataclasses_replace(self.valid_config, web_image="gcr.io/repo/web:latest")
+        self.assertTrue(any("web_image" in err for err in validate_staging_config(bad_cfg)))
+
+        bad_cfg = dataclasses_replace(self.valid_config, worker_image="gcr.io/repo/worker:latest")
+        self.assertTrue(any("worker_image" in err for err in validate_staging_config(bad_cfg)))
+
+        bad_cfg = dataclasses_replace(self.valid_config, scheduler_image="gcr.io/repo/scheduler:latest")
+        self.assertTrue(any("scheduler_image" in err for err in validate_staging_config(bad_cfg)))
 
         # Invalid TTL
         bad_cfg = dataclasses_replace(self.valid_config, ttl_hours=0)
@@ -1316,6 +1327,8 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 "--project-id", "oday-staging-proj",
                 "--api-image", self.valid_config.api_image,
                 "--web-image", self.valid_config.web_image,
+                "--worker-image", self.valid_config.worker_image,
+                "--scheduler-image", self.valid_config.scheduler_image,
                 "--owner-task-id", "ODP-EPHEMERAL-STAGING-IAC-001",
                 "--state-dir", str(tmp_path),
                 "--dry-run",
@@ -1871,6 +1884,8 @@ class UnverifiableReleaseStateTests(unittest.TestCase):
                 "--project-id", "oday-staging-proj",
                 "--api-image", self.config.api_image,
                 "--web-image", self.config.web_image,
+                "--worker-image", self.config.worker_image,
+                "--scheduler-image", self.config.scheduler_image,
                 "--owner-task-id", "ODP-EPHEMERAL-STAGING-IAC-001",
                 "--state-dir", str(state_root),
                 "--dry-run",
@@ -2819,8 +2834,29 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
 
     def test_cli_verify_and_hold_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            create_receipt = Path(tmpdir) / "staging-create.json"
             verify_receipt = Path(tmpdir) / "staging-verify.json"
             hold_receipt = Path(tmpdir) / "staging-hold.json"
+
+            code = main([
+                "create",
+                "--release-id", self.release_id,
+                "--candidate-sha", self.candidate_sha,
+                "--manifest-digest", self.manifest_digest,
+                "--project-id", self.project_id,
+                "--api-image", "asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
+                "--web-image", "asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+                "--worker-image", "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+                "--scheduler-image", "asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
+                "--owner-task-id", "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+                "--dry-run",
+                "--receipt", str(create_receipt),
+            ])
+            self.assertEqual(code, 0)
+            self.assertTrue(create_receipt.is_file())
+            data = json.loads(create_receipt.read_text(encoding="utf-8"))
+            self.assertEqual(data["action"], "create")
+            self.assertTrue(data["success"])
 
             code = main([
                 "verify",
@@ -2828,6 +2864,8 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
                 "--candidate-sha", self.candidate_sha,
                 "--manifest-digest", self.manifest_digest,
                 "--project-id", self.project_id,
+                "--worker-image", "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+                "--scheduler-image", "asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
                 "--dry-run",
                 "--receipt", str(verify_receipt),
             ])
@@ -2851,6 +2889,39 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
             data = json.loads(hold_receipt.read_text(encoding="utf-8"))
             self.assertEqual(data["action"], "hold")
             self.assertTrue(data["success"])
+
+    def test_immutable_release_identity_detects_worker_and_scheduler_image_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            cfg = StagingConfig(
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+                owner_task_id="ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+                worker_image="asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+                scheduler_image="asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
+                created_at="2026-08-24T12:00:00Z",
+            )
+            tfvars_path = state_root / f"{self.release_id}.tfvars.json"
+            tfvars_path.write_text(json.dumps(generate_tfvars(cfg)), encoding="utf-8")
+
+            # Same config passes
+            self.assertEqual(validate_immutable_release_identity(cfg, state_root), [])
+
+            # Changing worker_image fails
+            changed_worker = dataclasses_replace(
+                cfg, worker_image="asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "1" * 64
+            )
+            errors = validate_immutable_release_identity(changed_worker, state_root)
+            self.assertTrue(any("immutable worker_image" in err for err in errors), errors)
+
+            # Changing scheduler_image fails
+            changed_scheduler = dataclasses_replace(
+                cfg, scheduler_image="asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "2" * 64
+            )
+            errors = validate_immutable_release_identity(changed_scheduler, state_root)
+            self.assertTrue(any("immutable scheduler_image" in err for err in errors), errors)
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:

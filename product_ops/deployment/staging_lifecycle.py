@@ -77,6 +77,8 @@ IMMUTABLE_RELEASE_IDENTITY_FIELDS: tuple[str, ...] = (
     "manifest_digest",
     "api_image",
     "web_image",
+    "worker_image",
+    "scheduler_image",
     "created_at",
     "owner_task_id",
 )
@@ -109,6 +111,8 @@ class StagingConfig:
     deployer_service_account_email: str = "deployer@project.iam.gserviceaccount.com"
     api_image: str = "asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "0" * 64
     web_image: str = "asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "0" * 64
+    worker_image: str = "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "0" * 64
+    scheduler_image: str = "asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "0" * 64
     ttl_hours: int = DEFAULT_TTL_HOURS
     created_at: str = ""
     owner_task_id: str = ""
@@ -435,6 +439,16 @@ def validate_staging_config(config: StagingConfig, now: datetime | None = None) 
             f"Invalid web_image: {config.web_image!r}. Must include an immutable @sha256:<64 hex> digest."
         )
 
+    if not IMAGE_DIGEST_PATTERN.fullmatch(config.worker_image):
+        errors.append(
+            f"Invalid worker_image: {config.worker_image!r}. Must include an immutable @sha256:<64 hex> digest."
+        )
+
+    if not IMAGE_DIGEST_PATTERN.fullmatch(config.scheduler_image):
+        errors.append(
+            f"Invalid scheduler_image: {config.scheduler_image!r}. Must include an immutable @sha256:<64 hex> digest."
+        )
+
     if not (1 <= config.ttl_hours <= MAX_TTL_HOURS):
         errors.append(
             f"Invalid ttl_hours: {config.ttl_hours}. Must be between 1 and {MAX_TTL_HOURS} hours."
@@ -496,6 +510,8 @@ def generate_tfvars(
         "manifest_digest": config.manifest_digest,
         "api_image": config.api_image,
         "web_image": config.web_image,
+        "worker_image": config.worker_image,
+        "scheduler_image": config.scheduler_image,
         "ttl_hours": config.ttl_hours,
         "created_at": format_timestamp(target_created_dt),
         "owner_task_id": config.owner_task_id,
@@ -906,6 +922,22 @@ def validate_immutable_release_identity(
                     errors.append(
                         f"Existing release state for {config.release_id!r} has immutable web_image {prev_web!r}; "
                         f"rerun with web_image {config.web_image.strip()!r} is rejected. "
+                        "Rollout plan §5.2 requires a new release_id for image changes."
+                    )
+
+                prev_worker = str(prev_vars.get("worker_image", "")).strip()
+                if prev_worker and config.worker_image.strip() != prev_worker:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable worker_image {prev_worker!r}; "
+                        f"rerun with worker_image {config.worker_image.strip()!r} is rejected. "
+                        "Rollout plan §5.2 requires a new release_id for image changes."
+                    )
+
+                prev_scheduler = str(prev_vars.get("scheduler_image", "")).strip()
+                if prev_scheduler and config.scheduler_image.strip() != prev_scheduler:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable scheduler_image {prev_scheduler!r}; "
+                        f"rerun with scheduler_image {config.scheduler_image.strip()!r} is rejected. "
                         "Rollout plan §5.2 requires a new release_id for image changes."
                     )
 
@@ -1792,6 +1824,8 @@ def verify_ephemeral_staging(
     project_id: str,
     *,
     region: str = "asia-east1",
+    worker_image: str = "",
+    scheduler_image: str = "",
     state_dir: Path | str = DEFAULT_EPHEMERAL_STATE_DIR,
     dry_run: bool = False,
     stage_executor: Callable[[str, Mapping[str, Any]], bool] | None = None,
@@ -1843,6 +1877,8 @@ def verify_ephemeral_staging(
             "manifest_digest": manifest_digest,
             "project_id": project_id,
             "region": region,
+            "worker_image": worker_image,
+            "scheduler_image": scheduler_image,
             "database_name": names["database_name"],
             "bucket_name": names["bucket_name"],
             "sa_runtime": sa_runtime,
@@ -2727,6 +2763,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     create_p.add_argument("--cloud-sql-instance", default="oday-staging-db", help="Cloud SQL instance")
     create_p.add_argument("--api-image", required=True, help="API image reference with @sha256")
     create_p.add_argument("--web-image", required=True, help="Web image reference with @sha256")
+    create_p.add_argument("--worker-image", required=True, help="Worker image reference with @sha256")
+    create_p.add_argument("--scheduler-image", required=True, help="Scheduler image reference with @sha256")
     create_p.add_argument("--ttl-hours", type=int, default=DEFAULT_TTL_HOURS, help="TTL in hours")
     create_p.add_argument("--created-at", default="", help="Creation timestamp ISO")
     create_p.add_argument("--owner-task-id", required=True, help="Owner Task ID")
@@ -2747,6 +2785,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify_p.add_argument("--manifest-digest", required=True, help="SHA256 manifest digest")
     verify_p.add_argument("--project-id", required=True, help="GCP Project ID")
     verify_p.add_argument("--region", default="asia-east1", help="GCP Region")
+    verify_p.add_argument("--worker-image", default="", help="Worker image reference with @sha256")
+    verify_p.add_argument("--scheduler-image", default="", help="Scheduler image reference with @sha256")
     verify_p.add_argument("--dry-run", action="store_true", help="Perform dry-run verification")
     verify_p.add_argument("--operator-identity", default="", help="Optional operator identity to assert least privilege")
     verify_p.add_argument("--receipt", help="Path to write verification receipt JSON")
@@ -2842,6 +2882,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             api_image=args.api_image,
             web_image=args.web_image,
+            worker_image=args.worker_image,
+            scheduler_image=args.scheduler_image,
             ttl_hours=args.ttl_hours,
             created_at=created_at_to_use,
             owner_task_id=args.owner_task_id,
@@ -2911,6 +2953,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             manifest_digest=args.manifest_digest,
             project_id=args.project_id,
             region=args.region,
+            worker_image=args.worker_image,
+            scheduler_image=args.scheduler_image,
             state_dir=Path(args.state_dir),
             dry_run=args.dry_run,
             operator_identity=args.operator_identity,

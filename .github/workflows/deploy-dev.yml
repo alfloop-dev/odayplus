@@ -495,6 +495,8 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
+    outputs:
+      manifest_digest: ${{ steps.extract-admitted-manifest.outputs.manifest_digest }}
     # The admission job is itself protected by the selected GitHub environment.
     # Its variable-binding gate runs before any lease-state access, so hosted
     # admission cannot accidentally use ambient/local credentials.
@@ -632,6 +634,13 @@ jobs:
             --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
             --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
 
+      - name: Extract admitted manifest digest
+        id: extract-admitted-manifest
+        run: |
+          set -euo pipefail
+          manifest_digest="$(python3 -c 'import json; print(json.load(open(".odp_data/release/release-admission-receipt.json"))["manifest_digest"])')"
+          printf 'manifest_digest=%s\n' "${manifest_digest}" >> "${GITHUB_OUTPUT}"
+
       # The receipt is the audit trail for the admission decision. It carries
       # digests of the nonce and signature rather than the values, so it is safe
       # to publish whether or not the release was admitted.
@@ -723,6 +732,7 @@ jobs:
       ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
       ODP_PROD_DEPLOY_URL: ${{ vars.ODP_PROD_DEPLOY_URL }}
       ODP_PROD_API_URL: ${{ vars.ODP_PROD_API_URL }}
+      MANIFEST_DIGEST: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
       API_IMAGE: ${{ needs.build.outputs.api_image || inputs.api_image }}
       WEB_IMAGE: ${{ needs.build.outputs.web_image || inputs.web_image }}
       WORKER_IMAGE: ${{ needs.build.outputs.worker_image || inputs.worker_image }}
@@ -811,6 +821,7 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Deploy Cloud Run by immutable digest
+        if: ${{ inputs.environment != 'staging' }}
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
       - name: Execute ephemeral staging lifecycle create
@@ -819,14 +830,15 @@ jobs:
           python3 product_ops/deployment/staging_lifecycle.py create \
             --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
             --candidate-sha "${ODAY_RELEASE_SHA}" \
-            --manifest-digest "${MANIFEST_DIGEST:-sha256:0000000000000000000000000000000000000000000000000000000000000000}" \
+            --manifest-digest "${MANIFEST_DIGEST}" \
             --project-id "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
             --cloud-sql-instance "${GCP_CLOUD_SQL_INSTANCE}" \
             --api-image "${API_IMAGE}" \
             --web-image "${WEB_IMAGE}" \
+            --worker-image "${WORKER_IMAGE}" \
+            --scheduler-image "${SCHEDULER_IMAGE}" \
             --owner-task-id "${{ inputs.task_id }}" \
-            --dry-run \
             --tfvars-out "${RUNNER_TEMP}/staging-tfvars.json" \
             --receipt ".odp_data/staging-lifecycle/staging-lifecycle-create.json"
 
@@ -836,10 +848,12 @@ jobs:
           python3 product_ops/deployment/staging_lifecycle.py verify \
             --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
             --candidate-sha "${ODAY_RELEASE_SHA}" \
-            --manifest-digest "${MANIFEST_DIGEST:-sha256:0000000000000000000000000000000000000000000000000000000000000000}" \
+            --manifest-digest "${MANIFEST_DIGEST}" \
             --project-id "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
-            --dry-run \
+            --worker-image "${WORKER_IMAGE}" \
+            --scheduler-image "${SCHEDULER_IMAGE}" \
+            --operator-identity "stg-${ODAY_RELEASE_SHA:0:12}-rt@${GCP_PROJECT}.iam.gserviceaccount.com" \
             --receipt ".odp_data/staging-lifecycle/staging-rehearsal-receipt.json"
 
       - name: Verify configured staging authority endpoint
@@ -853,6 +867,17 @@ jobs:
             --expected-sha "$ODAY_RELEASE_SHA" \
             --correlation-id "corr-staging-${GITHUB_RUN_ID}" \
             --output ".odp_data/remote-staging-proof/staging-${GITHUB_RUN_ID}.json"
+
+      - name: Hold ephemeral staging resources on failure
+        if: ${{ failure() && inputs.environment == 'staging' }}
+        run: |
+          python3 product_ops/deployment/staging_lifecycle.py hold \
+            --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
+            --project-id "${GCP_PROJECT}" \
+            --owner-task-id "${{ inputs.task_id }}" \
+            --reason "Automated hold for forensic inspection after staging failure in GitHub Actions run ${GITHUB_RUN_ID}" \
+            --ttl-hours 24 \
+            --receipt ".odp_data/staging-lifecycle/staging-lifecycle-hold.json"
 
       - name: Verify production blue-green deployment state
         if: ${{ inputs.environment == 'production' }}
@@ -900,4 +925,5 @@ jobs:
             .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
             .odp_data/staging-lifecycle/staging-lifecycle-create.json
             .odp_data/staging-lifecycle/staging-rehearsal-receipt.json
+            .odp_data/staging-lifecycle/staging-lifecycle-hold.json
           if-no-files-found: ignore
