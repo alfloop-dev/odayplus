@@ -1806,9 +1806,6 @@ def reassign_tasks_after_review_churn(
             last_reassigned_count = raw_last_reassigned if raw_last_reassigned <= reopen_count else 0
         except (TypeError, ValueError):
             continue
-        if reopen_count < threshold or reopen_count - last_reassigned_count < threshold:
-            continue
-
         owner = str(snapshot.get("owner") or "").strip()
         reviewer = str(snapshot.get("reviewer") or "").strip()
         if not owner or is_human_gate_agent(owner):
@@ -1817,6 +1814,31 @@ def reassign_tasks_after_review_churn(
         # Collect failed owners in the current review churn epoch to avoid bouncing.
         # An explicit reset (e.g. reopen_count < raw_last_reassigned or reopen_count == 0) resets epoch history.
         is_reset = raw_last_reassigned > reopen_count or reopen_count == 0
+        if is_reset and (
+            raw_last_reassigned > 0
+            or bool(snapshot.get("review_churn_previous_owner"))
+            or bool(snapshot.get("review_churn_epoch_failed_owners"))
+        ):
+            if reopen_count < threshold:
+                if persist_task_reassignment(
+                    config,
+                    task_id=task_id,
+                    new_owner=owner,
+                    new_reviewer=reviewer,
+                    message=str(snapshot.get("assignment_note") or snapshot.get("next") or ""),
+                    task_updates={
+                        "review_churn_reassigned_at_count": 0,
+                        "review_churn_previous_owner": None,
+                        "review_churn_epoch_failed_owners": [],
+                    },
+                ):
+                    clear_task_failure_streaks_for_task(state, task_id)
+                    changed = True
+                continue
+
+        if reopen_count < threshold or reopen_count - last_reassigned_count < threshold:
+            continue
+
         raw_epoch_failed = snapshot.get("review_churn_epoch_failed_owners") if not is_reset else []
         epoch_failed_owners: list[str] = []
         if isinstance(raw_epoch_failed, list):

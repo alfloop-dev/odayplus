@@ -21,9 +21,12 @@
    - 同時結合 `review_churn_previous_owner` 與 `review_reopen_history` 中的歷史 owner 紀錄，建立完整的已失敗清單。
    - 在透過 `first_viable_agent` 尋找新 owner 時，將 `exclude` 集合擴充為 `set(epoch_failed_owners) | {owner, reviewer}`，嚴格確保同一 epoch 內絕不會重新選到已因 reopen 被替換的 owner。
 
-2. **Epoch 生命週期與重置規則**：
-   - 當任務發生明確重設（例如 `reopen_count` 被歸零、或 `reopen_count` 低於前次記錄的 `raw_last_reassigned` 計數）或成功合併完成後，epoch 歷史自動重置為空清單，允許新週期重新評估候選人。
-   - 當前週期未重設前，累積的所有已失敗 owner 將持續被排除。
+2. **Epoch 生命週期與重置持久化（Explicit Reset Persistence）**：
+   - 當任務發生明確重設（例如 `reopen_count` 被歸零、或 `reopen_count` 低於前次記錄的 `raw_last_reassigned` 計數）時，系統辨識出 epoch reset 條件。
+   - 若任務狀態中仍留有前次 epoch 的殘留狀態（`review_churn_reassigned_at_count > 0`、`review_churn_previous_owner` 或 `review_churn_epoch_failed_owners` 非空）：
+     - 當 `reopen_count < threshold`（例如 `reopen_count == 0`）時，系統直接呼叫既有 `persist_task_reassignment`，將 `review_churn_reassigned_at_count` 歸零為 0、`review_churn_previous_owner` 清為 `None`、`review_churn_epoch_failed_owners` 清空為 `[]`，並清除失敗記號，隨後直接 `continue` 不觸發任何重指派。
+     - 若 `reopen_count >= threshold`，則在同一次派發計算中重置 epoch 失敗清單（僅包含當前 owner）並原子持久化新 epoch 的重指派結果。
+   - 確保 reset 當下狀態即被清空並寫入 canonical status，不會遺留 stale epoch 紀錄。
 
 3. **無可用健康 Owner / Reviewer 時 Fail-Closed**：
    - 當所有備用 owner 均已在當前 epoch 失敗或無健康候選人（`not new_owner`）時，系統立即 fail-closed：
@@ -54,18 +57,26 @@ git diff --check origin/dev
 2. `test_review_churn_reassignment_is_idempotent_until_two_more_reopens`：確認在未累積滿新的 2 次 reopen 前維持等冪不重指派。
 3. `test_review_churn_does_not_bounce_back_to_failed_owner_in_same_epoch`：**核心 Regression 測試**，驗證 Antigravity -> Codex2 之後，Codex2 再次被退審兩次時，系統排除了 Antigravity，成功指派給 Claude2 而未回彈至 Antigravity。
 4. `test_review_churn_fails_closed_when_no_other_healthy_owner_available`：驗證當所有備用 owner 均已在當前 epoch 失敗且無其他候選人時，任務 fail-closed 轉為 `blocked`、`waiting_for: Human/Ops` 並產生 `review_churn_blocked` 審計日誌。
-5. `test_review_churn_epoch_history_cleared_on_explicit_reset`：驗證當任務明確 reset 時，epoch 歷史正確清除並重新允許指派。
+5. `test_review_churn_epoch_history_cleared_immediately_on_reset_count_zero`：**Reset Persistence Regression 測試**，驗證當 `reopen_count == 0` 時，系統立即呼叫 `persist_task_reassignment` 清空 `review_churn_epoch_failed_owners`、`review_churn_previous_owner` 與將 `review_churn_reassigned_at_count` 歸零，且不觸發重派。
+6. `test_review_churn_epoch_history_cleared_on_explicit_reset`：驗證當任務明確 reset 後，進入下一 epoch 達 2 次 reopen 時，前一 epoch 已失敗的候選人重新獲得指派資格。
 
 ### 3.3 測試輸出實錄
 ```text
 ============================= test session starts ==============================
 platform linux -- Python 3.12.14, pytest-9.1.1, pluggy-1.6.0
-collecting ... collected 462 items / 458 deselected / 4 selected
+collecting ... collected 463 items / 458 deselected / 5 selected
 
-.orchestrator/test_supervisor.py ....                                    [100%]
+.orchestrator/test_supervisor.py .....                                   [100%]
 
-====================== 4 passed, 458 deselected in 0.46s =======================
+====================== 5 passed, 458 deselected in 0.43s =======================
 Code boundary checks passed for 982 files.
+- archived: 14
+- development_delivery_tooling: 66
+- development_platform_system: 63
+- evidence_artifact: 22
+- product_operations_tooling: 29
+- product_system: 485
+- verification: 303
 git diff --check origin/dev (clean)
 ```
 全部 review churn 測試 100% 通過；程式邊界檢查與 `git diff --check` 皆通過。
