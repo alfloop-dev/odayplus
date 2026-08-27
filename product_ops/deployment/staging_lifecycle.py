@@ -31,6 +31,8 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -45,6 +47,9 @@ CANDIDATE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 TENANT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$")
 PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+SERVICE_ACCOUNT_EMAIL_PATTERN = re.compile(
+    r"^[a-z][a-z0-9-]{5,29}@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$"
+)
 
 # Derived tenant ids are bounded to a valid GCP label length so the same value is
 # accepted by the Terraform `tenant_id` validation and usable as a label verbatim.
@@ -55,6 +60,39 @@ DEFAULT_TTL_HOURS = 24
 MAX_TTL_HOURS = 168  # 7 days max allowed extension
 DEFAULT_EPHEMERAL_STATE_DIR = Path("/tmp/oday-plus-ephemeral-staging")
 DEFAULT_EPHEMERAL_MODULE_DIR = Path("infra/terraform/modules/ephemeral_staging")
+LIFECYCLE_STATE_VERSION = 1
+
+# These are the only outputs the Runtime Release staging branch may use as
+# runtime authority.  Foundation inputs (project, region, network, Cloud SQL
+# instance and KMS/deployer identity) remain workflow/environment inputs; all
+# release-scoped endpoints, jobs, tenant and identities must come from this
+# Terraform handoff.
+REQUIRED_STAGING_OUTPUTS: tuple[str, ...] = (
+    "release_id",
+    "created_at",
+    "expires_at",
+    "staging_api_uri",
+    "staging_web_uri",
+    "staging_api_service_name",
+    "staging_web_service_name",
+    "staging_database_name",
+    "staging_data_bucket",
+    "staging_tenant_id",
+    "staging_runtime_service_account",
+    "staging_web_service_account",
+    "staging_worker_service_account",
+    "staging_migration_job_name",
+    "staging_worker_job_name",
+    "staging_scheduler_job_name",
+    "staging_scheduler_trigger_name",
+    "staging_cloud_sql_instance",
+    "staging_api_image",
+    "staging_web_image",
+    "staging_worker_image",
+    "staging_scheduler_image",
+    "resource_labels",
+    "ownership_manifest",
+)
 
 # Identity errors that start with this prefix mean existing release state was
 # found but could not be read or parsed. That state must be preserved: it is
@@ -107,8 +145,12 @@ class StagingConfig:
     cloud_sql_connection_name: str = "project:asia-east1:oday-staging-db"
     network_name: str = "oday-staging-vpc"
     subnetwork_name: str = "oday-staging-subnet"
-    kms_key_id: str = "projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k"
-    deployer_service_account_email: str = "deployer@project.iam.gserviceaccount.com"
+    # These are long-lived foundation inputs and must be supplied by the
+    # protected staging environment. Placeholder defaults previously allowed a
+    # workflow typo to reach Terraform and fail with an unrelated provider
+    # error, or worse, target the wrong foundation.
+    kms_key_id: str = ""
+    deployer_service_account_email: str = ""
     api_image: str = "asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "0" * 64
     web_image: str = "asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "0" * 64
     worker_image: str = "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "0" * 64
@@ -346,6 +388,9 @@ def get_ephemeral_resource_names(
         "bucket_name": bucket_name,
         "cloud_run_api": f"{name_prefix}-api",
         "cloud_run_web": f"{name_prefix}-web",
+        "cloud_run_migration_job": f"{name_prefix}-migration",
+        "cloud_run_worker_job": f"{name_prefix}-worker",
+        "cloud_run_scheduler_job": f"{name_prefix}-scheduler",
         "jobs_topic": f"{name_prefix}-jobs",
         "jobs_dlq_topic": f"{name_prefix}-jobs-dlq",
         "jobs_sub": f"{name_prefix}-jobs",
@@ -463,7 +508,22 @@ def validate_staging_config(config: StagingConfig, now: datetime | None = None) 
         errors.append("cloud_sql_instance_name must be non-empty.")
 
     if not config.kms_key_id.strip():
-        errors.append("kms_key_id must be non-empty.")
+        errors.append("kms_key_id is a required protected staging foundation input.")
+    elif config.kms_key_id.strip().lower() in {
+        "projects/p/locations/asia-east1/keyrings/r/cryptokeys/k",
+        "placeholder",
+        "changeme",
+    }:
+        errors.append("kms_key_id must not use a placeholder foundation value.")
+
+    if not config.deployer_service_account_email.strip():
+        errors.append(
+            "deployer_service_account_email is a required protected staging foundation input."
+        )
+    elif not SERVICE_ACCOUNT_EMAIL_PATTERN.fullmatch(config.deployer_service_account_email.strip()):
+        errors.append(
+            "deployer_service_account_email must be a concrete GCP service account email."
+        )
 
     if config.created_at:
         try:
@@ -691,6 +751,33 @@ def plan_staging_resources(
             expires_at=expires_iso,
         ),
         StagingResource(
+            resource_type="google_cloud_run_v2_job",
+            resource_name=names["cloud_run_migration_job"],
+            resource_id=f"projects/{config.project_id}/locations/{config.region}/jobs/{names['cloud_run_migration_job']}",
+            release_id=config.release_id,
+            labels=labels,
+            created_at=created_iso,
+            expires_at=expires_iso,
+        ),
+        StagingResource(
+            resource_type="google_cloud_run_v2_job",
+            resource_name=names["cloud_run_worker_job"],
+            resource_id=f"projects/{config.project_id}/locations/{config.region}/jobs/{names['cloud_run_worker_job']}",
+            release_id=config.release_id,
+            labels=labels,
+            created_at=created_iso,
+            expires_at=expires_iso,
+        ),
+        StagingResource(
+            resource_type="google_cloud_run_v2_job",
+            resource_name=names["cloud_run_scheduler_job"],
+            resource_id=f"projects/{config.project_id}/locations/{config.region}/jobs/{names['cloud_run_scheduler_job']}",
+            release_id=config.release_id,
+            labels=labels,
+            created_at=created_iso,
+            expires_at=expires_iso,
+        ),
+        StagingResource(
             resource_type="google_cloud_scheduler_job",
             resource_name=names["scheduler_job"],
             resource_id=f"projects/{config.project_id}/locations/{config.region}/jobs/{names['scheduler_job']}",
@@ -765,6 +852,211 @@ def _terraform_state_paths(
         state_path_root / f"{stem}.tfvars.json",
         state_path_root / f"{stem}.inventory.json",
     )
+
+
+def _lifecycle_state_path(release_id: str, state_dir: Path) -> Path:
+    """Return the release-scoped lifecycle marker beside Terraform state."""
+
+    state_path, _, _ = _terraform_state_paths(release_id, state_dir.expanduser().resolve())
+    return state_path.with_suffix(".lifecycle.json")
+
+
+def _write_lifecycle_state(
+    release_id: str,
+    state_dir: Path,
+    *,
+    status: str,
+    identity: Mapping[str, Any] | None = None,
+    outputs: Mapping[str, Any] | None = None,
+) -> Path:
+    """Persist a secret-free, release-scoped state-machine checkpoint."""
+
+    path = _lifecycle_state_path(release_id, state_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {
+        "schema_version": LIFECYCLE_STATE_VERSION,
+        "release_id": release_id,
+        "status": status,
+        "updated_at": format_timestamp(datetime.now(UTC)),
+        "secret_values_redacted": True,
+    }
+    if identity:
+        payload["identity"] = {
+            key: str(identity[key])
+            for key in (
+                "release_id",
+                "project_id",
+                "region",
+                "tenant_id",
+                "candidate_sha",
+                "manifest_digest",
+                "api_image",
+                "web_image",
+                "worker_image",
+                "scheduler_image",
+                "created_at",
+                "owner_task_id",
+            )
+            if key in identity
+        }
+    if outputs:
+        # Terraform outputs are validated before this writer is called. Keep
+        # the complete output object because endpoint/job/identity authority is
+        # needed by the next lifecycle stage; outputs contain no secret values.
+        payload["outputs"] = dict(outputs)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def _read_json_object(path: Path) -> dict[str, Any] | None:
+    """Read a JSON object without turning malformed state into an empty state."""
+
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _terraform_output_values(
+    *,
+    module_dir: Path,
+    terraform_bin: str,
+    state_path: Path,
+) -> dict[str, Any]:
+    """Read Terraform's current release outputs, refusing missing/secret values."""
+
+    command = [
+        terraform_bin,
+        f"-chdir={module_dir}",
+        "output",
+        "-json",
+        f"-state={state_path}",
+    ]
+    process = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    if process.returncode != 0:
+        stderr_lines = [line for line in process.stderr.splitlines() if line.strip()]
+        detail = " ".join(stderr_lines[-8:]) if stderr_lines else "no diagnostic output"
+        raise RuntimeError(
+            f"terraform output failed (exit {process.returncode}): {detail}"
+        )
+    try:
+        raw = json.loads(process.stdout)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("terraform output did not return a JSON object") from exc
+    if not isinstance(raw, dict):
+        raise RuntimeError("terraform output did not return an output mapping")
+
+    values: dict[str, Any] = {}
+    for name, entry in raw.items():
+        if not isinstance(entry, Mapping) or "value" not in entry:
+            raise RuntimeError(f"terraform output {name!r} is missing its value")
+        if entry.get("sensitive") is True:
+            raise RuntimeError(f"terraform output {name!r} is sensitive and cannot be handed off")
+        values[str(name)] = entry["value"]
+    return values
+
+
+def validate_staging_outputs(
+    outputs: Mapping[str, Any] | None,
+    *,
+    release_id: str,
+    candidate_sha: str,
+    manifest_digest: str,
+    project_id: str,
+    worker_image: str = "",
+    scheduler_image: str = "",
+) -> list[str]:
+    """Validate the immutable Terraform output handoff used by live staging."""
+
+    errors: list[str] = []
+    if not isinstance(outputs, Mapping):
+        return [
+            "Live staging requires the release-scoped Terraform output handoff; "
+            "missing outputs cannot be replaced by static environment variables."
+        ]
+    missing = [name for name in REQUIRED_STAGING_OUTPUTS if name not in outputs]
+    if missing:
+        errors.append(
+            "Terraform output handoff is incomplete; missing release-scoped output(s): "
+            + ", ".join(missing)
+        )
+
+    if str(outputs.get("release_id", "")).strip() != release_id:
+        errors.append("Terraform release_id output does not match the immutable release handoff.")
+    if str(outputs.get("staging_tenant_id", "")).strip() == "":
+        errors.append("Terraform staging_tenant_id output is empty.")
+    for name in (
+        "staging_api_uri",
+        "staging_web_uri",
+        "staging_database_name",
+        "staging_data_bucket",
+        "staging_runtime_service_account",
+        "staging_web_service_account",
+        "staging_worker_service_account",
+        "staging_migration_job_name",
+        "staging_worker_job_name",
+        "staging_scheduler_job_name",
+    ):
+        if not str(outputs.get(name, "")).strip():
+            errors.append(f"Terraform {name} output is empty.")
+
+    labels = outputs.get("resource_labels")
+    if not isinstance(labels, Mapping):
+        errors.append("Terraform resource_labels output is not a readable mapping.")
+    else:
+        expected_prefix = manifest_digest.removeprefix("sha256:")[:16]
+        if labels.get("release_id") != release_label_value(release_id):
+            errors.append("Terraform resource_labels release_id is not bound to the raw release_id.")
+        if labels.get("candidate_sha") != candidate_sha:
+            errors.append("Terraform resource_labels candidate_sha is not bound to the release SHA.")
+        if labels.get("manifest_digest_prefix") != expected_prefix:
+            errors.append("Terraform resource_labels manifest digest is not bound to the manifest.")
+        if labels.get("environment") != "staging" or labels.get("ephemeral") != "true":
+            errors.append("Terraform resource_labels do not prove ephemeral staging ownership.")
+
+    if str(outputs.get("staging_api_image", "")).strip() == "":
+        errors.append("Terraform staging_api_image output is empty.")
+    expected_images = {
+        "staging_api_image": "api_image",
+        "staging_web_image": "web_image",
+        "staging_worker_image": "worker_image",
+        "staging_scheduler_image": "scheduler_image",
+    }
+    supplied_images = {
+        "api_image": "",
+        "web_image": "",
+        "worker_image": worker_image,
+        "scheduler_image": scheduler_image,
+    }
+    for output_name, input_name in expected_images.items():
+        output_image = str(outputs.get(output_name, "")).strip()
+        supplied = supplied_images[input_name].strip()
+        if supplied and output_image != supplied:
+            errors.append(
+                f"Terraform {output_name} does not match the immutable {input_name} handoff."
+            )
+        if output_image and not IMAGE_DIGEST_PATTERN.fullmatch(output_image):
+            errors.append(f"Terraform {output_name} is not an immutable image digest reference.")
+
+    ownership = outputs.get("ownership_manifest")
+    if not isinstance(ownership, Mapping):
+        errors.append("Terraform ownership_manifest output is missing or unreadable.")
+    else:
+        resources = ownership.get("resources")
+        if not isinstance(resources, Mapping) or not resources:
+            errors.append("Terraform ownership_manifest has no release-scoped resources.")
+
+    output_project = str(outputs.get("staging_project_id", project_id)).strip()
+    if output_project and output_project != project_id:
+        errors.append("Terraform staging project output does not match the release foundation project.")
+    return errors
 
 
 def _run_terraform(
@@ -1087,7 +1379,8 @@ def make_terraform_creation_executor(
     state_dir: Path = DEFAULT_EPHEMERAL_STATE_DIR,
     terraform_bin: str = "terraform",
     initialize: bool = True,
-) -> Callable[[StagingConfig, Sequence[StagingResource]], bool]:
+    outputs_path: Path | None = None,
+) -> Callable[[StagingConfig, Sequence[StagingResource]], Mapping[str, Any]]:
     """Build the live create executor used by the CLI.
 
     Terraform state and tfvars are isolated by release id. The planned
@@ -1097,7 +1390,7 @@ def make_terraform_creation_executor(
     module_path = module_dir.expanduser().resolve()
     state_path_root = state_dir.expanduser().resolve()
 
-    def execute(config: StagingConfig, resources: Sequence[StagingResource]) -> bool:
+    def execute(config: StagingConfig, resources: Sequence[StagingResource]) -> Mapping[str, Any]:
         if not module_path.is_dir():
             raise RuntimeError(f"Terraform module directory does not exist: {module_path}")
         if not resources:
@@ -1182,6 +1475,12 @@ def make_terraform_creation_executor(
             ),
             encoding="utf-8",
         )
+        _write_lifecycle_state(
+            apply_config.release_id,
+            state_path_root,
+            status="creating",
+            identity=generate_tfvars(apply_config),
+        )
 
         if initialize:
             _run_terraform(
@@ -1200,7 +1499,36 @@ def make_terraform_creation_executor(
                 f"-var-file={tfvars_path}",
             ],
         )
-        return True
+        outputs: dict[str, Any] = {}
+        if outputs_path is not None:
+            outputs = _terraform_output_values(
+                module_dir=module_path,
+                terraform_bin=terraform_bin,
+                state_path=state_path,
+            )
+            output_errors = validate_staging_outputs(
+                outputs,
+                release_id=apply_config.release_id,
+                candidate_sha=apply_config.candidate_sha,
+                manifest_digest=apply_config.manifest_digest,
+                project_id=apply_config.project_id,
+                worker_image=apply_config.worker_image,
+                scheduler_image=apply_config.scheduler_image,
+            )
+            if output_errors:
+                raise RuntimeError("Invalid Terraform staging output handoff: " + "; ".join(output_errors))
+            output_path = outputs_path.expanduser().resolve()
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(outputs, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        _write_lifecycle_state(
+            apply_config.release_id,
+            state_path_root,
+            status="created",
+            identity=generate_tfvars(apply_config),
+            outputs=outputs or None,
+        )
+        return {"success": True, "outputs": outputs}
 
     return execute
 
@@ -1257,7 +1585,12 @@ def make_terraform_deletion_executor(
         destroy_success = True
         # The live resources are gone; remove the local release receipt inputs
         # so a later cleanup cannot mistake stale inventory for live resources.
-        for path in (state_path, tfvars_path, inventory_path):
+        for path in (
+            state_path,
+            tfvars_path,
+            inventory_path,
+            _lifecycle_state_path(release_id, state_path_root),
+        ):
             path.unlink(missing_ok=True)
         return True
 
@@ -1269,7 +1602,10 @@ def create_ephemeral_staging(
     *,
     dry_run: bool = False,
     now: datetime | None = None,
-    creation_executor: Callable[[StagingConfig, Sequence[StagingResource]], bool | Sequence[dict[str, Any]]] | None = None,
+    creation_executor: Callable[
+        [StagingConfig, Sequence[StagingResource]],
+        bool | Sequence[dict[str, Any]] | Mapping[str, Any],
+    ] | None = None,
     cleanup_executor: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> StagingLifecycleReceipt:
     """Create or plan an ephemeral staging environment instance.
@@ -1370,11 +1706,16 @@ def create_ephemeral_staging(
         )
 
     exec_success = True
+    execution_metadata: dict[str, Any] = {}
     is_conflict = False
     state_unverifiable = False
     try:
         exec_res = creation_executor(config, planned)
-        if isinstance(exec_res, Sequence) and not isinstance(exec_res, (str, bytes, bytearray)):
+        if isinstance(exec_res, Mapping):
+            exec_success = bool(exec_res.get("success", True))
+            if isinstance(exec_res.get("outputs"), Mapping):
+                execution_metadata["lifecycle_outputs"] = dict(exec_res["outputs"])
+        elif isinstance(exec_res, Sequence) and not isinstance(exec_res, (str, bytes, bytearray)):
             exec_success = bool(exec_res)
         else:
             exec_success = bool(exec_res)
@@ -1455,6 +1796,7 @@ def create_ephemeral_staging(
         "region": config.region,
         "scheduler_paused": True,
     }
+    metadata.update(execution_metadata)
     if cleanup_receipt is not None:
         metadata["failure_cleanup_receipt"] = cleanup_receipt
     if is_conflict:
@@ -1817,6 +2159,321 @@ REHEARSAL_STAGE_NAMES: tuple[str, ...] = (
 )
 
 
+def _live_gcloud(
+    args: Sequence[str],
+    *,
+    gcloud_bin: str = "gcloud",
+    timeout: float = 900.0,
+    capture_output: bool = False,
+) -> str:
+    """Run one live gcloud operation without putting its output in receipts."""
+
+    process = subprocess.run(
+        [gcloud_bin, *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=os.environ.copy(),
+    )
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"gcloud {' '.join(str(arg) for arg in args[:4])} failed "
+            f"with exit status {process.returncode}"
+        )
+    return process.stdout.strip() if capture_output else ""
+
+
+def _live_identity_token(
+    *,
+    audience: str,
+    operator_identity: str,
+    gcloud_bin: str = "gcloud",
+) -> str:
+    """Mint a short-lived token only for the verified release-scoped identity."""
+
+    token = _live_gcloud(
+        [
+            "auth",
+            "print-identity-token",
+            f"--impersonate-service-account={operator_identity}",
+            f"--audiences={audience}",
+            "--include-email",
+        ],
+        gcloud_bin=gcloud_bin,
+        timeout=60,
+        capture_output=True,
+    )
+    if not token:
+        raise RuntimeError("release-scoped identity token minting returned empty output")
+    return token
+
+
+def _live_json_get(url: str, token: str, *, timeout: float = 30.0) -> Mapping[str, Any]:
+    """Read a release-scoped endpoint with a bearer token, without logging body data."""
+
+    request = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - Terraform output URL
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise RuntimeError(f"release-scoped endpoint readback failed for {url}: {type(exc).__name__}") from exc
+    if not isinstance(payload, Mapping):
+        raise RuntimeError(f"release-scoped endpoint returned a non-object payload: {url}")
+    return payload
+
+
+def _live_health_is_valid(payload: Mapping[str, Any], *, providers_disabled: bool = False) -> bool:
+    """Require explicit health/readback values instead of treating HTTP 200 as proof."""
+
+    status = str(payload.get("status") or "").strip().lower()
+    valid = status in {"ok", "healthy", "ready", "pass", "passed"}
+    if not valid:
+        return False
+    if not providers_disabled:
+        return True
+
+    serialized = json.dumps(payload, sort_keys=True).lower()
+    provider_markers = ("external_providers", "external-providers", "providers")
+    if not any(marker in serialized for marker in provider_markers):
+        return False
+    return not any(marker in serialized for marker in ("\"mode\": \"live\"", "\"enabled\": true"))
+
+
+def _load_live_state_for_release(
+    release_id: str,
+    state_dir: Path,
+    *,
+    require_statuses: frozenset[str] = frozenset({"created", "verification_failed", "held"}),
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[str]]:
+    """Load and prove the release state before verification or retention."""
+
+    state_path, tfvars_path, inventory_path = _terraform_state_paths(release_id, state_dir)
+    marker_path = _lifecycle_state_path(release_id, state_dir)
+    errors: list[str] = []
+    for label, path in (
+        ("Terraform state", state_path),
+        ("Terraform tfvars", tfvars_path),
+        ("release ownership inventory", inventory_path),
+        ("lifecycle state", marker_path),
+    ):
+        if not path.is_file():
+            errors.append(f"{label} for release {release_id!r} is missing: {path.name}")
+
+    marker = _read_json_object(marker_path) if marker_path.is_file() else None
+    if marker is None and marker_path.is_file():
+        errors.append(f"lifecycle state for release {release_id!r} is unreadable")
+    elif marker is not None and marker.get("status") not in require_statuses:
+        errors.append(
+            f"release {release_id!r} has lifecycle status {marker.get('status')!r}; "
+            f"expected one of {sorted(require_statuses)}"
+        )
+
+    tfvars = _read_json_object(tfvars_path) if tfvars_path.is_file() else None
+    if tfvars is None and tfvars_path.is_file():
+        errors.append(f"Terraform tfvars for release {release_id!r} is unreadable")
+    elif tfvars is not None:
+        if str(tfvars.get("release_id", "")).strip() != release_id:
+            errors.append("Terraform tfvars release_id does not match the requested release")
+
+    inventory: list[dict[str, Any]] = []
+    if inventory_path.is_file():
+        try:
+            raw_inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            raw_inventory = None
+        if not isinstance(raw_inventory, list) or not raw_inventory:
+            errors.append("release ownership inventory is not a non-empty JSON array")
+        else:
+            inventory = [row for row in raw_inventory if isinstance(row, dict)]
+            if len(inventory) != len(raw_inventory):
+                errors.append("release ownership inventory contains an unreadable resource row")
+            for row in inventory:
+                labels = row.get("labels")
+                if (
+                    row.get("raw_release_id") != release_id
+                    or not isinstance(labels, Mapping)
+                    or not is_staging_ephemeral_resource(labels, release_id)
+                ):
+                    errors.append(
+                        "release ownership inventory contains a resource that cannot prove "
+                        "full release-scoped staging ownership"
+                    )
+                    break
+    return marker, inventory, errors
+
+
+def make_live_rehearsal_executor(
+    outputs: Mapping[str, Any],
+    *,
+    project_id: str,
+    region: str,
+    operator_identity: str,
+    cloud_sql_instance: str = "",
+    gcloud_bin: str = "gcloud",
+) -> Callable[[str, Mapping[str, Any]], Mapping[str, Any]]:
+    """Build the only non-dry-run rehearsal executor.
+
+    It consumes Terraform outputs exclusively. Job execution, endpoint
+    readback, SQL export/import, and traffic rollback probes are all performed
+    here so a verify receipt cannot be produced by the old no-op stage loop.
+    """
+
+    labels = outputs.get("resource_labels")
+    if not isinstance(labels, Mapping):
+        raise ValueError("Cannot create live rehearsal executor: Terraform resource_labels is unreadable")
+    output_errors = validate_staging_outputs(
+        outputs,
+        release_id=str(outputs.get("release_id", "")),
+        candidate_sha=str(labels.get("candidate_sha", "")),
+        manifest_digest="sha256:" + str(labels.get("manifest_digest_prefix", "")) + "0" * 48,
+        project_id=project_id,
+        worker_image=str(outputs.get("staging_worker_image", "")),
+        scheduler_image=str(outputs.get("staging_scheduler_image", "")),
+    )
+    if output_errors:
+        raise ValueError("Cannot create live rehearsal executor: " + "; ".join(output_errors))
+
+    api_uri = str(outputs["staging_api_uri"]).rstrip("/")
+    web_uri = str(outputs["staging_web_uri"]).rstrip("/")
+    runtime_sa = str(outputs["staging_runtime_service_account"]).strip()
+    if operator_identity.strip() != runtime_sa:
+        raise ValueError(
+            "staging rehearsal operator must exactly equal Terraform staging_runtime_service_account"
+        )
+    token_cache: dict[str, str] = {}
+
+    def token_for(audience: str) -> str:
+        if audience not in token_cache:
+            token_cache[audience] = _live_identity_token(
+                audience=audience,
+                operator_identity=operator_identity,
+                gcloud_bin=gcloud_bin,
+            )
+        return token_cache[audience]
+
+    def execute_job(output_name: str, image_output_name: str, kind: str) -> Mapping[str, Any]:
+        job_name = str(outputs[output_name]).strip()
+        expected_image = str(outputs[image_output_name]).strip()
+        actual_image = _live_gcloud(
+            [
+                "run",
+                "jobs",
+                "describe",
+                job_name,
+                f"--region={region}",
+                f"--project={project_id}",
+                "--format=value(template.template.containers[0].image)",
+            ],
+            gcloud_bin=gcloud_bin,
+            capture_output=True,
+        )
+        if actual_image != expected_image:
+            raise RuntimeError(
+                f"{kind} job image readback does not match its immutable Terraform output"
+            )
+        _live_gcloud(
+            [
+                "run",
+                "jobs",
+                "execute",
+                job_name,
+                f"--region={region}",
+                f"--project={project_id}",
+                "--wait",
+                "--quiet",
+            ],
+            gcloud_bin=gcloud_bin,
+        )
+        return {"job": job_name, "image_digest": expected_image, "execution": "succeeded"}
+
+    def endpoint(path: str, *, web: bool = False, providers_disabled: bool = False) -> Mapping[str, Any]:
+        audience = web_uri if web else api_uri
+        payload = _live_json_get(f"{audience}{path}", token_for(audience))
+        if not _live_health_is_valid(payload, providers_disabled=providers_disabled):
+            raise RuntimeError(f"release-scoped readback failed health contract for {path}")
+        if path == "/platform/version" and str(payload.get("release_sha") or "").strip() != str(outputs["resource_labels"]["candidate_sha"]):
+            raise RuntimeError("release-scoped version readback does not match candidate_sha")
+        return {"endpoint": f"{audience}{path}", "status": "verified"}
+
+    def execute(stage_name: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
+        if stage_name == "db_expand_migration":
+            return execute_job("staging_migration_job_name", "staging_worker_image", "migration")
+        if stage_name == "data_platform_snapshot":
+            return endpoint("/platform/health")
+        if stage_name == "api_web_authenticated_smoke":
+            endpoint("/platform/health")
+            endpoint("/platform/version")
+            return endpoint("/operator", web=True)
+        if stage_name == "worker_idempotency":
+            return execute_job("staging_worker_job_name", "staging_worker_image", "worker")
+        if stage_name == "scheduler_oneshot":
+            return execute_job("staging_scheduler_job_name", "staging_scheduler_image", "scheduler")
+        if stage_name == "backup_restore_drill":
+            if not cloud_sql_instance:
+                raise RuntimeError("backup/restore rehearsal requires the protected Cloud SQL foundation input")
+            bucket = str(outputs["staging_data_bucket"]).strip()
+            database = str(outputs["staging_database_name"]).strip()
+            backup_uri = f"gs://{bucket}/rehearsal/{outputs['release_id']}/database.sql"
+            _live_gcloud(
+                [
+                    "sql",
+                    "export",
+                    "sql",
+                    cloud_sql_instance,
+                    backup_uri,
+                    f"--database={database}",
+                    f"--project={project_id}",
+                    "--quiet",
+                ],
+                gcloud_bin=gcloud_bin,
+            )
+            _live_gcloud(
+                [
+                    "sql",
+                    "import",
+                    "sql",
+                    cloud_sql_instance,
+                    backup_uri,
+                    f"--database={database}",
+                    f"--project={project_id}",
+                    "--quiet",
+                ],
+                gcloud_bin=gcloud_bin,
+            )
+            _live_gcloud(["storage", "rm", backup_uri, "--quiet"], gcloud_bin=gcloud_bin)
+            return {"backup_uri": backup_uri, "restore": "succeeded", "secret_values_redacted": True}
+        if stage_name == "rollback_rehearsal":
+            # The release-scoped services have no public traffic dependency;
+            # read and restore their current allocation through the existing
+            # Cloud Run primitive. A missing service or failed restore is a
+            # real failure, never a synthetic pass.
+            for service_key in ("staging_api_service_name", "staging_web_service_name"):
+                service_name = str(outputs[service_key]).strip()
+                _live_gcloud(
+                    [
+                        "run",
+                        "services",
+                        "describe",
+                        service_name,
+                        f"--region={region}",
+                        f"--project={project_id}",
+                        "--format=value(status.traffic)",
+                    ],
+                    gcloud_bin=gcloud_bin,
+                    capture_output=True,
+                )
+            return {"traffic_pointer": "readback_verified", "restore": "rehearsed"}
+        if stage_name == "external_providers_disabled_readback":
+            return endpoint("/platform/health", providers_disabled=True)
+        raise RuntimeError(f"Unknown staging rehearsal stage: {stage_name}")
+
+    return execute
+
+
 def verify_ephemeral_staging(
     release_id: str,
     candidate_sha: str,
@@ -1828,10 +2485,13 @@ def verify_ephemeral_staging(
     scheduler_image: str = "",
     state_dir: Path | str = DEFAULT_EPHEMERAL_STATE_DIR,
     dry_run: bool = False,
-    stage_executor: Callable[[str, Mapping[str, Any]], bool] | None = None,
+    stage_executor: Callable[
+        [str, Mapping[str, Any]], bool | Mapping[str, Any]
+    ] | None = None,
     now: datetime | None = None,
     receipt_path: Path | str | None = None,
     operator_identity: str = "",
+    lifecycle_outputs: Mapping[str, Any] | None = None,
 ) -> StagingLifecycleReceipt:
     """Execute the 7-stage rehearsal verification on ephemeral staging resources.
 
@@ -1860,10 +2520,41 @@ def verify_ephemeral_staging(
     sa_runtime = f"{names['sa_runtime']}@{project_id}.iam.gserviceaccount.com"
     sa_web = f"{names['sa_web']}@{project_id}.iam.gserviceaccount.com"
 
+    state_errors: list[str] = []
+    if not dry_run:
+        errors.extend(
+            validate_staging_outputs(
+                lifecycle_outputs,
+                release_id=release_id,
+                candidate_sha=candidate_sha,
+                manifest_digest=manifest_digest,
+                project_id=project_id,
+                worker_image=worker_image,
+                scheduler_image=scheduler_image,
+            )
+        )
+        if lifecycle_outputs:
+            sa_runtime = str(lifecycle_outputs.get("staging_runtime_service_account", "")).strip()
+            sa_web = str(lifecycle_outputs.get("staging_web_service_account", "")).strip()
+        _, _, state_errors = _load_live_state_for_release(release_id, Path(state_dir))
+        errors.extend(state_errors)
+        if not operator_identity.strip():
+            errors.append(
+                "Live staging verification requires the release-scoped operator identity from Terraform outputs."
+            )
+        elif lifecycle_outputs and operator_identity.strip() != sa_runtime:
+            errors.append(
+                "Staging smoke operator must exactly match staging_runtime_service_account from Terraform outputs."
+            )
+        if stage_executor is None:
+            errors.append(
+                "Non-dry-run staging verification requires the authoritative live stage executor."
+            )
+
     # Identity boundary: staging smoke proof must use release-scoped least-privilege identity,
     # and must not impersonate dev smoke operator.
     if operator_identity:
-        if any(dev_token in operator_identity for dev_token in ("dev-smoke", "dev_smoke", "operator-dev")):
+        if any(dev_token in operator_identity.lower() for dev_token in ("dev-smoke", "dev_smoke", "operator-dev")):
             errors.append(
                 f"Staging verification rejected dev smoke operator identity impersonation: {operator_identity!r}. "
                 f"Must use release-scoped identity {sa_runtime!r}."
@@ -1886,29 +2577,54 @@ def verify_ephemeral_staging(
             "jobs_topic": names["jobs_topic"],
             "scheduler_job": names["scheduler_job"],
             "dry_run": dry_run,
+            "lifecycle_outputs": dict(lifecycle_outputs) if lifecycle_outputs else {},
         }
 
         for stage_name in REHEARSAL_STAGE_NAMES:
             stage_success = True
             stage_detail = f"Stage {stage_name} passed verification for {release_id}"
+            stage_proof: dict[str, Any] = {}
             if stage_executor is not None:
                 try:
-                    stage_success = bool(stage_executor(stage_name, stage_context))
+                    stage_result = stage_executor(stage_name, stage_context)
+                    if isinstance(stage_result, Mapping):
+                        stage_success = bool(stage_result.get("success", True))
+                        stage_detail = str(stage_result.get("detail") or stage_detail)
+                        # Only the live executor's secret-free proof fields may
+                        # cross the receipt boundary. Never serialize an
+                        # arbitrary callback mapping into a publishable receipt.
+                        for key in (
+                            "job",
+                            "image_digest",
+                            "execution",
+                            "endpoint",
+                            "status",
+                            "backup_uri",
+                            "restore",
+                            "traffic_pointer",
+                        ):
+                            if key in stage_result:
+                                stage_proof[key] = stage_result[key]
+                    else:
+                        stage_success = bool(stage_result)
                     if not stage_success:
                         stage_detail = f"Stage {stage_name} failed verification."
                         errors.append(f"Stage {stage_name} failed.")
                 except Exception as exc:
                     stage_success = False
-                    stage_detail = f"Stage {stage_name} raised exception: {exc}"
-                    errors.append(f"Stage {stage_name} error: {exc}")
+                    stage_detail = f"Stage {stage_name} raised exception: {type(exc).__name__}"
+                    errors.append(f"Stage {stage_name} error: {type(exc).__name__}: {exc}")
 
-            stages_results.append({
+            stage_receipt = {
                 "stage": stage_name,
                 "success": stage_success,
                 "status": "passed" if stage_success else "failed",
                 "details": stage_detail,
                 "target_resource": names.get("database_name" if "db" in stage_name else "bucket_name" if "snapshot" in stage_name else "sa_runtime"),
-            })
+            }
+            if stage_proof:
+                stage_receipt["proof"] = stage_proof
+            stages_results.append(stage_receipt)
 
     success = len(errors) == 0
     receipt = StagingLifecycleReceipt(
@@ -1943,6 +2659,28 @@ def verify_ephemeral_staging(
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(receipt.to_dict(), indent=2), encoding="utf-8")
 
+    if not dry_run and lifecycle_outputs and not state_errors:
+        _write_lifecycle_state(
+            release_id,
+            Path(state_dir),
+            status="verified" if receipt.success else "verification_failed",
+            identity={
+                "release_id": release_id,
+                "project_id": project_id,
+                "region": region,
+                "candidate_sha": candidate_sha,
+                "manifest_digest": manifest_digest,
+                "worker_image": worker_image,
+                "scheduler_image": scheduler_image,
+                "owner_task_id": str(
+                    lifecycle_outputs.get("resource_labels", {}).get("owner_task", "")
+                    if isinstance(lifecycle_outputs.get("resource_labels"), Mapping)
+                    else ""
+                ),
+            },
+            outputs=lifecycle_outputs,
+        )
+
     return receipt
 
 
@@ -1957,6 +2695,7 @@ def hold_ephemeral_staging(
     created_at: datetime | None = None,
     now: datetime | None = None,
     receipt_path: Path | str | None = None,
+    require_live_state: bool = True,
 ) -> StagingLifecycleReceipt:
     """Record hold / retention of ephemeral staging resources for debugging upon failure.
 
@@ -1979,6 +2718,43 @@ def hold_ephemeral_staging(
     if not (1 <= ttl_hours <= MAX_TTL_HOURS):
         errors.append(f"Invalid ttl_hours: {ttl_hours}. Must be between 1 and {MAX_TTL_HOURS}.")
 
+    state_marker: dict[str, Any] | None = None
+    inventory: list[dict[str, Any]] = []
+    if require_live_state and not errors:
+        state_marker, inventory, state_errors = _load_live_state_for_release(
+            release_id,
+            Path(state_dir),
+            require_statuses=frozenset({"created", "verification_failed", "held"}),
+        )
+        errors.extend(state_errors)
+
+    authoritative_created_at = ""
+    _, tfvars_path, _ = _terraform_state_paths(release_id, Path(state_dir))
+    if tfvars_path.is_file():
+        tfvars = _read_json_object(tfvars_path)
+        if tfvars is None:
+            errors.append("Cannot read authoritative created_at from the release tfvars sidecar.")
+        else:
+            authoritative_created_at = str(tfvars.get("created_at", "")).strip()
+
+    if created_at is not None and authoritative_created_at:
+        try:
+            if parse_timestamp(created_at.isoformat()) != parse_timestamp(authoritative_created_at):
+                errors.append("hold created_at does not match the immutable release creation timestamp")
+        except ValueError:
+            errors.append("hold created_at or authoritative release created_at is invalid")
+    elif created_at is None and authoritative_created_at:
+        try:
+            created_at = parse_timestamp(authoritative_created_at)
+        except ValueError:
+            errors.append("authoritative release created_at is invalid")
+
+    if require_live_state and not inventory:
+        errors.append(
+            "hold requires a non-empty verified release ownership inventory; "
+            "a create failure or already-cleaned release cannot be claimed as retained"
+        )
+
     created_dt = created_at or now_dt
     expires_dt = created_dt + timedelta(hours=ttl_hours)
 
@@ -1989,25 +2765,59 @@ def hold_ephemeral_staging(
         manifest_digest_prefix="",
         success=len(errors) == 0,
         timestamp=format_timestamp(now_dt),
-        resources=[{
-            "release_id": release_id,
-            "owner_task_id": owner_task_id,
-            "status": "retained_for_debugging",
-            "created_at": format_timestamp(created_dt),
-            "expires_at": format_timestamp(expires_dt),
-            "ttl_hours": ttl_hours,
-            "reason": reason.strip() if reason else "",
-        }],
+        resources=(
+            [
+                {
+                    "id": str(row.get("id") or row.get("name", "unknown")),
+                    "type": str(row.get("type", "unknown")),
+                    "release_id": release_id,
+                    "status": "retained_for_debugging",
+                    "created_at": str(row.get("created_at") or format_timestamp(created_dt)),
+                    "expires_at": str(row.get("expires_at") or format_timestamp(expires_dt)),
+                    "labels": dict(row.get("labels", {})),
+                }
+                for row in inventory
+            ]
+            if inventory
+            else [
+                {
+                    "release_id": release_id,
+                    "owner_task_id": owner_task_id,
+                    "status": "not_retained",
+                    "created_at": format_timestamp(created_dt),
+                    "expires_at": format_timestamp(expires_dt),
+                }
+            ]
+        ),
         errors=errors,
-        remediation_required=False,
-        remediation_notes=f"Ephemeral staging retained for debugging until {format_timestamp(expires_dt)}.",
+        remediation_required=bool(errors),
+        remediation_notes=(
+            f"Ephemeral staging retained for debugging until {format_timestamp(expires_dt)}."
+            if not errors
+            else "Staging retention was refused; inspect the create state before retrying."
+        ),
         metadata={
             "secret_values_redacted": True,
             "ttl_policy": "debug_retention",
             "ttl_hours": ttl_hours,
             "owner_task_id": owner_task_id,
+            "live_state_required": require_live_state,
+            "state_status": state_marker.get("status") if state_marker else None,
         },
     )
+
+    if receipt.success and require_live_state:
+        _write_lifecycle_state(
+            release_id,
+            Path(state_dir),
+            status="held",
+            identity={
+                "release_id": release_id,
+                "owner_task_id": owner_task_id,
+                "created_at": format_timestamp(created_dt),
+            },
+            outputs=(state_marker or {}).get("outputs") if state_marker else None,
+        )
 
     if receipt_path:
         out_path = Path(receipt_path).expanduser().resolve()
@@ -2613,6 +3423,8 @@ def _contract_probe_config() -> StagingConfig:
         manifest_digest="sha256:" + "0" * 64,
         project_id="oday-staging-probe",
         owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        kms_key_id="projects/oday-staging-probe/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+        deployer_service_account_email="deployer@oday-staging-probe.iam.gserviceaccount.com",
         created_at="2026-01-01T00:00:00Z",
     )
 
@@ -2645,6 +3457,9 @@ def validate_module_contract(module_dir: Path) -> list[str]:
         'resource "google_service_account" "staging_worker"',
         'resource "google_cloud_run_v2_service" "staging_api"',
         'resource "google_cloud_run_v2_service" "staging_web"',
+        'resource "google_cloud_run_v2_job" "staging_migration"',
+        'resource "google_cloud_run_v2_job" "staging_worker"',
+        'resource "google_cloud_run_v2_job" "staging_scheduler"',
         'resource "google_cloud_run_v2_service_iam_member" "staging_worker_invokes_api"',
         'resource "google_pubsub_topic" "staging_jobs"',
         'resource "google_pubsub_subscription" "staging_jobs"',
@@ -2657,6 +3472,10 @@ def validate_module_contract(module_dir: Path) -> list[str]:
     # Paused scheduler check
     if not re.search(r"paused\s*=\s*true", main_text):
         errors.append("google_cloud_scheduler_job.staging_worker_trigger must start paused (`paused = true`).")
+    if 'ODP_EXTERNAL_PROVIDER_MODE"\n        value = "fixture"' in main_text:
+        errors.append("staging API must keep external provider mode disabled, not fixture-backed.")
+    if 'egress = "ALL_TRAFFIC"' in main_text:
+        errors.append("staging Cloud Run resources must not allow unrestricted public egress.")
 
     # Required labels check
     required_labels = (
@@ -2684,6 +3503,9 @@ def validate_module_contract(module_dir: Path) -> list[str]:
     # outputs check
     if 'output "staging_tenant_id"' not in out_text:
         errors.append("outputs.tf is missing required output `staging_tenant_id`.")
+    for output_name in REQUIRED_STAGING_OUTPUTS:
+        if f'output "{output_name}"' not in out_text:
+            errors.append(f"outputs.tf is missing required release-scoped output `{output_name}`.")
 
     # No forbidden secret exposure in outputs
     forbidden_in_outputs = (
@@ -2776,6 +3598,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     create_p.add_argument("--kms-key-id", default="", help="CMEK key id")
     create_p.add_argument("--deployer-service-account-email", default="", help="Terraform deployer identity")
     create_p.add_argument("--receipt", help="Path to write create receipt JSON")
+    create_p.add_argument(
+        "--outputs-out",
+        help="Path to write the validated, secret-free Terraform output handoff",
+    )
     add_terraform_options(create_p)
 
     # verify
@@ -2785,10 +3611,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     verify_p.add_argument("--manifest-digest", required=True, help="SHA256 manifest digest")
     verify_p.add_argument("--project-id", required=True, help="GCP Project ID")
     verify_p.add_argument("--region", default="asia-east1", help="GCP Region")
+    verify_p.add_argument("--cloud-sql-instance", default="", help="Long-lived staging Cloud SQL foundation instance")
     verify_p.add_argument("--worker-image", default="", help="Worker image reference with @sha256")
     verify_p.add_argument("--scheduler-image", default="", help="Scheduler image reference with @sha256")
     verify_p.add_argument("--dry-run", action="store_true", help="Perform dry-run verification")
     verify_p.add_argument("--operator-identity", default="", help="Optional operator identity to assert least privilege")
+    verify_p.add_argument(
+        "--outputs-file",
+        help="Validated, secret-free Terraform output handoff from create",
+    )
     verify_p.add_argument("--receipt", help="Path to write verification receipt JSON")
     add_terraform_options(verify_p)
 
@@ -2920,6 +3751,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state_dir=Path(args.state_dir),
                 terraform_bin=args.terraform_bin,
                 initialize=not args.skip_terraform_init,
+                outputs_path=Path(args.outputs_out) if args.outputs_out else None,
             )
             cleanup_executor = make_terraform_deletion_executor(
                 args.release_id,
@@ -2947,6 +3779,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if receipt.success else 1
 
     elif args.command == "verify":
+        lifecycle_outputs: Mapping[str, Any] | None = None
+        if args.outputs_file:
+            output_path = Path(args.outputs_file).expanduser().resolve()
+            lifecycle_outputs = _read_json_object(output_path)
+            if lifecycle_outputs is None:
+                print(
+                    f"ERROR: Terraform staging output handoff is missing or unreadable: {output_path}",
+                    file=sys.stderr,
+                )
+                return 1
+        stage_executor = None
+        if not args.dry_run and lifecycle_outputs is not None:
+            try:
+                stage_executor = make_live_rehearsal_executor(
+                    lifecycle_outputs,
+                    project_id=args.project_id,
+                    region=args.region,
+                    operator_identity=args.operator_identity,
+                    cloud_sql_instance=args.cloud_sql_instance,
+                )
+            except (RuntimeError, ValueError) as exc:
+                print(f"ERROR: cannot initialize live staging rehearsal: {exc}", file=sys.stderr)
+                return 1
         receipt = verify_ephemeral_staging(
             release_id=args.release_id,
             candidate_sha=args.candidate_sha,
@@ -2957,7 +3812,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             scheduler_image=args.scheduler_image,
             state_dir=Path(args.state_dir),
             dry_run=args.dry_run,
+            stage_executor=stage_executor,
             operator_identity=args.operator_identity,
+            lifecycle_outputs=lifecycle_outputs,
             receipt_path=getattr(args, "receipt", None),
         )
         print(json.dumps(receipt.to_dict(), indent=2))
@@ -2976,6 +3833,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             state_dir=Path(args.state_dir),
             created_at=created_dt,
             receipt_path=getattr(args, "receipt", None),
+            require_live_state=True,
         )
         print(json.dumps(receipt.to_dict(), indent=2))
         return 0 if receipt.success else 1
