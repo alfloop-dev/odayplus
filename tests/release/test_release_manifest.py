@@ -452,6 +452,16 @@ def test_validate_rollback_manifest_same_candidate_fails_closed() -> None:
     assert any("must not match current candidate_sha" in err for err in errors)
 
 
+def test_validate_rollback_manifest_same_release_id_fails_closed() -> None:
+    prev = built_manifest(candidate_sha="0" * 40, release_id="odp-current-001")
+    errors = validate_rollback_manifest(
+        prev,
+        current_candidate_sha="1" * 40,
+        current_release_id="odp-current-001",
+    )
+    assert any("must not match current release_id" in error for error in errors)
+
+
 def test_extract_rollback_release_binding_retains_exact_identity() -> None:
     prev = built_manifest(candidate_sha="0" * 40, release_id="odp-prev-001")
     binding = extract_rollback_release_binding(prev)

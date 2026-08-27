@@ -25,6 +25,7 @@ from delivery_toolchain.release.build_release_handoff import (
     resolve_created_at,
 )
 from delivery_toolchain.release.release_manifest import (
+    build_release_manifest,
     compute_data_contract_digest,
     compute_manifest_digest,
     validate_manifest,
@@ -63,24 +64,55 @@ def valid_snapshot() -> dict:
     }
 
 
-def valid_rollback(current_sha: str = SHA) -> dict:
-    prev_sha = "0" * 40 if current_sha != "0" * 40 else "9" * 40
+def valid_rollback_summary(candidate_sha: str) -> dict:
+    older_sha = "9" * 40 if candidate_sha != "9" * 40 else "8" * 40
     return {
-        "release_id": "odp-prev-001",
-        "candidate_sha": prev_sha,
+        "release_id": "odp-older-001",
+        "candidate_sha": older_sha,
         "manifest_digest": "sha256:" + "8" * 64,
         "components": {
             "api": {"image": ref("api", "a")},
             "web": {"image": ref("web", "b")},
         },
         "data_snapshot": {
+            "id": "snap-older-001",
+            "uri": "gs://odayplus-snapshots/masked/snap-older-001.tar.gz",
+            "content_sha256": "sha256:" + "c" * 64,
+            "data_contract_digest": compute_data_contract_digest(root=ROOT),
+            "masked": True,
+        },
+    }
+
+
+def valid_rollback(current_sha: str = SHA, release_id: str = "odp-prev-001") -> dict:
+    prev_sha = "0" * 40 if current_sha != "0" * 40 else "9" * 40
+    return build_release_manifest(
+        release_id=release_id,
+        candidate_sha=prev_sha,
+        components={
+            "api": {"image": ref("api", "a")},
+            "web": {"image": ref("web", "b")},
+            "worker": {"image": ref("worker", "c")},
+            "scheduler": {"image": ref("scheduler", "d")},
+        },
+        sbom_refs=[ref("api", "5")],
+        signature_refs=[ref("api", "6")],
+        created_at="2026-08-25T12:00:00+00:00",
+        created_by_workflow=(
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@"
+            + prev_sha
+        ),
+        data_snapshot={
             "id": "snap-prev-001",
             "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
             "content_sha256": "sha256:" + "c" * 64,
             "data_contract_digest": compute_data_contract_digest(root=ROOT),
             "masked": True,
         },
-    }
+        rollback_release=valid_rollback_summary(prev_sha),
+        release_status="ready",
+        root=ROOT,
+    )
 
 
 def handoff(**overrides):
@@ -319,6 +351,27 @@ def test_missing_rollback_release_refuses_to_write_a_handoff() -> None:
     with pytest.raises(HandoffError) as excinfo:
         handoff(rollback_release=None)
     assert any("缺少 rollback release" in err for err in excinfo.value.errors)
+
+
+def test_direct_rollback_summary_is_not_accepted_as_a_previous_manifest() -> None:
+    """The direct API must not provide a summary-shaped validation bypass."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(rollback_release=valid_rollback_summary("0" * 40))
+
+    assert any("rollback manifest 無效" in err for err in excinfo.value.errors)
+    assert any("missing required field: schema_version" in err for err in excinfo.value.errors)
+
+
+def test_previous_manifest_with_current_release_id_fails_closed() -> None:
+    current_release_id = f"odp-{SHA[:12]}"
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            rollback_release=valid_rollback(release_id=current_release_id),
+        )
+
+    assert any("rollback release_id" in err for err in excinfo.value.errors)
 
 
 def test_rollback_manifest_cli_option(tmp_path: Path) -> None:

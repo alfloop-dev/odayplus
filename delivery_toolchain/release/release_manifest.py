@@ -48,6 +48,7 @@ REQUIRED_FIELDS_V2 = REQUIRED_FIELDS_V1 + (
 )
 
 REQUIRED_FIELDS = REQUIRED_FIELDS_V1
+SNAPSHOT_FIELDS = ("id", "uri", "content_sha256", "data_contract_digest", "masked")
 
 
 def is_exact_sha(value: Any) -> bool:
@@ -91,6 +92,41 @@ def is_valid_timestamp(value: Any) -> bool:
     except ValueError:
         return False
     return parsed.tzinfo is not None
+
+
+def _snapshot_errors(snapshot: Any, *, label: str) -> list[str]:
+    """Validate a snapshot pointer that is embedded in a release identity."""
+
+    if not isinstance(snapshot, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in SNAPSHOT_FIELDS:
+        if field not in snapshot:
+            errors.append(f"{label} missing required field: {field}")
+    if "id" in snapshot and (
+        not isinstance(snapshot["id"], str) or not snapshot["id"].strip()
+    ):
+        errors.append(f"{label}.id must be a non-empty string")
+    if "uri" in snapshot and (
+        not isinstance(snapshot["uri"], str) or not snapshot["uri"].strip()
+    ):
+        errors.append(f"{label}.uri must be a non-empty string")
+    if "content_sha256" in snapshot and not is_sha256_digest(
+        snapshot["content_sha256"]
+    ):
+        errors.append(
+            f"{label}.content_sha256 must be a sha256:<64 lowercase hex> digest"
+        )
+    if "data_contract_digest" in snapshot and not is_sha256_digest(
+        snapshot["data_contract_digest"]
+    ):
+        errors.append(
+            f"{label}.data_contract_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    if "masked" in snapshot and snapshot["masked"] is not True:
+        errors.append(f"{label}.masked must be True")
+    return errors
 
 
 def validate_manifest(
@@ -204,28 +240,21 @@ def validate_manifest(
     ).strip():
         errors.append("manifest.created_by_workflow must be a non-empty workflow reference")
 
-    # Validate data_snapshot if present
+    # Validate data_snapshot if present. Schema v2 makes this field required;
+    # v1 keeps it optional so historical manifests remain auditable.
     data_snapshot = manifest.get("data_snapshot")
     if data_snapshot is not None:
-        if not isinstance(data_snapshot, dict):
-            errors.append("manifest.data_snapshot must be an object")
-        else:
-            for snap_field in ("id", "uri", "content_sha256", "data_contract_digest", "masked"):
-                if snap_field not in data_snapshot:
-                    errors.append(f"manifest.data_snapshot missing required field: {snap_field}")
-            if "id" in data_snapshot and (not isinstance(data_snapshot["id"], str) or not data_snapshot["id"].strip()):
-                errors.append("manifest.data_snapshot.id must be a non-empty string")
-            if "uri" in data_snapshot and (not isinstance(data_snapshot["uri"], str) or not data_snapshot["uri"].strip()):
-                errors.append("manifest.data_snapshot.uri must be a non-empty string")
-            if "content_sha256" in data_snapshot and not is_sha256_digest(data_snapshot["content_sha256"]):
-                errors.append("manifest.data_snapshot.content_sha256 must be a sha256:<64 lowercase hex> digest")
-            if "data_contract_digest" in data_snapshot:
-                if not is_sha256_digest(data_snapshot["data_contract_digest"]):
-                    errors.append("manifest.data_snapshot.data_contract_digest must be a sha256:<64 lowercase hex> digest")
-                elif "data_contract_digest" in manifest and data_snapshot["data_contract_digest"] != manifest["data_contract_digest"]:
-                    errors.append("manifest.data_snapshot.data_contract_digest does not match manifest.data_contract_digest")
-            if "masked" in data_snapshot and data_snapshot["masked"] is not True:
-                errors.append("manifest.data_snapshot.masked must be True")
+        errors.extend(_snapshot_errors(data_snapshot, label="manifest.data_snapshot"))
+        if (
+            isinstance(data_snapshot, dict)
+            and is_sha256_digest(data_snapshot.get("data_contract_digest"))
+            and is_sha256_digest(manifest.get("data_contract_digest"))
+            and data_snapshot["data_contract_digest"] != manifest["data_contract_digest"]
+        ):
+            errors.append(
+                "manifest.data_snapshot.data_contract_digest does not match "
+                "manifest.data_contract_digest"
+            )
 
     # Validate rollback_release if present
     rollback_release = manifest.get("rollback_release")
@@ -267,25 +296,23 @@ def validate_manifest(
                     if not isinstance(img, str) or not IMAGE_DIGEST_PATTERN.fullmatch(img):
                         errors.append(f"{label}.image must be an immutable image reference with @sha256 digest")
 
-            rb_snapshot = rollback_release.get("data_snapshot") or rollback_release.get("snapshot_pointer") or rollback_release.get("snapshot")
-            if rb_snapshot is None:
+            snapshot_key = next(
+                (
+                    key
+                    for key in ("data_snapshot", "snapshot_pointer", "snapshot")
+                    if key in rollback_release
+                ),
+                None,
+            )
+            if snapshot_key is None:
                 errors.append("manifest.rollback_release missing required data_snapshot pointer")
-            elif not isinstance(rb_snapshot, dict):
-                errors.append("manifest.rollback_release.data_snapshot must be an object")
             else:
-                for req_snap_field in ("id", "uri", "content_sha256"):
-                    if req_snap_field not in rb_snapshot:
-                        errors.append(f"manifest.rollback_release.data_snapshot missing required field: {req_snap_field}")
-                if "id" in rb_snapshot and (not isinstance(rb_snapshot["id"], str) or not rb_snapshot["id"].strip()):
-                    errors.append("manifest.rollback_release.data_snapshot.id must be a non-empty string")
-                if "uri" in rb_snapshot and (not isinstance(rb_snapshot["uri"], str) or not rb_snapshot["uri"].strip()):
-                    errors.append("manifest.rollback_release.data_snapshot.uri must be a non-empty string")
-                if "content_sha256" in rb_snapshot and not is_sha256_digest(rb_snapshot["content_sha256"]):
-                    errors.append("manifest.rollback_release.data_snapshot.content_sha256 must be a sha256:<64 lowercase hex> digest")
-                if "data_contract_digest" in rb_snapshot and not is_sha256_digest(rb_snapshot["data_contract_digest"]):
-                    errors.append("manifest.rollback_release.data_snapshot.data_contract_digest must be a sha256:<64 lowercase hex> digest")
-                if "masked" in rb_snapshot and rb_snapshot["masked"] is not True:
-                    errors.append("manifest.rollback_release.data_snapshot.masked must be True")
+                errors.extend(
+                    _snapshot_errors(
+                        rollback_release[snapshot_key],
+                        label="manifest.rollback_release.data_snapshot",
+                    )
+                )
 
     recorded_digest = manifest.get("manifest_digest")
     if not is_sha256_digest(recorded_digest):
@@ -501,7 +528,13 @@ def build_release_manifest(
 
 
 def extract_rollback_release_binding(prev_manifest: dict[str, Any]) -> dict[str, Any]:
-    """Extract verifiable rollback release binding from an approved previous manifest."""
+    """Extract verifiable rollback binding from an approved previous manifest."""
+    admission_errors = validate_release_admission(prev_manifest)
+    if admission_errors:
+        raise ValueError(
+            "Cannot extract rollback binding from a non-admissible manifest: "
+            + "; ".join(admission_errors)
+        )
     components = prev_manifest.get("components", {})
     rb_components = {}
     for name, comp in components.items():
@@ -534,8 +567,9 @@ def validate_rollback_manifest(
     prev_manifest: Any,
     *,
     current_candidate_sha: str | None = None,
+    current_release_id: str | None = None,
 ) -> list[str]:
-    """Validate that a previous release manifest is structurally sound, admissible, and distinct."""
+    """Validate an entire admissible previous manifest before extracting it."""
     if not isinstance(prev_manifest, dict):
         return ["rollback manifest must be a JSON object"]
 
@@ -549,6 +583,13 @@ def validate_rollback_manifest(
         errors.append(
             "rollback candidate_sha must not match current candidate_sha; "
             "rollback target must be a distinct release candidate"
+        )
+
+    release_id = prev_manifest.get("release_id")
+    if current_release_id and release_id == current_release_id:
+        errors.append(
+            "rollback release_id must not match current release_id; "
+            "rollback target must be a distinct release"
         )
 
     snap = prev_manifest.get("data_snapshot")
@@ -567,6 +608,7 @@ __all__ = [
     "REQUIRED_FIELDS",
     "REQUIRED_FIELDS_V1",
     "REQUIRED_FIELDS_V2",
+    "SNAPSHOT_FIELDS",
     "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
     "build_release_manifest",

@@ -110,7 +110,7 @@ def build_handoff(
     sbom_refs: list[str],
     signature_refs: list[str],
     data_snapshot: dict[str, Any] | None = None,
-    rollback_manifest: dict[str, Any] | Path | None = None,
+    rollback_manifest: dict[str, Any] | str | Path | None = None,
     rollback_release: dict[str, Any] | None = None,
     release_id: str | None = None,
     created_at: str | None = None,
@@ -160,42 +160,36 @@ def build_handoff(
                     f"{label}參照必須是 immutable @sha256 reference，實際值為 {ref!r}。"
                 )
 
+    effective_release_id = release_id or f"odp-{release_sha[:12]}"
+    if rollback_manifest is not None and rollback_release is not None:
+        errors.append(
+            "rollback_manifest 與 rollback_release 不可同時指定；"
+            "兩者都必須指向同一份完整 previous release manifest"
+        )
+
+    rollback_source = rollback_manifest if rollback_manifest is not None else rollback_release
     resolved_rollback_release = None
-    if rollback_manifest is not None:
-        if isinstance(rollback_manifest, (str, Path)):
-            prev_m, prev_errs = load_manifest(Path(rollback_manifest))
-            if prev_errs or prev_m is None:
-                errors.extend([f"無法載入 rollback manifest：{e}" for e in prev_errs])
-            else:
-                rb_errs = validate_rollback_manifest(prev_m, current_candidate_sha=release_sha)
-                if rb_errs:
-                    errors.extend([f"rollback manifest 無效：{e}" for e in rb_errs])
-                else:
-                    resolved_rollback_release = extract_rollback_release_binding(prev_m)
-        elif isinstance(rollback_manifest, dict):
-            rb_errs = validate_rollback_manifest(rollback_manifest, current_candidate_sha=release_sha)
+    if rollback_source is not None:
+        previous_manifest: dict[str, Any] | None = None
+        if isinstance(rollback_source, (str, Path)):
+            previous_manifest, previous_errors = load_manifest(Path(rollback_source))
+            if previous_errors or previous_manifest is None:
+                errors.extend([f"無法載入 rollback manifest：{e}" for e in previous_errors])
+        elif isinstance(rollback_source, dict):
+            previous_manifest = rollback_source
+        else:
+            errors.append("rollback manifest 必須是完整 manifest dict 或檔案路徑")
+
+        if previous_manifest is not None:
+            rb_errs = validate_rollback_manifest(
+                previous_manifest,
+                current_candidate_sha=release_sha,
+                current_release_id=effective_release_id,
+            )
             if rb_errs:
                 errors.extend([f"rollback manifest 無效：{e}" for e in rb_errs])
             else:
-                resolved_rollback_release = extract_rollback_release_binding(rollback_manifest)
-        else:
-            errors.append("rollback_manifest 必須是 dict 或檔案路徑")
-    elif rollback_release is not None:
-        if isinstance(rollback_release, dict):
-            if (
-                "created_by_workflow" in rollback_release
-                or "migration_digest" in rollback_release
-                or "sbom_refs" in rollback_release
-            ):
-                rb_errs = validate_rollback_manifest(rollback_release, current_candidate_sha=release_sha)
-                if rb_errs:
-                    errors.extend([f"rollback manifest 無效：{e}" for e in rb_errs])
-                else:
-                    resolved_rollback_release = extract_rollback_release_binding(rollback_release)
-            else:
-                resolved_rollback_release = rollback_release
-        else:
-            errors.append("rollback_release 必須是 dict")
+                resolved_rollback_release = extract_rollback_release_binding(previous_manifest)
 
     if schema_version >= 2:
         if data_snapshot is None:
@@ -218,7 +212,7 @@ def build_handoff(
         }
 
     manifest = build_release_manifest(
-        release_id=release_id or f"odp-{release_sha[:12]}",
+        release_id=effective_release_id,
         candidate_sha=release_sha,
         components=manifest_components,
         sbom_refs=sorted(dict.fromkeys(str(ref).strip() for ref in sbom_refs)),
@@ -321,24 +315,7 @@ def main(argv: list[str] | None = None) -> int:
             "masked": not args.data_snapshot_unmasked,
         }
 
-    rollback_release = None
     rollback_file = args.rollback_manifest or args.rollback_release_file
-    if rollback_file:
-        prev_manifest, prev_errors = load_manifest(rollback_file)
-        if prev_errors or prev_manifest is None:
-            print("無法讀取 rollback manifest：", file=sys.stderr)
-            for error in prev_errors:
-                print(f"- {error}", file=sys.stderr)
-            return 1
-        rb_errors = validate_rollback_manifest(
-            prev_manifest, current_candidate_sha=args.release_sha
-        )
-        if rb_errors:
-            print("rollback manifest 無法通過驗證（必須為已核准且具備 data_snapshot 之上一份 release manifest）：", file=sys.stderr)
-            for error in rb_errors:
-                print(f"- {error}", file=sys.stderr)
-            return 1
-        rollback_release = extract_rollback_release_binding(prev_manifest)
 
     try:
         images, manifest = build_handoff(
@@ -347,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
             sbom_refs=[ref for ref in args.sbom_ref if str(ref).strip()],
             signature_refs=[ref for ref in args.signature_ref if str(ref).strip()],
             data_snapshot=data_snapshot,
-            rollback_release=rollback_release,
+            rollback_manifest=rollback_file,
             release_id=args.release_id,
             created_at=args.created_at,
             created_by_workflow=args.created_by_workflow,
