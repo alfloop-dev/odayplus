@@ -1,12 +1,14 @@
 {
   "task_id": "ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001",
-  "timestamp": "2026-08-27T05:13:30Z",
+  "timestamp": "2026-08-27T05:17:10Z",
   "owner": "Antigravity",
   "reviewer": "Codex",
   "phase": "Wave 3 - OAuth-independent deployment hardening",
   "artifacts": [
     "product_ops/deployment/deploy_cloud_run_waji.sh",
+    "delivery_toolchain/e2e/check_remote_staging_proof.py",
     "tests/ops/test_cloud_run_live_deployment.py",
+    "tests/e2e/test_remote_staging_proof_checker.py",
     "docs/evidence/runtime/ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001/README.md",
     "docs/evidence/runtime/ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001/verification_receipt.json"
   ],
@@ -15,14 +17,17 @@
     "api_deployment_no_allow_unauthenticated_removed": "PASS",
     "web_deployment_maintains_allow_unauthenticated": "PASS",
     "web_bff_iam_protected_api_audience_wiring": "PASS",
+    "staging_proof_checker_wif_identity_token_authorization": "PASS",
+    "staging_proof_checker_fail_closed_on_token_failure": "PASS",
     "fail_closed_tamper_tests": "PASS",
     "no_duplicate_or_second_deploy_path": "PASS"
   },
   "verification": {
-    "command": "uv run pytest tests/ops/test_cloud_run_live_deployment.py -q",
-    "result": "392 passed",
+    "command": "uv run pytest tests/ops/test_cloud_run_live_deployment.py tests/e2e/test_remote_staging_proof_checker.py -q",
+    "result": "397 passed",
     "ruff_check": "PASS",
     "ruff_format": "PASS",
-    "bash_syntax_check": "PASS"
+    "bash_syntax_check": "PASS",
+    "code_boundaries_check": "PASS"
   }
 }
