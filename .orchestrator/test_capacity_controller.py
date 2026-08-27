@@ -558,3 +558,137 @@ def test_custom_schema_active_worker_task_id_matching() -> None:
         cfg, runtime_state, tasks, runnable_tasks=runnable_ids, now=NOW
     )
     assert controller["chair_decision"]["approve_helper_wave"] is False
+
+
+def test_sidecar_task_id_short_ids_remain_unchanged() -> None:
+    """Short sidecar IDs (<= 48 chars) must remain identical to the legacy format."""
+    # 42 chars
+    short_id = capacity_controller.build_sidecar_task_id("BLOCKED-0", "blocked_task_diagnostics")
+    assert short_id == "BLOCKED-0-SIDECAR-BLOCKED-TASK-DIAGNOSTICS"
+    assert len(short_id) == 42
+
+    # 34 chars
+    bff_id = capacity_controller.build_sidecar_task_id("APP-001", "bff_handoff_packet")
+    assert bff_id == "APP-001-SIDECAR-BFF-HANDOFF-PACKET"
+    assert len(bff_id) == 34
+
+    # Exact boundary test: 48 chars
+    # "P" * 15 (15) + "-SIDECAR-" (9) + "K" * 24 (24) = 48
+    parent_exact = "P" * 15
+    kind_exact = "k" * 24
+    exact_id = capacity_controller.build_sidecar_task_id(parent_exact, kind_exact)
+    assert exact_id == f"{parent_exact}-SIDECAR-{kind_exact.upper()}"
+    assert len(exact_id) == 48
+
+
+def test_sidecar_task_id_bounded_and_deterministic_for_long_parent_and_kind() -> None:
+    """Long sidecar IDs (> 48 chars) must be deterministic, <= 48 chars, and contain -SIDECAR-."""
+    long_parent = "HUMAN-OSS-LEGAL-APPROVAL-001"
+    kind = "blocked_task_diagnostics"
+
+    # Determinism
+    id1 = capacity_controller.build_sidecar_task_id(long_parent, kind)
+    id2 = capacity_controller.build_sidecar_task_id(long_parent, kind)
+    assert id1 == id2
+    assert len(id1) <= 48
+    assert "-SIDECAR-" in id1
+    assert id1.startswith("HUMAN-OSS-LEGAL-APPROVAL-001-SIDECAR-")
+
+    # Long parent + long kind
+    very_long_parent = "ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001"
+    very_long_kind = "deep_diagnostic_remediation_investigation_packet"
+    long_id = capacity_controller.build_sidecar_task_id(very_long_parent, very_long_kind)
+    assert len(long_id) <= 48
+    assert "-SIDECAR-" in long_id
+
+    # 100+ character inputs
+    huge_parent = "X" * 120
+    huge_kind = "y" * 120
+    huge_id = capacity_controller.build_sidecar_task_id(huge_parent, huge_kind)
+    assert len(huge_id) <= 48
+    assert "-SIDECAR-" in huge_id
+
+
+def test_sidecar_task_id_collision_resistance_for_long_parents_and_kinds() -> None:
+    """Collision-resistant digest ensures distinct task IDs even when parent prefixes match."""
+    # Two distinct long parents sharing the exact same 31-character prefix
+    prefix = "ODP-VERY-LONG-TASK-PREFIX-NAME-"
+    parent_a = f"{prefix}ALPHA-001"
+    parent_b = f"{prefix}BETA-002"
+    kind = "blocked_task_diagnostics"
+
+    id_a = capacity_controller.build_sidecar_task_id(parent_a, kind)
+    id_b = capacity_controller.build_sidecar_task_id(parent_b, kind)
+
+    assert id_a != id_b
+    assert len(id_a) <= 48
+    assert len(id_b) <= 48
+
+    # Same long parent with two distinct long kinds
+    parent = "ODP-LONG-PARENT-SHARED-ACROSS-KINDS-001"
+    kind_a = "deep_diagnostic_analysis_and_triage_packet_v1"
+    kind_b = "deep_diagnostic_analysis_and_triage_packet_v2"
+
+    id_kind_a = capacity_controller.build_sidecar_task_id(parent, kind_a)
+    id_kind_b = capacity_controller.build_sidecar_task_id(parent, kind_b)
+
+    assert id_kind_a != id_kind_b
+    assert len(id_kind_a) <= 48
+    assert len(id_kind_b) <= 48
+
+    # Pairwise uniqueness across a matrix of 10 long parents and 10 long kinds
+    parents = [f"LONG-PARENT-ENTITY-SPECIFIER-{i:03d}" for i in range(10)]
+    kinds = [f"long_diagnostic_investigation_kind_{j:03d}" for j in range(10)]
+    generated_ids = {
+        capacity_controller.build_sidecar_task_id(p, k)
+        for p in parents
+        for k in kinds
+    }
+    assert len(generated_ids) == 100
+    assert all(len(sid) <= 48 for sid in generated_ids)
+    assert all("-SIDECAR-" in sid for sid in generated_ids)
+
+
+def test_sidecar_candidates_with_long_parent_preserves_authoritative_fields_and_artifacts() -> None:
+    """sidecar_candidates retains full helper_parent/helper_kind while generating bounded task ID and correct artifact paths."""
+    runtime_state = {
+        "capacity_controller": {
+            "underutilization_since": "2026-08-20T11:40:00Z",
+        }
+    }
+    tasks = [
+        {
+            "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+            "status": "blocked",
+            "blocked_reason": "upstream API defect",
+            "owner": "Claude",
+        },
+        {
+            "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+            "status": "blocked",
+            "blocked_reason": "upstream API defect",
+            "owner": "Claude",
+        },
+    ]
+
+    capacity_controller.evaluate_chair(
+        config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW
+    )
+    candidates = capacity_controller.sidecar_candidates(
+        config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW
+    )
+
+    assert len(candidates) == 2
+    for candidate in candidates:
+        sid = candidate["id"]
+        parent_id = candidate["helper_parent"]
+        kind = candidate["helper_kind"]
+
+        assert len(sid) <= 48
+        assert "-SIDECAR-" in sid
+        assert parent_id in {"HUMAN-OSS-LEGAL-APPROVAL-001", "ODP-EPHEMERAL-STAGING-ROLLOUT-001"}
+        assert kind == "blocked_task_diagnostics"
+        assert candidate["task_class"] == "sidecar"
+        assert candidate["artifacts"] == [f"support/sidecars/{parent_id}/{sid}.md"]
+        assert parent_id in candidate["title"]
+        assert parent_id in candidate["summary_zh"]
