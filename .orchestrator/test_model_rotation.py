@@ -770,11 +770,35 @@ def test_agy_quota_banner_variants_are_classified():
 
 def test_generic_provider_quota_markers_still_classified():
     """Non-agy provider quota text keeps its existing classification."""
-    for reason in ("Status: 402 credit balance is too low", "You have no quota", "quota exceeded"):
+    for reason in (
+        "Status: 402 credit balance is too low",
+        "You have no quota",
+        "quota exceeded",
+        "[API Error: Helper OAuth free tier quota exceeded.]",
+        "free tier quota exceeded",
+    ):
         assert (
             sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"]
             == "quota_terminal"
         ), reason
+
+
+def test_cloud_run_quota_exceeded_stays_terminal_not_provider_quota():
+    """Non-provider Cloud Run quota error strings must not trigger provider quota pause."""
+    for provider in ("codex", "claude", "antigravity5", "copilot", "gemini"):
+        assert (
+            sv.classify_worker_failure(CFG, {"provider": provider}, "Cloud Run API quota exceeded")[
+                "kind"
+            ]
+            == "terminal"
+        )
+        result = sv.classify_worker_failure(
+            CFG,
+            {"provider": provider},
+            "429 Quota exceeded for quota metric 'Cloud Run API quota exceeded'",
+        )
+        assert result["kind"] != "quota_terminal"
+        assert sv.should_pause_dispatch_for_failure_kind(result["kind"]) is False
 
 
 # The verbatim banner captured from the live synthetic assistant message that
