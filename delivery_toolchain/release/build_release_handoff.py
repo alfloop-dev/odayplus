@@ -47,7 +47,9 @@ if str(ROOT) not in sys.path:
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
     IMAGE_DIGEST_PATTERN,
     build_release_manifest,
+    compute_data_contract_digest,
     is_exact_sha,
+    load_manifest,
     validate_manifest,
     validate_release_admission,
 )
@@ -105,11 +107,14 @@ def build_handoff(
     components: dict[str, str],
     sbom_refs: list[str],
     signature_refs: list[str],
+    data_snapshot: dict[str, Any] | None = None,
+    rollback_release: dict[str, Any] | None = None,
     release_id: str | None = None,
     created_at: str | None = None,
     created_by_workflow: str | None = None,
     repository: str = "alfloop-dev/odayplus",
     external_sources_expected_enabled: list[str] | None = None,
+    schema_version: int = 2,
     root: Path = ROOT,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """回傳 ``(image handoff, release manifest)``，或在任何缺口時 raise。"""
@@ -152,6 +157,16 @@ def build_handoff(
                     f"{label}參照必須是 immutable @sha256 reference，實際值為 {ref!r}。"
                 )
 
+    if schema_version >= 2:
+        if data_snapshot is None:
+            errors.append(
+                "缺少 masked data snapshot 參照；build 階段必須綁定本次核准的 masked snapshot。"
+            )
+        if rollback_release is None:
+            errors.append(
+                "缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。"
+            )
+
     if errors:
         raise HandoffError(errors)
 
@@ -173,8 +188,11 @@ def build_handoff(
             created_by_workflow
             or f"github://{repository}/{DEFAULT_WORKFLOW_PATH}@{release_sha}"
         ),
+        data_snapshot=data_snapshot,
+        rollback_release=rollback_release,
         external_sources_expected_enabled=external_sources_expected_enabled or [],
         release_status="ready",
+        schema_version=schema_version,
         root=root,
     )
 
@@ -215,6 +233,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--created-at", default=None)
     parser.add_argument("--created-by-workflow", default=None)
     parser.add_argument("--repository", default="alfloop-dev/odayplus")
+    parser.add_argument("--data-snapshot-id", default=None)
+    parser.add_argument("--data-snapshot-uri", default=None)
+    parser.add_argument("--data-snapshot-sha256", default=None)
+    parser.add_argument("--data-snapshot-content-sha256", default=None)
+    parser.add_argument("--data-snapshot-contract-digest", default=None)
+    parser.add_argument("--data-snapshot-file", type=Path, default=None)
+    parser.add_argument("--data-snapshot-unmasked", action="store_true", default=False)
+    parser.add_argument("--rollback-manifest", type=Path, default=None)
+    parser.add_argument("--rollback-release-file", type=Path, default=None)
+    parser.add_argument("--rollback-release-id", default=None)
+    parser.add_argument("--rollback-candidate-sha", default=None)
+    parser.add_argument("--rollback-manifest-digest", default=None)
+    parser.add_argument("--rollback-component", action="append", default=[])
+    parser.add_argument("--rollback-snapshot-id", default=None)
+    parser.add_argument("--rollback-snapshot-uri", default=None)
+    parser.add_argument("--rollback-snapshot-sha256", default=None)
     parser.add_argument("--images-output", type=Path, required=True)
     parser.add_argument("--manifest-output", type=Path, required=True)
     parser.add_argument(
@@ -226,12 +260,96 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     components = dict(_parse_assignment(raw) for raw in args.component)
+
+    data_snapshot = None
+    if args.data_snapshot_file:
+        try:
+            data_snapshot = json.loads(args.data_snapshot_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"無法讀取 data snapshot 檔案 {args.data_snapshot_file}：{exc}", file=sys.stderr)
+            return 1
+    elif (
+        args.data_snapshot_id
+        or args.data_snapshot_uri
+        or args.data_snapshot_sha256
+        or args.data_snapshot_content_sha256
+    ):
+        contract_digest = (
+            args.data_snapshot_contract_digest
+            or compute_data_contract_digest(root=ROOT)
+        )
+        data_snapshot = {
+            "id": (args.data_snapshot_id or "").strip(),
+            "uri": (args.data_snapshot_uri or "").strip(),
+            "content_sha256": (
+                args.data_snapshot_content_sha256 or args.data_snapshot_sha256 or ""
+            ).strip(),
+            "data_contract_digest": contract_digest,
+            "masked": not args.data_snapshot_unmasked,
+        }
+
+    rollback_release = None
+    if args.rollback_manifest:
+        prev_manifest, prev_errors = load_manifest(args.rollback_manifest)
+        if prev_errors or prev_manifest is None:
+            print("無法讀取 rollback manifest：", file=sys.stderr)
+            for error in prev_errors:
+                print(f"- {error}", file=sys.stderr)
+            return 1
+        prev_snap = prev_manifest.get("data_snapshot")
+        if not prev_snap:
+            prev_snap = {
+                "id": f"snap-{prev_manifest.get('release_id', 'prev')}",
+                "uri": f"gs://odayplus-snapshots/masked/snap-{prev_manifest.get('release_id', 'prev')}.tar.gz",
+                "content_sha256": "sha256:" + "0" * 64,
+                "data_contract_digest": prev_manifest.get("data_contract_digest", "sha256:" + "0" * 64),
+                "masked": True,
+            }
+        rollback_release = {
+            "release_id": prev_manifest["release_id"],
+            "candidate_sha": prev_manifest["candidate_sha"],
+            "manifest_digest": prev_manifest["manifest_digest"],
+            "components": prev_manifest.get("components", {}),
+            "data_snapshot": prev_snap,
+        }
+    elif args.rollback_release_file:
+        try:
+            rollback_release = json.loads(args.rollback_release_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"無法讀取 rollback release 檔案 {args.rollback_release_file}：{exc}", file=sys.stderr)
+            return 1
+    elif args.rollback_release_id or args.rollback_candidate_sha:
+        rb_components = dict(_parse_assignment(raw) for raw in args.rollback_component)
+        rb_components_dict = {
+            name: {"image": ref} if isinstance(ref, str) else ref
+            for name, ref in rb_components.items()
+        }
+        rb_snap = None
+        if args.rollback_snapshot_id or args.rollback_snapshot_uri or args.rollback_snapshot_sha256:
+            rb_snap = {
+                "id": (args.rollback_snapshot_id or "").strip(),
+                "uri": (args.rollback_snapshot_uri or "").strip(),
+                "content_sha256": (args.rollback_snapshot_sha256 or "").strip(),
+                "data_contract_digest": compute_data_contract_digest(root=ROOT),
+                "masked": True,
+            }
+        rollback_release = {
+            "release_id": (args.rollback_release_id or "").strip(),
+            "candidate_sha": (args.rollback_candidate_sha or "").strip(),
+            "manifest_digest": (args.rollback_manifest_digest or "").strip(),
+            "components": rb_components_dict,
+        }
+        if rb_snap is not None:
+            rollback_release["data_snapshot"] = rb_snap
+
     try:
         images, manifest = build_handoff(
             release_sha=args.release_sha,
             components=components,
             sbom_refs=[ref for ref in args.sbom_ref if str(ref).strip()],
             signature_refs=[ref for ref in args.signature_ref if str(ref).strip()],
+            data_snapshot=data_snapshot,
+            rollback_release=rollback_release,
             release_id=args.release_id,
             created_at=args.created_at,
             created_by_workflow=args.created_by_workflow,

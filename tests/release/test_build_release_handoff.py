@@ -25,6 +25,7 @@ from delivery_toolchain.release.build_release_handoff import (
     resolve_created_at,
 )
 from delivery_toolchain.release.release_manifest import (
+    compute_data_contract_digest,
     compute_manifest_digest,
     validate_manifest,
     validate_release_admission,
@@ -52,14 +53,47 @@ def components(**overrides: str) -> dict[str, str]:
     return built
 
 
+def valid_snapshot() -> dict:
+    return {
+        "id": "snap-handoff-001",
+        "uri": "gs://odayplus-snapshots/masked/snap-handoff-001.tar.gz",
+        "content_sha256": "sha256:" + "7" * 64,
+        "data_contract_digest": compute_data_contract_digest(root=ROOT),
+        "masked": True,
+    }
+
+
+def valid_rollback(current_sha: str = SHA) -> dict:
+    prev_sha = "0" * 40 if current_sha != "0" * 40 else "9" * 40
+    return {
+        "release_id": "odp-prev-001",
+        "candidate_sha": prev_sha,
+        "manifest_digest": "sha256:" + "8" * 64,
+        "components": {
+            "api": {"image": ref("api", "a")},
+            "web": {"image": ref("web", "b")},
+        },
+        "data_snapshot": {
+            "id": "snap-prev-001",
+            "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+            "content_sha256": "sha256:" + "c" * 64,
+            "data_contract_digest": compute_data_contract_digest(root=ROOT),
+            "masked": True,
+        },
+    }
+
+
 def handoff(**overrides):
+    release_sha = overrides.get("release_sha", SHA)
     kwargs = {
-        "release_sha": SHA,
+        "release_sha": release_sha,
         "components": components(),
         "sbom_refs": [ref("api", "5")],
         "signature_refs": [ref("api", "6")],
+        "data_snapshot": valid_snapshot(),
+        "rollback_release": valid_rollback(release_sha),
         "created_at": CREATED_AT,
-        "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@" + SHA,
+        "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@" + release_sha,
     }
     kwargs.update(overrides)
     return build_handoff(**kwargs)
@@ -172,9 +206,33 @@ def test_an_unknown_release_sha_cannot_be_dated() -> None:
     assert any("無法讀取" in error for error in excinfo.value.errors)
 
 
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------
+def _snapshot_and_rollback_args() -> list[str]:
+    snap = valid_snapshot()
+    rb = valid_rollback()
+    return [
+        "--data-snapshot-id",
+        snap["id"],
+        "--data-snapshot-uri",
+        snap["uri"],
+        "--data-snapshot-sha256",
+        snap["content_sha256"],
+        "--rollback-release-id",
+        rb["release_id"],
+        "--rollback-candidate-sha",
+        rb["candidate_sha"],
+        "--rollback-manifest-digest",
+        rb["manifest_digest"],
+        "--rollback-component",
+        f"api={rb['components']['api']['image']}",
+        "--rollback-component",
+        f"web={rb['components']['web']['image']}",
+        "--rollback-snapshot-id",
+        rb["data_snapshot"]["id"],
+        "--rollback-snapshot-uri",
+        rb["data_snapshot"]["uri"],
+        "--rollback-snapshot-sha256",
+        rb["data_snapshot"]["content_sha256"],
+    ]
 
 
 def _cli(tmp_path: Path, *extra: str) -> tuple[int, Path, Path]:
@@ -205,6 +263,7 @@ def test_the_cli_writes_both_halves_of_the_handoff(tmp_path: Path) -> None:
     code, images_path, manifest_path = _cli(
         tmp_path,
         *_component_args(),
+        *_snapshot_and_rollback_args(),
         "--sbom-ref",
         ref("api", "5"),
         "--signature-ref",
@@ -215,6 +274,8 @@ def test_the_cli_writes_both_halves_of_the_handoff(tmp_path: Path) -> None:
     assert json.loads(images_path.read_text(encoding="utf-8")) == components()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert validate_release_admission(manifest) == []
+    assert manifest["data_snapshot"]["masked"] is True
+    assert manifest["rollback_release"]["candidate_sha"] != SHA
 
 
 def test_the_cli_reports_the_manifest_digest_to_the_workflow(tmp_path: Path) -> None:
@@ -223,6 +284,7 @@ def test_the_cli_reports_the_manifest_digest_to_the_workflow(tmp_path: Path) -> 
     code, _, manifest_path = _cli(
         tmp_path,
         *_component_args(),
+        *_snapshot_and_rollback_args(),
         "--sbom-ref",
         ref("api", "5"),
         "--signature-ref",
@@ -257,3 +319,45 @@ def test_the_cli_writes_nothing_when_the_build_was_incomplete(tmp_path: Path) ->
     assert code == 1
     assert not images_path.exists()
     assert not manifest_path.exists()
+
+
+def test_missing_data_snapshot_refuses_to_write_a_handoff() -> None:
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(data_snapshot=None)
+    assert any("缺少 masked data snapshot" in err for err in excinfo.value.errors)
+
+
+def test_missing_rollback_release_refuses_to_write_a_handoff() -> None:
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(rollback_release=None)
+    assert any("缺少 rollback release" in err for err in excinfo.value.errors)
+
+
+def test_rollback_manifest_cli_option(tmp_path: Path) -> None:
+    # First build a previous release manifest
+    prev_images, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-current-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["rollback_release"]["candidate_sha"] == "0" * 40
+    assert manifest["rollback_release"]["manifest_digest"] == prev_manifest["manifest_digest"]
+    assert validate_release_admission(manifest) == []
+
