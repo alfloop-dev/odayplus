@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -5312,6 +5313,398 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
         self.assertEqual(worker["status"], "completed")
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "completed")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_completed")
+
+
+class QuotaPlanningAndCoordinationPollOrderTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        (self.root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+        (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            },
+            "account_pools": {
+                "antigravity_main": {"max_concurrent": 2, "state": "healthy"},
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "antigravity2": {
+                    "id": "antigravity2",
+                    "display_name": "Antigravity2",
+                    "provider": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+            },
+            "providers": {"antigravity": {}},
+            "ready_dispatcher": {
+                "active_worker_statuses": ["running", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled"],
+                "review_statuses": ["review"],
+                "owned_statuses": ["in_progress", "todo"],
+                "done_statuses": ["done", "review_approved"],
+            },
+            "provider_guardrails": {
+                "pause_on_capacity_failure": True,
+                "quota_terminal_pause_seconds": 900,
+            },
+        }
+
+    def _write_log(self, content: str) -> str:
+        log_file = self.root / f"log-{uuid.uuid4().hex}.log"
+        log_file.write_text(content, encoding="utf-8")
+        return str(log_file)
+
+    def test_failed_quota_planning_worker_with_exit_code_1_fences_account_pool_and_fails(self) -> None:
+        log_path = self._write_log("free tier quota exceeded\n")
+        state = {
+            "queue": {"events": {"evt-plan-1": {"status": "started"}}},
+            "workers": {
+                "run-plan-1": {
+                    "run_id": "run-plan-1",
+                    "task_id": None,
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "logical_agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-plan-1",
+                    "pid": 999999,
+                    "exit_code": 1,
+                    "log_path": log_path,
+                    "last_event_at": "2026-08-27T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "discussion_planning_baton_dispatch",
+                        "metadata": {
+                            "planning": {
+                                "session_id": "sess-123",
+                            },
+                        },
+                    },
+                }
+            },
+            "account_pool_runtime": {},
+            "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "record_account_pool_canary_success") as canary_success,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-plan-1"]
+        self.assertEqual(worker["status"], "failed")
+        self.assertTrue(worker.get("last_error"))
+        pool_entry = state.get("account_pool_runtime", {}).get("antigravity_main", {})
+        self.assertEqual(pool_entry.get("state"), "cooldown")
+        canary_success.assert_not_called()
+
+    def test_failed_quota_coordination_worker_with_exit_code_1_fences_account_pool_and_fails(self) -> None:
+        log_path = self._write_log("402 You have no quota\n")
+        state = {
+            "queue": {"events": {"evt-coord-1": {"status": "started"}}},
+            "workers": {
+                "run-coord-1": {
+                    "run_id": "run-coord-1",
+                    "task_id": "F-042",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "logical_agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-coord-1",
+                    "pid": 999999,
+                    "exit_code": 1,
+                    "log_path": log_path,
+                    "last_event_at": "2026-08-27T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "coordination:ui-done",
+                        "metadata": {
+                            "coordination": {
+                                "feature_id": "F-042",
+                                "worker_kind": "front-sync-worker",
+                                "payload_type": "ui-done",
+                            },
+                        },
+                    },
+                }
+            },
+            "account_pool_runtime": {},
+            "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-coord-1"]
+        self.assertEqual(worker["status"], "failed")
+        pool_entry = state.get("account_pool_runtime", {}).get("antigravity_main", {})
+        self.assertEqual(pool_entry.get("state"), "cooldown")
+
+    def test_exit_code_0_planning_and_coordination_workers_succeed(self) -> None:
+        log_path = self._write_log("Normal execution log with no error.\n")
+        state = {
+            "queue": {
+                "events": {
+                    "evt-plan": {"status": "started"},
+                    "evt-coord": {"status": "started"},
+                }
+            },
+            "workers": {
+                "run-plan": {
+                    "run_id": "run-plan",
+                    "task_id": None,
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-plan",
+                    "pid": 999991,
+                    "exit_code": 0,
+                    "log_path": log_path,
+                    "last_event_at": "2026-08-27T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "discussion_planning_baton_dispatch",
+                        "metadata": {"planning": {"session_id": "sess-1"}},
+                    },
+                },
+                "run-coord": {
+                    "run_id": "run-coord",
+                    "task_id": "F-001",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-coord",
+                    "pid": 999992,
+                    "exit_code": 0,
+                    "log_path": log_path,
+                    "last_event_at": "2026-08-27T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "coordination:sync",
+                        "metadata": {"coordination": {"feature_id": "F-001"}},
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "record_account_pool_canary_success") as canary_success,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"]["run-plan"]["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-plan"]["status"], "completed")
+        self.assertEqual(state["workers"]["run-coord"]["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-coord"]["status"], "completed")
+        canary_success.assert_called_once()
+
+    def test_signal_terminated_planning_and_coordination_workers_do_not_succeed(self) -> None:
+        log_path = self._write_log("status: 429 You have exceeded your quota\n")
+        state = {
+            "queue": {
+                "events": {
+                    "evt-plan": {"status": "started"},
+                    "evt-coord": {"status": "started"},
+                }
+            },
+            "workers": {
+                "run-plan": {
+                    "run_id": "run-plan",
+                    "task_id": None,
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-plan",
+                    "pid": 999991,
+                    "runner_signal": 15,
+                    "exit_code": 0,
+                    "log_path": log_path,
+                    "last_event_at": "2026-08-27T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "discussion_planning_baton_dispatch",
+                        "metadata": {"planning": {"session_id": "sess-1"}},
+                    },
+                },
+                "run-coord": {
+                    "run_id": "run-coord",
+                    "task_id": "F-001",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-coord",
+                    "pid": 999992,
+                    "runner_signal": 9,
+                    "exit_code": 0,
+                    "log_path": log_path,
+                    "last_event_at": "2026-08-27T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "coordination:sync",
+                        "metadata": {"coordination": {"feature_id": "F-001"}},
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", wraps=supervisor.detect_worker_failure) as detect_failure,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"]["run-plan"]["status"], "failed")
+        self.assertEqual(state["workers"]["run-coord"]["status"], "failed")
+        self.assertEqual(detect_failure.call_count, 2)
+
+    def test_exit_code_1_without_log_failure_does_not_succeed(self) -> None:
+        log_path = self._write_log("No recognized error strings here.\n")
+        state = {
+            "queue": {
+                "events": {
+                    "evt-plan": {"status": "started"},
+                    "evt-coord": {"status": "started"},
+                }
+            },
+            "workers": {
+                "run-plan": {
+                    "run_id": "run-plan",
+                    "task_id": None,
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-plan",
+                    "pid": 999991,
+                    "exit_code": 1,
+                    "log_path": log_path,
+                    "last_event_at": "2026-08-27T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "discussion_planning_baton_dispatch",
+                        "metadata": {"planning": {"session_id": "sess-1"}},
+                    },
+                },
+                "run-coord": {
+                    "run_id": "run-coord",
+                    "task_id": "F-001",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-coord",
+                    "pid": 999992,
+                    "exit_code": 1,
+                    "log_path": log_path,
+                    "last_event_at": "2026-08-27T09:00:00Z",
+                    "request_snapshot": {
+                        "reason": "coordination:sync",
+                        "metadata": {"coordination": {"feature_id": "F-001"}},
+                    },
+                },
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": []}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"]["run-plan"]["status"], "failed")
+        self.assertEqual(state["workers"]["run-coord"]["status"], "failed")
+
+    def test_only_structured_success_with_valid_outcome_short_circuits_failure_detection(self) -> None:
+        task = {
+            "id": "TASK-100",
+            "status": "in_progress",
+            "owner": "Antigravity",
+            "reviewer": "Codex",
+            "next": "Implement",
+            "depends_on": [],
+        }
+        dispatch_task = dict(task, head="a" * 40)
+        task_with_new_head = dict(task, head="b" * 40)
+        log_path = self._write_log("Normal log\n")
+        worker = {
+            "run_id": "run-task-1",
+            "task_id": "TASK-100",
+            "provider": "antigravity",
+            "agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-task-1",
+            "pid": 999991,
+            "runner_status": "completed",
+            "exit_code": 0,
+            "log_path": log_path,
+            "last_event_at": "2026-08-27T09:00:00Z",
+            "request_snapshot": {
+                "reason": "owned_in_progress_dispatch",
+                "metadata": {
+                    "logical_agent_id": "antigravity",
+                    "task": dispatch_task,
+                },
+            },
+        }
+        state = {
+            "queue": {"events": {"evt-task-1": {"status": "started"}}},
+            "workers": {"run-task-1": worker},
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task_with_new_head]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="b" * 40),
+            mock.patch.object(
+                supervisor,
+                "detect_worker_failure",
+                side_effect=AssertionError("structured successful worker with valid outcome must short-circuit"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "incremental_progress")
 
 
 class OrphanedQueueEventTests(unittest.TestCase):
