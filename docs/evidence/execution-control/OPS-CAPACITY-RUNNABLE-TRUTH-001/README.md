@@ -30,19 +30,20 @@
 
 ## 2. 修復架構與設計
 
-沿用 Supervisor 現有 Dispatcher 與依賴真實來源（`dispatch_engine.dispatch_priority_for_task`、`dispatch_policy.py`、`task_archive.TaskResolver`、`worker_failure_policy.py`），實現單一權威來源（Single Source of Truth），徹底消除第二套規則與循環 import：
+沿用 Supervisor 現有 Dispatcher 與依賴真實來源（`dispatch_engine.dispatch_priority_for_task`、`task_archive.TaskResolver`），實現單一權威來源（Single Source of Truth），徹底消除第二套規則與平行相容介面：
 
 1. **沿用 Dispatcher 的 canonical owner-execution truth**：
    - `supervisor.canonical_dispatchable_task_ids` 呼叫既有 `dispatch_engine.dispatch_priority_for_task`，只投影 Dispatcher 的 owner `in_progress`/`todo` 優先級 2/3，不複製第三套 eligibility 規則。
    - 支援動態 schema 設定：`task_id_field = schema.get("task_id_field", "id")` 與 `owner_field = schema.get("assignee_field", "owner")`。
    - 在投影邊界排除無效或空白 task ID、`non_dispatchable`、Human/Ops gate、sidecar 與治理/阻塞狀態；owner eligibility 仍由既有 `agent_can_take_task` 與 Dispatcher 判斷。
-   - 自訂 schema 的 active task lookup（`TaskResolver`、dict、list）一律從 task payload 的 canonical task ID 建 map，再交給 `TaskResolver`；缺少 `taskId` 的 legacy `id` 不得滿足依賴。
+   - 徹底移除無 production caller 的 `task_is_runnable` / `is_task_runnable` 相容別名，所有外部驗證與內部邏輯全面統一使用 `canonical_dispatchable_task_ids`。
 
 2. **Capacity Chair 純消費模式（Zero Duplicate Rules / No Reverse Imports）**：
    - `capacity_controller.py` 徹底移除 `_supervisor_module()` 與任何對 `supervisor.py` 的反向匯入。
    - `capacity_controller.py` 徹底移除 `TaskResolver` 與任何對 `supervisor.py` 的反向匯入。
-   - `capacity_snapshot`、`evaluate_chair`、`sidecar_candidates` 只接收 Supervisor 傳入的 runnable task count/ID set，不再維護獨立的可派發規則。
+   - `capacity_snapshot`、`evaluate_chair`、`sidecar_candidates` 只接收 Supervisor 傳入的 `runnable_tasks`，不再維護獨立的可派發規則。
    - `supervisor.reconcile_capacity_controller` 先計算 canonical task ID set，再餵 Capacity Chair，確保 snapshot、sidecar decision 與 Dispatcher 判定一致。
+   - `sidecar_candidates` 在自訂 schema 下嚴格使用 `task_id_field` 作為 parent ID，禁止 fallback 到 legacy `id`。
 
 ---
 
@@ -51,9 +52,11 @@
 ### 3.1 測試套件執行
 執行指令（使用 repository `.venv`）：
 ```bash
-.venv/bin/python3 -m pytest .orchestrator/test_capacity_controller.py -q
-.venv/bin/python3 -m pytest .orchestrator/test_supervisor.py -k capacity -q
-.venv/bin/python3 delivery_toolchain/governance/check_code_boundaries.py
+PATH="/home/lupin/odayplus/.venv/bin:$PATH" python3 -m pytest .orchestrator/test_capacity_controller.py -q
+PATH="/home/lupin/odayplus/.venv/bin:$PATH" python3 -m pytest .orchestrator/test_supervisor.py -k capacity -q
+PATH="/home/lupin/odayplus/.venv/bin:$PATH" python3 delivery_toolchain/governance/check_code_boundaries.py
+PATH="/home/lupin/odayplus/.venv/bin:$PATH" ruff check .orchestrator/capacity_controller.py .orchestrator/supervisor.py .orchestrator/test_capacity_controller.py .orchestrator/test_supervisor.py
+git diff --check origin/dev
 ```
 
 ### 3.2 測試項目清單
@@ -65,12 +68,14 @@
 6. `test_current_active_tasks_regression_fixture_runnable_is_zero`：**Regression Fixture** 測試，重現目前看板 5 項任務，確認 `runnable_tasks` 從 4 降為 0，且 sidecar wave 可正常啟動。
 7. `test_runnable_todo_task_approves_helper_wave_when_slots_available`：確認真正可執行的 todo 任務在有可用 slot 時仍正常核准 helper wave。
 8. `test_capacity_snapshot_with_custom_schema_and_invalid_task_id_or_owner`：驗證自訂 schema 欄位、缺少 task ID、未知 owner、Human/Ops 等邊界情況皆正確歸零。
-9. `test_capacity_and_supervisor_dispatch_share_identical_runnable_truth`：驗證 Capacity snapshot 與 Supervisor dispatcher 權威述詞判定完全一致。
-10. `CapacityControllerReconciliationTests`：驗證 Supervisor 層級的 `reconcile_capacity_controller` 狀態與決策寫入一致性。
-11. `test_task_is_runnable_respects_custom_schema_and_excludes_invalid_id_or_owner`：驗證 Supervisor 權威述詞在自訂 schema 與未知 owner 下的精確行為。
-12. `test_task_is_runnable_excludes_non_execution_states_and_unsatisfied_dependencies`：驗證非執行狀態與未滿足依賴在 Supervisor Dispatcher-backed predicate 下的排除。
-13. `test_custom_schema_dependency_requires_canonical_dependency_id`：驗證 custom `taskId` schema 下 `TaskResolver`、list、dict 三種 lookup 都不接受缺少 `taskId` 的 legacy dependency。
-14. `test_custom_schema_sidecar_parent_requires_canonical_task_id`：驗證 custom `taskId` schema 下 sidecar parent 不會 fallback 到 legacy `id`。
+9. `test_capacity_and_supervisor_dispatch_share_identical_runnable_truth`：驗證 Capacity snapshot 與 Supervisor `canonical_dispatchable_task_ids` 判定完全一致。
+10. `test_custom_schema_dependency_requires_canonical_dependency_id`：驗證 custom `taskId` schema 下不接受缺少 `taskId` 的 legacy dependency，具有 canonical dependency 時則正常派發。
+11. `test_custom_schema_sidecar_parent_requires_canonical_task_id`：驗證 custom `taskId` schema 下 sidecar parent 必須具備 canonical `taskId`，禁止 fallback 到 legacy `id`。
+12. `CapacityControllerReconciliationTests`：
+    - `test_capacity_reconcile_with_blocked_and_human_gate_tasks_does_not_flag_stalled_runnable_work`：驗證 supervisor 層級 reconcile 在 blocked / human gate 下不誤報 stall。
+    - `test_capacity_reconcile_with_runnable_task_updates_snapshot_truth`：驗證 supervisor 層級 reconcile 在有 runnable 任務時正確更新 snapshot 並核准 helper wave。
+    - `test_canonical_dispatchable_task_ids_respects_custom_schema_and_excludes_invalid_id_or_owner`：驗證 `canonical_dispatchable_task_ids` 在自訂 schema 與邊界輸入下的精確過濾。
+    - `test_canonical_dispatchable_task_ids_excludes_non_execution_states_and_unsatisfied_dependencies`：驗證非執行狀態與未滿足依賴在 `canonical_dispatchable_task_ids` 下的精確排除。
 
 ### 3.3 測試輸出實錄
 ```text
@@ -78,5 +83,8 @@
 .orchestrator/test_supervisor.py ............                             [100%]
 
 ============================== 23 passed ==============================
+Code boundary checks passed for 982 files.
+All checks passed! (ruff)
+git diff --check origin/dev (clean)
 ```
-全部 23 項相關測試 100% 通過；code boundary checks（982 個檔案）與 `git diff --check` 亦通過，未修改 forbidden 的 Dispatcher 實作檔。
+全部 23 項相關測試 100% 通過；code boundary checks（982 個檔案）、ruff linter 與 `git diff --check` 皆全數通過，無任何違規或多餘相容層。

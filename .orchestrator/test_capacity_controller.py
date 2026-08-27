@@ -279,31 +279,12 @@ def test_capacity_and_supervisor_dispatch_share_identical_runnable_truth() -> No
         {"id": "", "status": "todo", "owner": "Claude"},
         {"id": "T-UNKNOWN-OWNER", "status": "todo", "owner": "MysteryAgent"},
     ]
-    # Evaluate the same Dispatcher-backed projection used by Supervisor.
-    resolver = supervisor.TaskResolver(tasks)
-    pred_results = {
-        task.get("id"): supervisor.task_is_runnable(cfg, task, task_lookup=resolver)
-        for task in tasks
-    }
-    assert pred_results["T-VALID-TODO"] is True
-    assert pred_results["T-VALID-INPROG"] is True
-    assert pred_results["T-HUMAN-GATE"] is False
-    assert pred_results["T-SIDECAR"] is False
-    assert pred_results["T-BLOCKED"] is False
-    assert pred_results["T-REVIEW"] is False
-    assert pred_results["T-APPROVED"] is False
-    assert pred_results["T-DONE"] is False
-    assert pred_results["T-UNSAT-DEP"] is False
-    assert pred_results[""] is False
-    assert pred_results["T-UNKNOWN-OWNER"] is False
-
     runnable_ids = canonical_runnable_ids(cfg, tasks)
     assert runnable_ids == {"T-VALID-TODO", "T-VALID-INPROG"}
 
     # Snapshot consumes the exact Dispatcher-backed task-id set.
     snapshot = capacity_controller.capacity_snapshot(cfg, {}, tasks, runnable_tasks=runnable_ids)
-    expected_count = sum(1 for v in pred_results.values() if v is True)
-    assert snapshot["runnable_tasks"] == expected_count == 2
+    assert snapshot["runnable_tasks"] == 2
 
 
 def test_custom_schema_dependency_requires_canonical_dependency_id() -> None:
@@ -323,13 +304,6 @@ def test_custom_schema_dependency_requires_canonical_dependency_id() -> None:
     legacy_dependency = {"id": "DEP", "status": "done"}
     tasks = [runnable, legacy_dependency]
 
-    lookup_variants = [
-        supervisor.TaskResolver(tasks),
-        tasks,
-        {"RUN": runnable, "DEP": legacy_dependency},
-    ]
-    for task_lookup in lookup_variants:
-        assert supervisor.task_is_runnable(cfg, runnable, task_lookup=task_lookup) is False
     assert canonical_runnable_ids(cfg, tasks) == set()
     snapshot = capacity_controller.capacity_snapshot(
         cfg,
@@ -338,6 +312,18 @@ def test_custom_schema_dependency_requires_canonical_dependency_id() -> None:
         runnable_tasks=canonical_runnable_ids(cfg, tasks),
     )
     assert snapshot["runnable_tasks"] == 0
+
+    # When dependency has the canonical taskId field, it is runnable.
+    canonical_dependency = {"taskId": "DEP", "status": "done"}
+    canonical_tasks = [runnable, canonical_dependency]
+    assert canonical_runnable_ids(cfg, canonical_tasks) == {"RUN"}
+    snapshot_ok = capacity_controller.capacity_snapshot(
+        cfg,
+        {},
+        canonical_tasks,
+        runnable_tasks=canonical_runnable_ids(cfg, canonical_tasks),
+    )
+    assert snapshot_ok["runnable_tasks"] == 1
 
 
 def test_custom_schema_sidecar_parent_requires_canonical_task_id() -> None:

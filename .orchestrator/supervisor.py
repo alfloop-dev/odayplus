@@ -3851,39 +3851,14 @@ def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     return statuses
 
 
-def _task_resolver(
-    task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None,
-    task_id_field: str = "id",
-) -> TaskResolver:
-    if task_lookup is None or task_id_field == "id":
-        return task_lookup if isinstance(task_lookup, TaskResolver) else TaskResolver(task_lookup)
-
-    # TaskResolver's iterable and mapping constructors are intentionally
-    # legacy-id based. Rebuild the same canonical map the Dispatcher builds
-    # from the payload values for every lookup shape, including an already
-    # constructed resolver, so a legacy ``id`` cannot satisfy a custom
-    # ``taskId`` dependency.
+def _task_resolver(task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> TaskResolver:
     if isinstance(task_lookup, TaskResolver):
-        source_tasks = task_lookup.active_task_map().values()
-    elif isinstance(task_lookup, dict):
-        source_tasks = task_lookup.values()
-    else:
-        source_tasks = task_lookup
-    canonical_map = {
-        str(task.get(task_id_field) or "").strip(): task
-        for task in source_tasks
-        if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
-    }
-    return TaskResolver(canonical_map)
+        return task_lookup
+    return TaskResolver(task_lookup)
 
 
-def dependencies_satisfied(
-    task: dict[str, Any],
-    task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None,
-    done_statuses: set[str],
-    task_id_field: str = "id",
-) -> bool:
-    resolver = _task_resolver(task_lookup, task_id_field=task_id_field)
+def dependencies_satisfied(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]], done_statuses: set[str]) -> bool:
+    resolver = _task_resolver(task_lookup)
     for dep_id in task.get("depends_on", []) or []:
         dep_status = resolver.dependency_status(dep_id)
         if dep_status not in done_statuses or not resolver.dependency_satisfied(dep_id):
@@ -3956,30 +3931,6 @@ def canonical_dispatchable_task_ids(
         for task_id, task in task_map.items()
         if _dispatcher_owner_execution_priority(config, task, task_map) is not None
     }
-
-
-def task_is_runnable(
-    config: dict[str, Any],
-    task: dict[str, Any],
-    task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None = None,
-) -> bool:
-    """Compatibility predicate backed by the existing Dispatcher decision."""
-    if not isinstance(task, dict):
-        return False
-    schema = config.get("schema", {}) or {}
-    task_id_field = schema.get("task_id_field", "id")
-    task_id = str(task.get(task_id_field) or "").strip()
-    if not task_id:
-        return False
-
-    resolver = _task_resolver(task_lookup, task_id_field=task_id_field)
-    task_map = resolver.active_task_map()
-    task_map.setdefault(task_id, task)
-
-    return _dispatcher_owner_execution_priority(config, task, task_map) is not None
-
-
-is_task_runnable = task_is_runnable
 
 
 def task_dependency_signature(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
