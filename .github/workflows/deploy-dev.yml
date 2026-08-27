@@ -666,6 +666,8 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
+    outputs:
+      manifest_digest: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
     env:
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
@@ -676,7 +678,6 @@ jobs:
       ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
       ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
       ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
-      ODP_PRODUCTION_WATCH_CLOSEOUT_URI: ${{ vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI }}
       API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
       WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
       MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
@@ -972,61 +973,19 @@ jobs:
       - name: Verify production blue-green deployment state
         if: ${{ inputs.environment == 'production' }}
         run: |
+          set -euo pipefail
+          prod_state_dir="${RUNNER_TEMP}/prod-bluegreen-state"
           python3 product_ops/deployment/bluegreen_release.py capture-state \
             --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
             --api-service "${API_SERVICE}" \
             --web-service "${WEB_SERVICE}" \
             --project "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
-            --output-state-file "${RUNNER_TEMP}/prod-bluegreen-state.json" \
-            --dry-run
-
-      - name: Verify production watch closeout before staging cleanup
-        if: ${{ inputs.environment == 'production' }}
-        run: |
-          set -euo pipefail
-          : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout}"
-          : "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI:?ODP_PRODUCTION_WATCH_CLOSEOUT_URI is required for staging closeout}"
-          watch_receipt="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/production-watch-window-receipt.json"
-          mkdir -p "$(dirname "${watch_receipt}")"
-          gcloud storage cp "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI}" "${watch_receipt}"
-          WATCH_RECEIPT="${watch_receipt}" uv run --frozen python -c 'from shared.observability.watch_window import verify_watch_window_receipt; import os; verify_watch_window_receipt(os.environ["ODAY_RELEASE_SHA"], os.environ["WATCH_RECEIPT"])'
-
-      - name: Prepare staging state for production closeout
-        if: ${{ success() && inputs.environment == 'production' }}
-        run: |
-          set -euo pipefail
-          : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout}"
-          staging_release_id="odp-${ODAY_RELEASE_SHA:0:12}"
-          staging_backend_prefix="oday-plus/ephemeral-staging/${staging_release_id}"
-          staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
-          staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
-          mkdir -p "${staging_state_dir}"
-          gcloud storage cp "${staging_bundle_uri}/*" "${staging_state_dir}/"
-          staging_outputs_file="${staging_state_dir}/staging-terraform-outputs.json"
-          staging_project_id="$(STAGING_OUTPUTS_FILE="${staging_outputs_file}" python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_project_id"])')"
-          : "${staging_project_id:?staging recovery outputs must contain staging_project_id}"
-          {
-            echo "STAGING_RELEASE_ID=${staging_release_id}"
-            echo "STAGING_BACKEND_PREFIX=${staging_backend_prefix}"
-            echo "STAGING_STATE_DIR=${staging_state_dir}"
-            echo "STAGING_PROJECT_ID=${staging_project_id}"
-          } >> "${GITHUB_ENV}"
-
-      - name: Cleanup staging after production watch closeout
-        if: ${{ success() && inputs.environment == 'production' }}
-        run: |
-          set -euo pipefail
-          inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
-          test -f "${inventory_file}"
-          python3 product_ops/deployment/staging_lifecycle.py cleanup \
-            --release-id "${STAGING_RELEASE_ID}" \
-            --project-id "${STAGING_PROJECT_ID}" \
-            --state-dir "${STAGING_STATE_DIR}" \
-            --inventory-file "${inventory_file}" \
-            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
-            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
-            --receipt ".odp_data/staging-lifecycle/staging-lifecycle-cleanup.json"
+            --output-dir "${prod_state_dir}"
+          test -s "${prod_state_dir}/api-traffic.json"
+          test -s "${prod_state_dir}/web-traffic.json"
+          test -s "${prod_state_dir}/release-state.json"
+          PROD_STATE_DIR="${prod_state_dir}" uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["PROD_STATE_DIR"]); s=json.loads((d / "release-state.json").read_text()); assert s["release_id"] == "odp-" + os.environ["ODAY_RELEASE_SHA"][:12]; traffic=[json.loads((d / n).read_text()).get("status", {}).get("traffic") for n in ("api-traffic.json", "web-traffic.json")]; assert all(isinstance(item, list) and item for item in traffic)'
 
       - name: Upload deployment validation reports
         if: always()
@@ -1062,7 +1021,151 @@ jobs:
             .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
             .odp_data/staging-lifecycle/staging-lifecycle-create.json
             .odp_data/staging-lifecycle/staging-rehearsal-receipt.json
+            .odp_data/staging-lifecycle/staging-lifecycle-hold.json
+          if-no-files-found: ignore
+
+  # Production deployment and staging destruction have different authorities.
+  # The closeout therefore binds the staging environment independently and
+  # reads both the durable watch receipt and Terraform recovery bundle with
+  # staging WIF credentials. It must never inherit production credentials just
+  # because production was the preceding job.
+  staging_closeout:
+    name: Verify production watch and clean up ephemeral staging
+    needs: [deploy]
+    if: ${{ always() && inputs.environment == 'production' && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+      ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+      ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+      ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+      ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+      ODP_PRODUCTION_WATCH_CLOSEOUT_URI: ${{ vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI }}
+      ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+      MANIFEST_DIGEST: ${{ needs.deploy.outputs.manifest_digest }}
+      ODP_DEPLOY_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Assert exact release SHA is checked out
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          if [ "${head_sha}" != "${ODAY_RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match ODAY_RELEASE_SHA (${ODAY_RELEASE_SHA})." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install locked project dependencies
+        run: uv sync --frozen
+
+      - name: 確認 staging closeout 已綁定 staging environment 且變數齊備
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+          ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+          ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+          ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+          ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+          ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope staging \
+            --environment "staging" \
+            --github-environment "staging" \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-closeout-environment-receipt.json"
+
+      - name: Authenticate to staging foundation (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK for staging closeout
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Prepare release-scoped staging closeout paths
+        run: |
+          set -euo pipefail
+          : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout}"
+          : "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI:?ODP_PRODUCTION_WATCH_CLOSEOUT_URI is required for staging closeout}"
+          staging_release_id="odp-${ODAY_RELEASE_SHA:0:12}"
+          staging_backend_prefix="oday-plus/ephemeral-staging/${staging_release_id}"
+          staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
+          staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
+          watch_receipt="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/production-watch-window-receipt.json"
+          mkdir -p "${staging_state_dir}" "$(dirname "${watch_receipt}")"
+          {
+            echo "STAGING_RELEASE_ID=${staging_release_id}"
+            echo "STAGING_BACKEND_PREFIX=${staging_backend_prefix}"
+            echo "STAGING_STATE_DIR=${staging_state_dir}"
+            echo "STAGING_BUNDLE_URI=${staging_bundle_uri}"
+            echo "STAGING_WATCH_RECEIPT=${watch_receipt}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Read staging recovery bundle with staging identity
+        run: |
+          set -euo pipefail
+          gcloud storage cp "${STAGING_BUNDLE_URI}/*" "${STAGING_STATE_DIR}/"
+          test -s "${STAGING_STATE_DIR}/staging-terraform-outputs.json"
+          inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
+          test -s "${inventory_file}"
+          tfvars_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.tfvars.json)"
+          test -s "${tfvars_file}"
+          STAGING_STATE_DIR="${STAGING_STATE_DIR}" TFVARS_FILE="${tfvars_file}" \
+            uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["STAGING_STATE_DIR"]); out=json.loads((d / "staging-terraform-outputs.json").read_text()); tf=json.loads(Path(os.environ["TFVARS_FILE"]).read_text()); assert os.environ["MANIFEST_DIGEST"].startswith("sha256:"); assert out["release_id"] == os.environ["STAGING_RELEASE_ID"]; assert tf["release_id"] == os.environ["STAGING_RELEASE_ID"]; assert tf["candidate_sha"] == os.environ["ODAY_RELEASE_SHA"]; assert tf["manifest_digest"] == os.environ["MANIFEST_DIGEST"]'
+
+      - name: Read and verify production watch receipt with staging identity
+        run: |
+          set -euo pipefail
+          gcloud storage cp "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI}" "${STAGING_WATCH_RECEIPT}"
+          test -s "${STAGING_WATCH_RECEIPT}"
+          WATCH_RECEIPT="${STAGING_WATCH_RECEIPT}" uv run --frozen python -c 'from shared.observability.watch_window import verify_watch_window_receipt; import os; verify_watch_window_receipt(os.environ["ODAY_RELEASE_SHA"], os.environ["WATCH_RECEIPT"])'
+
+      - name: Cleanup staging after verified production watch closeout
+        run: |
+          set -euo pipefail
+          inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
+          test -s "${inventory_file}"
+          python3 product_ops/deployment/staging_lifecycle.py cleanup \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --project-id "$(STAGING_STATE_DIR="${STAGING_STATE_DIR}" uv run --frozen python -c 'import json, os; print(json.load(open(os.path.join(os.environ["STAGING_STATE_DIR"], "staging-terraform-outputs.json"), encoding="utf-8"))["staging_project_id"])')" \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --inventory-file "${inventory_file}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --receipt ".odp_data/staging-lifecycle/staging-lifecycle-cleanup.json"
+          test -s ".odp_data/staging-lifecycle/staging-lifecycle-cleanup.json"
+
+      - name: Upload staging closeout receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-production-staging-closeout
+          path: |
+            .odp_data/release/staging-closeout-environment-receipt.json
             .odp_data/staging-lifecycle/production-watch-window-receipt.json
             .odp_data/staging-lifecycle/staging-lifecycle-cleanup.json
-            .odp_data/staging-lifecycle/staging-lifecycle-hold.json
           if-no-files-found: ignore

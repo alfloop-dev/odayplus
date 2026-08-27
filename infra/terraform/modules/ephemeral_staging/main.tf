@@ -529,9 +529,10 @@ resource "google_cloud_run_v2_service" "staging_api" {
         network    = var.network_name
         subnetwork = var.subnetwork_name
       }
-      # Public provider egress stays disabled; only private ranges use the
-      # release foundation connector. Provider activation is a separate flow.
-      egress = "PRIVATE_RANGES_ONLY"
+      # Every packet follows the controlled VPC path. The foundation does not
+      # provide Cloud NAT and its default-deny firewall blocks public targets;
+      # the live rehearsal proves that deny boundary.
+      egress = "ALL_TRAFFIC"
     }
 
     volumes {
@@ -713,9 +714,10 @@ resource "google_cloud_run_v2_service" "staging_web" {
         network    = var.network_name
         subnetwork = var.subnetwork_name
       }
-      # Public provider egress stays disabled; only private ranges use the
-      # release foundation connector.
-      egress = "PRIVATE_RANGES_ONLY"
+      # Every packet follows the controlled VPC path. The foundation does not
+      # provide Cloud NAT and its default-deny firewall blocks public targets;
+      # the live rehearsal proves that deny boundary.
+      egress = "ALL_TRAFFIC"
     }
 
     containers {
@@ -866,7 +868,8 @@ resource "google_cloud_run_v2_job" "staging_migration" {
           network    = var.network_name
           subnetwork = var.subnetwork_name
         }
-        egress = "PRIVATE_RANGES_ONLY"
+        # Jobs use the same controlled VPC egress policy as the services.
+        egress = "ALL_TRAFFIC"
       }
 
       volumes {
@@ -966,7 +969,8 @@ resource "google_cloud_run_v2_job" "staging_worker" {
           network    = var.network_name
           subnetwork = var.subnetwork_name
         }
-        egress = "PRIVATE_RANGES_ONLY"
+        # Jobs use the same controlled VPC egress policy as the services.
+        egress = "ALL_TRAFFIC"
       }
 
       volumes {
@@ -1066,7 +1070,8 @@ resource "google_cloud_run_v2_job" "staging_scheduler" {
           network    = var.network_name
           subnetwork = var.subnetwork_name
         }
-        egress = "PRIVATE_RANGES_ONLY"
+        # Jobs use the same controlled VPC egress policy as the services.
+        egress = "ALL_TRAFFIC"
       }
 
       volumes {

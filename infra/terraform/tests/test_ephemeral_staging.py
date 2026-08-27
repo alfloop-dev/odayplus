@@ -48,6 +48,12 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('resource "google_cloud_scheduler_job" "staging_worker_trigger"', main_tf)
         self.assertTrue(re.search(r"paused\s*=\s*true", main_tf))
 
+    def test_all_release_scoped_cloud_run_resources_use_controlled_vpc_egress(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+
+        self.assertEqual(main_tf.count('egress = "ALL_TRAFFIC"'), 5)
+        self.assertNotIn('egress = "PRIVATE_RANGES_ONLY"', main_tf)
+
     def test_module_variables_validation_rules(self) -> None:
         vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
 

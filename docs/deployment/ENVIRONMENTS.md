@@ -35,7 +35,7 @@ The system uses a single CI/CD release workflow entrypoint (`.github/workflows/d
 2. **Build Once**: The first dispatch leaves the four optional image handoff inputs empty, so a dedicated `build` job runs secret scanning, SAST (Bandit), SBOM generation, and container image builds/Cosign signing once. It resolves the pushed tags to four immutable digests and publishes them as the cross-environment handoff. Staging and production dispatches pass all four `repo/service@sha256:...` values, skip the build job, and reuse the exact same images.
 3. **Deploy by Digest**:
    - **`dev`**: Deploys immutable digests, executes migrations, runs live preflight, Cloud Run Job validations, and live E2E gate.
-   - **`staging`**: Provisions short-lived ephemeral staging instance with isolated database schema, tenant partitioning, and masked snapshot via `staging_lifecycle.py create`; executes the 8-stage rehearsal verification via `staging_lifecycle.py verify`; checks remote staging proof; cleans up on successful closeout or holds up to 24h for debugging on failure (`staging_lifecycle.py hold`).
+   - **`staging`**: Provisions short-lived ephemeral staging instance with isolated database schema, tenant partitioning, and masked snapshot via `staging_lifecycle.py create`; executes the 9-stage rehearsal verification via `staging_lifecycle.py verify`, including a real rollback-target switch/health/restore and a live public-egress deny probe; checks remote staging proof; then the independent `environment: staging` closeout job verifies the production watch receipt against the same candidate/manifest/release and cleans up with staging WIF, or holds up to 24h for debugging on failure (`staging_lifecycle.py hold`).
    - **`production`**: Deploys green revisions (0% public traffic), validates green smoke and IAM bindings, atomistically promotes traffic to green (100%), updates Cloud Scheduler targets to green digests, and arms fail-closed rollback primitives.
 
 ## 短生命週期 Staging 生命週期與整合架構 (Ephemeral Staging Lifecycle Integration)
@@ -48,16 +48,17 @@ The system uses a single CI/CD release workflow entrypoint (`.github/workflows/d
 - **排程初始狀態**：Staging 的 Cloud Scheduler trigger 建立時預設為 `PAUSED`（`paused = true`），避免在 rehearsal 驗證前自動觸發排程。
 - **Durable state**：Terraform 使用受保護的 GCS backend，以 `oday-plus/ephemeral-staging/<release_id>` 作為每個 release 的獨立 state key；recovery sidecar 與 output handoff 亦寫入同一受保護 storage，不能依賴 runner `/tmp` 或一般 artifact。
 
-### 2. 八階段 Rehearsal 演練 (8-Stage Rehearsal Verification)
-由 `product_ops/deployment/staging_lifecycle.py verify` 執行完整演練狀態機：
+### 2. 九階段 Rehearsal 演練 (9-Stage Rehearsal Verification)
+由 `product_ops/deployment/staging_lifecycle.py verify` 執行完整演練狀態機；五個 release-scoped Cloud Run service/job 均以 `ALL_TRAFFIC` 經受控 VPC，並由 live probe 證明 public destination 被 default-deny foundation 拒絕：
 1. **DB Expand Migration**：驗證資料庫向後相容的 expand migration 與新舊 schema 相容性。
 2. **Data Platform Snapshot**：演練 masked snapshot 資料物化與契約 readback。
 3. **API / Web Authenticated Smoke & E2E**：以 staging 專屬權限執行 API/Web authenticated smoke 與端對端測試。
 4. **Worker Idempotency**：驗證 worker 工作冪等性、重試、dead-letter/quarantine 機制。
 5. **Scheduler One-Shot**：驗證暫停排程之單次手動觸發與執行。
 6. **Backup Checkpoint & Restore Drill**：執行 release-scoped point-in-time 備份與還原演練。
-7. **Rollback Rehearsal**：演練指標與 selector 回切至前一版本之指標回復。
-8. **External Providers Disabled Readback**：確認 16 個外部資料來源維持 `disabled`、零 provider credentials 且 public egress 維持 default-deny。
+7. **Rollback Rehearsal**：建立無流量 release revision，切換至該 revision 做 health readback，再實際回切已核准的既有 revision，並驗證 traffic allocation 等價。
+8. **Public Egress Deny Probe**：從 release-scoped worker job 執行固定 public canary；只有連線被拒絕才算通過。
+9. **External Providers Disabled Readback**：確認 16 個外部資料來源維持 `disabled`、零 provider credentials 且 public egress 維持 default-deny。
 
 所有階段皆產生不含機密值的 secret-free 收據（`secret_values_redacted: true`），並上傳至工作流程 artifacts（`.odp_data/staging-lifecycle/`）。
 

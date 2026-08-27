@@ -44,6 +44,7 @@ JOB_ENVIRONMENT_BINDINGS = {
     "build": (BUILD_ENVIRONMENT, "build"),
     "admission": (DEPLOY_ENVIRONMENT, "admission"),
     "deploy": (DEPLOY_ENVIRONMENT, "deploy"),
+    "staging_closeout": ("staging", "staging"),
 }
 
 # The one job that must stay unbound: binding it would put a deploy approval in
@@ -693,15 +694,26 @@ def test_staging_hold_on_failure_invoked_on_error() -> None:
     assert ".odp_data/staging-lifecycle/staging-lifecycle-hold.json" in hold_run
 
 
-def test_staging_failure_hold_requires_live_state_and_cleanup_waits_for_prod_closeout() -> None:
+def test_staging_failure_hold_requires_live_state_and_closeout_uses_staging_authority() -> None:
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     deploy_steps = parsed["jobs"]["deploy"]["steps"]
     cleanup_steps = [
         step for step in deploy_steps
         if isinstance(step, dict) and "staging_lifecycle.py cleanup" in str(step.get("run", ""))
     ]
+    assert cleanup_steps == []
+
+    closeout = parsed["jobs"]["staging_closeout"]
+    assert closeout["needs"] == ["deploy"]
+    assert closeout["if"] == "${{ always() && inputs.environment == 'production' && needs.deploy.result == 'success' }}"
+    assert closeout["environment"] == {"name": "staging"}
+    assert closeout["env"]["MANIFEST_DIGEST"] == "${{ needs.deploy.outputs.manifest_digest }}"
+    closeout_steps = closeout["steps"]
+    cleanup_steps = [
+        step for step in closeout_steps
+        if isinstance(step, dict) and "staging_lifecycle.py cleanup" in str(step.get("run", ""))
+    ]
     assert len(cleanup_steps) == 1
-    assert cleanup_steps[0].get("if") == "${{ success() && inputs.environment == 'production' }}"
     cleanup_run = str(cleanup_steps[0]["run"])
     assert "--state-dir" in cleanup_run
     assert "--terraform-backend-bucket" in cleanup_run
@@ -718,7 +730,8 @@ def test_staging_failure_hold_requires_live_state_and_cleanup_waits_for_prod_clo
     assert "--allow-empty" not in str(hold_steps[0]["run"])
     assert "inputs.environment == 'staging'" in str(hold_steps[0].get("if"))
 
-    assert "inputs.environment == 'staging'" not in cleanup_steps[0].get("if", "")
+    assert "verify_watch_window_receipt" in "\n".join(str(step.get("run", "")) for step in closeout_steps)
+    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout["env"]
 
 
 def test_staging_skips_static_preflight_and_uses_foundation_binding_scope() -> None:
@@ -749,10 +762,13 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "gcloud storage cp" in str(persist["run"])
     assert "STAGING_BUNDLE_URI" in str(persist["run"])
 
-    closeout = next(step for step in deploy_steps if step.get("name") == "Verify production watch closeout before staging cleanup")
-    assert closeout.get("if") == "${{ inputs.environment == 'production' }}"
-    assert "verify_watch_window_receipt" in str(closeout["run"])
-    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in str(closeout["run"])
+    closeout = parsed["jobs"]["staging_closeout"]
+    assert closeout["environment"] == {"name": "staging"}
+    assert closeout["needs"] == ["deploy"]
+    closeout_run = "\n".join(str(step.get("run", "")) for step in closeout["steps"])
+    assert "verify_watch_window_receipt" in closeout_run
+    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout_run
+    assert "MANIFEST_DIGEST" in closeout_run
 
 
 def test_staging_identity_rejects_dev_operator_impersonation() -> None:

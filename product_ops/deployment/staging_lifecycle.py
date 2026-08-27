@@ -2364,6 +2364,7 @@ REHEARSAL_STAGE_NAMES: tuple[str, ...] = (
     "scheduler_oneshot",
     "backup_restore_drill",
     "rollback_rehearsal",
+    "public_egress_denied_probe",
     "external_providers_disabled_readback",
 )
 
@@ -2690,11 +2691,12 @@ def make_live_rehearsal_executor(
             ),
             field_name=f"{kind} service VPC egress",
         )
-        if actual_egress != "PRIVATE_RANGES_ONLY":
+        if actual_egress != "ALL_TRAFFIC":
             raise RuntimeError(
-                f"{kind} service live VPC egress is {actual_egress!r}; expected PRIVATE_RANGES_ONLY"
+                f"{kind} service live VPC egress is {actual_egress!r}; expected ALL_TRAFFIC"
             )
         return {
+            "success": True,
             "service": service_name,
             "image_digest": expected_image,
             "egress": actual_egress,
@@ -2731,9 +2733,9 @@ def make_live_rehearsal_executor(
             ),
             field_name=f"{kind} job VPC egress",
         )
-        if actual_egress != "PRIVATE_RANGES_ONLY":
+        if actual_egress != "ALL_TRAFFIC":
             raise RuntimeError(
-                f"{kind} job live VPC egress is {actual_egress!r}; expected PRIVATE_RANGES_ONLY"
+                f"{kind} job live VPC egress is {actual_egress!r}; expected ALL_TRAFFIC"
             )
         _live_gcloud(
             [
@@ -2749,10 +2751,71 @@ def make_live_rehearsal_executor(
             gcloud_bin=gcloud_bin,
         )
         return {
+            "success": True,
             "job": job_name,
             "image_digest": expected_image,
             "egress": actual_egress,
             "execution": "succeeded",
+        }
+
+    def execute_public_egress_probe() -> Mapping[str, Any]:
+        """Run the fixed public canary from the release-scoped worker job."""
+
+        job_name = str(outputs["staging_worker_job_name"]).strip()
+        expected_image = str(outputs["staging_worker_image"]).strip()
+        payload = _live_cloud_run_description(
+            "job",
+            job_name,
+            project_id=project_id,
+            region=region,
+            gcloud_bin=gcloud_bin,
+        )
+        actual_image = _live_cloud_run_field(
+            payload,
+            (
+                ("template", "template", "containers", 0, "image"),
+                ("spec", "template", "spec", "template", "spec", "containers", 0, "image"),
+            ),
+            field_name="public egress probe job image",
+        )
+        if actual_image != expected_image:
+            raise RuntimeError(
+                "public egress probe job image readback does not match its immutable Terraform output"
+            )
+        actual_egress = _live_cloud_run_field(
+            payload,
+            (
+                ("template", "template", "vpcAccess", "egress"),
+                ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
+            ),
+            field_name="public egress probe job VPC egress",
+        )
+        if actual_egress != "ALL_TRAFFIC":
+            raise RuntimeError(
+                f"public egress probe job live VPC egress is {actual_egress!r}; expected ALL_TRAFFIC"
+            )
+        _live_gcloud(
+            [
+                "run",
+                "jobs",
+                "execute",
+                job_name,
+                f"--region={region}",
+                f"--project={project_id}",
+                "--args=product_ops/deployment/cloud_run_job_entrypoint.py,public-egress-probe",
+                "--wait",
+                "--quiet",
+            ],
+            gcloud_bin=gcloud_bin,
+        )
+        return {
+            "success": True,
+            "job": job_name,
+            "image_digest": expected_image,
+            "egress": actual_egress,
+            "execution": "succeeded",
+            "probe": "public_egress_denied",
+            "status": "denied",
         }
 
     def endpoint(path: str, *, web: bool = False, providers_disabled: bool = False) -> Mapping[str, Any]:
@@ -2760,9 +2823,13 @@ def make_live_rehearsal_executor(
         payload = _live_json_get(f"{audience}{path}", token_for(audience))
         if not _live_health_is_valid(payload, providers_disabled=providers_disabled):
             raise RuntimeError(f"release-scoped readback failed health contract for {path}")
-        if path == "/platform/version" and str(payload.get("release_sha") or "").strip() != str(outputs["resource_labels"]["candidate_sha"]):
+        if (
+            path == "/platform/version"
+            and str(payload.get("release_sha") or "").strip()
+            != str(outputs["resource_labels"]["candidate_sha"])
+        ):
             raise RuntimeError("release-scoped version readback does not match candidate_sha")
-        return {"endpoint": f"{audience}{path}", "status": "verified"}
+        return {"success": True, "endpoint": f"{audience}{path}", "status": "verified"}
 
     def execute(stage_name: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
         ensure_release_identities_exist()
@@ -2830,56 +2897,49 @@ def make_live_rehearsal_executor(
                 gcloud_bin=gcloud_bin,
             )
             _live_gcloud(["storage", "rm", backup_uri, "--quiet"], gcloud_bin=gcloud_bin)
-            return {"backup_uri": backup_uri, "restore": "succeeded", "secret_values_redacted": True}
+            return {
+                "success": True,
+                "backup_uri": backup_uri,
+                "restore": "succeeded",
+                "secret_values_redacted": True,
+            }
         if stage_name == "rollback_rehearsal":
-            # Read and restore the exact allocation through Cloud Run's traffic
-            # primitive. This is deliberately a real no-op round trip, so a
-            # missing service, malformed allocation, or failed readback is a
-            # failure instead of a synthetic "rehearsed" result.
-            for service_key in ("staging_api_service_name", "staging_web_service_name"):
-                service_name = str(outputs[service_key]).strip()
-                before_raw = _live_gcloud(
-                    [
-                        "run",
-                        "services",
-                        "describe",
-                        service_name,
-                        f"--region={region}",
-                        f"--project={project_id}",
-                        "--format=json",
-                    ],
+            def describe_traffic(service_name: str) -> list[Mapping[str, Any]]:
+                payload = _live_cloud_run_description(
+                    "service",
+                    service_name,
+                    project_id=project_id,
+                    region=region,
                     gcloud_bin=gcloud_bin,
-                    capture_output=True,
                 )
-                try:
-                    before_payload = json.loads(before_raw)
-                    traffic = before_payload["status"]["traffic"]
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise RuntimeError(
-                        f"{service_name} traffic allocation readback is malformed"
-                    ) from exc
+                status = payload.get("status")
+                traffic = status.get("traffic") if isinstance(status, Mapping) else None
                 if not isinstance(traffic, list) or not traffic:
-                    raise RuntimeError(f"{service_name} has no traffic allocation to restore")
+                    raise RuntimeError(f"{service_name} rollback target is missing")
+                if not all(isinstance(entry, Mapping) for entry in traffic):
+                    raise RuntimeError(f"{service_name} traffic allocation is malformed")
+                return traffic
+
+            def normalize_traffic(
+                service_name: str, traffic: Sequence[Mapping[str, Any]]
+            ) -> dict[str, int]:
                 revisions: dict[str, int] = {}
                 for entry in traffic:
-                    if not isinstance(entry, Mapping):
-                        raise RuntimeError(
-                            f"{service_name} traffic allocation contains an unreadable entry"
-                        )
                     revision = str(entry.get("revisionName") or entry.get("revision") or "").strip()
                     if not revision:
-                        raise RuntimeError(
-                            f"{service_name} traffic allocation is not pinned to a revision"
-                        )
+                        raise RuntimeError(f"{service_name} rollback target is not pinned to a revision")
                     try:
                         percent = int(entry.get("percent"))
                     except (TypeError, ValueError) as exc:
                         raise RuntimeError(f"{service_name} traffic percentage is invalid") from exc
-                    if not 0 <= percent <= 100:
-                        raise RuntimeError(f"{service_name} traffic percentage is out of range")
+                    if not 0 <= percent <= 100 or revision in revisions:
+                        raise RuntimeError(f"{service_name} traffic allocation is malformed")
                     revisions[revision] = percent
-                if sum(revisions.values()) != 100:
-                    raise RuntimeError(f"{service_name} traffic allocation does not total 100 percent")
+                if sum(revisions.values()) != 100 or not any(revisions.values()):
+                    raise RuntimeError(f"{service_name} rollback target is missing")
+                return revisions
+
+            def update_traffic(service_name: str, revisions: Mapping[str, int]) -> None:
                 to_revisions = ",".join(
                     f"{revision}={percent}" for revision, percent in revisions.items()
                 )
@@ -2896,33 +2956,90 @@ def make_live_rehearsal_executor(
                     ],
                     gcloud_bin=gcloud_bin,
                 )
-                after_raw = _live_gcloud(
-                    [
-                        "run",
-                        "services",
-                        "describe",
-                        service_name,
-                        f"--region={region}",
-                        f"--project={project_id}",
-                        "--format=json",
-                    ],
-                    gcloud_bin=gcloud_bin,
-                    capture_output=True,
-                )
+
+            rollback_proofs: list[dict[str, Any]] = []
+            candidate_sha = str(labels.get("candidate_sha", ""))[:12]
+            revision_suffix = f"rb-{compute_release_hash(str(outputs['release_id']))}-{candidate_sha}"
+            for service_key, image_key, is_web in (
+                ("staging_api_service_name", "staging_api_image", False),
+                ("staging_web_service_name", "staging_web_image", True),
+            ):
+                service_name = str(outputs[service_key]).strip()
+                expected_image = str(outputs[image_key]).strip()
+                # The pre-existing non-zero allocation is the approved rollback
+                # target. It must be pinned and complete before any rehearsal
+                # mutation is attempted; an absent target fails closed.
+                approved_traffic = normalize_traffic(service_name, describe_traffic(service_name))
+                baseline_revisions = set(approved_traffic)
+                switched_to_probe = False
+                probe_revision = ""
                 try:
-                    after_traffic = json.loads(after_raw)["status"]["traffic"]
-                    after_revisions = {
-                        str(entry.get("revisionName") or entry.get("revision")): int(entry.get("percent"))
-                        for entry in after_traffic
-                        if isinstance(entry, Mapping)
-                    }
-                except (KeyError, TypeError, ValueError) as exc:
-                    raise RuntimeError(f"{service_name} traffic restore readback is malformed") from exc
-                if after_revisions != revisions:
-                    raise RuntimeError(
-                        f"{service_name} traffic restore readback does not match the saved allocation"
+                    _live_gcloud(
+                        [
+                            "run",
+                            "services",
+                            "update",
+                            service_name,
+                            f"--image={expected_image}",
+                            "--no-traffic",
+                            "--tag=rollback-probe",
+                            f"--revision-suffix={revision_suffix}",
+                            f"--region={region}",
+                            f"--project={project_id}",
+                            "--quiet",
+                        ],
+                        gcloud_bin=gcloud_bin,
                     )
-            return {"traffic_pointer": "restored_and_read_back", "restore": "succeeded"}
+                    probe_entries = [
+                        entry
+                        for entry in describe_traffic(service_name)
+                        if str(entry.get("tag") or "").strip() == "rollback-probe"
+                    ]
+                    if len(probe_entries) != 1:
+                        raise RuntimeError(f"{service_name} rollback rehearsal revision is missing")
+                    probe_revision = str(
+                        probe_entries[0].get("revisionName") or probe_entries[0].get("revision") or ""
+                    ).strip()
+                    if not probe_revision or probe_revision in baseline_revisions:
+                        raise RuntimeError(f"{service_name} rollback rehearsal target is not distinct")
+                    update_traffic(service_name, {probe_revision: 100})
+                    switched_to_probe = True
+                    if is_web:
+                        health_readback = endpoint("/operator", web=True)
+                    else:
+                        health_readback = endpoint("/platform/health")
+                finally:
+                    if switched_to_probe:
+                        try:
+                            update_traffic(service_name, approved_traffic)
+                        except Exception as exc:
+                            raise RuntimeError(
+                                f"{service_name} rollback target restore failed: {type(exc).__name__}"
+                            ) from exc
+
+                restored = normalize_traffic(service_name, describe_traffic(service_name))
+                if restored != approved_traffic:
+                    raise RuntimeError(
+                        f"{service_name} rollback target readback does not match the approved allocation"
+                    )
+                rollback_proofs.append(
+                    {
+                        "service": service_name,
+                        "rollback_target": sorted(approved_traffic),
+                        "rehearsal_revision": probe_revision,
+                        "health_readback": health_readback.get("status", "verified"),
+                        "traffic_pointer": "rollback_target_restored_and_read_back",
+                        "restore": "succeeded",
+                    }
+                )
+            return {
+                "success": True,
+                "traffic_pointer": "rollback_target_restored_and_read_back",
+                "restore": "succeeded",
+                "rollback_targets": rollback_proofs,
+            }
+        if stage_name == "public_egress_denied_probe":
+            return execute_public_egress_probe()
         if stage_name == "external_providers_disabled_readback":
             return endpoint("/platform/health", providers_disabled=True)
         raise RuntimeError(f"Unknown staging rehearsal stage: {stage_name}")
@@ -2950,12 +3067,13 @@ def verify_ephemeral_staging(
     lifecycle_outputs: Mapping[str, Any] | None = None,
     remote_state_verified: bool = False,
 ) -> StagingLifecycleReceipt:
-    """Execute the 8-stage rehearsal verification on ephemeral staging resources.
+    """Execute the 9-stage rehearsal verification on ephemeral staging resources.
 
     Guarantees:
     1. Rehearses DB expand migration, data platform snapshot materialization,
        authenticated API/Web smoke, worker idempotency, scheduler one-shot,
-       backup/restore drill, rollback pointer reversal, and external-sources disabled readback.
+       backup/restore drill, rollback target reversal, public egress denial,
+       and external-sources disabled readback.
     2. Enforces release-scoped least-privilege identity; explicitly rejects
        impersonation of dev smoke operator.
     3. Produces secret-free receipts with secret_values_redacted=True.
@@ -3082,6 +3200,11 @@ def verify_ephemeral_staging(
                             "backup_uri",
                             "restore",
                             "traffic_pointer",
+                            "probe",
+                            "rollback_target",
+                            "rehearsal_revision",
+                            "health_readback",
+                            "rollback_targets",
                         ):
                             if key in stage_result:
                                 stage_proof[key] = stage_result[key]
@@ -3978,8 +4101,17 @@ def validate_module_contract(module_dir: Path) -> list[str]:
         errors.append("google_cloud_scheduler_job.staging_worker_trigger must start paused (`paused = true`).")
     if 'ODP_EXTERNAL_PROVIDER_MODE"\n        value = "fixture"' in main_text:
         errors.append("staging API must keep external provider mode disabled, not fixture-backed.")
-    if 'egress = "ALL_TRAFFIC"' in main_text:
-        errors.append("staging Cloud Run resources must not allow unrestricted public egress.")
+    all_traffic_count = main_text.count('egress = "ALL_TRAFFIC"')
+    if all_traffic_count != 5:
+        errors.append(
+            "all five release-scoped Cloud Run resources must use ALL_TRAFFIC through the controlled VPC; "
+            f"found {all_traffic_count}."
+        )
+    if 'egress = "PRIVATE_RANGES_ONLY"' in main_text:
+        errors.append(
+            "release-scoped Cloud Run resources must not use PRIVATE_RANGES_ONLY; "
+            "the live public egress deny probe requires ALL_TRAFFIC."
+        )
 
     # Required labels check
     required_labels = (
@@ -4119,7 +4251,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     add_terraform_options(create_p)
 
     # verify
-    verify_p = subparsers.add_parser("verify", help="Run 8-stage rehearsal verification on ephemeral staging")
+    verify_p = subparsers.add_parser("verify", help="Run 9-stage rehearsal verification on ephemeral staging")
     verify_p.add_argument("--release-id", required=True, help="Release identifier")
     verify_p.add_argument("--candidate-sha", required=True, help="Exact 40-character commit SHA")
     verify_p.add_argument("--manifest-digest", required=True, help="SHA256 manifest digest")
