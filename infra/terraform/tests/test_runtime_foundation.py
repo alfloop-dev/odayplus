@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
 MODULE_DIR = Path(__file__).resolve().parents[1] / "modules" / "runtime_foundation"
+EVIDENCE_DIR = (
+    Path(__file__).resolve().parents[3]
+    / "docs"
+    / "evidence"
+    / "runtime"
+    / "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001"
+)
 
 
 class RuntimeFoundationModuleContractTests(unittest.TestCase):
@@ -58,6 +66,43 @@ class RuntimeFoundationModuleContractTests(unittest.TestCase):
         # Ensure no secrets in outputs
         for forbidden in ("password", "result", "secret_data"):
             self.assertNotIn(forbidden, outputs_tf)
+
+    def test_state_bucket_rejects_plan_uploads_and_preserves_quarantine(self) -> None:
+        runbook = (EVIDENCE_DIR / "STAGING_FOUNDATION_RUNBOOK.md").read_text(encoding="utf-8")
+        apply_receipt = json.loads(
+            (EVIDENCE_DIR / "live-apply-plan-receipt.json").read_text(encoding="utf-8")
+        )
+        readback = json.loads(
+            (EVIDENCE_DIR / "live-foundation-readback-receipt.json").read_text(encoding="utf-8")
+        )
+        incident = apply_receipt["security_quarantine_incident"]
+        state_backend = readback["foundation_resources"]["state_backend"]
+        iam = state_backend["least_privilege_iam"]
+
+        self.assertNotIn("saved_plan_artifact", apply_receipt)
+        self.assertNotIn("saved_plan_artifact", runbook)
+        self.assertNotIn("LIVE_APPLIED_AND_VERIFIED", runbook)
+        self.assertEqual(state_backend["plan_upload_policy"], "PROHIBITED")
+        self.assertNotEqual(state_backend["status"], "LIVE_APPLIED_AND_VERIFIED")
+        self.assertIn("binary plan、一般 release artifact", runbook)
+        self.assertIn("一律禁止", runbook)
+        self.assertEqual(incident["status"], "OPEN")
+        self.assertEqual(incident["cmek_key_id"], state_backend["cmek_key_id"])
+        self.assertEqual(incident["retention_expiration"], "2026-09-26T09:24:24Z")
+        self.assertEqual(incident["retention_expires_at"], "2026-09-26T09:24:24Z")
+        self.assertTrue(incident["no_early_deletion"])
+        self.assertEqual(incident["expiry_cleanup_owner"], "Staging Foundation Owner")
+        self.assertEqual(incident["deletion_before_retention_expiration"], "PROHIBITED")
+        self.assertEqual(state_backend["retention_period_days"], 30)
+        self.assertTrue(state_backend["prevent_destroy"])
+        self.assertTrue(apply_receipt["validation_results"]["completion_claims_withheld"])
+
+        self.assertEqual(iam["status"], "BLOCKED_HUMAN_PERMISSION")
+        self.assertFalse(iam["verified"])
+        self.assertIn("storage.buckets.get", iam["active_principal_missing_permissions"])
+        self.assertIn("storage.buckets.getIamPolicy", iam["active_principal_missing_permissions"])
+        self.assertEqual(iam["project_missing_role"], "roles/storage.admin")
+        self.assertFalse(readback["security_compliance"]["state_bucket_iam_least_privilege_verified"])
 
 
 if __name__ == "__main__":

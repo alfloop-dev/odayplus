@@ -4,6 +4,7 @@
   "verified_at": "2026-08-27T09:27:25Z",
   "origin_dev_sha": "1fdec6cbed15660bdf89531cb1bb69d4c36aa00b",
   "environment": "staging",
+  "receipt_status": "BLOCKED_SECURITY_QUARANTINE_AND_IAM_PERMISSION",
   "project_id": "odayplus-runtime-20260825",
   "project_number": "767864276141",
   "region": "asia-east1",
@@ -139,7 +140,8 @@
       }
     },
     "state_backend": {
-      "status": "LIVE_APPLIED_AND_VERIFIED",
+      "status": "LIVE_CONTROLS_PARTIAL_SECURITY_QUARANTINE_AND_IAM_BLOCKED",
+      "completion_claims_withheld": true,
       "bucket_name": "oday-tfstate-staging-odayplus-runtime-20260825",
       "bucket_url": "gs://oday-tfstate-staging-odayplus-runtime-20260825",
       "public_access_prevention": "enforced",
@@ -153,14 +155,31 @@
       "bootstrap_state_prefix": "oday-plus/bootstrap/default.tfstate",
       "foundation_state_prefix": "oday-plus/staging/foundation/default.tfstate",
       "release_prefix_pattern": "oday-plus/staging/releases/{release_id}",
-      "deployer_iam_binding": "roles/storage.objectUser granted to serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
+      "state_only_contract": "Terraform state and lock objects only; ordinary artifacts are prohibited",
+      "plan_upload_policy": "PROHIBITED",
+      "security_quarantine_incident_ref": "live-apply-plan-receipt.json#security_quarantine_incident",
+      "retention_expires_at": "2026-09-26T09:24:24Z",
+      "least_privilege_iam": {
+        "status": "BLOCKED_HUMAN_PERMISSION",
+        "verified": false,
+        "active_principal_missing_permissions": [
+          "storage.buckets.get",
+          "storage.buckets.getIamPolicy"
+        ],
+        "project_missing_role": "roles/storage.admin",
+        "human_action_required": "由具備 project IAM authority 的人類 operator 授予必要的唯讀 bucket readback 權限及收斂所需 authority，完成後重新執行 IAM readback；在此之前不得宣稱 least-privilege IAM 完成。",
+        "completion_claim": "WITHHELD"
+      },
+      "intended_deployer_iam_binding": "roles/storage.objectUser for serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "deployer_iam_binding_status": "UNVERIFIED_HUMAN_PERMISSION_BLOCKER"
     },
     "deployer_authority": {
+      "status": "DECLARED_CONTRACT_NOT_LIVE_VERIFIED",
       "service_account": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
       "wif_pool": "github-actions",
       "wif_provider": "odayplus",
       "attribute_condition": "assertion.repository == 'alfloop-dev/odayplus'",
-      "roles": [
+      "intended_roles": [
         "roles/cloudscheduler.admin",
         "roles/cloudsql.client",
         "roles/run.admin",
@@ -194,6 +213,17 @@
       "note": "既有 MLflow 仍使用 Serverless VPC connector 的 PRIVATE_RANGES_ONLY 且連接 legacy SQL；API/Web 尚未由 ephemeral release 部署，因此不能把任何現有 Cloud Run 服務標成 Direct VPC ALL_TRAFFIC live evidence。"
     }
   },
+  "security_quarantine": {
+    "status": "OPEN",
+    "incident_receipt_ref": "live-apply-plan-receipt.json#security_quarantine_incident",
+    "object_generation": "1787822664931431",
+    "cmek_key_id": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-tfstate-staging-state/cryptoKeys/oday-tfstate-staging-state",
+    "retention_expiration": "2026-09-26T09:24:24Z",
+    "retention_expires_at": "2026-09-26T09:24:24Z",
+    "no_early_deletion": true,
+    "expiry_cleanup_owner": "Staging Foundation Owner",
+    "completion_claims_withheld": true
+  },
   "security_compliance": {
     "zero_secrets_exposed": true,
     "default_deny_egress_enforced": true,
@@ -202,6 +232,9 @@
     "direct_vpc_all_traffic_configured": false,
     "direct_vpc_all_traffic_contract_verified": true,
     "direct_vpc_all_traffic_live_application_services_verified": false,
-    "remote_state_convergence_verified": true
+    "remote_state_convergence_verified": true,
+    "state_bucket_plan_upload_policy": "PROHIBITED",
+    "state_bucket_iam_least_privilege_verified": false,
+    "security_quarantine_open": true
   }
 }
