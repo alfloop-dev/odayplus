@@ -277,7 +277,7 @@ def _workflow_written_reports(workflow: DeployWorkflow) -> list[str]:
             if normalized not in written:
                 written.append(normalized)
         if "watch_receipt=" in run:
-            production_receipt = ".odp_data/staging-lifecycle/production-watch-window-receipt.json"
+            production_receipt = ".odp_data/release/production-watch-window-receipt.json"
             if production_receipt not in written:
                 written.append(production_receipt)
     return written
@@ -646,7 +646,7 @@ def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
     assert "--network-name" in create_run
     assert "--subnetwork-name" in create_run
     assert "--receipt" in create_run
-    assert ".odp_data/staging-lifecycle/staging-lifecycle-create.json" in create_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-lifecycle-create.json" in create_run
     assert "--dry-run" not in create_run, "Staging create must execute live without --dry-run"
 
     verify_steps = [
@@ -668,7 +668,7 @@ def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
     assert "--state-dir" in verify_run
     assert "--outputs-file" in verify_run
     assert "--receipt" in verify_run
-    assert ".odp_data/staging-lifecycle/staging-rehearsal-receipt.json" in verify_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-rehearsal-receipt.json" in verify_run
     assert "--dry-run" not in verify_run, "Staging verify must execute live without --dry-run"
 
 
@@ -691,7 +691,7 @@ def test_staging_hold_on_failure_invoked_on_error() -> None:
     assert "--owner-task-id" in hold_run
     assert "--reason" in hold_run
     assert "--receipt" in hold_run
-    assert ".odp_data/staging-lifecycle/staging-lifecycle-hold.json" in hold_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-lifecycle-hold.json" in hold_run
 
 
 def test_staging_failure_hold_requires_live_state_and_closeout_uses_staging_authority() -> None:

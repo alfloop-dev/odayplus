@@ -894,7 +894,7 @@ jobs:
             --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
             --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
             --outputs-out "${STAGING_OUTPUTS_FILE}" \
-            --receipt ".odp_data/staging-lifecycle/staging-lifecycle-create.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-create.json"
 
       - name: Persist staging recovery bundle to protected state storage
         if: ${{ success() && inputs.environment == 'staging' }}
@@ -925,7 +925,7 @@ jobs:
             --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
             --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
             --outputs-file "${STAGING_OUTPUTS_FILE}" \
-            --receipt ".odp_data/staging-lifecycle/staging-rehearsal-receipt.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-rehearsal-receipt.json"
 
       - name: Verify release-scoped staging authority endpoint
         if: ${{ inputs.environment == 'staging' }}
@@ -956,7 +956,7 @@ jobs:
             --state-dir "${STAGING_STATE_DIR}" \
             --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
             --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
-            --receipt ".odp_data/staging-lifecycle/staging-lifecycle-hold.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-hold.json"
 
       - name: Persist staging hold state to protected state storage
         if: ${{ always() && inputs.environment == 'staging' }}
@@ -969,6 +969,17 @@ jobs:
             [ -f "${sidecar}" ] || continue
             gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"
           done
+
+      - name: Upload staging lifecycle receipts
+        if: ${{ always() && inputs.environment == 'staging' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-staging-lifecycle-receipts
+          path: |
+            .odp_data/release/staging-lifecycle-create.json
+            .odp_data/release/staging-rehearsal-receipt.json
+            .odp_data/release/staging-lifecycle-hold.json
+          if-no-files-found: ignore
 
       - name: Verify production blue-green deployment state
         if: ${{ inputs.environment == 'production' }}
@@ -1019,9 +1030,6 @@ jobs:
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json
             .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
-            .odp_data/staging-lifecycle/staging-lifecycle-create.json
-            .odp_data/staging-lifecycle/staging-rehearsal-receipt.json
-            .odp_data/staging-lifecycle/staging-lifecycle-hold.json
           if-no-files-found: ignore
 
   # Production deployment and staging destruction have different authorities.
@@ -1115,7 +1123,7 @@ jobs:
           staging_backend_prefix="oday-plus/ephemeral-staging/${staging_release_id}"
           staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
           staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
-          watch_receipt="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/production-watch-window-receipt.json"
+          watch_receipt="${GITHUB_WORKSPACE}/.odp_data/release/production-watch-window-receipt.json"
           mkdir -p "${staging_state_dir}" "$(dirname "${watch_receipt}")"
           {
             echo "STAGING_RELEASE_ID=${staging_release_id}"
@@ -1156,16 +1164,16 @@ jobs:
             --inventory-file "${inventory_file}" \
             --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
             --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
-            --receipt ".odp_data/staging-lifecycle/staging-lifecycle-cleanup.json"
-          test -s ".odp_data/staging-lifecycle/staging-lifecycle-cleanup.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-cleanup.json"
+          test -s "${RELEASE_RECEIPT_DIR}/staging-lifecycle-cleanup.json"
 
       - name: Upload staging closeout receipts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: runtime-release-production-staging-closeout
+          name: runtime-release-production-staging-closeout-receipts
           path: |
             .odp_data/release/staging-closeout-environment-receipt.json
-            .odp_data/staging-lifecycle/production-watch-window-receipt.json
-            .odp_data/staging-lifecycle/staging-lifecycle-cleanup.json
+            .odp_data/release/production-watch-window-receipt.json
+            .odp_data/release/staging-lifecycle-cleanup.json
           if-no-files-found: ignore
