@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 import unittest
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -32,6 +33,7 @@ from product_ops.deployment.staging_lifecycle import (
     generate_tfvars,
     get_ephemeral_resource_names,
     is_staging_ephemeral_resource,
+    main,
     make_terraform_creation_executor,
     make_terraform_deletion_executor,
     parse_module_variables,
@@ -2816,9 +2818,6 @@ class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
         self.assertTrue(any("reason" in err.lower() for err in receipt.errors))
 
     def test_cli_verify_and_hold_commands(self) -> None:
-        import tempfile
-        from product_ops.deployment.staging_lifecycle import main
-
         with tempfile.TemporaryDirectory() as tmpdir:
             verify_receipt = Path(tmpdir) / "staging-verify.json"
             hold_receipt = Path(tmpdir) / "staging-hold.json"
