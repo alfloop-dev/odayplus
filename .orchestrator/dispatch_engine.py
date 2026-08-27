@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import worker_workspace
 from dispatch_policy import REASON_HELPER_CLAIM, worker_logical_dispatch_agent_id
 
 
@@ -1260,6 +1261,8 @@ def worktree_block_still_matches_dispatch(
     if not isinstance(entry, dict):
         return False
     if str(entry.get("dispatch_signature") or "") != ready_dispatch_signature(task, reason, task_map):
+        return False
+    if worker_workspace.is_worktree_lease_block_repaired(entry):
         return False
     if entry.get("escalated"):
         # An escalated block retries on a much longer window -- it does not stop.
