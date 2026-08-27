@@ -1,6 +1,6 @@
 {
   "task_id": "OPS-AGY-HARD-TIMEOUT-2H-001",
-  "timestamp": "2026-08-27T02:46:00Z",
+  "timestamp": "2026-08-27T03:01:00Z",
   "owner": "Antigravity2",
   "reviewer": "Codex2",
   "timeout_setting": "2h",
@@ -14,10 +14,23 @@
   "live_config_updated": [
     "/home/lupin/odayplus/.orchestrator/config.json"
   ],
-  "supervisor_runtime_restart": {
-    "log_file": "/home/lupin/odayplus/.orchestrator/logs/supervisor-watchdog-restart-20260827T024528Z.log",
-    "new_pid": 3978295,
-    "worker_argv_print_timeout": "2h"
+  "supervisor_runtime_worker_receipt": {
+    "supervisor_pid": 3979693,
+    "receipt_file": "/home/lupin/odayplus/.orchestrator/worker-runtime/status/antigravity-20260827T025914Z-485e7dcb.json",
+    "run_id": "antigravity-20260827T025914Z-485e7dcb",
+    "worker_pid": 3995866,
+    "started_at": "2026-08-27T02:59:14Z",
+    "worker_argv_print_timeout": "2h",
+    "command_sample": [
+      "/home/lupin/oday-plus-supervisor-runtime-fe698e88d916/.orchestrator/bin/agy",
+      "--model",
+      "gemini-3.7-flash-high",
+      "--print-timeout",
+      "2h",
+      "--dangerously-skip-permissions",
+      "--add-dir",
+      "/tmp/pantheon-worker-worktrees/pantheon/ops-agy-hard-timeout-2h-001"
+    ]
   },
   "checks": {
     "pytest_test_model_rotation": {

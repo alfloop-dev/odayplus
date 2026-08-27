@@ -63,21 +63,32 @@ $ git diff --check origin/dev
 (clean exit 0)
 ```
 
-### 5. Supervisor Runtime Restart & Post-Update Worker Argv Verification
-- **Supervisor Watchdog Restart Log**: `/home/lupin/odayplus/.orchestrator/logs/supervisor-watchdog-restart-20260827T024528Z.log`
+### 5. Supervisor Runtime & Post-Update Worker Argv Verification
+- **Supervisor Process (Live)**:
   ```text
-  [2026-08-27 10:45:30] starting supervisor pid=3978295 poll_interval=180.0s source=config config=None
+  lupin 3979693 python3 -u .orchestrator/supervisor.py --verbose
   ```
-- **Post-Update Worker Delivery Argv Verification**:
-  ```python
-  cfg = load_config("/home/lupin/odayplus/.orchestrator/config.json")
-  adapter = AntigravityAdapter(config=cfg, provider_capabilities={})
-  # antigravity
-  adapter.deliver(DeliveryRequest(agent_id="antigravity", provider="antigravity", ...))
-  # -> ['.../bin/agy', '--model', 'gemini-3.7-flash-high', '--print-timeout', '2h', '--dangerously-skip-permissions', ...]
-  # antigravity2
-  adapter.deliver(DeliveryRequest(agent_id="antigravity2", provider="antigravity2", ...))
-  # -> ['.../bin/agy', '--model', 'gemini-3.7-flash-high', '--print-timeout', '2h', '--dangerously-skip-permissions', ...]
+- **Persisted Worker Runtime Receipt**:
+  - File: `/home/lupin/odayplus/.orchestrator/worker-runtime/status/antigravity-20260827T025914Z-485e7dcb.json`
+  - Run ID: `antigravity-20260827T025914Z-485e7dcb` (Started At: `2026-08-27T02:59:14Z`, PID: 3995866)
+  - Recorded Worker Command:
+    ```json
+    [
+      "/home/lupin/oday-plus-supervisor-runtime-fe698e88d916/.orchestrator/bin/agy",
+      "--model",
+      "gemini-3.7-flash-high",
+      "--print-timeout",
+      "2h",
+      "--dangerously-skip-permissions",
+      "--add-dir",
+      "/tmp/pantheon-worker-worktrees/pantheon/ops-agy-hard-timeout-2h-001",
+      "--prompt",
+      "..."
+    ]
+    ```
+- **Active Process Command Verification**:
+  ```text
+  lupin 3995866 /usr/bin/python3 .../worker_runner.py --run-id antigravity-20260827T025914Z-485e7dcb ... -- .../bin/agy --model gemini-3.7-flash-high --print-timeout 2h --dangerously-skip-permissions ...
   ```
 
 ## Acceptance Criteria Checklist
@@ -86,4 +97,4 @@ $ git diff --check origin/dev
 - [x] Adapter (`antigravity.py`) and rotation tests (`test_model_rotation.py`) verify `--print-timeout 2h`.
 - [x] No second timeout or inactivity mechanism added (clean single `hard_print_timeout`).
 - [x] Atomic update and non-disruption of executing workers preserved.
-- [x] Post-update supervisor runtime reloaded live config and worker argv confirmed with `--print-timeout 2h`.
+- [x] Post-update supervisor runtime reloaded live config and worker argv confirmed with `--print-timeout 2h` in persisted receipt `/home/lupin/odayplus/.orchestrator/worker-runtime/status/antigravity-20260827T025914Z-485e7dcb.json`.
