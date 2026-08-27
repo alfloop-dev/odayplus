@@ -2484,6 +2484,57 @@ class ReconcilePrBodyTests(unittest.TestCase):
         self.assertIn(github_bus.BUS_END_MARKER, reconciled)
         self.assertIn("## 人工自訂備註\n這是舊範本下方新增的自訂內容", reconciled)
 
+    def test_handles_chinese_legacy_bus_template_without_end_marker(self) -> None:
+        legacy_chinese_template = (
+            f"{github_bus.COMMENT_MARKER}\n"
+            "# Pantheon Review Bus\n\n"
+            "## 任務資訊\n"
+            "- 任務 ID: `LIN-002`\n\n"
+            "## 行動審查指南\n"
+            "Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。\n"
+        )
+        custom_suffix = "\n\n## 人工自訂備註\n這是中文舊範本下方新增的自訂內容\n"
+        old_body = legacy_chinese_template + custom_suffix
+        reconciled = github_bus.reconcile_pr_body(old_body, self.template)
+        self.assertIn(github_bus.BUS_END_MARKER, reconciled)
+        self.assertIn("## 人工自訂備註\n這是中文舊範本下方新增的自訂內容", reconciled)
+
+    def test_unrecognized_unclosed_block_fails_closed_and_preserves_body(self) -> None:
+        unknown_legacy_body = (
+            f"{github_bus.COMMENT_MARKER}\n"
+            "# 未知格式的 PR 內容\n"
+            "這裡包含人工整理的重要分析與排查紀錄，但沒有標準結尾 marker 也沒有已知舊終止句。\n\n"
+            "## 關鍵變更\n"
+            "- 項目 A\n"
+            "- 項目 B\n"
+        )
+        # First reconcile pass
+        reconciled = github_bus.reconcile_pr_body(unknown_legacy_body, self.template)
+        self.assertEqual(reconciled, unknown_legacy_body.strip() + "\n")
+        self.assertIn("這裡包含人工整理的重要分析與排查紀錄", reconciled)
+        self.assertIn("- 項目 A", reconciled)
+
+        # Subsequent passes must be strictly idempotent
+        second_pass = github_bus.reconcile_pr_body(reconciled, self.template)
+        third_pass = github_bus.reconcile_pr_body(second_pass, self.template)
+        self.assertEqual(reconciled, second_pass)
+        self.assertEqual(second_pass, third_pass)
+
+    def test_unrecognized_unclosed_block_with_prefix_fails_closed(self) -> None:
+        prefix_unknown_body = (
+            "# 開發前置說明\n"
+            "前置人工備註內容\n\n"
+            f"{github_bus.COMMENT_MARKER}\n"
+            "未閉合且無已知終止句的自訂內容區塊\n"
+        )
+        reconciled = github_bus.reconcile_pr_body(prefix_unknown_body, self.template)
+        self.assertEqual(reconciled, prefix_unknown_body.strip() + "\n")
+        self.assertIn("前置人工備註內容", reconciled)
+        self.assertIn("未閉合且無已知終止句的自訂內容區塊", reconciled)
+
+        second_pass = github_bus.reconcile_pr_body(reconciled, self.template)
+        self.assertEqual(reconciled, second_pass)
+
     def test_chinese_review_template_rendering(self) -> None:
         config = {
             "github_bus": {

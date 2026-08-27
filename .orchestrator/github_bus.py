@@ -46,7 +46,6 @@ from runtime_state import enqueue_event
 from watch_events import render_wakeup_message
 
 COMMENT_MARKER = "<!-- pantheon-bus -->"
-BUS_START_MARKER = "<!-- pantheon-bus -->"
 BUS_END_MARKER = "<!-- /pantheon-bus -->"
 MAX_PROCESSED_IDS = 2000
 # remote -> (snapshot_expires_at, refs, last_successful_probe_at), monotonic seconds.
@@ -999,6 +998,12 @@ def review_pr_ref_is_stale(pr_ref: Any) -> bool:
     return str(pr_ref.get("state") or "").lower() in STALE_REVIEW_PR_STATES
 
 
+KNOWN_LEGACY_TERMINATORS: tuple[str, ...] = (
+    "The orchestrator polls review results and writes them back into `ai-status.json`.",
+    "Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。",
+)
+
+
 def reconcile_pr_body(existing_body: str | None, bus_template_body: str) -> str:
     """Reconcile an existing PR body with the governed ReviewBus metadata block.
 
@@ -1041,35 +1046,29 @@ def reconcile_pr_body(existing_body: str | None, bus_template_body: str) -> str:
         prefix = existing_body[:start_idx]
         remainder = existing_body[start_idx:]
 
-        legacy_end_patterns = [
-            "The orchestrator polls review results and writes them back into `ai-status.json`.",
-            "Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。",
-            "ai-status.json`.",
-            "ai-status.json`",
-        ]
         end_match_idx = -1
-        for pat in legacy_end_patterns:
-            pos = remainder.find(pat)
+        for terminator in KNOWN_LEGACY_TERMINATORS:
+            pos = remainder.find(terminator)
             if pos != -1:
-                end_match_idx = pos + len(pat)
+                end_match_idx = pos + len(terminator)
                 break
 
         if end_match_idx != -1:
             suffix = remainder[end_match_idx:]
-        else:
-            suffix = ""
+            has_prefix = bool(prefix.strip())
+            has_suffix = bool(suffix.strip())
 
-        has_prefix = bool(prefix.strip())
-        has_suffix = bool(suffix.strip())
+            if has_prefix and has_suffix:
+                return f"{prefix.rstrip()}\n\n{clean_template}\n\n{suffix.lstrip()}".strip() + "\n"
+            elif has_prefix:
+                return f"{prefix.rstrip()}\n\n{clean_template}".strip() + "\n"
+            elif has_suffix:
+                return f"{clean_template}\n\n{suffix.lstrip()}".strip() + "\n"
+            else:
+                return clean_template + "\n"
 
-        if has_prefix and has_suffix:
-            return f"{prefix.rstrip()}\n\n{clean_template}\n\n{suffix.lstrip()}".strip() + "\n"
-        elif has_prefix:
-            return f"{prefix.rstrip()}\n\n{clean_template}".strip() + "\n"
-        elif has_suffix:
-            return f"{clean_template}\n\n{suffix.lstrip()}".strip() + "\n"
-        else:
-            return clean_template + "\n"
+        # Unrecognized unclosed block -> fail closed to preserve entire existing content
+        return existing_stripped + "\n"
 
     # Case 3: Existing body does not contain COMMENT_MARKER (e.g. human description or task_finalize output)
     return f"{existing_stripped}\n\n---\n\n{clean_template}".strip() + "\n"
