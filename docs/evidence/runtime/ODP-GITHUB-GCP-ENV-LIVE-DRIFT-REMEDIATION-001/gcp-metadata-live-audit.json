@@ -1,0 +1,555 @@
+{
+  "evidence_kind": "gcp-metadata-live-audit",
+  "task_id": "ODP-GITHUB-GCP-ENV-LIVE-DRIFT-REMEDIATION-001",
+  "timestamp_utc": "2026-08-27T05:57:24Z",
+  "readback_scope": "GCP metadata and Secret Manager metadata only; no secret payload or variable raw value was requested, printed, or recorded.",
+  "status_vocabulary": {
+    "PASS": "The live resource or metadata dependency was found and read back.",
+    "ABSENT_PREDEPLOY": "The configured rollout target is intentionally not deployed yet; this receipt does not claim deployment.",
+    "FAIL_CLOSED_WAITING_HUMAN_OPS": "The OAuth gate remains intentionally incomplete until Human/Ops supplies the client material.",
+    "FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE": "Staging operator smoke identity is intentionally removed from GitHub environment to fail closed until ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 provisions release-scoped identity; no static parallel identity created."
+  },
+  "environments": {
+    "dev": {
+      "project": {
+        "project_id": "odayplus-runtime-20260825",
+        "project_number": "767864276141",
+        "lifecycle_state": "ACTIVE",
+        "status": "PASS"
+      },
+      "artifact_registry": {
+        "name": "projects/odayplus-runtime-20260825/locations/asia-east1/repositories/oday-plus-dev",
+        "format": "DOCKER",
+        "mode": "STANDARD_REPOSITORY",
+        "status": "PASS"
+      },
+      "cloud_sql": {
+        "name": "oday-dev-sql",
+        "connection_name": "odayplus-runtime-20260825:asia-east1:oday-dev-sql",
+        "region": "asia-east1",
+        "database_version": "POSTGRES_16",
+        "state": "RUNNABLE",
+        "status": "PASS"
+      },
+      "service_accounts": [
+        {
+          "variable": "GCP_SERVICE_ACCOUNT",
+          "email": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+          "email": "gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+          "email": "oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+          "email": "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "status": "PASS"
+        }
+      ],
+      "workload_identity_provider": {
+        "name": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+        "state": "ACTIVE",
+        "status": "PASS"
+      },
+      "buckets": [
+        {
+          "variable": "ODP_SNAPSHOT_BUCKET",
+          "name": "oday-dev-source-snapshots-odayplus-runtime-20260825",
+          "location": "ASIA-EAST1",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_RELEASE_LEASE_STATE_URI",
+          "name": "odayplus-runtime-20260825-release-leases",
+          "location": "ASIA-EAST1",
+          "status": "PASS"
+        }
+      ],
+      "secret_manager_references": [
+        {
+          "environment_variable": "ODAY_DATABASE_URL_SECRET",
+          "secret_name": "oday-plus-dev-api-database-url-pg16",
+          "version_selector": "latest",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+          "secret_name": "oday-plus-dev-auth-principal-map",
+          "version_selector": "latest",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_WEB_SESSION_SECRET_SECRET",
+          "secret_name": "oday-plus-dev-web-session-secret",
+          "version_selector": "latest",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+          "secret_name": "oday-dev-web-oidc-client-secret",
+          "version_selector": "latest",
+          "classification": "oauth_client_secret",
+          "version_count": 0,
+          "versions": [],
+          "status": "FAIL_CLOSED_WAITING_HUMAN_OPS"
+        }
+      ],
+      "oauth_client_id": {
+        "environment_variable": "ODP_WEB_OIDC_CLIENT_ID",
+        "present": false,
+        "status": "FAIL_CLOSED_WAITING_HUMAN_OPS"
+      },
+      "deployment_targets": {
+        "cloud_run_services": [
+          {
+            "variable": "ODP_CLOUD_RUN_API_SERVICE",
+            "name": "oday-api",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_WEB_SERVICE",
+            "name": "oday-web",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ],
+        "cloud_run_jobs": [
+          {
+            "variable": "ODP_CLOUD_RUN_MIGRATION_JOB",
+            "name": "oday-migration",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_WORKER_JOB",
+            "name": "oday-worker",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_SCHEDULER_JOB",
+            "name": "oday-scheduler",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ],
+        "scheduler_jobs": [
+          {
+            "variable": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
+            "name": "oday-scheduler-trigger",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
+            "name": "oday-worker-trigger",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ]
+      }
+    },
+    "staging": {
+      "project": {
+        "project_id": "odayplus-runtime-20260825",
+        "project_number": "767864276141",
+        "lifecycle_state": "ACTIVE",
+        "status": "PASS"
+      },
+      "artifact_registry": {
+        "name": "projects/odayplus-runtime-20260825/locations/asia-east1/repositories/oday-plus-dev",
+        "format": "DOCKER",
+        "mode": "STANDARD_REPOSITORY",
+        "status": "PASS"
+      },
+      "cloud_sql": {
+        "name": "oday-staging-sql",
+        "connection_name": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
+        "region": "asia-east1",
+        "database_version": "POSTGRES_16",
+        "state": "RUNNABLE",
+        "status": "PASS"
+      },
+      "service_accounts": [
+        {
+          "variable": "GCP_SERVICE_ACCOUNT",
+          "email": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+          "email": "oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+          "email": "oday-staging-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+          "email": null,
+          "status": "FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE",
+          "note": "Removed from staging environment to ensure preflight fails closed until ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 integrates release-scoped identity. Dev/prod values unchanged; no static parallel identity created."
+        }
+      ],
+      "workload_identity_provider": {
+        "name": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+        "state": "ACTIVE",
+        "status": "PASS"
+      },
+      "buckets": [
+        {
+          "variable": "ODP_SNAPSHOT_BUCKET",
+          "name": "oday-staging-source-snapshots-odayplus-runtime-20260825",
+          "location": "ASIA-EAST1",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_RELEASE_LEASE_STATE_URI",
+          "name": "odayplus-runtime-20260825-release-leases",
+          "location": "ASIA-EAST1",
+          "status": "PASS"
+        }
+      ],
+      "vpc_connector": {
+        "name": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc",
+        "state": "READY",
+        "network": "default",
+        "ip_cidr_range": "10.8.0.0/28",
+        "status": "PASS"
+      },
+      "secret_manager_references": [
+        {
+          "environment_variable": "ODAY_DATABASE_URL_SECRET",
+          "secret_name": "oday-staging-database-url",
+          "version_selector": "1",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+          "secret_name": "oday-staging-auth-principal-map",
+          "version_selector": "1",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_WEB_SESSION_SECRET_SECRET",
+          "secret_name": "oday-staging-web-session-secret",
+          "version_selector": "1",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+          "secret_name": "oday-staging-web-oidc-client-secret",
+          "version_selector": "latest",
+          "classification": "oauth_client_secret",
+          "version_count": 0,
+          "versions": [],
+          "status": "FAIL_CLOSED_WAITING_HUMAN_OPS"
+        }
+      ],
+      "oauth_client_id": {
+        "environment_variable": "ODP_WEB_OIDC_CLIENT_ID",
+        "present": false,
+        "status": "FAIL_CLOSED_WAITING_HUMAN_OPS"
+      },
+      "deployment_targets": {
+        "cloud_run_services": [
+          {
+            "variable": "ODP_CLOUD_RUN_API_SERVICE",
+            "name": "oday-staging-api",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_WEB_SERVICE",
+            "name": "oday-staging-web",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ],
+        "cloud_run_jobs": [
+          {
+            "variable": "ODP_CLOUD_RUN_MIGRATION_JOB",
+            "name": "oday-staging-migration",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_WORKER_JOB",
+            "name": "oday-staging-worker",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_SCHEDULER_JOB",
+            "name": "oday-staging-scheduler",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ],
+        "scheduler_jobs": [
+          {
+            "variable": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
+            "name": "oday-staging-scheduler-trigger",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
+            "name": "oday-staging-worker-trigger",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ]
+      }
+    },
+    "production": {
+      "project": {
+        "project_id": "odayplus-prod-20260826",
+        "project_number": "365886461656",
+        "lifecycle_state": "ACTIVE",
+        "status": "PASS"
+      },
+      "artifact_registry": {
+        "name": "projects/odayplus-prod-20260826/locations/asia-east1/repositories/oday-plus",
+        "format": "DOCKER",
+        "mode": "STANDARD_REPOSITORY",
+        "status": "PASS"
+      },
+      "cloud_sql": {
+        "name": "oday-prod-sql",
+        "connection_name": "odayplus-prod-20260826:asia-east1:oday-prod-sql",
+        "region": "asia-east1",
+        "database_version": "POSTGRES_16",
+        "state": "RUNNABLE",
+        "status": "PASS"
+      },
+      "service_accounts": [
+        {
+          "variable": "GCP_SERVICE_ACCOUNT",
+          "email": "github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+          "email": "oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+          "email": "oday-prod-scheduler@odayplus-prod-20260826.iam.gserviceaccount.com",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+          "email": "oday-prod-smoke-operator@odayplus-prod-20260826.iam.gserviceaccount.com",
+          "status": "PASS"
+        }
+      ],
+      "workload_identity_provider": {
+        "name": "projects/365886461656/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+        "state": "ACTIVE",
+        "status": "PASS"
+      },
+      "buckets": [
+        {
+          "variable": "ODP_SNAPSHOT_BUCKET",
+          "name": "odayplus-prod-20260826-source-snapshots",
+          "location": "ASIA-EAST1",
+          "status": "PASS"
+        },
+        {
+          "variable": "ODP_RELEASE_LEASE_STATE_URI",
+          "name": "odayplus-prod-20260826-release-leases",
+          "location": "ASIA-EAST1",
+          "status": "PASS"
+        }
+      ],
+      "secret_manager_references": [
+        {
+          "environment_variable": "ODAY_DATABASE_URL_SECRET",
+          "secret_name": "oday-prod-database-url",
+          "version_selector": "1",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+          "secret_name": "oday-prod-auth-principal-map",
+          "version_selector": "1",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_WEB_SESSION_SECRET_SECRET",
+          "secret_name": "oday-prod-web-session-secret",
+          "version_selector": "1",
+          "classification": "non_oauth",
+          "version_count": 1,
+          "versions": [
+            {
+              "version": "1",
+              "state": "ENABLED"
+            }
+          ],
+          "status": "PASS"
+        },
+        {
+          "environment_variable": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+          "secret_name": "oday-prod-web-oidc-client-secret",
+          "version_selector": "latest",
+          "classification": "oauth_client_secret",
+          "version_count": 0,
+          "versions": [],
+          "status": "FAIL_CLOSED_WAITING_HUMAN_OPS"
+        }
+      ],
+      "oauth_client_id": {
+        "environment_variable": "ODP_WEB_OIDC_CLIENT_ID",
+        "present": false,
+        "status": "FAIL_CLOSED_WAITING_HUMAN_OPS"
+      },
+      "deployment_targets": {
+        "cloud_run_services": [
+          {
+            "variable": "ODP_CLOUD_RUN_API_SERVICE",
+            "name": "oday-api",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_WEB_SERVICE",
+            "name": "oday-web",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ],
+        "cloud_run_jobs": [
+          {
+            "variable": "ODP_CLOUD_RUN_MIGRATION_JOB",
+            "name": "oday-migration",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_WORKER_JOB",
+            "name": "oday-worker",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_RUN_SCHEDULER_JOB",
+            "name": "oday-scheduler",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ],
+        "scheduler_jobs": [
+          {
+            "variable": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
+            "name": "oday-scheduler-trigger",
+            "status": "ABSENT_PREDEPLOY"
+          },
+          {
+            "variable": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
+            "name": "oday-worker-trigger",
+            "status": "ABSENT_PREDEPLOY"
+          }
+        ]
+      }
+    }
+  },
+  "policy_readback": {
+    "external_provider_mode_environment_variable": {
+      "present_in_dev": false,
+      "present_in_staging": false,
+      "present_in_production": false,
+      "status": "PASS_NO_SECOND_AUTHORITY"
+    },
+    "runtime_release_provider_mode_authority": {
+      "workflow_path": ".github/workflows/deploy-dev.yml",
+      "injected_mode": "disabled",
+      "status": "PASS"
+    },
+    "oauth_client_id_environment_variable": {
+      "name": "ODP_WEB_OIDC_CLIENT_ID",
+      "present_in_dev": false,
+      "present_in_staging": false,
+      "present_in_production": false,
+      "status": "FAIL_CLOSED_WAITING_HUMAN_OPS"
+    },
+    "official_www_domain": {
+      "modified": false,
+      "status": "PASS_NOT_IN_ENVIRONMENT_ENDPOINT_POLICY"
+    },
+    "required_reviewers": {
+      "staging": [
+        "Alien-alfaloop",
+        "ajoe734"
+      ],
+      "production": [
+        "Alien-alfaloop",
+        "ajoe734"
+      ],
+      "status": "PASS_UNCHANGED"
+    },
+    "staging_operator_smoke_identity": {
+      "variable": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+      "present_in_staging": false,
+      "status": "FAIL_CLOSED_PREDEPLOY_WAITING_STAGING_LIFECYCLE",
+      "note": "Staging smoke operator SA was previously pointing to dev smoke operator; removed to fail closed until ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 provisions release-scoped identity."
+    }
+  }
+}
