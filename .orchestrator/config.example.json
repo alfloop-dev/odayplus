@@ -482,7 +482,7 @@
       },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
-        "hard_print_timeout": "168h",
+        "hard_print_timeout": "2h",
         "model_policy": {
           "enabled": true,
           "standard_model": "gemini-3.7-flash-high",
@@ -509,7 +509,7 @@
       },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
-        "hard_print_timeout": "168h",
+        "hard_print_timeout": "2h",
         "config_home": "~/.gemini-ag2",
         "home": "~/.gemini-ag2",
         "include_directories": true,

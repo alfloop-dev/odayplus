@@ -26,11 +26,8 @@ from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, Deli
 ANTIGRAVITY_OAUTH_TOKEN_REL = Path(".gemini") / "antigravity-cli" / "antigravity-oauth-token"
 
 # `agy --print-timeout` is an absolute wall-clock limit; it does not observe
-# worker process-tree activity.  The supervisor already owns activity-aware
-# stall detection and terminates genuinely inactive workers, so keep the CLI
-# timeout only as a last-resort runaway guard.  A week is deliberately beyond
-# the normal task lifetime without pretending the CLI can reset this timer.
-DEFAULT_HARD_PRINT_TIMEOUT = "168h"
+# worker process-tree activity. The single absolute wall-clock timeout is 2 hours.
+DEFAULT_HARD_PRINT_TIMEOUT = "2h"
 
 # `agy --effort` accepts only these levels.
 ANTIGRAVITY_EFFORT_LEVELS = ("low", "medium", "high")

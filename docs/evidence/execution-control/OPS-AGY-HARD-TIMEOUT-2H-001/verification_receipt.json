@@ -1,0 +1,40 @@
+{
+  "task_id": "OPS-AGY-HARD-TIMEOUT-2H-001",
+  "timestamp": "2026-08-27T02:32:00Z",
+  "owner": "Antigravity2",
+  "reviewer": "Codex2",
+  "timeout_setting": "2h",
+  "files_updated": [
+    ".orchestrator/adapters/antigravity.py",
+    ".orchestrator/config.example.json",
+    ".orchestrator/test_model_rotation.py",
+    "docs/evidence/execution-control/OPS-AGY-HARD-TIMEOUT-2H-001/README.md",
+    "docs/evidence/execution-control/OPS-AGY-HARD-TIMEOUT-2H-001/verification_receipt.json"
+  ],
+  "live_config_updated": [
+    "/home/lupin/odayplus/.orchestrator/config.json"
+  ],
+  "checks": {
+    "pytest_test_model_rotation": {
+      "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_model_rotation.py -q",
+      "exit_code": 0,
+      "passed": 38
+    },
+    "check_orchestrator_config": {
+      "command": "python3 delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json",
+      "exit_code": 0
+    },
+    "check_config_wiring": {
+      "command": "python3 delivery_toolchain/governance/check_config_wiring.py",
+      "exit_code": 0
+    },
+    "check_code_boundaries": {
+      "command": "python3 delivery_toolchain/governance/check_code_boundaries.py",
+      "exit_code": 0
+    },
+    "git_diff_check": {
+      "command": "git diff --check origin/dev",
+      "exit_code": 0
+    }
+  }
+}
