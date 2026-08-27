@@ -7297,6 +7297,216 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertFalse(changed)
         persist.assert_not_called()
 
+    def test_review_churn_does_not_bounce_back_to_failed_owner_in_same_epoch(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": True,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex2"],
+                    "Codex2": ["Antigravity", "Claude2"],
+                },
+            },
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "account_pool": "agy-shared",
+                },
+                "codex2": {
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                    "account_pool": "codex-main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "account_pool": "claude-main",
+                },
+                "claude2": {
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                    "account_pool": "claude-alt",
+                },
+            },
+        }
+        # Codex2 currently owns task after Antigravity failed earlier in this churn epoch (reopen 1 & 2).
+        # Codex2 now gets 2 more reopens (reopen 3 & 4), reaching reopen_count = 4.
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-REVIEW-CHURN-TEST-001",
+                    "status": "in_progress",
+                    "owner": "Codex2",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 4,
+                    "review_churn_reassigned_at_count": 2,
+                    "review_churn_previous_owner": "Antigravity",
+                    "review_churn_epoch_failed_owners": ["Antigravity"],
+                    "review_reopen_history": [
+                        {"count": 1, "at": "2026-08-27T01:00:00Z", "by": "Claude", "owner": "Antigravity"},
+                        {"count": 2, "at": "2026-08-27T01:30:00Z", "by": "Claude", "owner": "Antigravity"},
+                        {"count": 3, "at": "2026-08-27T02:00:00Z", "by": "Claude", "owner": "Codex2"},
+                        {"count": 4, "at": "2026-08-27T02:30:00Z", "by": "Claude", "owner": "Codex2"},
+                    ],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        # Must not bounce back to Antigravity; must advance to Claude2
+        self.assertEqual(kwargs["new_owner"], "Claude2")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+        self.assertEqual(kwargs["new_status"], "todo")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 4)
+        self.assertEqual(kwargs["task_updates"]["review_churn_previous_owner"], "Codex2")
+        self.assertEqual(
+            kwargs["task_updates"]["review_churn_epoch_failed_owners"],
+            ["Antigravity", "Codex2"],
+        )
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+        self.assertEqual(event["to_owner"], "Claude2")
+        self.assertEqual(event["epoch_failed_owners"], ["Antigravity", "Codex2"])
+
+    def test_review_churn_fails_closed_when_no_other_healthy_owner_available(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": True,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex2"],
+                    "Codex2": ["Antigravity"],
+                },
+            },
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "account_pool": "agy-shared",
+                },
+                "codex2": {
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                    "account_pool": "codex-main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "account_pool": "claude-main",
+                },
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-REVIEW-CHURN-TEST-002",
+                    "status": "in_progress",
+                    "owner": "Codex2",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 4,
+                    "review_churn_reassigned_at_count": 2,
+                    "review_churn_previous_owner": "Antigravity",
+                    "review_churn_epoch_failed_owners": ["Antigravity"],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        # Fails closed to blocked with Human/Ops
+        self.assertEqual(kwargs["new_status"], "blocked")
+        self.assertEqual(kwargs["new_waiting_for"], "Human/Ops")
+        self.assertIn("Review churn fail-closed", kwargs["message"])
+        self.assertIn("Antigravity, Codex2", kwargs["message"])
+        self.assertEqual(
+            kwargs["task_updates"]["review_churn_epoch_failed_owners"],
+            ["Antigravity", "Codex2"],
+        )
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_blocked")
+        self.assertEqual(event["failed_owners"], ["Antigravity", "Codex2"])
+
+    def test_review_churn_epoch_history_cleared_on_explicit_reset(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": True,
+                },
+                "owner_fallbacks": {
+                    "Codex2": ["Antigravity"],
+                },
+            },
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "account_pool": "agy-shared",
+                },
+                "codex2": {
+                    "display_name": "Codex2",
+                    "provider": "codex2",
+                    "account_pool": "codex-main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "account_pool": "claude-main",
+                },
+            },
+        }
+        # Suppose a task was reset: reopen_count is 2, but last_reassigned_count was 4 (reopen_count < last_reassigned_count indicates reset)
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-REVIEW-CHURN-TEST-003",
+                    "status": "in_progress",
+                    "owner": "Codex2",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 2,
+                    "review_churn_reassigned_at_count": 4,
+                    "review_churn_epoch_failed_owners": ["Antigravity"],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        # In a new epoch after reset, Antigravity is eligible again
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_status"], "todo")
+        self.assertEqual(kwargs["task_updates"]["review_churn_epoch_failed_owners"], ["Codex2"])
+
     def test_reassign_review_skips_paused_reviewer_candidates(self) -> None:
         config = {
             "worker_reassignment": {
