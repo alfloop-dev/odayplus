@@ -44,6 +44,7 @@ JOB_ENVIRONMENT_BINDINGS = {
     "build": (BUILD_ENVIRONMENT, "build"),
     "admission": (DEPLOY_ENVIRONMENT, "admission"),
     "deploy": (DEPLOY_ENVIRONMENT, "deploy"),
+    "staging_closeout": ("staging", "staging"),
 }
 
 # The one job that must stay unbound: binding it would put a deploy approval in
@@ -126,7 +127,10 @@ DEPLOY_WORKFLOWS = (
         workflow_name="Runtime Release",
         job_id="deploy",
         artifact_name="runtime-release-${{ inputs.environment }}-validation",
-        extra_report_roots=(".odp_data/remote-staging-proof/",),
+        extra_report_roots=(
+            ".odp_data/remote-staging-proof/",
+            ".odp_data/staging-lifecycle/",
+        ),
     ),
 )
 
@@ -268,10 +272,14 @@ def _workflow_written_reports(workflow: DeployWorkflow) -> list[str]:
         run = step.get("run")
         if not isinstance(run, str):
             continue
-        for match in re.findall(r'--output[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
+        for match in re.findall(r'(?:--output|--receipt)[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
             normalized = _normalize_run_id(match)
             if normalized not in written:
                 written.append(normalized)
+        if "watch_receipt=" in run:
+            production_receipt = ".odp_data/release/production-watch-window-receipt.json"
+            if production_receipt not in written:
+                written.append(production_receipt)
     return written
 
 
@@ -590,9 +598,193 @@ def test_staging_proof_checker_gated_on_staging_environment() -> None:
     assert len(staging_steps) == 1
     step = staging_steps[0]
     assert step.get("if") == "${{ inputs.environment == 'staging' }}"
-    assert "ODP_STAGING_DEPLOY_URL" in step.get("env", {})
-    assert "ODP_STAGING_API_URL" in step.get("env", {})
-    assert "ODP_STAGING_SECRET_OWNER" in step.get("env", {})
+    run = str(step.get("run", ""))
+    assert "STAGING_OUTPUTS_FILE" in run
+    assert 'staging_web_uri' in run
+    assert 'staging_api_uri' in run
+    assert 'staging_runtime_service_account' in run
+    assert "vars.ODP_STAGING_DEPLOY_URL" not in run
+    assert "vars.ODP_STAGING_API_URL" not in run
+    assert "vars.ODP_STAGING_SECRET_OWNER" not in run
+
+
+def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
+    """Runtime Release directly invokes staging lifecycle create and verify in the staging deploy branch."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+
+    # Static deploy script MUST NOT run when environment is staging
+    static_deploy_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "deploy_cloud_run_waji.sh" in str(step.get("run", ""))
+    ]
+    assert len(static_deploy_steps) == 1
+    assert static_deploy_steps[0].get("if") == "${{ inputs.environment != 'staging' }}"
+
+    create_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py create" in str(step.get("run", ""))
+    ]
+    assert len(create_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py create step"
+    create_step = create_steps[0]
+    assert create_step.get("if") == "${{ inputs.environment == 'staging' }}"
+    create_run = str(create_step.get("run", ""))
+    assert "--release-id" in create_run
+    assert "--candidate-sha" in create_run
+    assert "--manifest-digest" in create_run
+    assert "--api-image" in create_run
+    assert "--web-image" in create_run
+    assert "--worker-image" in create_run
+    assert "--scheduler-image" in create_run
+    assert "--owner-task-id" in create_run
+    assert "--state-dir" in create_run
+    assert "--outputs-out" in create_run
+    assert "--kms-key-id" in create_run
+    assert "--deployer-service-account-email" in create_run
+    assert "--network-name" in create_run
+    assert "--subnetwork-name" in create_run
+    assert "--receipt" in create_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-lifecycle-create.json" in create_run
+    assert "--dry-run" not in create_run, "Staging create must execute live without --dry-run"
+
+    verify_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py verify" in str(step.get("run", ""))
+    ]
+    assert len(verify_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py verify step"
+    verify_step = verify_steps[0]
+    assert verify_step.get("if") == "${{ inputs.environment == 'staging' }}"
+    verify_run = str(verify_step.get("run", ""))
+    assert "--release-id" in verify_run
+    assert "--candidate-sha" in verify_run
+    assert "--manifest-digest" in verify_run
+    assert "--worker-image" in verify_run
+    assert "--scheduler-image" in verify_run
+    assert "--operator-identity" in verify_run
+    assert "--cloud-sql-instance" in verify_run
+    assert "--state-dir" in verify_run
+    assert "--outputs-file" in verify_run
+    assert "--receipt" in verify_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-rehearsal-receipt.json" in verify_run
+    assert "--dry-run" not in verify_run, "Staging verify must execute live without --dry-run"
+
+
+def test_staging_hold_on_failure_invoked_on_error() -> None:
+    """Staging deploy failure triggers staging_lifecycle.py hold to retain resources for debugging."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+
+    hold_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py hold" in str(step.get("run", ""))
+    ]
+    assert len(hold_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py hold step"
+    hold_step = hold_steps[0]
+    assert hold_step.get("if") == "${{ failure() && inputs.environment == 'staging' }}"
+    hold_run = str(hold_step.get("run", ""))
+    assert "--release-id" in hold_run
+    assert "--project-id" in hold_run
+    assert "--owner-task-id" in hold_run
+    assert "--reason" in hold_run
+    assert "--receipt" in hold_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-lifecycle-hold.json" in hold_run
+
+
+def test_staging_failure_hold_requires_live_state_and_closeout_uses_staging_authority() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    cleanup_steps = [
+        step for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py cleanup" in str(step.get("run", ""))
+    ]
+    assert cleanup_steps == []
+
+    closeout = parsed["jobs"]["staging_closeout"]
+    assert closeout["needs"] == ["deploy"]
+    assert closeout["if"] == "${{ always() && inputs.environment == 'production' && needs.deploy.result == 'success' }}"
+    assert closeout["environment"] == {"name": "staging"}
+    assert closeout["env"]["MANIFEST_DIGEST"] == "${{ needs.deploy.outputs.manifest_digest }}"
+    closeout_steps = closeout["steps"]
+    cleanup_steps = [
+        step for step in closeout_steps
+        if isinstance(step, dict) and "staging_lifecycle.py cleanup" in str(step.get("run", ""))
+    ]
+    assert len(cleanup_steps) == 1
+    cleanup_run = str(cleanup_steps[0]["run"])
+    assert "--state-dir" in cleanup_run
+    assert "--terraform-backend-bucket" in cleanup_run
+    assert "--terraform-backend-prefix" in cleanup_run
+    assert "--allow-empty" not in cleanup_run
+
+    hold_steps = [
+        step for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py hold" in str(step.get("run", ""))
+    ]
+    assert "--state-dir" in str(hold_steps[0]["run"])
+    assert "--terraform-backend-bucket" in str(hold_steps[0]["run"])
+    assert "--terraform-backend-prefix" in str(hold_steps[0]["run"])
+    assert "--allow-empty" not in str(hold_steps[0]["run"])
+    assert "inputs.environment == 'staging'" in str(hold_steps[0].get("if"))
+
+    assert "verify_watch_window_receipt" in "\n".join(str(step.get("run", "")) for step in closeout_steps)
+    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout["env"]
+
+
+def test_staging_skips_static_preflight_and_uses_foundation_binding_scope() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    preflight = next(step for step in deploy_steps if step.get("name") == "Run the live runtime preflight")
+    assert preflight.get("if") == "${{ inputs.environment != 'staging' }}"
+    staging_gate = next(
+        step for step in deploy_steps if step.get("name") == "確認 staging foundation 已綁定 environment 且變數齊備"
+    )
+    assert staging_gate.get("if") == "${{ inputs.environment == 'staging' }}"
+    assert "--scope staging" in str(staging_gate["run"])
+    assert "ODP_STAGING_KMS_KEY_ID" in staging_gate["env"]
+    assert "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT" in staging_gate["env"]
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in staging_gate["env"]
+
+
+def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sidecars() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    create = next(step for step in deploy_steps if "staging_lifecycle.py create" in str(step.get("run", "")))
+    create_run = str(create["run"])
+    assert "--terraform-backend-bucket" in create_run
+    assert "--terraform-backend-prefix" in create_run
+    assert "${STAGING_BACKEND_PREFIX}" in create_run
+    assert "${RUNNER_TEMP}" not in create_run
+    persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected state storage")
+    assert "gcloud storage cp" in str(persist["run"])
+    assert "STAGING_BUNDLE_URI" in str(persist["run"])
+
+    closeout = parsed["jobs"]["staging_closeout"]
+    assert closeout["environment"] == {"name": "staging"}
+    assert closeout["needs"] == ["deploy"]
+    closeout_run = "\n".join(str(step.get("run", "")) for step in closeout["steps"])
+    assert "verify_watch_window_receipt" in closeout_run
+    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout_run
+    assert "MANIFEST_DIGEST" in closeout_run
+
+
+def test_staging_identity_rejects_dev_operator_impersonation() -> None:
+    """Staging verification must enforce release-scoped identity and reject dev operator impersonation."""
+    from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+    receipt = verify_ephemeral_staging(
+        release_id="odp-test-001",
+        candidate_sha="a" * 40,
+        manifest_digest="sha256:" + "b" * 64,
+        project_id="oday-staging-proj",
+        operator_identity="dev-smoke-operator@oday-dev-proj.iam.gserviceaccount.com",
+    )
+    assert not receipt.success
+    assert any("dev smoke operator identity impersonation" in err for err in receipt.errors)
+
 
 
 def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:

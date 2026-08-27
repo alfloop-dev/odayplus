@@ -260,15 +260,26 @@ def test_runtime_release_stages_every_receipt_under_one_declared_relative_root()
         for line in str(step["with"]["path"]).splitlines()
         if line.strip()
     ]
-    # Three environment-binding receipts, one phase receipt, one admission receipt.
-    assert len(uploaded) == len(written) == 5, (uploaded, written)
     for path in uploaded:
         assert path.startswith(f"{receipt_dir}/"), f"{path} is uploaded from outside {receipt_dir}"
         assert "${{" not in path, f"{path}: a receipt path needs no expression"
 
-    assert {Path(p).name for p in uploaded} == {
-        argument.split("/")[-1] for argument in written
-    }, "the uploaded receipts are not the ones the workflow writes"
+    written_names = [argument.split("/")[-1] for argument in written]
+    uploaded_names = [Path(path).name for path in uploaded]
+    # Mutually exclusive environment branches may write the same canonical
+    # filename, so static writer occurrences do not need one upload line each.
+    # Every locally written basename must nevertheless have an explicit upload.
+    for name in set(written_names):
+        assert name in uploaded_names, f"locally written receipt {name} is never uploaded"
+
+    # The production watch receipt is produced by the production watch owner,
+    # copied from protected storage, and verified before staging cleanup. It is
+    # the sole receipt uploaded by this workflow without a local --receipt
+    # writer; it must still use the same literal staging root.
+    externally_produced = [
+        name for name in uploaded_names if name not in set(written_names)
+    ]
+    assert externally_produced == ["production-watch-window-receipt.json"]
 
 
 def test_the_signed_lease_never_lands_inside_the_checkout() -> None:

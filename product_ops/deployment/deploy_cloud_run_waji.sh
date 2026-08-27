@@ -40,6 +40,16 @@ run_locked_python() {
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  : "${ODP_PROD_DEPLOY_URL:?Error: ODP_PROD_DEPLOY_URL is required for production live E2E.}"
+  : "${ODP_PROD_API_URL:?Error: ODP_PROD_API_URL is required for production live E2E.}"
+  for production_url in "${ODP_PROD_DEPLOY_URL}" "${ODP_PROD_API_URL}"; do
+    if [[ ! "${production_url}" =~ ^https://[^[:space:]]+$ ]]; then
+      echo "Error: production live E2E URLs must be HTTPS custom domains." >&2
+      exit 1
+    fi
+  done
+fi
 
 # Private-IP Cloud SQL is used by isolated staging. Keep the connectivity
 # binding in this single release entrypoint so every service and job follows
@@ -665,9 +675,16 @@ promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
 echo "Running fail-closed live E2E acceptance gate against the promoted release..."
 # Resolve the served origins into variables first. Inside the argv of the gate
 # invocation a failing command substitution would expand to an empty string
-# without tripping `set -e`, handing the gate a blank URL.
-LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+# without tripping `set -e`, handing the gate a blank URL. Dev deliberately
+# uses the Cloud Run default service URL; production uses the configured HTTPS
+# custom domains so the final gate exercises the public production contract.
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  LIVE_E2E_API_URL="${ODP_PROD_API_URL}"
+  LIVE_E2E_WEB_URL="${ODP_PROD_DEPLOY_URL}"
+else
+  LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+  LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+fi
 if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
   echo "Live E2E gate cannot run: served origin lookup returned empty" \
     "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2

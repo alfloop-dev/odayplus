@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
@@ -20,6 +22,7 @@ from shared.jobs.queue import JobRecord, JobStatus
 EXIT_FAILED = 1
 EXIT_CONTRACT_INVALID = 2
 EXIT_RETRY_QUEUED = 75
+PUBLIC_EGRESS_PROBE_URL = "https://example.com/"
 
 
 def _now() -> str:
@@ -326,6 +329,49 @@ def run_worker(*, max_jobs: int, require_job: bool) -> int:
     return 0
 
 
+def run_public_egress_probe(*, timeout: float = 5.0) -> int:
+    """Prove that the controlled VPC path denies a fixed public canary.
+
+    ``ALL_TRAFFIC`` is intentional here: Cloud Run sends every packet through
+    the staging VPC, where the foundation's lack of Cloud NAT/default-deny
+    firewall prevents public egress.  A response (including an HTTP error)
+    means the canary was reachable and therefore fails the rehearsal.
+    """
+
+    request = urllib.request.Request(
+        PUBLIC_EGRESS_PROBE_URL,
+        headers={"Accept": "text/plain"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310 - fixed deny canary
+            _emit_receipt(
+                "public_egress_probe",
+                "failed",
+                reason="public_canary_reachable",
+                probe_url=PUBLIC_EGRESS_PROBE_URL,
+            )
+            return EXIT_FAILED
+    except urllib.error.HTTPError as exc:
+        # HTTPError is a successful network connection, not a denied probe.
+        _emit_receipt(
+            "public_egress_probe",
+            "failed",
+            reason="public_canary_reachable",
+            http_status=exc.code,
+            probe_url=PUBLIC_EGRESS_PROBE_URL,
+        )
+        return EXIT_FAILED
+    except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        _emit_receipt(
+            "public_egress_probe",
+            "succeeded",
+            reason="public_canary_denied",
+            error_class=type(exc).__name__,
+            probe_url=PUBLIC_EGRESS_PROBE_URL,
+        )
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -334,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
     worker = subparsers.add_parser("worker")
     worker.add_argument("--max-jobs", type=int, default=100)
     worker.add_argument("--require-job", action="store_true")
+    subparsers.add_parser("public-egress-probe")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO)
@@ -341,6 +388,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_migration()
     if args.command == "scheduler":
         return run_scheduler()
+    if args.command == "public-egress-probe":
+        return run_public_egress_probe()
     if args.max_jobs < 1:
         parser.error("--max-jobs must be at least 1")
     return run_worker(max_jobs=args.max_jobs, require_job=args.require_job)

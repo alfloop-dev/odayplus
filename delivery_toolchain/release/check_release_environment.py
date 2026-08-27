@@ -57,6 +57,17 @@ ARTIFACT_REGISTRY_VARIABLES = (
     "GCP_AR_REPO",
 )
 
+STAGING_FOUNDATION_VARIABLES = (
+    "GCP_PROJECT_ID",
+    "GCP_REGION",
+    "GCP_CLOUD_SQL_INSTANCE",
+    "ODP_STAGING_VPC_NETWORK",
+    "ODP_STAGING_VPC_SUBNETWORK",
+    "ODP_STAGING_KMS_KEY_ID",
+    "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+    "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+)
+
 REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
     # build 需要 OIDC 才能推 image，需要 registry 座標才能組出 image reference，
     # 需要四個 service/job 名稱才能決定要建哪四個 image。
@@ -83,6 +94,13 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_MIGRATION_JOB",
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
+    ),
+    # Staging release-scoped names, endpoints, tenants, and service accounts
+    # come from Terraform outputs. This gate admits only the long-lived
+    # foundation needed to run Terraform and the lifecycle verifier.
+    "staging": (
+        *OIDC_VARIABLES,
+        *STAGING_FOUNDATION_VARIABLES,
     ),
 }
 
