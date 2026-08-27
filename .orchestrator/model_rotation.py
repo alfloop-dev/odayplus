@@ -86,6 +86,8 @@ DEFAULT_HIGH_RISK_KEYWORDS = (
     "temporal",
     "contract",
     "schema",
+    "workflow",
+    "iac",
 )
 DEFAULT_STANDARD_KEYWORDS = (
     "sidecar",
@@ -202,7 +204,7 @@ def task_model_decision(
     task_class = str(task.get("task_class") or "").strip().lower()
     corpus_parts = [
         str(task.get(key) or "")
-        for key in ("id", "title", "summary", "scope", "next")
+        for key in ("id", "title", "summary", "summary_zh", "scope", "next")
     ]
     corpus_parts.extend(str(item or "") for item in (task.get("artifacts") or []))
     corpus = " ".join(corpus_parts).casefold().replace("\\", "/")
@@ -231,14 +233,6 @@ def task_model_decision(
             "reason": f"review_reopened_{reopen_count}_time(s)",
         }
 
-    standard_keywords = [str(item).casefold() for item in policy.get("standard_task_keywords", []) if str(item)]
-    if any(keyword in corpus for keyword in standard_keywords):
-        return {
-            "model": str(policy.get("standard_model") or DEFAULT_STANDARD_MODEL).strip(),
-            "risk_tier": "standard",
-            "reason": "bounded_docs_or_lint",
-        }
-
     priority = str(task.get("priority") or "").strip().upper()
     high_priorities = {str(item).strip().upper() for item in policy.get("high_risk_priorities", [])}
     if priority and priority in high_priorities:
@@ -255,6 +249,14 @@ def task_model_decision(
             "model": str(policy.get("high_risk_model") or DEFAULT_HIGH_RISK_MODEL).strip(),
             "risk_tier": "high",
             "reason": f"sensitive_scope:{matched_keyword}",
+        }
+
+    standard_keywords = [str(item).casefold() for item in policy.get("standard_task_keywords", []) if str(item)]
+    if any(keyword in corpus for keyword in standard_keywords):
+        return {
+            "model": str(policy.get("standard_model") or DEFAULT_STANDARD_MODEL).strip(),
+            "risk_tier": "standard",
+            "reason": "bounded_docs_or_lint",
         }
 
     return {

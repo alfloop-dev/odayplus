@@ -414,6 +414,7 @@ from provider_runtime import (
     configured_provider_binary,
     provider_config,
     provider_config_entry,
+    provider_key,
     provider_section,
     provider_uses_claude_cli,
 )
@@ -1701,8 +1702,17 @@ def build_request(
 ) -> DeliveryRequest:
     logical_agent = agent_config_for(config, event["target_agent"])
     agent = agent_config_for(config, agent_id_override or event["target_agent"])
+    # A dispatch slot is only a process-capacity lease. Provider identity is
+    # owned by the logical target so aliases keep their provider-specific
+    # credentials, HOME, model rotation state, and failure attribution when a
+    # shared slot launches the worker.
+    logical_provider = provider_key(
+        config,
+        default=str(logical_agent.get("provider") or logical_agent["id"]),
+        agent_id=logical_agent["id"],
+    )
     metadata = dict(event.get("metadata", {}) or {})
-    model_preference = resolve_agent_model_preference(config, agent)
+    model_preference = resolve_agent_model_preference(config, logical_agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
     logical_agent_id = normalize_agent_id(str(logical_agent.get("id") or event.get("target_agent") or ""))
@@ -1718,9 +1728,9 @@ def build_request(
         context_files = execution_context_files(config, event.get("task_id"))
     return DeliveryRequest(
         agent_id=agent["id"],
-        provider=agent.get("provider", agent["id"]),
+        provider=logical_provider,
         delivery_mode=provider_config(
-            config, agent.get("provider", agent["id"])
+            config, logical_provider
         ).get("delivery_mode", agent.get("adapter", "file_inbox")),
         message=event["message"],
         task_id=event.get("task_id"),
