@@ -7215,7 +7215,7 @@ class WorkerReassignmentTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_reassigned")
 
-    def test_second_review_reopen_reassigns_owner_to_different_account_pool(self) -> None:
+    def test_review_churn_second_review_reopen_reassigns_owner_to_different_account_pool(self) -> None:
         config = {
             "worker_reassignment": {
                 "enabled": True,
@@ -7490,6 +7490,7 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "review_reopen_count": 0,
                     "review_churn_reassigned_at_count": 4,
                     "review_churn_previous_owner": "Antigravity",
+                    "review_churn_last_reassigned_at": "2026-08-27T02:00:00Z",
                     "review_churn_epoch_failed_owners": ["Antigravity", "Codex2"],
                 }
             ]
@@ -7508,10 +7509,11 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 0)
         self.assertIsNone(kwargs["task_updates"]["review_churn_previous_owner"])
+        self.assertIsNone(kwargs["task_updates"]["review_churn_last_reassigned_at"])
         self.assertEqual(kwargs["task_updates"]["review_churn_epoch_failed_owners"], [])
         write_activity_log.assert_not_called()
 
-    def test_review_churn_epoch_history_cleared_on_explicit_reset(self) -> None:
+    def test_review_churn_epoch_history_is_cleared_before_next_epoch(self) -> None:
         config = {
             "worker_reassignment": {
                 "enabled": True,
@@ -7542,7 +7544,9 @@ class WorkerReassignmentTests(unittest.TestCase):
                 },
             },
         }
-        # Suppose a task was reset: reopen_count is 2, but last_reassigned_count was 4 (reopen_count < last_reassigned_count indicates reset)
+        # First call observes an explicit reset and must persist the cleared epoch.
+        # The second call is a new epoch that retains old audit history; that
+        # history must not make Antigravity ineligible again.
         status = {
             "tasks": [
                 {
@@ -7550,9 +7554,15 @@ class WorkerReassignmentTests(unittest.TestCase):
                     "status": "in_progress",
                     "owner": "Codex2",
                     "reviewer": "Claude",
-                    "review_reopen_count": 2,
+                    "review_reopen_count": 0,
                     "review_churn_reassigned_at_count": 4,
-                    "review_churn_epoch_failed_owners": ["Antigravity"],
+                    "review_churn_previous_owner": "Antigravity",
+                    "review_churn_last_reassigned_at": "2026-08-27T02:00:00Z",
+                    "review_churn_epoch_failed_owners": ["Antigravity", "Codex2"],
+                    "review_reopen_history": [
+                        {"count": 1, "at": "2026-08-27T01:00:00Z", "by": "Claude", "owner": "Antigravity"},
+                        {"count": 2, "at": "2026-08-27T01:30:00Z", "by": "Claude", "owner": "Antigravity"},
+                    ],
                 }
             ]
         }
@@ -7564,12 +7574,32 @@ class WorkerReassignmentTests(unittest.TestCase):
             changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
 
         self.assertTrue(changed)
-        kwargs = persist.call_args.kwargs
-        # In a new epoch after reset, Antigravity is eligible again
+        reset_kwargs = persist.call_args.kwargs
+        self.assertEqual(reset_kwargs["new_owner"], "Codex2")
+        self.assertEqual(reset_kwargs["task_updates"]["review_churn_reassigned_at_count"], 0)
+        self.assertIsNone(reset_kwargs["task_updates"]["review_churn_previous_owner"])
+        self.assertIsNone(reset_kwargs["task_updates"]["review_churn_last_reassigned_at"])
+        self.assertEqual(reset_kwargs["task_updates"]["review_churn_epoch_failed_owners"], [])
+        write_activity_log.assert_not_called()
+
+        task = status["tasks"][0]
+        task.update(reset_kwargs["task_updates"])
+        task["review_reopen_count"] = 2
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as second_persist,
+            mock.patch.object(supervisor, "write_activity_log") as second_write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        second_persist.assert_called_once()
+        kwargs = second_persist.call_args.kwargs
+        # In a new epoch after reset, Antigravity is eligible again even though
+        # the old reopen audit entries are still present.
         self.assertEqual(kwargs["new_owner"], "Antigravity")
         self.assertEqual(kwargs["new_status"], "todo")
         self.assertEqual(kwargs["task_updates"]["review_churn_epoch_failed_owners"], ["Codex2"])
-        event = write_activity_log.call_args.args[1]
+        event = second_write_activity_log.call_args.args[1]
         self.assertEqual(event["type"], "review_churn_reassigned")
         self.assertEqual(event["epoch_failed_owners"], ["Codex2"])
 

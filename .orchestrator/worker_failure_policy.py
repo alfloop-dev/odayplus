@@ -1817,6 +1817,7 @@ def reassign_tasks_after_review_churn(
         if is_reset and (
             raw_last_reassigned > 0
             or bool(snapshot.get("review_churn_previous_owner"))
+            or bool(snapshot.get("review_churn_last_reassigned_at"))
             or bool(snapshot.get("review_churn_epoch_failed_owners"))
         ):
             if reopen_count < threshold:
@@ -1829,6 +1830,7 @@ def reassign_tasks_after_review_churn(
                     task_updates={
                         "review_churn_reassigned_at_count": 0,
                         "review_churn_previous_owner": None,
+                        "review_churn_last_reassigned_at": None,
                         "review_churn_epoch_failed_owners": [],
                     },
                 ):
@@ -1850,13 +1852,6 @@ def reassign_tasks_after_review_churn(
         prev_owner = str(snapshot.get("review_churn_previous_owner") or "").strip()
         if prev_owner and not is_reset and prev_owner not in epoch_failed_owners:
             epoch_failed_owners.append(prev_owner)
-
-        if not is_reset:
-            for item in (snapshot.get("review_reopen_history") or []):
-                if isinstance(item, dict):
-                    h_owner = str(item.get("owner") or "").strip()
-                    if h_owner and h_owner not in epoch_failed_owners:
-                        epoch_failed_owners.append(h_owner)
 
         if owner and owner not in epoch_failed_owners:
             epoch_failed_owners.append(owner)
