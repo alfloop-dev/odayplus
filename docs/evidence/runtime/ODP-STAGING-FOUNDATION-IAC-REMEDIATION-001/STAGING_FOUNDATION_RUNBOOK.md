@@ -33,12 +33,12 @@ cd infra/terraform/bootstrap
 
 # 準備 staging bootstrap 變數
 cat <<EOF > staging.tfvars
-project_id             = "oday-staging-123456"
+project_id             = "odayplus-runtime-20260825"
 region                 = "asia-east1"
 environment            = "staging"
 retention_period_days  = 30
 deployer_member_emails = [
-  "serviceAccount:github-deployer@oday-staging-123456.iam.gserviceaccount.com"
+  "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
 ]
 EOF
 
@@ -55,13 +55,13 @@ terraform apply bootstrap.tfplan
 ```bash
 # 準備 backend 設定
 cat <<EOF > staging_foundation.backend.hcl
-bucket = "oday-tfstate-staging-oday-staging-123456"
+bucket = "oday-tfstate-staging-odayplus-runtime-20260825"
 prefix = "oday-plus/staging/foundation"
 EOF
 
 # 準備 foundation 變數
 cat <<EOF > staging_foundation.tfvars
-project_id                   = "oday-staging-123456"
+project_id                   = "odayplus-runtime-20260825"
 region                       = "asia-east1"
 environment                  = "staging"
 network_cidr                 = "10.42.0.0/24"
@@ -69,7 +69,7 @@ cloud_sql_tier               = "db-custom-2-7680"
 cloud_sql_disk_gb            = 50
 enable_deletion_protection   = false
 network_user_members         = [
-  "serviceAccount:github-deployer@oday-staging-123456.iam.gserviceaccount.com"
+  "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
 ]
 EOF
 ```
@@ -82,14 +82,14 @@ EOF
 
 | Ephemeral Staging 參數名稱 | 來源 Foundation 輸出 / 資源名稱 | 範例值 |
 |---|---|---|
-| `--project-id` | `var.project_id` | `oday-staging-123456` |
+| `--project-id` | `var.project_id` | `odayplus-runtime-20260825` |
 | `--region` | `var.region` | `asia-east1` |
 | `--network-name` | `module.runtime_foundation.network_name` | `oday-staging-runtime` |
 | `--subnetwork-name` | `module.runtime_foundation.subnetwork_name` | `oday-staging-runtime` |
 | `--cloud-sql-instance-name` | `module.runtime_foundation.cloud_sql_instance_name` | `oday-staging-sql` |
-| `--cloud-sql-connection-name` | `module.runtime_foundation.cloud_sql_instance_connection_name` | `oday-staging-123456:asia-east1:oday-staging-sql` |
-| `--kms-key-id` | `module.runtime_foundation.kms_crypto_key_id` | `projects/oday-staging-123456/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime` |
-| `--deployer-service-account` | `google_service_account.github_deployer.email` | `github-deployer@oday-staging-123456.iam.gserviceaccount.com` |
+| `--cloud-sql-connection-name` | `module.runtime_foundation.cloud_sql_instance_connection_name` | `odayplus-runtime-20260825:asia-east1:oday-staging-sql` |
+| `--kms-key-id` | `module.runtime_foundation.kms_crypto_key_id` | `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime` |
+| `--deployer-service-account` | `google_service_account.github_deployer.email` | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` |
 
 ---
 

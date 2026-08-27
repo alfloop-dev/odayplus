@@ -31,7 +31,7 @@ variable "environment" {
 
 variable "name_prefix" {
   type        = string
-  description = "Prefix for resource naming. Defaults to oday-${var.environment}."
+  description = "Prefix for resource naming. Defaults to oday-<environment>."
   default     = ""
 }
 

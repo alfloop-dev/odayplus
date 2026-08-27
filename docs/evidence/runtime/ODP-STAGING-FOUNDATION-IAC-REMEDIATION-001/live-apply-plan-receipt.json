@@ -1,8 +1,9 @@
 {
   "receipt_type": "terraform_apply_plan_metadata",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-  "generated_at": "2026-08-27T07:20:00Z",
+  "generated_at": "2026-08-27T07:47:30Z",
   "candidate_sha": "9840082623c7f4c570ca1fcc1f3c39dbebf02f58",
+  "target_project_id": "odayplus-runtime-20260825",
   "module_tree": [
     {
       "module": "root",
@@ -34,7 +35,7 @@
     "egress_firewall_validation": "PASS",
     "no_secrets_in_outputs": "PASS",
     "rfc1918_cidr_enforcement": "PASS",
-    "unit_test_count": 40,
+    "unit_test_count": 42,
     "unit_tests_status": "ALL_PASSED"
   }
 }

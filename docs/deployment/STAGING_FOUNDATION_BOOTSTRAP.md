@@ -25,12 +25,12 @@
 ```bash
 # 準備 staging tfvars
 cat <<EOF > infra/terraform/bootstrap/staging.tfvars
-project_id             = "oday-staging-123456"
+project_id             = "odayplus-runtime-20260825"
 region                 = "asia-east1"
 environment            = "staging"
 retention_period_days  = 30
 deployer_member_emails = [
-  "serviceAccount:github-deployer@oday-staging-123456.iam.gserviceaccount.com"
+  "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
 ]
 EOF
 
@@ -45,7 +45,7 @@ EOF
 ```bash
 # 初始化 runtime_foundation (指向剛剛建立的 GCS Bucket)
 cat <<EOF > staging_foundation.backend.hcl
-bucket = "oday-tfstate-staging-oday-staging-123456"
+bucket = "oday-tfstate-staging-odayplus-runtime-20260825"
 prefix = "oday-plus/staging/foundation"
 EOF
 
@@ -59,9 +59,9 @@ terraform -chdir=infra/terraform plan -var-file=infra/terraform/env/staging.tfva
 - `--network-name`: `oday-staging-runtime`
 - `--subnetwork-name`: `oday-staging-runtime`
 - `--cloud-sql-instance-name`: `oday-staging-sql`
-- `--cloud-sql-connection-name`: `oday-staging-123456:asia-east1:oday-staging-sql`
-- `--kms-key-id`: `projects/oday-staging-123456/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime`
-- `--deployer-service-account`: `github-deployer@oday-staging-123456.iam.gserviceaccount.com`
+- `--cloud-sql-connection-name`: `odayplus-runtime-20260825:asia-east1:oday-staging-sql`
+- `--kms-key-id`: `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime`
+- `--deployer-service-account`: `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com`
 
 ---
 

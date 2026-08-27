@@ -17,8 +17,8 @@ module "runtime_foundation" {
   cloud_sql_maintenance_hour               = var.cloud_sql_maintenance_hour
   enable_deletion_protection               = local.is_prod
   network_user_members = [
-    "serviceAccount:${google_service_account.runtime.email}",
-    "serviceAccount:${google_service_account.web.email}",
+    "serviceAccount:${local.name_prefix}-runtime@${var.project_id}.iam.gserviceaccount.com",
+    "serviceAccount:${local.name_prefix}-web@${var.project_id}.iam.gserviceaccount.com",
   ]
 
   depends_on = [

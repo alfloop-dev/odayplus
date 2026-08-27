@@ -1,10 +1,11 @@
 {
   "receipt_type": "staging_foundation_live_readback",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-  "verified_at": "2026-08-27T07:20:00Z",
+  "verified_at": "2026-08-27T07:46:46Z",
   "origin_dev_sha": "9840082623c7f4c570ca1fcc1f3c39dbebf02f58",
   "environment": "staging",
-  "project_id": "oday-staging-123456",
+  "project_id": "odayplus-runtime-20260825",
+  "project_number": "767864276141",
   "region": "asia-east1",
   "foundation_resources": {
     "network": {
@@ -55,51 +56,52 @@
       }
     ],
     "kms": {
-      "key_ring": "oday-staging-runtime",
-      "crypto_key": "oday-staging-runtime",
+      "state_key_ring": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-tfstate-staging-state",
+      "state_crypto_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-tfstate-staging-state/cryptoKeys/oday-tfstate-staging-state",
+      "runtime_key_ring": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-runtime",
+      "runtime_crypto_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
       "rotation_period": "7776000s",
       "prevent_destroy": true,
       "encrypter_decrypters": [
-        "serviceAccount:service-PROJECT_NUM@gcp-sa-cloud-sql.iam.gserviceaccount.com",
-        "serviceAccount:service-PROJECT_NUM@gcp-sa-pubsub.iam.gserviceaccount.com",
-        "serviceAccount:service-PROJECT_NUM@gs-project-accounts.iam.gserviceaccount.com"
+        "serviceAccount:service-767864276141@gs-project-accounts.iam.gserviceaccount.com"
       ]
     },
     "cloud_sql": {
       "instance_name": "oday-staging-sql",
       "database_version": "POSTGRES_16",
       "availability_type": "ZONAL",
-      "tier": "db-custom-2-7680",
-      "disk_size_gb": 50,
-      "disk_type": "PD_SSD",
+      "tier": "db-f1-micro",
+      "location": "asia-east1-a",
       "ipv4_enabled": false,
-      "private_network": "projects/oday-staging-123456/global/networks/oday-staging-runtime",
-      "cmek_key": "projects/oday-staging-123456/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime",
+      "private_address": "10.50.0.5",
       "pitr_enabled": true,
       "transaction_log_retention_days": 7,
-      "retained_backups": 30
+      "retained_backups": 7
     },
     "state_backend": {
-      "bucket_name": "oday-tfstate-staging-oday-staging-123456",
+      "status": "LIVE_APPLIED_AND_VERIFIED",
+      "bucket_name": "oday-tfstate-staging-odayplus-runtime-20260825",
+      "bucket_url": "gs://oday-tfstate-staging-odayplus-runtime-20260825",
       "public_access_prevention": "enforced",
       "uniform_bucket_level_access": true,
       "versioning_enabled": true,
       "cmek_encrypted": true,
+      "cmek_key_id": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-tfstate-staging-state/cryptoKeys/oday-tfstate-staging-state",
       "retention_period_days": 30,
+      "force_destroy": false,
+      "prevent_destroy": true,
       "release_prefix_pattern": "oday-plus/staging/releases/{release_id}"
     },
     "deployer_authority": {
-      "service_account": "github-deployer@oday-staging-123456.iam.gserviceaccount.com",
+      "service_account": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
       "wif_pool": "github-actions",
       "wif_provider": "odayplus",
-      "attribute_condition": "assertion.repository == \"alfloop-dev/odayplus\"",
+      "attribute_condition": "assertion.repository == 'alfloop-dev/odayplus'",
       "roles": [
-        "roles/run.admin",
         "roles/cloudscheduler.admin",
         "roles/cloudsql.client",
-        "roles/artifactregistry.writer",
-        "roles/iam.serviceAccountUser",
-        "roles/storage.objectUser"
+        "roles/run.admin",
+        "roles/serviceusage.serviceUsageConsumer"
       ]
     }
   },

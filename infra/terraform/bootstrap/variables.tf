@@ -31,7 +31,7 @@ variable "environment" {
 
 variable "name_prefix" {
   type        = string
-  description = "Optional name prefix for state bucket and KMS. Defaults to oday-tfstate-${var.environment}."
+  description = "Optional name prefix for state bucket and KMS. Defaults to oday-tfstate-<environment>."
   default     = ""
 }
 

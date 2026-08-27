@@ -2,9 +2,9 @@ terraform {
   required_version = ">= 1.6.0"
 
   # Backend declaration supports 2-phase bootstrap:
-  # Phase 1: terraform init -backend=false (initial creation using local state)
-  # Phase 2: terraform init -migrate-state -backend-config=... (migrate state to the new GCS bucket)
-  backend "gcs" {}
+  # Phase 1: local state during initial creation
+  # Phase 2: remote state migration after bucket creation
+  # backend "gcs" {}
 
   required_providers {
     google = {
