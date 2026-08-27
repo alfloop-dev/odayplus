@@ -57,14 +57,56 @@ def _entrypoint(func):
 
 
 @_entrypoint
-def detect_worker_failure(worker: dict[str, Any]) -> str | None:
-    if worker.get("status") == "completed" or worker.get("runner_status") in {"completed", "success", "succeeded"}:
-        return None
+def is_cloud_run_quota_error(reason: str | None) -> bool:
+    if not reason:
+        return False
+    normalized = str(reason).lower()
+    return (
+        "cloud run" in normalized
+        and ("quota" in normalized or "resourceexhausted" in normalized or "429" in normalized)
+    ) or "run.googleapis.com" in normalized
+
+
+@_entrypoint
+def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
+    if not isinstance(worker, dict):
+        return False
+    if str(worker.get("status") or "").strip().lower() in {"completed", "success", "succeeded"}:
+        return True
+    if str(worker.get("runner_status") or "").strip().lower() in {"completed", "success", "succeeded"}:
+        try:
+            exit_code = int(worker.get("exit_code", 0))
+            if exit_code == 0 and not worker.get("runner_signal"):
+                return True
+        except (TypeError, ValueError):
+            pass
     try:
         if "exit_code" in worker and int(worker.get("exit_code")) == 0 and not worker.get("runner_signal"):
-            return None
+            return True
     except (TypeError, ValueError):
         pass
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    if status_path:
+        status_payload = _load_runtime_marker(status_path)
+        if isinstance(status_payload, dict):
+            status_val = str(status_payload.get("status") or "").strip().lower()
+            try:
+                code_val = int(status_payload.get("exit_code", 0)) if "exit_code" in status_payload else 0
+                signal_val = status_payload.get("signal")
+                if status_val in {"completed", "success", "succeeded"} and code_val == 0 and not signal_val:
+                    return True
+                if "exit_code" in status_payload and code_val == 0 and not signal_val and not status_payload.get("error"):
+                    return True
+            except (TypeError, ValueError):
+                pass
+    return False
+
+
+@_entrypoint
+def detect_worker_failure(worker: dict[str, Any]) -> str | None:
+    if is_structured_successful_worker(worker):
+        return None
     log_path_value = worker.get("log_path")
     if not log_path_value:
         return None
@@ -220,6 +262,7 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "exhausted your capacity",
         "no quota",
         "you have no quota",
+        "quota exceeded",
         "free daily quota has been reached",
         "free tier quota exceeded",
         "quota will reset after",
@@ -227,9 +270,13 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
     }
     retryable_capacity_markers = {
         "status: 429",
+        ": 429",
+        " 429 ",
         "retryablequotaerror",
         "quota_exhausted",
         "resource_exhausted",
+        "resourceexhausted",
+        "resource has been exhausted",
         "rate limit",
         "rate limited",
         "no capacity available",
@@ -271,6 +318,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if is_claude_session_limit_banner(config, provider, reason):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
+    if is_cloud_run_quota_error(reason):
+        return {"kind": "terminal", "transient": False, "label": "terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
@@ -789,14 +838,8 @@ def mark_provider_dispatch_paused(
     worker: dict[str, Any] | None = None,
 ) -> bool:
     worker_obj = worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
-    if isinstance(worker_obj, dict):
-        if worker_obj.get("status") == "completed" or str(worker_obj.get("runner_status") or "").lower() in {"completed", "success", "succeeded"}:
-            return False
-        try:
-            if "exit_code" in worker_obj and int(worker_obj.get("exit_code")) == 0 and not worker_obj.get("runner_signal"):
-                return False
-        except (TypeError, ValueError):
-            pass
+    if is_structured_successful_worker(worker_obj):
+        return False
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
@@ -804,6 +847,8 @@ def mark_provider_dispatch_paused(
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
     now = datetime.now(UTC)
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
+    if not should_pause_dispatch_for_failure_kind(effective_pause_kind):
+        return False
     if effective_pause_kind in {"auth", "provider_config", "provider_unavailable"}:
         if not settings.get("pause_on_auth_failure", True):
             return False

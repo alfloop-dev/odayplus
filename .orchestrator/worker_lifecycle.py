@@ -1161,156 +1161,26 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
             continue
 
-        if worker.get("status") in {"completed", "failed", "manual_pending"}:
-            continue
-
-        if worker_is_discussion_planning(worker):
-            worker["status"] = "completed"
-            worker["last_event_at"] = utc_now()
-            clear_task_failure_streak(state, worker=worker)
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_completed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "Discussion planning worker exited.",
-                    "worker_run_id": worker["run_id"],
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                },
-            )
-            record_account_pool_canary_success(config, state, worker)
-            finalize_queue_event_record(config, state, worker, "completed")
-            changed = True
-            continue
-        if worker_is_coordination_dispatch(worker):
-            worker["status"] = "completed"
-            worker["last_event_at"] = utc_now()
-            clear_task_failure_streak(state, worker=worker)
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_completed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "Coordination worker exited after completing its handoff step.",
-                    "worker_run_id": worker["run_id"],
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                },
-            )
-            finalize_queue_event_record(config, state, worker, "completed")
-            changed = True
-            continue
-        task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
+        runner_succeeded = is_structured_successful_worker(worker)
+        current_task = task_map.get(worker.get("task_id"), {})
         terminal_statuses = {
             str(value).lower()
-            for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
+            for value in ready_dispatch_settings(config).get(
+                "worker_terminal_statuses", ["done", "review_approved"]
+            )
         }
-        current_task = task_map.get(worker.get("task_id"), {})
         success_outcome = successful_worker_exit_outcome(
             worker,
             current_task,
             terminal_statuses=terminal_statuses,
         )
-        if success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
-            request_snapshot = worker.get("request_snapshot")
-            raw_dispatch_reason = (
-                request_snapshot.get("reason")
-                if isinstance(request_snapshot, dict)
-                else worker.get("reason")
-            )
-            dispatch_reason = str(raw_dispatch_reason or "").strip()
-            needs_owner_handoff_seal = dispatch_reason in {
-                REASON_OWNED_READY,
-                REASON_OWNED_IN_PROGRESS,
-            }
-            handoff_seal = (
-                seal_worker_handoff(config, state, worker, current_task)
-                if needs_owner_handoff_seal
-                else None
-            )
-            if handoff_seal is not None and not handoff_seal.accepted:
-                if str(current_task.get("status") or "").lower() == "review":
-                    if not status_transition.reject_unsealed_worker_handoff(
-                        config,
-                        status_snapshot,
-                        current_task,
-                        worker_run_id=str(worker.get("run_id") or "") or None,
-                        reason=handoff_seal.reason,
-                        detail=handoff_seal.detail,
-                    ):
-                        worker["status"] = "failed"
-                        worker["last_event_at"] = utc_now()
-                        worker["last_error"] = "Worker handoff seal could not atomically revoke review dispatch."
-                        finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
-                        write_activity_log(
-                            config,
-                            {
-                                "type": "worker_failed",
-                                "provider": worker.get("provider"),
-                                "task_id": worker.get("task_id"),
-                                "message": worker["last_error"],
-                                "worker_run_id": worker.get("run_id"),
-                            },
-                        )
-                        changed = True
-                        continue
-                record_unsealed_worker_handoff(config, state, worker, current_task, handoff_seal)
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                worker["progress_outcome"] = "handoff_seal_rejected"
-                worker["last_error"] = f"Handoff seal rejected: {handoff_seal.reason}: {handoff_seal.detail}"
-                finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_handoff_rejected",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": worker["last_error"],
-                        "worker_run_id": worker.get("run_id"),
-                        "handoff_reason": handoff_seal.reason,
-                        "handoff_detail": handoff_seal.detail,
-                    },
-                )
-                changed = True
-                continue
-            if handoff_seal is not None:
-                clear_unsealed_worker_handoff(state, worker.get("task_id"))
-            worker["status"] = "completed"
-            worker["last_event_at"] = utc_now()
-            worker["progress_outcome"] = success_outcome
-            clear_task_failure_streak(state, worker=worker)
-            message = (
-                "Background worker process exited after recording meaningful incremental progress; task remains dispatchable."
-                if success_outcome == "incremental_progress"
-                else "Background worker process exited after completing its required task lifecycle transition."
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_progress_recorded" if success_outcome == "incremental_progress" else "worker_completed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": message,
-                    "worker_run_id": worker["run_id"],
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                    "progress_outcome": success_outcome,
-                },
-            )
-            finalize_queue_event_record(config, state, worker, "completed")
-            changed = True
-            continue
-
-        runner_succeeded = (
-            worker_runner_succeeded(worker)
-            or int(worker.get("exit_code", -1)) == 0
-            or worker.get("status") == "completed"
+        is_success = (
+            runner_succeeded
+            or success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}
+            or worker_is_discussion_planning(worker)
+            or worker_is_coordination_dispatch(worker)
         )
-        failure_reason = None if runner_succeeded else detect_worker_failure(worker)
+        failure_reason = None if is_success else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -1433,7 +1303,151 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             continue
 
         if worker.get("status") not in {"completed", "failed", "manual_pending"}:
-            if task_status in redispatch_statuses:
+            if worker_is_discussion_planning(worker):
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                clear_task_failure_streak(state, worker=worker)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": "Discussion planning worker exited.",
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                record_account_pool_canary_success(config, state, worker)
+                finalize_queue_event_record(config, state, worker, "completed")
+                changed = True
+                continue
+            if worker_is_coordination_dispatch(worker):
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                clear_task_failure_streak(state, worker=worker)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": "Coordination worker exited after completing its handoff step.",
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                    },
+                )
+                finalize_queue_event_record(config, state, worker, "completed")
+                changed = True
+                continue
+            task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
+            terminal_statuses = {
+                str(value).lower()
+                for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
+            }
+            current_task = task_map.get(worker.get("task_id"), {})
+            success_outcome = successful_worker_exit_outcome(
+                worker,
+                current_task,
+                terminal_statuses=terminal_statuses,
+            )
+            if success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
+                request_snapshot = worker.get("request_snapshot")
+                raw_dispatch_reason = (
+                    request_snapshot.get("reason")
+                    if isinstance(request_snapshot, dict)
+                    else worker.get("reason")
+                )
+                dispatch_reason = str(raw_dispatch_reason or "").strip()
+                # This is the owner-to-reviewer boundary, not a generic worker
+                # exit hook.  Reviewers, helper claims, and coordination runs
+                # must never create a continuation record for the task owner.
+                needs_owner_handoff_seal = dispatch_reason in {
+                    REASON_OWNED_READY,
+                    REASON_OWNED_IN_PROGRESS,
+                }
+                handoff_seal = (
+                    seal_worker_handoff(config, state, worker, current_task)
+                    if needs_owner_handoff_seal
+                    else None
+                )
+                if handoff_seal is not None and not handoff_seal.accepted:
+                    # The owner is already gone, so this must settle the run and
+                    # release capacity.  For a submitted review, atomically
+                    # revoke the reviewer handoff before dispatch can see it.
+                    if str(current_task.get("status") or "").lower() == "review":
+                        if not status_transition.reject_unsealed_worker_handoff(
+                            config,
+                            status_snapshot,
+                            current_task,
+                            worker_run_id=str(worker.get("run_id") or "") or None,
+                            reason=handoff_seal.reason,
+                            detail=handoff_seal.detail,
+                        ):
+                            worker["status"] = "failed"
+                            worker["last_event_at"] = utc_now()
+                            worker["last_error"] = "Worker handoff seal could not atomically revoke review dispatch."
+                            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "worker_failed",
+                                    "provider": worker.get("provider"),
+                                    "task_id": worker.get("task_id"),
+                                    "message": worker["last_error"],
+                                    "worker_run_id": worker.get("run_id"),
+                                },
+                            )
+                            changed = True
+                            continue
+                    record_unsealed_worker_handoff(config, state, worker, current_task, handoff_seal)
+                    worker["status"] = "completed"
+                    worker["last_event_at"] = utc_now()
+                    worker["progress_outcome"] = "handoff_seal_rejected"
+                    worker["last_error"] = f"Handoff seal rejected: {handoff_seal.reason}: {handoff_seal.detail}"
+                    finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_handoff_rejected",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": worker["last_error"],
+                            "worker_run_id": worker.get("run_id"),
+                            "handoff_reason": handoff_seal.reason,
+                            "handoff_detail": handoff_seal.detail,
+                        },
+                    )
+                    changed = True
+                    continue
+                if handoff_seal is not None:
+                    clear_unsealed_worker_handoff(state, worker.get("task_id"))
+                worker["status"] = "completed"
+                worker["last_event_at"] = utc_now()
+                worker["progress_outcome"] = success_outcome
+                clear_task_failure_streak(state, worker=worker)
+                message = (
+                    "Background worker process exited after recording meaningful incremental progress; task remains dispatchable."
+                    if success_outcome == "incremental_progress"
+                    else "Background worker process exited after completing its required task lifecycle transition."
+                )
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worker_progress_recorded" if success_outcome == "incremental_progress" else "worker_completed",
+                        "provider": worker.get("provider"),
+                        "task_id": worker.get("task_id"),
+                        "message": message,
+                        "worker_run_id": worker["run_id"],
+                        "pr_url": worker.get("pr_url"),
+                        "session_url": worker.get("session_url"),
+                        "progress_outcome": success_outcome,
+                    },
+                )
+                finalize_queue_event_record(config, state, worker, "completed")
+            elif task_status in redispatch_statuses:
                 failure_reason = NO_PROGRESS_WORKER_EXIT_REASON
                 failure_count = record_task_failure_streak(
                     state,

@@ -1275,7 +1275,7 @@ def summarize_failure_reason(reason: str | None, provider: str | None = None, *,
         or "unknown variant" in lowered
     ):
         return {"kind": "provider_config", "summary": "Provider config invalid", "detail": raw[: max(420, limit)]}
-    if "rate limit" in lowered or "rate limited" in lowered or "capacity" in lowered or "quota_exhausted" in lowered or "free tier quota exceeded" in lowered:
+    if "rate limit" in lowered or "rate limited" in lowered or "capacity" in lowered or "quota exceeded" in lowered or "quota_exhausted" in lowered or "free tier quota exceeded" in lowered:
         return {"kind": "capacity", "summary": "Capacity / rate limit failure", "detail": raw[: max(420, limit)]}
     if "unauthorized" in lowered or "authentication" in lowered or "invalid api key" in lowered:
         return {"kind": "auth", "summary": "Authentication failure", "detail": raw[: max(420, limit)]}
