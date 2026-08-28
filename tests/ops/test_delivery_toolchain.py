@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from unittest import mock
+
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,7 +18,6 @@ for p in (SCRIPTS_DIR, ORCHESTRATOR_DIR, DELIVERY_GIT_DIR):
         sys.path.insert(0, str(p))
 
 import ai_status
-
 
 TASK_ID = "ODP-TEST-DELIVERY-001"
 APPROVED_HEAD = "1111111111111111111111111111111111111111"
