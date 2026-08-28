@@ -17,23 +17,13 @@ command above to refresh it.
 
 | Metric | Value | Authoritative source |
 |---|---:|---|
-| Blocker count (external) | 7 | `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` |
-| Open blockers / pending pickup ACKs | 7 | `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` |
 | Closure packets (lifecycle actions) | 8 | `PRODUCT_RELEASE_CLOSEOUT_QUEUE.json` |
-| Handback bundle status | `pending_external_handbacks` | `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` |
+| Rollout governance | Active | `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md` |
 | Fleet completion | 58.0% (29/50 done) | `ai-status.json` @ 2026-07-11T04:38:06Z |
 
-## Open Blockers (pending pickup ACK)
+## Release Rollout Controls
 
-| Task | Issue | Blocking type | Handback status |
-|---|---|---|---|
-| `ODP-EXT-PROD-001` | #132 | provider_credentials | `pending_external_handback` |
-| `ODP-EXT-PROD-002` | #133 | provider_license_and_snapshot | `pending_external_handback` |
-| `ODP-EXT-PROD-003` | #134 | provider_geocoder | `pending_external_handback` |
-| `ODP-MAP-STAGE-001` | #135 | live_map_endpoint | `pending_external_handback` |
-| `ODP-MAP-STAGE-002` | #136 | live_map_geocoder | `pending_external_handback` |
-| `ODP-PV-STAGE-001` | #137 | remote_staging_configuration | `pending_external_handback` |
-| `ODP-PV-STAGE-002` | #138 | remote_staging_drill | `pending_external_handback` |
+External source activation and staging rehearsals are governed by `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`. All external source flags remain false and public egress default-deny until approved by Human/Ops.
 
 ## Fleet Completion
 

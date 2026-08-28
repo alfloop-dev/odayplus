@@ -19,12 +19,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = (1,)
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+CURRENT_SCHEMA_VERSION = 2
 SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
+RELEASE_STATUSES = frozenset({"ready", "blocked"})
 
-REQUIRED_FIELDS = (
+REQUIRED_FIELDS_V1 = (
     "schema_version",
     "release_id",
     "candidate_sha",
@@ -39,6 +41,14 @@ REQUIRED_FIELDS = (
     "created_by_workflow",
     "manifest_digest",
 )
+
+REQUIRED_FIELDS_V2 = REQUIRED_FIELDS_V1 + (
+    "data_snapshot",
+    "rollback_release",
+)
+
+REQUIRED_FIELDS = REQUIRED_FIELDS_V1
+SNAPSHOT_FIELDS = ("id", "uri", "content_sha256", "data_contract_digest", "masked")
 
 
 def is_exact_sha(value: Any) -> bool:
@@ -84,6 +94,41 @@ def is_valid_timestamp(value: Any) -> bool:
     return parsed.tzinfo is not None
 
 
+def _snapshot_errors(snapshot: Any, *, label: str) -> list[str]:
+    """Validate a snapshot pointer that is embedded in a release identity."""
+
+    if not isinstance(snapshot, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in SNAPSHOT_FIELDS:
+        if field not in snapshot:
+            errors.append(f"{label} missing required field: {field}")
+    if "id" in snapshot and (
+        not isinstance(snapshot["id"], str) or not snapshot["id"].strip()
+    ):
+        errors.append(f"{label}.id must be a non-empty string")
+    if "uri" in snapshot and (
+        not isinstance(snapshot["uri"], str) or not snapshot["uri"].strip()
+    ):
+        errors.append(f"{label}.uri must be a non-empty string")
+    if "content_sha256" in snapshot and not is_sha256_digest(
+        snapshot["content_sha256"]
+    ):
+        errors.append(
+            f"{label}.content_sha256 must be a sha256:<64 lowercase hex> digest"
+        )
+    if "data_contract_digest" in snapshot and not is_sha256_digest(
+        snapshot["data_contract_digest"]
+    ):
+        errors.append(
+            f"{label}.data_contract_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    if "masked" in snapshot and snapshot["masked"] is not True:
+        errors.append(f"{label}.masked must be True")
+    return errors
+
+
 def validate_manifest(
     manifest: Any,
     *,
@@ -101,16 +146,21 @@ def validate_manifest(
     if not isinstance(manifest, dict):
         return ["manifest must be a JSON object"]
 
-    for field in REQUIRED_FIELDS:
-        if field not in manifest:
-            errors.append(f"manifest missing required field: {field}")
-
     version = manifest.get("schema_version")
     if isinstance(version, bool) or version not in SUPPORTED_SCHEMA_VERSIONS:
         errors.append(
             f"manifest.schema_version must be one of {list(SUPPORTED_SCHEMA_VERSIONS)}, "
             f"got: {version!r}"
         )
+        required_fields = REQUIRED_FIELDS_V1
+    elif version == 2:
+        required_fields = REQUIRED_FIELDS_V2
+    else:
+        required_fields = REQUIRED_FIELDS_V1
+
+    for field in required_fields:
+        if field not in manifest:
+            errors.append(f"manifest missing required field: {field}")
 
     release_id = manifest.get("release_id")
     if not isinstance(release_id, str) or not RELEASE_ID_PATTERN.fullmatch(release_id):
@@ -127,9 +177,18 @@ def validate_manifest(
             "the manifest is for a different candidate"
         )
 
+    # A candidate that never produced an image has no honest component list.
+    # Forcing one here is what makes a manifest quote a *previous* candidate's
+    # digests, so an empty component set is representable -- but only on a
+    # manifest that records why, and never on an admissible one.
     components = manifest.get("components")
-    if not isinstance(components, dict) or not components:
-        errors.append("manifest.components must be a non-empty object")
+    if not isinstance(components, dict):
+        errors.append("manifest.components must be an object")
+    elif not components and manifest.get("release_status") != "blocked":
+        errors.append(
+            "manifest.components must be a non-empty object unless the manifest "
+            "records release_status='blocked'"
+        )
     elif not all(isinstance(name, str) and name.strip() for name in components):
         errors.append("manifest.components names must be non-empty strings")
     else:
@@ -163,12 +222,97 @@ def validate_manifest(
         ):
             errors.append(f"manifest.{field} must be a list of non-empty strings")
 
+    release_status = manifest.get("release_status")
+    if release_status is not None and release_status not in RELEASE_STATUSES:
+        errors.append(
+            f"manifest.release_status must be one of {sorted(RELEASE_STATUSES)}, "
+            f"got: {release_status!r}"
+        )
+    if release_status == "blocked":
+        blockers = manifest.get("blockers")
+        if not isinstance(blockers, list) or not blockers:
+            errors.append("blocked manifest must include a non-empty blockers list")
+
     if not is_valid_timestamp(manifest.get("created_at")):
         errors.append("manifest.created_at must be an RFC3339 timestamp with timezone")
     if not isinstance(manifest.get("created_by_workflow"), str) or not manifest.get(
         "created_by_workflow"
     ).strip():
         errors.append("manifest.created_by_workflow must be a non-empty workflow reference")
+
+    # Validate data_snapshot if present. Schema v2 makes this field required;
+    # v1 keeps it optional so historical manifests remain auditable.
+    data_snapshot = manifest.get("data_snapshot")
+    if data_snapshot is not None:
+        errors.extend(_snapshot_errors(data_snapshot, label="manifest.data_snapshot"))
+        if (
+            isinstance(data_snapshot, dict)
+            and is_sha256_digest(data_snapshot.get("data_contract_digest"))
+            and is_sha256_digest(manifest.get("data_contract_digest"))
+            and data_snapshot["data_contract_digest"] != manifest["data_contract_digest"]
+        ):
+            errors.append(
+                "manifest.data_snapshot.data_contract_digest does not match "
+                "manifest.data_contract_digest"
+            )
+
+    # Validate rollback_release if present
+    rollback_release = manifest.get("rollback_release")
+    if rollback_release is not None:
+        if not isinstance(rollback_release, dict):
+            errors.append("manifest.rollback_release must be an object")
+        else:
+            for rb_field in ("release_id", "candidate_sha", "manifest_digest", "components"):
+                if rb_field not in rollback_release:
+                    errors.append(f"manifest.rollback_release missing required field: {rb_field}")
+            rb_release_id = rollback_release.get("release_id")
+            if not isinstance(rb_release_id, str) or not RELEASE_ID_PATTERN.fullmatch(rb_release_id):
+                errors.append("manifest.rollback_release.release_id must be a stable release identifier")
+            rb_candidate_sha = rollback_release.get("candidate_sha")
+            if not is_exact_sha(rb_candidate_sha):
+                errors.append("manifest.rollback_release.candidate_sha must be an exact 40-character lowercase git SHA")
+            elif rb_candidate_sha == candidate_sha:
+                errors.append("manifest.rollback_release.candidate_sha must not match current candidate_sha; rollback must be a distinct release candidate")
+            rb_digest = rollback_release.get("manifest_digest")
+            if not is_sha256_digest(rb_digest):
+                errors.append("manifest.rollback_release.manifest_digest must be a sha256:<64 lowercase hex> digest")
+
+            rb_components = rollback_release.get("components")
+            if not isinstance(rb_components, dict) or not rb_components:
+                errors.append("manifest.rollback_release.components must be a non-empty object")
+            else:
+                for req_comp in ("api", "web"):
+                    if req_comp not in rb_components:
+                        errors.append(f"manifest.rollback_release.components missing required component: {req_comp!r}")
+                for name, comp in rb_components.items():
+                    label = f"manifest.rollback_release.components[{name!r}]"
+                    if isinstance(comp, dict):
+                        img = comp.get("image")
+                    elif isinstance(comp, str):
+                        img = comp
+                    else:
+                        errors.append(f"{label} must be an object or string reference")
+                        continue
+                    if not isinstance(img, str) or not IMAGE_DIGEST_PATTERN.fullmatch(img):
+                        errors.append(f"{label}.image must be an immutable image reference with @sha256 digest")
+
+            snapshot_key = next(
+                (
+                    key
+                    for key in ("data_snapshot", "snapshot_pointer", "snapshot")
+                    if key in rollback_release
+                ),
+                None,
+            )
+            if snapshot_key is None:
+                errors.append("manifest.rollback_release missing required data_snapshot pointer")
+            else:
+                errors.extend(
+                    _snapshot_errors(
+                        rollback_release[snapshot_key],
+                        label="manifest.rollback_release.data_snapshot",
+                    )
+                )
 
     recorded_digest = manifest.get("manifest_digest")
     if not is_sha256_digest(recorded_digest):
@@ -184,6 +328,94 @@ def validate_manifest(
                 "manifest.manifest_digest does not match the digest recorded by the registry"
             )
 
+    return errors
+
+
+def validate_release_admission(manifest: Any) -> list[str]:
+    """Return why a structurally valid manifest cannot be deployed.
+
+    A blocked manifest is intentionally still hashable and reviewable: it is
+    the immutable record of what was observed and why release stopped.  It is
+    not, however, a deployable artifact.  Keeping this predicate separate from
+    ``validate_manifest`` lets auditors inspect a blocked candidate without
+    accidentally treating it as a successful release.
+    """
+
+    errors = validate_manifest(manifest)
+    if not isinstance(manifest, dict):
+        return errors
+    # Manifests created before the status field was introduced remain
+    # admissible when they contain the required immutable references.  New
+    # manifests must explicitly move to ``ready`` before deployment; a
+    # recorded ``blocked`` state can never be promoted implicitly.
+    release_status = manifest.get("release_status", "ready")
+    if release_status != "ready":
+        errors.append(
+            "release admission requires manifest.release_status='ready'; "
+            f"got {release_status!r}"
+        )
+    # ``validate_manifest`` lets a blocked manifest carry no components. That
+    # relaxation must not travel into admission: a release with nothing to
+    # deploy is not a release, whatever its recorded status says.
+    components = manifest.get("components")
+    if not isinstance(components, dict) or not components:
+        errors.append(
+            "release admission requires at least one immutable component image "
+            "in manifest.components"
+        )
+    for field in ("sbom_refs", "signature_refs"):
+        refs = manifest.get(field)
+        if not isinstance(refs, list) or not refs:
+            errors.append(f"release admission requires non-empty manifest.{field}")
+
+    # Staging and production admission require data snapshot and rollback release bindings (fail closed)
+    if manifest.get("data_snapshot") is None:
+        errors.append(
+            "release admission requires manifest.data_snapshot with masked=true and verified content sha256"
+        )
+    if manifest.get("rollback_release") is None:
+        errors.append(
+            "release admission requires manifest.rollback_release with verified candidate sha and components"
+        )
+    return errors
+
+
+def component_binding_errors(manifest: Any, images: dict[str, str]) -> list[str]:
+    """Return why *images* are not the artifacts this manifest identifies.
+
+    A lease authorises deploying *a release*, not *any image*.  The Runtime
+    Release deploy phase receives its image references as workflow inputs, so
+    without this check a valid lease would admit an arbitrary digest that the
+    build phase never produced, signed, or recorded an SBOM for.  Binding the
+    handoff back to ``manifest.components`` is what makes "build once, deploy
+    that exact artifact" an enforced property rather than a convention.
+    """
+
+    if not isinstance(manifest, dict):
+        return ["manifest must be a JSON object"]
+    components = manifest.get("components")
+    if not isinstance(components, dict) or not components:
+        return ["manifest.components must be a non-empty object"]
+
+    errors: list[str] = []
+    for name in sorted(images):
+        image = images[name]
+        if not isinstance(image, str) or not IMAGE_DIGEST_PATTERN.fullmatch(image):
+            errors.append(
+                f"handoff image for {name!r} must be an immutable @sha256 reference"
+            )
+            continue
+        component = components.get(name)
+        if not isinstance(component, dict):
+            errors.append(
+                f"manifest has no component {name!r}; this release never built that artifact"
+            )
+            continue
+        if component.get("image") != image:
+            errors.append(
+                f"handoff image for {name!r} is not the image recorded by the manifest; "
+                "the deploy would run an artifact this release did not build"
+            )
     return errors
 
 
@@ -209,11 +441,290 @@ def load_manifest(
     return (payload if isinstance(payload, dict) else None), errors
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def compute_file_set_digest(paths: Any, *, root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over a sequence of file paths."""
+    h = hashlib.sha256()
+    for p in sorted(paths):
+        path_obj = Path(p)
+        if path_obj.is_file():
+            rel_path = path_obj.relative_to(root).as_posix().encode("utf-8")
+            h.update(rel_path)
+            h.update(b"\x00")
+            h.update(path_obj.read_bytes())
+            h.update(b"\x00")
+    return "sha256:" + h.hexdigest()
+
+
+def compute_migration_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over infra/db/migrations SQL files."""
+    migrations_dir = root / "infra/db/migrations"
+    return compute_file_set_digest(migrations_dir.glob("*.sql"), root=root)
+
+
+def compute_data_contract_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over docs/data contract files."""
+    data_dir = root / "docs/data"
+    return compute_file_set_digest(data_dir.glob("*"), root=root)
+
+
+def compute_source_policy_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over security/license policies."""
+    policy_files = [
+        root / "docs/security/license_policy.json",
+        root / "docs/security/license_exemptions.json",
+        root / "docs/security/release_bindings.json",
+    ]
+    return compute_file_set_digest(policy_files, root=root)
+
+
+def build_release_manifest(
+    *,
+    release_id: str,
+    candidate_sha: str,
+    components: dict[str, dict[str, str]],
+    sbom_refs: list[str],
+    signature_refs: list[str],
+    created_at: str,
+    created_by_workflow: str,
+    data_snapshot: dict[str, Any] | None = None,
+    rollback_release: dict[str, Any] | None = None,
+    external_sources_expected_enabled: list[str] | None = None,
+    release_status: str | None = None,
+    schema_version: int = CURRENT_SCHEMA_VERSION,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    """Build and self-seal a canonical release manifest dictionary.
+
+    ``release_status`` is omitted by default so an existing manifest digest is
+    unchanged by this parameter's introduction.  A build phase that has already
+    published signed images and an SBOM passes ``"ready"`` explicitly; nothing
+    may promote a manifest to ``ready`` implicitly.
+    """
+    manifest: dict[str, Any] = {
+        "schema_version": schema_version,
+        "release_id": release_id,
+        "candidate_sha": candidate_sha,
+        "components": components,
+        "migration_digest": compute_migration_digest(root=root),
+        "data_contract_digest": compute_data_contract_digest(root=root),
+        "source_policy_digest": compute_source_policy_digest(root=root),
+        "external_sources_expected_enabled": external_sources_expected_enabled or [],
+        "sbom_refs": sbom_refs,
+        "signature_refs": signature_refs,
+        "created_at": created_at,
+        "created_by_workflow": created_by_workflow,
+    }
+    if data_snapshot is not None:
+        manifest["data_snapshot"] = data_snapshot
+    if rollback_release is not None:
+        manifest["rollback_release"] = rollback_release
+    if release_status is not None:
+        manifest["release_status"] = release_status
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return manifest
+
+
+def extract_rollback_release_binding(prev_manifest: dict[str, Any]) -> dict[str, Any]:
+    """Extract verifiable rollback binding from an approved previous manifest."""
+    admission_errors = validate_release_admission(prev_manifest)
+    if admission_errors:
+        raise ValueError(
+            "Cannot extract rollback binding from a non-admissible manifest: "
+            + "; ".join(admission_errors)
+        )
+    components = prev_manifest.get("components", {})
+    rb_components = {}
+    for name, comp in components.items():
+        if isinstance(comp, dict):
+            item = {"image": comp.get("image", "")}
+            if "shares_image_with" in comp:
+                item["shares_image_with"] = comp["shares_image_with"]
+            rb_components[name] = item
+        else:
+            rb_components[name] = {"image": str(comp)}
+
+    prev_snapshot = (
+        prev_manifest.get("data_snapshot")
+        or prev_manifest.get("snapshot_pointer")
+        or prev_manifest.get("snapshot")
+    )
+    if not isinstance(prev_snapshot, dict):
+        raise ValueError("Cannot extract rollback binding from manifest without data_snapshot")
+
+    return {
+        "release_id": prev_manifest["release_id"],
+        "candidate_sha": prev_manifest["candidate_sha"],
+        "manifest_digest": prev_manifest["manifest_digest"],
+        "components": rb_components,
+        "data_snapshot": copy.deepcopy(prev_snapshot),
+    }
+
+
+def validate_rollback_manifest(
+    prev_manifest: Any,
+    *,
+    current_candidate_sha: str | None = None,
+    current_release_id: str | None = None,
+) -> list[str]:
+    """Validate an entire admissible previous manifest before extracting it."""
+    if not isinstance(prev_manifest, dict):
+        return ["rollback manifest must be a JSON object"]
+
+    errors = validate_manifest(prev_manifest)
+    errors.extend(
+        err for err in validate_release_admission(prev_manifest) if err not in errors
+    )
+
+    candidate_sha = prev_manifest.get("candidate_sha")
+    if current_candidate_sha and candidate_sha == current_candidate_sha:
+        errors.append(
+            "rollback candidate_sha must not match current candidate_sha; "
+            "rollback target must be a distinct release candidate"
+        )
+
+    release_id = prev_manifest.get("release_id")
+    if current_release_id and release_id == current_release_id:
+        errors.append(
+            "rollback release_id must not match current release_id; "
+            "rollback target must be a distinct release"
+        )
+
+    snap = prev_manifest.get("data_snapshot")
+    if not isinstance(snap, dict) or not snap:
+        errors.append(
+            "rollback manifest missing required data_snapshot; "
+            "cannot use legacy or snapshot-less manifest as rollback evidence"
+        )
+    return errors
+
+
 __all__ = [
+    "CURRENT_SCHEMA_VERSION",
+    "RELEASE_ID_PATTERN",
+    "RELEASE_STATUSES",
+    "REQUIRED_FIELDS",
+    "REQUIRED_FIELDS_V1",
+    "REQUIRED_FIELDS_V2",
+    "SNAPSHOT_FIELDS",
+    "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
+    "build_release_manifest",
+    "component_binding_errors",
+    "compute_data_contract_digest",
+    "compute_file_set_digest",
     "compute_manifest_digest",
+    "compute_migration_digest",
+    "compute_source_policy_digest",
+    "extract_rollback_release_binding",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
     "validate_manifest",
+    "validate_release_admission",
+    "validate_rollback_manifest",
 ]
+
+
+def _print_manifest_summary(manifest: dict[str, Any]) -> None:
+    print(f"  Release ID:      {manifest['release_id']}")
+    print(f"  Candidate SHA:   {manifest['candidate_sha']}")
+    print(f"  Manifest digest: {manifest['manifest_digest']}")
+    print(f"  Release status:  {manifest.get('release_status', 'ready')}")
+    print(f"  Components:      {len(manifest.get('components', {}))}")
+    if not manifest.get("components"):
+        print("    - (none: no candidate image is bound to this manifest)")
+    for name, comp in (manifest.get("components") or {}).items():
+        print(f"    - {name}: {comp['image']}")
+    if "data_snapshot" in manifest and isinstance(manifest["data_snapshot"], dict):
+        snap = manifest["data_snapshot"]
+        print(f"  Data Snapshot:   {snap.get('id')} ({snap.get('uri')}) [masked={snap.get('masked')}]")
+    if "rollback_release" in manifest and isinstance(manifest["rollback_release"], dict):
+        rb = manifest["rollback_release"]
+        print(f"  Rollback Target: {rb.get('release_id')} ({rb.get('candidate_sha')})")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Validate a release manifest and refuse to bless a non-admissible one.
+
+    The default mode answers the question an auditor actually has -- "may this
+    manifest be deployed?" -- not merely "is this file well formed?".  A
+    manifest that parses cleanly but records ``release_status='blocked'`` is a
+    NO-GO, so it must exit non-zero and must never print a success verdict;
+    otherwise this command becomes the same kind of fake green light the
+    release gates exist to eliminate.  Pure structural checking is still
+    available, but only when it is asked for explicitly.
+    """
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Validate an ODay Plus release manifest and its admission status.",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json",
+        help="Path to release manifest JSON",
+    )
+    parser.add_argument("--expected-sha", type=str, default=None, help="Expected candidate SHA")
+    parser.add_argument("--expected-digest", type=str, default=None, help="Expected manifest digest")
+    parser.add_argument(
+        "--structure-only",
+        action="store_true",
+        help=(
+            "Check schema and digest self-consistency only, without deciding "
+            "release admission. Never reports a deployable verdict."
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    manifest, errors = load_manifest(
+        args.manifest,
+        expected_candidate_sha=args.expected_sha,
+        expected_digest=args.expected_digest,
+    )
+    if errors:
+        print(f"INVALID: {len(errors)} structural error(s) in release manifest {args.manifest}:")
+        for err in errors:
+            print(f"  - {err}")
+        return 1
+
+    assert manifest is not None  # load_manifest reports an error when it is None
+
+    if args.structure_only:
+        print(f"STRUCTURE-OK: {args.manifest} is schema valid and digest self-consistent.")
+        print("  Release admission was NOT evaluated (--structure-only).")
+        _print_manifest_summary(manifest)
+        return 0
+
+    admission_errors = validate_release_admission(manifest)
+    if admission_errors:
+        print(f"BLOCKED: release manifest {args.manifest} is NOT admissible for deployment.")
+        _print_manifest_summary(manifest)
+        print(f"  Admission refused for {len(admission_errors)} reason(s):")
+        for err in admission_errors:
+            print(f"    - {err}")
+        blockers = manifest.get("blockers")
+        if isinstance(blockers, list) and blockers:
+            print(f"  Recorded blockers ({len(blockers)}):")
+            for blocker in blockers:
+                if isinstance(blocker, dict):
+                    print(
+                        f"    - [{blocker.get('severity', '?')}] "
+                        f"{blocker.get('id', '?')}: {blocker.get('reason', '')}"
+                    )
+                else:
+                    print(f"    - {blocker}")
+        return 1
+
+    print(f"ADMISSIBLE: release manifest {args.manifest} may be deployed.")
+    _print_manifest_summary(manifest)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

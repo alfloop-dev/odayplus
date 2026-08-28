@@ -108,6 +108,7 @@ REQUIRED_RUNTIME_VALUES = {
     "ODP_REQUIRE_LIVE_DATA": "true",
     "ODP_DATA_BINDING_MODE": "live",
     "ODP_PRODUCT_MODE": "production",
+    "ODP_EXTERNAL_PROVIDER_MODE": "disabled",
     "ODP_PERSISTENCE": "postgresql",
     "ODP_OBJECT_STORE": "gcs",
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS": "disabled",

@@ -192,6 +192,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "_deferred_tool_use_receipt",
 "_dispatch_pause_bucket",
 "_failure_streak_key",
+"_has_explicit_failure_evidence",
 "_load_runtime_marker",
 "_lookup_worker_record",
 "_parse_iso_utc",
@@ -225,10 +226,12 @@ _FAILURE_HELPER_FUNCTIONS = [
 "is_captured_orchestrator_record",
 "is_claude_provider",
 "is_claude_session_limit_banner",
+"is_cloud_run_quota_error",
 "is_human_gate_agent",
 "is_provider_config_failure_kind",
 "is_provider_unavailable_failure_kind",
 "is_retryable_capacity_failure_kind",
+"is_structured_successful_worker",
 "is_terminal_quota_failure_kind",
 "is_tool_command_output_failure_line",
 "is_transient_infra_reason",
@@ -278,6 +281,8 @@ _FAILURE_HELPER_FUNCTIONS = [
 "review_churn_settings",
 "worker_retry_settings",
 "worker_runner_succeeded",
+"worker_log_scan_should_be_skipped",
+"worker_was_terminated",
 "worker_runtime_metrics_bucket",
 "worker_runtime_settings",
 "worker_supports_approval_resume",
@@ -349,16 +354,25 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
     return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
 
 
-def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any]) -> bool:
+def reconcile_capacity_controller(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
     """Run the governed capacity Chair and materialize its bounded sidecars."""
+    if provider_report is None:
+        provider_report = load_provider_report(config)
     status = load_status(config)
     schema = config.get("schema", {}) or {}
     tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
     tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
-    expired_claim_ids = set(capacity_controller.expired_helper_claim_task_ids(tasks))
+    expired_claim_ids = set(
+        capacity_controller.expired_helper_claim_task_ids(tasks, task_id_field=task_id_field)
+    )
     if expired_claim_ids:
         for task in tasks:
-            if str(task.get("id") or "") in expired_claim_ids:
+            if str(task.get(task_id_field) or task.get("id") or "") in expired_claim_ids:
                 task.pop("helper_execution_lease", None)
         if not commit_canonical_task_transition(config, status):
             return False
@@ -371,11 +385,16 @@ def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any])
                     "message": "Expired helper execution lease released back to its canonical owner.",
                 },
             )
-    controller, state_changed = capacity_controller.evaluate_chair(config, state, tasks)
-    additions = capacity_controller.sidecar_candidates(config, state, tasks)
+    runnable_task_ids = canonical_dispatchable_task_ids(config, tasks)
+    controller, state_changed = capacity_controller.evaluate_chair(
+        config, state, tasks, runnable_tasks=runnable_task_ids, provider_report=provider_report
+    )
+    additions = capacity_controller.sidecar_candidates(
+        config, state, tasks, runnable_tasks=runnable_task_ids, provider_report=provider_report
+    )
     if additions:
-        known = {str(task.get("id") or "") for task in tasks}
-        additions = [task for task in additions if str(task.get("id") or "") not in known]
+        known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
+        additions = [task for task in additions if str(task.get(task_id_field) or task.get("id") or "") not in known]
     if additions:
         status.setdefault(tasks_path, []).extend(additions)
         if not commit_canonical_task_transition(config, status):
@@ -407,6 +426,7 @@ from provider_runtime import (
     configured_provider_binary,
     provider_config,
     provider_config_entry,
+    provider_key,
     provider_section,
     provider_uses_claude_cli,
 )
@@ -455,6 +475,7 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r'"error"\s*:\s*"authentication_failed"', re.IGNORECASE),
     re.compile(r"quota exceeded", re.IGNORECASE),
     re.compile(r"free daily quota has been reached", re.IGNORECASE),
+    re.compile(r"free tier quota exceeded", re.IGNORECASE),
     re.compile(r"you have no quota", re.IGNORECASE),
     re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
     re.compile(r"\bnot authenticated\b", re.IGNORECASE),
@@ -486,6 +507,9 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     ),
     re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
     re.compile(r"\bauto-reassigned\b.*\bafter repeated\b", re.IGNORECASE),
+    re.compile(r"\bcloud\s+run\b.*\bquota\b", re.IGNORECASE),
+    re.compile(r"^[+-]\s+.*"),
+    re.compile(r"^\s*(?:raise|assert|except|def|return|self\.assert)\b", re.IGNORECASE),
 )
 SEARCH_RESULT_JSON_FIELD_PATTERN = re.compile(
     r"^(?:[^:\s][^:]*:)?\d+[:-]\s*\"[A-Za-z0-9_]+\"\s*:\s*",
@@ -1238,10 +1262,16 @@ def log_runtime_summary(
 
 def load_provider_report(config: dict[str, Any]) -> dict[str, Any]:
     if config.get("supervisor", {}).get("auto_refresh_provider_capabilities", True):
-        report = build_provider_capabilities(config)
-        write_provider_capabilities(config, report=report)
-        return report
-    return load_json(config_path(config, "provider_capabilities"), default={}) or {}
+        try:
+            report = build_provider_capabilities(config)
+            write_provider_capabilities(config, report=report)
+            return report
+        except (KeyError, OSError, ValueError):
+            pass
+    try:
+        return load_json(config_path(config, "provider_capabilities"), default={}) or {}
+    except (KeyError, OSError, ValueError):
+        return {}
 
 
 def resolve_agent_model_preference(config: dict[str, Any], agent: dict[str, Any]) -> str | None:
@@ -1340,12 +1370,76 @@ def _account_pool_runtime_bucket(state: dict[str, Any]) -> dict[str, Any]:
     return bucket if isinstance(bucket, dict) else {}
 
 
+def provider_capability_block_reason(
+    config: dict[str, Any],
+    agent_id: str | None,
+    provider_report: dict[str, Any] | None = None,
+) -> str | None:
+    if not provider_report:
+        return None
+    raw_agent = str(agent_id or "").strip()
+    normalized_agent = normalize_agent_id(raw_agent)
+    if not normalized_agent:
+        return None
+    agents = config.get("agents", {}) or {}
+    agent = agents.get(normalized_agent) or agents.get(raw_agent)
+    if not agent:
+        for k, v in agents.items():
+            if normalize_agent_id(k) == normalized_agent:
+                agent = v
+                break
+    agent = agent or {}
+    provider_key = str(agent.get("provider") or normalized_agent)
+    provider_id = normalize_agent_id(provider_key)
+
+    adapters = provider_report.get("agent_adapters") or {}
+    agent_capability = adapters.get(raw_agent) or adapters.get(normalized_agent)
+    if not agent_capability:
+        for k, v in adapters.items():
+            if normalize_agent_id(k) == normalized_agent:
+                agent_capability = v
+                break
+    agent_capability = agent_capability or {}
+
+    if agent_capability:
+        if not agent_capability.get("supported", True):
+            notes = str(agent_capability.get("notes") or "").strip()
+            return notes or f"{normalized_agent} adapter is not supported"
+        if agent_capability.get("can_auto_deliver") is False:
+            notes = str(agent_capability.get("notes") or "").strip()
+            return notes or f"{normalized_agent} cannot auto-deliver in the current workspace"
+
+    providers = provider_report.get("providers") or {}
+    provider_capability = (
+        providers.get(provider_key)
+        or providers.get(provider_id)
+    )
+    if not provider_capability:
+        for k, v in providers.items():
+            if normalize_agent_id(k) in (provider_id, normalize_agent_id(provider_key)):
+                provider_capability = v
+                break
+    provider_capability = provider_capability or {}
+
+    if provider_capability:
+        if provider_capability.get("local_cli_worker_supported") is False:
+            return f"{provider_id} local CLI worker is not ready"
+        if provider_capability.get("supports_auto_approve") is False:
+            return f"{provider_id} does not currently support auto-approved dispatch"
+        if provider_capability.get("config_valid") is False:
+            return str(provider_capability.get("config_error") or f"{provider_id} provider config is invalid")
+        if provider_capability.get("auth_ready") is False:
+            return f"{provider_id} authentication is not ready"
+    return None
+
+
 def account_pool_runtime_state(
     config: dict[str, Any],
     state: dict[str, Any] | None,
     agent_id: str | None,
     *,
     now: datetime | None = None,
+    provider_report: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     pool_id, pool = account_pool_settings(config, agent_id)
     configured_state = str(pool.get("state") or "").strip().lower()
@@ -1354,6 +1448,39 @@ def account_pool_runtime_state(
         return "healthy", {}
     if pool.get("enabled") is False or configured_state == "disabled" or configured_limit == 0:
         return "disabled", {"state": "disabled", "effective_concurrency": 0}
+
+    if provider_report:
+        agents_to_check = (
+            [agent_id]
+            if agent_id and normalize_agent_id(agent_id) in (config.get("agents", {}) or {})
+            else [
+                aid
+                for aid, acfg in (config.get("agents", {}) or {}).items()
+                if isinstance(acfg, dict)
+                and (
+                    normalize_agent_id(str(acfg.get("account_pool") or "")) == pool_id
+                    or normalize_agent_id(str(acfg.get("dispatch_slot_for_pool") or "")) == pool_id
+                )
+            ]
+        )
+        if agents_to_check:
+            reasons = [
+                provider_capability_block_reason(config, aid, provider_report)
+                for aid in agents_to_check
+            ]
+            if all(reasons) and reasons:
+                first_reason = reasons[0] or "provider capability is unavailable"
+                low = first_reason.lower()
+                if "auth" in low or "authentication" in low:
+                    lifecycle = "auth_blocked"
+                elif "inbox" in low or "auto-deliver" in low:
+                    lifecycle = "inbox_fallback"
+                elif "config" in low or "invalid" in low:
+                    lifecycle = "provider_config_blocked"
+                else:
+                    lifecycle = "unavailable"
+                return lifecycle, {"state": lifecycle, "effective_concurrency": 0, "reason": first_reason}
+
     if state is None:
         return "healthy", {"state": "healthy", "effective_concurrency": configured_limit}
 
@@ -1390,10 +1517,22 @@ def account_pool_effective_concurrency(
     config: dict[str, Any],
     state: dict[str, Any] | None,
     agent_id: str | None,
+    provider_report: dict[str, Any] | None = None,
 ) -> int | None:
     configured = quota_group_concurrency_limit(config, agent_id)
-    lifecycle, entry = account_pool_runtime_state(config, state, agent_id)
-    if lifecycle in {"disabled", "cooldown", "paused", "exhausted"}:
+    lifecycle, entry = account_pool_runtime_state(
+        config, state, agent_id, provider_report=provider_report
+    )
+    if lifecycle in {
+        "disabled",
+        "cooldown",
+        "paused",
+        "exhausted",
+        "unavailable",
+        "auth_blocked",
+        "inbox_fallback",
+        "provider_config_blocked",
+    }:
         return 0
     runtime_limit = entry.get("effective_concurrency")
     try:
@@ -1411,6 +1550,7 @@ def account_pool_dispatch_block_reason(
     config: dict[str, Any],
     agent_id: str | None,
     runtime_state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
 ) -> str | None:
     pool_id, pool = account_pool_settings(config, agent_id)
     if not pool_id:
@@ -1418,11 +1558,31 @@ def account_pool_dispatch_block_reason(
     if pool and pool.get("enabled") is False:
         return f"account pool {pool_id} is disabled"
     configured_state = str(pool.get("state") or "").strip().lower()
-    if configured_state in {"disabled", "exhausted", "cooldown", "paused"}:
+    if configured_state in {
+        "disabled",
+        "exhausted",
+        "cooldown",
+        "paused",
+        "unavailable",
+        "auth_blocked",
+        "inbox_fallback",
+        "provider_config_blocked",
+    }:
         detail = str(pool.get("reason") or "").strip()
         return f"account pool {pool_id} is {configured_state}" + (f": {detail}" if detail else "")
-    lifecycle, runtime = account_pool_runtime_state(config, runtime_state, agent_id)
-    if lifecycle in {"disabled", "exhausted", "cooldown", "paused"}:
+    lifecycle, runtime = account_pool_runtime_state(
+        config, runtime_state, agent_id, provider_report=provider_report
+    )
+    if lifecycle in {
+        "disabled",
+        "exhausted",
+        "cooldown",
+        "paused",
+        "unavailable",
+        "auth_blocked",
+        "inbox_fallback",
+        "provider_config_blocked",
+    }:
         detail = str(runtime.get("reason") or "").strip()
         return f"account pool {pool_id} is {lifecycle}" + (f": {detail}" if detail else "")
     return None
@@ -1694,8 +1854,17 @@ def build_request(
 ) -> DeliveryRequest:
     logical_agent = agent_config_for(config, event["target_agent"])
     agent = agent_config_for(config, agent_id_override or event["target_agent"])
+    # A dispatch slot is only a process-capacity lease. Provider identity is
+    # owned by the logical target so aliases keep their provider-specific
+    # credentials, HOME, model rotation state, and failure attribution when a
+    # shared slot launches the worker.
+    logical_provider = provider_key(
+        config,
+        default=str(logical_agent.get("provider") or logical_agent["id"]),
+        agent_id=logical_agent["id"],
+    )
     metadata = dict(event.get("metadata", {}) or {})
-    model_preference = resolve_agent_model_preference(config, agent)
+    model_preference = resolve_agent_model_preference(config, logical_agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
     logical_agent_id = normalize_agent_id(str(logical_agent.get("id") or event.get("target_agent") or ""))
@@ -1711,9 +1880,9 @@ def build_request(
         context_files = execution_context_files(config, event.get("task_id"))
     return DeliveryRequest(
         agent_id=agent["id"],
-        provider=agent.get("provider", agent["id"]),
+        provider=logical_provider,
         delivery_mode=provider_config(
-            config, agent.get("provider", agent["id"])
+            config, logical_provider
         ).get("delivery_mode", agent.get("adapter", "file_inbox")),
         message=event["message"],
         task_id=event.get("task_id"),
@@ -3104,7 +3273,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "Worker process missing during supervisor boot reconciliation."
         )
-        runner_succeeded = worker_runner_succeeded(worker)
+        runner_succeeded = is_structured_successful_worker(worker)
         if runner_succeeded and (worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
@@ -3859,6 +4028,73 @@ def dependencies_satisfied(task: dict[str, Any], task_lookup: TaskResolver | dic
     return True
 
 
+def _dispatcher_owner_execution_priority(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> int | None:
+    """Ask the existing Dispatcher whether owner execution is dispatchable."""
+    if not isinstance(task, dict):
+        return None
+
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    owner_field = schema.get("assignee_field", "owner")
+
+    task_id = str(task.get(task_id_field) or "").strip()
+    if not task_id:
+        return None
+
+    if bool(task.get("non_dispatchable")) or task_is_human_gate(task) or task_is_sidecar(task):
+        return None
+
+    owner = str(task.get(owner_field) or "").strip()
+    waiting_for = str(task.get("waiting_for") or "").strip()
+    if is_human_gate_agent(owner) or is_human_gate_agent(waiting_for):
+        return None
+
+    if not owner or not agent_can_take_task(config, owner, task):
+        return None
+
+    settings_map = ready_dispatch_settings(config)
+    dependency_done_statuses = normalized_status_set(
+        settings_map.get("dependency_done_statuses"), ["done"]
+    )
+    priority = dispatch_engine.dispatch_priority_for_task(
+        config,
+        task,
+        owner,
+        task_map=task_map,
+        dependencies_done_statuses=dependency_done_statuses,
+    )
+    return priority if priority in {2, 3} else None
+
+
+def canonical_dispatchable_task_ids(
+    config: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> set[str]:
+    """Return canonical owner-execution task IDs from Dispatcher truth.
+
+    This is deliberately a projection of ``dispatch_priority_for_task`` rather
+    than a second eligibility implementation. Priorities 2 and 3 are the
+    Dispatcher's in-progress and ready owner actions; review/finalize and
+    helper-only actions are not Capacity Chair canonical work.
+    """
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    task_map = {
+        str(task.get(task_id_field) or "").strip(): task
+        for task in tasks
+        if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
+    }
+    return {
+        task_id
+        for task_id, task in task_map.items()
+        if _dispatcher_owner_execution_priority(config, task, task_map) is not None
+    }
+
+
 def task_dependency_signature(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
     resolver = _task_resolver(task_lookup)
     parts: list[str] = []
@@ -4165,6 +4401,85 @@ def higher_priority_ready_task_exists(
     return dispatch_ops.higher_priority_ready_task_exists(config, worker, task_map, state=state)
 
 
+def is_operator_emergency(config: dict[str, Any], state: dict[str, Any] | None, worker: dict[str, Any]) -> bool:
+    if bool(worker.get("operator_emergency")) or bool(worker.get("force_preempt")):
+        return True
+    if state and (bool(state.get("operator_emergency")) or bool(state.get("emergency_preempt"))):
+        return True
+    if bool(config.get("supervisor", {}).get("operator_emergency")):
+        return True
+    return False
+
+
+def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+    workspace_path_str = str(worker.get("workspace_path") or "").strip()
+    if not workspace_path_str:
+        return True
+    workspace_path = Path(workspace_path_str)
+    if not workspace_path.exists() or not (workspace_path / ".git").exists():
+        return True
+    try:
+        from worktree_cleanliness import inspect_worktree
+        inspection = inspect_worktree(workspace_path)
+        return bool(inspection.handoff_clean)
+    except Exception:
+        return False
+
+
+def worker_can_be_preempted(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    state: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Determine whether a worker is at a safe boundary for priority preemption.
+
+    General preemption is ONLY allowed at a clean terminal checkpoint (e.g. finalize
+    tasks with immutable repo state or quiescent clean worktrees), or when the worker
+    is stalled or during an explicit operator emergency. Healthy active owners with
+    uncommitted progress or active implementation must not be SIGTERM'd to free a
+    lane for review; review is deferred to the next tick.
+    """
+    if is_operator_emergency(config, state, worker):
+        return True
+
+    if now is None:
+        now = datetime.now(UTC)
+
+    alive = pid_is_alive(worker.get("pid"))
+    worker_status = str(worker.get("status") or "").lower()
+
+    if worker_status == "stalled" or not alive:
+        return True
+
+    heartbeat_stale = worker_heartbeat_is_stale(config, worker, now)
+    has_fresh_activity = not heartbeat_stale
+    if heartbeat_stale:
+        activity_at = parse_iso_timestamp(str(worker.get("last_process_activity_at") or ""))
+        if activity_at is not None and (now - activity_at.astimezone(UTC)).total_seconds() <= 300:
+            has_fresh_activity = True
+
+    if not has_fresh_activity:
+        # Worker is stalled or unresponsive
+        return True
+
+    request_snapshot = worker.get("request_snapshot") or {}
+    dispatch_reason = str(request_snapshot.get("reason") or worker.get("reason") or "").strip()
+    task_id = str(worker.get("task_id") or "").strip()
+    task = task_map.get(task_id) or {}
+    task_status = str(task.get("status") or "").lower()
+
+    # Finalize workers are read-only on repo (immutable approved head)
+    if dispatch_reason == REASON_OWNED_FINALIZE or task_status == "review_approved":
+        return worker_worktree_is_clean(config, worker)
+
+    # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
+    # helper_claim, todo, in_progress) or any other active workers are actively running
+    # and cannot be preempted even if their worktrees are currently clean.
+    return False
+
+
 def worker_matches_current_assignment(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -4366,7 +4681,7 @@ def run_once(
         elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
-            changed = reconcile_capacity_controller(config, state) or changed
+            changed = reconcile_capacity_controller(config, state, provider_report=provider_report) or changed
             # The Capacity Chair may create only bounded diagnostic sidecars;
             # canonical product work remains owned by the task board.
             if check_control_plane(config, state):

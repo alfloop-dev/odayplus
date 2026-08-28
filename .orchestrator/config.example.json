@@ -28,6 +28,7 @@
     "poll_interval_seconds": 180.0,
     "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
+    "hard_inactivity_seconds": 3600,
     "max_worker_history": 200,
     "external_command_timeout_seconds": 30,
     "auto_refresh_provider_capabilities": true
@@ -481,7 +482,7 @@
       },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
-        "hard_print_timeout": "168h",
+        "hard_print_timeout": "2h",
         "model_policy": {
           "enabled": true,
           "standard_model": "gemini-3.7-flash-high",
@@ -508,7 +509,7 @@
       },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
-        "hard_print_timeout": "168h",
+        "hard_print_timeout": "2h",
         "config_home": "~/.gemini-ag2",
         "home": "~/.gemini-ag2",
         "include_directories": true,

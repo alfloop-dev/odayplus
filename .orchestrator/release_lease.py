@@ -249,7 +249,12 @@ def _load_json(path: Path, label: str) -> tuple[Any, list[str]]:
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--state-dir", type=Path, default=DEFAULT_STATE_DIR)
+    parser.add_argument(
+        "--state-dir",
+        type=str,
+        default=str(DEFAULT_STATE_DIR),
+        help="Supervisor lease state directory or gs://bucket/prefix.",
+    )
     parser.add_argument(
         "--private-key-file",
         type=Path,

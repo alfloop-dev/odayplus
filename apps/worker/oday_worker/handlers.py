@@ -117,25 +117,41 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
     )
     from modules.external_data.workers.scheduled_fetch import (
         CONFIGURATION_REASON_CODES,
+        PROVIDER_MODE_DISABLED_REASON_CODE,
         PROVIDER_NOT_SELECTED_REASON_CODE,
         ExternalFetchJobSpec,
+        external_provider_fetch_disabled,
     )
 
     provider_id = job.payload.get("provider_id", "listing.partner_feed")
     schedule_id = job.payload.get("schedule_id", "hourly-listing")
     freshness_sla_hours = job.payload.get("freshness_sla_hours", 6)
 
-    # Resolved per job, from the same switch the scheduler and the API read, so
-    # the three cannot disagree about whether this deployment still fetches.
-    try:
-        fetch_enabled = legacy_external_fetch_enabled()
-    except MarketDataValidationError as exc:
-        # A mode this release cannot read is fixed for the deployment: no retry
-        # changes it, so dead-letter now while the reason is still attached.
-        raise NonRetryableJobError(
-            f"External fetch cannot run: {exc}. Fix {FACADE_MODE_ENV} on the "
-            "worker deployment."
-        ) from exc
+    # Provider-off is authoritative for this job. Still run the scheduler's
+    # deterministic blocked path so the worker produces an auditable receipt,
+    # but never let the unrelated market-data cutover switch turn this probe
+    # into a retrying/dead-lettering worker failure. The question is asked
+    # through ``workers.scheduled_fetch``, the consumer-facing boundary for
+    # external data: reading ``connectors.provider_registry`` here would put
+    # producer internals in product code and trip the EMGI consumer boundary
+    # check (delivery_toolchain/governance/emgi-consumer-boundary.json).
+    provider_mode_disabled = external_provider_fetch_disabled()
+    if provider_mode_disabled:
+        fetch_enabled = True
+    else:
+        # Resolved per job, from the same switch the scheduler and the API read,
+        # so the three cannot disagree about whether this deployment still
+        # fetches.
+        try:
+            fetch_enabled = legacy_external_fetch_enabled()
+        except MarketDataValidationError as exc:
+            # A mode this release cannot read is fixed for the deployment: no
+            # retry changes it, so dead-letter now while the reason is still
+            # attached.
+            raise NonRetryableJobError(
+                f"External fetch cannot run: {exc}. Fix {FACADE_MODE_ENV} on the "
+                "worker deployment."
+            ) from exc
     if not fetch_enabled:
         raise NonRetryableJobError(
             "External fetch is decommissioned on this deployment (cutover mode "
@@ -178,7 +194,10 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
         return
 
     reason_code = _external_fetch_reason_code(record)
-    if reason_code == PROVIDER_NOT_SELECTED_REASON_CODE:
+    if reason_code in {
+        PROVIDER_NOT_SELECTED_REASON_CODE,
+        PROVIDER_MODE_DISABLED_REASON_CODE,
+    }:
         # ODP_PRODUCTION_PROVIDER_IDS is the operator's explicit statement of
         # which providers this deployment runs live. A schedule for a provider
         # left off that list is not applicable here, not broken: the blocked run

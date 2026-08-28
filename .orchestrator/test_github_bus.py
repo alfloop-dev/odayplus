@@ -340,6 +340,327 @@ class GitHubBusCommandTests(unittest.TestCase):
         self.assertEqual(bus_state["tasks"][task["id"]]["review_pr"]["state"], "open")
         self.assertEqual(bus_state["tasks"][task["id"]]["review_pr"]["number"], 812)
 
+    def test_closed_review_bus_pr_is_reconciled_to_current_open_pr(self) -> None:
+        """A stale closed PR must not suppress adoption of the publisher PR."""
+
+        config = {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            }
+        }
+        task = {
+            "id": "ODP-PR-STALE-REF-001",
+            "title": "Reconcile stale review reference",
+            "summary_zh": "reconcile me",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "ready",
+        }
+        branch = "task/ODP-PR-STALE-REF-001"
+        title = f"[ReviewBus] {task['id']} {task['title']}"
+        body = "body\n"
+        pr_hash = json.dumps(
+            {
+                "title": title,
+                "body": body,
+                "labels": ["pantheon-review"],
+                "branch": branch,
+                "base": "dev",
+                "head_sha": "a" * 40,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        bus_state = {
+            "tasks": {
+                task["id"]: {
+                    "review_pr": {
+                        "number": 1018,
+                        "url": "https://example.test/pull/1018",
+                        "branch": branch,
+                        "state": "closed",
+                    },
+                    "last_review_hash": pr_hash,
+                }
+            }
+        }
+        found = {"number": 1019, "url": "https://example.test/pull/1019"}
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=found) as find,
+            mock.patch.object(github_bus, "build_template_body", return_value=body),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, {"tasks": []}, "o/r", task)
+
+        self.assertTrue(changed)
+        find.assert_called_once_with("o/r", task["id"], branch, "dev")
+        self.assertEqual(edit.call_args.args[1], 1019)
+        review_pr = bus_state["tasks"][task["id"]]["review_pr"]
+        self.assertEqual(review_pr["number"], 1019)
+        self.assertEqual(review_pr["state"], "open")
+
+    def test_skipped_no_commits_is_suppressed_on_consecutive_poll(self) -> None:
+        """skipped_no_commits must not trigger re-evaluation when the hash matches.
+
+        Regression: the original ``state != "open"`` guard treated every
+        non-open state as stale, so ``skipped_no_commits`` forced
+        ``branch_has_diff`` to run again and appended a duplicate
+        ``github_review_pr_skipped`` log entry on every poll cycle (~30 s).
+        """
+
+        config = {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            }
+        }
+        task = {
+            "id": "ODP-SKIP-NO-COMMITS-001",
+            "title": "Suppress no-commit skip",
+            "summary_zh": "suppress me",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "ready",
+        }
+        branch = "task/ODP-SKIP-NO-COMMITS-001"
+        head_sha = "b" * 40
+        body = "body\n"
+        title = f"[ReviewBus] {task['id']} {task['title']}"
+        pr_hash = json.dumps(
+            {
+                "title": title,
+                "body": body,
+                "labels": ["pantheon-review"],
+                "branch": branch,
+                "base": "dev",
+                "head_sha": head_sha,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        bus_state = {
+            "tasks": {
+                task["id"]: {
+                    "review_pr": {
+                        "number": None,
+                        "url": None,
+                        "title": title,
+                        "branch": branch,
+                        "state": "skipped_no_commits",
+                        "head_sha": head_sha,
+                        "remote_ref": f"refs/heads/{branch}",
+                    },
+                    "last_review_hash": pr_hash,
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=head_sha),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=head_sha),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=False) as diff,
+            mock.patch.object(github_bus, "build_template_body", return_value=body),
+            mock.patch.object(github_bus, "write_activity_log") as log,
+        ):
+            changed = github_bus.upsert_review_pr(
+                config, bus_state, {"tasks": []}, "o/r", task
+            )
+
+        # The suppression guard must fire and return False immediately; neither
+        # branch_has_diff nor write_activity_log should be called.
+        self.assertFalse(changed)
+        diff.assert_not_called()
+        log.assert_not_called()
+
+    def _stale_ref_config(self) -> dict:
+        return {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            }
+        }
+
+    def _stale_ref_task(self, task_id: str, title: str) -> dict:
+        return {
+            "id": task_id,
+            "title": title,
+            "summary_zh": "reconcile me",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "ready",
+        }
+
+    def test_stale_pr_number_is_not_carried_into_no_commits_skip(self) -> None:
+        """A closed PR number must not survive the ``skipped_no_commits`` path.
+
+        Regression: the stale null-out used to sit *after* the skip paths, so a
+        poll that found no commits ahead of the base copied the dead PR number
+        into ``state: skipped_no_commits`` -- a state that no longer looks
+        stale.  The next poll (new head_sha, so the hash guard does not fire)
+        then edited the CLOSED PR again and auto-merge stranded the task.
+        """
+
+        config = self._stale_ref_config()
+        task = self._stale_ref_task("ODP-PR-STALE-SKIP-001", "Stale ref meets empty branch")
+        branch = "task/ODP-PR-STALE-SKIP-001"
+        bus_state = {
+            "tasks": {
+                task["id"]: {
+                    "review_pr": {
+                        "number": 1018,
+                        "url": "https://example.test/pull/1018",
+                        "branch": branch,
+                        "state": "closed",
+                    },
+                    "last_review_hash": "stale-hash",
+                }
+            }
+        }
+        found = {"number": 1019, "url": "https://example.test/pull/1019"}
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", side_effect=["a" * 40, "c" * 40]),
+            mock.patch.object(github_bus, "remote_branch_head_sha", side_effect=["a" * 40, "c" * 40]),
+            mock.patch.object(github_bus, "branch_has_diff", side_effect=[False, True]),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=found),
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            first = github_bus.upsert_review_pr(config, bus_state, {"tasks": []}, "o/r", task)
+            skipped = bus_state["tasks"][task["id"]]["review_pr"]
+            # The dead number must be dropped here, not merely ignored later.
+            self.assertEqual(skipped["state"], "skipped_no_commits")
+            self.assertIsNone(skipped["number"])
+            self.assertIsNone(skipped["url"])
+
+            second = github_bus.upsert_review_pr(config, bus_state, {"tasks": []}, "o/r", task)
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        # The closed PR must never be edited; only the adopted open PR is.
+        edited_numbers = [call.args[1] for call in edit.call_args_list]
+        self.assertEqual(edited_numbers, [1019])
+        review_pr = bus_state["tasks"][task["id"]]["review_pr"]
+        self.assertEqual(review_pr["number"], 1019)
+        self.assertEqual(review_pr["state"], "open")
+
+    def test_stale_pr_number_is_not_carried_into_unpublished_skip(self) -> None:
+        """Same carry-over hazard on the ``skipped_unpublished_branch`` path."""
+
+        config = self._stale_ref_config()
+        task = self._stale_ref_task("ODP-PR-STALE-SKIP-002", "Stale ref meets unpushed branch")
+        branch = "task/ODP-PR-STALE-SKIP-002"
+        bus_state = {
+            "tasks": {
+                task["id"]: {
+                    "review_pr": {
+                        "number": 1018,
+                        "url": "https://example.test/pull/1018",
+                        "branch": branch,
+                        "state": "merged",
+                    },
+                    "last_review_hash": "stale-hash",
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=None),
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, {"tasks": []}, "o/r", task)
+
+        self.assertTrue(changed)
+        review_pr = bus_state["tasks"][task["id"]]["review_pr"]
+        self.assertEqual(review_pr["state"], "skipped_unpublished_branch")
+        self.assertIsNone(review_pr["number"])
+        self.assertIsNone(review_pr["url"])
+
+    def test_github_cased_pr_states_are_treated_as_stale(self) -> None:
+        """``poll_pr_reviews`` writes GitHub's casing into ``pr_ref["state"]``.
+
+        ``pr view --json state`` returns ``OPEN``/``CLOSED``/``MERGED``, so a
+        lowercase-only membership test would silently keep editing a dead PR.
+        """
+
+        for github_state in ("CLOSED", "MERGED"):
+            with self.subTest(state=github_state):
+                self.assertTrue(
+                    github_bus.review_pr_ref_is_stale({"number": 1018, "state": github_state})
+                )
+
+                config = self._stale_ref_config()
+                task = self._stale_ref_task(
+                    "ODP-PR-STALE-CASE-001", "Uppercase stale state"
+                )
+                branch = "task/ODP-PR-STALE-CASE-001"
+                bus_state = {
+                    "tasks": {
+                        task["id"]: {
+                            "review_pr": {
+                                "number": 1018,
+                                "url": "https://example.test/pull/1018",
+                                "branch": branch,
+                                "state": github_state,
+                            },
+                            "last_review_hash": "stale-hash",
+                        }
+                    }
+                }
+                found = {"number": 1019, "url": "https://example.test/pull/1019"}
+
+                with (
+                    mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+                    mock.patch.object(github_bus, "branch_head_sha", return_value="a" * 40),
+                    mock.patch.object(github_bus, "remote_branch_head_sha", return_value="a" * 40),
+                    mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+                    mock.patch.object(github_bus, "find_existing_pr", return_value=found) as find,
+                    mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+                    mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+                    mock.patch.object(github_bus, "write_activity_log"),
+                ):
+                    changed = github_bus.upsert_review_pr(
+                        config, bus_state, {"tasks": []}, "o/r", task
+                    )
+
+                self.assertTrue(changed)
+                find.assert_called_once_with("o/r", task["id"], branch, "dev")
+                self.assertEqual(edit.call_args.args[1], 1019)
+                self.assertEqual(bus_state["tasks"][task["id"]]["review_pr"]["number"], 1019)
+
+    def test_open_and_skipped_states_are_not_treated_as_stale(self) -> None:
+        """Only dead-PR states are stale; live and transient ones are not."""
+
+        for state in ("open", "OPEN", "skipped_no_commits", "skipped_unpublished_branch", "skipped_no_branch"):
+            with self.subTest(state=state):
+                self.assertFalse(github_bus.review_pr_ref_is_stale({"number": 7, "state": state}))
+        self.assertFalse(github_bus.review_pr_ref_is_stale(None))
+        self.assertFalse(github_bus.review_pr_ref_is_stale({}))
+
     def test_upsert_review_pr_skips_unpublished_remote_branch(self) -> None:
         config = {
             "github_bus": {
@@ -2060,6 +2381,276 @@ class GhBinaryResolutionTests(unittest.TestCase):
                 mock.patch.object(common, "SYSTEM_GH_PATHS", ()),
             ):
                 self.assertIsNone(github_bus.resolve_gh_binary())
+
+
+class ReconcilePrBodyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.template = (
+            f"{github_bus.COMMENT_MARKER}\n"
+            "# Pantheon Review Bus\n\n"
+            "## 任務資訊\n"
+            "- 任務 ID: `OPS-REVIEW-PR-BODY-PRESERVE-001`\n"
+            "- 標題: 保留人工整理的繁中 PR body，避免 Review Bus 狀態同步覆寫\n"
+            "- 狀態: `review`\n"
+            "- 負責人: `Antigravity3`\n"
+            "- 評審人: `Codex2`\n\n"
+            "## 審查範圍\n"
+            "- `.orchestrator/github_bus.py`\n\n"
+            "## 分支資訊\n"
+            "- 來源分支: `task/OPS-REVIEW-PR-BODY-PRESERVE-001`\n"
+            "- 目標分支: `dev`\n\n"
+            "## 下一步\n"
+            "ready for review\n\n"
+            "## 行動審查指南\n"
+            "請使用 GitHub Mobile PR 審查動作：\n"
+            "- `Approve`\n\n"
+            "Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。\n"
+            f"{github_bus.BUS_END_MARKER}\n"
+        )
+
+    def test_reconcile_empty_or_none_uses_template(self) -> None:
+        self.assertEqual(github_bus.reconcile_pr_body(None, self.template), self.template.strip() + "\n")
+        self.assertEqual(github_bus.reconcile_pr_body("", self.template), self.template.strip() + "\n")
+        self.assertEqual(github_bus.reconcile_pr_body("   \n\t  ", self.template), self.template.strip() + "\n")
+
+    def test_preserves_custom_human_body_without_markers(self) -> None:
+        human_body = (
+            "# 繁中 PR 說明\n"
+            "這是一份由開發者人工整理的繁體中文 PR 說明。\n\n"
+            "## 改動細節\n"
+            "- 項目 1: 修正 Review Bus 覆寫問題\n"
+            "- 項目 2: 支援 PR body 保留\n"
+        )
+        reconciled = github_bus.reconcile_pr_body(human_body, self.template)
+        self.assertTrue(reconciled.startswith(human_body.strip()))
+        self.assertIn("---", reconciled)
+        self.assertIn(github_bus.COMMENT_MARKER, reconciled)
+        self.assertIn(github_bus.BUS_END_MARKER, reconciled)
+
+    def test_reconcile_is_strictly_idempotent(self) -> None:
+        human_body = (
+            "# 繁中 PR 說明\n"
+            "人工撰寫內容\n"
+        )
+        first_pass = github_bus.reconcile_pr_body(human_body, self.template)
+        second_pass = github_bus.reconcile_pr_body(first_pass, self.template)
+        third_pass = github_bus.reconcile_pr_body(second_pass, self.template)
+        self.assertEqual(first_pass, second_pass)
+        self.assertEqual(second_pass, third_pass)
+
+    def test_updates_bus_block_while_preserving_prefix_content(self) -> None:
+        prefix = (
+            "# 繁中 PR 說明\n"
+            "人工撰寫內容\n\n"
+            "---\n"
+        )
+        old_body = prefix + self.template
+        updated_template = self.template.replace("狀態: `review`", "狀態: `review_approved`")
+        reconciled = github_bus.reconcile_pr_body(old_body, updated_template)
+        self.assertTrue(reconciled.startswith("# 繁中 PR 說明\n人工撰寫內容"))
+        self.assertIn("狀態: `review_approved`", reconciled)
+        self.assertNotIn("狀態: `review`\n", reconciled)
+
+    def test_preserves_suffix_content_below_bus_block(self) -> None:
+        suffix = "\n\n---\n## 補充說明\n下方人工整理筆記\n"
+        old_body = self.template + suffix
+        updated_template = self.template.replace("狀態: `review`", "狀態: `done`")
+        reconciled = github_bus.reconcile_pr_body(old_body, updated_template)
+        self.assertIn("狀態: `done`", reconciled)
+        self.assertTrue(reconciled.endswith("## 補充說明\n下方人工整理筆記\n"))
+
+    def test_preserves_both_prefix_and_suffix_content(self) -> None:
+        prefix = "## 上方筆記\n前置說明\n\n---\n"
+        suffix = "\n\n---\n## 下方筆記\n後置說明\n"
+        old_body = prefix + self.template + suffix
+        updated_template = self.template.replace("狀態: `review`", "狀態: `review_approved`")
+        reconciled = github_bus.reconcile_pr_body(old_body, updated_template)
+        self.assertTrue(reconciled.startswith("## 上方筆記\n前置說明"))
+        self.assertIn("狀態: `review_approved`", reconciled)
+        self.assertTrue(reconciled.endswith("## 下方筆記\n後置說明\n"))
+
+    def test_handles_legacy_bus_template_without_end_marker(self) -> None:
+        legacy_template = (
+            f"{github_bus.COMMENT_MARKER}\n"
+            "# Pantheon Review Bus\n\n"
+            "## Task\n"
+            "- ID: `LIN-001`\n\n"
+            "## Mobile Review Guidance\n"
+            "The orchestrator polls review results and writes them back into `ai-status.json`.\n"
+        )
+        custom_suffix = "\n\n## 人工自訂備註\n這是舊範本下方新增的自訂內容\n"
+        old_body = legacy_template + custom_suffix
+        reconciled = github_bus.reconcile_pr_body(old_body, self.template)
+        self.assertIn(github_bus.BUS_END_MARKER, reconciled)
+        self.assertIn("## 人工自訂備註\n這是舊範本下方新增的自訂內容", reconciled)
+
+    def test_handles_chinese_legacy_bus_template_without_end_marker(self) -> None:
+        legacy_chinese_template = (
+            f"{github_bus.COMMENT_MARKER}\n"
+            "# Pantheon Review Bus\n\n"
+            "## 任務資訊\n"
+            "- 任務 ID: `LIN-002`\n\n"
+            "## 行動審查指南\n"
+            "Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。\n"
+        )
+        custom_suffix = "\n\n## 人工自訂備註\n這是中文舊範本下方新增的自訂內容\n"
+        old_body = legacy_chinese_template + custom_suffix
+        reconciled = github_bus.reconcile_pr_body(old_body, self.template)
+        self.assertIn(github_bus.BUS_END_MARKER, reconciled)
+        self.assertIn("## 人工自訂備註\n這是中文舊範本下方新增的自訂內容", reconciled)
+
+    def test_unrecognized_unclosed_block_fails_closed_and_preserves_body(self) -> None:
+        unknown_legacy_body = (
+            f"{github_bus.COMMENT_MARKER}\n"
+            "# 未知格式的 PR 內容\n"
+            "這裡包含人工整理的重要分析與排查紀錄，但沒有標準結尾 marker 也沒有已知舊終止句。\n\n"
+            "## 關鍵變更\n"
+            "- 項目 A\n"
+            "- 項目 B\n"
+        )
+        # First reconcile pass
+        reconciled = github_bus.reconcile_pr_body(unknown_legacy_body, self.template)
+        self.assertEqual(reconciled, unknown_legacy_body.strip() + "\n")
+        self.assertIn("這裡包含人工整理的重要分析與排查紀錄", reconciled)
+        self.assertIn("- 項目 A", reconciled)
+
+        # Subsequent passes must be strictly idempotent
+        second_pass = github_bus.reconcile_pr_body(reconciled, self.template)
+        third_pass = github_bus.reconcile_pr_body(second_pass, self.template)
+        self.assertEqual(reconciled, second_pass)
+        self.assertEqual(second_pass, third_pass)
+
+    def test_unrecognized_unclosed_block_with_prefix_fails_closed(self) -> None:
+        prefix_unknown_body = (
+            "# 開發前置說明\n"
+            "前置人工備註內容\n\n"
+            f"{github_bus.COMMENT_MARKER}\n"
+            "未閉合且無已知終止句的自訂內容區塊\n"
+        )
+        reconciled = github_bus.reconcile_pr_body(prefix_unknown_body, self.template)
+        self.assertEqual(reconciled, prefix_unknown_body.strip() + "\n")
+        self.assertIn("前置人工備註內容", reconciled)
+        self.assertIn("未閉合且無已知終止句的自訂內容區塊", reconciled)
+
+        second_pass = github_bus.reconcile_pr_body(reconciled, self.template)
+        self.assertEqual(reconciled, second_pass)
+
+    def test_chinese_review_template_rendering(self) -> None:
+        config = {
+            "github_bus": {
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"}
+            }
+        }
+        variables = {
+            "marker": github_bus.COMMENT_MARKER,
+            "task_id": "OPS-REVIEW-PR-BODY-PRESERVE-001",
+            "task_title": "保留人工整理的繁中 PR body",
+            "task_summary": "修正 Review Bus 覆寫問題",
+            "task_status": "review",
+            "task_owner": "Antigravity3",
+            "task_reviewer": "Codex2",
+            "depends_on": "OPS-AGY-HARD-TIMEOUT-2H-001",
+            "next_step": "ready for review",
+            "artifacts": "- `.orchestrator/github_bus.py`",
+            "branch": "task/OPS-REVIEW-PR-BODY-PRESERVE-001",
+            "base_branch": "dev",
+        }
+        rendered = github_bus.build_template_body(config, "review_pr", variables)
+        self.assertTrue(rendered.startswith(github_bus.COMMENT_MARKER))
+        self.assertTrue(rendered.strip().endswith(github_bus.BUS_END_MARKER))
+        self.assertIn("## 任務資訊", rendered)
+        self.assertIn("- 任務 ID: `OPS-REVIEW-PR-BODY-PRESERVE-001`", rendered)
+        self.assertIn("- 標題: 保留人工整理的繁中 PR body", rendered)
+        self.assertIn("- 摘要: 修正 Review Bus 覆寫問題", rendered)
+        self.assertIn("- 狀態: `review`", rendered)
+        self.assertIn("- 負責人: `Antigravity3`", rendered)
+        self.assertIn("- 評審人: `Codex2`", rendered)
+        self.assertIn("- 依賴任務: OPS-AGY-HARD-TIMEOUT-2H-001", rendered)
+        self.assertIn("## 審查範圍", rendered)
+        self.assertIn("## 分支資訊", rendered)
+        self.assertIn("- 來源分支: `task/OPS-REVIEW-PR-BODY-PRESERVE-001`", rendered)
+        self.assertIn("- 目標分支: `dev`", rendered)
+        self.assertIn("## 下一步", rendered)
+        self.assertIn("## 行動審查指南", rendered)
+        self.assertIn("Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。", rendered)
+
+
+class UpsertReviewPrPreserveBodyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        github_bus.clear_remote_branch_snapshot_cache()
+        self.config = {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            },
+            "branch_workflow": {"enabled": True, "task_pr": {"target_branch": "dev"}},
+        }
+        self.task = {
+            "id": "OPS-REVIEW-PR-BODY-PRESERVE-001",
+            "title": "保留人工整理的繁中 PR body",
+            "summary_zh": "修正 Review Bus 每次 reconcile 都覆寫既有 PR body 的行為",
+            "status": "review",
+            "owner": "Antigravity3",
+            "reviewer": "Codex2",
+            "depends_on": [],
+            "artifacts": [".orchestrator/github_bus.py"],
+            "next": "ready for review",
+        }
+        self.branch = "task/OPS-REVIEW-PR-BODY-PRESERVE-001"
+        self.head_sha = "e" * 40
+
+    def test_upsert_review_pr_preserves_human_body_on_reconcile(self) -> None:
+        human_body = (
+            "# 繁中 PR 說明\n"
+            "人工撰寫的詳細改動說明。\n"
+        )
+        found_pr = {
+            "number": 1050,
+            "url": "https://github.com/alfloop-dev/odayplus/pull/1050",
+            "title": f"[ReviewBus] {self.task['id']} {self.task['title']}",
+            "headRefName": self.branch,
+            "baseRefName": "dev",
+            "state": "OPEN",
+            "body": human_body,
+        }
+        bus_state = {"tasks": {}}
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=self.branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=self.head_sha),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=self.head_sha),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=found_pr),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(self.config, bus_state, {"tasks": []}, "o/r", self.task)
+
+        self.assertTrue(changed)
+        edit.assert_called_once()
+        edited_body = edit.call_args.args[3]
+        self.assertTrue(edited_body.startswith(human_body.strip()))
+        self.assertIn("---", edited_body)
+        self.assertIn("## 任務資訊", edited_body)
+        self.assertIn(github_bus.COMMENT_MARKER, edited_body)
+        self.assertIn(github_bus.BUS_END_MARKER, edited_body)
+
+        # Reconcile consecutive run without change must be idempotent
+        found_pr["body"] = edited_body
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=self.branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=self.head_sha),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=self.head_sha),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=found_pr),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit_again,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            consecutive_changed = github_bus.upsert_review_pr(self.config, bus_state, {"tasks": []}, "o/r", self.task)
+
+        self.assertFalse(consecutive_changed)
+        edit_again.assert_not_called()
 
 
 if __name__ == "__main__":

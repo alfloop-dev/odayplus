@@ -122,13 +122,53 @@ def test_allowlist_matches_workflow_uploads_and_script_producers() -> None:
         for step in workflow["jobs"]["deploy"]["steps"]
         if str(step.get("uses", "")).startswith("actions/upload-artifact@")
     ]
-    assert len(upload_steps) == 1
+    validation_steps = [
+        step
+        for step in upload_steps
+        if "validation" in str(step["with"]["name"])
+    ]
+    assert len(validation_steps) == 1
     uploaded = {
         line.strip().replace("${{ github.run_id }}", "{run_id}")
-        for line in upload_steps[0]["with"]["path"].splitlines()
+        for line in validation_steps[0]["with"]["path"].splitlines()
         if line.strip()
     }
     assert uploaded == set(RUNTIME_RELEASE_ARTIFACT_ALLOWLIST)
+
+    # The allowlist governs deployment reports. Any *other* upload the deploy
+    # job makes -- the environment binding receipt, for one -- must come from the
+    # release receipt staging root, so it cannot smuggle out a raw Cloud Run dump
+    # under a name the allowlist never had to approve.
+    #
+    # ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001: that root used to be
+    # `${{ runner.temp }}/`, which cost the workflow its `jobs.build.env` entry
+    # and with it the ability to compile at all. The separation it bought is the
+    # part worth keeping, and `.odp_data/release/` keeps it: `capture_job_proof`
+    # writes its raw `describe` dumps under `.odp_data/deployment/`, which is a
+    # sibling of the staging root, never a parent of it.
+    receipt_dir = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["env"][
+        "RELEASE_RECEIPT_DIR"
+    ].rstrip("/")
+    report_dir = ".odp_data/deployment"
+    assert not report_dir.startswith(f"{receipt_dir}/"), (
+        f"{receipt_dir} contains the Cloud Run report directory; staging receipts "
+        "there would re-expose the raw describe dumps this separation exists for"
+    )
+    for step in upload_steps:
+        if step in validation_steps:
+            continue
+        for line in str(step["with"]["path"]).splitlines():
+            entry = line.strip()
+            if not entry:
+                continue
+            assert entry.startswith(f"{receipt_dir}/"), (
+                f"{step['with']['name']} publishes {entry} from outside "
+                f"{receipt_dir} without an allowlist entry"
+            )
+            # A literal file, for the same reason the allowlist is literal: a
+            # glob publishes whatever else lands in the tree.
+            assert not set(entry) & set("*?[]"), f"{entry}: name the file, not a pattern"
+            assert "${{" not in entry, f"{entry}: a receipt path needs no expression"
 
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     job_kinds = set(re.findall(r'^\s*execute_job "([a-z]+)"', script, flags=re.MULTILINE))

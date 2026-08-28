@@ -20,6 +20,57 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github/workflows"
+RELEASE_WORKFLOW = WORKFLOW_DIR / "deploy-dev.yml"
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.check_release_environment import (  # noqa: E402
+    REQUIRED_VARIABLES,
+)
+
+# Which GitHub environment each job binds to, and why it is that one.
+#
+# `staging` and `production` both carry `required_reviewers`. Binding the build
+# phase to them would demand a human deploy approval before the build that
+# produces the manifest that approval is granted against -- which is the
+# circular dependency this workflow exists to remove, re-entered through the
+# approval gate instead of the lease. The build therefore binds to a
+# build-scoped twin: same variables, no deployment approval.
+BUILD_ENVIRONMENT = "${{ inputs.environment }}-build"
+DEPLOY_ENVIRONMENT = "${{ inputs.environment }}"
+
+JOB_ENVIRONMENT_BINDINGS = {
+    "build": (BUILD_ENVIRONMENT, "build"),
+    "admission": (DEPLOY_ENVIRONMENT, "admission"),
+    "deploy": (DEPLOY_ENVIRONMENT, "deploy"),
+    "staging_closeout": ("staging", "staging"),
+}
+
+# The one job that must stay unbound: binding it would put a deploy approval in
+# front of plain input validation, and a run that is going to be refused for a
+# malformed SHA should not spend a reviewer's attention first.
+UNBOUND_JOB = "release_phase"
+
+BINDING_GATE_SCRIPT = "delivery_toolchain/release/check_release_environment.py"
+
+
+def _release_jobs() -> dict:
+    return yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+
+def _job_steps(job: dict) -> list[dict]:
+    return [step for step in job.get("steps", []) if isinstance(step, dict)]
+
+
+def _binding_gate_index(job: dict) -> int:
+    """Index of the step that proves this job's environment variables resolved."""
+
+    return next(
+        index
+        for index, step in enumerate(_job_steps(job))
+        if BINDING_GATE_SCRIPT in str(step.get("run", ""))
+    )
 DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
 VALIDATOR_PATH = ROOT / "product_ops/deployment/validate_cloud_run_live_deployment.py"
 
@@ -76,7 +127,10 @@ DEPLOY_WORKFLOWS = (
         workflow_name="Runtime Release",
         job_id="deploy",
         artifact_name="runtime-release-${{ inputs.environment }}-validation",
-        extra_report_roots=(".odp_data/remote-staging-proof/",),
+        extra_report_roots=(
+            ".odp_data/remote-staging-proof/",
+            ".odp_data/staging-lifecycle/",
+        ),
     ),
 )
 
@@ -143,6 +197,19 @@ def _parsed(workflow: DeployWorkflow) -> dict:
     return yaml.safe_load(workflow.path.read_text(encoding="utf-8"))
 
 
+def _needs(job: dict) -> list[str]:
+    needs = job.get("needs", [])
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+def _named_step(job: dict, name: str) -> dict:
+    return next(
+        step
+        for step in job["steps"]
+        if isinstance(step, dict) and step.get("name") == name
+    )
+
+
 @pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
 def test_tenant_variables_pass_through_without_placeholder_defaults(
     workflow: DeployWorkflow,
@@ -205,10 +272,14 @@ def _workflow_written_reports(workflow: DeployWorkflow) -> list[str]:
         run = step.get("run")
         if not isinstance(run, str):
             continue
-        for match in re.findall(r'--output[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
+        for match in re.findall(r'(?:--output|--receipt)[= ]+"?(\.odp_data/[^"\s\\]+)"?', run):
             normalized = _normalize_run_id(match)
             if normalized not in written:
                 written.append(normalized)
+        if "watch_receipt=" in run:
+            production_receipt = ".odp_data/release/production-watch-window-receipt.json"
+            if production_receipt not in written:
+                written.append(production_receipt)
     return written
 
 
@@ -527,9 +598,193 @@ def test_staging_proof_checker_gated_on_staging_environment() -> None:
     assert len(staging_steps) == 1
     step = staging_steps[0]
     assert step.get("if") == "${{ inputs.environment == 'staging' }}"
-    assert "ODP_STAGING_DEPLOY_URL" in step.get("env", {})
-    assert "ODP_STAGING_API_URL" in step.get("env", {})
-    assert "ODP_STAGING_SECRET_OWNER" in step.get("env", {})
+    run = str(step.get("run", ""))
+    assert "STAGING_OUTPUTS_FILE" in run
+    assert 'staging_web_uri' in run
+    assert 'staging_api_uri' in run
+    assert 'staging_runtime_service_account' in run
+    assert "vars.ODP_STAGING_DEPLOY_URL" not in run
+    assert "vars.ODP_STAGING_API_URL" not in run
+    assert "vars.ODP_STAGING_SECRET_OWNER" not in run
+
+
+def test_staging_lifecycle_invocations_gated_on_staging_environment() -> None:
+    """Runtime Release directly invokes staging lifecycle create and verify in the staging deploy branch."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+
+    # Static deploy script MUST NOT run when environment is staging
+    static_deploy_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "deploy_cloud_run_waji.sh" in str(step.get("run", ""))
+    ]
+    assert len(static_deploy_steps) == 1
+    assert static_deploy_steps[0].get("if") == "${{ inputs.environment != 'staging' }}"
+
+    create_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py create" in str(step.get("run", ""))
+    ]
+    assert len(create_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py create step"
+    create_step = create_steps[0]
+    assert create_step.get("if") == "${{ inputs.environment == 'staging' }}"
+    create_run = str(create_step.get("run", ""))
+    assert "--release-id" in create_run
+    assert "--candidate-sha" in create_run
+    assert "--manifest-digest" in create_run
+    assert "--api-image" in create_run
+    assert "--web-image" in create_run
+    assert "--worker-image" in create_run
+    assert "--scheduler-image" in create_run
+    assert "--owner-task-id" in create_run
+    assert "--state-dir" in create_run
+    assert "--outputs-out" in create_run
+    assert "--kms-key-id" in create_run
+    assert "--deployer-service-account-email" in create_run
+    assert "--network-name" in create_run
+    assert "--subnetwork-name" in create_run
+    assert "--receipt" in create_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-lifecycle-create.json" in create_run
+    assert "--dry-run" not in create_run, "Staging create must execute live without --dry-run"
+
+    verify_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py verify" in str(step.get("run", ""))
+    ]
+    assert len(verify_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py verify step"
+    verify_step = verify_steps[0]
+    assert verify_step.get("if") == "${{ inputs.environment == 'staging' }}"
+    verify_run = str(verify_step.get("run", ""))
+    assert "--release-id" in verify_run
+    assert "--candidate-sha" in verify_run
+    assert "--manifest-digest" in verify_run
+    assert "--worker-image" in verify_run
+    assert "--scheduler-image" in verify_run
+    assert "--operator-identity" in verify_run
+    assert "--cloud-sql-instance" in verify_run
+    assert "--state-dir" in verify_run
+    assert "--outputs-file" in verify_run
+    assert "--receipt" in verify_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-rehearsal-receipt.json" in verify_run
+    assert "--dry-run" not in verify_run, "Staging verify must execute live without --dry-run"
+
+
+def test_staging_hold_on_failure_invoked_on_error() -> None:
+    """Staging deploy failure triggers staging_lifecycle.py hold to retain resources for debugging."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+
+    hold_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py hold" in str(step.get("run", ""))
+    ]
+    assert len(hold_steps) == 1, "deploy job must contain exactly one staging_lifecycle.py hold step"
+    hold_step = hold_steps[0]
+    assert hold_step.get("if") == "${{ failure() && inputs.environment == 'staging' }}"
+    hold_run = str(hold_step.get("run", ""))
+    assert "--release-id" in hold_run
+    assert "--project-id" in hold_run
+    assert "--owner-task-id" in hold_run
+    assert "--reason" in hold_run
+    assert "--receipt" in hold_run
+    assert "${RELEASE_RECEIPT_DIR}/staging-lifecycle-hold.json" in hold_run
+
+
+def test_staging_failure_hold_requires_live_state_and_closeout_uses_staging_authority() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    cleanup_steps = [
+        step for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py cleanup" in str(step.get("run", ""))
+    ]
+    assert cleanup_steps == []
+
+    closeout = parsed["jobs"]["staging_closeout"]
+    assert closeout["needs"] == ["deploy"]
+    assert closeout["if"] == "${{ always() && inputs.environment == 'production' && needs.deploy.result == 'success' }}"
+    assert closeout["environment"] == {"name": "staging"}
+    assert closeout["env"]["MANIFEST_DIGEST"] == "${{ needs.deploy.outputs.manifest_digest }}"
+    closeout_steps = closeout["steps"]
+    cleanup_steps = [
+        step for step in closeout_steps
+        if isinstance(step, dict) and "staging_lifecycle.py cleanup" in str(step.get("run", ""))
+    ]
+    assert len(cleanup_steps) == 1
+    cleanup_run = str(cleanup_steps[0]["run"])
+    assert "--state-dir" in cleanup_run
+    assert "--terraform-backend-bucket" in cleanup_run
+    assert "--terraform-backend-prefix" in cleanup_run
+    assert "--allow-empty" not in cleanup_run
+
+    hold_steps = [
+        step for step in deploy_steps
+        if isinstance(step, dict) and "staging_lifecycle.py hold" in str(step.get("run", ""))
+    ]
+    assert "--state-dir" in str(hold_steps[0]["run"])
+    assert "--terraform-backend-bucket" in str(hold_steps[0]["run"])
+    assert "--terraform-backend-prefix" in str(hold_steps[0]["run"])
+    assert "--allow-empty" not in str(hold_steps[0]["run"])
+    assert "inputs.environment == 'staging'" in str(hold_steps[0].get("if"))
+
+    assert "verify_watch_window_receipt" in "\n".join(str(step.get("run", "")) for step in closeout_steps)
+    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout["env"]
+
+
+def test_staging_skips_static_preflight_and_uses_foundation_binding_scope() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    preflight = next(step for step in deploy_steps if step.get("name") == "Run the live runtime preflight")
+    assert preflight.get("if") == "${{ inputs.environment != 'staging' }}"
+    staging_gate = next(
+        step for step in deploy_steps if step.get("name") == "確認 staging foundation 已綁定 environment 且變數齊備"
+    )
+    assert staging_gate.get("if") == "${{ inputs.environment == 'staging' }}"
+    assert "--scope staging" in str(staging_gate["run"])
+    assert "ODP_STAGING_KMS_KEY_ID" in staging_gate["env"]
+    assert "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT" in staging_gate["env"]
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in staging_gate["env"]
+
+
+def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sidecars() -> None:
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    create = next(step for step in deploy_steps if "staging_lifecycle.py create" in str(step.get("run", "")))
+    create_run = str(create["run"])
+    assert "--terraform-backend-bucket" in create_run
+    assert "--terraform-backend-prefix" in create_run
+    assert "${STAGING_BACKEND_PREFIX}" in create_run
+    assert "${RUNNER_TEMP}" not in create_run
+    persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected state storage")
+    assert "gcloud storage cp" in str(persist["run"])
+    assert "STAGING_BUNDLE_URI" in str(persist["run"])
+
+    closeout = parsed["jobs"]["staging_closeout"]
+    assert closeout["environment"] == {"name": "staging"}
+    assert closeout["needs"] == ["deploy"]
+    closeout_run = "\n".join(str(step.get("run", "")) for step in closeout["steps"])
+    assert "verify_watch_window_receipt" in closeout_run
+    assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout_run
+    assert "MANIFEST_DIGEST" in closeout_run
+
+
+def test_staging_identity_rejects_dev_operator_impersonation() -> None:
+    """Staging verification must enforce release-scoped identity and reject dev operator impersonation."""
+    from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+    receipt = verify_ephemeral_staging(
+        release_id="odp-test-001",
+        candidate_sha="a" * 40,
+        manifest_digest="sha256:" + "b" * 64,
+        project_id="oday-staging-proj",
+        operator_identity="dev-smoke-operator@oday-dev-proj.iam.gserviceaccount.com",
+    )
+    assert not receipt.success
+    assert any("dev smoke operator identity impersonation" in err for err in receipt.errors)
+
 
 
 def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:
@@ -544,3 +799,476 @@ def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:
     assert len(checkout_steps) == 1
     assert checkout_steps[0].get("with", {}).get("fetch-depth") == 0
 
+
+def test_admission_uses_protected_wif_and_shared_gcs_lease_state() -> None:
+    """Hosted admission must not fall back to runner-local credentials/state."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    admission = parsed["jobs"]["admission"]
+    assert admission["environment"] == {"name": "${{ inputs.environment }}"}
+
+    steps = admission["steps"]
+    binding_index = _binding_gate_index(admission)
+    validate_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict)
+        and step.get("name") == "Validate shared lease store configuration"
+    )
+    auth_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict)
+        and step.get("uses") == "google-github-actions/auth@v2"
+        and "durable lease admission" in step.get("name", "")
+    )
+    admission_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict) and step.get("name") == "Validate supervisor release admission"
+    )
+    assert binding_index < validate_index < auth_index < admission_index
+
+    validation = steps[validate_index]
+    assert validation["env"]["RELEASE_LEASE_STATE_URI"] == "${{ vars.ODP_RELEASE_LEASE_STATE_URI }}"
+    assert "requires a shared gs://bucket/prefix state URI" in validation["run"]
+
+    admission_run = steps[admission_index]["run"]
+    assert "RELEASE_LEASE_STATE_URI" in admission_run
+    assert "ODP_RELEASE_LEASE_STATE_DIR" not in "\n".join(
+        str(step) for step in steps if isinstance(step, dict)
+    )
+
+
+def test_environment_inputs_support_dev_staging_production() -> None:
+    """The unified Runtime Release workflow must support dev, staging, and production."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    on_block = parsed.get("on") or parsed.get(True)
+    env_input = on_block["workflow_dispatch"]["inputs"]["environment"]
+    assert env_input["type"] == "choice"
+    assert set(env_input["options"]) == {"dev", "staging", "production"}
+
+
+def test_build_once_job_exists_and_precedes_deploy() -> None:
+    """A first dispatch builds once; later dispatches reuse immutable refs."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    jobs = parsed["jobs"]
+    assert "build" in jobs
+    assert "deploy" in jobs
+    assert "build" in _needs(jobs["deploy"])
+
+    # Build job must perform secret scan, SAST scan, SBOM, and E2E operational proof
+    build_steps = jobs["build"]["steps"]
+    build_runs = [
+        step.get("run", "")
+        for step in build_steps
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+    assert any("secret_scan.py" in run for run in build_runs)
+    assert any("sast_scan.py" in run for run in build_runs)
+    assert any("generate_sbom.py" in run for run in build_runs)
+    assert any("verify_deployment_health_backup_rollback.py" in run for run in build_runs)
+
+    build_if = jobs["build"].get("if", "")
+    assert all(
+        f"inputs.{name} == ''" in build_if
+        for name in ("api_image", "web_image", "worker_image", "scheduler_image")
+    )
+    assert "gcloud artifacts docker images describe" in "\n".join(build_runs)
+    assert "GITHUB_OUTPUT" in "\n".join(build_runs)
+    assert set(jobs["build"]["outputs"]) == {
+        "api_image",
+        "web_image",
+        "worker_image",
+        "scheduler_image",
+        # The manifest the Supervisor issues a lease against is a build output,
+        # because nothing before the build can know it.
+        "manifest_digest",
+        "release_id",
+    }
+
+    deploy_if = jobs["deploy"].get("if", "")
+    assert "needs.build.result == 'skipped'" in deploy_if
+
+
+def test_deploy_job_configures_deploy_by_digest() -> None:
+    """Deploy job must pass the build output or handoff input to the script."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_env = parsed["jobs"]["deploy"]["env"]
+    assert deploy_env.get("ODP_DEPLOY_BY_DIGEST") == "true"
+    for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
+        lower = name.lower()
+        expected = "${{ needs.build.outputs." + lower + " || inputs." + lower + " }}"
+        assert deploy_env[name] == expected
+
+    deploy_runs = [
+        step.get("run", "")
+        for step in parsed["jobs"]["deploy"]["steps"]
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+    assert not any("docker build" in run for run in deploy_runs)
+
+
+def test_image_handoff_inputs_are_all_or_none_immutable_refs() -> None:
+    """The cross-environment handoff cannot mix tags, blanks, or components."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+    image_names = {"api_image", "web_image", "worker_image", "scheduler_image"}
+    assert image_names <= set(inputs)
+    for name in image_names:
+        assert inputs[name]["required"] is False
+        assert inputs[name]["default"] == ""
+
+    validation_step = next(
+        step
+        for step in parsed["jobs"]["admission"]["steps"]
+        if isinstance(step, dict) and step.get("name") == "Validate immutable image handoff"
+    )
+    validation = validation_step["run"]
+    assert "must be supplied together" in validation
+    assert "@sha256:[0-9a-f]{64}" in validation
+
+
+def test_deploy_script_uses_digest_refs_for_every_cloud_run_target() -> None:
+    """The deploy script's immutable path cannot silently turn refs into tags."""
+    script = _deploy_script_text()
+    assert "@sha256:[0-9a-f]{64}" in script
+    assert 'ODP_DEPLOY_BY_DIGEST:-false' in script
+    assert '--image="${API_IMAGE}"' in script
+    assert '--image="${WEB_IMAGE}"' in script
+    assert '--image="${WORKER_IMAGE}"' in script
+    assert '--image="${SCHEDULER_IMAGE}"' in script
+    assert "deploy-by-digest requires immutable image reference" in script
+
+
+def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_target() -> None:
+    """Every service/job must share the release entrypoint's VPC binding."""
+    script = _deploy_script_text()
+    network_args = '"${CLOUD_RUN_NETWORK_ARGS[@]}"'
+    targets = (
+        'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"',
+        'gcloud run deploy "${API_SERVICE}"',
+        'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"',
+        'gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}"',
+        'gcloud run deploy "${WEB_SERVICE}"',
+    )
+
+    assert script.count(network_args) == len(targets)
+    for target in targets:
+        start = script.index(target)
+        end = script.index("\n\n", start)
+        assert network_args in script[start:end], target
+
+
+def test_deploy_script_rejects_partial_or_invalid_vpc_config_before_cloud_run() -> None:
+    """Connector mistakes must fail before any Cloud Run mutation is possible."""
+    script = _deploy_script_text()
+    first_cloud_run_call = script.index("gcloud run ")
+    guard_end = script.index("CLOUD_RUN_NETWORK_ARGS=()")
+
+    assert "ODP_CLOUD_RUN_VPC_EGRESS is required with ODP_CLOUD_RUN_VPC_CONNECTOR" in script
+    assert "ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS" in script
+    assert "all|all-traffic|private-ranges-only" in script
+    assert guard_end < first_cloud_run_call
+
+
+def test_deploy_job_passes_optional_vpc_config_through_environment() -> None:
+    """The single Runtime Release entrypoint receives environment-scoped vars."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_env = parsed["jobs"]["deploy"]["env"]
+
+    assert deploy_env["ODP_CLOUD_RUN_VPC_CONNECTOR"] == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
+    assert deploy_env["ODP_CLOUD_RUN_VPC_EGRESS"] == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
+
+
+def test_production_bluegreen_verification_gated_on_production_environment() -> None:
+    """Production blue-green verification runs in deploy job when environment is production."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    prod_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "bluegreen_release.py" in str(step.get("run", ""))
+    ]
+    assert len(prod_steps) == 1
+    step = prod_steps[0]
+    assert step.get("if") == "${{ inputs.environment == 'production' }}"
+
+
+# --------------------------------------------------------------------------
+# ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001: build-once and admission ordering
+#
+# `admission` used to be `build`'s parent. Because the lease is bound to a
+# `manifest_digest`, and the manifest names image digests, SBOM refs, and Cosign
+# signature refs that only a build produces, that ordering made the release
+# unable to build without a lease and unable to earn a lease without building.
+# These tests hold the ordering that removes the cycle, and the bindings that
+# keep the split from turning "build once" into "deploy anything".
+# --------------------------------------------------------------------------
+
+
+def test_the_lease_is_verified_after_the_build_not_before() -> None:
+    """Admission must never be a precondition of producing its own evidence."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+
+    assert "admission" not in _needs(jobs["build"]), (
+        "the build phase must not depend on lease admission; requiring a lease to "
+        "produce the manifest the lease is bound to is the circular dependency"
+    )
+    assert "build" in _needs(jobs["admission"]), (
+        "admission must be ordered after the build phase that publishes the "
+        "manifest it verifies"
+    )
+    assert "admission" in _needs(jobs["deploy"])
+
+    # Admission is deploy authority, so it runs in the deploy phase only.
+    admission_if = jobs["admission"].get("if", "")
+    assert "inputs.phase == 'deploy'" in admission_if
+    assert "needs.build.result == 'skipped'" in admission_if
+
+    # And the build phase runs only when asked to build.
+    assert "inputs.phase == 'build'" in jobs["build"].get("if", "")
+
+
+def test_every_job_is_gated_on_the_fail_closed_phase_check() -> None:
+    """One precheck, ahead of every build, credential, and deployment step."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+
+    assert "release_phase" in jobs
+    assert _needs(jobs["release_phase"]) == [], "the phase check must run first"
+    for job_id in ("build", "admission", "deploy"):
+        assert "release_phase" in _needs(jobs[job_id]), f"{job_id} bypasses the phase check"
+
+    check = _named_step(jobs["release_phase"], "Validate phase and artifact handoff preconditions")
+    run = check["run"]
+    assert "delivery_toolchain/release/check_release_phase.py" in run
+    # Lease presence is an input to the refusal, not an assumption. OIDC is
+    # not: this job is unbound, so it cannot observe `vars.*` and anything it
+    # concluded from them would describe the binding, not the configuration.
+    # `test_the_binding_gate_runs_before_the_job_touches_google_cloud` holds
+    # that half, inside the jobs that are bound.
+    assert "--oidc-configured" not in run
+    assert "--lease-supplied" in run
+    assert "--receipt" in run
+    # The lease reaches the precheck as a presence bit. Everything after the
+    # script name is argv, and a signed lease in argv is readable from the
+    # process table, so the document itself must not appear there.
+    invocation = run.split("check_release_phase.py", 1)[1]
+    assert "RELEASE_LEASE" not in invocation
+    assert "--lease-file" not in invocation
+
+
+def test_the_lease_input_is_optional_so_the_build_phase_can_run_without_one() -> None:
+    """A required lease input would re-impose the cycle at the form level."""
+
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    assert inputs["release_lease"]["required"] is False
+    assert inputs["release_lease"]["default"] == ""
+
+    phase = inputs["phase"]
+    assert phase["type"] == "choice"
+    assert set(phase["options"]) == {"build", "deploy"}
+
+
+def test_admission_binds_the_handoff_images_to_the_manifest() -> None:
+    """A lease admits this release's artifacts, not any digest presented."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    step = _named_step(jobs["admission"], "Validate supervisor release admission")
+    run = step["run"]
+
+    assert "--action deploy" in run, "the lease must authorise the deploy action explicitly"
+    for component in ("api", "web", "worker", "scheduler"):
+        assert f'--component-image "{component}=${{{component.upper()}_IMAGE_INPUT}}"' in run, (
+            f"{component}'s handoff image is not bound back to manifest.components"
+        )
+
+
+def test_the_build_phase_publishes_the_artifact_handoff_it_hands_forward() -> None:
+    """The handoff is an artifact of the build, not a promise about it."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    steps = jobs["build"]["steps"]
+
+    handoff = _named_step(jobs["build"], "Write the build-once artifact handoff")
+    run = handoff["run"]
+    assert "delivery_toolchain/release/build_release_handoff.py" in run
+    for component in ("api", "web", "worker", "scheduler"):
+        assert f'--component "{component}=' in run
+    assert "--sbom-ref" in run
+    assert "--signature-ref" in run
+    assert "--manifest-output" in run
+    assert "--images-output" in run
+
+    # Both halves of the handoff leave the run, or a later deploy phase has
+    # nothing to be dispatched with.
+    uploaded = [
+        str(step.get("with", {}).get("path", ""))
+        for step in steps
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert any("runtime-release-images.json" in path for path in uploaded)
+    assert any("RELEASE_MANIFEST.json" in path for path in uploaded)
+
+
+def test_the_build_phase_signs_and_attests_every_published_image() -> None:
+    """`sbom_refs` / `signature_refs` must name artifacts that were published.
+
+    ODP-RELEASE-MANIFEST-COSIGN-001 and ODP-RELEASE-MANIFEST-SBOM-001 were
+    raised because the manifest claimed supply-chain evidence that had never
+    been pushed anywhere. The build resolves both back through the registry, so
+    an unresolvable reference fails the build instead of reaching the manifest.
+    """
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    run = _named_step(
+        jobs["build"], "Build, publish, sign, and attest immutable container images"
+    )["run"]
+
+    assert "cosign sign --yes" in run
+    assert "cosign attest --yes --type cyclonedx" in run
+    assert "resolve_supply_chain_ref" in run
+    assert 'resolve_supply_chain_ref "${digest_ref}" sig' in run
+    assert 'resolve_supply_chain_ref "${digest_ref}" att' in run
+    assert "no Cosign signature artifact resolves" in run
+    assert "no SBOM attestation artifact resolves" in run
+
+
+# --------------------------------------------------------------------------
+# GitHub environment binding
+#
+# This repository has zero repository-level Actions variables: `GCP_PROJECT_ID`,
+# `GCP_AR_REPO` and the WIF pair exist only under the `dev` / `staging` /
+# `production` environments. GitHub injects those into `vars.*` only for a job
+# that carries an `environment:` binding, and an unbound job does not fail --
+# `vars.X` expands to the empty string. So a missing binding is invisible in the
+# YAML and produces a job that authenticates with nothing and publishes to
+# `-docker.pkg.dev//`.
+# --------------------------------------------------------------------------
+
+
+def test_every_job_that_reads_environment_variables_binds_an_environment() -> None:
+    unbound = []
+    for job_id, job in _release_jobs().items():
+        if "vars." not in yaml.safe_dump(job, allow_unicode=True):
+            continue
+        if not job.get("environment"):
+            unbound.append(job_id)
+    assert unbound == [], (
+        f"{unbound} read `vars.*` with no `environment:` binding; those expand to "
+        "the empty string rather than failing"
+    )
+
+
+def test_the_input_shape_gate_stays_unbound_and_reads_no_variables() -> None:
+    """Input validation must be reachable without spending a deploy approval."""
+
+    job = _release_jobs()[UNBOUND_JOB]
+    assert "environment" not in job
+    assert "vars." not in yaml.safe_dump(job, allow_unicode=True)
+
+
+@pytest.mark.parametrize(
+    ("job_id", "expected_environment"),
+    [(job_id, binding) for job_id, (binding, _) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_each_phase_binds_to_its_own_authority_environment(
+    job_id: str, expected_environment: str
+) -> None:
+    job = _release_jobs()[job_id]
+    assert job["environment"]["name"] == expected_environment
+
+
+def test_the_build_phase_does_not_bind_to_the_deploy_environment() -> None:
+    """Otherwise a staging/production build waits on a `required_reviewers` gate."""
+
+    jobs = _release_jobs()
+    assert jobs["build"]["environment"]["name"] != jobs["deploy"]["environment"]["name"]
+    assert jobs["build"]["environment"]["name"].endswith("-build")
+
+
+@pytest.mark.parametrize(
+    ("job_id", "scope"),
+    [(job_id, scope) for job_id, (_, scope) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_the_binding_gate_exposes_exactly_the_variables_its_scope_requires(
+    job_id: str, scope: str
+) -> None:
+    """The gate reads `os.environ`, so a variable the step forgets reads as missing.
+
+    Tying the step's `env:` block to the module's own required set is what keeps
+    a newly required variable from silently passing the gate it was added to.
+    """
+
+    job = _release_jobs()[job_id]
+    step = _job_steps(job)[_binding_gate_index(job)]
+    assert set(step["env"]) == set(REQUIRED_VARIABLES[scope])
+    for name in REQUIRED_VARIABLES[scope]:
+        assert step["env"][name] == "${{ vars." + name + " }}"
+
+
+@pytest.mark.parametrize(
+    ("job_id", "scope"),
+    [(job_id, scope) for job_id, (_, scope) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_the_binding_gate_declares_the_environment_the_job_binds_to(
+    job_id: str, scope: str
+) -> None:
+    job = _release_jobs()[job_id]
+    step = _job_steps(job)[_binding_gate_index(job)]
+    run = step["run"]
+    assert f"--scope {scope}" in run
+    binding = JOB_ENVIRONMENT_BINDINGS[job_id][0]
+    assert f'--github-environment "{binding}"' in run
+    assert "--receipt" in run, "a refusal with no receipt is not evidence"
+
+
+@pytest.mark.parametrize("job_id", sorted(JOB_ENVIRONMENT_BINDINGS))
+def test_the_binding_gate_runs_before_the_job_touches_google_cloud(
+    job_id: str,
+) -> None:
+    job = _release_jobs()[job_id]
+    steps = _job_steps(job)
+    gate_index = _binding_gate_index(job)
+    cloud_indexes = [
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("google-github-actions/")
+    ]
+    assert cloud_indexes, f"{job_id} was expected to authenticate to Google Cloud"
+    assert gate_index < min(cloud_indexes)
+
+
+def test_no_step_is_skipped_on_a_variable_derived_condition() -> None:
+    """A `vars.`-derived `if:` turns a missing binding into a silent success.
+
+    The old shape guarded the auth and gcloud steps on `env.HAS_WIF == 'true'`,
+    which was itself derived from `vars.*`. In an unbound job that condition is
+    always false, so the build would skip authentication and carry on rather
+    than refuse.
+    """
+
+    offenders = []
+    for job_id, job in _release_jobs().items():
+        for step in _job_steps(job):
+            condition = str(step.get("if", ""))
+            if "HAS_WIF" in condition or "vars." in condition:
+                offenders.append(f"{job_id}:{step.get('name', step.get('uses'))}")
+    assert offenders == []
+
+
+def test_the_build_phase_publishes_its_binding_receipt() -> None:
+    """The refusal has to leave the runner, or it is not auditable evidence."""
+
+    job = _release_jobs()["build"]
+    upload = next(
+        step
+        for step in _job_steps(job)
+        if str(step.get("uses", "")).startswith("actions/upload-artifact")
+        and "environment" in str(step.get("with", {}).get("name", ""))
+    )
+    assert upload["if"] == "always()", "a receipt only kept on success proves nothing"
+    assert "release-environment-receipt" in upload["with"]["name"]

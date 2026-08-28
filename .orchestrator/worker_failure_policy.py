@@ -57,7 +57,152 @@ def _entrypoint(func):
 
 
 @_entrypoint
+def is_cloud_run_quota_error(reason: str | None) -> bool:
+    if not reason:
+        return False
+    normalized = str(reason).lower()
+    return (
+        "cloud run" in normalized
+        and ("quota" in normalized or "resourceexhausted" in normalized or "429" in normalized)
+    ) or "run.googleapis.com" in normalized
+
+
+@_entrypoint
+def _has_runner_signal(value: Any) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str) and value.strip().lower() in {"", "0", "none", "null"}:
+        return False
+    return value != 0
+
+
+@_entrypoint
+def worker_was_terminated(worker: dict[str, Any] | None) -> bool:
+    """Return whether the runner recorded an operator/signal termination.
+
+    A signal is an authoritative reason to ignore unstructured log text, but
+    it is not a successful worker outcome.  In particular, a SIGTERM can leave
+    an old provider-quota line at the end of a log while the runner is being
+    reaped by the supervisor.
+    """
+    if not isinstance(worker, dict):
+        return False
+    status = str(worker.get("status") or "").strip().lower()
+    if status in {"terminated", "cancelled", "canceled", "superseded"}:
+        return True
+    if _has_runner_signal(worker.get("runner_signal")) or _has_runner_signal(worker.get("signal")):
+        return True
+    try:
+        if int(worker.get("exit_code")) < 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    status_payload = _load_runtime_marker(status_path)
+    if not isinstance(status_payload, dict):
+        return False
+    if _has_runner_signal(status_payload.get("signal")):
+        return True
+    try:
+        return int(status_payload.get("exit_code")) < 0
+    except (TypeError, ValueError):
+        return False
+
+
+@_entrypoint
+def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
+    """Return true only for an explicit zero-exit runner completion.
+
+    ``worker["status"] == "completed"`` is a lifecycle disposition, not
+    proof that the runner succeeded.  Keep that distinction because a
+    supervisor/operator SIGTERM must be prevented from becoming a successful
+    postcondition transition.
+    """
+    if not isinstance(worker, dict) or worker_was_terminated(worker):
+        return False
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status in {"completed", "success", "succeeded"}:
+        try:
+            exit_code = int(worker["exit_code"])
+            if exit_code == 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    if not runner_status:
+        try:
+            if "exit_code" in worker and worker.get("exit_code") is not None and int(worker["exit_code"]) == 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    if status_path:
+        status_payload = _load_runtime_marker(status_path)
+        if isinstance(status_payload, dict):
+            status_val = str(status_payload.get("status") or "").strip().lower()
+            try:
+                code_val = int(status_payload["exit_code"])
+                if status_val in {"completed", "success", "succeeded"} and code_val == 0:
+                    return True
+            except (TypeError, ValueError):
+                pass
+    return False
+
+
+@_entrypoint
+def _has_explicit_failure_evidence(worker: dict[str, Any] | None) -> bool:
+    if not isinstance(worker, dict):
+        return False
+    try:
+        if "exit_code" in worker and worker.get("exit_code") is not None and int(worker["exit_code"]) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status in {"failed", "error", "failure"}:
+        return True
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    if status_path:
+        status_payload = _load_runtime_marker(status_path)
+        if isinstance(status_payload, dict):
+            try:
+                if (
+                    "exit_code" in status_payload
+                    and status_payload.get("exit_code") is not None
+                    and int(status_payload["exit_code"]) > 0
+                ):
+                    return True
+            except (TypeError, ValueError):
+                pass
+            status_val = str(status_payload.get("status") or "").strip().lower()
+            if status_val in {"failed", "error", "failure"}:
+                return True
+    return False
+
+
+@_entrypoint
+def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
+    """Whether failure detection must ignore unstructured worker log text."""
+    if not isinstance(worker, dict):
+        return False
+    if worker_was_terminated(worker):
+        return True
+    if _has_explicit_failure_evidence(worker):
+        return False
+    if is_structured_successful_worker(worker):
+        return True
+    lifecycle_status = str(worker.get("status") or "").strip().lower()
+    if lifecycle_status in {"completed", "success", "succeeded"}:
+        return True
+    return False
+
+
+@_entrypoint
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
+    if worker_log_scan_should_be_skipped(worker):
+        return None
     log_path_value = worker.get("log_path")
     if not log_path_value:
         return None
@@ -221,9 +366,13 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
     }
     retryable_capacity_markers = {
         "status: 429",
+        ": 429",
+        " 429 ",
         "retryablequotaerror",
         "quota_exhausted",
         "resource_exhausted",
+        "resourceexhausted",
+        "resource has been exhausted",
         "rate limit",
         "rate limited",
         "no capacity available",
@@ -265,6 +414,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if is_claude_session_limit_banner(config, provider, reason):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
+    if is_cloud_run_quota_error(reason):
+        return {"kind": "terminal", "transient": False, "label": "terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
@@ -417,6 +568,10 @@ def update_worker_runtime_markers(worker: dict[str, Any]) -> bool:
         if process_activity_at and process_activity_at > str(worker.get("last_process_activity_at") or ""):
             worker["last_process_activity_at"] = process_activity_at
             changed = True
+        disk_activity_at = str(payload.get("last_disk_activity_at") or "").strip()
+        if disk_activity_at and disk_activity_at > str(worker.get("last_disk_activity_at") or ""):
+            worker["last_disk_activity_at"] = disk_activity_at
+            changed = True
         process_activity = payload.get("process_activity")
         if isinstance(process_activity, dict) and worker.get("process_activity") != process_activity:
             worker["process_activity"] = process_activity
@@ -443,10 +598,10 @@ def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
     if runner_status not in {"completed", "success", "succeeded"}:
         return False
     try:
-        exit_code = int(worker.get("exit_code", 0))
+        exit_code = int(worker["exit_code"])
     except (TypeError, ValueError):
         return False
-    return exit_code == 0 and not worker.get("runner_signal")
+    return exit_code == 0 and not _has_runner_signal(worker.get("runner_signal"))
 
 @_entrypoint
 def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
@@ -778,6 +933,9 @@ def mark_provider_dispatch_paused(
     raw_ref: str | None = None,
     worker: dict[str, Any] | None = None,
 ) -> bool:
+    worker_obj = worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
+    if worker_log_scan_should_be_skipped(worker_obj):
+        return False
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
@@ -785,6 +943,8 @@ def mark_provider_dispatch_paused(
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
     now = datetime.now(UTC)
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
+    if not should_pause_dispatch_for_failure_kind(effective_pause_kind):
+        return False
     if effective_pause_kind in {"auth", "provider_config", "provider_unavailable"}:
         if not settings.get("pause_on_auth_failure", True):
             return False
@@ -1418,6 +1578,11 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
         return True
     agents_cfg = config.get("agents", {}) or {}
     agent = agents_cfg.get(agent_id) or agents_cfg.get(name)
+    if not isinstance(agent, dict):
+        for candidate in agents_cfg.values():
+            if isinstance(candidate, dict) and str(candidate.get("display_name") or candidate.get("name") or "").casefold() == name.casefold():
+                agent = candidate
+                break
     if isinstance(agent, dict):
         if agent.get("enabled") is False or agent.get("disabled") is True or str(agent.get("status") or "").lower() in {"disabled", "unavailable"}:
             return True
@@ -1537,6 +1702,33 @@ def first_viable_agent(
     # load is equal.
     counts = agent_open_task_counts(config, status, role=role)
     return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
+
+@_entrypoint
+def has_configured_reassignment_candidates(
+    config: dict[str, Any],
+    preferred: list[str],
+    exclude: set[str],
+    *,
+    task: dict[str, Any] | None = None,
+    exclude_pools: set[str] | None = None,
+) -> bool:
+    known = known_agent_display_names(config)
+    seen: set[str] = set()
+    excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
+    for candidate in preferred:
+        name = str(candidate or "").strip()
+        if not name or name in seen or name in exclude:
+            continue
+        seen.add(name)
+        if is_human_gate_agent(name):
+            continue
+        if name in known:
+            if agent_account_pool_id(config, name) in excluded_pool_ids:
+                continue
+            if not agent_can_take_task(config, name, task):
+                continue
+            return True
+    return False
 
 @_entrypoint
 def agent_auto_dispatch_block_reason(
@@ -1773,6 +1965,12 @@ def reassign_tasks_after_review_churn(
     changes ownership, regardless of which LLM owned the task. It deliberately
     uses the existing reassignment candidates and viability checks rather than
     introducing a second scheduler.
+
+    To prevent churn bounce (來回彈跳), all owners who have failed during the
+    current review churn epoch are remembered and excluded from reassignment
+    until a successful merge or an explicit reset clears the epoch history.
+    If no healthy alternative owner is available, the task fails closed to
+    'blocked' with an auditable reason.
     """
     settings = review_churn_settings(config)
     if not settings.get("enabled", True):
@@ -1806,32 +2004,85 @@ def reassign_tasks_after_review_churn(
             continue
         try:
             reopen_count = max(0, int(snapshot.get("review_reopen_count", 0) or 0))
-            last_reassigned_count = max(0, int(snapshot.get("review_churn_reassigned_at_count", 0) or 0))
+            raw_last_reassigned = max(0, int(snapshot.get("review_churn_reassigned_at_count", 0) or 0))
+            # If reopen_count was reset below the previous reassignment count, start a new epoch with last_reassigned_count=0
+            last_reassigned_count = raw_last_reassigned if raw_last_reassigned <= reopen_count else 0
         except (TypeError, ValueError):
             continue
-        if reopen_count < threshold or reopen_count - last_reassigned_count < threshold:
-            continue
-
         owner = str(snapshot.get("owner") or "").strip()
         reviewer = str(snapshot.get("reviewer") or "").strip()
         if not owner or is_human_gate_agent(owner):
             continue
 
-        # Terminating case for the rotation. Reassignment assumes a different
-        # agent can clear the review; when the blocker is external -- an
-        # unauthorized deploy, a suspended project, evidence only a human can
-        # produce -- every rotation burns a dispatch and returns to the same
-        # refusal. Handing the task to a human is the only move that changes
-        # the outcome, and `eligible_statuses` excludes `blocked`, so this
-        # fires once rather than every tick.
+        # Collect failed owners in the current review churn epoch to avoid bouncing.
+        # An explicit reset (e.g. reopen_count < raw_last_reassigned or reopen_count == 0) resets epoch history.
+        is_reset = raw_last_reassigned > reopen_count or reopen_count == 0
+        if is_reset and (
+            raw_last_reassigned > 0
+            or bool(snapshot.get("review_churn_previous_owner"))
+            or bool(snapshot.get("review_churn_last_reassigned_at"))
+            or bool(snapshot.get("review_churn_epoch_failed_owners"))
+        ):
+            if reopen_count < threshold:
+                if persist_task_reassignment(
+                    config,
+                    task_id=task_id,
+                    new_owner=owner,
+                    new_reviewer=reviewer,
+                    message=str(snapshot.get("assignment_note") or snapshot.get("next") or ""),
+                    task_updates={
+                        "review_churn_reassigned_at_count": 0,
+                        "review_churn_previous_owner": None,
+                        "review_churn_last_reassigned_at": None,
+                        "review_churn_epoch_failed_owners": [],
+                    },
+                ):
+                    clear_task_failure_streaks_for_task(state, task_id)
+                    changed = True
+                continue
+
+        if reopen_count < threshold or reopen_count - last_reassigned_count < threshold:
+            continue
+
+        raw_epoch_failed = snapshot.get("review_churn_epoch_failed_owners") if not is_reset else []
+        epoch_failed_owners: list[str] = []
+        if isinstance(raw_epoch_failed, list):
+            for item in raw_epoch_failed:
+                name = str(item or "").strip()
+                if name and name not in epoch_failed_owners:
+                    epoch_failed_owners.append(name)
+
+        prev_owner = str(snapshot.get("review_churn_previous_owner") or "").strip()
+        if prev_owner and not is_reset and prev_owner not in epoch_failed_owners:
+            epoch_failed_owners.append(prev_owner)
+
+        if owner and owner not in epoch_failed_owners:
+            epoch_failed_owners.append(owner)
+
+        # Terminating case for the rotation itself.
+        #
+        # The fail-closed branch below already stops when no viable owner is
+        # LEFT; it answers "we ran out of agents". It cannot answer "rotating
+        # agents is not what is wrong here", and with a large enough roster it
+        # never fires. DPF-EMGI-LIVE-ROLLOUT-001 reached 8 reopens and 20
+        # dispatches cycling owners against a gate that needed an authorized
+        # human action -- every rotation found a willing agent and every one of
+        # them hit the same external refusal.
+        #
+        # `eligible_statuses` excludes `blocked`, so this fires once rather
+        # than every tick.
         if escalate_threshold and reopen_count >= escalate_threshold:
             escalation = (
-                f"Escalated to Human/Ops after {reopen_count} reviewer reopens: automated "
-                f"owner rotation is not clearing this review. Last owner {owner}, reviewer "
-                f"{reviewer or 'unassigned'}. A human decision or an authorized action is "
-                f"needed before further dispatch."
+                f"Escalated to Human/Ops after {reopen_count} reviewer reopens: owner rotation "
+                f"is not clearing this review"
+                + (
+                    f" (tried in current review epoch: {', '.join(epoch_failed_owners)})"
+                    if epoch_failed_owners
+                    else ""
+                )
+                + ". A human decision or an authorized action is needed before further dispatch."
             )
-            if not persist_task_reassignment(
+            if persist_task_reassignment(
                 config,
                 task_id=task_id,
                 new_owner=owner,
@@ -1842,30 +2093,32 @@ def reassign_tasks_after_review_churn(
                 task_updates={
                     "review_churn_escalated_at_count": reopen_count,
                     "review_churn_escalated_at": utc_now(),
+                    "review_churn_epoch_failed_owners": list(epoch_failed_owners),
                 },
             ):
-                continue
-            write_activity_log(
-                config,
-                {
-                    "type": "review_churn_escalated_to_human",
-                    "task_id": task_id,
-                    "message": escalation,
-                    "review_reopen_count": reopen_count,
-                    "owner": owner,
-                    "reviewer": reviewer,
-                },
-            )
-            clear_task_failure_streaks_for_task(state, task_id)
-            changed = True
+                write_activity_log(
+                    config,
+                    {
+                        "type": "review_churn_escalated_to_human",
+                        "task_id": task_id,
+                        "message": escalation,
+                        "review_reopen_count": reopen_count,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                        "failed_owners": list(epoch_failed_owners),
+                    },
+                )
+                clear_task_failure_streaks_for_task(state, task_id)
+                changed = True
             continue
+
         owner_pool = agent_account_pool_id(config, owner)
         excluded_pools = {owner_pool} if settings.get("require_different_account_pool", True) and owner_pool else set()
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=snapshot)
         new_owner = first_viable_agent(
             config,
             owner_candidates,
-            exclude={owner, reviewer},
+            exclude=set(epoch_failed_owners) | {owner, reviewer},
             state=state,
             task=snapshot,
             provider_report=provider_report,
@@ -1874,8 +2127,52 @@ def reassign_tasks_after_review_churn(
             exclude_pools=excluded_pools,
         )
         if not new_owner or is_human_gate_agent(new_owner):
+            if has_configured_reassignment_candidates(
+                config,
+                owner_candidates,
+                exclude=set(epoch_failed_owners) | {owner, reviewer},
+                task=snapshot,
+                exclude_pools=excluded_pools,
+            ):
+                continue
+            # Fail closed: no viable alternative owner available in this review churn epoch
+            blocked_message = (
+                f"Review churn fail-closed: no viable alternative owner available after {reopen_count} reviewer reopens "
+                f"(failed in current review epoch: {', '.join(epoch_failed_owners)}). "
+                "Task marked blocked for human intervention."
+            )
+            if persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=owner,
+                new_reviewer=reviewer,
+                message=blocked_message,
+                new_status="blocked",
+                new_waiting_for="Human/Ops",
+                task_updates={
+                    "review_churn_reassigned_at_count": reopen_count,
+                    "review_churn_previous_owner": owner,
+                    "review_churn_last_reassigned_at": utc_now(),
+                    "review_churn_epoch_failed_owners": list(epoch_failed_owners),
+                },
+            ):
+                write_activity_log(
+                    config,
+                    {
+                        "type": "review_churn_blocked",
+                        "task_id": task_id,
+                        "message": blocked_message,
+                        "review_reopen_count": reopen_count,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                        "failed_owners": list(epoch_failed_owners),
+                    },
+                )
+                clear_task_failure_streaks_for_task(state, task_id)
+                changed = True
             continue
 
+        reviewer_candidates: list[str] = []
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
         else:
@@ -1911,6 +2208,50 @@ def reassign_tasks_after_review_churn(
                     exclude_pools={agent_account_pool_id(config, new_owner)},
                 )
         if not new_reviewer:
+            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)}
+            all_reviewer_candidates = ([reviewer] if reviewer else []) + reviewer_candidates
+            if has_configured_reassignment_candidates(
+                config,
+                all_reviewer_candidates,
+                exclude={new_owner},
+                task=snapshot,
+                exclude_pools=reviewer_pool_exclusions,
+            ):
+                continue
+            # Fail closed: no viable reviewer available for new owner
+            blocked_message = (
+                f"Review churn fail-closed: no viable reviewer available for new owner {new_owner} after "
+                f"{reopen_count} reviewer reopens. Task marked blocked for human intervention."
+            )
+            if persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=owner,
+                new_reviewer=reviewer,
+                message=blocked_message,
+                new_status="blocked",
+                new_waiting_for="Human/Ops",
+                task_updates={
+                    "review_churn_reassigned_at_count": reopen_count,
+                    "review_churn_previous_owner": owner,
+                    "review_churn_last_reassigned_at": utc_now(),
+                    "review_churn_epoch_failed_owners": list(epoch_failed_owners),
+                },
+            ):
+                write_activity_log(
+                    config,
+                    {
+                        "type": "review_churn_blocked",
+                        "task_id": task_id,
+                        "message": blocked_message,
+                        "review_reopen_count": reopen_count,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                        "failed_owners": list(epoch_failed_owners),
+                    },
+                )
+                clear_task_failure_streaks_for_task(state, task_id)
+                changed = True
             continue
 
         message = (
@@ -1930,6 +2271,7 @@ def reassign_tasks_after_review_churn(
                 "review_churn_reassigned_at_count": reopen_count,
                 "review_churn_previous_owner": owner,
                 "review_churn_last_reassigned_at": utc_now(),
+                "review_churn_epoch_failed_owners": list(epoch_failed_owners),
             },
         ):
             continue
@@ -1945,6 +2287,7 @@ def reassign_tasks_after_review_churn(
                 "from_owner_pool": owner_pool,
                 "to_owner_pool": agent_account_pool_id(config, new_owner),
                 "reviewer": new_reviewer,
+                "epoch_failed_owners": list(epoch_failed_owners),
             },
         )
         clear_task_failure_streaks_for_task(state, task_id)

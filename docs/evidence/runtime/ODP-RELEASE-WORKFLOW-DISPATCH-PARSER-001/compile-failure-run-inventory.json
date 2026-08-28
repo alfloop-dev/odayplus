@@ -1,0 +1,237 @@
+{
+  "evidence_kind": "runtime-release-workflow-compile-failure-inventory",
+  "task_id": "ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001",
+  "repository": "alfloop-dev/odayplus",
+  "workflow_file": ".github/workflows/deploy-dev.yml",
+  "collected_at_utc": "2026-08-26T18:24:52Z",
+  "說明": "每一列都是 gh api 逐字回讀的 run metadata，另附該 run head 上 deploy-dev.yml 的形狀。job_count=0 且沒有 log，是 GitHub 無法編譯 workflow 檔時建立的 run；此 workflow 的 on: 只有 workflow_dispatch，所以能編譯的版本在 push 上不會產生任何 run。",
+  "runs": [
+    {
+      "run_id": 32997671900,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-26T18:04:21Z",
+      "head_branch": "gh-readonly-queue/dev/pr-1028-a4708003faade297854216086284c3ece6d977c1",
+      "head_sha": "15a901343eab387537beddef1fe50228e46671c5",
+      "job_count": 0,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32997671900",
+      "workflow_file_at_head": {
+        "has_push_trigger": false,
+        "job_level_env_runner_temp": [
+          "210:HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff"
+        ],
+        "step_level_runner_temp": [
+          "172:path: ${{ runner.temp }}/release-phase-receipt.json",
+          "255:path: ${{ runner.temp }}/release-environment-receipt.json",
+          "448:path: ${{ runner.temp }}/runtime-release-handoff/runtime-release-images.json",
+          "455:path: ${{ runner.temp }}/runtime-release-handoff/RELEASE_MANIFEST.json",
+          "544:path: ${{ runner.temp }}/release-environment-receipt.json",
+          "615:path: ${{ runner.temp }}/release-admission-receipt.json",
+          "760:path: ${{ runner.temp }}/release-environment-receipt.json"
+        ]
+      }
+    },
+    {
+      "run_id": 32995852711,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-26T17:44:00Z",
+      "head_branch": "gh-readonly-queue/dev/pr-1028-a4708003faade297854216086284c3ece6d977c1",
+      "head_sha": "15a901343eab387537beddef1fe50228e46671c5",
+      "job_count": 0,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32995852711",
+      "workflow_file_at_head": {
+        "has_push_trigger": false,
+        "job_level_env_runner_temp": [
+          "210:HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff"
+        ],
+        "step_level_runner_temp": [
+          "172:path: ${{ runner.temp }}/release-phase-receipt.json",
+          "255:path: ${{ runner.temp }}/release-environment-receipt.json",
+          "448:path: ${{ runner.temp }}/runtime-release-handoff/runtime-release-images.json",
+          "455:path: ${{ runner.temp }}/runtime-release-handoff/RELEASE_MANIFEST.json",
+          "544:path: ${{ runner.temp }}/release-environment-receipt.json",
+          "615:path: ${{ runner.temp }}/release-admission-receipt.json",
+          "760:path: ${{ runner.temp }}/release-environment-receipt.json"
+        ]
+      }
+    },
+    {
+      "run_id": 32993493214,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-26T17:19:59Z",
+      "head_branch": "task/ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+      "head_sha": "2d878fd8ae27a4a2626f7f018430b196ec267a3d",
+      "job_count": 0,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32993493214",
+      "workflow_file_at_head": {
+        "has_push_trigger": false,
+        "job_level_env_runner_temp": [
+          "210:HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff"
+        ],
+        "step_level_runner_temp": [
+          "172:path: ${{ runner.temp }}/release-phase-receipt.json",
+          "255:path: ${{ runner.temp }}/release-environment-receipt.json",
+          "448:path: ${{ runner.temp }}/runtime-release-handoff/runtime-release-images.json",
+          "455:path: ${{ runner.temp }}/runtime-release-handoff/RELEASE_MANIFEST.json",
+          "544:path: ${{ runner.temp }}/release-environment-receipt.json",
+          "615:path: ${{ runner.temp }}/release-admission-receipt.json",
+          "760:path: ${{ runner.temp }}/release-environment-receipt.json"
+        ]
+      }
+    },
+    {
+      "run_id": 32992553224,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-26T17:10:22Z",
+      "head_branch": "task/ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+      "head_sha": "9691c26957b6843bc7320afa9058a1fed95e902d",
+      "job_count": 0,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32992553224",
+      "workflow_file_at_head": {
+        "has_push_trigger": false,
+        "job_level_env_runner_temp": [
+          "210:HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff"
+        ],
+        "step_level_runner_temp": [
+          "172:path: ${{ runner.temp }}/release-phase-receipt.json",
+          "255:path: ${{ runner.temp }}/release-environment-receipt.json",
+          "448:path: ${{ runner.temp }}/runtime-release-handoff/runtime-release-images.json",
+          "455:path: ${{ runner.temp }}/runtime-release-handoff/RELEASE_MANIFEST.json",
+          "544:path: ${{ runner.temp }}/release-environment-receipt.json",
+          "615:path: ${{ runner.temp }}/release-admission-receipt.json",
+          "760:path: ${{ runner.temp }}/release-environment-receipt.json"
+        ]
+      }
+    },
+    {
+      "run_id": 32990568816,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-26T16:49:10Z",
+      "head_branch": "task/ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+      "head_sha": "0f4837801e60dbc23f9f57cc4b10257dd7a5c043",
+      "job_count": 0,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32990568816",
+      "workflow_file_at_head": {
+        "has_push_trigger": false,
+        "job_level_env_runner_temp": [
+          "188:HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff"
+        ],
+        "step_level_runner_temp": [
+          "154:path: ${{ runner.temp }}/release-phase-receipt.json",
+          "400:path: ${{ runner.temp }}/runtime-release-handoff/runtime-release-images.json",
+          "407:path: ${{ runner.temp }}/runtime-release-handoff/RELEASE_MANIFEST.json",
+          "545:path: ${{ runner.temp }}/release-admission-receipt.json"
+        ]
+      }
+    },
+    {
+      "run_id": 32359736962,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-20T10:36:14Z",
+      "head_branch": "dev",
+      "head_sha": "208262cf372af0527d2a27adca8e1810f9bf7ccb",
+      "job_count": 3,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32359736962",
+      "workflow_file_at_head": {
+        "has_push_trigger": true,
+        "job_level_env_runner_temp": [],
+        "step_level_runner_temp": []
+      }
+    },
+    {
+      "run_id": 32359586288,
+      "event": "push",
+      "conclusion": "cancelled",
+      "created_at": "2026-08-20T10:34:23Z",
+      "head_branch": "dev",
+      "head_sha": "55fe2275be9442ada3bfe1012c74efca1b8b038d",
+      "job_count": 3,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32359586288",
+      "workflow_file_at_head": {
+        "has_push_trigger": true,
+        "job_level_env_runner_temp": [],
+        "step_level_runner_temp": []
+      }
+    },
+    {
+      "run_id": 32341943807,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-20T06:59:26Z",
+      "head_branch": "dev",
+      "head_sha": "56a2b4a55504c1690ff5f99fdb0a8af2d1e186c2",
+      "job_count": 3,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32341943807",
+      "workflow_file_at_head": {
+        "has_push_trigger": true,
+        "job_level_env_runner_temp": [],
+        "step_level_runner_temp": []
+      }
+    },
+    {
+      "run_id": 32327030934,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-20T03:06:15Z",
+      "head_branch": "dev",
+      "head_sha": "7cc1c3c6b8492d059719a7f8211727c26341661f",
+      "job_count": 3,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32327030934",
+      "workflow_file_at_head": {
+        "has_push_trigger": true,
+        "job_level_env_runner_temp": [],
+        "step_level_runner_temp": []
+      }
+    },
+    {
+      "run_id": 32323723277,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-20T02:11:00Z",
+      "head_branch": "dev",
+      "head_sha": "115e0d924e0ee85a86efa62b4d968e98433c0d27",
+      "job_count": 3,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32323723277",
+      "workflow_file_at_head": {
+        "has_push_trigger": true,
+        "job_level_env_runner_temp": [],
+        "step_level_runner_temp": []
+      }
+    },
+    {
+      "run_id": 32322408509,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-20T01:49:32Z",
+      "head_branch": "dev",
+      "head_sha": "1be4064287400d21431b2083d64f36792e3d2c22",
+      "job_count": 3,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32322408509",
+      "workflow_file_at_head": {
+        "has_push_trigger": true,
+        "job_level_env_runner_temp": [],
+        "step_level_runner_temp": []
+      }
+    },
+    {
+      "run_id": 32265972592,
+      "event": "push",
+      "conclusion": "failure",
+      "created_at": "2026-08-19T14:45:56Z",
+      "head_branch": "dev",
+      "head_sha": "559e389e6de802d062898d5adec7991f9f49387c",
+      "job_count": 3,
+      "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32265972592",
+      "workflow_file_at_head": {
+        "has_push_trigger": true,
+        "job_level_env_runner_temp": [],
+        "step_level_runner_temp": []
+      }
+    }
+  ]
+}

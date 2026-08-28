@@ -40,6 +40,45 @@ run_locked_python() {
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  : "${ODP_PROD_DEPLOY_URL:?Error: ODP_PROD_DEPLOY_URL is required for production live E2E.}"
+  : "${ODP_PROD_API_URL:?Error: ODP_PROD_API_URL is required for production live E2E.}"
+  for production_url in "${ODP_PROD_DEPLOY_URL}" "${ODP_PROD_API_URL}"; do
+    if [[ ! "${production_url}" =~ ^https://[^[:space:]]+$ ]]; then
+      echo "Error: production live E2E URLs must be HTTPS custom domains." >&2
+      exit 1
+    fi
+  done
+fi
+
+# Private-IP Cloud SQL is used by isolated staging. Keep the connectivity
+# binding in this single release entrypoint so every service and job follows
+# the same path; if either half is missing, fail before any mutation.
+if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ] && [ -z "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
+  echo "Error: ODP_CLOUD_RUN_VPC_EGRESS is required with ODP_CLOUD_RUN_VPC_CONNECTOR." >&2
+  exit 1
+fi
+if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ] && [ -z "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
+  echo "Error: ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS." >&2
+  exit 1
+fi
+if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
+  case "${ODP_CLOUD_RUN_VPC_EGRESS}" in
+    all|all-traffic|private-ranges-only)
+      ;;
+    *)
+      echo "Error: unsupported ODP_CLOUD_RUN_VPC_EGRESS '${ODP_CLOUD_RUN_VPC_EGRESS}'. " \
+        "Expected all, all-traffic, or private-ranges-only." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+CLOUD_RUN_NETWORK_ARGS=()
+if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
+  CLOUD_RUN_NETWORK_ARGS+=("--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}")
+  CLOUD_RUN_NETWORK_ARGS+=("--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}")
+fi
 
 if [ -z "${ODP_SCHEDULED_INGESTION_TENANT_ID:-}" ] && [ -z "${ODP_TENANT_ID:-}" ]; then
   echo "Error: ODP_SCHEDULED_INGESTION_TENANT_ID or ODP_TENANT_ID is required." >&2
@@ -82,7 +121,6 @@ run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py p
   --output "${PREFLIGHT_REPORT}"
 
 # No build, push, or Cloud Run mutation may occur above this line.
-IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
 REVISION_SUFFIX="release-${ODAY_RELEASE_SHA:0:12}"
 API_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
 WEB_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
@@ -97,10 +135,24 @@ WORKER_CANDIDATE_JOB="$(release_job_name "${WORKER_JOB}")"
 SCHEDULER_CANDIDATE_JOB="$(release_job_name "${SCHEDULER_JOB}")"
 REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
-API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
-WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
-WORKER_IMAGE="${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}"
-SCHEDULER_IMAGE="${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}"
+if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
+  : "${API_IMAGE:?Error: API_IMAGE is required for deploy-by-digest.}"
+  : "${WEB_IMAGE:?Error: WEB_IMAGE is required for deploy-by-digest.}"
+  : "${WORKER_IMAGE:?Error: WORKER_IMAGE is required for deploy-by-digest.}"
+  : "${SCHEDULER_IMAGE:?Error: SCHEDULER_IMAGE is required for deploy-by-digest.}"
+  for image in "${API_IMAGE}" "${WEB_IMAGE}" "${WORKER_IMAGE}" "${SCHEDULER_IMAGE}"; do
+    if [[ ! "${image}" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+      echo "Error: deploy-by-digest requires immutable image reference, got '${image}'." >&2
+      exit 1
+    fi
+  done
+else
+  IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
+  API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
+  WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+  WORKER_IMAGE="${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}"
+  SCHEDULER_IMAGE="${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}"
+fi
 
 echo "Deployment details:"
 echo "  Environment:      ${ODP_DEPLOY_ENV}"
@@ -188,6 +240,7 @@ keys = [
     "ODP_PRODUCT_MODE",
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
+    "ODP_EXTERNAL_PROVIDER_MODE",
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
@@ -218,6 +271,10 @@ build_publish_sign() {
   local name="$1"
   local image="$2"
   local dockerfile="$3"
+  if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ] || [ "${ODP_SKIP_BUILD:-false}" = "true" ]; then
+    echo "Deploy-by-digest: skipping build for ${name} image (${image})."
+    return 0
+  fi
   echo "Building and publishing ${name} image..."
   docker build \
     --platform linux/amd64 \
@@ -343,6 +400,7 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=0 \
   --task-timeout=1800s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=migration,oday-data-binding=live" \
   --quiet
 
@@ -396,9 +454,10 @@ gcloud run deploy "${API_SERVICE}" \
   --set-secrets="${API_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${API_REVISION_TAG}" \
   --no-traffic \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --quiet
 
 gcloud run services describe "${API_SERVICE}" \
@@ -423,6 +482,7 @@ gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=0 \
   --task-timeout=600s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=scheduler,oday-data-binding=live" \
   --quiet
 
@@ -440,6 +500,7 @@ gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=3 \
   --task-timeout=900s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=worker,oday-data-binding=live" \
   --quiet
 
@@ -517,23 +578,27 @@ payload = {
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
 
-echo "Building and publishing Web image..."
-docker build \
-  --platform linux/amd64 \
-  --build-arg "ODP_API_BASE_URL=${API_URL}" \
-  --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
-  --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
-  --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
-  --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
-  --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
-  --label "com.oday-plus.data-binding=live" \
-  -t "${WEB_IMAGE}" \
-  -f infra/docker/web.Dockerfile \
-  .
-docker push "${WEB_IMAGE}"
+if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ] || [ "${ODP_SKIP_BUILD:-false}" = "true" ]; then
+  echo "Deploy-by-digest: skipping build for Web image (${WEB_IMAGE})."
+else
+  echo "Building and publishing Web image..."
+  docker build \
+    --platform linux/amd64 \
+    --build-arg "ODP_API_BASE_URL=${API_URL}" \
+    --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
+    --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
+    --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
+    --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
+    --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+    --label "com.oday-plus.data-binding=live" \
+    -t "${WEB_IMAGE}" \
+    -f infra/docker/web.Dockerfile \
+    .
+  docker push "${WEB_IMAGE}"
 
-cosign sign --yes "${WEB_IMAGE}"
-CI=true ./delivery_toolchain/security/sign_images.sh verify "${WEB_IMAGE}"
+  cosign sign --yes "${WEB_IMAGE}"
+  CI=true ./delivery_toolchain/security/sign_images.sh verify "${WEB_IMAGE}"
+fi
 
 echo "Deploying immutable Web candidate without production traffic..."
 gcloud run deploy "${WEB_SERVICE}" \
@@ -547,6 +612,7 @@ gcloud run deploy "${WEB_SERVICE}" \
   --set-secrets="${WEB_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${WEB_REVISION_TAG}" \
   --no-traffic \
   --allow-unauthenticated \
@@ -609,9 +675,16 @@ promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
 echo "Running fail-closed live E2E acceptance gate against the promoted release..."
 # Resolve the served origins into variables first. Inside the argv of the gate
 # invocation a failing command substitution would expand to an empty string
-# without tripping `set -e`, handing the gate a blank URL.
-LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+# without tripping `set -e`, handing the gate a blank URL. Dev deliberately
+# uses the Cloud Run default service URL; production uses the configured HTTPS
+# custom domains so the final gate exercises the public production contract.
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  LIVE_E2E_API_URL="${ODP_PROD_API_URL}"
+  LIVE_E2E_WEB_URL="${ODP_PROD_DEPLOY_URL}"
+else
+  LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+  LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+fi
 if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
   echo "Live E2E gate cannot run: served origin lookup returned empty" \
     "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2

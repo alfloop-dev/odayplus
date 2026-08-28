@@ -1908,7 +1908,13 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         text = workflow.read_text(encoding="utf-8")
         if_lines = [line for line in text.splitlines() if line.strip().startswith("if:")]
         assert all("secrets." not in line for line in if_lines)
-        assert "env.HAS_WIF" in text
+        # Federated identity used to be asserted here as `env.HAS_WIF`, a
+        # var-derived boolean that also gated the auth steps via `if:`. In a
+        # job with no `environment:` binding that boolean is always false, so
+        # the guard skipped authentication instead of refusing. The presence
+        # check now runs as a fail-closed step inside each bound job.
+        assert "delivery_toolchain/release/check_release_environment.py" in text
+        assert "env.HAS_WIF" not in text
         assert "GCP_SA_KEY" not in text
         assert "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT" in text
         assert 'ODP_REQUIRE_LIVE_DATA: "true"' in text
@@ -1924,7 +1930,8 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_SCHEDULER_CRON" in text
         assert "ODP_PRODUCTION_PROVIDER_IDS" not in text
         assert "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" not in text
-        assert "ODP_EXTERNAL_PROVIDER_MODE" not in text
+        assert "ODP_EXTERNAL_PROVIDER_MODE" in text
+        assert "ODP_EXTERNAL_PROVIDER_MODE: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
@@ -2028,7 +2035,7 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert "restore_scheduler_trigger" in text
     assert "ODP_PRODUCTION_PROVIDER_IDS" not in text
     assert "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" not in text
-    assert "ODP_EXTERNAL_PROVIDER_MODE" not in text
+    assert '"ODP_EXTERNAL_PROVIDER_MODE",' in text
     assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION" not in text
     assert "oday-local" not in text
     assert "postgresql://" not in text
@@ -2747,12 +2754,74 @@ def test_worker_and_scheduler_images_use_bounded_job_entrypoint() -> None:
 
     for dockerfile in (worker, scheduler):
         assert (
-            'ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]' in dockerfile
+            'ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]'
+            in dockerfile
         )
-        assert '"alembic>=1.13"' in dockerfile
-        assert '"psycopg[binary,pool]>=3.2"' in dockerfile
     assert 'CMD ["worker", "--max-jobs", "100"]' in worker
     assert 'CMD ["scheduler"]' in scheduler
+
+
+def test_docker_python_runtime_images_install_from_frozen_uv_lock() -> None:
+    """Contract: API, worker, scheduler runtime images only install from uv.lock frozen resolution."""
+    live_dockerfiles = {
+        "api": ROOT / "infra/docker/api.Dockerfile",
+        "worker": ROOT / "infra/docker/worker.Dockerfile",
+        "scheduler": ROOT / "infra/docker/scheduler.Dockerfile",
+    }
+
+    # Verify canonical three live Python Dockerfiles exist
+    for role, path in live_dockerfiles.items():
+        assert path.is_file(), f"Missing live Dockerfile for {role}: {path}"
+        content = path.read_text(encoding="utf-8")
+
+        # Must copy uv from an immutable digest, rejecting mutable :latest
+        assert "COPY --from=ghcr.io/astral-sh/uv" in content, (
+            f"{role}.Dockerfile must copy uv binary from ghcr.io/astral-sh/uv"
+        )
+        assert ":latest" not in content, (
+            f"{role}.Dockerfile must not use mutable :latest tag for uv or base images"
+        )
+        assert "@sha256:" in content, (
+            f"{role}.Dockerfile must pin uv to an explicit immutable digest"
+        )
+
+        # Must copy both pyproject.toml and uv.lock
+        assert "COPY pyproject.toml uv.lock ./" in content, (
+            f"{role}.Dockerfile must copy pyproject.toml and uv.lock"
+        )
+
+        # Must use frozen export from uv.lock
+        assert "uv export --frozen --no-dev --no-emit-project" in content, (
+            f"{role}.Dockerfile must export dependencies with --frozen from uv.lock"
+        )
+
+        # Must use canonical locked install with require-hashes
+        assert (
+            "uv pip install --no-cache --system --require-hashes -r" in content
+        ), (
+            f"{role}.Dockerfile must install via canonical 'uv pip install --no-cache --system --require-hashes -r'"
+        )
+
+        # Must clean up temporary requirements file
+        assert "rm -f /tmp/requirements.txt" in content, (
+            f"{role}.Dockerfile must clean up temporary /tmp/requirements.txt"
+        )
+
+        # Must not parse pyproject.toml at build time directly or hand-pin individual packages
+        assert "tomllib.load" not in content, (
+            f"{role}.Dockerfile must not parse pyproject.toml dependencies dynamically"
+        )
+        assert '"alembic>=' not in content, (
+            f"{role}.Dockerfile must not hand-pin alembic; uv.lock is authority"
+        )
+        assert '"psycopg[binary,pool]>=' not in content, (
+            f"{role}.Dockerfile must not hand-pin psycopg; uv.lock is authority"
+        )
+
+    # No parallel requirements files maintained in infra/docker
+    docker_dir = ROOT / "infra/docker"
+    parallel_reqs = list(docker_dir.glob("*requirements*.txt"))
+    assert not parallel_reqs, f"Found parallel requirements files: {parallel_reqs}"
 
 
 # Deploy Dev run 30376737123 selected exactly these three providers, so
@@ -5663,3 +5732,121 @@ def test_dynamic_provider_env_inventory_returns_exact_general_keys_and_registry_
     assert "ODP_POI_PROVIDER_API_KEY" in inv["secrets"]
     assert "ODP_POI_PROVIDER_URL" in inv["endpoints"]
     assert "ODP_POI_PROVIDER_AUTH_STATUS" in inv["auth_statuses"]
+
+
+# --- ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001 tests ---
+
+
+def _extract_cloud_run_service_deploy_block(script_text: str, service_var: str) -> str:
+    """Extract the gcloud run deploy command block for a specific service."""
+    marker = f'gcloud run deploy "${{{service_var}}}"'
+    start = script_text.find(marker)
+    if start == -1:
+        raise ValueError(f"Could not find deploy block for ${{{service_var}}}")
+    lines = script_text[start:].splitlines()
+    block_lines: list[str] = []
+    for line in lines:
+        block_lines.append(line)
+        if not line.rstrip().endswith("\\"):
+            break
+    return "\n".join(block_lines)
+
+
+def test_deploy_script_api_and_web_authentication_boundary_contract() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    - API deployment must explicitly use --no-allow-unauthenticated and must not use --allow-unauthenticated.
+    - Web deployment must use --allow-unauthenticated (as public entrypoint for OIDC login) and must not use --no-allow-unauthenticated.
+    - Both services deploy with --no-traffic and explicit revision tags.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    api_block = _extract_cloud_run_service_deploy_block(text, "API_SERVICE")
+    assert "--no-allow-unauthenticated" in api_block
+    assert "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
+    assert "--no-traffic" in api_block
+    assert '--tag="${API_REVISION_TAG}"' in api_block
+
+    web_block = _extract_cloud_run_service_deploy_block(text, "WEB_SERVICE")
+    assert "--allow-unauthenticated" in web_block
+    assert "--no-allow-unauthenticated" not in web_block
+    assert "--no-traffic" in web_block
+    assert '--tag="${WEB_REVISION_TAG}"' in web_block
+
+    # Across the entire script, exactly one service uses --no-allow-unauthenticated (API)
+    # and exactly one service uses --allow-unauthenticated (Web).
+    assert text.count("--no-allow-unauthenticated") == 1
+    assert text.count("--allow-unauthenticated") == 1
+
+
+@pytest.mark.parametrize(
+    "mutated_api_flag,mutated_web_flag,should_pass",
+    [
+        ("--no-allow-unauthenticated", "--allow-unauthenticated", True),
+        ("--allow-unauthenticated", "--allow-unauthenticated", False),
+        ("--no-allow-unauthenticated", "--no-allow-unauthenticated", False),
+        ("", "--allow-unauthenticated", False),
+        ("--no-allow-unauthenticated", "", False),
+    ],
+)
+def test_deploy_script_invoker_boundary_fails_closed_when_flags_tampered(
+    mutated_api_flag: str,
+    mutated_web_flag: str,
+    should_pass: bool,
+) -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Contract validation fails closed if either API or Web authentication flag is tampered with.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    mutated_text = text.replace(
+        "  --no-allow-unauthenticated \\\n",
+        f"  {mutated_api_flag} \\\n" if mutated_api_flag else "",
+        1,
+    ).replace(
+        "  --allow-unauthenticated \\\n",
+        f"  {mutated_web_flag} \\\n" if mutated_web_flag else "",
+        1,
+    )
+
+    api_block = _extract_cloud_run_service_deploy_block(mutated_text, "API_SERVICE")
+    web_block = _extract_cloud_run_service_deploy_block(mutated_text, "WEB_SERVICE")
+
+    api_ok = (
+        "--no-allow-unauthenticated" in api_block
+        and "--allow-unauthenticated" not in api_block.replace("--no-allow-unauthenticated", "")
+    )
+    web_ok = (
+        "--allow-unauthenticated" in web_block and "--no-allow-unauthenticated" not in web_block
+    )
+    is_valid = api_ok and web_ok
+    assert is_valid is should_pass
+
+
+def test_web_bff_iam_protected_api_audience_wiring_intact() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Web BFF service invokes IAM-protected API candidate using ODP_API_SERVICE_AUDIENCE and ODP_API_BASE_URL.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert 'API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"' in text
+    assert 'python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<\'PY\'' in text
+    assert '"ODP_API_BASE_URL": sys.argv[2],' in text
+    assert '"ODP_API_SERVICE_AUDIENCE": sys.argv[3],' in text
+
+
+def test_no_duplicate_or_additional_deployment_entrypoints() -> None:
+    """ODP-RUNTIME-RELEASE-API-INVOCATION-BOUNDARY-001:
+
+    Deployments must go strictly through the single Runtime Release entrypoint.
+    No second deploy script or workflow may exist.
+    """
+    deploy_scripts = list((ROOT / "product_ops/deployment").glob("deploy_*.sh"))
+    assert len(deploy_scripts) == 1
+    assert deploy_scripts[0].name == "deploy_cloud_run_waji.sh"
+
+    workflows = list((ROOT / ".github/workflows").glob("deploy-*.yml"))
+    assert len(workflows) == 1
+    assert workflows[0].name == "deploy-dev.yml"
+

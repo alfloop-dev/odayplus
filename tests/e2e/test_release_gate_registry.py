@@ -31,7 +31,10 @@ PRODUCT_GATE = ROOT / "delivery_toolchain/e2e/check_product_release_gate.py"
 REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 REGISTRY_README = ROOT / "docs/evidence/gates/README.md"
 
-CANDIDATE_SHA = "e496be62c47c45d758681b8a4d3abfae16f1c96d"
+# Derived, not pinned: the release candidate is rebound whenever a new build
+# produces a manifest, and a pinned literal here turns every rebind into a
+# spurious suite failure that says nothing about the checker under test.
+CANDIDATE_SHA = json.loads(REGISTRY.read_text(encoding="utf-8"))["release"]["candidate_sha"]
 OTHER_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 

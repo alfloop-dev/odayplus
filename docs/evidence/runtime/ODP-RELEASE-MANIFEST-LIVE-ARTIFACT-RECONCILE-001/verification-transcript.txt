@@ -1,0 +1,246 @@
+ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001 verification transcript
+Recorded by: Claude2   Reviewer: Codex   Recorded at: 2026-08-26 (UTC)
+Candidate SHA: ebc4fca5c2dd5871275aee39a18406dd67464f04
+Build run:     https://github.com/alfloop-dev/odayplus/actions/runs/33003734045
+
+Every command below is reproduced verbatim with its real exit code. Where a
+check could not be run, the failure is recorded as a failure, not omitted.
+
+================================================================================
+section-1  The build run that produced the artifact
+================================================================================
+
+$ gh run view 33003734045 --json databaseId,name,displayTitle,status,conclusion,headSha,headBranch,workflowName,createdAt,updatedAt,url,event
+{"conclusion":"success","createdAt":"2026-08-26T19:10:26Z","databaseId":33003734045,"displayTitle":"Deploy Dev","event":"workflow_dispatch","headBranch":"dev","headSha":"ebc4fca5c2dd5871275aee39a18406dd67464f04","name":"Runtime Release","status":"completed","updatedAt":"2026-08-26T19:21:39Z","url":"https://github.com/alfloop-dev/odayplus/actions/runs/33003734045","workflowName":"Deploy Dev"}
+EXIT=0
+
+$ gh run view 33003734045 --json jobs -q '.jobs[] | "\(.databaseId)\t\(.name)\t\(.status)\t\(.conclusion)"'
+98291895128	Validate release phase inputs	completed	success
+98292059495	Build once and publish the immutable artifact handoff	completed	success
+98295294519	Verify the Supervisor lease authorises this deploy	completed	skipped
+98295295941	Deploy the admitted artifact by immutable digest	completed	skipped
+EXIT=0
+
+The two deploy-side jobs are 'skipped', not 'success'. This run built and
+signed an artifact; it did not deploy anything and no Supervisor lease was
+issued or consumed.
+
+$ gh api repos/alfloop-dev/odayplus/actions/runs/33003734045/artifacts -q '.artifacts[] | "\(.id)\t\(.name)\t\(.size_in_bytes)\t\(.expired)"'
+9620034471	runtime-release-manifest-ebc4fca5c2dd5871275aee39a18406dd67464f04	1248	false
+9620033876	runtime-release-images-ebc4fca5c2dd5871275aee39a18406dd67464f04	455	false
+9619676334	release-environment-receipt-dev-build	739	false
+9619653273	release-phase-receipt-dev-build	589	false
+EXIT=0
+
+================================================================================
+section-2  The repository manifest is the run artifact, byte for byte
+================================================================================
+
+$ gh run download 33003734045 -R alfloop-dev/odayplus \
+    -n runtime-release-manifest-ebc4fca5c2dd5871275aee39a18406dd67464f04 -D <tmp>
+$ cmp <tmp>/RELEASE_MANIFEST.json docs/evidence/gates/RELEASE_MANIFEST.json
+EXIT=0  (no output: the files are identical)
+
+$ sha256sum <tmp>/RELEASE_MANIFEST.json docs/evidence/gates/RELEASE_MANIFEST.json
+a1b3c12f47f2ff0b42f918584401b33c0dd925f3059feaaf99fd65c0c7c5d653  /tmp/odp-live-artifact/dl/runtime-release-manifest-ebc4fca5c2dd5871275aee39a18406dd67464f04/RELEASE_MANIFEST.json
+a1b3c12f47f2ff0b42f918584401b33c0dd925f3059feaaf99fd65c0c7c5d653  docs/evidence/gates/RELEASE_MANIFEST.json
+EXIT=0
+
+The same applies to the build handoff and the two build-phase receipts copied
+into this evidence directory:
+
+$ cmp <tmp>/runtime-release-images.json      docs/evidence/runtime/<TASK>/runtime-release-images.json
+EXIT=0
+$ cmp <tmp>/release-phase-receipt.json       docs/evidence/runtime/<TASK>/release-phase-receipt.json
+EXIT=0
+$ cmp <tmp>/release-environment-receipt.json docs/evidence/runtime/<TASK>/release-environment-receipt.json
+EXIT=0
+
+Note that a1b3c12f... is the digest of the *file bytes*. It is not
+manifest_digest. manifest_digest is the SHA-256 of the canonical JSON payload
+with the manifest_digest field removed, which is what lets a self-describing
+file be verified without a hash cycle. Section 3 checks that one.
+
+================================================================================
+section-3  Recomputed bindings (delivery_toolchain/release/release_manifest.py)
+================================================================================
+
+$ python3 docs/evidence/runtime/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001/verify_live_artifact_binding.py
+candidate: ebc4fca5c2dd5871275aee39a18406dd67464f04  build run: 33003734045
+
+[PASS] manifest schema is valid -- []
+[PASS] manifest_digest equals the SHA-256 of its own canonical payload -- sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9
+[PASS] manifest.candidate_sha is the live candidate -- ebc4fca5c2dd5871275aee39a18406dd67464f04
+[PASS] manifest was created by the deploy-dev workflow at the candidate SHA -- github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@ebc4fca5c2dd5871275aee39a18406dd67464f04
+[PASS] migration_digest recomputes from this checkout -- sha256:e860458dd1bb62f07460b0e32ccb92cfbce4d28b3102036a7b883f3db5318840
+[PASS] data_contract_digest recomputes from this checkout -- sha256:3ff542af6a09584cc60644f03e91f7d4fdb3ea75b8659e23af6b0a8e23376a44
+[PASS] source_policy_digest recomputes from this checkout -- sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824
+[PASS] the four build-handoff images are exactly the manifest components -- []
+[PASS] handoff covers every deployable component -- ['api', 'scheduler', 'web', 'worker']
+[PASS] migration reuses the worker image rather than introducing a fifth artifact
+[PASS] sbom_refs: one reference per component repository -- ['asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker']
+[PASS] sbom_refs: every reference is digest-pinned
+[PASS] sbom_refs: no reference reuses an image digest
+[PASS] signature_refs: one reference per component repository -- ['asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker']
+[PASS] signature_refs: every reference is digest-pinned
+[PASS] signature_refs: no reference reuses an image digest
+[PASS] no external source is enabled for this release
+[PASS] registry candidate SHA matches the manifest -- ebc4fca5c2dd5871275aee39a18406dd67464f04
+[PASS] registry manifest_digest matches the manifest -- sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9
+[PASS] registry manifest_ref points at the manifest this script verified -- docs/evidence/gates/RELEASE_MANIFEST.json
+[PASS] registry still records seven gates -- 7
+[PASS] every gate is re-opened against the live candidate
+[PASS] no gate carries a receipt
+[PASS] every gate is blocked and names a blocker
+[PASS] release decision is fail-closed -- no-go
+[PASS] the artifact itself is complete (admission is still blocked by the registry, not by a broken artifact) -- []
+
+Live-artifact binding verified; the release remains NO-GO.
+EXIT=0
+
+================================================================================
+section-4  The release is still fail-closed
+================================================================================
+
+$ python3 delivery_toolchain/e2e/check_release_gate_registry.py --expected-sha ebc4fca5c2dd5871275aee39a18406dd67464f04
+Release gate registry: ODP-RELEASE-GATE-REGISTRY
+Release candidate SHA: ebc4fca5c2dd5871275aee39a18406dd67464f04
+Admission boundary: candidate-built / dev -> dev
+Recorded decision: no-go
+Gates cleared: 0/7
+- [OPEN] gate-0 Code Gate: blocked
+    blocker: No Code Gate receipt is bound to release candidate ebc4fca5c2dd5871275aee39a18406dd67464f04; a green CI run on an earlier commit is not a receipt for this candidate.
+    blocker: ODP-PLAN-ENGINEERING-HARDENING-001 (OpenAPI, frontend dependency, and documentation hardening) is open.
+- [OPEN] gate-1 Contract Gate: blocked
+    blocker: No Contract Gate receipt is bound to release candidate ebc4fca5c2dd5871275aee39a18406dd67464f04.
+    blocker: ODP-PLAN-ENGINEERING-HARDENING-001 must close the OpenAPI and frontend dependency hardening gap before contract compatibility can be attested.
+- [OPEN] gate-2 Data Gate: blocked
+    blocker: No Data Gate receipt is bound to release candidate ebc4fca5c2dd5871275aee39a18406dd67464f04.
+    blocker: check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate.
+- [OPEN] gate-3 Model and Solver Gate: blocked
+    blocker: No Model and Solver Gate receipt is bound to release candidate ebc4fca5c2dd5871275aee39a18406dd67464f04.
+    blocker: ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001 (ForecastOps formal model release evidence) is open.
+    blocker: ODP-PLAN-SITESCORE-OUTCOME-001 and ODP-PLAN-AVM-OUTCOME-001 remain open; ForecastOps history and an approved production alias are still unverified.
+    blocker: ODP-PLAN-SOLVER-RUNTIME-COMPAT-001, ODP-PLAN-HEATZONE-OUTCOME-001, and ODP-PLAN-NETPLAN-ACCEPTANCE-001 are archived done, but task completion is not an exact-candidate Gate 3 receipt or Human/Ops model approval.
+- [OPEN] gate-4 Security and Privacy Gate: blocked
+    blocker: No Security and Privacy Gate receipt is bound to release candidate ebc4fca5c2dd5871275aee39a18406dd67464f04.
+    blocker: ODP-PLAN-OSS-LICENSE-GATE-001 and ODP-PLAN-DEFERRED-OSS-ADR-001 are archived done, but no exact-candidate Gate 4 receipt or Human/Ops legal approval is recorded.
+- [OPEN] gate-5 E2E, Performance and UAT Gate: blocked
+    blocker: No E2E, Performance and UAT Gate receipt is bound to release candidate ebc4fca5c2dd5871275aee39a18406dd67464f04.
+    blocker: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001 and ODP-PLAN-CANONICAL-SHELL-LIVE-001 are archived done, but those implementation receipts do not prove this exact release candidate in staging or UAT.
+    blocker: ODP-PLAN-LIVE-STAGING-PROOF-001 must produce exact-SHA live staging end-to-end proof.
+    blocker: ODP-PLAN-UAT-SIGNOFF-001 (cross-role UAT defect closeout and formal sign-off) is open.
+- [OPEN] gate-6 Ops, Release and Audit Gate: blocked
+    blocker: No Ops, Release and Audit Gate receipt is bound to release candidate ebc4fca5c2dd5871275aee39a18406dd67464f04.
+    blocker: ODP-PLAN-OBSERVABILITY-LIVE-001 (production observability and on-call route) is open.
+    blocker: Every Human/Ops row in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is still pending-human.
+    blocker: ODP-PLAN-FINAL-GATE-AUDIT-001 has not re-run the Stage 0-7 / Gate 0-6 RTM audit.
+RELEASE STATE: NO-GO
+Release gate registry checks passed.
+EXIT=0  (integrity check: a well-formed NO-GO registry passes)
+
+$ python3 delivery_toolchain/e2e/check_release_gate_registry.py --require-go 2>&1 | tail -3
+    blocker: ODP-PLAN-FINAL-GATE-AUDIT-001 has not re-run the Stage 0-7 / Gate 0-6 RTM audit.
+RELEASE STATE: NO-GO
+Release is NO-GO: --require-go was requested but the registry does not record a cleared GO state.
+EXIT=1  (the form a release promotion must call; it refuses this candidate)
+
+================================================================================
+section-5  Supply-chain evidence recorded by the build job (job 98292059495)
+================================================================================
+
+Cosign was really installed in this run (sigstore/cosign-installer@v3,
+cosign-release v2.5.2), so delivery_toolchain/security/sign_images.sh took its
+verifying path instead of its refusing path. The four image digests below are
+the ones the registry now binds.
+
+$ gh run view -R alfloop-dev/odayplus --job 98292059495 --log | grep 'release-<sha>: digest:'
+release-ebc4fca5c2dd5871275aee39a18406dd67464f04: digest: sha256:ac085f14e958ae85befa8edf9476a6a6c55c74dadcf308f610e5c4078b17b4c6 size: 1998
+release-ebc4fca5c2dd5871275aee39a18406dd67464f04: digest: sha256:27109e8066e5d08ca766a9c85498a95125ff843c52f43d3dfbd74c656f08ecce size: 1998
+release-ebc4fca5c2dd5871275aee39a18406dd67464f04: digest: sha256:9a56f306ba2df547196f1e742397646a3db4231aca65cd9af39635b92d18766e size: 1998
+release-ebc4fca5c2dd5871275aee39a18406dd67464f04: digest: sha256:4222c0429385e9883446d3ca7f0826b68e3d93e25f4efb26a846a64e843dae37 size: 1996
+
+$ ... | grep -c 'Verification PASSED.'
+4
+
+$ ... | grep -oE 'Verification for [^ ]+' | sort -u
+Verification for asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api:release-ebc4fca5c2dd5871275aee39a18406dd67464f04
+Verification for asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler:release-ebc4fca5c2dd5871275aee39a18406dd67464f04
+Verification for asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web:release-ebc4fca5c2dd5871275aee39a18406dd67464f04
+Verification for asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker:release-ebc4fca5c2dd5871275aee39a18406dd67464f04
+
+$ ... | grep -oE 'tlog entry created with index: [0-9]+'
+tlog entry created with index: 2605645026
+tlog entry created with index: 2605648013
+tlog entry created with index: 2605693557
+tlog entry created with index: 2605696586
+tlog entry created with index: 2605701308
+tlog entry created with index: 2605704643
+tlog entry created with index: 2605719845
+tlog entry created with index: 2605722121
+
+Eight Rekor transparency-log entries: one signature and one CycloneDX
+attestation per image. Each verified certificate binds the Fulcio identity
+https://github.com/alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@refs/heads/dev
+with githubWorkflowSha=ebc4fca5c2dd5871275aee39a18406dd67464f04, which is what
+ties the signatures to this candidate rather than to the repository at large.
+
+$ ... | grep 'SBOM Content Digest'
+SBOM Content Digest: sha256:5794423dd76ccee5cfc812fa4b29b2de334ce66169c13c822c0c8dfae6af54c1
+Total components cataloged: 775
+
+================================================================================
+section-6  What this environment could NOT verify
+================================================================================
+
+The image, SBOM, and signature digests are recorded as Artifact Registry
+references. Resolving them requires a credential this audit environment does
+not have. The probe is recorded as the failure it was:
+
+$ docker buildx imagetools inspect --raw \
+    asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:ac085f14e958ae85befa8edf9476a6a6c55c74dadcf308f610e5c4078b17b4c6
+
+to select an already authenticated account to use.
+ERROR: error getting credentials - err: exit status 1, out: ``
+EXIT=1
+
+This is a gap in *independent re-resolution*, not a gap in the binding. The
+digests were emitted by the build job itself and fail closed at build time:
+resolve_supply_chain_ref() in .github/workflows/deploy-dev.yml exits non-zero
+when a Cosign .sig or .att tag does not resolve, so a manifest can never claim
+supply-chain evidence the registry did not actually hold. Re-resolution against
+Artifact Registry stays an open item for whoever attests Gate 4.
+
+Also not done here, deliberately:
+  - no deployment, no lease request, and no admission attempt;
+  - no gate receipt was written and no gate status was moved;
+  - external_sources_expected_enabled stays empty; no third-party source was
+    enabled for this candidate.
+
+================================================================================
+section-7  Repository test evidence
+================================================================================
+
+Baseline first. Before this task's changes, these suites already had two
+environment-only failures: the two tests that shell out to
+'make product-e2e-gate', which needs a Playwright install this machine does
+not have. They are unrelated to the release manifest and are unchanged here.
+
+$ uv run --python 3.12 pytest -q tests/e2e/test_release_gate_registry.py tests/release/   # at baseline
+FAILED tests/e2e/test_release_gate_registry.py::test_product_gate_accepts_expected_sha
+FAILED tests/e2e/test_release_gate_registry.py::test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed
+EXIT=1
+
+$ uv run --python 3.12 pytest -q tests/e2e/test_release_gate_registry.py tests/release/   # after
+E        +  where 1 = CompletedProcess(args=['/tmp/pantheon-worker-worktrees/pantheon/odp-release-manifest-live-artifact-reconcile-001/.venv...ht/lib/program.js',\n    '/home/lupin/.npm/_npx/e41f203b7505f1fb/node_modules/playwright/cli.js'\n  ]\n}\n", stderr='').returncode
+
+tests/e2e/test_release_gate_registry.py:623: AssertionError
+=========================== short test summary info ============================
+FAILED tests/e2e/test_release_gate_registry.py::test_product_gate_accepts_expected_sha
+FAILED tests/e2e/test_release_gate_registry.py::test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed
+EXIT=1  (same two Playwright-environment failures as baseline, no new ones)
+
+$ uv run --python 3.12 pytest -q tests/ops/test_release_receipts.py tests/ops/test_dev_rollout.py tests/ops/test_deploy_workflow_contract.py
+........................................................................ [ 97%]
+..                                                                       [100%]
+EXIT=0

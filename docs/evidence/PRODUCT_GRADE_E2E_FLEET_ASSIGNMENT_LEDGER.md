@@ -27,31 +27,11 @@ It is not completion evidence. A lane is complete only after the assigned fleet
 returns implementation evidence, verification evidence, acceptance proof, and
 handoff artifacts matching the task brief.
 
-## Current External Proof Closeout
+## Current Rollout Governance
 
-This ledger is the historical implementation pickup record. Current
-live-provider, live-map, and remote-staging release blockers are tracked in
-`docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` and GitHub issues
-#132-#138.
+This ledger is the historical implementation pickup record. Current live-provider, live-map, and staging rollout governance is defined in `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`.
 
-Product Validation must not close those blockers from this ledger alone. Each
-runtime handback must use the external-proof handback flow:
-
-```bash
-python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>
-python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 delivery_toolchain/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 delivery_toolchain/e2e/update_external_proof_handback_status_board.py --help
-python3 delivery_toolchain/e2e/check_external_proof_handback_status_board.py
-python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees
-python3 delivery_toolchain/e2e/check_external_proof_fleet_notifications.py
-python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees
-```
-
-Accepted #132-#138 handbacks must cite the current PR #82 `headRefOid`, include
-redacted artifacts, include queue-required command fragments in `commands_run`,
-and be recorded through
-`docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`.
+All live provider integrations require explicit operator approval receipts and live ephemeral staging validation prior to production enablement.
 
 ## Assignment Status
 

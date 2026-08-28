@@ -1,38 +1,43 @@
 {
-  "schema_version": 1,
-  "release_id": "odp-20260730-001",
-  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "candidate_sha": "ebc4fca5c2dd5871275aee39a18406dd67464f04",
   "components": {
     "api": {
-      "image": "ghcr.io/alfloop-dev/odayplus-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
-    },
-    "web": {
-      "image": "ghcr.io/alfloop-dev/odayplus-web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
-    },
-    "data_platform": {
-      "image": "ghcr.io/alfloop-dev/oday-data-platform@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:ac085f14e958ae85befa8edf9476a6a6c55c74dadcf308f610e5c4078b17b4c6"
     },
     "migration": {
-      "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:4444444444444444444444444444444444444444444444444444444444444444"
-    },
-    "worker": {
-      "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:27109e8066e5d08ca766a9c85498a95125ff843c52f43d3dfbd74c656f08ecce",
+      "shares_image_with": "worker"
     },
     "scheduler": {
-      "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:6666666666666666666666666666666666666666666666666666666666666666"
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:9a56f306ba2df547196f1e742397646a3db4231aca65cd9af39635b92d18766e"
+    },
+    "web": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:4222c0429385e9883446d3ca7f0826b68e3d93e25f4efb26a846a64e843dae37"
+    },
+    "worker": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:27109e8066e5d08ca766a9c85498a95125ff843c52f43d3dfbd74c656f08ecce"
     }
   },
-  "migration_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "data_contract_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  "source_policy_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "created_at": "2026-08-26T18:50:50+00:00",
+  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@ebc4fca5c2dd5871275aee39a18406dd67464f04",
+  "data_contract_digest": "sha256:3ff542af6a09584cc60644f03e91f7d4fdb3ea75b8659e23af6b0a8e23376a44",
   "external_sources_expected_enabled": [],
+  "manifest_digest": "sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9",
+  "migration_digest": "sha256:e860458dd1bb62f07460b0e32ccb92cfbce4d28b3102036a7b883f3db5318840",
+  "release_id": "odp-ebc4fca5c2dd",
+  "release_status": "ready",
   "sbom_refs": [
-    "oci://ghcr.io/alfloop-dev/odayplus/sbom@sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5384be8688c48ff05e8936b59ae1febe21016ece780d49bab265ff3384824d95",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:819dd2d3b77d2099bf9664fc973d38e6bc1378b58f5e9786c6cd7aadfd5c76af",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:b7d4dd7c67ccdf4716d425f4cb66d05e719a9b88aa0c50732fdb9b3170a2679a",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9f8fca07ede80d1ecff3c61199033877a45c0e1656cabe2337365864d2f1d7a4"
   ],
+  "schema_version": 1,
   "signature_refs": [
-    "oci://ghcr.io/alfloop-dev/odayplus/signature@sha256:8888888888888888888888888888888888888888888888888888888888888888"
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:dd62a2d9466b2d388d7ed3c86d506b51e81084ee32080af72846d0124505fffa",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:4e6688cb45e1b73890790b3f85e183ba43afb2cb58478cd012684f195dbc8783",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:21e194a647a6c2c776f8d8953290af48909323a6bee5b53939e55bc4d8f8fb9b",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:dfd3a4925935dbcd2a493c93c4470d5ad2df081382301d864730300f73cec389"
   ],
-  "created_at": "2026-07-30T12:00:00Z",
-  "created_by_workflow": "github://alfloop-dev/odayplus/actions/runtime-release.yml/run-0001",
-  "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271"
+  "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824"
 }

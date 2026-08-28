@@ -42,6 +42,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -292,6 +293,165 @@ def generate_keypair() -> tuple[bytes, bytes]:
 # ---------------------------------------------------------------------------
 
 
+class _GCSLeaseStateStore:
+    """GCS-backed CAS store shared by Supervisor and hosted release runners.
+
+    The object generation is the compare-and-set token.  Issuance uses
+    ``if_generation_match=0`` and transitions use the generation observed while
+    reading the record, so two callers cannot both consume one lease.  The
+    bucket is provisioned outside this module; this class never creates a
+    bucket or silently falls back to a runner-local directory.
+    """
+
+    def __init__(self, uri: str, *, require_existing: bool) -> None:
+        parsed = urlsplit(uri)
+        if parsed.scheme != "gs" or not parsed.netloc:
+            raise LeaseStateError(
+                "GCS lease state must use a gs://bucket/prefix URI"
+            )
+        self._uri = uri.rstrip("/")
+        self._bucket_name = parsed.netloc
+        self._prefix = parsed.path.strip("/")
+        try:
+            from google.cloud import storage
+        except ImportError as exc:  # pragma: no cover - dependency contract
+            raise LeaseStateError(
+                "google-cloud-storage is required for gs:// lease state"
+            ) from exc
+        try:
+            # The long-lived Supervisor normally uses ADC.  A local operator
+            # may instead pass a short-lived gcloud access token explicitly;
+            # hosted runners never use this escape hatch and authenticate via
+            # WIF before admission.
+            access_token = os.environ.get("ODP_RELEASE_LEASE_GCS_ACCESS_TOKEN", "").strip()
+            if access_token:
+                from google.oauth2.credentials import Credentials
+
+                self._client = storage.Client(credentials=Credentials(token=access_token))
+            else:
+                self._client = storage.Client()
+            self._bucket = self._client.bucket(self._bucket_name)
+            if require_existing and not self._bucket.exists():
+                raise LeaseStateError(
+                    f"durable lease state bucket does not exist: {self._bucket_name}"
+                )
+        except LeaseStateError:
+            raise
+        except Exception as exc:
+            raise LeaseStateError(
+                f"cannot access durable lease state bucket {self._bucket_name}: {exc}"
+            ) from exc
+
+    @property
+    def directory(self) -> str:
+        return self._uri
+
+    def _blob(self, lease_id: str):
+        if not LEASE_ID_PATTERN.fullmatch(lease_id):
+            raise LeaseStateError(f"lease_id {lease_id!r} is not a valid lease identifier")
+        name = f"{self._prefix}/{lease_id}.json" if self._prefix else f"{lease_id}.json"
+        return self._bucket.blob(name)
+
+    def _read(self, lease_id: str) -> tuple[dict[str, Any], int] | None:
+        try:
+            blob = self._blob(lease_id)
+            blob.reload()
+            generation = blob.generation
+            payload = blob.download_as_text(if_generation_match=generation)
+            record = json.loads(payload)
+        except Exception as exc:
+            if exc.__class__.__name__ == "NotFound":
+                return None
+            if isinstance(exc, LeaseStateError):
+                raise
+            raise LeaseStateError(
+                f"lease state record gs://{self._bucket_name}/{lease_id}.json is unreadable: {exc}"
+            ) from exc
+        if not isinstance(record, dict) or not isinstance(generation, int):
+            raise LeaseStateError("lease state record is malformed")
+        return record, generation
+
+    def get(self, lease_id: str) -> dict[str, Any] | None:
+        result = self._read(lease_id)
+        return result[0] if result else None
+
+    def record_issued(self, lease: dict[str, Any], *, issued_by: str) -> dict[str, Any]:
+        record = {
+            "lease_id": lease["lease_id"],
+            "state": STATE_ISSUED,
+            "issued_at": lease["issued_at"],
+            "issued_by": issued_by,
+            "expires_at": lease["expires_at"],
+            "consumed_at": None,
+            "consumed_by": None,
+            "revoked_at": None,
+            "revoked_reason": None,
+            "lease": lease,
+        }
+        payload = json.dumps(record, indent=2, ensure_ascii=False) + "\n"
+        try:
+            self._blob(lease["lease_id"]).upload_from_string(
+                payload,
+                content_type="application/json",
+                if_generation_match=0,
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ == "PreconditionFailed":
+                raise LeaseStateError(
+                    f"lease {lease['lease_id']} already exists in the durable state store"
+                ) from exc
+            raise LeaseStateError(
+                f"cannot record lease state in {self._uri}: {exc}"
+            ) from exc
+        return record
+
+    def consume(self, lease: dict[str, Any], *, consumed_by: str) -> dict[str, Any]:
+        return self._transition(lease, STATE_CONSUMED, "consumed_by", consumed_by)
+
+    def revoke(self, lease: dict[str, Any], *, reason: str) -> dict[str, Any]:
+        return self._transition(lease, STATE_REVOKED, "revoked_reason", reason)
+
+    def _transition(
+        self, lease: dict[str, Any], to_state: str, actor_field: str, actor: str
+    ) -> dict[str, Any]:
+        lease_id = lease.get("lease_id")
+        if not isinstance(lease_id, str):
+            raise LeaseStateError("lease is missing lease_id; cannot transition state")
+        result = self._read(lease_id)
+        if result is None:
+            raise LeaseStateError(f"lease {lease_id} is not present in the durable state store")
+        record, generation = result
+        if record.get("state") != STATE_ISSUED:
+            raise LeaseStateError(
+                f"lease {lease_id} is {record.get('state')!r}, not {STATE_ISSUED!r}; "
+                f"refusing to mark it {to_state!r} (replay)"
+            )
+        stored = record.get("lease")
+        if not isinstance(stored, dict) or canonical_bytes(stored) != canonical_bytes(lease):
+            raise LeaseStateError(
+                f"lease {lease_id} does not match the lease recorded at issuance"
+            )
+        record["state"] = to_state
+        record[f"{to_state}_at"] = _utc_now().isoformat()
+        record[actor_field] = actor
+        payload = json.dumps(record, indent=2, ensure_ascii=False) + "\n"
+        try:
+            self._blob(lease_id).upload_from_string(
+                payload,
+                content_type="application/json",
+                if_generation_match=generation,
+            )
+        except Exception as exc:
+            if exc.__class__.__name__ == "PreconditionFailed":
+                raise LeaseStateError(
+                    f"lease {lease_id} changed concurrently; refusing transition"
+                ) from exc
+            raise LeaseStateError(
+                f"cannot transition lease {lease_id} in {self._uri}: {exc}"
+            ) from exc
+        return record
+
+
 class LeaseStateStore:
     """Durable Supervisor-owned CAS store for lease lifecycle state.
 
@@ -306,7 +466,16 @@ class LeaseStateStore:
     "consume" a lease that stays `issued` everywhere that matters.
     """
 
-    def __init__(self, state_dir: Path, *, require_existing: bool = False) -> None:
+    def __init__(self, state_dir: Path | str, *, require_existing: bool = False) -> None:
+        raw_state_dir = str(state_dir)
+        self._remote = (
+            _GCSLeaseStateStore(raw_state_dir, require_existing=require_existing)
+            if raw_state_dir.startswith("gs://")
+            else None
+        )
+        if self._remote is not None:
+            self._dir = None
+            return
         self._dir = Path(state_dir)
         if require_existing:
             if not self._dir.is_dir():
@@ -319,7 +488,9 @@ class LeaseStateStore:
             self._dir.mkdir(parents=True, exist_ok=True)
 
     @property
-    def directory(self) -> Path:
+    def directory(self) -> Path | str:
+        if self._remote is not None:
+            return self._remote.directory
         return self._dir
 
     def _path(self, lease_id: str) -> Path:
@@ -328,6 +499,8 @@ class LeaseStateStore:
         return self._dir / f"{lease_id}.json"
 
     def get(self, lease_id: str) -> dict[str, Any] | None:
+        if self._remote is not None:
+            return self._remote.get(lease_id)
         try:
             path = self._path(lease_id)
         except LeaseStateError:
@@ -341,6 +514,9 @@ class LeaseStateStore:
 
     def record_issued(self, lease: dict[str, Any], *, issued_by: str = "supervisor") -> dict[str, Any]:
         """Persist a freshly minted lease. Fails closed if the id already exists."""
+
+        if self._remote is not None:
+            return self._remote.record_issued(lease, issued_by=issued_by)
 
         path = self._path(lease["lease_id"])
         record = {
@@ -376,6 +552,9 @@ class LeaseStateStore:
     def consume(self, lease: dict[str, Any], *, consumed_by: str) -> dict[str, Any]:
         """CAS `issued` -> `consumed`, binding the presented lease to the record."""
 
+        if self._remote is not None:
+            return self._remote.consume(lease, consumed_by=consumed_by)
+
         return self._transition(
             lease,
             to_state=STATE_CONSUMED,
@@ -385,6 +564,9 @@ class LeaseStateStore:
 
     def revoke(self, lease: dict[str, Any], *, reason: str) -> dict[str, Any]:
         """CAS `issued` -> `revoked`. A revoked lease can never be consumed."""
+
+        if self._remote is not None:
+            return self._remote.revoke(lease, reason=reason)
 
         return self._transition(
             lease,

@@ -1,9 +1,17 @@
-from __future__ import annotations
-
+import hashlib
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+THIS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = THIS_DIR.parent
+SCRIPTS_DIR = ROOT_DIR / "scripts"
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 ACTIVE_WORKER_STATUSES = {
     "running",
@@ -13,7 +21,6 @@ ACTIVE_WORKER_STATUSES = {
     "manual_pending",
     "stalled",
 }
-RUNNABLE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved"}
 HARD_GATE_MARKERS = {
     "human gate",
     "manual approval",
@@ -23,6 +30,32 @@ HARD_GATE_MARKERS = {
     "legal",
 }
 DEFAULT_SIDECAR_CATALOG = Path(__file__).with_name("sidecar_catalog.json")
+MAX_SIDECAR_ID_LENGTH = 48
+
+
+def build_sidecar_task_id(parent_id: str, kind: str) -> str:
+    """Build a deterministic, bounded sidecar task ID (at most 48 characters).
+
+    If {parent_id}-SIDECAR-{kind_slug} fits within 48 characters, it remains
+    unchanged to preserve existing short sidecar IDs. Otherwise, the -SIDECAR-
+    marker is preserved with a truncated parent prefix and an 8-character
+    collision-resistant SHA-256 digest of the canonical parent:kind signature.
+    """
+    parent = str(parent_id or "").strip()
+    clean_kind = str(kind or "").strip()
+    kind_slug = clean_kind.replace("_", "-").upper()
+    raw_id = f"{parent}-SIDECAR-{kind_slug}"
+    if len(raw_id) <= MAX_SIDECAR_ID_LENGTH:
+        return raw_id
+
+    digest = hashlib.sha256(f"{parent}:{clean_kind}".encode()).hexdigest()[:8].upper()
+    marker = "-SIDECAR-"
+    max_parent_len = MAX_SIDECAR_ID_LENGTH - len(marker) - len(digest)
+    parent_prefix = parent[:max_parent_len].rstrip("-")
+    return f"{parent_prefix}{marker}{digest}"
+
+
+sidecar_task_id = build_sidecar_task_id
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -76,23 +109,128 @@ def configured_slots(config: dict[str, Any]) -> int:
     )
 
 
+def effective_slots(
+    config: dict[str, Any],
+    runtime_state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+) -> int:
+    """Count dispatch slots that are currently eligible for automated execution.
+
+    Consumes agent_auto_dispatch_block_reason and provider_report as the single
+    authority on provider health and dispatch eligibility. Configured slots that
+    cannot execute automated tasks (e.g. auth failure, inbox fallback, disabled
+    or cooling-down account pool) are excluded so that slot_total and available_slots
+    reflect real executable capacity rather than dead configured declarations.
+    """
+    from supervisor import provider_capability_block_reason
+    from worker_failure_policy import agent_auto_dispatch_block_reason
+
+    slot_check_state = dict(runtime_state or {})
+    # Clear active worker map so that currently executing workers do not falsely
+    # mark a healthy slot as unviable or capacity-depleted in the total count.
+    slot_check_state["workers"] = {}
+    count = 0
+    for slot_id, agent in (config.get("agents", {}) or {}).items():
+        if not (isinstance(agent, dict) and agent.get("slot_id")):
+            continue
+        if agent_auto_dispatch_block_reason(
+            config, slot_check_state, slot_id, provider_report=provider_report
+        ):
+            continue
+        if provider_report and provider_capability_block_reason(
+            config, slot_id, provider_report=provider_report
+        ):
+            continue
+        count += 1
+    return count
+
+
+def _count_runnable_tasks(
+    _config: dict[str, Any],
+    _tasks: list[dict[str, Any]],
+    runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+) -> int:
+    """Consume the Supervisor's already-computed canonical runnable set.
+
+    Capacity Chair deliberately has no task eligibility predicate of its own.
+    The Dispatcher owns that truth; Supervisor passes either its count or the
+    exact task-id set produced by the Dispatcher so this module cannot drift
+    into a second scheduler.
+    """
+    if isinstance(runnable_tasks, int):
+        return max(0, runnable_tasks)
+    if isinstance(runnable_tasks, (list, tuple, set)):
+        return len(runnable_tasks)
+    return 0
+
+
+def _extract_runnable_task_ids(
+    config: dict[str, Any],
+    runnable_tasks: int | list[Any] | tuple[Any, ...] | set[Any] | None = None,
+) -> set[str] | None:
+    """Extract canonical runnable task IDs if passed as a collection.
+
+    Returns None for int-only or missing inputs to signal conservative fallback.
+    """
+    if isinstance(runnable_tasks, int) or runnable_tasks is None:
+        return None
+    task_id_field = (config.get("schema", {}) or {}).get("task_id_field", "id")
+    canonical_ids: set[str] = set()
+    for item in runnable_tasks:
+        if isinstance(item, str):
+            tid = item.strip()
+            if tid:
+                canonical_ids.add(tid)
+        elif isinstance(item, dict):
+            tid = str(item.get(task_id_field) or item.get("id") or "").strip()
+            if tid:
+                canonical_ids.add(tid)
+    return canonical_ids
+
+
+def _worker_task_id(worker: dict[str, Any], task_id_field: str = "id") -> str:
+    """Extract assigned task ID from a worker record."""
+    if not isinstance(worker, dict):
+        return ""
+    if worker.get("task_id"):
+        return str(worker["task_id"]).strip()
+    if worker.get(task_id_field):
+        return str(worker[task_id_field]).strip()
+    req_task = worker.get("request_snapshot", {}).get("metadata", {}).get("task", {})
+    if isinstance(req_task, dict):
+        tid = str(req_task.get(task_id_field) or req_task.get("id") or "").strip()
+        if tid:
+            return tid
+    metadata = worker.get("metadata", {})
+    if isinstance(metadata, dict):
+        tid = str(metadata.get(task_id_field) or metadata.get("task_id") or "").strip()
+        if tid:
+            return tid
+    return ""
+
+
 def capacity_snapshot(
     config: dict[str, Any],
     runtime_state: dict[str, Any],
     tasks: list[dict[str, Any]],
+    *,
+    runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    slot_total = configured_slots(config)
+    cfg_slot_total = configured_slots(config)
+    slot_total = effective_slots(
+        config, runtime_state=runtime_state, provider_report=provider_report
+    )
     active_workers = [
         worker
         for worker in (runtime_state.get("workers", {}) or {}).values()
         if str(worker.get("status") or "").lower() in ACTIVE_WORKER_STATUSES
     ]
-    runnable = [
-        task
-        for task in tasks
-        if str(task.get("status") or "").lower() in RUNNABLE_TASK_STATUSES
-        and not task.get("non_dispatchable")
-    ]
+    runnable_count = _count_runnable_tasks(
+        config,
+        tasks,
+        runnable_tasks=runnable_tasks,
+    )
     active_sidecars = sum(
         1
         for worker in active_workers
@@ -100,18 +238,36 @@ def capacity_snapshot(
         == "sidecar"
     )
     active_count = len(active_workers)
+
+    task_id_field = (config.get("schema", {}) or {}).get("task_id_field", "id")
+    runnable_ids = _extract_runnable_task_ids(config, runnable_tasks)
+    if runnable_ids is not None:
+        active_runnable_count = sum(
+            1
+            for worker in active_workers
+            if _worker_task_id(worker, task_id_field) in runnable_ids
+        )
+    else:
+        # int-only legacy input: conservative fallback, must not over-dispatch
+        active_runnable_count = active_count
+
     return {
         "slot_total": slot_total,
+        "configured_slot_total": cfg_slot_total,
         "active_workers": active_count,
+        "active_runnable_workers": active_runnable_count,
         "available_slots": max(0, slot_total - active_count),
-        "runnable_tasks": len(runnable),
+        "runnable_tasks": runnable_count,
         "active_sidecars": active_sidecars,
         "utilization_ratio": round(active_count / slot_total, 4) if slot_total else 0.0,
     }
 
 
 def expired_helper_claim_task_ids(
-    tasks: list[dict[str, Any]], *, now: datetime | None = None
+    tasks: list[dict[str, Any]],
+    *,
+    task_id_field: str = "id",
+    now: datetime | None = None,
 ) -> list[str]:
     current = (now or datetime.now(UTC)).astimezone(UTC)
     expired: list[str] = []
@@ -121,7 +277,7 @@ def expired_helper_claim_task_ids(
             continue
         expires_at = _parse_iso(claim.get("lease_expires_at"))
         if expires_at is None or expires_at <= current:
-            task_id = str(task.get("id") or "")
+            task_id = str(task.get(task_id_field) or task.get("id") or "")
             if task_id:
                 expired.append(task_id)
     return expired
@@ -132,11 +288,19 @@ def evaluate_chair(
     runtime_state: dict[str, Any],
     tasks: list[dict[str, Any]],
     *,
+    runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], bool]:
     now = (now or datetime.now(UTC)).astimezone(UTC)
     cfg = settings(config)
-    snapshot = capacity_snapshot(config, runtime_state, tasks)
+    snapshot = capacity_snapshot(
+        config,
+        runtime_state,
+        tasks,
+        runnable_tasks=runnable_tasks,
+        provider_report=provider_report,
+    )
     controller = runtime_state.setdefault("capacity_controller", {})
     changed = controller.get("snapshot") != snapshot
     controller["snapshot"] = snapshot
@@ -189,7 +353,7 @@ def evaluate_chair(
         "valid_until": _iso(now + timedelta(seconds=float(cfg["chair_interval_seconds"]))),
         "reasons": reasons,
         "approve_helper_wave": bool(
-            snapshot["runnable_tasks"] > snapshot["active_workers"]
+            snapshot["runnable_tasks"] > snapshot.get("active_runnable_workers", snapshot["active_workers"])
             and snapshot["available_slots"] > 0
         ),
         "max_helper_claims": min(snapshot["available_slots"], 4),
@@ -214,6 +378,8 @@ def sidecar_candidates(
     runtime_state: dict[str, Any],
     tasks: list[dict[str, Any]],
     *,
+    runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -230,7 +396,15 @@ def sidecar_candidates(
     if valid_until is None or valid_until < now:
         return []
 
-    snapshot = capacity_snapshot(config, runtime_state, tasks)
+    snapshot = capacity_snapshot(
+        config,
+        runtime_state,
+        tasks,
+        runnable_tasks=runnable_tasks,
+        provider_report=provider_report,
+    )
+    if snapshot["runnable_tasks"] > 0:
+        return []
     max_by_ratio = max(0, int(snapshot["slot_total"] * float(cfg["max_capacity_ratio"])))
     existing = [task for task in tasks if str(task.get("task_class") or "").lower() == "sidecar"]
     budget = min(
@@ -251,6 +425,9 @@ def sidecar_candidates(
     existing_signatures = {
         f"{task.get('helper_parent')}:{task.get('helper_kind')}" for task in existing
     }
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+
     candidates: list[dict[str, Any]] = []
     for template in templates:
         if not isinstance(template, dict):
@@ -262,7 +439,7 @@ def sidecar_candidates(
         if not kind:
             continue
         for parent in tasks:
-            parent_id = str(parent.get("id") or "")
+            parent_id = str(parent.get(task_id_field) or "")
             parent_status = str(parent.get("status") or "").lower()
             signature = f"{parent_id}:{kind}"
             if not parent_id or signature in existing_signatures:
@@ -283,8 +460,7 @@ def sidecar_candidates(
             ).lower()
             if parent_status == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
                 continue
-            kind_slug = kind.replace("_", "-").upper()
-            sidecar_id = f"{parent_id}-SIDECAR-{kind_slug}"
+            sidecar_id = build_sidecar_task_id(parent_id, kind)
             variables = {
                 "parent_task_id": parent_id,
                 "sidecar_task_id": sidecar_id,
@@ -294,15 +470,14 @@ def sidecar_candidates(
                 _render_template(value, variables)
                 for value in template.get("artifact_targets", [])
             ]
-            candidates.append(
-                {
+            sidecar_dict = {
                 "id": sidecar_id,
-                    "title": _render_template(
-                        template.get("title_template") or sidecar_id, variables
-                    ),
-                    "summary_zh": _render_template(
-                        template.get("summary_zh_template"), variables
-                    ),
+                "title": _render_template(
+                    template.get("title_template") or sidecar_id, variables
+                ),
+                "summary_zh": _render_template(
+                    template.get("summary_zh_template"), variables
+                ),
                 "phase": "Capacity sidecar",
                 "priority": "P3",
                 "status": "todo",
@@ -324,8 +499,10 @@ def sidecar_candidates(
                     "Add bounded verification without changing canonical product behavior",
                 ],
                 "next": "Capacity Chair approved a bounded diagnostic sidecar wave.",
-                }
-            )
+            }
+            if task_id_field != "id":
+                sidecar_dict[task_id_field] = sidecar_id
+            candidates.append(sidecar_dict)
             existing_signatures.add(signature)
             if len(candidates) >= budget:
                 return candidates

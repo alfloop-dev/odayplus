@@ -1,13 +1,64 @@
 name: Runtime Release
 
+# One workflow, two explicit phases.
+#
+# ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001: `admission` used to run *before*
+# `build`. The Supervisor lease admission verifies against `manifest_digest`,
+# and the manifest names the component image digests, the SBOM, and the Cosign
+# signatures -- none of which exist until a build has published them. So the
+# release could not build without a lease, and could not obtain a lease without
+# having built: `docs/evidence/gates/RELEASE_MANIFEST.json` sat at `blocked`
+# with exactly those three P0 blockers recorded.
+#
+# The fix is an ordering fix, not a second pipeline:
+#
+#   build   -> publishes the immutable artifact handoff for an exact release
+#              SHA. Needs OIDC/WIF and nothing else; it must not require or
+#              accept a lease, because it is what produces the evidence a lease
+#              is issued against.
+#   deploy  -> takes that handoff back as input, proves the Supervisor lease
+#              authorises this exact manifest/environment/action, and deploys
+#              by digest. It never builds.
+#
+# Both phases need environment-scoped GitHub variables: this repository has no
+# repository-level Actions variables at all, so `vars.GCP_PROJECT_ID` and
+# friends resolve only inside a job that carries an `environment:` binding.
+# Without one they do not error -- they expand to the empty string, which is how
+# a build silently produces `-docker.pkg.dev//` image references and how
+# `HAS_WIF` reads as false on a correctly configured repository.
+#
+# The build phase cannot bind to the deploy environment, though: `staging` and
+# `production` both carry `required_reviewers`, so binding there would demand a
+# human deploy approval before a build could start -- and the build is what
+# produces the manifest that approval and the Supervisor lease are checked
+# against. So the two authorities get separate environments:
+#
+#   build   -> `<environment>-build`, same variables, no deployment approval.
+#   deploy  -> `<environment>`, approval plus the signed Supervisor lease.
+#
+# `release_phase` validates input *shape* only and binds nothing on purpose;
+# binding it would pull a deploy approval in front of plain input validation.
+# That is also why it no longer reads `vars.*`: an unbound job cannot observe
+# them, so anything it concluded from them would be about the binding, not the
+# configuration. `check_release_environment.py` makes that observation inside
+# each bound job instead.
+#
+# What constrains the build beyond that is that it may only publish immutable,
+# signed, SHA-labelled artifacts, and refuses to move an existing release tag.
 on:
   workflow_dispatch:
     inputs:
+      phase:
+        description: "Release phase: build the artifact handoff, or deploy one already built"
+        required: true
+        type: choice
+        options: [build, deploy]
+        default: build
       environment:
         description: "Release environment"
         required: true
         type: choice
-        options: [dev, staging]
+        options: [dev, staging, production]
       release_sha:
         description: "Exact 40-character commit SHA to release"
         required: true
@@ -17,12 +68,36 @@ on:
         required: true
         type: string
       release_lease:
-        description: "Base64-encoded signed Supervisor release lease document (JSON)"
-        required: true
+        description: "Base64-encoded signed Supervisor release lease (deploy phase only; empty to build)"
+        required: false
+        default: ""
+        type: string
+      api_image:
+        description: "Immutable API image reference from the build phase (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      web_image:
+        description: "Immutable Web image reference from the build phase (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      worker_image:
+        description: "Immutable Worker image reference from the build phase (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      scheduler_image:
+        description: "Immutable Scheduler image reference from the build phase (repo/service@sha256:...)"
+        required: false
+        default: ""
         type: string
 
+# Deploys of one environment stay mutually exclusive. The phase is part of the
+# key so a long build does not hold the deploy lane for an already-built
+# release; a build cannot mutate a running environment, only publish artifacts.
 concurrency:
-  group: runtime-release-${{ inputs.environment }}
+  group: runtime-release-${{ inputs.environment }}-${{ inputs.phase }}
   cancel-in-progress: false
 
 permissions:
@@ -30,9 +105,401 @@ permissions:
   packages: write
   id-token: write
 
+# ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001: receipt staging is workspace-relative
+# because the alternative did not compile.
+#
+# The previous shape staged the build handoff at
+# `jobs.build.env.HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff`.
+# GitHub does not offer the `runner` context to `jobs.<job_id>.env` -- that key
+# is evaluated before a runner has been assigned to the job -- so the whole file
+# stopped compiling and `Runtime Release` could not be dispatched at all.
+#
+# That failure is silent in review. `${{ runner.temp }}` reads as correct, it is
+# genuinely valid one level down in `jobs.<job_id>.steps.*`, and the only signal
+# GitHub emits is a `failure` run carrying zero jobs and no logs, created for a
+# `push` this workflow has no trigger for.
+#
+# Staging under the checkout removes the expression rather than relocating it:
+# the path needs no context at all, `.odp_data/` is git-ignored and excluded from
+# every image build context, and each receipt writer creates its own parent.
+# `.odp_data/release/` is disjoint from `.odp_data/deployment/`, where
+# `deploy_cloud_run_waji.sh` leaves the raw `gcloud ... describe` dumps that must
+# never be uploaded.
+#
+# The signed lease document deliberately stays in `${RUNNER_TEMP}`. It is a
+# credential, not a receipt, and it must not land where an artifact upload can
+# reach it. `${RUNNER_TEMP}` in a `run:` block is a shell variable expanded by
+# bash, not a workflow expression, so it was never part of this defect.
+env:
+  RELEASE_RECEIPT_DIR: .odp_data/release
+
 jobs:
-  admission:
+  # Fail closed before anything is built, authenticated, or deployed. This is
+  # the one place that states what each phase requires, and it produces a
+  # zh-TW receipt for the refusal so a blocked release says why in the language
+  # the release evidence is written in.
+  release_phase:
+    name: Validate release phase inputs
     runs-on: ubuntu-latest
+    # No `environment:` and no `vars.*` by design -- see the header. This job is
+    # pure input validation and must stay reachable without a deploy approval.
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+
+      - name: Assert exact release SHA is checked out
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          if [ "${head_sha}" != "${RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
+            exit 1
+          fi
+
+      # The lease reaches this step only as a presence bit. Nothing here reads
+      # its contents, and the receipt records `lease_supplied` rather than the
+      # document, so a refusal is publishable without redaction.
+      - name: Validate phase and artifact handoff preconditions
+        env:
+          RELEASE_PHASE: ${{ inputs.phase }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TASK_ID: ${{ inputs.task_id }}
+          RELEASE_LEASE: ${{ inputs.release_lease }}
+          API_IMAGE_INPUT: ${{ inputs.api_image }}
+          WEB_IMAGE_INPUT: ${{ inputs.web_image }}
+          WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
+          SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+        run: |
+          set -euo pipefail
+          if [ -n "${RELEASE_LEASE}" ]; then
+            lease_supplied=true
+          else
+            lease_supplied=false
+          fi
+          python3 delivery_toolchain/release/check_release_phase.py \
+            --phase "${RELEASE_PHASE}" \
+            --environment "${RELEASE_ENVIRONMENT}" \
+            --release-sha "${RELEASE_SHA}" \
+            --task-id "${RELEASE_TASK_ID}" \
+            --api-image "${API_IMAGE_INPUT}" \
+            --web-image "${WEB_IMAGE_INPUT}" \
+            --worker-image "${WORKER_IMAGE_INPUT}" \
+            --scheduler-image "${SCHEDULER_IMAGE_INPUT}" \
+            --lease-supplied "${lease_supplied}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/release-phase-receipt.json"
+
+      - name: Publish release phase receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-phase-receipt-${{ inputs.environment }}-${{ inputs.phase }}
+          path: .odp_data/release/release-phase-receipt.json
+          if-no-files-found: warn
+
+  # Build once, for one exact SHA, with no lease. Re-running this phase for the
+  # same SHA must reproduce the same handoff byte for byte -- a lease already
+  # issued against `manifest_digest` would otherwise stop verifying after a
+  # re-run. That is why the manifest is derived only from the release SHA's tree
+  # and from digests already in the registry: no run id, no wall-clock time.
+  build:
+    name: Build once and publish the immutable artifact handoff
+    needs: release_phase
+    if: ${{ inputs.phase == 'build' && inputs.api_image == '' && inputs.web_image == '' && inputs.worker_image == '' && inputs.scheduler_image == '' }}
+    runs-on: ubuntu-latest
+    # The build-scoped twin of the target environment. It carries the same GCP
+    # variables and no deployment approval, so a build can resolve the registry
+    # it publishes to without consuming the authority that admits a deploy.
+    environment:
+      name: ${{ inputs.environment }}-build
+    outputs:
+      api_image: ${{ steps.publish-images.outputs.api_image }}
+      web_image: ${{ steps.publish-images.outputs.web_image }}
+      worker_image: ${{ steps.publish-images.outputs.worker_image }}
+      scheduler_image: ${{ steps.publish-images.outputs.scheduler_image }}
+      manifest_digest: ${{ steps.handoff.outputs.manifest_digest }}
+      release_id: ${{ steps.handoff.outputs.release_id }}
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
+      API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+      WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+      WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+      SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+      ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+      IMAGE_TAG: release-${{ inputs.release_sha }}
+      # `generate_sbom.py` writes here by default; it is the CycloneDX document
+      # attested onto every published image below.
+      SBOM_PATH: docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json
+      HANDOFF_DIR: .odp_data/release/runtime-release-handoff
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+
+      - name: Assert exact release SHA is checked out
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          if [ "${head_sha}" != "${ODAY_RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match ODAY_RELEASE_SHA (${ODAY_RELEASE_SHA})." >&2
+            exit 1
+          fi
+
+      # First real gate in the build phase. If `<environment>-build` does not
+      # exist, GitHub silently creates an empty one rather than failing, so an
+      # unprovisioned environment looks exactly like a bound one until a
+      # variable is read. This refuses there, in zh-TW, naming what to add.
+      - name: 確認 build 階段已綁定 environment 且變數齊備
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
+          ODP_CLOUD_RUN_API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+          ODP_CLOUD_RUN_WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+          ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+          ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope build \
+            --environment "${{ inputs.environment }}" \
+            --github-environment "${{ inputs.environment }}-build" \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/release-environment-receipt.json"
+
+      - name: Publish build environment binding receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-environment-receipt-${{ inputs.environment }}-build
+          path: .odp_data/release/release-environment-receipt.json
+          if-no-files-found: warn
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Run Secret Scan
+        run: python3 delivery_toolchain/security/secret_scan.py
+
+      - name: Run Python SAST Scan
+        run: python3 delivery_toolchain/security/sast_scan.py
+
+      - name: Generate SBOM
+        run: python3 delivery_toolchain/security/generate_sbom.py
+
+      # The preflight's repository capability checks import the real provider
+      # registry (httpx and friends), so the locked project environment must
+      # exist before it runs. `--frozen` keeps the resolution pinned to uv.lock.
+      - name: Install locked project dependencies
+        run: uv sync --frozen
+
+      - name: Run E2E deployment health, backup, restore, and rollback proof
+        run: python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py
+
+      # Unconditional: the binding gate above already refused if the WIF
+      # variables were unresolvable, so a skip here could only mean the build
+      # continuing without a cloud identity.
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Build, publish, sign, and attest immutable container images
+        id: publish-images
+        run: |
+          set -euo pipefail
+          REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
+          REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
+          gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
+
+          resolve_image_digest() {
+            local image="$1"
+            local digest
+            digest="$(gcloud artifacts docker images describe "${image}" \
+              --format='value(image_summary.digest)' 2>/dev/null | tr -d '\r\n')" || return 1
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              return 1
+            fi
+            printf '%s@%s' "${image%:*}" "${digest}"
+          }
+
+          # Cosign publishes the signature and the CycloneDX SBOM attestation as
+          # OCI artifacts tagged off the image digest. Resolving those tags back
+          # to their own immutable digests is what makes them references an
+          # auditor can actually fetch. ODP-RELEASE-MANIFEST-COSIGN-001 and
+          # ODP-RELEASE-MANIFEST-SBOM-001 were raised because nothing published
+          # them; a tag that does not resolve now fails the build instead of
+          # producing a manifest that claims evidence it cannot hand over.
+          resolve_supply_chain_ref() {
+            local digest_ref="$1"
+            local suffix="$2"
+            local repo="${digest_ref%@*}"
+            local hex="${digest_ref##*@sha256:}"
+            resolve_image_digest "${repo}:sha256-${hex}.${suffix}"
+          }
+
+          api_tagged="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
+          web_tagged="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+          worker_tagged="${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}"
+          scheduler_tagged="${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}"
+
+          declare -A resolved=()
+          existing_count=0
+          for entry in "api=${api_tagged}" "web=${web_tagged}" "worker=${worker_tagged}" "scheduler=${scheduler_tagged}"; do
+            name="${entry%%=*}"
+            tagged="${entry#*=}"
+            found="$(resolve_image_digest "${tagged}" || true)"
+            if [ -n "${found}" ]; then
+              resolved["${name}"]="${found}"
+              existing_count=$((existing_count + 1))
+            fi
+          done
+
+          if [ "${existing_count}" -ne 0 ] && [ "${existing_count}" -ne 4 ]; then
+            echo "Error: release image tag set is incomplete; refusing to rebuild or move an existing tag." >&2
+            exit 1
+          fi
+
+          if [ "${existing_count}" -eq 4 ]; then
+            # Re-running this phase must reproduce the first run's handoff. Verify
+            # what is already published; do not sign or attest again, because a
+            # second attestation would change the attestation digest and with it
+            # the manifest digest an issued lease is bound to.
+            echo "Immutable images already exist for ${ODAY_RELEASE_SHA}; reusing their digests."
+            for name in api web worker scheduler; do
+              CI=true ./delivery_toolchain/security/sign_images.sh verify "${resolved[${name}]}"
+            done
+          else
+            build_publish_sign_attest() {
+              local name="$1"
+              local tagged="$2"
+              local dockerfile="$3"
+              echo "Building immutable ${name} image..."
+              docker build \
+                --platform linux/amd64 \
+                --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+                --label "com.oday-plus.data-binding=live" \
+                -t "${tagged}" \
+                -f "${dockerfile}" \
+                .
+              docker push "${tagged}"
+              cosign sign --yes "${tagged}"
+              CI=true ./delivery_toolchain/security/sign_images.sh verify "${tagged}"
+              local digest_ref
+              digest_ref="$(resolve_image_digest "${tagged}")"
+              cosign attest --yes --type cyclonedx --predicate "${SBOM_PATH}" "${digest_ref}"
+              resolved["${name}"]="${digest_ref}"
+            }
+
+            build_publish_sign_attest api "${api_tagged}" infra/docker/api.Dockerfile
+            build_publish_sign_attest worker "${worker_tagged}" infra/docker/worker.Dockerfile
+            build_publish_sign_attest scheduler "${scheduler_tagged}" infra/docker/scheduler.Dockerfile
+            build_publish_sign_attest web "${web_tagged}" infra/docker/web.Dockerfile
+          fi
+
+          signature_refs=()
+          sbom_refs=()
+          for name in api web worker scheduler; do
+            digest_ref="${resolved[${name}]}"
+            printf '%s_image=%s\n' "${name}" "${digest_ref}" >> "${GITHUB_OUTPUT}"
+            if ! signature_ref="$(resolve_supply_chain_ref "${digest_ref}" sig)"; then
+              echo "Error: no Cosign signature artifact resolves for ${digest_ref}." >&2
+              exit 1
+            fi
+            if ! sbom_ref="$(resolve_supply_chain_ref "${digest_ref}" att)"; then
+              echo "Error: no SBOM attestation artifact resolves for ${digest_ref}." >&2
+              exit 1
+            fi
+            signature_refs+=("${signature_ref}")
+            sbom_refs+=("${sbom_ref}")
+          done
+          printf 'signature_refs=%s\n' "${signature_refs[*]}" >> "${GITHUB_OUTPUT}"
+          printf 'sbom_refs=%s\n' "${sbom_refs[*]}" >> "${GITHUB_OUTPUT}"
+
+      # This is the handoff a Supervisor lease is issued against: the candidate
+      # release manifest whose `manifest_digest` the deploy phase must match.
+      - name: Write the build-once artifact handoff
+        id: handoff
+        env:
+          API_IMAGE: ${{ steps.publish-images.outputs.api_image }}
+          WEB_IMAGE: ${{ steps.publish-images.outputs.web_image }}
+          WORKER_IMAGE: ${{ steps.publish-images.outputs.worker_image }}
+          SCHEDULER_IMAGE: ${{ steps.publish-images.outputs.scheduler_image }}
+          SBOM_REFS: ${{ steps.publish-images.outputs.sbom_refs }}
+          SIGNATURE_REFS: ${{ steps.publish-images.outputs.signature_refs }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HANDOFF_DIR}"
+          refs=()
+          for ref in ${SBOM_REFS}; do
+            refs+=(--sbom-ref "${ref}")
+          done
+          for ref in ${SIGNATURE_REFS}; do
+            refs+=(--signature-ref "${ref}")
+          done
+          python3 delivery_toolchain/release/build_release_handoff.py \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --component "api=${API_IMAGE}" \
+            --component "web=${WEB_IMAGE}" \
+            --component "worker=${WORKER_IMAGE}" \
+            --component "scheduler=${SCHEDULER_IMAGE}" \
+            "${refs[@]}" \
+            --images-output "${HANDOFF_DIR}/runtime-release-images.json" \
+            --manifest-output "${HANDOFF_DIR}/RELEASE_MANIFEST.json" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Publish immutable image handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-images-${{ inputs.release_sha }}
+          path: .odp_data/release/runtime-release-handoff/runtime-release-images.json
+          if-no-files-found: error
+
+      - name: Publish candidate release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-manifest-${{ inputs.release_sha }}
+          path: .odp_data/release/runtime-release-handoff/RELEASE_MANIFEST.json
+          if-no-files-found: error
+
+  # Deploy authority. This runs only in the deploy phase, and only after a build
+  # phase has already published the manifest the lease is bound to -- `needs:
+  # build` records that ordering even though the two phases never run in the
+  # same dispatch. Reversing it is what created the circular dependency this
+  # task exists to remove.
+  admission:
+    name: Verify the Supervisor lease authorises this deploy
+    needs: [release_phase, build]
+    if: ${{ always() && needs.release_phase.result == 'success' && needs.build.result == 'skipped' && inputs.phase == 'deploy' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+    outputs:
+      manifest_digest: ${{ steps.extract-admitted-manifest.outputs.manifest_digest }}
+    # The admission job is itself protected by the selected GitHub environment.
+    # Its variable-binding gate runs before any lease-state access, so hosted
+    # admission cannot accidentally use ambient/local credentials.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -50,12 +517,94 @@ jobs:
             exit 1
           fi
 
+      - name: Validate immutable image handoff
+        env:
+          API_IMAGE_INPUT: ${{ inputs.api_image }}
+          WEB_IMAGE_INPUT: ${{ inputs.web_image }}
+          WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
+          SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+        run: |
+          set -euo pipefail
+          values=(
+            "${API_IMAGE_INPUT}"
+            "${WEB_IMAGE_INPUT}"
+            "${WORKER_IMAGE_INPUT}"
+            "${SCHEDULER_IMAGE_INPUT}"
+          )
+          filled=0
+          for value in "${values[@]}"; do
+            if [ -n "${value}" ]; then
+              filled=$((filled + 1))
+            fi
+          done
+          if [ "${filled}" -ne 4 ]; then
+            echo "Error: api_image, web_image, worker_image, and scheduler_image must be supplied together." >&2
+            exit 1
+          fi
+          for image in "${values[@]}"; do
+            if [[ ! "${image}" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+              echo "Error: image handoff must use an immutable @sha256 reference: ${image}" >&2
+              exit 1
+            fi
+          done
+
+      # `release_phase` is unbound and can no longer speak for OIDC, so each
+      # bound job proves its own variables resolved before it authenticates.
+      - name: 確認 admission 階段已綁定 environment 且變數齊備
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
+          ODP_RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope admission \
+            --environment "${{ inputs.environment }}" \
+            --github-environment "${{ inputs.environment }}" \
+            --release-sha "${{ inputs.release_sha }}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/release-environment-receipt.json"
+
+      - name: Publish admission environment binding receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-environment-receipt-${{ inputs.environment }}-admission
+          path: .odp_data/release/release-environment-receipt.json
+          if-no-files-found: warn
+
+      # The binding gate covers variable presence; this covers the one shape
+      # requirement it cannot express -- lease state must be shared, not local.
+      - name: Validate shared lease store configuration
+        env:
+          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${RELEASE_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
+            echo "Error: durable lease admission requires a shared gs://bucket/prefix state URI." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud for durable lease admission (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK for durable lease admission
+        uses: google-github-actions/setup-gcloud@v2
+
       # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
       # Ed25519 verification key and is deliberately a var, not a secret: it
-      # cannot sign, so publishing it grants nothing. `ODP_RELEASE_LEASE_STATE_DIR`
-      # must resolve to the Supervisor's durable lease state on this runner;
-      # admission fails closed when it does not, because a lease consumed
-      # against a directory the Supervisor cannot see has not been consumed.
+      # cannot sign, so publishing it grants nothing. The GCS state URI is the
+      # one Supervisor-owned CAS store shared with this hosted runner; the
+      # validation above rejects a local runner directory as a substitute.
+      #
+      # `--action deploy` and `--component-image` are what keep the lease narrow:
+      # it authorises deploying *these* artifacts, and the images handed back
+      # from the build phase must be the ones `manifest.components` records.
+      # Without that binding a valid lease would admit any digest at all.
       - name: Validate supervisor release admission
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -63,7 +612,11 @@ jobs:
           RELEASE_TASK_ID: ${{ inputs.task_id }}
           RELEASE_LEASE: ${{ inputs.release_lease }}
           ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
-          RELEASE_LEASE_STATE_DIR: ${{ vars.ODP_RELEASE_LEASE_STATE_DIR }}
+          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+          API_IMAGE_INPUT: ${{ inputs.api_image }}
+          WEB_IMAGE_INPUT: ${{ inputs.web_image }}
+          WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
+          SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
         run: |
           set -euo pipefail
           umask 077
@@ -72,9 +625,21 @@ jobs:
             --sha "${RELEASE_SHA}" \
             --environment "${RELEASE_ENVIRONMENT}" \
             --task-id "${RELEASE_TASK_ID}" \
+            --action deploy \
+            --component-image "api=${API_IMAGE_INPUT}" \
+            --component-image "web=${WEB_IMAGE_INPUT}" \
+            --component-image "worker=${WORKER_IMAGE_INPUT}" \
+            --component-image "scheduler=${SCHEDULER_IMAGE_INPUT}" \
             --lease-file "${RUNNER_TEMP}/release-lease.json" \
-            --lease-state-dir "${RELEASE_LEASE_STATE_DIR}" \
-            --receipt "${RUNNER_TEMP}/release-admission-receipt.json"
+            --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
+
+      - name: Extract admitted manifest digest
+        id: extract-admitted-manifest
+        run: |
+          set -euo pipefail
+          manifest_digest="$(python3 -c 'import json; print(json.load(open(".odp_data/release/release-admission-receipt.json"))["manifest_digest"])')"
+          printf 'manifest_digest=%s\n' "${manifest_digest}" >> "${GITHUB_OUTPUT}"
 
       # The receipt is the audit trail for the admission decision. It carries
       # digests of the nonce and signature rather than the values, so it is safe
@@ -84,47 +649,35 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-admission-receipt-${{ inputs.environment }}
-          path: ${{ runner.temp }}/release-admission-receipt.json
+          path: .odp_data/release/release-admission-receipt.json
           if-no-files-found: warn
 
       - name: Discard the lease document from the runner
         if: always()
         run: rm -f "${RUNNER_TEMP}/release-lease.json"
 
-  e2e-operational-evidence:
-    needs: admission
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.release_sha }}
-
-      - name: Assert exact release SHA is checked out
-        env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
-        run: |
-          set -euo pipefail
-          head_sha="$(git rev-parse HEAD)"
-          if [ "${head_sha}" != "${RELEASE_SHA}" ]; then
-            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
-            exit 1
-          fi
-
-      - name: Run E2E deployment health, backup, restore, and rollback proof
-        run: python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py
-
+  # Deploy by digest only. The build phase is `skipped` here by construction --
+  # its `if` requires `phase == 'build'` -- so this job has nothing to rebuild
+  # and no path back into a build. It runs the artifacts admission just bound.
   deploy:
-    needs: e2e-operational-evidence
+    name: Deploy the admitted artifact by immutable digest
+    needs: [release_phase, build, admission]
+    if: ${{ always() && needs.release_phase.result == 'success' && needs.admission.result == 'success' && needs.build.result == 'skipped' }}
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
-      url: ${{ inputs.environment == 'staging' && vars.ODP_STAGING_DEPLOY_URL || vars.ODP_DEV_DEPLOY_URL }}
+    outputs:
+      manifest_digest: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
     env:
-      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
       GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+      ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+      ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+      ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+      ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
       API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
       WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
       MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
@@ -134,6 +687,8 @@ jobs:
       SCHEDULER_SCHEDULE_NAME: ${{ vars.ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER }}
       ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT: ${{ vars.ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT }}
       ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT: ${{ vars.ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT }}
+      ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
       ODP_WORKER_CRON: ${{ vars.ODP_WORKER_CRON }}
       ODP_SCHEDULER_CRON: ${{ vars.ODP_SCHEDULER_CRON }}
       ODP_SCHEDULER_TIME_ZONE: ${{ vars.ODP_SCHEDULER_TIME_ZONE }}
@@ -168,6 +723,9 @@ jobs:
       ODP_PRODUCT_MODE: production
       ODP_FORECAST_ENGINE: ${{ vars.ODP_FORECAST_ENGINE }}
       ODP_FORECAST_MODEL: ${{ vars.ODP_FORECAST_MODEL }}
+      # Third-party connectors are deployed but remain closed until a
+      # source-specific activation receipt is approved.
+      ODP_EXTERNAL_PROVIDER_MODE: disabled
       ODP_PERSISTENCE: postgresql
       ODP_OBJECT_STORE: gcs
       # Both values must match the smoke principal's tenant claim. Do not add a
@@ -175,9 +733,14 @@ jobs:
       # environment has not configured a tenant explicitly.
       ODP_SCHEDULED_INGESTION_TENANT_ID: ${{ vars.ODP_SCHEDULED_INGESTION_TENANT_ID }}
       ODP_TENANT_ID: ${{ vars.ODP_TENANT_ID }}
-      ODP_STAGING_DEPLOY_URL: ${{ vars.ODP_STAGING_DEPLOY_URL }}
-      ODP_STAGING_API_URL: ${{ vars.ODP_STAGING_API_URL }}
-      ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
+      ODP_PROD_DEPLOY_URL: ${{ vars.ODP_PROD_DEPLOY_URL }}
+      ODP_PROD_API_URL: ${{ vars.ODP_PROD_API_URL }}
+      MANIFEST_DIGEST: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
+      API_IMAGE: ${{ needs.build.outputs.api_image || inputs.api_image }}
+      WEB_IMAGE: ${{ needs.build.outputs.web_image || inputs.web_image }}
+      WORKER_IMAGE: ${{ needs.build.outputs.worker_image || inputs.worker_image }}
+      SCHEDULER_IMAGE: ${{ needs.build.outputs.scheduler_image || inputs.scheduler_image }}
+      ODP_DEPLOY_BY_DIGEST: "true"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -200,34 +763,80 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Run Secret Scan
-        run: python3 delivery_toolchain/security/secret_scan.py
-
-      - name: Run Python SAST Scan
-        run: python3 delivery_toolchain/security/sast_scan.py
-
-      - name: Generate SBOM
-        run: python3 delivery_toolchain/security/generate_sbom.py
-
       # The preflight's repository capability checks import the real provider
       # registry (httpx and friends), so the locked project environment must
       # exist before it runs. `--frozen` keeps the resolution pinned to uv.lock.
       - name: Install locked project dependencies
         run: uv sync --frozen
 
-      - name: Validate WIF authentication and live runtime preflight
+      # `release_phase` is unbound and can no longer speak for OIDC, so each
+      # bound job proves its own variables resolved before it authenticates.
+      - name: 確認 deploy 階段已綁定 environment 且變數齊備
+        if: ${{ inputs.environment != 'staging' }}
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
+          ODP_CLOUD_RUN_API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+          ODP_CLOUD_RUN_WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+          ODP_CLOUD_RUN_MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
+          ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+          ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
         run: |
-          if [ "${HAS_WIF}" != "true" ]; then
-            echo "Error: Workload Identity Federation variables are required." >&2
-            exit 1
-          fi
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope deploy \
+            --environment "${{ inputs.environment }}" \
+            --github-environment "${{ inputs.environment }}" \
+            --release-sha "${{ inputs.release_sha }}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/release-environment-receipt.json"
+
+      - name: Publish deploy environment binding receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-environment-receipt-${{ inputs.environment }}-deploy
+          path: .odp_data/release/release-environment-receipt.json
+          if-no-files-found: warn
+
+      - name: 確認 staging foundation 已綁定 environment 且變數齊備
+        if: ${{ inputs.environment == 'staging' }}
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+          ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+          ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+          ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+          ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+          ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope staging \
+            --environment "${{ inputs.environment }}" \
+            --github-environment "${{ inputs.environment }}" \
+            --release-sha "${{ inputs.release_sha }}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/release-environment-receipt.json"
+
+      - name: Run the live runtime preflight
+        if: ${{ inputs.environment != 'staging' }}
+        run: |
           uv run --frozen python product_ops/deployment/validate_cloud_run_live_deployment.py preflight \
             --environment "${ODP_DEPLOY_ENV}" \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --output .odp_data/deployment/cloud-run-preflight.json
 
+      # Unconditional: the binding gate above already refused if the WIF
+      # variables were unresolvable, so a skip here could only mean deploying
+      # without a cloud identity.
       - name: Authenticate to Google Cloud (WIF)
-        if: ${{ env.HAS_WIF == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -239,22 +848,155 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Build, push, deploy, and verify Cloud Run
-        env:
-          IMAGE_TAG: ${{ inputs.environment }}-${{ inputs.release_sha }}
+      - name: Deploy Cloud Run by immutable digest
+        if: ${{ inputs.environment != 'staging' }}
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
-      - name: Verify configured staging authority endpoint
+      - name: Prepare release-scoped staging handoff paths
         if: ${{ inputs.environment == 'staging' }}
-        env:
-          ODP_STAGING_DEPLOY_URL: ${{ vars.ODP_STAGING_DEPLOY_URL }}
-          ODP_STAGING_API_URL: ${{ vars.ODP_STAGING_API_URL }}
-          ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
         run: |
+          set -euo pipefail
+          : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required}"
+          staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
+          staging_outputs_file="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/staging-terraform-outputs.json"
+          staging_backend_prefix="oday-plus/ephemeral-staging/odp-${ODAY_RELEASE_SHA:0:12}"
+          staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
+          mkdir -p "${staging_state_dir}"
+          {
+            echo "STAGING_RELEASE_ID=odp-${ODAY_RELEASE_SHA:0:12}"
+            echo "STAGING_STATE_DIR=${staging_state_dir}"
+            echo "STAGING_OUTPUTS_FILE=${staging_outputs_file}"
+            echo "STAGING_BACKEND_PREFIX=${staging_backend_prefix}"
+            echo "STAGING_BUNDLE_URI=${staging_bundle_uri}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Execute ephemeral staging lifecycle create
+        if: ${{ inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          python3 product_ops/deployment/staging_lifecycle.py create \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" \
+            --manifest-digest "${MANIFEST_DIGEST}" \
+            --project-id "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --cloud-sql-instance "${GCP_CLOUD_SQL_INSTANCE}" \
+            --network-name "${ODP_STAGING_VPC_NETWORK}" \
+            --subnetwork-name "${ODP_STAGING_VPC_SUBNETWORK}" \
+            --kms-key-id "${ODP_STAGING_KMS_KEY_ID}" \
+            --deployer-service-account-email "${ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT}" \
+            --api-image "${API_IMAGE}" \
+            --web-image "${WEB_IMAGE}" \
+            --worker-image "${WORKER_IMAGE}" \
+            --scheduler-image "${SCHEDULER_IMAGE}" \
+            --owner-task-id "${{ inputs.task_id }}" \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --outputs-out "${STAGING_OUTPUTS_FILE}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-create.json"
+
+      - name: Persist staging recovery bundle to protected state storage
+        if: ${{ success() && inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          for sidecar in "${STAGING_STATE_DIR}"/*.tfvars.json "${STAGING_STATE_DIR}"/*.inventory.json "${STAGING_STATE_DIR}"/*.lifecycle.json; do
+            [ -f "${sidecar}" ] || continue
+            gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"
+          done
+          gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"
+
+      - name: Execute ephemeral staging rehearsal verification
+        if: ${{ inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          operator_identity="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_runtime_service_account"])')"
+          python3 product_ops/deployment/staging_lifecycle.py verify \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" \
+            --manifest-digest "${MANIFEST_DIGEST}" \
+            --project-id "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --cloud-sql-instance "${GCP_CLOUD_SQL_INSTANCE}" \
+            --worker-image "${WORKER_IMAGE}" \
+            --scheduler-image "${SCHEDULER_IMAGE}" \
+            --operator-identity "${operator_identity}" \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --outputs-file "${STAGING_OUTPUTS_FILE}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-rehearsal-receipt.json"
+
+      - name: Verify release-scoped staging authority endpoint
+        if: ${{ inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          export ODP_STAGING_DEPLOY_URL="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_web_uri"])')"
+          export ODP_STAGING_API_URL="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_api_uri"])')"
+          export ODP_STAGING_SECRET_OWNER="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_runtime_service_account"])')"
           python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
             --expected-sha "$ODAY_RELEASE_SHA" \
             --correlation-id "corr-staging-${GITHUB_RUN_ID}" \
             --output ".odp_data/remote-staging-proof/staging-${GITHUB_RUN_ID}.json"
+
+      - name: Hold ephemeral staging resources on failure
+        if: ${{ failure() && inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGING_RELEASE_ID:-}" ] || [ -z "${STAGING_STATE_DIR:-}" ]; then
+            echo "No staging lifecycle state was created in this run; retention is not claimed."
+            exit 0
+          fi
+          python3 product_ops/deployment/staging_lifecycle.py hold \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --project-id "${GCP_PROJECT}" \
+            --owner-task-id "${{ inputs.task_id }}" \
+            --reason "Automated hold for forensic inspection after staging failure in GitHub Actions run ${GITHUB_RUN_ID}" \
+            --ttl-hours 24 \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-hold.json"
+
+      - name: Persist staging hold state to protected state storage
+        if: ${{ always() && inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGING_BUNDLE_URI:-}" ] || [ -z "${STAGING_STATE_DIR:-}" ]; then
+            exit 0
+          fi
+          for sidecar in "${STAGING_STATE_DIR}"/*.lifecycle.json; do
+            [ -f "${sidecar}" ] || continue
+            gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"
+          done
+
+      - name: Upload staging lifecycle receipts
+        if: ${{ always() && inputs.environment == 'staging' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-staging-lifecycle-receipts
+          path: |
+            .odp_data/release/staging-lifecycle-create.json
+            .odp_data/release/staging-rehearsal-receipt.json
+            .odp_data/release/staging-lifecycle-hold.json
+          if-no-files-found: ignore
+
+      - name: Verify production blue-green deployment state
+        if: ${{ inputs.environment == 'production' }}
+        run: |
+          set -euo pipefail
+          prod_state_dir="${RUNNER_TEMP}/prod-bluegreen-state"
+          python3 product_ops/deployment/bluegreen_release.py capture-state \
+            --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
+            --api-service "${API_SERVICE}" \
+            --web-service "${WEB_SERVICE}" \
+            --project "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --output-dir "${prod_state_dir}"
+          test -s "${prod_state_dir}/api-traffic.json"
+          test -s "${prod_state_dir}/web-traffic.json"
+          test -s "${prod_state_dir}/release-state.json"
+          PROD_STATE_DIR="${prod_state_dir}" uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["PROD_STATE_DIR"]); s=json.loads((d / "release-state.json").read_text()); assert s["release_id"] == "odp-" + os.environ["ODAY_RELEASE_SHA"][:12]; traffic=[json.loads((d / n).read_text()).get("status", {}).get("traffic") for n in ("api-traffic.json", "web-traffic.json")]; assert all(isinstance(item, list) and item for item in traffic)'
 
       - name: Upload deployment validation reports
         if: always()
@@ -274,7 +1016,8 @@ jobs:
           # file named below is written by
           # `product_ops/deployment/validate_cloud_run_live_deployment.py` (or
           # `delivery_toolchain/e2e/check_live_e2e_gate.py` or
-          # `delivery_toolchain/e2e/check_remote_staging_proof.py`) and carries
+          # `delivery_toolchain/e2e/check_remote_staging_proof.py` or
+          # `product_ops/deployment/staging_lifecycle.py`) and carries
           # `secret_values_redacted: true`: check names, outcomes, and env-var *names*
           # only, never a bound value. `tests/ops/test_deploy_workflow_contract.py`
           # holds this list to the receipts the deploy script actually produces.
@@ -287,4 +1030,150 @@ jobs:
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json
             .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
+          if-no-files-found: ignore
+
+  # Production deployment and staging destruction have different authorities.
+  # The closeout therefore binds the staging environment independently and
+  # reads both the durable watch receipt and Terraform recovery bundle with
+  # staging WIF credentials. It must never inherit production credentials just
+  # because production was the preceding job.
+  staging_closeout:
+    name: Verify production watch and clean up ephemeral staging
+    needs: [deploy]
+    if: ${{ always() && inputs.environment == 'production' && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+      ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+      ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+      ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+      ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+      ODP_PRODUCTION_WATCH_CLOSEOUT_URI: ${{ vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI }}
+      ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+      MANIFEST_DIGEST: ${{ needs.deploy.outputs.manifest_digest }}
+      ODP_DEPLOY_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Assert exact release SHA is checked out
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          if [ "${head_sha}" != "${ODAY_RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match ODAY_RELEASE_SHA (${ODAY_RELEASE_SHA})." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install locked project dependencies
+        run: uv sync --frozen
+
+      - name: 確認 staging closeout 已綁定 staging environment 且變數齊備
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+          ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+          ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+          ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+          ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+          ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope staging \
+            --environment "staging" \
+            --github-environment "staging" \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-closeout-environment-receipt.json"
+
+      - name: Authenticate to staging foundation (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK for staging closeout
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Prepare release-scoped staging closeout paths
+        run: |
+          set -euo pipefail
+          : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout}"
+          : "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI:?ODP_PRODUCTION_WATCH_CLOSEOUT_URI is required for staging closeout}"
+          staging_release_id="odp-${ODAY_RELEASE_SHA:0:12}"
+          staging_backend_prefix="oday-plus/ephemeral-staging/${staging_release_id}"
+          staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
+          staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
+          watch_receipt="${GITHUB_WORKSPACE}/.odp_data/release/production-watch-window-receipt.json"
+          mkdir -p "${staging_state_dir}" "$(dirname "${watch_receipt}")"
+          {
+            echo "STAGING_RELEASE_ID=${staging_release_id}"
+            echo "STAGING_BACKEND_PREFIX=${staging_backend_prefix}"
+            echo "STAGING_STATE_DIR=${staging_state_dir}"
+            echo "STAGING_BUNDLE_URI=${staging_bundle_uri}"
+            echo "STAGING_WATCH_RECEIPT=${watch_receipt}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Read staging recovery bundle with staging identity
+        run: |
+          set -euo pipefail
+          gcloud storage cp "${STAGING_BUNDLE_URI}/*" "${STAGING_STATE_DIR}/"
+          test -s "${STAGING_STATE_DIR}/staging-terraform-outputs.json"
+          inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
+          test -s "${inventory_file}"
+          tfvars_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.tfvars.json)"
+          test -s "${tfvars_file}"
+          STAGING_STATE_DIR="${STAGING_STATE_DIR}" TFVARS_FILE="${tfvars_file}" \
+            uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["STAGING_STATE_DIR"]); out=json.loads((d / "staging-terraform-outputs.json").read_text()); tf=json.loads(Path(os.environ["TFVARS_FILE"]).read_text()); assert os.environ["MANIFEST_DIGEST"].startswith("sha256:"); assert out["release_id"] == os.environ["STAGING_RELEASE_ID"]; assert tf["release_id"] == os.environ["STAGING_RELEASE_ID"]; assert tf["candidate_sha"] == os.environ["ODAY_RELEASE_SHA"]; assert tf["manifest_digest"] == os.environ["MANIFEST_DIGEST"]'
+
+      - name: Read and verify production watch receipt with staging identity
+        run: |
+          set -euo pipefail
+          gcloud storage cp "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI}" "${STAGING_WATCH_RECEIPT}"
+          test -s "${STAGING_WATCH_RECEIPT}"
+          WATCH_RECEIPT="${STAGING_WATCH_RECEIPT}" uv run --frozen python -c 'from shared.observability.watch_window import verify_watch_window_receipt; import os; verify_watch_window_receipt(os.environ["ODAY_RELEASE_SHA"], os.environ["WATCH_RECEIPT"])'
+
+      - name: Cleanup staging after verified production watch closeout
+        run: |
+          set -euo pipefail
+          inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
+          test -s "${inventory_file}"
+          python3 product_ops/deployment/staging_lifecycle.py cleanup \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --project-id "$(STAGING_STATE_DIR="${STAGING_STATE_DIR}" uv run --frozen python -c 'import json, os; print(json.load(open(os.path.join(os.environ["STAGING_STATE_DIR"], "staging-terraform-outputs.json"), encoding="utf-8"))["staging_project_id"])')" \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --inventory-file "${inventory_file}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-cleanup.json"
+          test -s "${RELEASE_RECEIPT_DIR}/staging-lifecycle-cleanup.json"
+
+      - name: Upload staging closeout receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-production-staging-closeout-receipts
+          path: |
+            .odp_data/release/staging-closeout-environment-receipt.json
+            .odp_data/release/production-watch-window-receipt.json
+            .odp_data/release/staging-lifecycle-cleanup.json
           if-no-files-found: ignore

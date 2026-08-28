@@ -35,6 +35,12 @@ def normalize_command(raw: list[str]) -> list[str]:
     return raw
 
 
+# Storage counters only.  cpu_ticks, rchar and wchar keep moving for a process
+# that is merely blocked with a live network session, so they cannot be used to
+# tell "waiting on the model" apart from "hung forever".
+DISK_ACTIVITY_KEYS = ("read_bytes", "write_bytes")
+
+
 def process_tree_activity(root_pid: int | None) -> dict[str, int]:
     """Return monotonic CPU/I/O counters for a Linux process tree.
 
@@ -108,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     child: subprocess.Popen[str] | None = None
     terminating_signal: int | None = None
     last_activity_sample: dict[str, int] = {}
+    last_disk_sample: dict[str, int] = {}
 
     status: dict[str, Any] = {
         "run_id": args.run_id,
@@ -118,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         "started_at": started_at,
         "last_heartbeat_at": started_at,
         "last_process_activity_at": started_at,
+        "last_disk_activity_at": started_at,
         "process_activity": {},
         "finished_at": None,
         "exit_code": None,
@@ -125,12 +133,21 @@ def main(argv: list[str] | None = None) -> int:
     }
 
     def publish(next_status: str) -> None:
-        nonlocal last_activity_sample
+        nonlocal last_activity_sample, last_disk_sample
         now = utc_now()
         activity_sample = process_tree_activity(child.pid if child is not None else None)
         if activity_sample and activity_sample != last_activity_sample:
             status["last_process_activity_at"] = now
             last_activity_sample = activity_sample
+        # A CLI that is blocked forever -- waiting on a shell command that never
+        # returns, say -- still burns a little CPU and keeps its sockets warm, so
+        # the counters above keep moving and the stall timer never fires.  Storage
+        # I/O is the one signal such a process stops producing entirely, so track
+        # it separately for the supervisor's much longer hard-inactivity timeout.
+        disk_sample = {key: activity_sample[key] for key in DISK_ACTIVITY_KEYS if key in activity_sample}
+        if disk_sample and disk_sample != last_disk_sample:
+            status["last_disk_activity_at"] = now
+            last_disk_sample = disk_sample
         status["process_activity"] = activity_sample
         status["status"] = next_status
         status["last_heartbeat_at"] = now
@@ -141,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
             "child_pid": status.get("child_pid"),
             "updated_at": now,
             "last_process_activity_at": status.get("last_process_activity_at"),
+            "last_disk_activity_at": status.get("last_disk_activity_at"),
             "process_activity": activity_sample,
         })
         write_json(status_path, status)

@@ -26,11 +26,8 @@ from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, Deli
 ANTIGRAVITY_OAUTH_TOKEN_REL = Path(".gemini") / "antigravity-cli" / "antigravity-oauth-token"
 
 # `agy --print-timeout` is an absolute wall-clock limit; it does not observe
-# worker process-tree activity.  The supervisor already owns activity-aware
-# stall detection and terminates genuinely inactive workers, so keep the CLI
-# timeout only as a last-resort runaway guard.  A week is deliberately beyond
-# the normal task lifetime without pretending the CLI can reset this timer.
-DEFAULT_HARD_PRINT_TIMEOUT = "168h"
+# worker process-tree activity. The single absolute wall-clock timeout is 2 hours.
+DEFAULT_HARD_PRINT_TIMEOUT = "2h"
 
 # `agy --effort` accepts only these levels.
 ANTIGRAVITY_EFFORT_LEVELS = ("low", "medium", "high")
@@ -88,8 +85,16 @@ def _auth_ready(config: dict | None = None, provider_id: str | None = None) -> b
 class AntigravityAdapter(BaseAdapter):
     name = "antigravity"
 
-    def capability(self, agent_id: str) -> DeliveryCapability:
-        provider_id = provider_key(self.config, default="antigravity", agent_id=agent_id)
+    def capability(self, agent_id: str, *, provider_id: str | None = None) -> DeliveryCapability:
+        # ``agent_id`` may be a shared execution slot. When capability is
+        # checked for a request, the request's provider is authoritative; the
+        # slot must not select the account/profile for that probe.
+        provider_id = provider_key(
+            self.config,
+            default="antigravity",
+            agent_id=agent_id,
+            provider_id=provider_id,
+        )
         allow_inbox_fallback = inbox_fallback_enabled(
             self.config, default="antigravity", provider_id=provider_id
         )
@@ -122,7 +127,7 @@ class AntigravityAdapter(BaseAdapter):
         provider_id = provider_key(
             self.config, default="antigravity", agent_id=request.agent_id, provider_id=request.provider
         )
-        capability = self.capability(request.agent_id)
+        capability = self.capability(request.agent_id, provider_id=provider_id)
         if not capability.supported or not capability.can_auto_deliver:
             return self.unavailable_or_inbox(
                 request,

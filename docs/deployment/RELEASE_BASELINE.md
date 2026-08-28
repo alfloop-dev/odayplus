@@ -7,8 +7,8 @@ The R7 deployment baseline is intentionally small but auditable:
 
 | Layer | Artifact |
 |---|---|
-| Runtime image | `infra/docker/Dockerfile.api` |
-| Local deploy | `infra/docker/docker-compose.yml` |
+| Runtime image | `infra/docker/api.Dockerfile` |
+| Local deploy | `docker-compose.yml` |
 | Cloud baseline | `infra/terraform/*.tf` and `infra/terraform/env/*.tfvars.example` |
 | Migration evidence | `python -m apps.cli.oday_cli migration-plan` output |
 | Backfill evidence | `python -m apps.cli.oday_cli backfill-plan` output |

@@ -1,0 +1,21 @@
+{
+  "receipt_kind": "runtime-release-phase-precheck",
+  "schema_version": 1,
+  "verifier": "delivery_toolchain/release/check_release_phase.py",
+  "phase": "build",
+  "environment": "dev",
+  "release_sha": "ebc4fca5c2dd5871275aee39a18406dd67464f04",
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "admitted": true,
+  "checked_at": "2026-08-26T19:10:56+00:00",
+  "lease_supplied": false,
+  "image_handoff": {
+    "api": null,
+    "web": null,
+    "worker": null,
+    "scheduler": null
+  },
+  "blockers_zh_tw": [],
+  "summary_zh_tw": "build 階段前置條件全部通過；release_sha=ebc4fca5c2dd5871275aee39a18406dd67464f04、environment=dev。",
+  "secret_values_redacted": true
+}

@@ -27,6 +27,15 @@ for every environment made staging evidence a prerequisite for creating staging
 (EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN §6.1); admission is evaluated against
 the gates bound to the requested `admission_target` instead.
 
+A lease authorises the *deploy* phase only, and it is verified after the build
+phase has already published the artifact it names. Requiring a lease before the
+build made the manifest a precondition of producing the manifest, so the release
+could never leave `blocked`; the Runtime Release workflow now runs
+build -> admission -> deploy, and `--component-image` binds the image references
+the deploy phase was handed back to `manifest.components`. Without that binding a
+valid lease would admit any digest, and "build once, deploy that exact artifact"
+would be a convention rather than a control.
+
 Two responsibilities deliberately stay outside this check. GitHub environment
 approval is the human production gate, and the workflow `concurrency` group is
 same-environment mutual exclusion. A lease is not a substitute for either, and
@@ -41,11 +50,13 @@ to keep secret, and one it does not have to share at all:
 
 * `ODP_RELEASE_LEASE_PUBLIC_KEY` (repository variable) - the Ed25519
   verification key. It cannot sign, so it is a variable rather than a secret.
-* `--lease-state-dir` / `ODP_RELEASE_LEASE_STATE_DIR` - the Supervisor's durable
-  lease state. It must already exist and must be the same store the Supervisor
-  wrote to at issuance. A hosted runner that cannot reach it cannot admit a
-  release, which is the intended failure: consuming a lease in a directory that
-  disappears with the runner does not stop a replay anywhere that matters.
+* `--lease-state-dir` / `ODP_RELEASE_LEASE_STATE_URI` - the Supervisor's durable
+  lease state. Hosted admission passes a `gs://bucket/prefix` URI, and the
+  workflow rejects local paths before authentication. It must already exist and
+  must be the same store the Supervisor wrote to at issuance. A hosted runner
+  that cannot reach it cannot admit, which is the intended failure: consuming a
+  lease in a directory that disappears with the runner does not stop a replay
+  anywhere that matters.
 * the private key, which stays with the Supervisor and is never needed here.
 """
 
@@ -81,15 +92,18 @@ from delivery_toolchain.release.release_lease import (  # noqa: E402
     load_lease,
     load_public_key,
 )
-from delivery_toolchain.release.release_manifest import load_manifest  # noqa: E402
+from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    component_binding_errors,
+    load_manifest,
+    validate_release_admission,
+)
 
 DEFAULT_REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 DEFAULT_MANIFEST = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
 
-# The Runtime Release workflow deploys dev and ephemeral staging. Production
-# goes through the blue-green path, which is a different admission target and
-# is not reachable from this entrypoint.
-DEPLOYABLE_ENVIRONMENTS = ("dev", "staging")
+# The unified Runtime Release workflow deploys dev, ephemeral staging, and
+# production via single-path staged state machine.
+DEPLOYABLE_ENVIRONMENTS = ("dev", "staging", "production")
 PASSING_RECEIPT_RESULT = "pass"
 NOT_APPLICABLE_STATUS = "not-applicable"
 VERIFIER_NAME = "delivery_toolchain/release/check_runtime_admission.py"
@@ -106,10 +120,8 @@ def registry_admission_errors(
 ) -> list[str]:
     """Return why the staged gate registry does not admit *environment*.
 
-    `allowed_environments` narrows which targets the caller may ask about. The
-    Runtime Release workflow can only reach dev and staging; the Supervisor
-    issuer widens it so a production lease is refused by the gate stage rather
-    than by the entrypoint.
+    `allowed_environments` specifies the deployable environments admitted by
+    the Runtime Release workflow (dev, staging, production).
     """
 
     errors: list[str] = []
@@ -254,8 +266,10 @@ def admit_release(
     task_id: str,
     public_key: Any,
     state_store: LeaseStateStore,
+    manifest: Any = None,
     manifest_digest: str | None = None,
     manifest_errors: list[str] | None = None,
+    component_images: dict[str, str] | None = None,
     allowed_action: str = DEFAULT_ACTION,
     consumed_by: str,
     root: Path = ROOT,
@@ -264,6 +278,14 @@ def admit_release(
     """Run the whole admission decision and consume the lease when it passes."""
 
     extra = list(manifest_errors or [])
+    if component_images:
+        # A manifest that failed to load is `None` here, and binding against it
+        # reports an error rather than silently skipping the check.
+        extra.extend(
+            error
+            for error in component_binding_errors(manifest, component_images)
+            if error not in extra
+        )
     extra.extend(
         registry_admission_errors(
             registry,
@@ -338,14 +360,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--lease-state-dir",
         required=True,
-        type=Path,
-        help="Durable Supervisor lease state directory. Must already exist.",
+        type=str,
+        help="Durable Supervisor lease state directory or gs://bucket/prefix. Must already exist.",
     )
     parser.add_argument(
         "--public-key-file",
         type=Path,
         default=None,
         help="Ed25519 verification key; defaults to the ODP_RELEASE_LEASE_PUBLIC_KEY env var.",
+    )
+    parser.add_argument(
+        "--component-image",
+        action="append",
+        default=[],
+        metavar="NAME=REF",
+        help=(
+            "Immutable image reference the deploy phase was handed for one manifest "
+            "component, e.g. api=repo/api@sha256:... . Repeat per component; each one "
+            "must equal the image recorded by manifest.components."
+        ),
     )
     parser.add_argument("--action", default=DEFAULT_ACTION)
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
@@ -395,7 +428,19 @@ def main(argv: list[str] | None = None) -> int:
     manifest, manifest_errors = load_manifest(
         args.manifest, expected_candidate_sha=expected_candidate_sha
     )
+    if manifest is not None:
+        admission_errors = validate_release_admission(manifest)
+        manifest_errors.extend(
+            error for error in admission_errors if error not in manifest_errors
+        )
     manifest_digest = manifest.get("manifest_digest") if manifest and not manifest_errors else None
+
+    component_images: dict[str, str] = {}
+    for raw in args.component_image:
+        name, _, ref = str(raw).partition("=")
+        if not name.strip() or not ref.strip():
+            return fail([f"--component-image expects NAME=REF, got: {raw!r}"])
+        component_images[name.strip()] = ref.strip()
 
     admitted, errors, receipt = admit_release(
         registry,
@@ -405,12 +450,17 @@ def main(argv: list[str] | None = None) -> int:
         task_id=args.task_id,
         public_key=public_key,
         state_store=state_store,
+        manifest=manifest,
         manifest_digest=manifest_digest,
         manifest_errors=manifest_errors,
+        component_images=component_images,
         allowed_action=args.action,
         consumed_by=_consumer_label(args.environment, args.release_sha),
         now=now,
     )
+    # Digests are not secrets, and an admission receipt that does not say which
+    # artifact was admitted cannot be audited against what actually deployed.
+    receipt["component_images"] = dict(sorted(component_images.items()))
     if not admitted:
         return _blocked(errors, receipt, args.receipt)
 

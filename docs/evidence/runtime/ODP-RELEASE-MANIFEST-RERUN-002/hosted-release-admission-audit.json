@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-RERUN-002",
+  "candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+  "observed_at": "2026-08-26T14:42:37Z",
+  "recorded_by": "Claude2",
+  "subject": "Can the hosted Runtime Release workflow admit a dev release for this candidate?",
+  "answer": "No.",
+  "workflow": {
+    "ref": ".github/workflows/deploy-dev.yml",
+    "name_at_candidate": "Runtime Release",
+    "triggers_at_candidate": ["workflow_dispatch"],
+    "last_change": {
+      "commit": "56b439d4202d9f81ac3bb0b53e3a49751263b4b8",
+      "authored_at": "2026-08-26T08:34:35+00:00",
+      "subject": "ODP-RELEASE-ADMISSION-HOSTED-WIF-GUARD-001: WIF/GCS preflight"
+    },
+    "transcript_ref": "release-candidate-transcript.txt#L308",
+    "note": "The workflow has no push trigger at the candidate SHA, so merging to dev cannot produce a release build. A release must be dispatched explicitly with a signed lease."
+  },
+  "admission_preconditions": [
+    {
+      "workflow_line": 118,
+      "assertion": "HAS_WIF must be true, i.e. both vars.GCP_WORKLOAD_IDENTITY_PROVIDER and vars.GCP_SERVICE_ACCOUNT are set",
+      "dev_environment_satisfies": true,
+      "observed": "GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_SERVICE_ACCOUNT are both defined on the dev environment."
+    },
+    {
+      "workflow_line": 122,
+      "assertion": "vars.ODP_RELEASE_LEASE_STATE_URI must match ^gs://[^/]+/.+ , otherwise the job exits 1",
+      "dev_environment_satisfies": false,
+      "observed": "ODP_RELEASE_LEASE_STATE_URI is not defined on the dev environment and is not defined at repository scope, so it expands to the empty string and the regex test fails."
+    },
+    {
+      "workflow_line": 147,
+      "assertion": "vars.ODP_RELEASE_LEASE_PUBLIC_KEY supplies the Ed25519 key that check_runtime_admission.py verifies the lease signature against",
+      "dev_environment_satisfies": false,
+      "observed": "ODP_RELEASE_LEASE_PUBLIC_KEY is not defined on the dev environment and is not defined at repository scope."
+    }
+  ],
+  "environment_variable_inventory": {
+    "command": "gh variable list --repo alfloop-dev/odayplus --env <env> --json name",
+    "command_exit_code": 0,
+    "transcript_ref": "release-candidate-transcript.txt#L275",
+    "results": {
+      "dev": {
+        "variable_count": 38,
+        "ODP_RELEASE_LEASE_STATE_URI": "absent",
+        "ODP_RELEASE_LEASE_PUBLIC_KEY": "absent"
+      },
+      "staging": {
+        "variable_count": 42,
+        "ODP_RELEASE_LEASE_STATE_URI": "present",
+        "ODP_RELEASE_LEASE_PUBLIC_KEY": "present"
+      },
+      "production": {
+        "variable_count": 38,
+        "ODP_RELEASE_LEASE_STATE_URI": "present",
+        "ODP_RELEASE_LEASE_PUBLIC_KEY": "present"
+      },
+      "repository_scope": {
+        "variable_count": 0,
+        "note": "gh variable list --json name returned [] at repository scope, so nothing supplies the missing dev variables as a fallback."
+      }
+    },
+    "privacy_note": "Only variable names were collected. No variable values are recorded in this evidence directory."
+  },
+  "conclusion": "Every other blocker in this audit (no image, no workflow run, no SBOM, no signature) is downstream of this one: the dev environment cannot pass hosted release admission, so no hosted run can produce the artifacts those blockers ask for. Building and pushing images from this worker instead would produce artifacts with no hosted OIDC provenance and no lease authorisation, which is precisely the artifact drift the release model exists to prevent. The correct fix is a configuration task on the dev GitHub environment, not a local build.",
+  "recommended_followup": {
+    "proposed_task": "Configure ODP_RELEASE_LEASE_STATE_URI and ODP_RELEASE_LEASE_PUBLIC_KEY on the GitHub dev environment, mirroring the staging and production configuration, and confirm the backing GCS lease bucket exists for the dev project.",
+    "owner_hint": "Platform/Ops (human-owned: it touches GitHub environment configuration and a GCS bucket)",
+    "blocks": "ODP-RELEASE-MANIFEST-RERUN-LEASE-CONFIG-002"
+  }
+}

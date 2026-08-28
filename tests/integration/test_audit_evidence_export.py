@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.opsboard.audit import (
+    AuditEvidenceExportError,
     AuditEvidenceExportService,
     DecisionCard,
     EvidenceExportRequest,
@@ -13,10 +15,18 @@ from modules.opsboard.audit import (
 from shared.audit import AuditEvent, InMemoryAuditLog
 from tests.integration._authz import AUDIT_HEADERS
 
-NOW = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
+
+def _now() -> datetime:
+    """Stable reference time anchored one hour before wall-clock.
+
+    Every ``expires_at`` in the tests is built as ``_now() + delta`` so that
+    sensitive-export authorization can never race against real time the way
+    the old fixed ``datetime(2026, 6, 27, …)`` constant did.
+    """
+    return datetime.now(UTC) - timedelta(hours=1)
 
 
-def _ready_card(audit_event_id: str = "audit-1") -> DecisionCard:
+def _ready_card(now: datetime, audit_event_id: str = "audit-1") -> DecisionCard:
     return DecisionCard(
         decision_id="decision-intervention-001",
         decision_type="INTERVENTION_EFFECT",
@@ -25,7 +35,7 @@ def _ready_card(audit_event_id: str = "audit-1") -> DecisionCard:
         subject_ref="intervention/intv-001",
         outcome="COMPLETED",
         owner="ops-manager",
-        decided_at=NOW,
+        decided_at=now,
         rationale="Observation window matured with DID evidence and positive margin.",
         input_snapshot_id="intervention-input-snapshot-20260627",
         evidence_refs=("label/intv-001", "artifact/effect-report-001"),
@@ -47,6 +57,7 @@ def _ready_card(audit_event_id: str = "audit-1") -> DecisionCard:
 
 
 def test_audit_evidence_export_builds_decision_cards_and_subsidy_matrix() -> None:
+    now = _now()
     audit_log = InMemoryAuditLog()
     event = audit_log.record(
         AuditEvent(
@@ -56,7 +67,7 @@ def test_audit_evidence_export_builds_decision_cards_and_subsidy_matrix() -> Non
             resource="intervention/intv-001",
             outcome="completed",
             correlation_id="corr-audit-export-1",
-            occurred_at=NOW,
+            occurred_at=now,
             metadata={"evidence_level": "L3", "label_id": "label/intv-001"},
         )
     )
@@ -67,8 +78,8 @@ def test_audit_evidence_export_builds_decision_cards_and_subsidy_matrix() -> Non
             program_id="subsidy-program-2026-q2",
             purpose="quarterly subsidy review",
             requested_by="reviewer-a",
-            from_time=NOW - timedelta(days=1),
-            to_time=NOW + timedelta(days=1),
+            from_time=now - timedelta(days=1),
+            to_time=now + timedelta(days=1),
             correlation_ids=("corr-audit-export-1",),
             export_scope="tenant=t1;region=north;program=subsidy-program-2026-q2",
             environment="ci",
@@ -76,13 +87,13 @@ def test_audit_evidence_export_builds_decision_cards_and_subsidy_matrix() -> Non
             data_classification="restricted",
             sensitive=True,
             purpose_scope="subsidy-review:q2",
-            expires_at=NOW + timedelta(hours=4),
+            expires_at=now + timedelta(hours=4),
             authorized_by="legal-approver",
             authorization_id="authz-sub-2026-q2",
             masking_profile="masked",
         ),
-        decision_cards=(_ready_card(event.event_id),),
-        generated_at=NOW,
+        decision_cards=(_ready_card(now, event.event_id),),
+        generated_at=now,
     )
 
     assert bundle.policy_version == "audit-evidence-export-policy-v1"
@@ -118,6 +129,7 @@ def test_audit_evidence_export_builds_decision_cards_and_subsidy_matrix() -> Non
 
 
 def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
+    now = _now()
     audit_log = InMemoryAuditLog()
     event = audit_log.record(
         AuditEvent(
@@ -127,7 +139,7 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
             resource="model/forecast_revenue_interval:1.1.0",
             outcome="approved",
             correlation_id="corr-api-export-1",
-            occurred_at=NOW,
+            occurred_at=now,
             metadata={"release_type": "FULL", "approval_id": "approval-full-002"},
         )
     )
@@ -141,8 +153,8 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
             "program_id": "subsidy-program-2026-q2",
             "purpose": "model release subsidy audit",
             "requested_by": "auditor-a",
-            "from_time": (NOW - timedelta(hours=1)).isoformat(),
-            "to_time": (NOW + timedelta(hours=1)).isoformat(),
+            "from_time": (now - timedelta(hours=1)).isoformat(),
+            "to_time": (now + timedelta(hours=1)).isoformat(),
             "correlation_ids": ["corr-api-export-1"],
             "export_scope": "tenant=t1;model=forecast_revenue_interval",
             "environment": "ci",
@@ -150,7 +162,7 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
             "data_classification": "restricted",
             "sensitive": True,
             "purpose_scope": "model-release-subsidy-review",
-            "expires_at": (NOW + timedelta(days=60)).isoformat(),
+            "expires_at": (now + timedelta(hours=6)).isoformat(),
             "authorized_by": "legal-approver",
             "authorization_id": "authz-model-release-q2",
             "masking_profile": "masked",
@@ -163,7 +175,7 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
                     "subject_ref": "model/forecast_revenue_interval:1.1.0",
                     "outcome": "APPROVED",
                     "owner": "model-review-board",
-                    "decided_at": NOW.isoformat(),
+                    "decided_at": now.isoformat(),
                     "rationale": "Validation passed and rollback target is recorded.",
                     "input_snapshot_id": "forecast-training-1.1.0",
                     "evidence_refs": ["validation/forecast-1.1.0", "model-card/1.1.0"],
@@ -206,3 +218,129 @@ def test_audit_evidence_export_api_uses_platform_audit_log() -> None:
     assert len(payload["bundle_checksum"]) == 64
     assert payload["export_governance"]["download_evidence_id"]
     assert payload["audit_chain"]["end"]
+
+
+def test_expired_authorization_is_rejected_by_service() -> None:
+    """Regression: sensitive export with past expires_at must fail-closed.
+
+    Production validation (``_validate_request``) rejects any sensitive export
+    whose ``expires_at`` is at or before ``generated_at``.  This test proves
+    the guard is intact after switching the happy-path tests to dynamic
+    timestamps.
+    """
+    now = _now()
+    audit_log = InMemoryAuditLog()
+    audit_log.record(
+        AuditEvent(
+            event_type="intervention.effect_evaluated.v1",
+            actor="analyst-a",
+            action="evaluate",
+            resource="intervention/intv-001",
+            outcome="completed",
+            correlation_id="corr-expired-1",
+            occurred_at=now,
+            metadata={},
+        )
+    )
+    service = AuditEvidenceExportService(audit_log=audit_log)
+
+    with pytest.raises(
+        AuditEvidenceExportError, match="sensitive export authorization expired"
+    ):
+        service.export(
+            EvidenceExportRequest(
+                program_id="subsidy-program-2026-q2",
+                purpose="quarterly subsidy review",
+                requested_by="reviewer-a",
+                from_time=now - timedelta(days=1),
+                to_time=now + timedelta(days=1),
+                correlation_ids=("corr-expired-1",),
+                export_scope="tenant=t1;region=north",
+                environment="ci",
+                build_version="test-build",
+                data_classification="restricted",
+                sensitive=True,
+                purpose_scope="subsidy-review:q2",
+                expires_at=now - timedelta(hours=2),
+                authorized_by="legal-approver",
+                authorization_id="authz-expired-test",
+                masking_profile="masked",
+            ),
+            decision_cards=(_ready_card(now),),
+            generated_at=now,
+        )
+
+    # Denial must be audited (durable trail for rejected sensitive exports).
+    denial_events = [
+        item
+        for item in audit_log.list_events(correlation_id="corr-expired-1")
+        if item.event_type == "audit.evidence_export.v1"
+        and item.outcome == "denied"
+    ]
+    assert len(denial_events) == 1
+
+
+def test_expired_authorization_returns_422_via_api() -> None:
+    """Regression: the API route surfaces the expired-authorization rejection."""
+    now = _now()
+    audit_log = InMemoryAuditLog()
+    audit_log.record(
+        AuditEvent(
+            event_type="learninghub.model_release.v1",
+            actor="ml-owner",
+            action="release",
+            resource="model/forecast_revenue_interval:1.1.0",
+            outcome="approved",
+            correlation_id="corr-api-expired-1",
+            occurred_at=now,
+            metadata={},
+        )
+    )
+    app = create_app(audit_log=audit_log)
+    client = TestClient(app, headers=AUDIT_HEADERS)
+
+    response = client.post(
+        "/audit/evidence/export",
+        headers={"X-Correlation-ID": "corr-api-expired-1"},
+        json={
+            "program_id": "subsidy-program-2026-q2",
+            "purpose": "model release subsidy audit",
+            "requested_by": "auditor-a",
+            "from_time": (now - timedelta(hours=1)).isoformat(),
+            "to_time": (now + timedelta(hours=1)).isoformat(),
+            "correlation_ids": ["corr-api-expired-1"],
+            "export_scope": "tenant=t1;model=forecast_revenue_interval",
+            "environment": "ci",
+            "build_version": "test-build",
+            "data_classification": "restricted",
+            "sensitive": True,
+            "purpose_scope": "model-release-subsidy-review",
+            "expires_at": (now - timedelta(hours=2)).isoformat(),
+            "authorized_by": "legal-approver",
+            "authorization_id": "authz-api-expired-test",
+            "masking_profile": "masked",
+            "decision_cards": [
+                {
+                    "decision_id": "decision-model-release-001",
+                    "decision_type": "MODEL_RELEASE",
+                    "module": "Learning Hub",
+                    "title": "ForecastOps model release",
+                    "subject_ref": "model/forecast_revenue_interval:1.1.0",
+                    "outcome": "APPROVED",
+                    "owner": "model-review-board",
+                    "decided_at": now.isoformat(),
+                    "rationale": "Validation passed.",
+                    "input_snapshot_id": "forecast-training-1.1.0",
+                    "evidence_refs": [],
+                    "model_refs": ["forecast_revenue_interval:1.1.0"],
+                    "policy_refs": ["learninghub-release-policy-v1"],
+                    "audit_event_ids": [],
+                    "subsidy_requirements": ["ELIGIBILITY"],
+                    "controls": ["approval_id_present"],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "expired" in response.json()["detail"].lower()

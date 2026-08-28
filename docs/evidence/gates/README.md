@@ -13,6 +13,12 @@ the migration/data-contract/source-policy digests, SBOM/signature references,
 and its own canonical `manifest_digest`. Deployments carry this manifest by
 digest; they do not rebuild it per environment.
 
+A candidate that never produced an image has no honest component list, so an
+empty `components` map stays representable -- but only on a manifest that
+records `release_status: blocked` and says why. `validate_release_admission`
+refuses an empty component set regardless of the recorded status, so a candidate
+with nothing to deploy can never read as deployable.
+
 `docs/release/RELEASE_GATE_CHECKLIST.md` stays the human-facing narrative and
 per-check worksheet. Where the two disagree, the registry is the state of
 record and the checklist is the explanation.
@@ -21,9 +27,33 @@ record and the checklist is the explanation.
 
 **NO-GO.** All seven gates are `blocked`, none carries a receipt, and
 `release.decision` is `no-go` against candidate SHA
-`e496be62c47c45d758681b8a4d3abfae16f1c96d`. Deterministic product-E2E readiness
+`ebc4fca5c2dd5871275aee39a18406dd67464f04`. Deterministic product-E2E readiness
 (`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness. The
 current state is `candidate-built` in `dev`, with admission target `dev`.
+
+The candidate was rebound from `a027fa1c3935360e6fc4b3bd073cd91cbee07548` by
+ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001. This is the first candidate
+with a real artifact behind it: `RELEASE_MANIFEST.json` is now the byte-exact
+`runtime-release-manifest` artifact of Runtime Release run
+[33003734045](https://github.com/alfloop-dev/odayplus/actions/runs/33003734045),
+so it records `release_status: ready`, four `@sha256:`-pinned component images,
+four Cosign signature references, and four CycloneDX SBOM attestation
+references. `registry.candidate_rebind` records what that does *not* mean: no
+gate was re-attested, no receipt was written, and no status moved toward
+cleared. The build run ran its build phase only -- its lease-verification and
+deploy jobs are `skipped` -- so nothing was deployed.
+
+A `ready` manifest is an admissible *artifact*, not an admitted *release*.
+Admission additionally requires this registry to record a cleared `go` decision
+and the Runtime Release deploy phase to present a signed Supervisor lease bound
+to `manifest_digest`. Both are absent, so the release stays fail-closed:
+`check_release_gate_registry.py --require-go` exits non-zero.
+
+Re-resolving the image, SBOM, and signature digests against Artifact Registry
+needs a registry credential and has not been done outside the build run itself;
+`docs/evidence/runtime/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001/`
+records that probe failing closed rather than reporting it as a pass, and leaves
+it as an open item for whoever attests Gate 4.
 
 ## Gate 0-6
 

@@ -3,7 +3,7 @@
 - PR authority: #82 headRefOid and attached checks
 - Queue status: ready_for_fleet_pickup
 - Queue role: historical_initial_dispatch
-- Current remaining queue: `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`
+- Current rollout plan: `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`
 - Updated: 2026-06-29
 
 ## Operator Preflight
@@ -13,10 +13,7 @@
 - Keep deterministic fixture/source-stub tests as CI defaults.
 - Use each task's suggested branch and brief file as the handoff contract.
 - Execute any task-specific `execution_commands` before requesting review.
-- Treat this kickoff queue as historical implementation dispatch; current release blockers are routed through `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`.
-- Before Product Validation accepts live provider, live map, or remote staging proof, use `python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>` and validate the completed handback with `python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"`.
-- Keep `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` synchronized with `python3 delivery_toolchain/e2e/update_external_proof_handback_status_board.py`; verify it with `python3 delivery_toolchain/e2e/check_external_proof_handback_status_board.py`.
-- Before closing #132-#138, run `python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees`, `python3 delivery_toolchain/e2e/check_external_proof_fleet_notifications.py`, and `python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees`.
+- Treat this kickoff queue as historical implementation dispatch; current rollout controls are defined in `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`.
 
 ## Fleet Pickup Sequence
 
@@ -86,17 +83,6 @@ For every task, the implementation fleet must attach:
 - acceptance criteria proof
 - handoff artifacts
 
-For current live-provider, live-map, and remote-staging closeout, convert the implementation handback into the #132-#138 external-proof handback format:
-
-```bash
-python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>
-python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 delivery_toolchain/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 delivery_toolchain/e2e/update_external_proof_handback_status_board.py --help
-python3 delivery_toolchain/e2e/check_external_proof_handback_status_board.py
-python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees
-python3 delivery_toolchain/e2e/check_external_proof_fleet_notifications.py
-python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees
-```
+Live provider activation and remote staging validation are governed by `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`.
 
 A document-only PR must not close any `ready_for_fleet` queue entry.
