@@ -45,6 +45,10 @@ import worker_lifecycle
 
 TASK = {"id": "T-1", "status": "in_progress", "owner": "Claude", "reviewer": "Codex"}
 STATUS = {"tasks": [TASK]}
+# The assignment-moved drop is only reachable for a dead worker whose runner
+# exited cleanly and whose task already reached a terminal board status --
+# anything else is claimed by the supersede branch above it.
+DONE_STATUS = {"tasks": [{**TASK, "status": "done"}]}
 REQUEST_SNAPSHOT = {
     "message": "go",
     "provider": "claude",
@@ -94,20 +98,37 @@ class WorkerSettlementPathTests(unittest.TestCase):
         worker.update(overrides)
         return worker
 
-    def _settle(self, path, worker: dict) -> tuple[str, str]:
+    def _settle(self, path, worker: dict, *, pid_alive: bool | None = None) -> tuple[str, str]:
         """Run one settlement path over one worker; return (worker status, queue status)."""
+        state, _activity = self._run_settlement(path, worker, pid_alive=pid_alive)
+        settled = state["workers"].get("run-1", {})
+        return str(settled.get("status")), str(state["queue"]["events"]["evt-1"].get("status"))
+
+    def _run_settlement(
+        self,
+        path,
+        worker: dict,
+        *,
+        pid_alive: bool | None = None,
+        status_doc: dict = STATUS,
+        assignment_matches: bool = True,
+    ) -> tuple[dict, mock.Mock]:
+        """Run one settlement path; return the mutated state and the activity-log mock."""
         state = {
             "workers": {"run-1": copy.deepcopy(worker)},
             "queue": {"events": {"evt-1": {"status": "started"}}},
             "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
         }
         config = supervisor.load_config(".orchestrator/config.json")
+        activity_log = mock.patch.object(supervisor, "write_activity_log")
         patches = [
-            mock.patch.object(supervisor, "load_status", return_value=STATUS),
-            mock.patch.object(worker_lifecycle, "load_status", return_value=STATUS, create=True),
-            mock.patch.object(supervisor, "worker_matches_current_assignment", return_value=True),
+            mock.patch.object(supervisor, "load_status", return_value=status_doc),
+            mock.patch.object(worker_lifecycle, "load_status", return_value=status_doc, create=True),
+            mock.patch.object(
+                supervisor, "worker_matches_current_assignment", return_value=assignment_matches
+            ),
             mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
-            mock.patch.object(supervisor, "write_activity_log"),
+            activity_log,
             mock.patch.object(supervisor, "console_log"),
             mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-2", None)),
             # Reassignment depends on `worker_reassignment.owner_fallbacks`, which
@@ -117,15 +138,137 @@ class WorkerSettlementPathTests(unittest.TestCase):
             # reaches and whether it retries, so hold reassignment policy still.
             mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
         ]
-        for patch in patches:
-            patch.start()
+        if pid_alive is not None:
+            patches.append(mock.patch.object(supervisor, "pid_is_alive", return_value=pid_alive))
+        started = [patch.start() for patch in patches]
         try:
             path(config, state)
         finally:
             for patch in patches:
                 patch.stop()
-        settled = state["workers"].get("run-1", {})
-        return str(settled.get("status")), str(state["queue"]["events"]["evt-1"].get("status"))
+        return state, started[patches.index(activity_log)]
+
+    def test_dead_running_worker_preserves_worktree_before_failure_settlement(self) -> None:
+        worker = self._worker()
+        with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
+            self.assertEqual(
+                self._settle(supervisor.poll_workers, worker, pid_alive=False),
+                ("failed", "failed"),
+            )
+        preserve.assert_called_once()
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "missing_process")
+
+    def test_failed_runner_marker_settles_without_refreshing_lease(self) -> None:
+        worker = self._worker(runner_status="failed", exit_code=1)
+        with (
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve,
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh,
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate,
+        ):
+            self.assertEqual(
+                self._settle(supervisor.poll_workers, worker, pid_alive=True),
+                ("failed", "failed"),
+            )
+        refresh.assert_not_called()
+        terminate.assert_called_once_with(999999)
+        preserve.assert_called_once()
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "runner_failed")
+
+    def test_failed_runner_marker_file_is_settled_before_terminal_skip(self) -> None:
+        status_path = self.logs / "failed-runner-status.json"
+        status_path.write_text('{"status": "failed", "exit_code": 1}', encoding="utf-8")
+        worker = self._worker(status="completed", runner_status_path=str(status_path))
+        with (
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve,
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh,
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate,
+        ):
+            self.assertEqual(
+                self._settle(supervisor.poll_workers, worker, pid_alive=True),
+                ("failed", "failed"),
+            )
+        refresh.assert_not_called()
+        terminate.assert_called_once_with(999999)
+        preserve.assert_called_once()
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "runner_failed")
+
+    def test_unsettled_failed_lifecycle_record_is_not_skipped(self) -> None:
+        worker = self._worker(status="failed", last_error="runner failed before queue settlement")
+        with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
+            self.assertEqual(
+                self._settle(supervisor.poll_workers, worker, pid_alive=False),
+                ("failed", "failed"),
+            )
+        preserve.assert_called_once()
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "runner_failed")
+
+    def _assignment_moved_worker(self, name: str) -> dict:
+        """A dead worker that the poll drops because its task moved on."""
+        workspace = self.logs / name
+        workspace.mkdir(exist_ok=True)
+        return self._worker(
+            status="fallback",
+            workspace_path=str(workspace),
+            runner_status="success",
+            exit_code=0,
+        )
+
+    def test_assignment_moved_dead_worker_preserves_its_worktree_exactly_once(self) -> None:
+        """The call in front of `workers.pop` is an ordering net, not a second backup.
+
+        `preserve_dead_worker_worktree` is not idempotent: each call mints a
+        fresh UUID backup directory and writes another `worker_death_worktree_*`
+        entry. Every worker reaching the assignment-moved drop is already dead,
+        so the poll preserved it on the way in; the direct call kept ahead of
+        the pop (pinned at the source level by
+        `test_the_orphan_path_preserves_before_the_record_disappears`) has to be
+        gated on that, or the one path that exists as a safety net doubles the
+        backup instead.
+        """
+        worker = self._assignment_moved_worker("assignment-moved-workspace")
+        with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
+            state, _activity = self._run_settlement(
+                supervisor.poll_workers,
+                worker,
+                pid_alive=False,
+                status_doc=DONE_STATUS,
+                assignment_matches=False,
+            )
+        self.assertEqual(
+            preserve.call_count,
+            1,
+            "a dead worker whose assignment moved must be preserved once, not once per "
+            f"drop site; triggers were {[call.kwargs.get('trigger') for call in preserve.call_args_list]}",
+        )
+        self.assertNotIn("run-1", state["workers"], "the stale record should have been dropped")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "completed")
+
+    def test_assignment_moved_dead_worker_records_one_preservation_outcome(self) -> None:
+        """Same guarantee, observed through the real helper rather than a mock.
+
+        The duplicate was only visible in its side effects -- a second backup
+        directory and a second activity entry -- so assert on the side effect
+        the helper always produces, whether or not it found anything to save.
+        """
+        worker = self._assignment_moved_worker("assignment-moved-logged-workspace")
+        _state, activity = self._run_settlement(
+            supervisor.poll_workers,
+            worker,
+            pid_alive=False,
+            status_doc=DONE_STATUS,
+            assignment_matches=False,
+        )
+        preservation_entries = [
+            call.args[1]
+            for call in activity.call_args_list
+            if len(call.args) > 1
+            and str((call.args[1] or {}).get("type", "")).startswith("worker_death_worktree_")
+        ]
+        self.assertEqual(
+            len(preservation_entries),
+            1,
+            f"expected one preservation outcome per dead worker, got {preservation_entries}",
+        )
 
     def test_boot_does_not_retry_a_transient_failure(self) -> None:
         """Retry/backoff timestamps predate the restart, so boot settles instead."""
