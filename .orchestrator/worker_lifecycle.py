@@ -734,15 +734,19 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         alive = process_alive and not runner_reports_failure
         worktree_preserved = False
 
-        def preserve_worker_worktree_once(trigger: str) -> None:
+        def preserve_worker_worktree_once(
+            trigger: str,
+            *,
+            current_worker: dict[str, Any] = worker,
+        ) -> None:
             nonlocal worktree_preserved
             if worktree_preserved:
                 return
             preserve_dead_worker_worktree(
                 config,
                 state,
-                worker,
-                task=task_map.get(str(worker.get("task_id") or "")),
+                current_worker,
+                task=task_map.get(str(current_worker.get("task_id") or "")),
                 trigger=trigger,
             )
             worktree_preserved = True
