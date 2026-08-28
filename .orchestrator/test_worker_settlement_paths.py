@@ -94,7 +94,7 @@ class WorkerSettlementPathTests(unittest.TestCase):
         worker.update(overrides)
         return worker
 
-    def _settle(self, path, worker: dict) -> tuple[str, str]:
+    def _settle(self, path, worker: dict, *, pid_alive: bool | None = None) -> tuple[str, str]:
         """Run one settlement path over one worker; return (worker status, queue status)."""
         state = {
             "workers": {"run-1": copy.deepcopy(worker)},
@@ -117,6 +117,8 @@ class WorkerSettlementPathTests(unittest.TestCase):
             # reaches and whether it retries, so hold reassignment policy still.
             mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
         ]
+        if pid_alive is not None:
+            patches.append(mock.patch.object(supervisor, "pid_is_alive", return_value=pid_alive))
         for patch in patches:
             patch.start()
         try:
@@ -126,6 +128,42 @@ class WorkerSettlementPathTests(unittest.TestCase):
                 patch.stop()
         settled = state["workers"].get("run-1", {})
         return str(settled.get("status")), str(state["queue"]["events"]["evt-1"].get("status"))
+
+    def test_dead_running_worker_preserves_worktree_before_failure_settlement(self) -> None:
+        worker = self._worker()
+        with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
+            self.assertEqual(
+                self._settle(supervisor.poll_workers, worker, pid_alive=False),
+                ("failed", "failed"),
+            )
+        preserve.assert_called_once()
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "missing_process")
+
+    def test_failed_runner_marker_settles_without_refreshing_lease(self) -> None:
+        worker = self._worker(runner_status="failed", exit_code=1)
+        with (
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve,
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh,
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate,
+        ):
+            self.assertEqual(
+                self._settle(supervisor.poll_workers, worker, pid_alive=True),
+                ("failed", "failed"),
+            )
+        refresh.assert_not_called()
+        terminate.assert_called_once_with(999999)
+        preserve.assert_called_once()
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "runner_failed")
+
+    def test_unsettled_failed_lifecycle_record_is_not_skipped(self) -> None:
+        worker = self._worker(status="failed", last_error="runner failed before queue settlement")
+        with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
+            self.assertEqual(
+                self._settle(supervisor.poll_workers, worker, pid_alive=False),
+                ("failed", "failed"),
+            )
+        preserve.assert_called_once()
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "runner_failed")
 
     def test_boot_does_not_retry_a_transient_failure(self) -> None:
         """Retry/backoff timestamps predate the restart, so boot settles instead."""
