@@ -696,9 +696,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if marker_changed:
                 poll_counts["marker_updates"] += 1
                 changed = True
-        update_from_log(config, worker)
+        runner_reports_failure = _runner_reports_failure(worker)
+        if not runner_reports_failure:
+            update_from_log(config, worker)
         try:
-            adopted_approval = correlate_deferred_tool_approval(config, worker, approval_state)
+            adopted_approval = (
+                correlate_deferred_tool_approval(config, worker, approval_state)
+                if not runner_reports_failure
+                else None
+            )
         except Exception as error:  # pragma: no cover - queue write failures must fail closed, not crash
             adopted_approval = None
             write_activity_log(
@@ -835,7 +841,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             worker.get("last_process_activity_at")
             and worker.get("last_process_activity_at") > str(previous_last_process_activity_at or "")
         )
-        if manual_pending_inbox_can_auto_redeliver(config, state, provider_report, worker):
+        if not runner_reports_failure and manual_pending_inbox_can_auto_redeliver(
+            config, state, provider_report, worker
+        ):
             changed = (
                 requeue_stale_manual_pending_worker(
                     config,
@@ -1023,7 +1031,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])
         if pending:
-            if not alive and not worker_supports_approval_resume(config, worker):
+            if not alive and (
+                runner_reports_failure or not worker_supports_approval_resume(config, worker)
+            ):
                 worker["status"] = "failed"
                 worker["deferred_action"] = None
                 worker["deferred_tool_use"] = None

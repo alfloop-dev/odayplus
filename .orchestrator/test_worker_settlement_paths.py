@@ -155,6 +155,24 @@ class WorkerSettlementPathTests(unittest.TestCase):
         preserve.assert_called_once()
         self.assertEqual(preserve.call_args.kwargs["trigger"], "runner_failed")
 
+    def test_failed_runner_marker_file_is_settled_before_terminal_skip(self) -> None:
+        status_path = self.logs / "failed-runner-status.json"
+        status_path.write_text('{"status": "failed", "exit_code": 1}', encoding="utf-8")
+        worker = self._worker(status="completed", runner_status_path=str(status_path))
+        with (
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve,
+            mock.patch.object(supervisor, "refresh_worker_lease") as refresh,
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate,
+        ):
+            self.assertEqual(
+                self._settle(supervisor.poll_workers, worker, pid_alive=True),
+                ("failed", "failed"),
+            )
+        refresh.assert_not_called()
+        terminate.assert_called_once_with(999999)
+        preserve.assert_called_once()
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "runner_failed")
+
     def test_unsettled_failed_lifecycle_record_is_not_skipped(self) -> None:
         worker = self._worker(status="failed", last_error="runner failed before queue settlement")
         with mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve:
