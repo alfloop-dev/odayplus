@@ -139,6 +139,11 @@ def test_overlong_subject_is_rejected():
     assert any("limit is 72" in e for e in validate_message(message, task_id=TASK))
 
 
+def test_validate_message_allows_long_subject_when_subject_length_limit_disabled():
+    message = GOOD_MESSAGE.replace("add a thing", "x" * 80)
+    assert validate_message(message, task_id=TASK, require_subject_length_limit=False) == []
+
+
 def test_subject_must_start_with_task_id():
     message = GOOD_MESSAGE.replace(f"{TASK}: add a thing", "add a thing")
     assert any("must start with the task id" in e for e in validate_message(message, task_id=TASK))
@@ -243,6 +248,16 @@ def test_worker_commit_refuses_bad_message(repo: Path, tmp_path: Path):
     result = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
     assert result.returncode == 1
     assert "commit message rejected" in result.stderr
+
+
+def test_worker_commit_refuses_overlong_subject(repo: Path, tmp_path: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE.replace("add a thing", "x" * 80))
+
+    result = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt")
+    assert result.returncode == 1
+    assert "limit is 72" in result.stderr
 
 
 def test_worker_commit_uses_the_requested_index_file(repo: Path, tmp_path: Path):
@@ -401,6 +416,21 @@ def test_task_finalize_rejects_head_that_done_cannot_close(
     assert "dry-run: git push" not in result.stdout
 
 
+def test_task_finalize_allows_historical_commit_with_long_subject(repo: Path):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    git(repo, "add", "owned.txt")
+    long_subject_msg = (
+        f"{TASK}: " + "very long summary that exceeds seventy two characters limit intentionally"
+        "\n\nBody text.\n\nLLM-Agent: Claude2\nTask-ID: " + TASK + "\nReviewer: Antigravity4\n"
+    )
+    git(repo, "commit", "--no-verify", "-m", long_subject_msg)
+
+    result = task_finalize(repo, TASK, "--dry-run")
+    assert result.returncode == 0, result.stderr
+    assert "dry-run: git push" in result.stdout
+
+
 def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):
     """The lint preflight refuses here rather than letting CI find it 20 minutes later.
 
@@ -546,3 +576,24 @@ def test_commit_msg_hook_blocks_a_bad_message(repo: Path):
 
     good = run(["git", "commit", "-m", GOOD_MESSAGE], repo)
     assert good.returncode == 0, good.stderr
+
+
+def test_commit_msg_hook_blocks_overlong_subject(repo: Path):
+    hooks = repo / ".githooks"
+    hooks.mkdir()
+    (hooks / "commit-msg").write_text((REPO_ROOT / ".githooks" / "commit-msg").read_text(), encoding="utf-8")
+    (hooks / "commit-msg").chmod(0o755)
+    tool_git = repo / "delivery_toolchain" / "git"
+    tool_git.mkdir(parents=True)
+    (tool_git / "check_commit_trailers.py").write_text(
+        (GIT_DIR / "check_commit_trailers.py").read_text(), encoding="utf-8"
+    )
+    git(repo, "config", "core.hooksPath", ".githooks")
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    git(repo, "add", "owned.txt")
+    overlong = GOOD_MESSAGE.replace("add a thing", "x" * 80)
+    bad = run(["git", "commit", "-m", overlong], repo)
+    assert bad.returncode != 0
+    assert "limit is 72" in bad.stderr
