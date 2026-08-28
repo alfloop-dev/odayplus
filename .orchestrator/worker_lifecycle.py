@@ -1004,13 +1004,25 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             # about to be deleted, and it is the only thing that knows where the
             # workspace is. Reassigning the task does not make whatever this
             # dead worker had written worth losing.
-            preserve_dead_worker_worktree(
-                config,
-                state,
-                worker,
-                task=task_map.get(str(worker.get("task_id") or "")),
-                trigger="assignment_moved",
-            )
+            #
+            # Called directly rather than through `preserve_worker_worktree_once`
+            # so the ordering stays visible to a reader (and to the AST guard in
+            # `test_the_orphan_path_preserves_before_the_record_disappears`), but
+            # gated on the same flag: every worker reaching this branch is `not
+            # alive` and was therefore already preserved above. The helper is not
+            # idempotent -- each call mints a fresh UUID backup directory and a
+            # second `worker_death_worktree_preserved` activity entry -- so an
+            # unconditional call here duplicated both for the one path that is
+            # supposed to be the safety net.
+            if not worktree_preserved:
+                preserve_dead_worker_worktree(
+                    config,
+                    state,
+                    worker,
+                    task=task_map.get(str(worker.get("task_id") or "")),
+                    trigger="assignment_moved",
+                )
+                worktree_preserved = True
             workers.pop(run_id, None)
             finalize_queue_event_record(
                 config,
