@@ -657,7 +657,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 failure_reason = str(worker.get("last_error") or GENERIC_WORKER_EXIT_REASON)
                 finalize_queue_event_record(config, state, worker, "failed", failure_reason)
                 changed = True
-            if lifecycle_status != "completed" or not runner_reports_failure:
+            if not queue_unsettled or lifecycle_status != "completed" or not runner_reports_failure:
                 continue
         previous_last_event_at = worker.get("last_event_at")
         previous_last_process_activity_at = worker.get("last_process_activity_at")
@@ -1004,7 +1004,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             # about to be deleted, and it is the only thing that knows where the
             # workspace is. Reassigning the task does not make whatever this
             # dead worker had written worth losing.
-            preserve_worker_worktree_once("assignment_moved")
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                worker,
+                task=task_map.get(str(worker.get("task_id") or "")),
+                trigger="assignment_moved",
+            )
             workers.pop(run_id, None)
             finalize_queue_event_record(
                 config,
