@@ -7966,6 +7966,91 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(event["type"], "review_churn_reassigned")
         self.assertNotEqual(event["from_owner_pool"], event["to_owner_pool"])
 
+    def _escalation_config(self, **churn_overrides) -> dict:
+        churn = {
+            "enabled": True,
+            "reassign_after_reopens": 2,
+            "require_different_account_pool": False,
+        }
+        churn.update(churn_overrides)
+        return {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": churn,
+                "owner_fallbacks": {"Antigravity": ["Codex"]},
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+
+    def _churn_status(self, reopen_count: int) -> dict:
+        return {
+            "tasks": [
+                {
+                    "id": "P3-ESCALATE",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": reopen_count,
+                }
+            ]
+        }
+
+    def test_repeated_reopens_escalate_to_a_human_instead_of_rotating_again(self) -> None:
+        """Owner rotation has to terminate.
+
+        Rotating answers "this agent could not pass review"; it cannot answer
+        "no agent can pass review from here". A live task reached 8 reopens and
+        20 dispatches cycling owners against a gate that needed an authorized
+        human action, because nothing in the loop ever stopped rotating.
+        """
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(
+                self._escalation_config(escalate_to_human_after_reopens=6), {}, self._churn_status(6)
+            )
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_status"], "blocked")
+        self.assertEqual(kwargs["new_waiting_for"], "Human/Ops")
+        # The owner is kept: escalation is a handoff to a human, not one more
+        # rotation, and a reader needs to see who last held it.
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["task_updates"]["review_churn_escalated_at_count"], 6)
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"], "review_churn_escalated_to_human"
+        )
+
+    def test_below_the_escalation_threshold_still_rotates_owners(self) -> None:
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            supervisor.reassign_tasks_after_review_churn(
+                self._escalation_config(escalate_to_human_after_reopens=6), {}, self._churn_status(2)
+            )
+
+        self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "review_churn_reassigned")
+
+    def test_escalation_can_be_disabled_with_zero(self) -> None:
+        """Zero opts a deployment out; rotation then keeps its old behaviour."""
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            supervisor.reassign_tasks_after_review_churn(
+                self._escalation_config(escalate_to_human_after_reopens=0), {}, self._churn_status(99)
+            )
+
+        self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
+
     def test_review_churn_reassignment_is_idempotent_until_two_more_reopens(self) -> None:
         status = {
             "tasks": [
@@ -10933,6 +11018,382 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         ):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertFalse(result)
+
+
+class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
+    """A refused reclaim must say why it refused.
+
+    Every guard in `prune_orphan_worktrees` ends in a bare `continue`, and the
+    only log it emitted was the success one, so a pruner that examined 69
+    worktrees and reclaimed none logged exactly what an idle pruner logged. On
+    a live host that silence lasted until the disk hit 99%.
+
+    Subclasses the guard tests to inherit their registry/base isolation; the
+    inherited cases re-run here, which is cheap and keeps the two in step.
+    """
+
+    MANAGED_ROOT = Path("/tmp/wt").resolve()
+
+    def _scan(
+        self,
+        state: dict,
+        records: list[dict],
+        runs: dict,
+        *,
+        base: Path | None = None,
+        housekeeping: dict | None = None,
+        live_paths: set | None = None,
+        classify_result=None,
+    ):
+        """Run one prune tick over `records` and hand back its return value.
+
+        `runs` is exhaustive: `_stub_subprocess_run` raises on any command it
+        was not given, so a test that omits a command is asserting that command
+        never runs.
+        """
+        base = base if base is not None else self.MANAGED_ROOT
+        settings = {"enabled": True, "tick_interval_seconds": 0}
+        settings.update(housekeeping or {})
+        config = {"worker_worktree_housekeeping": settings}
+        classify = (
+            mock.patch.object(supervisor, "_classify_processes_in_worktree", return_value=classify_result)
+            if classify_result is not None
+            else contextlib.nullcontext()
+        )
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=live_paths or set()),
+            classify,
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+        ):
+            return supervisor.prune_orphan_worktrees(config, state)
+
+    @staticmethod
+    def _completed(stdout: str = "", returncode: int = 0):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+    @staticmethod
+    def _last_scan(state: dict) -> dict:
+        return state["worker_worktree_housekeeping"]["last_scan"]
+
+    def _dirty_case(self, state: dict):
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        return self._scan(
+            state,
+            [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+            {
+                ("git", "branch", "--merged"): self._completed("task/X\n"),
+                ("git", "-C", record_path, "status", "--porcelain"): self._completed(" M foo.py\n"),
+            },
+        )
+
+    def _live_process_case(self, state: dict, classify_result):
+        """A worktree nothing active claims, but something inside is running."""
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        return self._scan(
+            state,
+            [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+            {("git", "branch", "--merged"): self._completed("task/X\n")},
+            live_paths={Path(record_path)},
+            classify_result=classify_result,
+        )
+
+    def test_a_worktree_held_only_by_orphans_is_reported_as_reclaimable(self) -> None:
+        """An init-reparented holder means the owning worker is already gone.
+
+        Twelve pgserver instances outlived their workers by up to three days
+        here. Each had called `setsid()`, so no process group reached them, and
+        the pruner reported them the same way it reported genuinely busy trees.
+        """
+        state: dict = {}
+        self.assertFalse(self._live_process_case(state, ([4242], 0)))
+        scan = self._last_scan(state)
+        self.assertEqual(scan["skipped"], {"live_process_orphaned": 1})
+        self.assertEqual(
+            scan["orphaned_worktrees"], [{"path": str(Path("/tmp/wt").resolve() / "task-x"), "pids": [4242]}]
+        )
+
+    def test_a_still_parented_holder_is_a_real_tenant_and_stays_opaque(self) -> None:
+        state: dict = {}
+        self.assertFalse(self._live_process_case(state, ([], 1)))
+        scan = self._last_scan(state)
+        self.assertEqual(scan["skipped"], {"live_process": 1})
+        self.assertEqual(scan["orphaned_worktrees"], [])
+
+    def test_one_living_parent_disqualifies_the_whole_tree(self) -> None:
+        """Orphans alongside a live tenant must not be called reclaimable."""
+        state: dict = {}
+        self._live_process_case(state, ([4242], 1))
+        scan = self._last_scan(state)
+        self.assertEqual(scan["skipped"], {"live_process": 1})
+        self.assertEqual(scan["orphaned_worktrees"], [])
+
+    def test_worktrees_outside_the_managed_root_are_counted_not_ignored(self) -> None:
+        """A repo's worktrees elsewhere are not reclaimable, but they are real.
+
+        68 of 178 registered worktrees on the live host sat outside the managed
+        root and held 8.3G. The skip happened before any counter, so they were
+        invisible to every reclaim report -- not even counted as refused.
+        """
+        base = Path("/tmp/wt").resolve()
+        outside = "/tmp/somewhere-else/task-y"
+        records = [
+            {"worktree": str(base / "task-x"), "branch": "refs/heads/task/X"},
+            {"worktree": outside, "branch": "refs/heads/task/Y"},
+        ]
+        merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
+        dirty_status = subprocess.CompletedProcess(args=[], returncode=0, stdout=" M foo.py\n", stderr="")
+        runs = {
+            ("git", "branch", "--merged"): merged_proc,
+            ("git", "-C", str(base / "task-x"), "status", "--porcelain"): dirty_status,
+        }
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+        ):
+            supervisor.prune_orphan_worktrees(config, state)
+
+        scan = self._last_scan(state)
+        self.assertEqual(scan["unmanaged"], 1)
+        self.assertEqual(scan["unmanaged_sample"], [outside])
+        # The outside one is not a reclaim candidate, so it must not inflate
+        # `examined` -- that number is the denominator for "reclaimed 0 of N".
+        self.assertEqual(scan["examined"], 1)
+        self.assertEqual(scan["skipped"], {"dirty": 1})
+
+    def test_records_refusal_reasons_when_nothing_is_reclaimed(self) -> None:
+        state: dict = {}
+        self.assertFalse(self._dirty_case(state))
+        scan = self._last_scan(state)
+        self.assertEqual(scan["examined"], 1)
+        self.assertEqual(scan["removed"], 0)
+        self.assertEqual(scan["skipped"], {"dirty": 1})
+
+    def test_stall_marker_starts_on_the_first_fully_refused_tick(self) -> None:
+        state: dict = {}
+        self._dirty_case(state)
+        bucket = state["worker_worktree_housekeeping"]
+        self.assertTrue(bucket.get("stall_since"))
+        self.assertEqual(bucket.get("last_stall_signature"), "dirty=1")
+
+    def test_a_missing_activity_log_sink_does_not_break_the_reclaim(self) -> None:
+        """The counts live in state; the log is a convenience on top of them."""
+        state: dict = {}
+        with mock.patch.object(
+            supervisor, "write_activity_log", side_effect=KeyError("activity_log")
+        ):
+            self.assertFalse(self._dirty_case(state))
+        self.assertEqual(self._last_scan(state)["skipped"], {"dirty": 1})
+
+    def test_a_sibling_root_sharing_the_name_prefix_is_not_managed(self) -> None:
+        """`<root>-archive` is a different directory, not a member of `<root>`.
+
+        Membership used to be `str.startswith` on the raw record, so every
+        sibling whose name merely began with the root's name was pulled into
+        the reclaim candidate set. `runs` carries no `git status` entry for the
+        sibling, so if it is ever treated as managed the stub raises.
+        """
+        sibling = f"{self.MANAGED_ROOT}-archive/task-y"
+        state: dict = {}
+        self.assertFalse(
+            self._scan(
+                state,
+                [{"worktree": sibling, "branch": "refs/heads/task/Y"}],
+                {("git", "branch", "--merged"): self._completed("task/Y\n")},
+            )
+        )
+        scan = self._last_scan(state)
+        self.assertEqual(scan["examined"], 0)
+        self.assertEqual(scan["unmanaged"], 1)
+        self.assertEqual(scan["unmanaged_sample"], [sibling])
+
+    def test_a_symlink_pointing_out_of_the_managed_root_is_not_managed(self) -> None:
+        """The record's spelling is not evidence of where the tree lives.
+
+        A link sitting under the root satisfies any string-prefix test while
+        its content is somewhere the pruner has no authority over, which is the
+        direction of this bug that actually destroys data.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw).resolve()
+            root = tmp / "root"
+            outside = tmp / "outside"
+            root.mkdir()
+            outside.mkdir()
+            link = root / "task-z"
+            link.symlink_to(outside)
+            state: dict = {}
+            self.assertFalse(
+                self._scan(
+                    state,
+                    [{"worktree": str(link), "branch": "refs/heads/task/Z"}],
+                    {("git", "branch", "--merged"): self._completed("task/Z\n")},
+                    base=root,
+                )
+            )
+        scan = self._last_scan(state)
+        self.assertEqual(scan["examined"], 0)
+        self.assertEqual(scan["unmanaged"], 1)
+
+    def test_a_capped_tick_still_counts_the_worktrees_it_did_not_reach(self) -> None:
+        """The cap bounds removals, not the accounting.
+
+        It used to `break` out of both loops, so everything after the cap fell
+        out of `examined` and `unmanaged` while `unmanaged` was still published
+        as the exact total -- under-reporting of exactly the kind this record
+        exists to end.
+        """
+        first = str(self.MANAGED_ROOT / "task-a")
+        second = str(self.MANAGED_ROOT / "task-b")
+        outside = f"{self.MANAGED_ROOT}-archive/task-c"
+        state: dict = {}
+        # `second` has no `git status` entry and no `worktree remove` entry: the
+        # cap must stop it from being evaluated at all, not merely from being
+        # removed.
+        with mock.patch.object(supervisor, "write_activity_log"):
+            reclaimed = self._scan(
+                state,
+                [
+                    {"worktree": first, "branch": "refs/heads/task/A"},
+                    {"worktree": second, "branch": "refs/heads/task/B"},
+                    {"worktree": outside, "branch": "refs/heads/task/C"},
+                ],
+                {
+                    ("git", "branch", "--merged"): self._completed("task/A\ntask/B\ntask/C\n"),
+                    ("git", "-C", first, "status", "--porcelain"): self._completed(),
+                    ("git", "-C", "/repo", "worktree", "remove", first): self._completed(),
+                },
+                housekeeping={"max_removals_per_tick": 1},
+            )
+        self.assertTrue(reclaimed)
+        scan = self._last_scan(state)
+        self.assertEqual(scan["removed"], 1)
+        self.assertTrue(scan["capped_at_max_removals"])
+        self.assertEqual(scan["examined"], 2)
+        self.assertEqual(scan["skipped"], {"deferred_removal_cap": 1})
+        # The one that matters: discovered after the cap, still counted.
+        self.assertEqual(scan["unmanaged"], 1)
+        self.assertEqual(scan["unmanaged_sample"], [outside])
+
+    def test_a_zero_cap_counts_without_resolving_a_base_or_touching_git(self) -> None:
+        """Counting is cheap; the work the cap exists to bound is not.
+
+        An empty `runs` makes every subprocess an error, so this also pins that
+        a capped tick skips base resolution and per-worktree status queries
+        rather than merely skipping the removal.
+        """
+        state: dict = {}
+        self.assertFalse(
+            self._scan(
+                state,
+                [
+                    {"worktree": str(self.MANAGED_ROOT / "task-a"), "branch": "refs/heads/task/A"},
+                    {"worktree": f"{self.MANAGED_ROOT}-archive/task-c", "branch": "refs/heads/task/C"},
+                ],
+                {},
+                housekeeping={"max_removals_per_tick": 0},
+            )
+        )
+        scan = self._last_scan(state)
+        self.assertEqual(scan["examined"], 1)
+        self.assertEqual(scan["unmanaged"], 1)
+        self.assertEqual(scan["skipped"], {"deferred_removal_cap": 1})
+        self.assertTrue(scan["capped_at_max_removals"])
+
+    def test_a_process_in_a_prefix_sibling_does_not_pin_a_worktree(self) -> None:
+        """`/tmp/wt/task-x-old` is not inside `/tmp/wt/task-x`.
+
+        Both the live-path guard and the orphan classifier compared paths as
+        strings, so a neighbour whose name merely extended this one read as a
+        live tenant. Here that mislabels a clean, merged worktree as busy and
+        leaves the disk unreclaimed.
+        """
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        state: dict = {}
+        with mock.patch.object(supervisor, "write_activity_log"):
+            reclaimed = self._scan(
+                state,
+                [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+                {
+                    ("git", "branch", "--merged"): self._completed("task/X\n"),
+                    ("git", "-C", record_path, "status", "--porcelain"): self._completed(),
+                    ("git", "-C", "/repo", "worktree", "remove", record_path): self._completed(),
+                },
+                live_paths={Path(f"{record_path}-old")},
+            )
+        self.assertTrue(reclaimed)
+        scan = self._last_scan(state)
+        self.assertEqual(scan["removed"], 1)
+        self.assertEqual(scan["skipped"], {})
+
+
+class RuntimeSettingsAreReachableFromConfigTests(unittest.TestCase):
+    """A knob the schema rejects is a knob that does not exist.
+
+    `config.schema.json` is enforced on every config load and these objects are
+    `additionalProperties: false`, so a setting the code reads but the schema
+    never declares cannot be set -- and, worse, cannot be turned off.
+    `escalate_to_human_after_reopens` shipped that way: the code documented 0 as
+    the opt-out and the schema made writing 0 a hard ConfigError, leaving a
+    fleet-wide escalation threshold with no way to change or disable it.
+    """
+
+    SCHEMA = json.loads((THIS_DIR / "config.schema.json").read_text(encoding="utf-8"))
+
+    def _validate(self, config: dict) -> None:
+        from common import validate_config
+
+        validate_config(config, source="<test>")
+
+    def test_review_churn_escalation_threshold_is_settable_and_disablable(self) -> None:
+        for value in (0, 6, 12):
+            with self.subTest(value=value):
+                self._validate(
+                    {"worker_reassignment": {"review_churn": {"escalate_to_human_after_reopens": value}}}
+                )
+
+    def test_worktree_housekeeping_is_settable(self) -> None:
+        self._validate(
+            {
+                "worker_worktree_housekeeping": {
+                    "enabled": True,
+                    "tick_interval_seconds": 600,
+                    "max_removals_per_tick": 5,
+                    "stall_log_interval_seconds": 3600,
+                }
+            }
+        )
+
+    def test_every_default_these_readers_apply_is_declared_in_the_schema(self) -> None:
+        """Covers the next knob added to either block, not just today's.
+
+        Each reader's defaulted key set is the contract it offers operators;
+        anything in it the schema omits is unreachable at runtime.
+        """
+        cases = {
+            ("worker_reassignment", "review_churn"): supervisor.review_churn_settings({}),
+            ("worker_worktree_housekeeping",): supervisor.worker_worktree_housekeeping_settings({}),
+        }
+        for path, settings in cases.items():
+            with self.subTest(path=".".join(path)):
+                node = self.SCHEMA
+                for part in path:
+                    node = node["properties"][part]
+                self.assertEqual(set(settings), set(node["properties"]))
+
 
 
 class ResolvePollIntervalTests(unittest.TestCase):

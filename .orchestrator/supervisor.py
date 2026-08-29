@@ -131,6 +131,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_atomic_replace_context_bytes",
 "_atomic_write_context_text",
 "_blocking_dirt_entries",
+"_classify_processes_in_worktree",
 "_classify_worktree_dirt",
 "_clear_worktree_lease_block",
 "_create_worker_worktree",
