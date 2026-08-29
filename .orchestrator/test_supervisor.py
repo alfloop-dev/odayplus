@@ -11032,22 +11032,40 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
     inherited cases re-run here, which is cheap and keeps the two in step.
     """
 
-    def _dirty_case(self, state: dict):
-        base = Path("/tmp/wt").resolve()
-        record_path = str(base / "task-x")
-        records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
-        merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
-        dirty_status = subprocess.CompletedProcess(args=[], returncode=0, stdout=" M foo.py\n", stderr="")
-        runs = {
-            ("git", "branch", "--merged"): merged_proc,
-            ("git", "-C", record_path, "status", "--porcelain"): dirty_status,
-        }
-        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+    MANAGED_ROOT = Path("/tmp/wt").resolve()
+
+    def _scan(
+        self,
+        state: dict,
+        records: list[dict],
+        runs: dict,
+        *,
+        base: Path | None = None,
+        housekeeping: dict | None = None,
+        live_paths: set | None = None,
+        classify_result=None,
+    ):
+        """Run one prune tick over `records` and hand back its return value.
+
+        `runs` is exhaustive: `_stub_subprocess_run` raises on any command it
+        was not given, so a test that omits a command is asserting that command
+        never runs.
+        """
+        base = base if base is not None else self.MANAGED_ROOT
+        settings = {"enabled": True, "tick_interval_seconds": 0}
+        settings.update(housekeeping or {})
+        config = {"worker_worktree_housekeeping": settings}
+        classify = (
+            mock.patch.object(supervisor, "_classify_processes_in_worktree", return_value=classify_result)
+            if classify_result is not None
+            else contextlib.nullcontext()
+        )
         with (
             mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
             mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
-            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=live_paths or set()),
+            classify,
             mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
             mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
             mock.patch.object(Path, "exists", return_value=True),
@@ -11055,26 +11073,35 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
         ):
             return supervisor.prune_orphan_worktrees(config, state)
 
+    @staticmethod
+    def _completed(stdout: str = "", returncode: int = 0):
+        return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+
+    @staticmethod
+    def _last_scan(state: dict) -> dict:
+        return state["worker_worktree_housekeeping"]["last_scan"]
+
+    def _dirty_case(self, state: dict):
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        return self._scan(
+            state,
+            [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+            {
+                ("git", "branch", "--merged"): self._completed("task/X\n"),
+                ("git", "-C", record_path, "status", "--porcelain"): self._completed(" M foo.py\n"),
+            },
+        )
+
     def _live_process_case(self, state: dict, classify_result):
         """A worktree nothing active claims, but something inside is running."""
-        base = Path("/tmp/wt").resolve()
-        record_path = str(base / "task-x")
-        records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
-        merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
-        runs = {("git", "branch", "--merged"): merged_proc}
-        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
-        with (
-            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
-            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
-            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
-            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value={Path(record_path)}),
-            mock.patch.object(supervisor, "_classify_processes_in_worktree", return_value=classify_result),
-            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
-            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
-            mock.patch.object(Path, "exists", return_value=True),
-            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
-        ):
-            return supervisor.prune_orphan_worktrees(config, state)
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        return self._scan(
+            state,
+            [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+            {("git", "branch", "--merged"): self._completed("task/X\n")},
+            live_paths={Path(record_path)},
+            classify_result=classify_result,
+        )
 
     def test_a_worktree_held_only_by_orphans_is_reported_as_reclaimable(self) -> None:
         """An init-reparented holder means the owning worker is already gone.
@@ -11085,7 +11112,7 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
         """
         state: dict = {}
         self.assertFalse(self._live_process_case(state, ([4242], 0)))
-        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        scan = self._last_scan(state)
         self.assertEqual(scan["skipped"], {"live_process_orphaned": 1})
         self.assertEqual(
             scan["orphaned_worktrees"], [{"path": str(Path("/tmp/wt").resolve() / "task-x"), "pids": [4242]}]
@@ -11094,7 +11121,7 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
     def test_a_still_parented_holder_is_a_real_tenant_and_stays_opaque(self) -> None:
         state: dict = {}
         self.assertFalse(self._live_process_case(state, ([], 1)))
-        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        scan = self._last_scan(state)
         self.assertEqual(scan["skipped"], {"live_process": 1})
         self.assertEqual(scan["orphaned_worktrees"], [])
 
@@ -11102,7 +11129,7 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
         """Orphans alongside a live tenant must not be called reclaimable."""
         state: dict = {}
         self._live_process_case(state, ([4242], 1))
-        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        scan = self._last_scan(state)
         self.assertEqual(scan["skipped"], {"live_process": 1})
         self.assertEqual(scan["orphaned_worktrees"], [])
 
@@ -11139,7 +11166,7 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
         ):
             supervisor.prune_orphan_worktrees(config, state)
 
-        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        scan = self._last_scan(state)
         self.assertEqual(scan["unmanaged"], 1)
         self.assertEqual(scan["unmanaged_sample"], [outside])
         # The outside one is not a reclaim candidate, so it must not inflate
@@ -11150,7 +11177,7 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
     def test_records_refusal_reasons_when_nothing_is_reclaimed(self) -> None:
         state: dict = {}
         self.assertFalse(self._dirty_case(state))
-        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        scan = self._last_scan(state)
         self.assertEqual(scan["examined"], 1)
         self.assertEqual(scan["removed"], 0)
         self.assertEqual(scan["skipped"], {"dirty": 1})
@@ -11169,7 +11196,204 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
             supervisor, "write_activity_log", side_effect=KeyError("activity_log")
         ):
             self.assertFalse(self._dirty_case(state))
-        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"dirty": 1})
+        self.assertEqual(self._last_scan(state)["skipped"], {"dirty": 1})
+
+    def test_a_sibling_root_sharing_the_name_prefix_is_not_managed(self) -> None:
+        """`<root>-archive` is a different directory, not a member of `<root>`.
+
+        Membership used to be `str.startswith` on the raw record, so every
+        sibling whose name merely began with the root's name was pulled into
+        the reclaim candidate set. `runs` carries no `git status` entry for the
+        sibling, so if it is ever treated as managed the stub raises.
+        """
+        sibling = f"{self.MANAGED_ROOT}-archive/task-y"
+        state: dict = {}
+        self.assertFalse(
+            self._scan(
+                state,
+                [{"worktree": sibling, "branch": "refs/heads/task/Y"}],
+                {("git", "branch", "--merged"): self._completed("task/Y\n")},
+            )
+        )
+        scan = self._last_scan(state)
+        self.assertEqual(scan["examined"], 0)
+        self.assertEqual(scan["unmanaged"], 1)
+        self.assertEqual(scan["unmanaged_sample"], [sibling])
+
+    def test_a_symlink_pointing_out_of_the_managed_root_is_not_managed(self) -> None:
+        """The record's spelling is not evidence of where the tree lives.
+
+        A link sitting under the root satisfies any string-prefix test while
+        its content is somewhere the pruner has no authority over, which is the
+        direction of this bug that actually destroys data.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw).resolve()
+            root = tmp / "root"
+            outside = tmp / "outside"
+            root.mkdir()
+            outside.mkdir()
+            link = root / "task-z"
+            link.symlink_to(outside)
+            state: dict = {}
+            self.assertFalse(
+                self._scan(
+                    state,
+                    [{"worktree": str(link), "branch": "refs/heads/task/Z"}],
+                    {("git", "branch", "--merged"): self._completed("task/Z\n")},
+                    base=root,
+                )
+            )
+        scan = self._last_scan(state)
+        self.assertEqual(scan["examined"], 0)
+        self.assertEqual(scan["unmanaged"], 1)
+
+    def test_a_capped_tick_still_counts_the_worktrees_it_did_not_reach(self) -> None:
+        """The cap bounds removals, not the accounting.
+
+        It used to `break` out of both loops, so everything after the cap fell
+        out of `examined` and `unmanaged` while `unmanaged` was still published
+        as the exact total -- under-reporting of exactly the kind this record
+        exists to end.
+        """
+        first = str(self.MANAGED_ROOT / "task-a")
+        second = str(self.MANAGED_ROOT / "task-b")
+        outside = f"{self.MANAGED_ROOT}-archive/task-c"
+        state: dict = {}
+        # `second` has no `git status` entry and no `worktree remove` entry: the
+        # cap must stop it from being evaluated at all, not merely from being
+        # removed.
+        with mock.patch.object(supervisor, "write_activity_log"):
+            reclaimed = self._scan(
+                state,
+                [
+                    {"worktree": first, "branch": "refs/heads/task/A"},
+                    {"worktree": second, "branch": "refs/heads/task/B"},
+                    {"worktree": outside, "branch": "refs/heads/task/C"},
+                ],
+                {
+                    ("git", "branch", "--merged"): self._completed("task/A\ntask/B\ntask/C\n"),
+                    ("git", "-C", first, "status", "--porcelain"): self._completed(),
+                    ("git", "-C", "/repo", "worktree", "remove", first): self._completed(),
+                },
+                housekeeping={"max_removals_per_tick": 1},
+            )
+        self.assertTrue(reclaimed)
+        scan = self._last_scan(state)
+        self.assertEqual(scan["removed"], 1)
+        self.assertTrue(scan["capped_at_max_removals"])
+        self.assertEqual(scan["examined"], 2)
+        self.assertEqual(scan["skipped"], {"deferred_removal_cap": 1})
+        # The one that matters: discovered after the cap, still counted.
+        self.assertEqual(scan["unmanaged"], 1)
+        self.assertEqual(scan["unmanaged_sample"], [outside])
+
+    def test_a_zero_cap_counts_without_resolving_a_base_or_touching_git(self) -> None:
+        """Counting is cheap; the work the cap exists to bound is not.
+
+        An empty `runs` makes every subprocess an error, so this also pins that
+        a capped tick skips base resolution and per-worktree status queries
+        rather than merely skipping the removal.
+        """
+        state: dict = {}
+        self.assertFalse(
+            self._scan(
+                state,
+                [
+                    {"worktree": str(self.MANAGED_ROOT / "task-a"), "branch": "refs/heads/task/A"},
+                    {"worktree": f"{self.MANAGED_ROOT}-archive/task-c", "branch": "refs/heads/task/C"},
+                ],
+                {},
+                housekeeping={"max_removals_per_tick": 0},
+            )
+        )
+        scan = self._last_scan(state)
+        self.assertEqual(scan["examined"], 1)
+        self.assertEqual(scan["unmanaged"], 1)
+        self.assertEqual(scan["skipped"], {"deferred_removal_cap": 1})
+        self.assertTrue(scan["capped_at_max_removals"])
+
+    def test_a_process_in_a_prefix_sibling_does_not_pin_a_worktree(self) -> None:
+        """`/tmp/wt/task-x-old` is not inside `/tmp/wt/task-x`.
+
+        Both the live-path guard and the orphan classifier compared paths as
+        strings, so a neighbour whose name merely extended this one read as a
+        live tenant. Here that mislabels a clean, merged worktree as busy and
+        leaves the disk unreclaimed.
+        """
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        state: dict = {}
+        with mock.patch.object(supervisor, "write_activity_log"):
+            reclaimed = self._scan(
+                state,
+                [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+                {
+                    ("git", "branch", "--merged"): self._completed("task/X\n"),
+                    ("git", "-C", record_path, "status", "--porcelain"): self._completed(),
+                    ("git", "-C", "/repo", "worktree", "remove", record_path): self._completed(),
+                },
+                live_paths={Path(f"{record_path}-old")},
+            )
+        self.assertTrue(reclaimed)
+        scan = self._last_scan(state)
+        self.assertEqual(scan["removed"], 1)
+        self.assertEqual(scan["skipped"], {})
+
+
+class RuntimeSettingsAreReachableFromConfigTests(unittest.TestCase):
+    """A knob the schema rejects is a knob that does not exist.
+
+    `config.schema.json` is enforced on every config load and these objects are
+    `additionalProperties: false`, so a setting the code reads but the schema
+    never declares cannot be set -- and, worse, cannot be turned off.
+    `escalate_to_human_after_reopens` shipped that way: the code documented 0 as
+    the opt-out and the schema made writing 0 a hard ConfigError, leaving a
+    fleet-wide escalation threshold with no way to change or disable it.
+    """
+
+    SCHEMA = json.loads((THIS_DIR / "config.schema.json").read_text(encoding="utf-8"))
+
+    def _validate(self, config: dict) -> None:
+        from common import validate_config
+
+        validate_config(config, source="<test>")
+
+    def test_review_churn_escalation_threshold_is_settable_and_disablable(self) -> None:
+        for value in (0, 6, 12):
+            with self.subTest(value=value):
+                self._validate(
+                    {"worker_reassignment": {"review_churn": {"escalate_to_human_after_reopens": value}}}
+                )
+
+    def test_worktree_housekeeping_is_settable(self) -> None:
+        self._validate(
+            {
+                "worker_worktree_housekeeping": {
+                    "enabled": True,
+                    "tick_interval_seconds": 600,
+                    "max_removals_per_tick": 5,
+                    "stall_log_interval_seconds": 3600,
+                }
+            }
+        )
+
+    def test_every_default_these_readers_apply_is_declared_in_the_schema(self) -> None:
+        """Covers the next knob added to either block, not just today's.
+
+        Each reader's defaulted key set is the contract it offers operators;
+        anything in it the schema omits is unreachable at runtime.
+        """
+        cases = {
+            ("worker_reassignment", "review_churn"): supervisor.review_churn_settings({}),
+            ("worker_worktree_housekeeping",): supervisor.worker_worktree_housekeeping_settings({}),
+        }
+        for path, settings in cases.items():
+            with self.subTest(path=".".join(path)):
+                node = self.SCHEMA
+                for part in path:
+                    node = node["properties"][part]
+                self.assertEqual(set(settings), set(node["properties"]))
+
 
 
 class ResolvePollIntervalTests(unittest.TestCase):

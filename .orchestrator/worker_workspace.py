@@ -1970,6 +1970,27 @@ def _classify_processes_in_worktree(worktree_path: Path) -> tuple[list[int], int
     orphans: list[int] = []
     still_parented = 0
     wt_str = str(worktree_path)
+
+    def references_worktree(cmdline: str) -> bool:
+        """True when the path appears as a whole path, not as a prefix.
+
+        A bare `in` test reads a process running in `<path>-old` as a holder of
+        `<path>` -- the same prefix collision that made a string-prefix
+        managed-root check unsound. Requiring a boundary on both sides keeps
+        `--dir=<path>` style arguments matching while rejecting a longer
+        sibling name. This only labels a refusal that has already been decided,
+        so a miss degrades the diagnosis, never the safety of the skip.
+        """
+        index = cmdline.find(wt_str)
+        while index != -1:
+            end = index + len(wt_str)
+            before_ok = index == 0 or cmdline[index - 1] in " =:,\"'"
+            after_ok = end >= len(cmdline) or cmdline[end] in (" ", os.sep)
+            if before_ok and after_ok:
+                return True
+            index = cmdline.find(wt_str, index + 1)
+        return False
+
     try:
         entries = list(Path("/proc").iterdir())
     except OSError:
@@ -1986,7 +2007,7 @@ def _classify_processes_in_worktree(worktree_path: Path) -> tuple[list[int], int
         if not raw:
             continue
         cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
-        if wt_str not in cmdline:
+        if not references_worktree(cmdline):
             continue
         ppid = None
         try:
@@ -2063,7 +2084,6 @@ def prune_orphan_worktrees(
     live_paths = _scan_process_paths_in_root(base_root)
 
     max_removals = max(0, settings["max_removals_per_tick"])
-    base_root_str = str(base_root)
     removed: list[str] = []
     # Every guard below ends in a bare `continue`, and the only log this
     # function ever wrote was the success one. "Examined 69 worktrees and
@@ -2075,7 +2095,9 @@ def prune_orphan_worktrees(
     examined = 0
     skipped: dict[str, int] = {}
     repos_skipped: dict[str, int] = {}
-    capped = False
+    # A configured cap of 0 means "reclaim nothing this tick", which is the
+    # capped state before the scan even starts.
+    capped = max_removals <= 0
     orphan_reports: list[tuple[str, list[int]]] = []
     unmanaged = 0
     unmanaged_paths: list[str] = []
@@ -2087,53 +2109,67 @@ def prune_orphan_worktrees(
 
     active_base_cache = base_cache if base_cache is not None else {}
     for repo in iter_local_repositories(config):
-        if len(removed) >= max_removals:
-            capped = True
-            break
         repo_root = repo.get("resolved_local_path")
         repo_id = str(repo.get("id") or "").strip()
         default_branch = str(repo.get("default_branch") or "").strip()
         if not isinstance(repo_root, Path) or not repo_id:
             repos_skipped["unusable"] = repos_skipped.get("unusable", 0) + 1
             continue
-        base, _base_error = resolve_worker_base(
-            repo_root,
-            repository_id=repo_id,
-            default_branch=default_branch,
-            base_cache=active_base_cache,
-            network_timeout_seconds=float(worktree_settings["git_network_timeout_seconds"]),
-        )
-        if base is None:
-            # Counted separately from the per-worktree refusals. A repo whose
-            # base will not resolve is skipped whole, and folding that into the
-            # worktree tally reads as "4 of the 68 examined worktrees" when it
-            # actually means "4 repos, contributing an unknown number of
-            # worktrees, were never examined at all".
-            repos_skipped["base_unresolved"] = repos_skipped.get("base_unresolved", 0) + 1
-            continue
-        base_refs = [base.sha]
+        base_refs: list[str] = []
         merged_branches: set[str] = set()
-        merged_proc = subprocess.run(
-            ["git", "branch", "--merged", base.sha, "--list", "task/*"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if merged_proc.returncode == 0:
-            for line in merged_proc.stdout.splitlines():
-                name = line.strip().lstrip("*").strip()
-                if name:
-                    merged_branches.add(name)
+        # `max_removals_per_tick` bounds destruction, not accounting. Reaching
+        # it used to `break` out of both loops, which stopped the counters
+        # dead: a capped tick would report "3 unmanaged" on a host with 68 and
+        # call the number exact. That is the same under-reporting this function
+        # exists to remove, so the scan now runs to the end and only the
+        # expensive work stops -- no base resolution (a network fetch), no
+        # per-worktree git status, and above all no further removal.
+        if not capped:
+            base, _base_error = resolve_worker_base(
+                repo_root,
+                repository_id=repo_id,
+                default_branch=default_branch,
+                base_cache=active_base_cache,
+                network_timeout_seconds=float(worktree_settings["git_network_timeout_seconds"]),
+            )
+            if base is None:
+                # Counted separately from the per-worktree refusals. A repo
+                # whose base will not resolve is skipped whole, and folding
+                # that into the worktree tally reads as "4 of the 68 examined
+                # worktrees" when it actually means "4 repos, contributing an
+                # unknown number of worktrees, were never examined at all".
+                repos_skipped["base_unresolved"] = repos_skipped.get("base_unresolved", 0) + 1
+                continue
+            base_refs = [base.sha]
+            merged_proc = subprocess.run(
+                ["git", "branch", "--merged", base.sha, "--list", "task/*"],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if merged_proc.returncode == 0:
+                for line in merged_proc.stdout.splitlines():
+                    name = line.strip().lstrip("*").strip()
+                    if name:
+                        merged_branches.add(name)
 
         for record in _git_worktree_records(repo_root):
-            if len(removed) >= max_removals:
-                capped = True
-                break
             wt_value = record.get("worktree")
             if not wt_value:
                 continue
-            if not wt_value.startswith(base_root_str):
+            try:
+                wt_path = Path(wt_value).resolve()
+            except (OSError, ValueError):
+                # Unresolvable, so it can be placed neither inside nor outside
+                # the managed root. Counted as an examined refusal rather than
+                # as foreign: attributing an unreadable record to the side this
+                # function does not own would quietly shrink the denominator in
+                # "reclaimed 0 of N".
+                examined += 1
+                skipped["path_unresolvable"] = skipped.get("path_unresolvable", 0) + 1
+                continue
+            if not wt_path.is_relative_to(base_root):
                 # Registered in this repository, but outside the root this
                 # function manages -- someone ran `git worktree add` somewhere
                 # else. Reclaiming it is not this function's call: it did not
@@ -2146,6 +2182,14 @@ def prune_orphan_worktrees(
                 # every reclaim report -- not even counted as refused. Naming
                 # them is what lets an operator find space the pruner is not
                 # allowed to take.
+                #
+                # Membership is decided on the RESOLVED path, by path
+                # components. A `str.startswith` test on the raw record got
+                # this wrong in both directions: it claimed a sibling root
+                # named `<root>-archive` as managed, and it accepted a symlink
+                # under the root whose target lives somewhere else entirely.
+                # Both end with the pruner deciding removal for a directory it
+                # does not own.
                 unmanaged += 1
                 if len(unmanaged_paths) < _UNMANAGED_SAMPLE_LIMIT:
                     unmanaged_paths.append(wt_value)
@@ -2154,15 +2198,16 @@ def prune_orphan_worktrees(
             # business, so `examined` counts from here: anything earlier is a
             # foreign checkout, not a reclaim candidate we declined.
             examined += 1
-            try:
-                wt_path = Path(wt_value).resolve()
-            except OSError:
-                skipped["path_unresolvable"] = skipped.get("path_unresolvable", 0) + 1
+            if capped:
+                # Still counted, deliberately not evaluated: this tick has
+                # spent its removal budget, and saying so is more useful than
+                # a truncated scan that looks like a complete one.
+                skipped["deferred_removal_cap"] = skipped.get("deferred_removal_cap", 0) + 1
                 continue
             if wt_path in claimed_paths:
                 skipped["claimed_by_active_worker"] = skipped.get("claimed_by_active_worker", 0) + 1
                 continue
-            if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
+            if any(live.is_relative_to(wt_path) or wt_path.is_relative_to(live) for live in live_paths):
                 # No ACTIVE worker claims this worktree, yet something inside is
                 # still running. Two very different situations look identical
                 # here, and conflating them is why twelve test databases
@@ -2205,6 +2250,8 @@ def prune_orphan_worktrees(
             )
             if remove_proc.returncode == 0:
                 removed.append(str(wt_path))
+                if len(removed) >= max_removals:
+                    capped = True
             else:
                 skipped["remove_failed"] = skipped.get("remove_failed", 0) + 1
 
@@ -2216,7 +2263,15 @@ def prune_orphan_worktrees(
         "examined": examined,
         "removed": len(removed),
         "skipped": dict(sorted(skipped.items())),
+        # Repository-level refusals, and only for repositories this tick
+        # actually evaluated for removal. Once the removal budget is spent no
+        # base is resolved, so a repo scanned after that point contributes its
+        # worktrees to the counts above without ever reaching a verdict here.
         "repos_skipped": dict(sorted(repos_skipped.items())),
+        # The tick spent its `max_removals_per_tick` budget. Counting continues
+        # past this point, so `examined` and `unmanaged` stay exact; what a
+        # capped tick does not carry is a removal verdict for every worktree it
+        # counted -- those sit in `skipped.deferred_removal_cap`.
         "capped_at_max_removals": capped,
         # Registered worktrees living outside the managed root, which this
         # function may not reclaim. NOT a garbage count: the main checkout and
