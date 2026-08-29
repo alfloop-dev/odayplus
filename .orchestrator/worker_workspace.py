@@ -1944,6 +1944,12 @@ def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
                     pass
     return referenced
 
+# How many unmanaged worktree paths a single scan reports. The count is exact;
+# this only bounds the sample, so one pathological host cannot turn a routine
+# status record into an unbounded blob.
+_UNMANAGED_SAMPLE_LIMIT = 20
+
+
 @_entrypoint
 def _classify_processes_in_worktree(worktree_path: Path) -> tuple[list[int], int]:
     """Split processes referencing a worktree into (orphan pids, still-parented count).
@@ -2071,6 +2077,8 @@ def prune_orphan_worktrees(
     repos_skipped: dict[str, int] = {}
     capped = False
     orphan_reports: list[tuple[str, list[int]]] = []
+    unmanaged = 0
+    unmanaged_paths: list[str] = []
     # Pruning has the same authority boundary as leasing: each distinct local
     # checkout contributes its registry default branch and freshly fetched
     # immutable remote SHA.  Never use a developer's local dev/master/main as
@@ -2123,7 +2131,24 @@ def prune_orphan_worktrees(
                 capped = True
                 break
             wt_value = record.get("worktree")
-            if not wt_value or not wt_value.startswith(base_root_str):
+            if not wt_value:
+                continue
+            if not wt_value.startswith(base_root_str):
+                # Registered in this repository, but outside the root this
+                # function manages -- someone ran `git worktree add` somewhere
+                # else. Reclaiming it is not this function's call: it did not
+                # create it and cannot know who is using it.
+                #
+                # Staying silent about it was still wrong. On the host that
+                # prompted this work, 68 of 178 registered worktrees sat
+                # outside the managed root and held 8.3G, and because this
+                # branch skipped before any counter, they were invisible to
+                # every reclaim report -- not even counted as refused. Naming
+                # them is what lets an operator find space the pruner is not
+                # allowed to take.
+                unmanaged += 1
+                if len(unmanaged_paths) < _UNMANAGED_SAMPLE_LIMIT:
+                    unmanaged_paths.append(wt_value)
                 continue
             # Only worktrees under the managed root are this function's
             # business, so `examined` counts from here: anything earlier is a
@@ -2193,6 +2218,15 @@ def prune_orphan_worktrees(
         "skipped": dict(sorted(skipped.items())),
         "repos_skipped": dict(sorted(repos_skipped.items())),
         "capped_at_max_removals": capped,
+        # Registered worktrees living outside the managed root, which this
+        # function may not reclaim. NOT a garbage count: the main checkout and
+        # every live supervisor runtime legitimately appear here. It answers
+        # "what else does this repository have on the same disk that reclaim
+        # will never touch", which on the live host was 8.3G of abandoned
+        # scratch checkouts sitting alongside those legitimate ones. The sample
+        # is capped; `unmanaged` is the true count.
+        "unmanaged": unmanaged,
+        "unmanaged_sample": list(unmanaged_paths),
         # Worktrees held only by init-reparented leftovers. Unlike the other
         # refusals this one is actionable without waiting for anybody: the
         # owning worker is already gone, so these pids and paths are what an
@@ -2252,6 +2286,7 @@ def prune_orphan_worktrees(
                         "orphaned_worktrees": [
                             {"path": path, "pids": pids} for path, pids in orphan_reports
                         ],
+                        "unmanaged": unmanaged,
                     },
                 )
             except (KeyError, OSError):

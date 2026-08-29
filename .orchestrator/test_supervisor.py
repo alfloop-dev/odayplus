@@ -11106,6 +11106,47 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
         self.assertEqual(scan["skipped"], {"live_process": 1})
         self.assertEqual(scan["orphaned_worktrees"], [])
 
+    def test_worktrees_outside_the_managed_root_are_counted_not_ignored(self) -> None:
+        """A repo's worktrees elsewhere are not reclaimable, but they are real.
+
+        68 of 178 registered worktrees on the live host sat outside the managed
+        root and held 8.3G. The skip happened before any counter, so they were
+        invisible to every reclaim report -- not even counted as refused.
+        """
+        base = Path("/tmp/wt").resolve()
+        outside = "/tmp/somewhere-else/task-y"
+        records = [
+            {"worktree": str(base / "task-x"), "branch": "refs/heads/task/X"},
+            {"worktree": outside, "branch": "refs/heads/task/Y"},
+        ]
+        merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
+        dirty_status = subprocess.CompletedProcess(args=[], returncode=0, stdout=" M foo.py\n", stderr="")
+        runs = {
+            ("git", "branch", "--merged"): merged_proc,
+            ("git", "-C", str(base / "task-x"), "status", "--porcelain"): dirty_status,
+        }
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+        ):
+            supervisor.prune_orphan_worktrees(config, state)
+
+        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        self.assertEqual(scan["unmanaged"], 1)
+        self.assertEqual(scan["unmanaged_sample"], [outside])
+        # The outside one is not a reclaim candidate, so it must not inflate
+        # `examined` -- that number is the denominator for "reclaimed 0 of N".
+        self.assertEqual(scan["examined"], 1)
+        self.assertEqual(scan["skipped"], {"dirty": 1})
+
     def test_records_refusal_reasons_when_nothing_is_reclaimed(self) -> None:
         state: dict = {}
         self.assertFalse(self._dirty_case(state))
