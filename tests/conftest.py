@@ -164,6 +164,7 @@ def intake_pg_server():
         reason="No INTAKE_TEST_DATABASE_URL and pgserver (bundled PostgreSQL 16) unavailable",
     )
     import re
+    import shutil
     import tempfile
 
     _install_pgcrypto_stub(pgserver)
@@ -174,7 +175,23 @@ def intake_pg_server():
     try:
         yield IntakePgServer(psycopg=psycopg, admin_params=admin)
     finally:
-        server.cleanup()
+        # `server.cleanup()` stops PostgreSQL but leaves the data directory it
+        # was given. Each session therefore left ~54MB behind: a live host
+        # accumulated 132 `intake-pg16-*` directories totalling 6.9G, none of
+        # which any process still referenced.
+        #
+        # Removing it is also what keeps the leak bounded when this fixture
+        # does NOT get to finish. A worker killed mid-run (supersede, lease
+        # expiry) never reaches this block at all, and its pgserver -- which
+        # calls setsid(), so no process group reaches it -- outlives the run.
+        # Twelve such servers were still up after three days, and because the
+        # worktree pruner refuses any tree a live process references, each one
+        # also pinned its worktree against reclaim. Cleaning up on the paths we
+        # DO control keeps that failure rare rather than routine.
+        try:
+            server.cleanup()
+        finally:
+            shutil.rmtree(data_dir, ignore_errors=True)
 
 
 @dataclass

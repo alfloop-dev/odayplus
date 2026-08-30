@@ -40,6 +40,16 @@ run_locked_python() {
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  : "${ODP_PROD_DEPLOY_URL:?Error: ODP_PROD_DEPLOY_URL is required for production live E2E.}"
+  : "${ODP_PROD_API_URL:?Error: ODP_PROD_API_URL is required for production live E2E.}"
+  for production_url in "${ODP_PROD_DEPLOY_URL}" "${ODP_PROD_API_URL}"; do
+    if [[ ! "${production_url}" =~ ^https://[^[:space:]]+$ ]]; then
+      echo "Error: production live E2E URLs must be HTTPS custom domains." >&2
+      exit 1
+    fi
+  done
+fi
 
 # Private-IP Cloud SQL is used by isolated staging. Keep the connectivity
 # binding in this single release entrypoint so every service and job follows
@@ -88,6 +98,14 @@ case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
     exit 1
     ;;
 esac
+
+# Password-first is the default and OIDC is optional, so the preflight, the Web
+# secret bindings, and the Web runtime environment must all read one resolved
+# mode. Resolve it before the preflight so a split configuration is rejected
+# before anything is built or deployed.
+source product_ops/deployment/auth_mode.sh
+resolve_auth_mode
+echo "Authentication mode: ${ODP_AUTH_MODE} (ODP_AUTH_OIDC_ENABLED=${ODP_AUTH_OIDC_ENABLED})."
 
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
@@ -290,8 +308,12 @@ build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dock
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
-WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
-WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+WEB_SECRET_BINDINGS="ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+# Only the enabled provider's secrets reach Cloud Run. resolve_auth_mode has
+# already proven ODP_WEB_OIDC_CLIENT_SECRET_SECRET is set whenever OIDC is on.
+if [ "${ODP_AUTH_OIDC_ENABLED}" = "true" ]; then
+  WEB_SECRET_BINDINGS+=",ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
+fi
 
 # gcloud's shortcut for describing a job's newest execution only exists on
 # recent releases, so job proof capture used to depend on the runner's CLI
@@ -561,10 +583,20 @@ payload = {
     "ODP_API_BASE_URL": sys.argv[2],
     "ODP_API_SERVICE_AUDIENCE": sys.argv[3],
     "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
-    "ODP_WEB_OIDC_ISSUER": os.environ["ODP_WEB_OIDC_ISSUER"],
-    "ODP_WEB_OIDC_CLIENT_ID": os.environ["ODP_WEB_OIDC_CLIENT_ID"],
-    "ODP_WEB_OIDC_ALLOWED_ALGS": "RS256",
+    # The canonical web origin backs cookies, CSRF, and redirects in every auth
+    # mode; the Web runtime fails closed without it in production, so it is not
+    # part of the OIDC-only block below. The preflight has already proven it is
+    # set, which is why this is a direct lookup.
+    "ODP_WEB_BASE_URL": os.environ["ODP_WEB_BASE_URL"],
+    "ODP_AUTH_MODE": os.environ["ODP_AUTH_MODE"],
+    "ODP_AUTH_OIDC_ENABLED": os.environ["ODP_AUTH_OIDC_ENABLED"],
 }
+# resolve_auth_mode owns the decision; this stage only follows it, so the Web
+# runtime can never disagree with the secrets bound to the same revision.
+if payload["ODP_AUTH_OIDC_ENABLED"] == "true":
+    payload["ODP_WEB_OIDC_ISSUER"] = os.environ["ODP_WEB_OIDC_ISSUER"]
+    payload["ODP_WEB_OIDC_CLIENT_ID"] = os.environ["ODP_WEB_OIDC_CLIENT_ID"]
+    payload["ODP_WEB_OIDC_ALLOWED_ALGS"] = "RS256"
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
 
@@ -665,9 +697,16 @@ promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
 echo "Running fail-closed live E2E acceptance gate against the promoted release..."
 # Resolve the served origins into variables first. Inside the argv of the gate
 # invocation a failing command substitution would expand to an empty string
-# without tripping `set -e`, handing the gate a blank URL.
-LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+# without tripping `set -e`, handing the gate a blank URL. Dev deliberately
+# uses the Cloud Run default service URL; production uses the configured HTTPS
+# custom domains so the final gate exercises the public production contract.
+if [ "${ODP_DEPLOY_ENV}" = "production" ]; then
+  LIVE_E2E_API_URL="${ODP_PROD_API_URL}"
+  LIVE_E2E_WEB_URL="${ODP_PROD_DEPLOY_URL}"
+else
+  LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+  LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+fi
 if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
   echo "Live E2E gate cannot run: served origin lookup returned empty" \
     "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2

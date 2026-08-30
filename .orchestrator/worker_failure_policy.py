@@ -1443,6 +1443,12 @@ def review_churn_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("reassign_after_reopens", 2)
     settings.setdefault("eligible_statuses", ["todo", "in_progress"])
     settings.setdefault("require_different_account_pool", True)
+    # Rotating owners answers "this agent could not pass review". It cannot
+    # answer "no agent can pass review from here", and the rotation had no
+    # terminating case: one live task reached 8 reopens and 20 dispatches,
+    # cycling owners against a gate that needed an authorized human action.
+    # Past this count the task stops consuming the fleet and waits for a human.
+    settings.setdefault("escalate_to_human_after_reopens", 6)
     return settings
 
 @_entrypoint
@@ -1572,6 +1578,11 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
         return True
     agents_cfg = config.get("agents", {}) or {}
     agent = agents_cfg.get(agent_id) or agents_cfg.get(name)
+    if not isinstance(agent, dict):
+        for candidate in agents_cfg.values():
+            if isinstance(candidate, dict) and str(candidate.get("display_name") or candidate.get("name") or "").casefold() == name.casefold():
+                agent = candidate
+                break
     if isinstance(agent, dict):
         if agent.get("enabled") is False or agent.get("disabled") is True or str(agent.get("status") or "").lower() in {"disabled", "unavailable"}:
             return True
@@ -1691,6 +1702,33 @@ def first_viable_agent(
     # load is equal.
     counts = agent_open_task_counts(config, status, role=role)
     return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
+
+@_entrypoint
+def has_configured_reassignment_candidates(
+    config: dict[str, Any],
+    preferred: list[str],
+    exclude: set[str],
+    *,
+    task: dict[str, Any] | None = None,
+    exclude_pools: set[str] | None = None,
+) -> bool:
+    known = known_agent_display_names(config)
+    seen: set[str] = set()
+    excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
+    for candidate in preferred:
+        name = str(candidate or "").strip()
+        if not name or name in seen or name in exclude:
+            continue
+        seen.add(name)
+        if is_human_gate_agent(name):
+            continue
+        if name in known:
+            if agent_account_pool_id(config, name) in excluded_pool_ids:
+                continue
+            if not agent_can_take_task(config, name, task):
+                continue
+            return True
+    return False
 
 @_entrypoint
 def agent_auto_dispatch_block_reason(
@@ -1941,6 +1979,15 @@ def reassign_tasks_after_review_churn(
         threshold = max(2, int(settings.get("reassign_after_reopens", 2) or 2))
     except (TypeError, ValueError):
         threshold = 2
+    try:
+        escalate_threshold = max(0, int(settings.get("escalate_to_human_after_reopens", 6) or 0))
+    except (TypeError, ValueError):
+        escalate_threshold = 6
+    # 0 disables escalation; anything lower than the rotation threshold would
+    # escalate before a single rotation was ever tried, which defeats the point
+    # of having a rotation at all.
+    if escalate_threshold and escalate_threshold < threshold:
+        escalate_threshold = threshold
     eligible_statuses = {str(value).strip().lower() for value in settings.get("eligible_statuses", [])}
     skipped = {str(value) for value in (skip_task_ids or set())}
     changed = False
@@ -2012,6 +2059,59 @@ def reassign_tasks_after_review_churn(
         if owner and owner not in epoch_failed_owners:
             epoch_failed_owners.append(owner)
 
+        # Terminating case for the rotation itself.
+        #
+        # The fail-closed branch below already stops when no viable owner is
+        # LEFT; it answers "we ran out of agents". It cannot answer "rotating
+        # agents is not what is wrong here", and with a large enough roster it
+        # never fires. DPF-EMGI-LIVE-ROLLOUT-001 reached 8 reopens and 20
+        # dispatches cycling owners against a gate that needed an authorized
+        # human action -- every rotation found a willing agent and every one of
+        # them hit the same external refusal.
+        #
+        # `eligible_statuses` excludes `blocked`, so this fires once rather
+        # than every tick.
+        if escalate_threshold and reopen_count >= escalate_threshold:
+            escalation = (
+                f"Escalated to Human/Ops after {reopen_count} reviewer reopens: owner rotation "
+                f"is not clearing this review"
+                + (
+                    f" (tried in current review epoch: {', '.join(epoch_failed_owners)})"
+                    if epoch_failed_owners
+                    else ""
+                )
+                + ". A human decision or an authorized action is needed before further dispatch."
+            )
+            if persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=owner,
+                new_reviewer=reviewer,
+                message=escalation,
+                new_status="blocked",
+                new_waiting_for="Human/Ops",
+                task_updates={
+                    "review_churn_escalated_at_count": reopen_count,
+                    "review_churn_escalated_at": utc_now(),
+                    "review_churn_epoch_failed_owners": list(epoch_failed_owners),
+                },
+            ):
+                write_activity_log(
+                    config,
+                    {
+                        "type": "review_churn_escalated_to_human",
+                        "task_id": task_id,
+                        "message": escalation,
+                        "review_reopen_count": reopen_count,
+                        "owner": owner,
+                        "reviewer": reviewer,
+                        "failed_owners": list(epoch_failed_owners),
+                    },
+                )
+                clear_task_failure_streaks_for_task(state, task_id)
+                changed = True
+            continue
+
         owner_pool = agent_account_pool_id(config, owner)
         excluded_pools = {owner_pool} if settings.get("require_different_account_pool", True) and owner_pool else set()
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=snapshot)
@@ -2027,6 +2127,14 @@ def reassign_tasks_after_review_churn(
             exclude_pools=excluded_pools,
         )
         if not new_owner or is_human_gate_agent(new_owner):
+            if has_configured_reassignment_candidates(
+                config,
+                owner_candidates,
+                exclude=set(epoch_failed_owners) | {owner, reviewer},
+                task=snapshot,
+                exclude_pools=excluded_pools,
+            ):
+                continue
             # Fail closed: no viable alternative owner available in this review churn epoch
             blocked_message = (
                 f"Review churn fail-closed: no viable alternative owner available after {reopen_count} reviewer reopens "
@@ -2064,6 +2172,7 @@ def reassign_tasks_after_review_churn(
                 changed = True
             continue
 
+        reviewer_candidates: list[str] = []
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
         else:
@@ -2099,6 +2208,16 @@ def reassign_tasks_after_review_churn(
                     exclude_pools={agent_account_pool_id(config, new_owner)},
                 )
         if not new_reviewer:
+            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)}
+            all_reviewer_candidates = ([reviewer] if reviewer else []) + reviewer_candidates
+            if has_configured_reassignment_candidates(
+                config,
+                all_reviewer_candidates,
+                exclude={new_owner},
+                task=snapshot,
+                exclude_pools=reviewer_pool_exclusions,
+            ):
+                continue
             # Fail closed: no viable reviewer available for new owner
             blocked_message = (
                 f"Review churn fail-closed: no viable reviewer available for new owner {new_owner} after "

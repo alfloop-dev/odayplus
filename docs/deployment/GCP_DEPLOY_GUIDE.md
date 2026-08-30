@@ -61,6 +61,44 @@ The deployment pipeline is configured via GitHub Environment Variables and Secre
 | `ODP_CLOUD_RUN_SCHEDULER_JOB` | Environment | Scheduler Cloud Run Job name. | `oday-scheduler` |
 | `ODP_FORECAST_ENGINE` | Environment | Time-series forecasting engine. | `statsforecast` |
 | `ODP_FORECAST_MODEL` | Environment | Default forecasting model. | `seasonal_naive` |
+| `ODP_AUTH_MODE` | Environment | Authoritative authentication mode. Password-first `local` is the default and needs no Google OAuth client; `oidc` additionally requires the OIDC variables below. | *(unset)* / `oidc` |
+| `ODP_WEB_BASE_URL` | Environment | Canonical HTTPS web origin backing cookies, CSRF, and redirects. Required in **both** auth modes; the Web runtime fails closed without it in production. | `https://oday-web-dev.example.run.app` |
+
+#### Authentication mode resolution
+
+`ODP_AUTH_MODE` is the single input that decides whether OIDC is deployed. The
+release script, the fail-closed preflight, and the Web runtime all read it
+through the same resolver (`product_ops/deployment/auth_mode.sh`), so a revision
+can never be built with the OIDC client secret bound but the issuer missing, or
+the reverse. Resolution order, first match wins:
+
+1. `ODP_AUTH_MODE` — `local` or `oidc`.
+2. `ODP_AUTH_OIDC_ENABLED` — legacy boolean alias, kept so environments that
+   only ever set the flag keep deploying unchanged.
+3. `ODP_WEB_OIDC_ISSUER` — a configured issuer keeps a pre-contract environment
+   on OIDC until it opts into an explicit mode.
+4. Otherwise `local`.
+
+Setting `ODP_AUTH_MODE` and `ODP_AUTH_OIDC_ENABLED` to disagreeing values is a
+split configuration and fails the preflight rather than deploying either half.
+In `oidc` mode `ODP_WEB_OIDC_ISSUER`, `ODP_WEB_OIDC_CLIENT_ID`, and
+`ODP_WEB_OIDC_CLIENT_SECRET_SECRET` must all be present.
+
+Both halves of the resolver read their inputs the same way, because "one
+resolver" is otherwise only true on the happy path:
+
+* **Normalisation.** `ODP_AUTH_MODE` and `ODP_AUTH_OIDC_ENABLED` are trimmed and
+  lower-cased before they are compared, so `LOCAL`, ` local `, and `local` are
+  one input, and `TRUE` is the same flag as `true`.
+* **Placeholder values.** A variable whose value is empty or is only a
+  placeholder token (`changeme`, `dummy`, `example`, `fixture`, `mock`,
+  `placeholder`, `seed`, `todo`, …) counts as unconfigured everywhere. A
+  placeholder `ODP_WEB_OIDC_ISSUER` therefore does not switch a pre-contract
+  environment to OIDC, and it does not satisfy `oidc` mode either.
+
+`ODP_AUTH_ISSUER`, `ODP_AUTH_AUDIENCES`, and `ODP_AUTH_JWKS_URI` stay required
+in **both** modes: they also verify the Cloud Run service-identity token that
+the deployment smoke stage mints, so they are not OIDC-only inputs.
 
 ### 3.2 Secret Reference Governance (Zero Plaintext Secrets in GitHub)
 
@@ -71,7 +109,7 @@ Secrets are never stored as plaintext strings in GitHub repository settings or w
 | `ODAY_DATABASE_URL_SECRET` | `oday-plus-dev-api-database-url-pg16` | PostgreSQL connection string (`postgresql://...`) |
 | `ODP_AUTH_PRINCIPAL_MAP_SECRET` | `oday-plus-dev-auth-principal-map` | Subject & SA email to RBAC role mappings JSON |
 | `ODP_WEB_SESSION_SECRET_SECRET` | `oday-plus-dev-web-session-secret` | Web application session signing key |
-| `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` | `oday-plus-dev-web-oidc-client-secret` | Google OAuth Web client secret |
+| `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` | `oday-plus-dev-web-oidc-client-secret` | Google OAuth Web client secret (**required only in `oidc` mode**; never bound to Cloud Run in `local` mode) |
 
 ---
 
@@ -106,13 +144,15 @@ In accordance with Rollout Plan §16, Auto-Workers must **fail-closed** and not 
    - The first environment dispatch leaves `api_image`, `web_image`, `worker_image`, and `scheduler_image` empty so the build job runs. Staging and production dispatches must pass all four exact references from the handoff artifact; supplying only some, a mutable tag, or a different reference is rejected before admission.
    - When the handoff is supplied, the build job is skipped and the deploy job passes those exact digest references to Cloud Run. The deploy script rejects tags in this mode and never rebuilds.
    - For `dev`: Deploys API/Web services, Migration/Worker/Scheduler jobs, updates scheduler triggers, and runs live E2E acceptance gate.
-   - For `staging`: Provisions ephemeral staging with release-scoped isolation (`staging_lifecycle.py`) and validates remote staging proof.
-   - For `production`: Deploys green candidate revisions (0% public traffic), executes green smoke checks, executes blue→green 100% traffic switch via `product_ops/deployment/bluegreen_release.py`, and updates scheduler trigger digests.
+   - For `staging`: 透過 `product_ops/deployment/staging_lifecycle.py create` 建立短生命週期 release-scoped 隔離資源（DB、Bucket、Tenant、Service Accounts、Cloud Run Services/Jobs、Paused 排程），並將 Terraform output handoff 作為唯一 runtime authority；`staging_lifecycle.py verify` 執行 9 階段完整演練（Migration compatibility, snapshot materialization, authenticated smoke, worker idempotency, scheduler one-shot, backup/restore drill, real rollback target switch/health/restore, controlled-VPC public-egress deny probe, external providers disabled），五個 Cloud Run release resources 均以 `ALL_TRAFFIC` 經受控 VPC，並以 live readback 證明 public canary 被拒絕。成功 closeout 後由同一 workflow 的獨立 `environment: staging` closeout job 先讀取並驗證 production watch receipt（同 candidate/manifest/release），再以 staging WIF 精確 cleanup；失敗時僅在 create state、ownership inventory 與 lifecycle marker 可讀時執行 `staging_lifecycle.py hold`，依 TTL（24h）保留供除錯。
+   - For `production`: Deploys green candidate revisions (0% public traffic), executes green smoke checks, executes blue→green 100% traffic switch via `product_ops/deployment/bluegreen_release.py`, captures production traffic state live with readback, and updates scheduler trigger digests.
 
 3. **Automated Smoke Checks & Receipts**:
-   - Verify API authenticated health checks.
+   - Verify API authenticated health checks with release-scoped least-privilege identity.
    - Verify Web operator console loads and authentication flows succeed.
    - Redacted JSON validation receipts are published as workflow artifacts (`runtime-release-${environment}-validation`).
+
+Staging 的 Terraform state 必須使用受保護的 GCS backend，prefix 固定包含完整 release id（`oday-plus/ephemeral-staging/<release_id>`）；state 內含 generated credentials，不能放在 runner `/tmp`、git 或一般 artifact。`create` 產生的 tfvars/inventory/lifecycle sidecar 與 output handoff 會寫入同一 release recovery bundle，供 failure hold、orphan recovery 及 production closeout 使用。Staging 驗證成功後不立即 cleanup；必須先驗證 production watch-window durable closeout receipt，再由同一 lifecycle cleanup 以 exact release labels 執行銷毀。
 
 ---
 
@@ -123,4 +163,3 @@ Live configuration readbacks and proof artifacts for environment bootstrap are p
 - `github-variables-audit.json`: Redacted audit of environment variables across `dev`, `staging`, and `production`.
 - `gcp-wif-iam-audit.json`: GCP WIF provider, IAM policy, and Secret Manager references.
 - `production-authority-prerequisites.json`: Human authority blocking condition checklist.
-

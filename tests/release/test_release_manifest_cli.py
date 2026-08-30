@@ -53,6 +53,7 @@ def ready_manifest(tmp_path: Path) -> Path:
     """Write a synthetic admissible manifest for the positive-path assertion."""
 
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest["schema_version"] = 2
     manifest["release_status"] = "ready"
     manifest.pop("blockers", None)
     # Synthetic references keep the positive path independent of whichever
@@ -62,6 +63,29 @@ def ready_manifest(tmp_path: Path) -> Path:
     }
     manifest["sbom_refs"] = ["oci://registry.example.invalid/odayplus/sbom@sha256:" + "b" * 64]
     manifest["signature_refs"] = ["oci://registry.example.invalid/odayplus/api@sha256:" + "c" * 64]
+    manifest["data_snapshot"] = {
+        "id": "snap-ready-001",
+        "uri": "gs://odayplus-snapshots/masked/snap-ready-001.tar.gz",
+        "content_sha256": "sha256:" + "d" * 64,
+        "data_contract_digest": manifest["data_contract_digest"],
+        "masked": True,
+    }
+    manifest["rollback_release"] = {
+        "release_id": "odp-prev-001",
+        "candidate_sha": "0" * 40,
+        "manifest_digest": "sha256:" + "e" * 64,
+        "components": {
+            "api": {"image": "registry.example.invalid/odayplus/api@sha256:" + "f" * 64},
+            "web": {"image": "registry.example.invalid/odayplus/web@sha256:" + "1" * 64},
+        },
+        "data_snapshot": {
+            "id": "snap-prev-001",
+            "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+            "content_sha256": "sha256:" + "2" * 64,
+            "data_contract_digest": manifest["data_contract_digest"],
+            "masked": True,
+        },
+    }
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
     return write_manifest(tmp_path, manifest, "ready-manifest.json")
 

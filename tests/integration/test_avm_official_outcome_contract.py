@@ -150,7 +150,8 @@ def test_migration_path_is_versioned_and_committed_under_infra_db() -> None:
     )
     config = Config("infra/db/migrations/alembic.ini")
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["0003"]
+    heads = script.get_heads()
+    assert len(heads) == 1, f"migration chain must stay linear, found heads: {heads}"
     revision = script.get_revision("0003")
     assert revision is not None
     assert revision.down_revision == "0002"

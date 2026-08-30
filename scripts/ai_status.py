@@ -2648,7 +2648,7 @@ def enforce_delivery_merged_gate(
         if checkout_head and checkout_head != approved_head:
             task_id = branch.replace("task/", "") if branch.startswith("task/") else branch
             if is_approved_head_satisfied(
-                {"id": task_id, "approved_head": approved_head},
+                {"id": task_id, "approved_head": approved_head, "repository": repository_slug_value},
                 checkout_head,
                 approved_head,
                 repository_root=repository_root,

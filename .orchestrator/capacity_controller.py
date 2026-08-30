@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from datetime import UTC, datetime, timedelta
@@ -29,6 +30,32 @@ HARD_GATE_MARKERS = {
     "legal",
 }
 DEFAULT_SIDECAR_CATALOG = Path(__file__).with_name("sidecar_catalog.json")
+MAX_SIDECAR_ID_LENGTH = 48
+
+
+def build_sidecar_task_id(parent_id: str, kind: str) -> str:
+    """Build a deterministic, bounded sidecar task ID (at most 48 characters).
+
+    If {parent_id}-SIDECAR-{kind_slug} fits within 48 characters, it remains
+    unchanged to preserve existing short sidecar IDs. Otherwise, the -SIDECAR-
+    marker is preserved with a truncated parent prefix and an 8-character
+    collision-resistant SHA-256 digest of the canonical parent:kind signature.
+    """
+    parent = str(parent_id or "").strip()
+    clean_kind = str(kind or "").strip()
+    kind_slug = clean_kind.replace("_", "-").upper()
+    raw_id = f"{parent}-SIDECAR-{kind_slug}"
+    if len(raw_id) <= MAX_SIDECAR_ID_LENGTH:
+        return raw_id
+
+    digest = hashlib.sha256(f"{parent}:{clean_kind}".encode()).hexdigest()[:8].upper()
+    marker = "-SIDECAR-"
+    max_parent_len = MAX_SIDECAR_ID_LENGTH - len(marker) - len(digest)
+    parent_prefix = parent[:max_parent_len].rstrip("-")
+    return f"{parent_prefix}{marker}{digest}"
+
+
+sidecar_task_id = build_sidecar_task_id
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -80,6 +107,42 @@ def configured_slots(config: dict[str, Any]) -> int:
         for agent in (config.get("agents", {}) or {}).values()
         if isinstance(agent, dict) and agent.get("slot_id")
     )
+
+
+def effective_slots(
+    config: dict[str, Any],
+    runtime_state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+) -> int:
+    """Count dispatch slots that are currently eligible for automated execution.
+
+    Consumes agent_auto_dispatch_block_reason and provider_report as the single
+    authority on provider health and dispatch eligibility. Configured slots that
+    cannot execute automated tasks (e.g. auth failure, inbox fallback, disabled
+    or cooling-down account pool) are excluded so that slot_total and available_slots
+    reflect real executable capacity rather than dead configured declarations.
+    """
+    from supervisor import provider_capability_block_reason
+    from worker_failure_policy import agent_auto_dispatch_block_reason
+
+    slot_check_state = dict(runtime_state or {})
+    # Clear active worker map so that currently executing workers do not falsely
+    # mark a healthy slot as unviable or capacity-depleted in the total count.
+    slot_check_state["workers"] = {}
+    count = 0
+    for slot_id, agent in (config.get("agents", {}) or {}).items():
+        if not (isinstance(agent, dict) and agent.get("slot_id")):
+            continue
+        if agent_auto_dispatch_block_reason(
+            config, slot_check_state, slot_id, provider_report=provider_report
+        ):
+            continue
+        if provider_report and provider_capability_block_reason(
+            config, slot_id, provider_report=provider_report
+        ):
+            continue
+        count += 1
+    return count
 
 
 def _count_runnable_tasks(
@@ -152,8 +215,12 @@ def capacity_snapshot(
     tasks: list[dict[str, Any]],
     *,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    slot_total = configured_slots(config)
+    cfg_slot_total = configured_slots(config)
+    slot_total = effective_slots(
+        config, runtime_state=runtime_state, provider_report=provider_report
+    )
     active_workers = [
         worker
         for worker in (runtime_state.get("workers", {}) or {}).values()
@@ -186,6 +253,7 @@ def capacity_snapshot(
 
     return {
         "slot_total": slot_total,
+        "configured_slot_total": cfg_slot_total,
         "active_workers": active_count,
         "active_runnable_workers": active_runnable_count,
         "available_slots": max(0, slot_total - active_count),
@@ -221,6 +289,7 @@ def evaluate_chair(
     tasks: list[dict[str, Any]],
     *,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], bool]:
     now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -230,6 +299,7 @@ def evaluate_chair(
         runtime_state,
         tasks,
         runnable_tasks=runnable_tasks,
+        provider_report=provider_report,
     )
     controller = runtime_state.setdefault("capacity_controller", {})
     changed = controller.get("snapshot") != snapshot
@@ -309,6 +379,7 @@ def sidecar_candidates(
     tasks: list[dict[str, Any]],
     *,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
+    provider_report: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
     now = (now or datetime.now(UTC)).astimezone(UTC)
@@ -330,6 +401,7 @@ def sidecar_candidates(
         runtime_state,
         tasks,
         runnable_tasks=runnable_tasks,
+        provider_report=provider_report,
     )
     if snapshot["runnable_tasks"] > 0:
         return []
@@ -388,8 +460,7 @@ def sidecar_candidates(
             ).lower()
             if parent_status == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
                 continue
-            kind_slug = kind.replace("_", "-").upper()
-            sidecar_id = f"{parent_id}-SIDECAR-{kind_slug}"
+            sidecar_id = build_sidecar_task_id(parent_id, kind)
             variables = {
                 "parent_task_id": parent_id,
                 "sidecar_task_id": sidecar_id,

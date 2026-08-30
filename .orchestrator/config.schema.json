@@ -1028,6 +1028,10 @@
             },
             "require_different_account_pool": {
               "type": "boolean"
+            },
+            "escalate_to_human_after_reopens": {
+              "type": "integer",
+              "minimum": 0
             }
           },
           "additionalProperties": false
@@ -1097,6 +1101,27 @@
         },
         "worker_lease_seconds": {
           "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "worker_worktree_housekeeping": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "tick_interval_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_removals_per_tick": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stall_log_interval_seconds": {
+          "type": "integer",
+          "minimum": 0
         }
       },
       "additionalProperties": false

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 import unittest
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -32,6 +33,7 @@ from product_ops.deployment.staging_lifecycle import (
     generate_tfvars,
     get_ephemeral_resource_names,
     is_staging_ephemeral_resource,
+    main,
     make_terraform_creation_executor,
     make_terraform_deletion_executor,
     parse_module_variables,
@@ -60,10 +62,12 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             cloud_sql_connection_name="oday-staging-proj:asia-east1:oday-staging-pg",
             network_name="oday-staging-vpc",
             subnetwork_name="oday-staging-subnet",
-            kms_key_id="projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
             deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
             api_image="asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
             web_image="asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+            worker_image="asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+            scheduler_image="asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
             ttl_hours=24,
             owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
@@ -95,6 +99,15 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         # Invalid image (missing digest)
         bad_cfg = dataclasses_replace(self.valid_config, api_image="gcr.io/repo/api:latest")
         self.assertTrue(any("api_image" in err for err in validate_staging_config(bad_cfg)))
+
+        bad_cfg = dataclasses_replace(self.valid_config, web_image="gcr.io/repo/web:latest")
+        self.assertTrue(any("web_image" in err for err in validate_staging_config(bad_cfg)))
+
+        bad_cfg = dataclasses_replace(self.valid_config, worker_image="gcr.io/repo/worker:latest")
+        self.assertTrue(any("worker_image" in err for err in validate_staging_config(bad_cfg)))
+
+        bad_cfg = dataclasses_replace(self.valid_config, scheduler_image="gcr.io/repo/scheduler:latest")
+        self.assertTrue(any("scheduler_image" in err for err in validate_staging_config(bad_cfg)))
 
         # Invalid TTL
         bad_cfg = dataclasses_replace(self.valid_config, ttl_hours=0)
@@ -233,6 +246,10 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertIn("google_pubsub_topic", types)
         self.assertIn("google_pubsub_subscription", types)
         self.assertIn("google_cloud_run_v2_service", types)
+        self.assertEqual(types.count("google_cloud_run_v2_job"), 3)
+        self.assertTrue(any("migration" in n for n in names))
+        self.assertTrue(any("worker" in n for n in names))
+        self.assertTrue(any("scheduler" in n for n in names))
         self.assertIn("google_cloud_scheduler_job", types)
 
         rel_hash = compute_release_hash("odp-20260824-001")
@@ -1314,6 +1331,8 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 "--project-id", "oday-staging-proj",
                 "--api-image", self.valid_config.api_image,
                 "--web-image", self.valid_config.web_image,
+                "--worker-image", self.valid_config.worker_image,
+                "--scheduler-image", self.valid_config.scheduler_image,
                 "--owner-task-id", "ODP-EPHEMERAL-STAGING-IAC-001",
                 "--state-dir", str(tmp_path),
                 "--dry-run",
@@ -1432,6 +1451,8 @@ class DefaultTenantTfvarsContractTests(unittest.TestCase):
             candidate_sha="a" * 40,
             manifest_digest="sha256:" + "b" * 64,
             project_id="oday-staging-proj",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
             owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
 
@@ -1607,7 +1628,7 @@ class UnverifiableReleaseStateTests(unittest.TestCase):
             cloud_sql_connection_name="oday-staging-proj:asia-east1:oday-staging-pg",
             network_name="oday-staging-vpc",
             subnetwork_name="oday-staging-subnet",
-            kms_key_id="projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
             deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
             api_image="asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
             web_image="asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
@@ -1869,6 +1890,8 @@ class UnverifiableReleaseStateTests(unittest.TestCase):
                 "--project-id", "oday-staging-proj",
                 "--api-image", self.config.api_image,
                 "--web-image", self.config.web_image,
+                "--worker-image", self.config.worker_image,
+                "--scheduler-image", self.config.scheduler_image,
                 "--owner-task-id", "ODP-EPHEMERAL-STAGING-IAC-001",
                 "--state-dir", str(state_root),
                 "--dry-run",
@@ -2132,6 +2155,8 @@ class FailClosedReviewBlockerRegressionTests(unittest.TestCase):
             candidate_sha="a" * 40,
             manifest_digest="sha256:" + "b" * 64,
             project_id="oday-staging-proj",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
             owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
             created_at="2026-08-24T10:00:00Z",
         )
@@ -2472,9 +2497,13 @@ class IncompleteReleaseIdentityBundleTests(unittest.TestCase):
             candidate_sha="a" * 40,
             manifest_digest="sha256:" + "b" * 64,
             project_id="oday-staging-proj",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
             region="asia-east1",
             api_image="asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
             web_image="asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+            worker_image="asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+            scheduler_image="asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
             owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
             created_at="2026-08-24T12:00:00Z",
         )
@@ -2707,6 +2736,363 @@ class IncompleteReleaseIdentityBundleTests(unittest.TestCase):
         self.assertNotIn("failure_cleanup_receipt", receipt.metadata)
         self.assertTrue(receipt.remediation_required)
         self.assertTrue(any(UNVERIFIABLE_STATE_PREFIX in err for err in receipt.errors), receipt.errors)
+
+
+class EphemeralStagingVerificationAndHoldTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.release_id = "odp-20260824-001"
+        self.candidate_sha = "a" * 40
+        self.manifest_digest = "sha256:" + "b" * 64
+        self.project_id = "oday-staging-proj"
+        self.now = datetime(2026, 8, 27, 6, 0, 0, tzinfo=UTC)
+
+    def _seed_live_state(self, state_dir: Path) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            _lifecycle_state_path,
+            _terraform_state_paths,
+            generate_staging_labels,
+            generate_tfvars,
+        )
+
+        cfg = StagingConfig(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            region="asia-east1",
+            cloud_sql_instance_name="oday-staging-pg",
+            cloud_sql_connection_name="oday-staging-proj:asia-east1:oday-staging-pg",
+            network_name="oday-staging-vpc",
+            subnetwork_name="oday-staging-subnet",
+            kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
+            api_image="asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
+            web_image="asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+            worker_image="asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+            scheduler_image="asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
+            created_at=self.now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            owner_task_id="ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+        )
+        state_path, tfvars_path, inventory_path = _terraform_state_paths(self.release_id, state_dir)
+        state_path.write_text("{}", encoding="utf-8")
+        tfvars_path.write_text(json.dumps(generate_tfvars(cfg)), encoding="utf-8")
+        labels = generate_staging_labels(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            owner_task_id=cfg.owner_task_id,
+            created_at=self.now,
+        )
+        inventory_path.write_text(
+            json.dumps([{
+                "type": "google_cloud_run_v2_service",
+                "name": "staging-service",
+                "id": "staging-service-id",
+                "raw_release_id": self.release_id,
+                "labels": labels,
+                "created_at": cfg.created_at,
+                "expires_at": "2026-08-28T06:00:00Z",
+            }]),
+            encoding="utf-8",
+        )
+        marker_path = _lifecycle_state_path(self.release_id, state_dir)
+        marker_path.write_text(
+            json.dumps({
+                "schema_version": 1,
+                "release_id": self.release_id,
+                "status": "created",
+                "secret_values_redacted": True,
+            }),
+            encoding="utf-8",
+        )
+
+    def _valid_outputs(self) -> dict[str, Any]:
+        from product_ops.deployment.staging_lifecycle import (
+            generate_staging_labels,
+            get_ephemeral_resource_names,
+        )
+
+        names = get_ephemeral_resource_names(self.release_id, self.project_id)
+        labels = generate_staging_labels(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            owner_task_id="ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            created_at=self.now,
+        )
+        return {
+            "release_id": self.release_id,
+            "staging_project_id": self.project_id,
+            "created_at": "2026-08-27T06:00:00Z",
+            "expires_at": "2026-08-28T06:00:00Z",
+            "staging_api_uri": "https://staging-api.example.test",
+            "staging_web_uri": "https://staging-web.example.test",
+            "staging_api_service_name": names["cloud_run_api"],
+            "staging_web_service_name": names["cloud_run_web"],
+            "staging_database_name": names["database_name"],
+            "staging_data_bucket": names["bucket_name"],
+            "staging_tenant_id": names["tenant_id"],
+            "staging_runtime_service_account": f"{names['sa_runtime']}@{self.project_id}.iam.gserviceaccount.com",
+            "staging_web_service_account": f"{names['sa_web']}@{self.project_id}.iam.gserviceaccount.com",
+            "staging_worker_service_account": f"{names['sa_worker']}@{self.project_id}.iam.gserviceaccount.com",
+            "staging_migration_job_name": names["cloud_run_migration_job"],
+            "staging_worker_job_name": names["cloud_run_worker_job"],
+            "staging_scheduler_job_name": names["cloud_run_scheduler_job"],
+            "staging_scheduler_trigger_name": names["scheduler_job"],
+            "staging_cloud_sql_instance": "oday-staging-pg",
+            "staging_api_image": "asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
+            "staging_web_image": "asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+            "staging_worker_image": "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+            "staging_scheduler_image": "asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
+            "resource_labels": labels,
+            "ownership_manifest": {"labels": labels, "resources": {"api": names["cloud_run_api"]}},
+        }
+
+    def test_non_dry_run_requires_outputs_executor_and_live_state(self) -> None:
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        outputs = self._valid_outputs()
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            operator_identity=outputs["staging_runtime_service_account"],
+            lifecycle_outputs=outputs,
+            now=self.now,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(any("authoritative live stage executor" in error for error in receipt.errors))
+        self.assertTrue(any("Terraform state" in error for error in receipt.errors))
+
+    def test_mapping_stage_result_without_explicit_success_fails_closed(self) -> None:
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            dry_run=True,
+            stage_executor=lambda _stage, _context: {},
+            now=self.now,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(any("incomplete result" in error for error in receipt.errors))
+
+    def test_live_executor_rejects_arbitrary_operator_identity(self) -> None:
+        from product_ops.deployment.staging_lifecycle import make_live_rehearsal_executor
+
+        outputs = self._valid_outputs()
+        with self.assertRaises(ValueError) as ctx:
+            make_live_rehearsal_executor(
+                outputs,
+                project_id=self.project_id,
+                region="asia-east1",
+                operator_identity="arbitrary@oday-staging-proj.iam.gserviceaccount.com",
+            )
+        self.assertIn("exactly equal", str(ctx.exception))
+
+    def test_verify_ephemeral_staging_success(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            REHEARSAL_STAGE_NAMES,
+            verify_ephemeral_staging,
+        )
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            dry_run=True,
+            now=self.now,
+        )
+
+        self.assertTrue(receipt.success)
+        self.assertEqual(receipt.action, "verify")
+        self.assertEqual(receipt.release_id, self.release_id)
+        self.assertEqual(receipt.candidate_sha, self.candidate_sha)
+        self.assertTrue(receipt.metadata.get("secret_values_redacted"))
+        self.assertEqual(receipt.metadata.get("external_sources_expected_enabled"), [])
+        self.assertEqual(receipt.metadata.get("public_egress"), "default_deny")
+        self.assertEqual(receipt.metadata.get("identity_scope"), "release_scoped_least_privilege")
+        self.assertEqual(len(receipt.resources), len(REHEARSAL_STAGE_NAMES))
+        self.assertTrue(all(r["success"] for r in receipt.resources))
+
+    def test_verify_ephemeral_staging_stage_failure(self) -> None:
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        def failing_executor(stage: str, context: Mapping[str, Any]) -> bool:
+            if stage == "worker_idempotency":
+                return False
+            return True
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            dry_run=True,
+            stage_executor=failing_executor,
+            now=self.now,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(receipt.remediation_required)
+        self.assertTrue(any("worker_idempotency failed" in err for err in receipt.errors))
+
+    def test_verify_ephemeral_staging_dev_identity_rejection(self) -> None:
+        from product_ops.deployment.staging_lifecycle import verify_ephemeral_staging
+
+        receipt = verify_ephemeral_staging(
+            release_id=self.release_id,
+            candidate_sha=self.candidate_sha,
+            manifest_digest=self.manifest_digest,
+            project_id=self.project_id,
+            operator_identity="dev-smoke-operator@oday-dev-proj.iam.gserviceaccount.com",
+            now=self.now,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(any("dev smoke operator identity impersonation" in err for err in receipt.errors))
+
+    def test_hold_ephemeral_staging_success(self) -> None:
+        from product_ops.deployment.staging_lifecycle import hold_ephemeral_staging
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            self._seed_live_state(state_dir)
+            receipt = hold_ephemeral_staging(
+                release_id=self.release_id,
+                project_id=self.project_id,
+                owner_task_id="ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+                reason="Investigation of staging migration rehearsal failure",
+                ttl_hours=24,
+                state_dir=state_dir,
+                now=self.now,
+            )
+
+        self.assertTrue(receipt.success)
+        self.assertEqual(receipt.action, "hold")
+        self.assertEqual(receipt.release_id, self.release_id)
+        self.assertEqual(len(receipt.resources), 1)
+        self.assertEqual(receipt.resources[0]["status"], "retained_for_debugging")
+        self.assertEqual(receipt.resources[0]["ttl_hours"], 24)
+        self.assertEqual(receipt.resources[0]["expires_at"], "2026-08-28T06:00:00Z")
+        self.assertTrue(receipt.metadata.get("secret_values_redacted"))
+
+    def test_hold_ephemeral_staging_missing_reason(self) -> None:
+        from product_ops.deployment.staging_lifecycle import hold_ephemeral_staging
+
+        receipt = hold_ephemeral_staging(
+            release_id=self.release_id,
+            project_id=self.project_id,
+            owner_task_id="ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            reason="",
+            now=self.now,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(any("reason" in err.lower() for err in receipt.errors))
+
+    def test_cli_verify_and_hold_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            create_receipt = Path(tmpdir) / "staging-create.json"
+            verify_receipt = Path(tmpdir) / "staging-verify.json"
+            hold_receipt = Path(tmpdir) / "staging-hold.json"
+
+            code = main([
+                "create",
+                "--release-id", self.release_id,
+                "--candidate-sha", self.candidate_sha,
+                "--manifest-digest", self.manifest_digest,
+                "--project-id", self.project_id,
+                "--api-image", "asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
+                "--web-image", "asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+                "--worker-image", "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+                "--scheduler-image", "asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
+                "--owner-task-id", "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+                "--kms-key-id", "projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+                "--deployer-service-account-email", "deployer@oday-staging-proj.iam.gserviceaccount.com",
+                "--dry-run",
+                "--receipt", str(create_receipt),
+            ])
+            self.assertEqual(code, 0)
+            self.assertTrue(create_receipt.is_file())
+            data = json.loads(create_receipt.read_text(encoding="utf-8"))
+            self.assertEqual(data["action"], "create")
+            self.assertTrue(data["success"])
+
+            code = main([
+                "verify",
+                "--release-id", self.release_id,
+                "--candidate-sha", self.candidate_sha,
+                "--manifest-digest", self.manifest_digest,
+                "--project-id", self.project_id,
+                "--worker-image", "asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+                "--scheduler-image", "asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
+                "--dry-run",
+                "--receipt", str(verify_receipt),
+            ])
+            self.assertEqual(code, 0)
+            self.assertTrue(verify_receipt.is_file())
+            data = json.loads(verify_receipt.read_text(encoding="utf-8"))
+            self.assertEqual(data["action"], "verify")
+            self.assertTrue(data["success"])
+
+            code = main([
+                "hold",
+                "--release-id", self.release_id,
+                "--project-id", self.project_id,
+                "--owner-task-id", "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+                "--reason", "Test hold retention",
+                "--ttl-hours", "48",
+                "--state-dir", tmpdir,
+                "--receipt", str(hold_receipt),
+            ])
+            self.assertEqual(code, 1)
+            self.assertTrue(hold_receipt.is_file())
+            data = json.loads(hold_receipt.read_text(encoding="utf-8"))
+            self.assertEqual(data["action"], "hold")
+            self.assertFalse(data["success"])
+            self.assertTrue(any("missing" in error for error in data["errors"]))
+
+    def test_immutable_release_identity_detects_worker_and_scheduler_image_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            cfg = StagingConfig(
+                release_id=self.release_id,
+                candidate_sha=self.candidate_sha,
+                manifest_digest=self.manifest_digest,
+                project_id=self.project_id,
+                kms_key_id="projects/oday-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+                deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
+                owner_task_id="ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+                worker_image="asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "e" * 64,
+                scheduler_image="asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "f" * 64,
+                created_at="2026-08-24T12:00:00Z",
+            )
+            tfvars_path = state_root / f"{self.release_id}.tfvars.json"
+            tfvars_path.write_text(json.dumps(generate_tfvars(cfg)), encoding="utf-8")
+
+            # Same config passes
+            self.assertEqual(validate_immutable_release_identity(cfg, state_root), [])
+
+            # Changing worker_image fails
+            changed_worker = dataclasses_replace(
+                cfg, worker_image="asia-east1-docker.pkg.dev/proj/repo/worker@sha256:" + "1" * 64
+            )
+            errors = validate_immutable_release_identity(changed_worker, state_root)
+            self.assertTrue(any("immutable worker_image" in err for err in errors), errors)
+
+            # Changing scheduler_image fails
+            changed_scheduler = dataclasses_replace(
+                cfg, scheduler_image="asia-east1-docker.pkg.dev/proj/repo/scheduler@sha256:" + "2" * 64
+            )
+            errors = validate_immutable_release_identity(changed_scheduler, state_root)
+            self.assertTrue(any("immutable scheduler_image" in err for err in errors), errors)
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:

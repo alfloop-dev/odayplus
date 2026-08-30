@@ -48,6 +48,12 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('resource "google_cloud_scheduler_job" "staging_worker_trigger"', main_tf)
         self.assertTrue(re.search(r"paused\s*=\s*true", main_tf))
 
+    def test_all_release_scoped_cloud_run_resources_use_controlled_vpc_egress(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+
+        self.assertEqual(main_tf.count('egress = "ALL_TRAFFIC"'), 5)
+        self.assertNotIn('egress = "PRIVATE_RANGES_ONLY"', main_tf)
+
     def test_module_variables_validation_rules(self) -> None:
         vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
 
@@ -56,6 +62,8 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('variable "manifest_digest"', vars_tf)
         self.assertIn('variable "api_image"', vars_tf)
         self.assertIn('variable "web_image"', vars_tf)
+        self.assertIn('variable "worker_image"', vars_tf)
+        self.assertIn('variable "scheduler_image"', vars_tf)
         self.assertIn('variable "ttl_hours"', vars_tf)
         self.assertIn('variable "created_at"', vars_tf)
         self.assertIn('var.ttl_hours >= 1 && var.ttl_hours <= 168', vars_tf)
@@ -130,6 +138,7 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, outputs_tf)
 
         self.assertIn('output "staging_api_uri"', outputs_tf)
+        self.assertIn('output "staging_project_id"', outputs_tf)
         self.assertIn('output "staging_web_uri"', outputs_tf)
         self.assertIn('output "staging_database_name"', outputs_tf)
         self.assertIn('output "staging_data_bucket"', outputs_tf)
@@ -183,6 +192,8 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             "manifest_digest": "sha256:" + "0" * 64,
             "api_image": "asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
             "web_image": "asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
+            "worker_image": "asia-east1-docker.pkg.dev/test/repo/worker@sha256:" + "0" * 64,
+            "scheduler_image": "asia-east1-docker.pkg.dev/test/repo/scheduler@sha256:" + "0" * 64,
             "ttl_hours": 24,
             "owner_task_id": "ODP_TASK_001",
             "tenant_id": "custom_tenant",
@@ -190,15 +201,27 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             "cloud_sql_connection_name": "test:asia-east1:test-db",
             "network_name": "test-vpc",
             "subnetwork_name": "test-subnet",
-            "kms_key_id": "projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
-            "deployer_service_account_email": "deployer@test.iam.gserviceaccount.com",
+            "kms_key_id": "projects/test-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            "deployer_service_account_email": "deployer@test-staging-proj.iam.gserviceaccount.com",
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
             # Copy module files
             for f in ("main.tf", "variables.tf", "outputs.tf"):
-                shutil.copy(MODULE_DIR / f, tmppath / f)
+                if f == "main.tf":
+                    # The live module uses a release-scoped GCS backend. This
+                    # unit test deliberately plans offline, so remove only
+                    # that backend stanza from the temporary copy.
+                    main_text = (MODULE_DIR / f).read_text(encoding="utf-8")
+                    backend_start = main_text.index("  # The workflow supplies a protected bucket")
+                    backend_end = main_text.index("  required_providers", backend_start)
+                    (tmppath / f).write_text(
+                        main_text[:backend_start] + main_text[backend_end:],
+                        encoding="utf-8",
+                    )
+                else:
+                    shutil.copy(MODULE_DIR / f, tmppath / f)
 
             # Init terraform
             init_res = subprocess.run(
@@ -266,7 +289,16 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
         cls._tmpdir = tempfile.TemporaryDirectory()
         cls.workdir = Path(cls._tmpdir.name)
         for filename in ("main.tf", "variables.tf", "outputs.tf"):
-            shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
+            if filename == "main.tf":
+                main_text = (MODULE_DIR / filename).read_text(encoding="utf-8")
+                backend_start = main_text.index("  # The workflow supplies a protected bucket")
+                backend_end = main_text.index("  required_providers", backend_start)
+                (cls.workdir / filename).write_text(
+                    main_text[:backend_start] + main_text[backend_end:],
+                    encoding="utf-8",
+                )
+            else:
+                shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
 
         init_res = subprocess.run(
             ["terraform", f"-chdir={cls.workdir}", "init", "-backend=false"],
@@ -295,12 +327,14 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             owner_task_id="ODP_TASK_001",
             api_image="asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
             web_image="asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
+            worker_image="asia-east1-docker.pkg.dev/test/repo/worker@sha256:" + "0" * 64,
+            scheduler_image="asia-east1-docker.pkg.dev/test/repo/scheduler@sha256:" + "0" * 64,
             cloud_sql_instance_name="test-db",
             cloud_sql_connection_name="test:asia-east1:test-db",
             network_name="test-vpc",
             subnetwork_name="test-subnet",
-            kms_key_id="projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
-            deployer_service_account_email="deployer@test.iam.gserviceaccount.com",
+            kms_key_id="projects/test-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@test-staging-proj.iam.gserviceaccount.com",
             created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
 
@@ -385,4 +419,3 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

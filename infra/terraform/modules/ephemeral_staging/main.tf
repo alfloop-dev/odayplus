@@ -19,6 +19,12 @@
 terraform {
   required_version = ">= 1.6.0"
 
+  # The workflow supplies a protected bucket and a release-scoped prefix at
+  # init time. The backend is intentionally remote: local runner state may
+  # contain generated database credentials and must not be the recovery or
+  # cleanup authority after the runner exits.
+  backend "gcs" {}
+
   required_providers {
     google = {
       source  = "hashicorp/google"
@@ -62,7 +68,7 @@ locals {
   tenant_label   = length(local.tenant_clean) <= 63 ? local.tenant_clean : "${substr(local.tenant_clean, 0, 54)}-${substr(sha256(local.tenant_id), 0, 8)}"
 
   # Service Account ID max 30 chars: "stg-" (4) + slug (13) + "-" (1) + hash (8) + suffix (3-4) = 29-30 chars.
-  sa_slug       = substr(local.release_clean, 0, 13)
+  sa_slug       = trim(substr(local.release_clean, 0, 13), "-")
   sa_prefix     = "stg-${local.sa_slug}-${local.release_hash}"
   sa_runtime_id = "${local.sa_prefix}-rt"
   sa_web_id     = "${local.sa_prefix}-web"
@@ -82,8 +88,11 @@ locals {
   bucket_name = "stg-${local.bucket_slug}-${local.release_hash}-data-${var.project_id}"
 
   # Cloud Run & Secret Manager & Pub/Sub prefix: "stg-" (4) + slug (24) + "-" (1) + hash (8) = 37 chars.
-  res_slug    = substr(local.release_clean, 0, 24)
-  name_prefix = "stg-${local.res_slug}-${local.release_hash}"
+  res_slug           = substr(local.release_clean, 0, 24)
+  name_prefix        = "stg-${local.res_slug}-${local.release_hash}"
+  migration_job_name = "${local.name_prefix}-migration"
+  worker_job_name    = "${local.name_prefix}-worker"
+  scheduler_job_name = "${local.name_prefix}-scheduler"
 
   # Immutable creation and expiration timestamps (ensures applies do not refresh TTL).
   # created_at is deliberately a required input. Terraform cannot safely invent
@@ -138,6 +147,15 @@ resource "terraform_data" "staging_ownership" {
       web_service_acct     = local.sa_web_id
       worker_service_acct  = local.sa_worker_id
       name_prefix          = local.name_prefix
+      api_service          = "${local.name_prefix}-api"
+      web_service          = "${local.name_prefix}-web"
+      migration_job        = local.migration_job_name
+      worker_job           = local.worker_job_name
+      scheduler_job        = local.scheduler_job_name
+      api_image            = var.api_image
+      web_image            = var.web_image
+      worker_image         = var.worker_image
+      scheduler_image      = var.scheduler_image
     }
   }
 
@@ -157,6 +175,10 @@ resource "terraform_data" "staging_ownership" {
     local.tenant_id,
     var.candidate_sha,
     var.manifest_digest,
+    var.api_image,
+    var.web_image,
+    var.worker_image,
+    var.scheduler_image,
     var.created_at,
     local.expires_at,
   ]
@@ -507,6 +529,9 @@ resource "google_cloud_run_v2_service" "staging_api" {
         network    = var.network_name
         subnetwork = var.subnetwork_name
       }
+      # Every packet follows the controlled VPC path. The foundation does not
+      # provide Cloud NAT and its default-deny firewall blocks public targets;
+      # the live rehearsal proves that deny boundary.
       egress = "ALL_TRAFFIC"
     }
 
@@ -569,7 +594,7 @@ resource "google_cloud_run_v2_service" "staging_api" {
       }
       env {
         name  = "ODP_EXTERNAL_PROVIDER_MODE"
-        value = "fixture"
+        value = "disabled"
       }
       env {
         name  = "ODP_OBJECT_STORE"
@@ -581,11 +606,11 @@ resource "google_cloud_run_v2_service" "staging_api" {
       }
       env {
         name  = "ODP_PRODUCT_MODE"
-        value = "development"
+        value = "production"
       }
       env {
         name  = "ODP_REQUIRE_LIVE_DATA"
-        value = "false"
+        value = "true"
       }
       env {
         name  = "ODP_SOURCE_SNAPSHOT_BUCKET"
@@ -689,6 +714,9 @@ resource "google_cloud_run_v2_service" "staging_web" {
         network    = var.network_name
         subnetwork = var.subnetwork_name
       }
+      # Every packet follows the controlled VPC path. The foundation does not
+      # provide Cloud NAT and its default-deny firewall blocks public targets;
+      # the live rehearsal proves that deny boundary.
       egress = "ALL_TRAFFIC"
     }
 
@@ -731,11 +759,11 @@ resource "google_cloud_run_v2_service" "staging_web" {
       }
       env {
         name  = "ODP_PRODUCT_MODE"
-        value = "poc"
+        value = "production"
       }
       env {
         name  = "ODP_REQUIRE_LIVE_DATA"
-        value = "false"
+        value = "true"
       }
       env {
         name  = "ODP_STAGING_RELEASE_ID"
@@ -813,4 +841,315 @@ resource "google_cloud_scheduler_job" "staging_worker_trigger" {
       audience              = google_cloud_run_v2_service.staging_api.uri
     }
   }
+}
+
+# --- Release-scoped one-shot Cloud Run Jobs ---
+#
+# Terraform owns the immutable job definitions. The lifecycle verifier is the
+# only caller that executes them with `gcloud run jobs execute`; no second
+# workflow or deploy wrapper may create a parallel job path. Migration uses
+# the same worker image digest recorded in the release manifest, which keeps
+# the build-once handoff exact without introducing a rebuild.
+
+resource "google_cloud_run_v2_job" "staging_migration" {
+  project  = var.project_id
+  name     = local.migration_job_name
+  location = var.region
+  labels   = merge(local.resource_labels, { "oday-runtime" = "migration" })
+
+  template {
+    template {
+      service_account = google_service_account.staging_runtime.email
+      timeout         = "1800s"
+      max_retries     = 0
+
+      vpc_access {
+        network_interfaces {
+          network    = var.network_name
+          subnetwork = var.subnetwork_name
+        }
+        # Jobs use the same controlled VPC egress policy as the services.
+        egress = "ALL_TRAFFIC"
+      }
+
+      volumes {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [var.cloud_sql_connection_name]
+        }
+      }
+
+      containers {
+        image   = var.worker_image
+        command = ["python"]
+        args    = ["product_ops/deployment/cloud_run_job_entrypoint.py", "migrate"]
+
+        env {
+          name  = "ODAY_RELEASE_SHA"
+          value = var.candidate_sha
+        }
+        env {
+          name  = "ODP_DEPLOY_ENV"
+          value = "staging"
+        }
+        env {
+          name  = "ODP_TENANT_ID"
+          value = local.tenant_id
+        }
+        env {
+          name  = "ODP_SCHEDULED_INGESTION_TENANT_ID"
+          value = local.tenant_id
+        }
+        env {
+          name  = "ODP_EXTERNAL_PROVIDER_MODE"
+          value = "disabled"
+        }
+        env {
+          name  = "ODP_DATA_BINDING_MODE"
+          value = "live"
+        }
+        env {
+          name  = "ODP_REQUIRE_LIVE_DATA"
+          value = "true"
+        }
+        env {
+          name  = "ODP_PERSISTENCE"
+          value = "postgresql"
+        }
+        env {
+          name  = "ODP_OBJECT_STORE"
+          value = "gcs"
+        }
+        env {
+          name  = "ODP_SOURCE_SNAPSHOT_BUCKET"
+          value = google_storage_bucket.staging_data.name
+        }
+        env {
+          name  = "ODP_MODEL_ARTIFACT_BUCKET"
+          value = google_storage_bucket.staging_data.name
+        }
+        env {
+          name  = "ODP_STAGING_RELEASE_ID"
+          value = var.release_id
+        }
+
+        env {
+          name = "ODAY_DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.staging_database_url.secret_id
+              version = google_secret_manager_secret_version.staging_database_url.version
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_secret_manager_secret_iam_member.staging_runtime_db_url,
+    google_secret_manager_secret_version.staging_database_url,
+  ]
+}
+
+resource "google_cloud_run_v2_job" "staging_worker" {
+  project  = var.project_id
+  name     = local.worker_job_name
+  location = var.region
+  labels   = merge(local.resource_labels, { "oday-runtime" = "worker" })
+
+  template {
+    template {
+      service_account = google_service_account.staging_runtime.email
+      timeout         = "900s"
+      max_retries     = 3
+
+      vpc_access {
+        network_interfaces {
+          network    = var.network_name
+          subnetwork = var.subnetwork_name
+        }
+        # Jobs use the same controlled VPC egress policy as the services.
+        egress = "ALL_TRAFFIC"
+      }
+
+      volumes {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [var.cloud_sql_connection_name]
+        }
+      }
+
+      containers {
+        image   = var.worker_image
+        command = ["python"]
+        args    = ["product_ops/deployment/cloud_run_job_entrypoint.py", "worker", "--max-jobs", "1", "--require-job"]
+
+        env {
+          name  = "ODAY_RELEASE_SHA"
+          value = var.candidate_sha
+        }
+        env {
+          name  = "ODP_DEPLOY_ENV"
+          value = "staging"
+        }
+        env {
+          name  = "ODP_TENANT_ID"
+          value = local.tenant_id
+        }
+        env {
+          name  = "ODP_SCHEDULED_INGESTION_TENANT_ID"
+          value = local.tenant_id
+        }
+        env {
+          name  = "ODP_EXTERNAL_PROVIDER_MODE"
+          value = "disabled"
+        }
+        env {
+          name  = "ODP_DATA_BINDING_MODE"
+          value = "live"
+        }
+        env {
+          name  = "ODP_REQUIRE_LIVE_DATA"
+          value = "true"
+        }
+        env {
+          name  = "ODP_PERSISTENCE"
+          value = "postgresql"
+        }
+        env {
+          name  = "ODP_OBJECT_STORE"
+          value = "gcs"
+        }
+        env {
+          name  = "ODP_SOURCE_SNAPSHOT_BUCKET"
+          value = google_storage_bucket.staging_data.name
+        }
+        env {
+          name  = "ODP_MODEL_ARTIFACT_BUCKET"
+          value = google_storage_bucket.staging_data.name
+        }
+        env {
+          name  = "ODP_STAGING_RELEASE_ID"
+          value = var.release_id
+        }
+
+        env {
+          name = "ODAY_DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.staging_database_url.secret_id
+              version = google_secret_manager_secret_version.staging_database_url.version
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_secret_manager_secret_iam_member.staging_runtime_db_url,
+    google_secret_manager_secret_version.staging_database_url,
+  ]
+}
+
+resource "google_cloud_run_v2_job" "staging_scheduler" {
+  project  = var.project_id
+  name     = local.scheduler_job_name
+  location = var.region
+  labels   = merge(local.resource_labels, { "oday-runtime" = "scheduler" })
+
+  template {
+    template {
+      service_account = google_service_account.staging_runtime.email
+      timeout         = "600s"
+      max_retries     = 0
+
+      vpc_access {
+        network_interfaces {
+          network    = var.network_name
+          subnetwork = var.subnetwork_name
+        }
+        # Jobs use the same controlled VPC egress policy as the services.
+        egress = "ALL_TRAFFIC"
+      }
+
+      volumes {
+        name = "cloudsql"
+        cloud_sql_instance {
+          instances = [var.cloud_sql_connection_name]
+        }
+      }
+
+      containers {
+        image   = var.scheduler_image
+        command = ["python"]
+        args    = ["product_ops/deployment/cloud_run_job_entrypoint.py", "scheduler"]
+
+        env {
+          name  = "ODAY_RELEASE_SHA"
+          value = var.candidate_sha
+        }
+        env {
+          name  = "ODP_DEPLOY_ENV"
+          value = "staging"
+        }
+        env {
+          name  = "ODP_TENANT_ID"
+          value = local.tenant_id
+        }
+        env {
+          name  = "ODP_SCHEDULED_INGESTION_TENANT_ID"
+          value = local.tenant_id
+        }
+        env {
+          name  = "ODP_EXTERNAL_PROVIDER_MODE"
+          value = "disabled"
+        }
+        env {
+          name  = "ODP_DATA_BINDING_MODE"
+          value = "live"
+        }
+        env {
+          name  = "ODP_REQUIRE_LIVE_DATA"
+          value = "true"
+        }
+        env {
+          name  = "ODP_PERSISTENCE"
+          value = "postgresql"
+        }
+        env {
+          name  = "ODP_OBJECT_STORE"
+          value = "gcs"
+        }
+        env {
+          name  = "ODP_SOURCE_SNAPSHOT_BUCKET"
+          value = google_storage_bucket.staging_data.name
+        }
+        env {
+          name  = "ODP_MODEL_ARTIFACT_BUCKET"
+          value = google_storage_bucket.staging_data.name
+        }
+        env {
+          name  = "ODP_STAGING_RELEASE_ID"
+          value = var.release_id
+        }
+
+        env {
+          name = "ODAY_DATABASE_URL"
+          value_source {
+            secret_key_ref {
+              secret  = google_secret_manager_secret.staging_database_url.secret_id
+              version = google_secret_manager_secret_version.staging_database_url.version
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_secret_manager_secret_iam_member.staging_runtime_db_url,
+    google_secret_manager_secret_version.staging_database_url,
+  ]
 }

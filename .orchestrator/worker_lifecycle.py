@@ -47,6 +47,41 @@ def _entrypoint(func):
 _parse_iso_utc = parse_iso_timestamp
 
 
+_RUNNER_FAILURE_STATUSES = frozenset(
+    {
+        "failed",
+        "error",
+        "failure",
+        "terminated",
+        "cancelled",
+        "canceled",
+        "aborted",
+        "stopped",
+    }
+)
+
+
+def _runner_reports_failure(worker: dict[str, Any] | None) -> bool:
+    """Return whether the runner marker says this process cannot continue.
+
+    A worker lifecycle status is the supervisor's disposition, while the
+    runner status is the process's own result.  The latter must win before the
+    poller refreshes a lease: the wrapper can briefly remain alive after it
+    publishes its failed marker.
+    """
+    if not isinstance(worker, dict):
+        return False
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status in _RUNNER_FAILURE_STATUSES:
+        return True
+    if worker_was_terminated(worker):
+        return True
+    try:
+        return int(worker.get("exit_code")) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _helper_worker_runtime_assignment_is_valid(
     config: dict[str, Any],
     worker: dict[str, Any],
@@ -584,8 +619,46 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         # These records already have a durable terminal disposition. Re-reading
         # their old marker/log after a later re-review or reviewer reopen must
         # never count the same run again or reassign the current lifecycle.
-        if str(worker.get("status") or "").lower() in TERMINAL_WORKER_STATUSES:
-            continue
+        lifecycle_status = str(worker.get("status") or "").lower()
+        markers_checked = False
+        if lifecycle_status in TERMINAL_WORKER_STATUSES:
+            # A failed runner marker may arrive while the lifecycle record
+            # still says `completed`, and a failed lifecycle record can be
+            # persisted before its queue lease is finalized. Read the marker
+            # before applying the historical-terminal fast path so neither
+            # case keeps a queue event or provider failure unseen.
+            marker_changed = update_worker_runtime_markers(worker)
+            markers_checked = True
+            if marker_changed:
+                poll_counts["marker_updates"] += 1
+                changed = True
+            runner_reports_failure = _runner_reports_failure(worker)
+            queue_event_id = worker.get("queue_event_id")
+            queue_record = (
+                (state.get("queue") or {}).get("events", {}).get(queue_event_id)
+                if queue_event_id
+                else None
+            )
+            queue_status = str((queue_record or {}).get("status") or "").lower()
+            queue_unsettled = isinstance(queue_record, dict) and queue_status not in {
+                "completed",
+                "failed",
+                "done",
+            }
+            if lifecycle_status == "failed" and queue_unsettled:
+                if not pid_is_alive(worker.get("pid")):
+                    preserve_dead_worker_worktree(
+                        config,
+                        state,
+                        worker,
+                        task=task_map.get(str(worker.get("task_id") or "")),
+                        trigger="runner_failed",
+                    )
+                failure_reason = str(worker.get("last_error") or GENERIC_WORKER_EXIT_REASON)
+                finalize_queue_event_record(config, state, worker, "failed", failure_reason)
+                changed = True
+            if not queue_unsettled or lifecycle_status != "completed" or not runner_reports_failure:
+                continue
         previous_last_event_at = worker.get("last_event_at")
         previous_last_process_activity_at = worker.get("last_process_activity_at")
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
@@ -618,13 +691,20 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
-        marker_changed = update_worker_runtime_markers(worker)
-        if marker_changed:
-            poll_counts["marker_updates"] += 1
-            changed = True
-        update_from_log(config, worker)
+        if not markers_checked:
+            marker_changed = update_worker_runtime_markers(worker)
+            if marker_changed:
+                poll_counts["marker_updates"] += 1
+                changed = True
+        runner_reports_failure = _runner_reports_failure(worker)
+        if not runner_reports_failure:
+            update_from_log(config, worker)
         try:
-            adopted_approval = correlate_deferred_tool_approval(config, worker, approval_state)
+            adopted_approval = (
+                correlate_deferred_tool_approval(config, worker, approval_state)
+                if not runner_reports_failure
+                else None
+            )
         except Exception as error:  # pragma: no cover - queue write failures must fail closed, not crash
             adopted_approval = None
             write_activity_log(
@@ -644,7 +724,37 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 "pending" if adopted_approval.get("status") == "pending" else "history", []
             ).append(adopted_approval)
             changed = True
-        alive = pid_is_alive(worker.get("pid"))
+        process_alive = pid_is_alive(worker.get("pid"))
+        runner_reports_failure = _runner_reports_failure(worker)
+        if runner_reports_failure and process_alive:
+            # A runner publishes its failed marker immediately before the
+            # wrapper exits. Stop a lingering wrapper before preserving the
+            # worktree so no process can write while it is being copied.
+            terminate_worker_pid(worker.get("pid"))
+        alive = process_alive and not runner_reports_failure
+        worktree_preserved = False
+
+        def preserve_worker_worktree_once(
+            trigger: str,
+            *,
+            current_worker: dict[str, Any] = worker,
+        ) -> None:
+            nonlocal worktree_preserved
+            if worktree_preserved:
+                return
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                current_worker,
+                task=task_map.get(str(current_worker.get("task_id") or "")),
+                trigger=trigger,
+            )
+            worktree_preserved = True
+
+        if not alive:
+            preserve_worker_worktree_once(
+                "runner_failed" if runner_reports_failure else "missing_process"
+            )
         if not alive and str(worker.get("status") or "").lower() == "stalled":
             current_task = task_map.get(str(worker.get("task_id") or ""), {})
             terminal_statuses = {
@@ -678,13 +788,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             # the helper declines cheaply (`nothing_to_preserve`) when the
             # worktree is clean -- so there is no reason to gamble on which
             # exits leave work behind.
-            preserve_dead_worker_worktree(
-                config,
-                state,
-                worker,
-                task=current_task,
-                trigger=f"reaped_dead_stalled_worker:{queue_status}",
-            )
+            preserve_worker_worktree_once(f"reaped_dead_stalled_worker:{queue_status}")
             finalize_queue_event_record(
                 config,
                 state,
@@ -741,7 +845,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             worker.get("last_process_activity_at")
             and worker.get("last_process_activity_at") > str(previous_last_process_activity_at or "")
         )
-        if manual_pending_inbox_can_auto_redeliver(config, state, provider_report, worker):
+        if not runner_reports_failure and manual_pending_inbox_can_auto_redeliver(
+            config, state, provider_report, worker
+        ):
             changed = (
                 requeue_stale_manual_pending_worker(
                     config,
@@ -822,6 +928,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 # Grace exhausted: the worker is not exiting on its own, so fall
                 # through and reclaim it as before.
             worker.pop("supersede_deferred_since", None)
+            preserve_worker_worktree_once("worker_superseded:assignment_moved")
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
@@ -855,6 +962,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             and worker.get("status") in active_statuses
             and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
+            if not worker_can_be_preempted(config, worker, task_map, state, now=now):
+                continue
+            preserve_worker_worktree_once("preempted_priority_escalation")
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
@@ -894,13 +1004,25 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             # about to be deleted, and it is the only thing that knows where the
             # workspace is. Reassigning the task does not make whatever this
             # dead worker had written worth losing.
-            preserve_dead_worker_worktree(
-                config,
-                state,
-                worker,
-                task=task_map.get(str(worker.get("task_id") or "")),
-                trigger="assignment_moved",
-            )
+            #
+            # Called directly rather than through `preserve_worker_worktree_once`
+            # so the ordering stays visible to a reader (and to the AST guard in
+            # `test_the_orphan_path_preserves_before_the_record_disappears`), but
+            # gated on the same flag: every worker reaching this branch is `not
+            # alive` and was therefore already preserved above. The helper is not
+            # idempotent -- each call mints a fresh UUID backup directory and a
+            # second `worker_death_worktree_preserved` activity entry -- so an
+            # unconditional call here duplicated both for the one path that is
+            # supposed to be the safety net.
+            if not worktree_preserved:
+                preserve_dead_worker_worktree(
+                    config,
+                    state,
+                    worker,
+                    task=task_map.get(str(worker.get("task_id") or "")),
+                    trigger="assignment_moved",
+                )
+                worktree_preserved = True
             workers.pop(run_id, None)
             finalize_queue_event_record(
                 config,
@@ -931,7 +1053,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])
         if pending:
-            if not alive and not worker_supports_approval_resume(config, worker):
+            if not alive and (
+                runner_reports_failure or not worker_supports_approval_resume(config, worker)
+            ):
                 worker["status"] = "failed"
                 worker["deferred_action"] = None
                 worker["deferred_tool_use"] = None
@@ -965,7 +1089,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 changed = True
                 continue
             approval = pending[0]
-            next_status = "waiting_approval" if pid_is_alive(worker.get("pid")) else "suspended_approval"
+            next_status = "waiting_approval" if alive else "suspended_approval"
             if worker.get("status") != next_status:
                 worker["status"] = next_status
                 worker["deferred_action"] = approval.get("approval_id")
@@ -1178,18 +1302,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if runner_succeeded
             else None
         )
-        is_success = (
-            runner_succeeded
-            or (
-                not worker_was_terminated(worker)
-                and (
-                    success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}
-                    or worker_is_discussion_planning(worker)
-                    or worker_is_coordination_dispatch(worker)
-                )
-            )
-        )
-        failure_reason = None if is_success else detect_worker_failure(worker)
+        # A structured zero-exit runner may legitimately skip log-based failure
+        # detection even when it has not satisfied the task postcondition yet.
+        # Keep failure-scan eligibility separate from the completion outcome so
+        # the no-progress path below can still record and reassign the task.
+        failure_reason = None if runner_succeeded else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -1311,8 +1428,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
             continue
 
-        if worker.get("status") not in {"completed", "failed", "manual_pending"}:
-            if not worker_was_terminated(worker) and worker_is_discussion_planning(worker):
+        if (
+            worker.get("status") not in {"completed", "failed", "manual_pending"}
+            or runner_reports_failure
+        ):
+            if (
+                not worker_was_terminated(worker)
+                and not _has_explicit_failure_evidence(worker)
+                and not failure_reason
+                and worker_is_discussion_planning(worker)
+            ):
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 clear_task_failure_streak(state, worker=worker)
@@ -1332,7 +1457,12 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
-            if not worker_was_terminated(worker) and worker_is_coordination_dispatch(worker):
+            if (
+                not worker_was_terminated(worker)
+                and not _has_explicit_failure_evidence(worker)
+                and not failure_reason
+                and worker_is_coordination_dispatch(worker)
+            ):
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 clear_task_failure_streak(state, worker=worker)

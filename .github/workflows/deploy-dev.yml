@@ -495,6 +495,8 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
+    outputs:
+      manifest_digest: ${{ steps.extract-admitted-manifest.outputs.manifest_digest }}
     # The admission job is itself protected by the selected GitHub environment.
     # Its variable-binding gate runs before any lease-state access, so hosted
     # admission cannot accidentally use ambient/local credentials.
@@ -632,6 +634,13 @@ jobs:
             --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
             --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
 
+      - name: Extract admitted manifest digest
+        id: extract-admitted-manifest
+        run: |
+          set -euo pipefail
+          manifest_digest="$(python3 -c 'import json; print(json.load(open(".odp_data/release/release-admission-receipt.json"))["manifest_digest"])')"
+          printf 'manifest_digest=%s\n' "${manifest_digest}" >> "${GITHUB_OUTPUT}"
+
       # The receipt is the audit trail for the admission decision. It carries
       # digests of the nonce and signature rather than the values, so it is safe
       # to publish whether or not the release was admitted.
@@ -657,12 +666,18 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
-      url: ${{ inputs.environment == 'production' && vars.ODP_PROD_DEPLOY_URL || (inputs.environment == 'staging' && vars.ODP_STAGING_DEPLOY_URL || vars.ODP_DEV_DEPLOY_URL) }}
+    outputs:
+      manifest_digest: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
     env:
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
       GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+      ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+      ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+      ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+      ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
       API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
       WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
       MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
@@ -692,6 +707,10 @@ jobs:
       ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
+      # Canonical web origin for cookies, CSRF, and redirects. Required in both
+      # auth modes -- the Web runtime fails closed without it in production --
+      # so it is passed unconditionally, not alongside the OIDC inputs.
+      ODP_WEB_BASE_URL: ${{ vars.ODP_WEB_BASE_URL }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
       # ODP-LIVE-E2E-001: the post-promotion live E2E gate runs inside
       # deploy_cloud_run_waji.sh before the release is committed, so a failure
@@ -700,6 +719,14 @@ jobs:
       ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS: ${{ vars.ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS }}
       ODAY_DATABASE_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
       ODP_WEB_OIDC_CLIENT_SECRET_SECRET: ${{ vars.ODP_WEB_OIDC_CLIENT_SECRET_SECRET }}
+      # ODP_AUTH_MODE is the authoritative auth-mode input; ODP_AUTH_OIDC_ENABLED
+      # is its legacy boolean alias. Both are passed so an environment that has
+      # only ever set the legacy flag keeps deploying, and so a disagreement
+      # between them fails the preflight instead of producing a half-OIDC
+      # revision. Unset variables arrive as empty strings and fall through to
+      # the password-first default.
+      ODP_AUTH_MODE: ${{ vars.ODP_AUTH_MODE }}
+      ODP_AUTH_OIDC_ENABLED: ${{ vars.ODP_AUTH_OIDC_ENABLED }}
       ODP_WEB_SESSION_SECRET_SECRET: ${{ vars.ODP_WEB_SESSION_SECRET_SECRET }}
       ODP_DEPLOY_ENV: ${{ inputs.environment }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
@@ -718,11 +745,9 @@ jobs:
       # environment has not configured a tenant explicitly.
       ODP_SCHEDULED_INGESTION_TENANT_ID: ${{ vars.ODP_SCHEDULED_INGESTION_TENANT_ID }}
       ODP_TENANT_ID: ${{ vars.ODP_TENANT_ID }}
-      ODP_STAGING_DEPLOY_URL: ${{ vars.ODP_STAGING_DEPLOY_URL }}
-      ODP_STAGING_API_URL: ${{ vars.ODP_STAGING_API_URL }}
-      ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
       ODP_PROD_DEPLOY_URL: ${{ vars.ODP_PROD_DEPLOY_URL }}
       ODP_PROD_API_URL: ${{ vars.ODP_PROD_API_URL }}
+      MANIFEST_DIGEST: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
       API_IMAGE: ${{ needs.build.outputs.api_image || inputs.api_image }}
       WEB_IMAGE: ${{ needs.build.outputs.web_image || inputs.web_image }}
       WORKER_IMAGE: ${{ needs.build.outputs.worker_image || inputs.worker_image }}
@@ -759,6 +784,7 @@ jobs:
       # `release_phase` is unbound and can no longer speak for OIDC, so each
       # bound job proves its own variables resolved before it authenticates.
       - name: 確認 deploy 階段已綁定 environment 且變數齊備
+        if: ${{ inputs.environment != 'staging' }}
         env:
           GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
@@ -788,7 +814,31 @@ jobs:
           path: .odp_data/release/release-environment-receipt.json
           if-no-files-found: warn
 
+      - name: 確認 staging foundation 已綁定 environment 且變數齊備
+        if: ${{ inputs.environment == 'staging' }}
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+          ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+          ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+          ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+          ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+          ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope staging \
+            --environment "${{ inputs.environment }}" \
+            --github-environment "${{ inputs.environment }}" \
+            --release-sha "${{ inputs.release_sha }}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/release-environment-receipt.json"
+
       - name: Run the live runtime preflight
+        if: ${{ inputs.environment != 'staging' }}
         run: |
           uv run --frozen python product_ops/deployment/validate_cloud_run_live_deployment.py preflight \
             --environment "${ODP_DEPLOY_ENV}" \
@@ -811,31 +861,154 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Deploy Cloud Run by immutable digest
+        if: ${{ inputs.environment != 'staging' }}
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
-      - name: Verify configured staging authority endpoint
+      - name: Prepare release-scoped staging handoff paths
         if: ${{ inputs.environment == 'staging' }}
-        env:
-          ODP_STAGING_DEPLOY_URL: ${{ vars.ODP_STAGING_DEPLOY_URL }}
-          ODP_STAGING_API_URL: ${{ vars.ODP_STAGING_API_URL }}
-          ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
         run: |
+          set -euo pipefail
+          : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required}"
+          staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
+          staging_outputs_file="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/staging-terraform-outputs.json"
+          staging_backend_prefix="oday-plus/ephemeral-staging/odp-${ODAY_RELEASE_SHA:0:12}"
+          staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
+          mkdir -p "${staging_state_dir}"
+          {
+            echo "STAGING_RELEASE_ID=odp-${ODAY_RELEASE_SHA:0:12}"
+            echo "STAGING_STATE_DIR=${staging_state_dir}"
+            echo "STAGING_OUTPUTS_FILE=${staging_outputs_file}"
+            echo "STAGING_BACKEND_PREFIX=${staging_backend_prefix}"
+            echo "STAGING_BUNDLE_URI=${staging_bundle_uri}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Execute ephemeral staging lifecycle create
+        if: ${{ inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          python3 product_ops/deployment/staging_lifecycle.py create \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" \
+            --manifest-digest "${MANIFEST_DIGEST}" \
+            --project-id "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --cloud-sql-instance "${GCP_CLOUD_SQL_INSTANCE}" \
+            --network-name "${ODP_STAGING_VPC_NETWORK}" \
+            --subnetwork-name "${ODP_STAGING_VPC_SUBNETWORK}" \
+            --kms-key-id "${ODP_STAGING_KMS_KEY_ID}" \
+            --deployer-service-account-email "${ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT}" \
+            --api-image "${API_IMAGE}" \
+            --web-image "${WEB_IMAGE}" \
+            --worker-image "${WORKER_IMAGE}" \
+            --scheduler-image "${SCHEDULER_IMAGE}" \
+            --owner-task-id "${{ inputs.task_id }}" \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --outputs-out "${STAGING_OUTPUTS_FILE}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-create.json"
+
+      - name: Persist staging recovery bundle to protected state storage
+        if: ${{ success() && inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          for sidecar in "${STAGING_STATE_DIR}"/*.tfvars.json "${STAGING_STATE_DIR}"/*.inventory.json "${STAGING_STATE_DIR}"/*.lifecycle.json; do
+            [ -f "${sidecar}" ] || continue
+            gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"
+          done
+          gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"
+
+      - name: Execute ephemeral staging rehearsal verification
+        if: ${{ inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          operator_identity="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_runtime_service_account"])')"
+          python3 product_ops/deployment/staging_lifecycle.py verify \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" \
+            --manifest-digest "${MANIFEST_DIGEST}" \
+            --project-id "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --cloud-sql-instance "${GCP_CLOUD_SQL_INSTANCE}" \
+            --worker-image "${WORKER_IMAGE}" \
+            --scheduler-image "${SCHEDULER_IMAGE}" \
+            --operator-identity "${operator_identity}" \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --outputs-file "${STAGING_OUTPUTS_FILE}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-rehearsal-receipt.json"
+
+      - name: Verify release-scoped staging authority endpoint
+        if: ${{ inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          export ODP_STAGING_DEPLOY_URL="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_web_uri"])')"
+          export ODP_STAGING_API_URL="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_api_uri"])')"
+          export ODP_STAGING_SECRET_OWNER="$(python3 -c 'import json, os; print(json.load(open(os.environ["STAGING_OUTPUTS_FILE"], encoding="utf-8"))["staging_runtime_service_account"])')"
           python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
             --expected-sha "$ODAY_RELEASE_SHA" \
             --correlation-id "corr-staging-${GITHUB_RUN_ID}" \
             --output ".odp_data/remote-staging-proof/staging-${GITHUB_RUN_ID}.json"
 
+      - name: Hold ephemeral staging resources on failure
+        if: ${{ failure() && inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGING_RELEASE_ID:-}" ] || [ -z "${STAGING_STATE_DIR:-}" ]; then
+            echo "No staging lifecycle state was created in this run; retention is not claimed."
+            exit 0
+          fi
+          python3 product_ops/deployment/staging_lifecycle.py hold \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --project-id "${GCP_PROJECT}" \
+            --owner-task-id "${{ inputs.task_id }}" \
+            --reason "Automated hold for forensic inspection after staging failure in GitHub Actions run ${GITHUB_RUN_ID}" \
+            --ttl-hours 24 \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-hold.json"
+
+      - name: Persist staging hold state to protected state storage
+        if: ${{ always() && inputs.environment == 'staging' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STAGING_BUNDLE_URI:-}" ] || [ -z "${STAGING_STATE_DIR:-}" ]; then
+            exit 0
+          fi
+          for sidecar in "${STAGING_STATE_DIR}"/*.lifecycle.json; do
+            [ -f "${sidecar}" ] || continue
+            gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"
+          done
+
+      - name: Upload staging lifecycle receipts
+        if: ${{ always() && inputs.environment == 'staging' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-staging-lifecycle-receipts
+          path: |
+            .odp_data/release/staging-lifecycle-create.json
+            .odp_data/release/staging-rehearsal-receipt.json
+            .odp_data/release/staging-lifecycle-hold.json
+          if-no-files-found: ignore
+
       - name: Verify production blue-green deployment state
         if: ${{ inputs.environment == 'production' }}
         run: |
+          set -euo pipefail
+          prod_state_dir="${RUNNER_TEMP}/prod-bluegreen-state"
           python3 product_ops/deployment/bluegreen_release.py capture-state \
             --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
             --api-service "${API_SERVICE}" \
             --web-service "${WEB_SERVICE}" \
             --project "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
-            --output-state-file "${RUNNER_TEMP}/prod-bluegreen-state.json" \
-            --dry-run
+            --output-dir "${prod_state_dir}"
+          test -s "${prod_state_dir}/api-traffic.json"
+          test -s "${prod_state_dir}/web-traffic.json"
+          test -s "${prod_state_dir}/release-state.json"
+          PROD_STATE_DIR="${prod_state_dir}" uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["PROD_STATE_DIR"]); s=json.loads((d / "release-state.json").read_text()); assert s["release_id"] == "odp-" + os.environ["ODAY_RELEASE_SHA"][:12]; traffic=[json.loads((d / n).read_text()).get("status", {}).get("traffic") for n in ("api-traffic.json", "web-traffic.json")]; assert all(isinstance(item, list) and item for item in traffic)'
 
       - name: Upload deployment validation reports
         if: always()
@@ -855,7 +1028,8 @@ jobs:
           # file named below is written by
           # `product_ops/deployment/validate_cloud_run_live_deployment.py` (or
           # `delivery_toolchain/e2e/check_live_e2e_gate.py` or
-          # `delivery_toolchain/e2e/check_remote_staging_proof.py`) and carries
+          # `delivery_toolchain/e2e/check_remote_staging_proof.py` or
+          # `product_ops/deployment/staging_lifecycle.py`) and carries
           # `secret_values_redacted: true`: check names, outcomes, and env-var *names*
           # only, never a bound value. `tests/ops/test_deploy_workflow_contract.py`
           # holds this list to the receipts the deploy script actually produces.
@@ -868,4 +1042,150 @@ jobs:
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json
             .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
+          if-no-files-found: ignore
+
+  # Production deployment and staging destruction have different authorities.
+  # The closeout therefore binds the staging environment independently and
+  # reads both the durable watch receipt and Terraform recovery bundle with
+  # staging WIF credentials. It must never inherit production credentials just
+  # because production was the preceding job.
+  staging_closeout:
+    name: Verify production watch and clean up ephemeral staging
+    needs: [deploy]
+    if: ${{ always() && inputs.environment == 'production' && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+      ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+      ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+      ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+      ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+      ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+      ODP_PRODUCTION_WATCH_CLOSEOUT_URI: ${{ vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI }}
+      ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+      MANIFEST_DIGEST: ${{ needs.deploy.outputs.manifest_digest }}
+      ODP_DEPLOY_ENV: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Assert exact release SHA is checked out
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          if [ "${head_sha}" != "${ODAY_RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match ODAY_RELEASE_SHA (${ODAY_RELEASE_SHA})." >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install locked project dependencies
+        run: uv sync --frozen
+
+      - name: 確認 staging closeout 已綁定 staging environment 且變數齊備
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_CLOUD_SQL_INSTANCE: ${{ vars.GCP_CLOUD_SQL_INSTANCE }}
+          ODP_STAGING_VPC_NETWORK: ${{ vars.ODP_STAGING_VPC_NETWORK }}
+          ODP_STAGING_VPC_SUBNETWORK: ${{ vars.ODP_STAGING_VPC_SUBNETWORK }}
+          ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
+          ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
+          ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope staging \
+            --environment "staging" \
+            --github-environment "staging" \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-closeout-environment-receipt.json"
+
+      - name: Authenticate to staging foundation (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK for staging closeout
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Prepare release-scoped staging closeout paths
+        run: |
+          set -euo pipefail
+          : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout}"
+          : "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI:?ODP_PRODUCTION_WATCH_CLOSEOUT_URI is required for staging closeout}"
+          staging_release_id="odp-${ODAY_RELEASE_SHA:0:12}"
+          staging_backend_prefix="oday-plus/ephemeral-staging/${staging_release_id}"
+          staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
+          staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
+          watch_receipt="${GITHUB_WORKSPACE}/.odp_data/release/production-watch-window-receipt.json"
+          mkdir -p "${staging_state_dir}" "$(dirname "${watch_receipt}")"
+          {
+            echo "STAGING_RELEASE_ID=${staging_release_id}"
+            echo "STAGING_BACKEND_PREFIX=${staging_backend_prefix}"
+            echo "STAGING_STATE_DIR=${staging_state_dir}"
+            echo "STAGING_BUNDLE_URI=${staging_bundle_uri}"
+            echo "STAGING_WATCH_RECEIPT=${watch_receipt}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Read staging recovery bundle with staging identity
+        run: |
+          set -euo pipefail
+          gcloud storage cp "${STAGING_BUNDLE_URI}/*" "${STAGING_STATE_DIR}/"
+          test -s "${STAGING_STATE_DIR}/staging-terraform-outputs.json"
+          inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
+          test -s "${inventory_file}"
+          tfvars_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.tfvars.json)"
+          test -s "${tfvars_file}"
+          STAGING_STATE_DIR="${STAGING_STATE_DIR}" TFVARS_FILE="${tfvars_file}" \
+            uv run --frozen python -c 'import json, os; from pathlib import Path; d=Path(os.environ["STAGING_STATE_DIR"]); out=json.loads((d / "staging-terraform-outputs.json").read_text()); tf=json.loads(Path(os.environ["TFVARS_FILE"]).read_text()); assert os.environ["MANIFEST_DIGEST"].startswith("sha256:"); assert out["release_id"] == os.environ["STAGING_RELEASE_ID"]; assert tf["release_id"] == os.environ["STAGING_RELEASE_ID"]; assert tf["candidate_sha"] == os.environ["ODAY_RELEASE_SHA"]; assert tf["manifest_digest"] == os.environ["MANIFEST_DIGEST"]'
+
+      - name: Read and verify production watch receipt with staging identity
+        run: |
+          set -euo pipefail
+          gcloud storage cp "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI}" "${STAGING_WATCH_RECEIPT}"
+          test -s "${STAGING_WATCH_RECEIPT}"
+          WATCH_RECEIPT="${STAGING_WATCH_RECEIPT}" uv run --frozen python -c 'from shared.observability.watch_window import verify_watch_window_receipt; import os; verify_watch_window_receipt(os.environ["ODAY_RELEASE_SHA"], os.environ["WATCH_RECEIPT"])'
+
+      - name: Cleanup staging after verified production watch closeout
+        run: |
+          set -euo pipefail
+          inventory_file="$(printf '%s\n' "${STAGING_STATE_DIR}"/*.inventory.json)"
+          test -s "${inventory_file}"
+          python3 product_ops/deployment/staging_lifecycle.py cleanup \
+            --release-id "${STAGING_RELEASE_ID}" \
+            --project-id "$(STAGING_STATE_DIR="${STAGING_STATE_DIR}" uv run --frozen python -c 'import json, os; print(json.load(open(os.path.join(os.environ["STAGING_STATE_DIR"], "staging-terraform-outputs.json"), encoding="utf-8"))["staging_project_id"])')" \
+            --state-dir "${STAGING_STATE_DIR}" \
+            --inventory-file "${inventory_file}" \
+            --terraform-backend-bucket "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" \
+            --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
+            --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-cleanup.json"
+          test -s "${RELEASE_RECEIPT_DIR}/staging-lifecycle-cleanup.json"
+
+      - name: Upload staging closeout receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-production-staging-closeout-receipts
+          path: |
+            .odp_data/release/staging-closeout-environment-receipt.json
+            .odp_data/release/production-watch-window-receipt.json
+            .odp_data/release/staging-lifecycle-cleanup.json
           if-no-files-found: ignore
