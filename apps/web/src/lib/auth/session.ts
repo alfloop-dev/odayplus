@@ -1,5 +1,5 @@
 import { openJson, sealJson } from "./crypto";
-import { localJwtNeedsRefresh, mintLocalJwt } from "./localAuth";
+import { localJwtNeedsRefresh, mintLocalJwt } from "./localJwt";
 import {
   DEFAULT_SESSION_IDLE_TIMEOUT_MS,
   getDefaultSessionStore,
