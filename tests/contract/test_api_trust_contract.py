@@ -646,8 +646,6 @@ def test_t21b_high_risk_guard_denies_missing_sid(
     def approve_action():
         return {"status": "approved"}
 
-    client = TestClient(app)
-
     # Create an account with a session, but build a boundary WITHOUT
     # session_service so the token passes initial auth without sid
     account_id = uuid4()
