@@ -11,6 +11,11 @@ Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §2.2, §9
 Expand-only migration: creates ``identity`` schema and all contract tables.
 No existing tables, schemas, or data are modified. Rollback preserves empty
 tables and disables the new code path (§9 P1 rollback strategy).
+
+``identity.login_attempts.lockout_count`` is added both in the CREATE TABLE and
+via an idempotent ``ADD COLUMN IF NOT EXISTS`` so environments that already ran
+this revision pick it up without a destructive step (§6.4 exponential backoff
+needs lockout state that outlives the 15-minute counting window).
 """
 import os
 from collections.abc import Sequence

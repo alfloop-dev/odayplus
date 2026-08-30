@@ -159,13 +159,24 @@ CREATE TABLE IF NOT EXISTS identity.federated_identities (
 -- ============================================================================
 -- 8. identity.login_attempts — 登入節流與鎖定
 -- Contract §2.2, §6.4: attempt_key 為帳號鍵或來源 IP 雜湊
+--   • 帳號維度：'account:<account_id>'
+--   • IP 維度：'ip:<sha256/hmac-sha256 hex>'，**不得**落地明文 client IP
+-- lockout_count 為 §6.4 「每次再鎖定加倍（上限 60 分鐘）」所需的跨視窗狀態：
+-- 指數退避的倍數來自「已鎖定輪次」而非單一視窗內的失敗次數，
+-- 若不持久化，視窗一過期就會退回基礎鎖定時間，加倍永遠不會發生。
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS identity.login_attempts (
     attempt_key         TEXT            PRIMARY KEY,
     window_started_at   TIMESTAMPTZ     NOT NULL DEFAULT now(),
     failure_count       INTEGER         NOT NULL DEFAULT 0,
-    locked_until        TIMESTAMPTZ
+    locked_until        TIMESTAMPTZ,
+    lockout_count       INTEGER         NOT NULL DEFAULT 0
 );
+
+-- expand-only（Contract §9）：上方的 CREATE TABLE IF NOT EXISTS 對於已建表的
+-- 環境不會補上新欄位，因此以幂等 ALTER 補齊；不修改也不刪除任何現存欄位。
+ALTER TABLE identity.login_attempts
+    ADD COLUMN IF NOT EXISTS lockout_count INTEGER NOT NULL DEFAULT 0;
 
 -- ============================================================================
 -- 觸發器：accounts.updated_at 自動更新

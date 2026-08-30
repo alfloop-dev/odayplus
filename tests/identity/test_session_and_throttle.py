@@ -17,6 +17,7 @@ from shared.identity.login_throttle import (
     LoginAttemptRecord,
     LoginThrottleService,
     account_attempt_key,
+    ip_attempt_key,
 )
 from shared.identity.session_service import (
     RevocationReason,
@@ -198,70 +199,127 @@ class TestT05LoginThrottle:
         result = self.svc.check_account(self.account_id, now=after_window)
         assert result.allowed is True
 
-    def test_exponential_backoff(self) -> None:
-        """指數退避：每次再鎖定加倍，透過 check_account 驗證。"""
+    def _drive_lock_round(self, at: datetime) -> datetime:
+        """在 `at` 走完一輪「先 check 再 record」的失敗流程，回傳鎖定結束時間。
+
+        這是正確呼叫端的模式：被拒絕就不再送出憑證驗證，因此不會有
+        「鎖定期間繼續累積失敗次數」的副作用。
+        """
+        for _i in range(self.svc.config.account_max_failures):
+            precheck = self.svc.check_account(self.account_id, now=at)
+            assert precheck.allowed is True, "未達門檻前 check_account 必須放行"
+            self.svc.record_failure(self.account_id, self.ip, now=at)
+
+        result = self.svc.check_account(self.account_id, now=at)
+        assert result.allowed is False
+        assert result.locked_until is not None
+        return result.locked_until
+
+    def test_exponential_backoff_across_lock_rounds(self) -> None:
+        """迴歸測試：check-first 呼叫端連續鎖定必須加倍（Contract §6.4）。
+
+        每輪鎖定結束後計數視窗也已過期，若沒有跨視窗的「已鎖定輪次」狀態，
+        每一輪都會退回 15 分鐘基礎鎖定，「每次再鎖定加倍」永遠不會發生。
+        """
+        at = datetime.now(UTC)
+        durations: list[timedelta] = []
+
+        for _round in range(4):
+            locked_until = self._drive_lock_round(at)
+            durations.append(locked_until - at)
+            # 鎖定結束後 1 分鐘再來一輪（此時視窗也已過期）
+            at = locked_until + timedelta(minutes=1)
+
+        assert durations == [
+            timedelta(minutes=15),
+            timedelta(minutes=30),
+            timedelta(minutes=60),
+            timedelta(minutes=60),
+        ], f"連續鎖定時長應為 15m/30m/60m/60m（上限 60m），實際 {durations}"
+
+    def test_lock_survives_record_failure_during_lockout(self) -> None:
+        """迴歸測試：鎖定期間再記一次失敗，不得抹除 locked_until。
+
+        `_increment()` 若在視窗過期時重建記錄，60 分鐘鎖定會在 t0+16m 消失。
+        """
+        at = datetime.now(UTC)
+        round_start = at
+        locked_until = at
+        for _round in range(3):
+            round_start = at
+            locked_until = self._drive_lock_round(at)
+            at = locked_until + timedelta(minutes=1)
+
+        # 第三輪為 60 分鐘鎖定
+        assert locked_until - round_start == timedelta(minutes=60)
+
+        # 鎖定期間、且計數視窗（15 分鐘）已過期時再記一次失敗
+        during_lock = round_start + timedelta(minutes=16)
+        self.svc.record_failure(self.account_id, self.ip, now=during_lock)
+
+        result = self.svc.check_account(self.account_id, now=during_lock)
+        assert result.allowed is False, (
+            "鎖定期間的失敗記錄不得清掉 60 分鐘鎖定（視窗過期不等於鎖定過期）"
+        )
+        assert result.locked_until == locked_until, (
+            "鎖定期間再失敗不應重設鎖定結束時間"
+        )
+
+        # 60 分鐘鎖定仍完整走到底
+        at_59m = round_start + timedelta(minutes=59)
+        assert self.svc.check_account(self.account_id, now=at_59m).allowed is False
+        at_61m = round_start + timedelta(minutes=61)
+        assert self.svc.check_account(self.account_id, now=at_61m).allowed is True
+
+    def test_lockout_not_extended_by_repeated_failures_in_same_round(self) -> None:
+        """同一輪鎖定內連續失敗不得重複加倍（加倍單位是鎖定輪次）。"""
         now = datetime.now(UTC)
-        # 第一輪鎖定 (5 次失敗)
         for _i in range(5):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
-        # check_account 必須回報鎖定
-        result = self.svc.check_account(self.account_id, now=now)
-        assert result.allowed is False
-        assert result.locked_until is not None
-        first_lockout_end = result.locked_until
+        first = self.svc.check_account(self.account_id, now=now)
+        assert first.locked_until is not None
+        assert first.locked_until - now == timedelta(minutes=15)
 
-        # 繼續失敗 (第 6 次)
-        self.svc.record_failure(self.account_id, self.ip, now=now)
-        result2 = self.svc.check_account(self.account_id, now=now)
-        assert result2.allowed is False
-        assert result2.locked_until is not None
-        second_lockout_end = result2.locked_until
-
-        # 第二次鎖定結束時間應該比第一次晚（鎖定時間加倍）
-        assert second_lockout_end > first_lockout_end
-
-    def test_exponential_backoff_lock_survives_past_window(self) -> None:
-        """迴歸測試：60 分鐘指數退避鎖定不得在 t0+16m（視窗過期）被清掉。
-
-        Contract §6.4: 指數退避上限 60 分鐘。若 _check() 在鎖定檢查前
-        先刪除視窗過期記錄，鎖定實際上限只有 15 分鐘。
-        """
-        now = datetime.now(UTC)
-        # 累積足夠失敗以觸發接近 60 分鐘的鎖定
-        # 5 次 → 15m, 6 次 → 30m, 7 次 → 60m
-        for _i in range(7):
+        # 鎖定期間再失敗 3 次
+        for _i in range(3):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
-        # 確認已鎖定且鎖定時間 ≥ 30 分鐘
-        result = self.svc.check_account(self.account_id, now=now)
-        assert result.allowed is False
+        second = self.svc.check_account(self.account_id, now=now)
+        assert second.locked_until == first.locked_until, (
+            "同一輪鎖定內的額外失敗不應改變鎖定結束時間"
+        )
+
+    def test_lockout_escalation_decays_after_retention(self) -> None:
+        """超過保留期後退避輪次歸零，且不依賴呼叫端有沒有先走 check。"""
+        now = datetime.now(UTC)
+        first_lock = self._drive_lock_round(now)
+        assert first_lock - now == timedelta(minutes=15)
+
+        # 只呼叫 record_failure（不 check），時間拉到保留期之外
+        far = first_lock + self.svc.config.lockout_retention + timedelta(minutes=20)
+        for _i in range(self.svc.config.account_max_failures):
+            self.svc.record_failure(self.account_id, self.ip, now=far)
+
+        result = self.svc.check_account(self.account_id, now=far)
         assert result.locked_until is not None
-        lockout_duration = result.locked_until - now
-        assert lockout_duration >= timedelta(minutes=30), (
-            f"7 次失敗的鎖定應至少 30 分鐘，實際 {lockout_duration}"
+        assert result.locked_until - far == timedelta(minutes=15), (
+            "保留期外的舊鎖定紀錄不應讓下一輪直接跳到 30 分鐘"
         )
 
-        # t0 + 16 分鐘（視窗已過期）— 鎖定必須仍然生效
-        at_16m = now + timedelta(minutes=16)
-        result_16m = self.svc.check_account(self.account_id, now=at_16m)
-        assert result_16m.allowed is False, (
-            "鎖定在視窗過期後仍必須生效（60 分鐘鎖定 > 15 分鐘視窗）"
-        )
+    def test_success_clears_lockout_escalation(self) -> None:
+        """成功登入清除整筆記錄，退避輪次一併歸零（Contract §6.4）。"""
+        at = datetime.now(UTC)
+        first_lock = self._drive_lock_round(at)
+        assert first_lock - at == timedelta(minutes=15)
 
-        # t0 + 59 分鐘 — 仍在 60 分鐘鎖定內
-        at_59m = now + timedelta(minutes=59)
-        result_59m = self.svc.check_account(self.account_id, now=at_59m)
-        assert result_59m.allowed is False, (
-            "60 分鐘鎖定在 t0+59m 仍必須生效"
-        )
+        self.svc.record_success(self.account_id)
+        assert self.repo.get(account_attempt_key(self.account_id)) is None
 
-        # t0 + 61 分鐘 — 鎖定已過期且視窗已過期，應允許
-        at_61m = now + timedelta(minutes=61)
-        result_61m = self.svc.check_account(self.account_id, now=at_61m)
-        assert result_61m.allowed is True, (
-            "60 分鐘鎖定在 t0+61m 應已解除"
-        )
+        # 歸零後下一輪應回到基礎鎖定時間
+        next_round = first_lock + timedelta(minutes=1)
+        again = self._drive_lock_round(next_round)
+        assert again - next_round == timedelta(minutes=15)
 
     def test_ip_49_failures_still_allowed(self) -> None:
         """迴歸測試：IP 49 次失敗仍允許，50 次才拒絕。"""
@@ -282,6 +340,76 @@ class TestT05LoginThrottle:
         result = self.svc.check_account(self.account_id, now=now)
         assert result.allowed is False
         assert result.reason == "account_locked"
+
+
+# ============================================================================
+# T05b: attempt_key 只存帳號鍵或來源 IP 雜湊（Contract §2.2）
+# ============================================================================
+
+class TestAttemptKeyHashing:
+    """驗證 identity.login_attempts 不會落地明文 client IP。"""
+
+    IP_V4 = "203.0.113.42"
+
+    def test_ip_attempt_key_contains_no_plaintext_ip(self) -> None:
+        """attempt_key 不得包含原始 IP 字串（Contract §2.2）。"""
+        key = ip_attempt_key(self.IP_V4)
+
+        assert self.IP_V4 not in key, "attempt_key 不得含明文 IP"
+        assert key.startswith("ip:")
+        digest = key.split(":", 1)[1]
+        assert len(digest) == 64, "SHA-256 hex digest 長度應為 64"
+        assert all(c in "0123456789abcdef" for c in digest)
+        # 任一 octet 也不得以原樣出現
+        for octet in self.IP_V4.split("."):
+            assert f".{octet}." not in key
+
+    def test_ip_attempt_key_is_deterministic_and_distinct(self) -> None:
+        """同一 IP 必須對到同一 key，不同 IP 必須分開計數。"""
+        assert ip_attempt_key(self.IP_V4) == ip_attempt_key(self.IP_V4)
+        assert ip_attempt_key(self.IP_V4) != ip_attempt_key("203.0.113.43")
+
+    def test_ip_attempt_key_normalizes_equivalent_forms(self) -> None:
+        """等價的 IPv6 表述必須正規化成同一個 key，避免繞過節流。"""
+        assert ip_attempt_key("2001:DB8::1") == ip_attempt_key(
+            "2001:0db8:0000:0000:0000:0000:0000:0001"
+        )
+        assert ip_attempt_key(" 203.0.113.42 ") == ip_attempt_key(self.IP_V4)
+
+    def test_ip_attempt_key_pepper_changes_digest(self) -> None:
+        """加上 deployment-scoped pepper 後改用 HMAC，摘要必須不同。"""
+        plain = ip_attempt_key(self.IP_V4)
+        peppered = ip_attempt_key(self.IP_V4, pepper="deployment-secret")
+
+        assert peppered != plain
+        assert self.IP_V4 not in peppered
+        assert peppered == ip_attempt_key(self.IP_V4, pepper="deployment-secret")
+        assert peppered != ip_attempt_key(self.IP_V4, pepper="other-secret")
+
+    def test_persisted_keys_contain_no_plaintext_ip(self) -> None:
+        """實際寫入 repository 的 key 不得含明文 IP。"""
+        repo = InMemoryThrottleRepository()
+        svc = LoginThrottleService(repo)
+        svc.record_failure(str(uuid4()), self.IP_V4, now=datetime.now(UTC))
+
+        stored_keys = list(repo._store)
+        assert stored_keys, "record_failure 應寫入節流記錄"
+        for key in stored_keys:
+            assert self.IP_V4 not in key
+
+    def test_service_pepper_is_used_for_lookup(self) -> None:
+        """服務層帶 pepper 時，寫入與檢查必須使用同一組雜湊 key。"""
+        repo = InMemoryThrottleRepository()
+        svc = LoginThrottleService(repo, ip_pepper="deployment-secret")
+        now = datetime.now(UTC)
+
+        for _i in range(svc.config.ip_max_failures):
+            svc.record_failure(str(uuid4()), self.IP_V4, now=now)
+
+        assert svc.check_ip(self.IP_V4, now=now).allowed is False
+        assert ip_attempt_key(self.IP_V4, pepper="deployment-secret") in repo._store
+        # 未加 pepper 的 key 不應存在
+        assert ip_attempt_key(self.IP_V4) not in repo._store
 
 
 # ============================================================================
