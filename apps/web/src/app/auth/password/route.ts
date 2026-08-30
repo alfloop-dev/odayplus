@@ -88,6 +88,16 @@ function accountForSession(
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  if (!verifyCsrfOrigin(request)) {
+    return errorResponse(
+      403,
+      "CSRF_VERIFICATION_FAILED",
+      "CSRF verification failed.",
+    );
+  }
+
+  // Reject cross-site requests before resolving or touching the authoritative
+  // session. A rejected password request must not slide its idle timeout.
   const session = await readWebSession(
     request.cookies.get(webSessionCookieName)?.value,
   ).catch(() => null);
@@ -96,14 +106,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       401,
       "WEB_SESSION_REQUIRED",
       "A valid web session is required.",
-    );
-  }
-
-  if (!verifyCsrfOrigin(request)) {
-    return errorResponse(
-      403,
-      "CSRF_VERIFICATION_FAILED",
-      "CSRF verification failed.",
     );
   }
 
@@ -130,7 +132,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           "Current password verification failed.",
         );
       }
-      const credential = await identityStore.getPasswordCredential(account.accountId);
+      const credential = await identityStore.getPasswordCredential(
+        account.accountId,
+      );
       if (!credential) {
         return errorResponse(
           401,

@@ -1,8 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  resolveGoogleMetadataIdentityToken,
-} from "../cloudRunIdentity";
+import { resolveGoogleMetadataIdentityToken } from "../cloudRunIdentity";
+import { localJwtExpiresAt, mintLocalJwt } from "../localAuth";
 import { buildUpstreamHeaders, proxyApiRequest } from "../proxy";
 import {
   readWebSession,
@@ -135,6 +134,76 @@ describe("production BFF", () => {
     );
   });
 
+  it("renews an expired local token before forwarding to the API", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const now = Math.floor(Date.now() / 1000);
+    const signingSecret = "test-local-signing-material-at-least-32-bytes";
+    const expiredToken = await mintLocalJwt({
+      subject: "account-local",
+      sid: "session-local",
+      tenantId: "tenant-local",
+      nowSeconds: now - 600,
+      expiresInSeconds: 300,
+      signingSecret,
+    });
+    await testSessionStore.createSession({
+      sessionId: "session-local",
+      accountId: "account-local",
+      provider: "local_password",
+      accessToken: expiredToken,
+      subject: "operator",
+      tenantId: "tenant-local",
+      idleTimeoutMs: 30 * 60 * 1000,
+      absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+    });
+    const cookie = await sealWebSessionReference(
+      {
+        kind: "web-session",
+        sid: "session-local",
+        provider: "local_password",
+        issuedAt: now - 60,
+        expiresAt: now + 600,
+      },
+      SECRET,
+    );
+    let forwardedToken = "";
+    const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
+      forwardedToken =
+        new Headers(init?.headers)
+          .get("authorization")
+          ?.replace(/^Bearer /, "") || "";
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const request = new NextRequest(
+      "https://web.example/api/v1/operator/bootstrap",
+    );
+    request.cookies.set(webSessionCookieName, cookie);
+
+    const response = await proxyApiRequest(
+      request,
+      "/api/v1/operator/bootstrap",
+      {
+        NODE_ENV: "production",
+        ODP_API_BASE_URL: "https://api.internal.example",
+        ODP_API_SERVICE_AUDIENCE: "https://api.internal.example",
+        ODP_IDENTITY_TOKEN_SIGNING_KEY: signingSecret,
+        ODP_AUTH_LOCAL_ISSUER: "urn:odp:identity:local",
+        ODP_AUTH_AUDIENCES: "https://api.internal.example",
+      },
+      {
+        resolveServiceIdentityToken: async () => "service-identity-token",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(forwardedToken).not.toBe(expiredToken);
+    expect(localJwtExpiresAt(forwardedToken)).toBeGreaterThan(now);
+    await expect(
+      testSessionStore.validateSession("session-local"),
+    ).resolves.toMatchObject({ accessToken: forwardedToken });
+  });
+
   it("fails closed before contacting the upstream without a session", async () => {
     vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
     const fetchMock = vi.fn();
@@ -246,11 +315,12 @@ describe("production BFF", () => {
   it("passes an upstream 404 through without substituting data", async () => {
     vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
     const cookie = await productionSessionCookie();
-    const fetchMock = vi.fn(async () =>
-      new Response(JSON.stringify({ error: { code: "NOT_FOUND" } }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      }),
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ error: { code: "NOT_FOUND" } }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
     );
     vi.stubGlobal("fetch", fetchMock);
     const request = new NextRequest(
@@ -283,11 +353,9 @@ describe("production BFF", () => {
         new Promise((_resolve, reject) => {
           const signal = init?.signal;
           expect(signal).toBeInstanceOf(AbortSignal);
-          signal?.addEventListener(
-            "abort",
-            () => reject(signal.reason),
-            { once: true },
-          );
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
         }),
     );
     vi.stubGlobal("fetch", fetchMock);

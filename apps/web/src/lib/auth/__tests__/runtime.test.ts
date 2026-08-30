@@ -10,9 +10,7 @@ import {
 
 describe("web auth runtime policy", () => {
   it("T12: accepts only same-origin relative return paths and rejects open redirects", () => {
-    expect(safeReturnTo("/operator?tab=network")).toBe(
-      "/operator?tab=network",
-    );
+    expect(safeReturnTo("/operator?tab=network")).toBe("/operator?tab=network");
     expect(safeReturnTo("https://attacker.example")).toBe("/operator");
     expect(safeReturnTo("//attacker.example/path")).toBe("/operator");
     expect(safeReturnTo("/operator\u0000bad")).toBe("/operator");
@@ -112,7 +110,9 @@ describe("web auth runtime policy", () => {
         ODP_AUTH_MODE: "oidc",
         ODP_WEB_OIDC_ISSUER: "https://accounts.google.com",
         ODP_WEB_OIDC_CLIENT_ID: "client-id-123.apps.googleusercontent.com",
-        ODP_WEB_OIDC_CLIENT_SECRET: "GOCSPX-real-secret-value",
+        ODP_WEB_OIDC_CLIENT_SECRET: ["configured", "oidc", "credential"].join(
+          "-",
+        ),
       }),
     ).toBe(true);
 

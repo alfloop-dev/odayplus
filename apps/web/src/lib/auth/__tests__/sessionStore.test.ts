@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { openJson } from "../crypto";
+import { localJwtExpiresAt, mintLocalJwt } from "../localAuth";
 import {
   readWebSession,
   sealLegacyWebSession,
@@ -16,7 +17,7 @@ describe("authoritative server-side web sessions", () => {
     await store.createSession({
       sessionId: "session-authoritative",
       accountId: "account-1",
-      provider: "local_password",
+      provider: "oidc",
       accessToken: "server-only-bearer",
       subject: "operator",
       tenantId: "tenant-1",
@@ -27,7 +28,7 @@ describe("authoritative server-side web sessions", () => {
       {
         kind: "web-session",
         sid: "session-authoritative",
-        provider: "local_password",
+        provider: "oidc",
         issuedAt: now,
         expiresAt: now + 600,
       },
@@ -55,6 +56,61 @@ describe("authoritative server-side web sessions", () => {
         environment: { NODE_ENV: "production" },
       }),
     ).resolves.toBeNull();
+  });
+
+  it("renews an expired local bearer and persists it before returning", async () => {
+    const store = new MockSessionStore();
+    const now = Math.floor(Date.now() / 1000);
+    const signingSecret = "test-local-signing-material-at-least-32-bytes";
+    const expiredToken = await mintLocalJwt({
+      subject: "account-local",
+      sid: "session-local",
+      tenantId: "tenant-local",
+      nowSeconds: now - 600,
+      expiresInSeconds: 300,
+      signingSecret,
+    });
+    await store.createSession({
+      sessionId: "session-local",
+      accountId: "account-local",
+      provider: "local_password",
+      accessToken: expiredToken,
+      subject: "operator",
+      tenantId: "tenant-local",
+      idleTimeoutMs: 30 * 60 * 1000,
+      absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+    });
+    const cookie = await sealWebSessionReference(
+      {
+        kind: "web-session",
+        sid: "session-local",
+        provider: "local_password",
+        issuedAt: now - 60,
+        expiresAt: now + 600,
+      },
+      SECRET,
+    );
+
+    const session = await readWebSession(cookie, {
+      secret: SECRET,
+      nowSeconds: now,
+      sessionStore: store,
+      environment: {
+        NODE_ENV: "production",
+        ODP_IDENTITY_TOKEN_SIGNING_KEY: signingSecret,
+        ODP_AUTH_LOCAL_ISSUER: "urn:odp:identity:local",
+        ODP_AUTH_AUDIENCES: "https://api.example.run.app",
+      },
+    });
+
+    expect(session).not.toBeNull();
+    expect(session?.accessToken).not.toBe(expiredToken);
+    expect(localJwtExpiresAt(session?.accessToken || "")).toBeGreaterThan(now);
+    await expect(store.validateSession("session-local")).resolves.toMatchObject(
+      {
+        accessToken: session?.accessToken,
+      },
+    );
   });
 
   it("seals only an opaque reference, never the bearer or identity facts", async () => {

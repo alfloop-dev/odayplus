@@ -1,4 +1,5 @@
 import { openJson, sealJson } from "./crypto";
+import { localJwtNeedsRefresh, mintLocalJwt } from "./localAuth";
 import {
   DEFAULT_SESSION_IDLE_TIMEOUT_MS,
   getDefaultSessionStore,
@@ -72,13 +73,13 @@ function isValidWebSessionPayload(
 ): value is WebSession & { issuedAt: number; expiresAt: number } {
   return Boolean(
     value &&
-      value.kind === "web-session" &&
-      validExpiry(value as ExpiringPayload, nowSeconds) &&
-      ((typeof value.sid === "string" && value.sid.length > 0) ||
-        (typeof value.accessToken === "string" &&
-          value.accessToken.length > 0 &&
-          typeof value.subject === "string" &&
-          value.subject.length > 0)),
+    value.kind === "web-session" &&
+    validExpiry(value as ExpiringPayload, nowSeconds) &&
+    ((typeof value.sid === "string" && value.sid.length > 0) ||
+      (typeof value.accessToken === "string" &&
+        value.accessToken.length > 0 &&
+        typeof value.subject === "string" &&
+        value.subject.length > 0)),
   );
 }
 
@@ -88,13 +89,13 @@ function isOidcTransaction(
 ): value is OidcTransaction {
   return Boolean(
     value &&
-      value.kind === "oidc-transaction" &&
-      value.state &&
-      value.codeVerifier &&
-      value.nonce &&
-      value.redirectUri &&
-      value.returnTo &&
-      validExpiry(value, nowSeconds),
+    value.kind === "oidc-transaction" &&
+    value.state &&
+    value.codeVerifier &&
+    value.nonce &&
+    value.redirectUri &&
+    value.returnTo &&
+    validExpiry(value, nowSeconds),
   );
 }
 
@@ -104,7 +105,9 @@ function recordToSession(
   nowSeconds: number,
   legacyUpgrade = false,
 ): WebSession | null {
-  const absoluteExpiresAt = Math.floor(record.absoluteExpiresAt.getTime() / 1000);
+  const absoluteExpiresAt = Math.floor(
+    record.absoluteExpiresAt.getTime() / 1000,
+  );
   const expiresAt = Math.min(cookie.expiresAt, absoluteExpiresAt);
   if (expiresAt <= nowSeconds || !record.accessToken) return null;
   return {
@@ -122,7 +125,10 @@ function recordToSession(
   };
 }
 
-async function stableLegacySid(subject: string, issuedAt: number): Promise<string> {
+async function stableLegacySid(
+  subject: string,
+  issuedAt: number,
+): Promise<string> {
   const sidHash = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(`legacy-sid:${subject}:${issuedAt}`),
@@ -297,7 +303,7 @@ export async function readWebSession(
     return null;
   }
 
-  const record = await store.validateSession(value.sid);
+  let record = await store.validateSession(value.sid);
   if (!record) {
     // Compatibility for pre-P2 unit fixtures that seal the former payload
     // directly. It is deliberately unavailable to a deployed process.
@@ -310,6 +316,25 @@ export async function readWebSession(
       return value as WebSession;
     }
     return null;
+  }
+  if (
+    record.provider === "local_password" &&
+    isProductionWebRuntime(environment) &&
+    localJwtNeedsRefresh(record.accessToken, nowSeconds)
+  ) {
+    try {
+      const accessToken = await mintLocalJwt({
+        subject: record.accountId,
+        sid: record.sessionId,
+        tenantId: record.tenantId,
+        nowSeconds,
+        environment,
+      });
+      await store.updateAccessToken(record.sessionId, accessToken);
+      record = { ...record, accessToken };
+    } catch {
+      return null;
+    }
   }
   await store.touchSession(
     value.sid,
@@ -327,11 +352,8 @@ export async function rotateWebSession(
   } = {},
 ): Promise<WebSession> {
   const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
-  const ttl = options.ttlSeconds ?? (currentSession.expiresAt - nowSeconds);
-  const cappedTtl = Math.min(
-    Math.max(ttl, 1),
-    SESSION_COOKIE_MAX_AGE_SECONDS,
-  );
+  const ttl = options.ttlSeconds ?? currentSession.expiresAt - nowSeconds;
+  const cappedTtl = Math.min(Math.max(ttl, 1), SESSION_COOKIE_MAX_AGE_SECONDS);
 
   return {
     kind: "web-session",

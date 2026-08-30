@@ -42,13 +42,21 @@ describe("password policy & change route", () => {
     });
 
     // Contains email prefix
-    expect(validatePasswordPolicy("john_doe_pass123", undefined, "john_doe@example.com")).toMatchObject({
+    expect(
+      validatePasswordPolicy(
+        "john_doe_pass123",
+        undefined,
+        "john_doe@example.com",
+      ),
+    ).toMatchObject({
       valid: false,
       code: "AUTH_PASSWORD_POLICY_VIOLATION",
     });
 
     // Valid strong password
-    expect(validatePasswordPolicy("Correct-Horse-Battery-Staple-2026!")).toEqual({
+    expect(
+      validatePasswordPolicy("Correct-Horse-Battery-Staple-2026!"),
+    ).toEqual({
       valid: true,
     });
   });
@@ -103,6 +111,53 @@ describe("password policy & change route", () => {
     expect(data).toMatchObject({
       error: { code: "CSRF_VERIFICATION_FAILED" },
     });
+  });
+
+  it("T11: rejected CSRF does not touch the authoritative session", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const sessionStore = new MockSessionStore();
+    setSessionStoreForTests(sessionStore);
+    const now = Math.floor(Date.now() / 1000);
+    await sessionStore.createSession({
+      sessionId: "csrf-session",
+      accountId: "account-1",
+      provider: "local_password",
+      accessToken: "server-only-token",
+      subject: "operator",
+      idleTimeoutMs: 30 * 60 * 1000,
+      absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+    });
+    const before = sessionStore.sessions.get("csrf-session");
+    const lastSeenBefore = before?.lastSeenAt.getTime();
+    const idleExpiryBefore = before?.idleExpiresAt.getTime();
+    const cookie = await sealWebSessionReference(
+      {
+        kind: "web-session",
+        sid: "csrf-session",
+        provider: "local_password",
+        issuedAt: now,
+        expiresAt: now + 3600,
+      },
+      SECRET,
+    );
+    const request = new NextRequest("https://ops.oday.plus/auth/password", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        currentPassword: "OldPassword123!",
+        newPassword: "NewStrongPassword2026!",
+      }),
+    });
+    request.headers.set("origin", "https://attacker.example");
+    request.cookies.set(webSessionCookieName, cookie);
+
+    const response = await POST(request);
+    expect(response.status).toBe(403);
+    const after = sessionStore.sessions.get("csrf-session");
+    expect(after?.lastSeenAt.getTime()).toBe(lastSeenBefore);
+    expect(after?.idleExpiresAt.getTime()).toBe(idleExpiryBefore);
   });
 
   it("T10: rotates session and sets fresh HttpOnly session cookie on successful password change", async () => {
@@ -214,8 +269,12 @@ describe("password policy & change route", () => {
 
     const response = await POST(request);
     expect(response.status).toBe(200);
-    await expect(sessionStore.validateSession("old-session")).resolves.toBeNull();
-    await expect(sessionStore.validateSession("other-session")).resolves.toBeNull();
+    await expect(
+      sessionStore.validateSession("old-session"),
+    ).resolves.toBeNull();
+    await expect(
+      sessionStore.validateSession("other-session"),
+    ).resolves.toBeNull();
     const credential = await identityStore.getPasswordCredential("account-1");
     await expect(
       identityStore.verifyPassword(

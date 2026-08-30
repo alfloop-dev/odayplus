@@ -1,4 +1,4 @@
-import { base64UrlEncode, constantTimeEqual } from "./crypto";
+import { base64UrlDecode, base64UrlEncode, constantTimeEqual } from "./crypto";
 import { getDefaultIdentityStore, type IdentityStore } from "./identityStore";
 import { isProductionWebRuntime } from "./runtime";
 
@@ -84,7 +84,9 @@ export function validatePasswordPolicy(
     const emailPrefix = normalizedEmail.split("@")[0];
     if (
       (normalizedEmail && lowerPassword === normalizedEmail) ||
-      (emailPrefix && emailPrefix.length >= 3 && lowerPassword.includes(emailPrefix))
+      (emailPrefix &&
+        emailPrefix.length >= 3 &&
+        lowerPassword.includes(emailPrefix))
     ) {
       return {
         valid: false,
@@ -97,6 +99,31 @@ export function validatePasswordPolicy(
   return { valid: true };
 }
 
+export function localJwtExpiresAt(token: string): number | null {
+  const segments = token.split(".");
+  if (segments.length !== 3 || !segments[1]) return null;
+  try {
+    const claims = JSON.parse(
+      new TextDecoder().decode(base64UrlDecode(segments[1])),
+    ) as Record<string, unknown>;
+    return typeof claims.exp === "number" && Number.isSafeInteger(claims.exp)
+      ? claims.exp
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function localJwtNeedsRefresh(
+  token: string,
+  nowSeconds = Math.floor(Date.now() / 1000),
+  refreshWindowSeconds = 30,
+): boolean {
+  const expiresAt = localJwtExpiresAt(token);
+  const boundedWindow = Math.min(Math.max(refreshWindowSeconds, 0), 60);
+  return expiresAt === null || expiresAt <= nowSeconds + boundedWindow;
+}
+
 export async function mintLocalJwt(options: {
   subject: string;
   sid: string;
@@ -106,7 +133,9 @@ export async function mintLocalJwt(options: {
   expiresInSeconds?: number;
   nowSeconds?: number;
   signingSecret?: string;
+  environment?: Record<string, string | undefined>;
 }): Promise<string> {
+  const environment = options.environment ?? process.env;
   const now = options.nowSeconds ?? Math.floor(Date.now() / 1000);
   const requestedTtl = options.expiresInSeconds ?? 120;
   const ttl = Math.min(Math.max(requestedTtl, 1), 300);
@@ -117,8 +146,10 @@ export async function mintLocalJwt(options: {
   };
   const claims = {
     iss:
-      options.issuer || process.env.ODP_AUTH_LOCAL_ISSUER || LOCAL_IDENTITY_ISSUER,
-    aud: options.audience || process.env.ODP_AUTH_AUDIENCES || "oday-plus",
+      options.issuer ||
+      environment.ODP_AUTH_LOCAL_ISSUER ||
+      LOCAL_IDENTITY_ISSUER,
+    aud: options.audience || environment.ODP_AUTH_AUDIENCES || "oday-plus",
     sub: options.subject,
     sid: options.sid,
     tenant_id: options.tenantId || "default",
@@ -131,13 +162,13 @@ export async function mintLocalJwt(options: {
   const signingInput = `${headerB64}.${payloadB64}`;
 
   const configuredSecret =
-    options.signingSecret ?? process.env.ODP_IDENTITY_TOKEN_SIGNING_KEY;
-  if (isProductionWebRuntime() && !configuredSecret) {
+    options.signingSecret ?? environment.ODP_IDENTITY_TOKEN_SIGNING_KEY;
+  if (isProductionWebRuntime(environment) && !configuredSecret) {
     throw new Error("ODP_IDENTITY_TOKEN_SIGNING_KEY is required in production");
   }
   const rawSecret =
     configuredSecret ??
-    process.env.ODP_WEB_SESSION_SECRET ??
+    environment.ODP_WEB_SESSION_SECRET ??
     "default-secret-with-at-least-32-characters-key";
 
   const key = await crypto.subtle.importKey(
@@ -253,9 +284,10 @@ export async function authenticateLocalCredentials(
   }
 
   // Try the identity store (production path)
-  const store = options.identityStore !== undefined
-    ? options.identityStore
-    : getDefaultIdentityStore();
+  const store =
+    options.identityStore !== undefined
+      ? options.identityStore
+      : getDefaultIdentityStore();
 
   if (store) {
     try {

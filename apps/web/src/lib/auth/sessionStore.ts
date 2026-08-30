@@ -55,6 +55,9 @@ export interface SessionStore {
   /** Touch session and slide idle expiry without exceeding absolute expiry. */
   touchSession(sessionId: string, idleTimeoutMs: number): Promise<void>;
 
+  /** Replace the server-only API bearer for an active session. */
+  updateAccessToken(sessionId: string, accessToken: string): Promise<void>;
+
   /** Revoke a single session. */
   revokeSession(sessionId: string, reason: string): Promise<void>;
 
@@ -73,14 +76,14 @@ export interface SessionStore {
 }
 
 function boundedIdleTimeout(idleTimeoutMs: number): number {
-  return Math.min(
-    Math.max(idleTimeoutMs, 15 * 60 * 1000),
-    60 * 60 * 1000,
-  );
+  return Math.min(Math.max(idleTimeoutMs, 15 * 60 * 1000), 60 * 60 * 1000);
 }
 
 function boundedAbsoluteLifetime(absoluteLifetimeMs: number): number {
-  return Math.min(Math.max(absoluteLifetimeMs, 1), MAX_SESSION_ABSOLUTE_LIFETIME_MS);
+  return Math.min(
+    Math.max(absoluteLifetimeMs, 1),
+    MAX_SESSION_ABSOLUTE_LIFETIME_MS,
+  );
 }
 
 export class PostgresSessionStore implements SessionStore {
@@ -94,7 +97,9 @@ export class PostgresSessionStore implements SessionStore {
       process.env.ODAY_DATABASE_URL ||
       process.env.DATABASE_URL;
     if (!connectionString) {
-      throw new Error("No database connection URL configured for session store");
+      throw new Error(
+        "No database connection URL configured for session store",
+      );
     }
     this._pool = new Pool({
       connectionString,
@@ -119,7 +124,8 @@ export class PostgresSessionStore implements SessionStore {
     absoluteLifetimeMs: number;
     rotatedFrom?: string;
   }): Promise<SessionRecord> {
-    if (!params.accessToken) throw new Error("Session access token is required");
+    if (!params.accessToken)
+      throw new Error("Session access token is required");
     const pool = await this.pool();
     const now = new Date();
     const idleExpiresAt = new Date(
@@ -213,6 +219,28 @@ export class PostgresSessionStore implements SessionStore {
     );
   }
 
+  async updateAccessToken(
+    sessionId: string,
+    accessToken: string,
+  ): Promise<void> {
+    if (!accessToken) throw new Error("Session access token is required");
+    const pool = await this.pool();
+    const result = await pool.query(
+      `UPDATE identity.sessions
+       SET access_token = $2
+       WHERE session_id = $1
+         AND revoked_at IS NULL
+         AND idle_expires_at > now()
+         AND absolute_expires_at > now()`,
+      [sessionId, accessToken],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error(
+        "Cannot update bearer for an inactive or missing session",
+      );
+    }
+  }
+
   async revokeSession(sessionId: string, reason: string): Promise<void> {
     const pool = await this.pool();
     await pool.query(
@@ -287,7 +315,8 @@ export class MockSessionStore implements SessionStore {
     absoluteLifetimeMs: number;
     rotatedFrom?: string;
   }): Promise<SessionRecord> {
-    if (!params.accessToken) throw new Error("Session access token is required");
+    if (!params.accessToken)
+      throw new Error("Session access token is required");
     const now = new Date();
     const record: SessionRecord = {
       sessionId: params.sessionId,
@@ -316,7 +345,8 @@ export class MockSessionStore implements SessionStore {
     const session = this.sessions.get(sessionId);
     if (!session || session.revokedAt) return null;
     const now = new Date();
-    if (now >= session.idleExpiresAt || now >= session.absoluteExpiresAt) return null;
+    if (now >= session.idleExpiresAt || now >= session.absoluteExpiresAt)
+      return null;
     return session;
   }
 
@@ -331,6 +361,20 @@ export class MockSessionStore implements SessionStore {
         session.absoluteExpiresAt.getTime(),
       ),
     );
+  }
+
+  async updateAccessToken(
+    sessionId: string,
+    accessToken: string,
+  ): Promise<void> {
+    if (!accessToken) throw new Error("Session access token is required");
+    const session = await this.validateSession(sessionId);
+    if (!session) {
+      throw new Error(
+        "Cannot update bearer for an inactive or missing session",
+      );
+    }
+    session.accessToken = accessToken;
   }
 
   async revokeSession(sessionId: string, reason: string): Promise<void> {
@@ -370,7 +414,9 @@ let _defaultStore: SessionStore | null = null;
 let _overrideStore: SessionStore | null | undefined;
 
 /** Test/dev hook; production always resolves the Postgres store from env. */
-export function setSessionStoreForTests(store: SessionStore | null | undefined): void {
+export function setSessionStoreForTests(
+  store: SessionStore | null | undefined,
+): void {
   _overrideStore = store;
 }
 
