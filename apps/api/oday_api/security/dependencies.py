@@ -491,10 +491,7 @@ def require_permission(
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
         from modules.opsboard.auth.errors import AuthFailureReason
-        from shared.audit.policy import (
-            build_security_event,
-            is_high_risk,
-        )
+        from shared.audit.policy import is_high_risk
 
         principal = principal_from_headers(request.headers, boundary=boundary)
 
@@ -566,7 +563,7 @@ def require_permission(
                 source_ip=source_ip, attributes={"correlation_id": correlation_id}
             ),
         )
-        active_engine.audit_log.record(build_security_event(access, decision))
+        _record_denial(active_engine, access, decision)
         _raise_forbidden(decision)
 
     return dependency
@@ -730,7 +727,7 @@ def _operator_access_request(
     )
 
 
-def _record_operator_denial(
+def _record_denial(
     engine: AuthorizationEngine,
     access: AccessRequest,
     decision: Decision,
@@ -748,6 +745,10 @@ def _record_operator_denial(
     The failure stays loud: it is logged with the decision that was being
     recorded, so a silently unaudited denial is still visible in the API logs.
     What it can no longer do is convert a refusal into a server fault.
+
+    Note the asymmetry with :func:`_record_allow_or_fail_closed`: a lost denial
+    record cannot widen what the caller could do, so best-effort is the right
+    trade there. A lost *allow* record can, so that path fails closed instead.
     """
     from shared.audit.policy import build_security_event
 
@@ -755,7 +756,7 @@ def _record_operator_denial(
         engine.audit_log.record(build_security_event(access, decision))
     except Exception:
         _LOGGER.exception(
-            "operator denial audit failed; denial still enforced "
+            "denial audit failed; denial still enforced "
             "(policy_id=%s reason=%s actor=%s resource=%s)",
             decision.policy_id,
             decision.reason,
@@ -849,7 +850,7 @@ def require_operator_permission(
 
         if not principal.authenticated:
             decision = Decision.deny("principal not authenticated", policy_id="authenticated")
-            _record_operator_denial(active_engine, access, decision)
+            _record_denial(active_engine, access, decision)
             _raise_unauthenticated(None)
 
         # High risk / session validation check (Contract §5.4 / T21)
@@ -871,7 +872,7 @@ def require_operator_permission(
                     decision = Decision.deny(
                         "session has been revoked or expired", policy_id="session.revoked"
                     )
-                    _record_operator_denial(active_engine, access, decision)
+                    _record_denial(active_engine, access, decision)
                     _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
             except (ValueError, TypeError):
                 _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
@@ -886,7 +887,7 @@ def require_operator_permission(
                 "session reference required for high-risk action",
                 policy_id="session.required",
             )
-            _record_operator_denial(active_engine, access, decision)
+            _record_denial(active_engine, access, decision)
             _raise_unauthenticated(AuthFailureReason.SESSION_NOT_FOUND)
 
         if not effective_tenant_id:
@@ -894,12 +895,12 @@ def require_operator_permission(
                 "Operator Console tenant scope is required",
                 policy_id="operator.tenant_isolation",
             )
-            _record_operator_denial(active_engine, access, decision)
+            _record_denial(active_engine, access, decision)
             _raise_forbidden(decision)
 
         selected_role, role_decision = _select_operator_role(request, principal)
         if role_decision is not None:
-            _record_operator_denial(active_engine, access, role_decision)
+            _record_denial(active_engine, access, role_decision)
             _raise_forbidden(role_decision)
 
         if not rbac_allows(principal, resource_type, action):
@@ -907,12 +908,12 @@ def require_operator_permission(
                 f"role does not permit {action.value} on {resource_type}",
                 policy_id="rbac",
             )
-            _record_operator_denial(active_engine, access, decision)
+            _record_denial(active_engine, access, decision)
             _raise_forbidden(decision)
 
         scope_decision = _operator_scope_decision(principal, resource)
         if not scope_decision.allowed:
-            _record_operator_denial(active_engine, access, scope_decision)
+            _record_denial(active_engine, access, scope_decision)
             _raise_forbidden(scope_decision)
 
         # Audit on allow (T20)

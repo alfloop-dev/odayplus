@@ -1342,6 +1342,46 @@ def test_regression_require_permission_allow_fails_closed_without_audit(
     assert resp.json()["detail"] == AUDIT_UNAVAILABLE_DETAIL
 
 
+def test_regression_rbac_denial_survives_an_unavailable_audit_sink(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """A failing sink must not turn a decided 403 into a 500.
+
+    ``require_operator_permission`` already routed its denials through the
+    best-effort recorder; ``require_permission`` recorded its RBAC denial
+    inline, so the same sink outage surfaced there as an unhandled error and
+    the caller was told nothing had been decided.
+    """
+    engine = AuthorizationEngine(audit_log=_FailingAuditLog())
+    token = _seed_auditor(identity_store, session_service)
+
+    app = FastAPI()
+
+    @app.post(
+        "/api/listing",
+        dependencies=[
+            Depends(
+                require_permission(
+                    "listing",
+                    Action.DELETE,
+                    engine=engine,
+                    boundary=boundary,
+                    data_classification=DataClassification.INTERNAL,
+                )
+            )
+        ],
+    )
+    def delete_route():
+        return {"status": "deleted"}
+
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.post("/api/listing", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 403
+
+
 def test_regression_default_dead_letter_logs_the_event(caplog):
     """The default dead-letter emits the full canonical event as one ERROR line."""
     import json
