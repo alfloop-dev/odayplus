@@ -12,7 +12,6 @@ import dataclasses
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # 節流參數（Contract §6.4）
 # ────────────────────────────────────────────────────────────────────────────

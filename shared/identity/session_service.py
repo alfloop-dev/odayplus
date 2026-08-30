@@ -15,7 +15,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 from uuid import UUID, uuid4
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Session 生命週期參數（Contract §5.2）
 # ────────────────────────────────────────────────────────────────────────────

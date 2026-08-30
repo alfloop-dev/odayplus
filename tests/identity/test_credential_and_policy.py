@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import re
 import time
-import unicodedata
 
 import pytest
 
@@ -23,11 +22,8 @@ from shared.identity.credential_service import (
 )
 from shared.identity.password_policy import (
     PasswordPolicy,
-    PasswordPolicyConfig,
     PasswordPolicyError,
-    PasswordPolicyResult,
 )
-
 
 # ============================================================================
 # T01: Argon2id 參數符合 §6.1；PHC 往返

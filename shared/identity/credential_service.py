@@ -10,18 +10,11 @@ Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §6.1
 from __future__ import annotations
 
 import dataclasses
-import hashlib
-import secrets
 from typing import Any
 
 try:
     from argon2 import PasswordHasher, Type  # type: ignore[import-untyped]
-    from argon2.exceptions import (  # type: ignore[import-untyped]
-        HashingError,
-        InvalidHashError,
-        VerificationError,
-        VerifyMismatchError,
-    )
+    from argon2.exceptions import VerifyMismatchError  # type: ignore[import-untyped]
 
     _ARGON2_AVAILABLE = True
 except ImportError:  # pragma: no cover — CI may not have argon2-cffi

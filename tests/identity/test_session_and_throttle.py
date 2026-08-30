@@ -16,8 +16,6 @@ import pytest
 from shared.identity.login_throttle import (
     LoginAttemptRecord,
     LoginThrottleService,
-    ThrottleConfig,
-    ThrottleRepository,
     account_attempt_key,
     ip_attempt_key,
 )
@@ -25,10 +23,8 @@ from shared.identity.session_service import (
     RevocationReason,
     Session,
     SessionConfig,
-    SessionRepository,
     SessionService,
 )
-
 
 # ============================================================================
 # In-Memory Repository 實作（測試用）
@@ -127,7 +123,7 @@ class TestT05LoginThrottle:
     def test_under_threshold_allowed(self) -> None:
         """低於門檻的失敗次數應該允許。"""
         now = datetime.now(UTC)
-        for i in range(4):
+        for _i in range(4):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
         result = self.svc.check_account(self.account_id, now=now)
@@ -136,7 +132,7 @@ class TestT05LoginThrottle:
     def test_account_locked_after_5_failures(self) -> None:
         """每帳號 15 分鐘內 5 次失敗 → 鎖定。"""
         now = datetime.now(UTC)
-        for i in range(5):
+        for _i in range(5):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
         result = self.svc.check_account(self.account_id, now=now)
@@ -147,7 +143,7 @@ class TestT05LoginThrottle:
     def test_lockout_duration_is_15_minutes(self) -> None:
         """基礎鎖定時間為 15 分鐘。"""
         now = datetime.now(UTC)
-        for i in range(5):
+        for _i in range(5):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
         result = self.svc.check_account(self.account_id, now=now)
@@ -158,7 +154,7 @@ class TestT05LoginThrottle:
     def test_lockout_expires(self) -> None:
         """鎖定到期後恢復允許。"""
         now = datetime.now(UTC)
-        for i in range(5):
+        for _i in range(5):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
         # 15 分鐘後
@@ -169,7 +165,7 @@ class TestT05LoginThrottle:
     def test_success_clears_account_count(self) -> None:
         """成功登入清除該帳號計數。"""
         now = datetime.now(UTC)
-        for i in range(3):
+        for _i in range(3):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
         self.svc.record_success(self.account_id)
@@ -182,11 +178,11 @@ class TestT05LoginThrottle:
         """每來源 IP 15 分鐘內 50 次失敗 → 拒絕。"""
         now = datetime.now(UTC)
         # 用不同帳號來避免帳號鎖定
-        for i in range(50):
+        for _i in range(50):
             acct = str(uuid4())
             self.svc.record_failure(acct, self.ip, now=now)
 
-        result = self.svc.check_ip(self.ip, now=now)
+        self.svc.check_ip(self.ip, now=now)
         # IP 維度沒有鎖定機制，但超過門檻後也可以繼續
         # 實際的 IP 阻擋需要在呼叫端檢查 failure_count
         # 這裡驗證 IP 記錄有被累計
@@ -197,7 +193,7 @@ class TestT05LoginThrottle:
     def test_window_expiry_resets_count(self) -> None:
         """視窗過期重置計數。"""
         now = datetime.now(UTC)
-        for i in range(4):
+        for _i in range(4):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
         # 16 分鐘後（超過 15 分鐘視窗）
@@ -209,7 +205,7 @@ class TestT05LoginThrottle:
         """指數退避：每次再鎖定加倍。"""
         now = datetime.now(UTC)
         # 第一輪鎖定 (5 次失敗)
-        for i in range(5):
+        for _i in range(5):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
         record = self.repo.get(account_attempt_key(self.account_id))
