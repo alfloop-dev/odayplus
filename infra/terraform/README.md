@@ -56,7 +56,9 @@ Values, approvals, and secret payloads are owned outside Terraform:
    access.
 2. Immutable API and Web image digests built from the same exact source commit.
 3. OIDC issuer, audience list, JWKS URI, Web client registration/secret, public
-   HTTPS Web origin, API invoker members, and Web invoker members.
+   HTTPS Web origin, API invoker members, and Web invoker members. **Required
+   only when `auth_mode = "oidc"`**; the default `"local"` mode deploys with
+   password-only authentication and no OIDC dependency.
 4. External provider live endpoints, credentials, and Cloud NAT egress IPs are
    disabled in consumer-only platform snapshot deployment. Direct external
    provider acquisition is off.

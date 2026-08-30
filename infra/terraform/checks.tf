@@ -54,19 +54,25 @@ resource "terraform_data" "production_contract" {
 
     precondition {
       condition = !local.is_prod || (
+        length(var.api_invoker_members) > 0
+        && !contains(var.api_invoker_members, "allUsers")
+        && !contains(var.api_invoker_members, "allAuthenticatedUsers")
+        && length(var.web_invoker_members) > 0
+      )
+      error_message = "Production requires explicit non-public API and Web invoker members."
+    }
+
+    precondition {
+      condition = !(local.is_prod && local.oidc_enabled) || (
         startswith(var.oidc_issuer, "https://")
         && startswith(var.oidc_jwks_uri, "https://")
         && length(var.oidc_audiences) > 0
-        && length(var.api_invoker_members) > 0
-        && !contains(var.api_invoker_members, "allUsers")
-        && !contains(var.api_invoker_members, "allAuthenticatedUsers")
         && startswith(var.web_base_url, "https://")
         && length(var.web_oidc_client_id) > 0
         && var.web_oidc_client_secret_ref != null
         && can(regex("^[1-9][0-9]*$", try(var.web_oidc_client_secret_ref.version, "")))
-        && length(var.web_invoker_members) > 0
       )
-      error_message = "Production requires complete API/Web OIDC configuration, pinned Web client secret, and explicit invokers."
+      error_message = "Production with OIDC enabled requires complete OIDC configuration, pinned Web client secret, HTTPS issuer, and HTTPS JWKS URI."
     }
 
     precondition {
@@ -200,14 +206,18 @@ check "production_image_and_capacity" {
   }
 
   assert {
-    condition = !local.is_prod || (
+    condition     = !local.is_prod || length(var.web_invoker_members) > 0
+    error_message = "Production Web requires at least one invoker member."
+  }
+
+  assert {
+    condition = !(local.is_prod && local.oidc_enabled) || (
       startswith(var.web_base_url, "https://")
       && length(var.web_oidc_client_id) > 0
       && var.web_oidc_client_secret_ref != null
       && can(regex("^[1-9][0-9]*$", try(var.web_oidc_client_secret_ref.version, "")))
-      && length(var.web_invoker_members) > 0
     )
-    error_message = "Production Web requires HTTPS base URL, OIDC client id, pinned client secret, and at least one invoker."
+    error_message = "Production Web with OIDC enabled requires HTTPS base URL, OIDC client id, and pinned client secret."
   }
 
   assert {
@@ -226,12 +236,12 @@ check "production_image_and_capacity" {
 
 check "production_identity_contract" {
   assert {
-    condition = !local.is_prod || (
+    condition = !(local.is_prod && local.oidc_enabled) || (
       startswith(var.oidc_issuer, "https://")
       && startswith(var.oidc_jwks_uri, "https://")
       && length(var.oidc_audiences) > 0
     )
-    error_message = "Production requires an HTTPS OIDC issuer, HTTPS JWKS URI, and at least one audience."
+    error_message = "Production with OIDC enabled requires an HTTPS OIDC issuer, HTTPS JWKS URI, and at least one audience."
   }
 
   assert {

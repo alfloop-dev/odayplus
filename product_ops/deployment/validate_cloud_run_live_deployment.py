@@ -90,15 +90,19 @@ REQUIRED_PUBLIC_CONFIG = (
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
     "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+    "ODP_OPERATOR_SMOKE_ROLE",
+)
+OIDC_REQUIRED_PUBLIC_CONFIG = (
     "ODP_WEB_OIDC_ISSUER",
     "ODP_WEB_OIDC_CLIENT_ID",
-    "ODP_OPERATOR_SMOKE_ROLE",
 )
 REQUIRED_SECRET_REFERENCES = (
     "ODAY_DATABASE_URL_SECRET",
     "ODP_AUTH_PRINCIPAL_MAP_SECRET",
-    "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
     "ODP_WEB_SESSION_SECRET_SECRET",
+)
+OIDC_REQUIRED_SECRET_REFERENCES = (
+    "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
 )
 REQUIRED_SECRET_VALUES: tuple[str, ...] = ()
 # The database binding is required by every Cloud Run Job regardless of which
@@ -1398,6 +1402,39 @@ def preflight_checks(
                 detail="configured (value redacted)" if env.get(name, "").strip() else "missing",
             )
         )
+
+    # OIDC-specific checks: only required when ODP_AUTH_OIDC_ENABLED=true or
+    # ODP_WEB_OIDC_ISSUER is configured (backward compatibility with existing
+    # deployments that set OIDC variables directly).
+    oidc_enabled = (
+        env.get("ODP_AUTH_OIDC_ENABLED", "").lower() == "true"
+        or _configured(env.get("ODP_WEB_OIDC_ISSUER", ""))
+    )
+    if oidc_enabled:
+        for name in OIDC_REQUIRED_PUBLIC_CONFIG:
+            checks.append(
+                CheckResult(
+                    ok=_configured(env.get(name, "")),
+                    name=f"oidc-config:{name}",
+                    detail=(
+                        "configured"
+                        if _configured(env.get(name, ""))
+                        else "missing or placeholder (required when OIDC enabled)"
+                    ),
+                )
+            )
+        for name in OIDC_REQUIRED_SECRET_REFERENCES:
+            checks.append(
+                CheckResult(
+                    ok=_configured(env.get(name, "")),
+                    name=f"oidc-secret-reference:{name}",
+                    detail=(
+                        "configured (value redacted)"
+                        if _configured(env.get(name, ""))
+                        else "missing or placeholder (required when OIDC enabled)"
+                    ),
+                )
+            )
 
     actual_environment = env.get("ODP_DEPLOY_ENV", "").strip().lower()
     checks.append(

@@ -71,7 +71,7 @@ Secrets are never stored as plaintext strings in GitHub repository settings or w
 | `ODAY_DATABASE_URL_SECRET` | `oday-plus-dev-api-database-url-pg16` | PostgreSQL connection string (`postgresql://...`) |
 | `ODP_AUTH_PRINCIPAL_MAP_SECRET` | `oday-plus-dev-auth-principal-map` | Subject & SA email to RBAC role mappings JSON |
 | `ODP_WEB_SESSION_SECRET_SECRET` | `oday-plus-dev-web-session-secret` | Web application session signing key |
-| `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` | `oday-plus-dev-web-oidc-client-secret` | Google OAuth Web client secret |
+| `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` | `oday-plus-dev-web-oidc-client-secret` | Google OAuth Web client secret (**required only when `ODP_AUTH_OIDC_ENABLED=true`**) |
 
 ---
 

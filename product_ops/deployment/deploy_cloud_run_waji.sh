@@ -300,8 +300,10 @@ build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dock
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
-WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
-WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+WEB_SECRET_BINDINGS="ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+if [ -n "${ODP_WEB_OIDC_CLIENT_SECRET_SECRET:-}" ]; then
+  WEB_SECRET_BINDINGS+=",ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
+fi
 
 # gcloud's shortcut for describing a job's newest execution only exists on
 # recent releases, so job proof capture used to depend on the runner's CLI
@@ -571,10 +573,12 @@ payload = {
     "ODP_API_BASE_URL": sys.argv[2],
     "ODP_API_SERVICE_AUDIENCE": sys.argv[3],
     "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
-    "ODP_WEB_OIDC_ISSUER": os.environ["ODP_WEB_OIDC_ISSUER"],
-    "ODP_WEB_OIDC_CLIENT_ID": os.environ["ODP_WEB_OIDC_CLIENT_ID"],
-    "ODP_WEB_OIDC_ALLOWED_ALGS": "RS256",
 }
+if os.environ.get("ODP_WEB_OIDC_ISSUER"):
+    payload["ODP_WEB_OIDC_ISSUER"] = os.environ["ODP_WEB_OIDC_ISSUER"]
+    payload["ODP_WEB_OIDC_CLIENT_ID"] = os.environ.get("ODP_WEB_OIDC_CLIENT_ID", "")
+    payload["ODP_WEB_OIDC_ALLOWED_ALGS"] = "RS256"
+    payload["ODP_AUTH_OIDC_ENABLED"] = "true"
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
 

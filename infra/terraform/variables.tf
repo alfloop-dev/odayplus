@@ -29,6 +29,17 @@ variable "environment" {
   }
 }
 
+variable "auth_mode" {
+  type        = string
+  description = "Authentication mode. 'local' uses password-only authentication with no OIDC dependency. 'oidc' enables full OIDC provider integration and enforces all OIDC configuration."
+  default     = "local"
+
+  validation {
+    condition     = contains(["local", "oidc"], var.auth_mode)
+    error_message = "auth_mode must be 'local' or 'oidc'."
+  }
+}
+
 variable "labels" {
   type        = map(string)
   description = "Additional labels applied to managed resources."
