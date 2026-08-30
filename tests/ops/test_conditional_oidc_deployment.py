@@ -707,6 +707,11 @@ def test_documentation_states_the_single_auth_mode_contract() -> None:
     assert "lower-cased before they are compared" in guide
     assert "placeholder token" in guide
     assert "`ODP_WEB_BASE_URL`" in guide
+    # The API boundary became the fourth consumer of the resolved mode
+    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001). A guide that still lists three would
+    # leave an operator believing ODP_AUTH_MODE=local only affects the release.
+    assert "shared/auth/mode.py" in guide
+    assert "`ODP_AUTH_OIDC_ISSUER`" in guide
 
     terraform_readme = (TERRAFORM_ROOT / "README.md").read_text(encoding="utf-8")
     assert "service_auth_issuer" in terraform_readme
