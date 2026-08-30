@@ -55,24 +55,31 @@ Values, approvals, and secret payloads are owned outside Terraform:
    bucket with versioning, retention, CMEK, and tightly scoped Terraform-runner
    access.
 2. Immutable API and Web image digests built from the same exact source commit.
-3. OIDC issuer, audience list, JWKS URI, Web client registration/secret, public
-   HTTPS Web origin, API invoker members, and Web invoker members. **Required
-   only when `auth_mode = "oidc"`**; the default `"local"` mode deploys with
-   password-only authentication and no OIDC dependency.
-4. External provider live endpoints, credentials, and Cloud NAT egress IPs are
+3. Public HTTPS Web origin (`web_base_url`), API invoker members, and Web
+   invoker members. Required in every `auth_mode`.
+4. Token verification inputs. `service_auth_issuer`, `service_auth_jwks_uri`,
+   and `service_auth_audiences` verify the Cloud Run service-identity and
+   deployment smoke tokens and apply in every `auth_mode`; the first two default
+   to Google's issuer and JWKS endpoint. `oidc_issuer`, `oidc_audiences`,
+   `oidc_jwks_uri`, and the Web client registration/secret are consumed **only
+   when `auth_mode = "oidc"`**. The default `"local"` mode deploys with
+   password-only authentication and no Google OAuth client or OIDC secret; when
+   `service_auth_audiences` is empty it falls back to `oidc_audiences` so
+   pre-contract deployments keep their existing accepted audience list.
+5. External provider live endpoints, credentials, and Cloud NAT egress IPs are
    disabled in consumer-only platform snapshot deployment. Direct external
    provider acquisition is off.
-5. Model registry credentials (if MLflow does not use workload identity) and OIDC
-   client secret.
-6. Remote MLflow URI, production aliases/artifacts, AVM liquidity approval
+6. Model registry credentials (if MLflow does not use workload identity), and
+   the Web OIDC client secret when `auth_mode = "oidc"`.
+7. Remote MLflow URI, production aliases/artifacts, AVM liquidity approval
    metadata, digest, dataset snapshot, and OSS forecast engine/model.
-7. Optional MLflow credential secret IDs when the registry does not use
+8. Optional MLflow credential secret IDs when the registry does not use
    workload identity.
-8. A migration/reconciliation release job and canonical live datasets that make
+9. A migration/reconciliation release job and canonical live datasets that make
    `/readiness` return HTTP 200 before Cloud Run startup expires.
-9. DNS, managed HTTPS, and Cloud Armor policy when a custom Web origin is used.
-   The module deploys the Web BFF while leaving the API at
-   internal/load-balancer ingress.
+10. DNS, managed HTTPS, and Cloud Armor policy when a custom Web origin is used.
+    The module deploys the Web BFF while leaving the API at
+    internal/load-balancer ingress.
 
 The application WORM/object-store client must use Cloud Run workload identity
 or metadata-server ADC. Do not create or inject service-account JSON keys or

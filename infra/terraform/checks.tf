@@ -63,6 +63,16 @@ resource "terraform_data" "production_contract" {
     }
 
     precondition {
+      condition = !local.is_prod || (
+        startswith(local.auth_issuer, "https://")
+        && startswith(local.auth_jwks_uri, "https://")
+        && length(local.auth_audiences) > 0
+        && startswith(var.web_base_url, "https://")
+      )
+      error_message = "Production requires an HTTPS token issuer, HTTPS JWKS URI, at least one accepted audience, and an HTTPS Web base URL in every auth mode."
+    }
+
+    precondition {
       condition = !(local.is_prod && local.oidc_enabled) || (
         startswith(var.oidc_issuer, "https://")
         && startswith(var.oidc_jwks_uri, "https://")
@@ -211,13 +221,17 @@ check "production_image_and_capacity" {
   }
 
   assert {
+    condition     = !local.is_prod || startswith(var.web_base_url, "https://")
+    error_message = "Production Web requires an HTTPS canonical base URL in every auth mode."
+  }
+
+  assert {
     condition = !(local.is_prod && local.oidc_enabled) || (
-      startswith(var.web_base_url, "https://")
-      && length(var.web_oidc_client_id) > 0
+      length(var.web_oidc_client_id) > 0
       && var.web_oidc_client_secret_ref != null
       && can(regex("^[1-9][0-9]*$", try(var.web_oidc_client_secret_ref.version, "")))
     )
-    error_message = "Production Web with OIDC enabled requires HTTPS base URL, OIDC client id, and pinned client secret."
+    error_message = "Production Web with OIDC enabled requires an OIDC client id and a pinned client secret."
   }
 
   assert {
@@ -235,6 +249,19 @@ check "production_image_and_capacity" {
 }
 
 check "production_identity_contract" {
+  # The API verifier accepts both end-user OIDC tokens and the Cloud Run
+  # service-identity token the deploy smoke stage mints. Only the OIDC half is
+  # optional, so the resolved issuer/JWKS/audience set stays required in
+  # password-first deployments too.
+  assert {
+    condition = !local.is_prod || (
+      startswith(local.auth_issuer, "https://")
+      && startswith(local.auth_jwks_uri, "https://")
+      && length(local.auth_audiences) > 0
+    )
+    error_message = "Production requires an HTTPS token issuer, HTTPS JWKS URI, and at least one accepted audience in every auth mode."
+  }
+
   assert {
     condition = !(local.is_prod && local.oidc_enabled) || (
       startswith(var.oidc_issuer, "https://")

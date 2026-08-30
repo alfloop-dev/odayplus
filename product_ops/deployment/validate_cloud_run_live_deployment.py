@@ -101,9 +101,8 @@ REQUIRED_SECRET_REFERENCES = (
     "ODP_AUTH_PRINCIPAL_MAP_SECRET",
     "ODP_WEB_SESSION_SECRET_SECRET",
 )
-OIDC_REQUIRED_SECRET_REFERENCES = (
-    "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
-)
+OIDC_REQUIRED_SECRET_REFERENCES = ("ODP_WEB_OIDC_CLIENT_SECRET_SECRET",)
+AUTH_MODES = ("local", "oidc")
 REQUIRED_SECRET_VALUES: tuple[str, ...] = ()
 # The database binding is required by every Cloud Run Job regardless of which
 # external providers the release selects.
@@ -136,6 +135,40 @@ class CheckResult:
 
 def _configured(value: str) -> bool:
     return value.strip().lower() not in PLACEHOLDER_VALUES
+
+
+def resolve_auth_mode(env: Mapping[str, str]) -> tuple[str, str | None]:
+    """Resolve the single deployment auth mode.
+
+    Mirrors ``resolve_auth_mode`` in ``product_ops/deployment/auth_mode.sh``:
+    ``ODP_AUTH_MODE`` is authoritative, ``ODP_AUTH_OIDC_ENABLED`` is its legacy
+    boolean alias, and a configured ``ODP_WEB_OIDC_ISSUER`` keeps pre-contract
+    deployments on OIDC until they opt into an explicit mode. Returns the mode
+    and, when the configuration is invalid or self-contradicting, the reason the
+    release must not proceed.
+    """
+    mode = env.get("ODP_AUTH_MODE", "").strip().lower()
+    legacy_flag = env.get("ODP_AUTH_OIDC_ENABLED", "").strip().lower()
+
+    if legacy_flag not in ("", "true", "false"):
+        return "local", (
+            f"ODP_AUTH_OIDC_ENABLED must be 'true' or 'false', got {legacy_flag!r}"
+        )
+    if mode and mode not in AUTH_MODES:
+        return "local", f"ODP_AUTH_MODE must be 'local' or 'oidc', got {mode!r}"
+    if mode:
+        expected_flag = "true" if mode == "oidc" else "false"
+        if legacy_flag and legacy_flag != expected_flag:
+            return mode, (
+                f"ODP_AUTH_MODE={mode} conflicts with "
+                f"ODP_AUTH_OIDC_ENABLED={legacy_flag}"
+            )
+        return mode, None
+    if legacy_flag:
+        return ("oidc" if legacy_flag == "true" else "local"), None
+    if _configured(env.get("ODP_WEB_OIDC_ISSUER", "")):
+        return "oidc", None
+    return "local", None
 
 
 def _write_report(path: Path | None, payload: dict[str, Any]) -> None:
@@ -1403,14 +1436,19 @@ def preflight_checks(
             )
         )
 
-    # OIDC-specific checks: only required when ODP_AUTH_OIDC_ENABLED=true or
-    # ODP_WEB_OIDC_ISSUER is configured (backward compatibility with existing
-    # deployments that set OIDC variables directly).
-    oidc_enabled = (
-        env.get("ODP_AUTH_OIDC_ENABLED", "").lower() == "true"
-        or _configured(env.get("ODP_WEB_OIDC_ISSUER", ""))
+    # Password-first deployments need no OIDC provider at all, so the OIDC
+    # inputs are required only for the mode that actually consumes them. The
+    # mode itself comes from one resolver shared with the release script, so the
+    # preflight can never approve a configuration the deploy would reject.
+    auth_mode, auth_mode_error = resolve_auth_mode(env)
+    checks.append(
+        CheckResult(
+            ok=auth_mode_error is None,
+            name="auth-mode",
+            detail=auth_mode_error or auth_mode,
+        )
     )
-    if oidc_enabled:
+    if auth_mode == "oidc":
         for name in OIDC_REQUIRED_PUBLIC_CONFIG:
             checks.append(
                 CheckResult(

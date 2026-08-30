@@ -318,21 +318,39 @@ variable "audit_retention_period_seconds" {
   }
 }
 
+variable "service_auth_issuer" {
+  type        = string
+  description = "Issuer that mints Cloud Run service-identity and deployment smoke tokens. Required in every auth mode; ODP_AUTH_ISSUER is its migration alias."
+  default     = "https://accounts.google.com"
+}
+
+variable "service_auth_jwks_uri" {
+  type        = string
+  description = "JWKS endpoint for the service-identity issuer. Required in every auth mode; ODP_AUTH_JWKS_URI is its migration alias."
+  default     = "https://www.googleapis.com/oauth2/v3/certs"
+}
+
+variable "service_auth_audiences" {
+  type        = set(string)
+  description = "Audiences the API accepts for service-identity and deployment smoke tokens. Falls back to oidc_audiences when empty so pre-contract deployments keep their existing audience list."
+  default     = []
+}
+
 variable "oidc_issuer" {
   type        = string
-  description = "Trusted OIDC issuer URL."
+  description = "Trusted OIDC issuer URL. Only consumed when auth_mode is \"oidc\"."
   default     = ""
 }
 
 variable "oidc_audiences" {
   type        = set(string)
-  description = "Accepted OIDC API audiences."
+  description = "Accepted OIDC API audiences. Only added to the accepted audience set when auth_mode is \"oidc\"."
   default     = []
 }
 
 variable "oidc_jwks_uri" {
   type        = string
-  description = "Trusted OIDC JWKS endpoint."
+  description = "Trusted OIDC JWKS endpoint. Only consumed when auth_mode is \"oidc\"."
   default     = ""
 }
 

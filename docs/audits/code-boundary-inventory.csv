@@ -287,7 +287,6 @@ infra/mlflow/__init__.py,product_system,product_required,true,,engineering;opera
 infra/mlflow/entrypoint.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 infra/mlflow/healthcheck.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 infra/mlflow/runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
-infra/terraform/tests/test_conditional_oidc.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 infra/terraform/tests/test_contract.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 infra/terraform/tests/test_ephemeral_staging.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 infra/terraform/validate_contract.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -919,6 +918,7 @@ tests/ops/test_assisted_listing_intake_release.py,verification,verification_only
 tests/ops/test_bluegreen_release.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_cloud_run_job_entrypoint.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_cloud_run_live_deployment.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/ops/test_conditional_oidc_deployment.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_data_domain_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_delivery_toolchain.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_deploy_workflow_contract.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.

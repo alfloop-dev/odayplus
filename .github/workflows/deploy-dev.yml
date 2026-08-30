@@ -715,6 +715,13 @@ jobs:
       ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS: ${{ vars.ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS }}
       ODAY_DATABASE_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
       ODP_WEB_OIDC_CLIENT_SECRET_SECRET: ${{ vars.ODP_WEB_OIDC_CLIENT_SECRET_SECRET }}
+      # ODP_AUTH_MODE is the authoritative auth-mode input; ODP_AUTH_OIDC_ENABLED
+      # is its legacy boolean alias. Both are passed so an environment that has
+      # only ever set the legacy flag keeps deploying, and so a disagreement
+      # between them fails the preflight instead of producing a half-OIDC
+      # revision. Unset variables arrive as empty strings and fall through to
+      # the password-first default.
+      ODP_AUTH_MODE: ${{ vars.ODP_AUTH_MODE }}
       ODP_AUTH_OIDC_ENABLED: ${{ vars.ODP_AUTH_OIDC_ENABLED }}
       ODP_WEB_SESSION_SECRET_SECRET: ${{ vars.ODP_WEB_SESSION_SECRET_SECRET }}
       ODP_DEPLOY_ENV: ${{ inputs.environment }}

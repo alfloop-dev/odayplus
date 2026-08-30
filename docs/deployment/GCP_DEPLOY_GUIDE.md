@@ -61,6 +61,31 @@ The deployment pipeline is configured via GitHub Environment Variables and Secre
 | `ODP_CLOUD_RUN_SCHEDULER_JOB` | Environment | Scheduler Cloud Run Job name. | `oday-scheduler` |
 | `ODP_FORECAST_ENGINE` | Environment | Time-series forecasting engine. | `statsforecast` |
 | `ODP_FORECAST_MODEL` | Environment | Default forecasting model. | `seasonal_naive` |
+| `ODP_AUTH_MODE` | Environment | Authoritative authentication mode. Password-first `local` is the default and needs no Google OAuth client; `oidc` additionally requires the OIDC variables below. | *(unset)* / `oidc` |
+
+#### Authentication mode resolution
+
+`ODP_AUTH_MODE` is the single input that decides whether OIDC is deployed. The
+release script, the fail-closed preflight, and the Web runtime all read it
+through the same resolver (`product_ops/deployment/auth_mode.sh`), so a revision
+can never be built with the OIDC client secret bound but the issuer missing, or
+the reverse. Resolution order, first match wins:
+
+1. `ODP_AUTH_MODE` — `local` or `oidc`.
+2. `ODP_AUTH_OIDC_ENABLED` — legacy boolean alias, kept so environments that
+   only ever set the flag keep deploying unchanged.
+3. `ODP_WEB_OIDC_ISSUER` — a configured issuer keeps a pre-contract environment
+   on OIDC until it opts into an explicit mode.
+4. Otherwise `local`.
+
+Setting `ODP_AUTH_MODE` and `ODP_AUTH_OIDC_ENABLED` to disagreeing values is a
+split configuration and fails the preflight rather than deploying either half.
+In `oidc` mode `ODP_WEB_OIDC_ISSUER`, `ODP_WEB_OIDC_CLIENT_ID`, and
+`ODP_WEB_OIDC_CLIENT_SECRET_SECRET` must all be present.
+
+`ODP_AUTH_ISSUER`, `ODP_AUTH_AUDIENCES`, and `ODP_AUTH_JWKS_URI` stay required
+in **both** modes: they also verify the Cloud Run service-identity token that
+the deployment smoke stage mints, so they are not OIDC-only inputs.
 
 ### 3.2 Secret Reference Governance (Zero Plaintext Secrets in GitHub)
 
@@ -71,7 +96,7 @@ Secrets are never stored as plaintext strings in GitHub repository settings or w
 | `ODAY_DATABASE_URL_SECRET` | `oday-plus-dev-api-database-url-pg16` | PostgreSQL connection string (`postgresql://...`) |
 | `ODP_AUTH_PRINCIPAL_MAP_SECRET` | `oday-plus-dev-auth-principal-map` | Subject & SA email to RBAC role mappings JSON |
 | `ODP_WEB_SESSION_SECRET_SECRET` | `oday-plus-dev-web-session-secret` | Web application session signing key |
-| `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` | `oday-plus-dev-web-oidc-client-secret` | Google OAuth Web client secret (**required only when `ODP_AUTH_OIDC_ENABLED=true`**) |
+| `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` | `oday-plus-dev-web-oidc-client-secret` | Google OAuth Web client secret (**required only in `oidc` mode**; never bound to Cloud Run in `local` mode) |
 
 ---
 
