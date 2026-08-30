@@ -583,6 +583,11 @@ payload = {
     "ODP_API_BASE_URL": sys.argv[2],
     "ODP_API_SERVICE_AUDIENCE": sys.argv[3],
     "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
+    # The canonical web origin backs cookies, CSRF, and redirects in every auth
+    # mode; the Web runtime fails closed without it in production, so it is not
+    # part of the OIDC-only block below. The preflight has already proven it is
+    # set, which is why this is a direct lookup.
+    "ODP_WEB_BASE_URL": os.environ["ODP_WEB_BASE_URL"],
     "ODP_AUTH_MODE": os.environ["ODP_AUTH_MODE"],
     "ODP_AUTH_OIDC_ENABLED": os.environ["ODP_AUTH_OIDC_ENABLED"],
 }

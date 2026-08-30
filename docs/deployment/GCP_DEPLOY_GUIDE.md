@@ -62,6 +62,7 @@ The deployment pipeline is configured via GitHub Environment Variables and Secre
 | `ODP_FORECAST_ENGINE` | Environment | Time-series forecasting engine. | `statsforecast` |
 | `ODP_FORECAST_MODEL` | Environment | Default forecasting model. | `seasonal_naive` |
 | `ODP_AUTH_MODE` | Environment | Authoritative authentication mode. Password-first `local` is the default and needs no Google OAuth client; `oidc` additionally requires the OIDC variables below. | *(unset)* / `oidc` |
+| `ODP_WEB_BASE_URL` | Environment | Canonical HTTPS web origin backing cookies, CSRF, and redirects. Required in **both** auth modes; the Web runtime fails closed without it in production. | `https://oday-web-dev.example.run.app` |
 
 #### Authentication mode resolution
 
@@ -82,6 +83,18 @@ Setting `ODP_AUTH_MODE` and `ODP_AUTH_OIDC_ENABLED` to disagreeing values is a
 split configuration and fails the preflight rather than deploying either half.
 In `oidc` mode `ODP_WEB_OIDC_ISSUER`, `ODP_WEB_OIDC_CLIENT_ID`, and
 `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` must all be present.
+
+Both halves of the resolver read their inputs the same way, because "one
+resolver" is otherwise only true on the happy path:
+
+* **Normalisation.** `ODP_AUTH_MODE` and `ODP_AUTH_OIDC_ENABLED` are trimmed and
+  lower-cased before they are compared, so `LOCAL`, ` local `, and `local` are
+  one input, and `TRUE` is the same flag as `true`.
+* **Placeholder values.** A variable whose value is empty or is only a
+  placeholder token (`changeme`, `dummy`, `example`, `fixture`, `mock`,
+  `placeholder`, `seed`, `todo`, …) counts as unconfigured everywhere. A
+  placeholder `ODP_WEB_OIDC_ISSUER` therefore does not switch a pre-contract
+  environment to OIDC, and it does not satisfy `oidc` mode either.
 
 `ODP_AUTH_ISSUER`, `ODP_AUTH_AUDIENCES`, and `ODP_AUTH_JWKS_URI` stay required
 in **both** modes: they also verify the Cloud Run service-identity token that

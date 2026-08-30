@@ -707,6 +707,10 @@ jobs:
       ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
+      # Canonical web origin for cookies, CSRF, and redirects. Required in both
+      # auth modes -- the Web runtime fails closed without it in production --
+      # so it is passed unconditionally, not alongside the OIDC inputs.
+      ODP_WEB_BASE_URL: ${{ vars.ODP_WEB_BASE_URL }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
       # ODP-LIVE-E2E-001: the post-promotion live E2E gate runs inside
       # deploy_cloud_run_waji.sh before the release is committed, so a failure

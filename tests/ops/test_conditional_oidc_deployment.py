@@ -76,24 +76,58 @@ RESOLUTION_CASES: tuple[tuple[str, dict[str, str]], ...] = (
     ("agreeing-mode-and-flag", {"ODP_AUTH_MODE": "oidc", "ODP_AUTH_OIDC_ENABLED": "true", **COMPLETE_OIDC_ENV}),
     ("invalid-mode", {"ODP_AUTH_MODE": "google"}),
     ("invalid-flag", {"ODP_AUTH_OIDC_ENABLED": "yes"}),
+    # Normalisation. The preflight folded case and the release script did not,
+    # so each of these was accepted by one half and rejected by the other.
+    ("uppercase-mode-local", {"ODP_AUTH_MODE": "LOCAL"}),
+    ("uppercase-mode-oidc", {"ODP_AUTH_MODE": "OIDC", **COMPLETE_OIDC_ENV}),
+    ("mixed-case-mode", {"ODP_AUTH_MODE": "Local"}),
+    ("padded-mode", {"ODP_AUTH_MODE": "  local  "}),
+    ("uppercase-flag-true", {"ODP_AUTH_OIDC_ENABLED": "TRUE", **COMPLETE_OIDC_ENV}),
+    ("uppercase-flag-false", {"ODP_AUTH_OIDC_ENABLED": "False"}),
+    ("padded-flag", {"ODP_AUTH_OIDC_ENABLED": " true ", **COMPLETE_OIDC_ENV}),
+    ("mixed-case-conflict", {
+        "ODP_AUTH_MODE": "LOCAL",
+        "ODP_AUTH_OIDC_ENABLED": "True",
+        **COMPLETE_OIDC_ENV,
+    }),
+    ("blank-inputs-fall-through-to-local", {"ODP_AUTH_MODE": "  ", "ODP_AUTH_OIDC_ENABLED": ""}),
+    # Placeholder semantics. A placeholder issuer is not a configuration, so it
+    # must neither switch a pre-contract environment to OIDC nor satisfy an
+    # explicitly selected OIDC mode.
+    ("placeholder-issuer-only", {"ODP_WEB_OIDC_ISSUER": "placeholder"}),
+    ("placeholder-issuer-uppercase", {"ODP_WEB_OIDC_ISSUER": "CHANGEME"}),
+    ("explicit-oidc-placeholder-issuer", {
+        "ODP_AUTH_MODE": "oidc",
+        **COMPLETE_OIDC_ENV,
+        "ODP_WEB_OIDC_ISSUER": "placeholder",
+    }),
+    ("explicit-oidc-placeholder-client-secret", {
+        "ODP_AUTH_MODE": "oidc",
+        **COMPLETE_OIDC_ENV,
+        "ODP_WEB_OIDC_CLIENT_SECRET_SECRET": "todo",
+    }),
 )
 
 
-def _shell_resolve(env: dict[str, str]) -> tuple[bool, str, str]:
-    """Run the release script's resolver and report (accepted, mode, flag)."""
+def _run_shell_resolver(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     script = (
         "set -euo pipefail\n"
         f"source {AUTH_MODE_SCRIPT}\n"
         "resolve_auth_mode\n"
         'printf "%s %s\\n" "${ODP_AUTH_MODE}" "${ODP_AUTH_OIDC_ENABLED}"\n'
     )
-    completed = subprocess.run(
+    return subprocess.run(
         ["bash", "-c", script],
         env={"PATH": "/usr/bin:/bin", **env},
         capture_output=True,
         text=True,
         cwd=ROOT,
     )
+
+
+def _shell_resolve(env: dict[str, str]) -> tuple[bool, str, str]:
+    """Run the release script's resolver and report (accepted, mode, flag)."""
+    completed = _run_shell_resolver(env)
     if completed.returncode != 0:
         return False, "", ""
     mode, flag = completed.stdout.split()
@@ -121,6 +155,7 @@ def _render_web_env(env: dict[str, str], tmp_path: Path) -> dict[str, str]:
         "ODP_REQUIRE_LIVE_DATA": "true",
         "ODP_DATA_BINDING_MODE": "live",
         "ODP_PRODUCT_MODE": "poc",
+        "ODP_WEB_BASE_URL": "https://web.example.com",
     }
     subprocess.run(
         [sys.executable, "-c", serializer, str(out), "https://api.example.com", "https://api.example.com"],
@@ -184,13 +219,83 @@ def test_shell_and_preflight_resolvers_agree(case_id: str, env: dict[str, str]) 
         assert shell_flag == ("true" if shell_mode == "oidc" else "false"), case_id
     else:
         # The shell also refuses an incomplete OIDC configuration, which the
-        # preflight reports through its own per-variable checks instead.
-        incomplete_oidc = python_mode == "oidc" and not all(
-            env.get(name) for name in COMPLETE_OIDC_ENV
-        )
-        assert python_error is not None or incomplete_oidc, (
+        # preflight reports through its own per-variable checks instead. Either
+        # way the release must not get through the gate, so assert on the gate's
+        # actual verdict rather than on how it happens to be spelled. Only the
+        # auth checks count here: the shared fixture leaves unrelated checks
+        # failing, and those would make this assertion vacuous.
+        failing = [
+            name
+            for name, check in _named_checks(_preflight_env(**env)).items()
+            if not check.ok
+            and (name == "auth-mode" or name.startswith(("oidc-config:", "oidc-secret-reference:")))
+        ]
+        assert python_error is not None or failing, (
             f"{case_id}: deploy rejected a configuration the preflight approves"
         )
+
+
+@pytest.mark.parametrize("case_id, env", RESOLUTION_CASES, ids=[case[0] for case in RESOLUTION_CASES])
+def test_both_resolvers_reject_for_the_same_stated_reason(case_id: str, env: dict[str, str]) -> None:
+    """Agreeing on the verdict is not enough; they must agree on the reason.
+
+    A shared verdict reached from different rules drifts back apart on the next
+    input, so where the preflight names a reason the release script must fail
+    with that same reason rather than one of its own.
+    """
+    _, python_error = validator.resolve_auth_mode(env)
+    if python_error is None:
+        pytest.skip("configuration is not rejected by the preflight resolver")
+    completed = _run_shell_resolver(env)
+    assert completed.returncode != 0, f"{case_id}: deploy accepted what the preflight rejects"
+    assert python_error in completed.stderr, f"{case_id}: {completed.stderr.strip()!r}"
+
+
+def test_the_two_resolvers_share_one_placeholder_vocabulary() -> None:
+    """Placeholder tokens are duplicated across languages, so pin them together.
+
+    The lists diverging is exactly how ``ODP_WEB_OIDC_ISSUER=placeholder`` came
+    to mean "OIDC is on" to the deploy and "OIDC is off" to the preflight.
+    """
+    shell_tokens = set(
+        re.search(
+            r'^AUTH_MODE_PLACEHOLDER_VALUES="([^"]*)"',
+            AUTH_MODE_SCRIPT.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        .group(1)
+        .split()
+    )
+    # The shell list cannot carry the empty string through word splitting; it
+    # rejects an empty value before consulting the list at all.
+    assert shell_tokens == validator.PLACEHOLDER_VALUES - {""}
+    assert _shell_resolve({"ODP_WEB_OIDC_ISSUER": ""})[1] == "local"
+
+
+def test_normalisation_is_shared_by_both_resolvers() -> None:
+    """Case and padding are not a configuration difference."""
+    for raw, expected in (("LOCAL", "local"), ("Local", "local"), ("  local  ", "local")):
+        assert _shell_resolve({"ODP_AUTH_MODE": raw}) == (True, expected, "false")
+        assert validator.resolve_auth_mode({"ODP_AUTH_MODE": raw}) == (expected, None)
+    assert _shell_resolve({"ODP_AUTH_MODE": "OIDC", **COMPLETE_OIDC_ENV}) == (True, "oidc", "true")
+    assert _shell_resolve({"ODP_AUTH_OIDC_ENABLED": "TRUE", **COMPLETE_OIDC_ENV}) == (
+        True,
+        "oidc",
+        "true",
+    )
+
+
+def test_a_placeholder_issuer_never_turns_oidc_on() -> None:
+    """A placeholder is not a configuration in either half of the resolver."""
+    for token in sorted(validator.PLACEHOLDER_VALUES - {""}):
+        env = {"ODP_WEB_OIDC_ISSUER": token}
+        assert _shell_resolve(env) == (True, "local", "false"), token
+        assert validator.resolve_auth_mode(env) == ("local", None), token
+    # And it does not satisfy an explicitly selected OIDC mode either.
+    env = {"ODP_AUTH_MODE": "oidc", **COMPLETE_OIDC_ENV, "ODP_WEB_OIDC_ISSUER": "placeholder"}
+    assert _shell_resolve(env)[0] is False
+    by_name = _named_checks(_preflight_env(**env))
+    assert by_name["oidc-config:ODP_WEB_OIDC_ISSUER"].ok is False
 
 
 def test_password_first_is_the_default() -> None:
@@ -256,6 +361,50 @@ def test_web_env_follows_the_resolved_flag_not_a_second_signal(tmp_path: Path) -
     )
     assert payload["ODP_AUTH_OIDC_ENABLED"] == "false"
     assert "ODP_WEB_OIDC_ISSUER" not in payload
+
+
+def test_release_payload_carries_the_canonical_web_origin_in_both_modes(tmp_path: Path) -> None:
+    """The Web revision must never ship without ``ODP_WEB_BASE_URL``.
+
+    Terraform already injects it unconditionally, but the workflow deploys
+    through the release script, whose serializer omitted it entirely. That
+    produced a production Web revision with no canonical origin, which
+    ``resolveWebBaseUrl`` fails closed on, so the two paths must agree.
+    """
+    for mode_env in (
+        {"ODP_AUTH_MODE": "local", "ODP_AUTH_OIDC_ENABLED": "false"},
+        {"ODP_AUTH_MODE": "oidc", "ODP_AUTH_OIDC_ENABLED": "true", **COMPLETE_OIDC_ENV},
+    ):
+        payload = _render_web_env(
+            {**mode_env, "ODP_WEB_BASE_URL": "https://ops.example.com"}, tmp_path
+        )
+        assert payload["ODP_WEB_BASE_URL"] == "https://ops.example.com"
+
+
+def test_release_payload_refuses_to_omit_the_web_origin(tmp_path: Path) -> None:
+    """An absent origin aborts the release instead of silently deploying."""
+    serializer = _extract_heredoc(
+        DEPLOY_SCRIPT.read_text(encoding="utf-8"),
+        'python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<\'PY\'',
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", serializer, str(tmp_path / "web-env.json"), "https://api", "https://api"],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "ODP_DEPLOY_ENV": "dev",
+            "ODAY_RELEASE_SHA": "a" * 40,
+            "ODP_REQUIRE_LIVE_DATA": "true",
+            "ODP_DATA_BINDING_MODE": "live",
+            "ODP_PRODUCT_MODE": "poc",
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_OIDC_ENABLED": "false",
+        },
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    assert completed.returncode != 0
+    assert "ODP_WEB_BASE_URL" in completed.stderr
 
 
 def test_web_secret_bindings_are_gated_on_the_same_resolved_flag() -> None:
@@ -340,6 +489,15 @@ def test_preflight_still_requires_complete_oidc_when_it_is_selected() -> None:
 def test_preflight_rejects_a_split_auth_configuration() -> None:
     by_name = _named_checks(_preflight_env(ODP_AUTH_MODE="local", ODP_AUTH_OIDC_ENABLED="true"))
     assert by_name["auth-mode"].ok is False
+
+
+def test_preflight_requires_the_canonical_web_origin_in_local_mode() -> None:
+    """The fail-closed gate covers the origin, not only the OIDC inputs."""
+    assert "ODP_WEB_BASE_URL" in validator.REQUIRED_PUBLIC_CONFIG
+    assert "ODP_WEB_BASE_URL" not in validator.OIDC_REQUIRED_PUBLIC_CONFIG
+    by_name = _named_checks(_preflight_env(ODP_WEB_BASE_URL=""))
+    assert by_name["auth-mode"].detail == "local"
+    assert by_name["config:ODP_WEB_BASE_URL"].ok is False
 
 
 def test_service_identity_inputs_stay_required_in_every_mode() -> None:
@@ -457,6 +615,19 @@ def test_deploy_workflow_passes_both_the_mode_and_its_legacy_alias() -> None:
         assert name in deploy_env, f"{name} verifies the smoke token in every mode"
 
 
+def test_deploy_workflow_supplies_the_canonical_web_origin() -> None:
+    """A variable the release script requires must be bound by the job.
+
+    The deploy job reads environment-scoped ``vars.*``; a name that is never
+    listed here arrives unset rather than empty, so the omission is invisible
+    until the Web revision is already live.
+    """
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    envs = [job.get("env", {}) for job in workflow["jobs"].values()]
+    deploy_env = next(env for env in envs if "ODP_WEB_OIDC_CLIENT_SECRET_SECRET" in env)
+    assert deploy_env["ODP_WEB_BASE_URL"] == "${{ vars.ODP_WEB_BASE_URL }}"
+
+
 def test_documentation_states_the_single_auth_mode_contract() -> None:
     web_readme = (ROOT / "apps" / "web" / "README.md").read_text(encoding="utf-8")
     all_modes_table = web_readme.partition("Required environment (all modes):")[2].partition("###")[0]
@@ -467,6 +638,11 @@ def test_documentation_states_the_single_auth_mode_contract() -> None:
     guide = (ROOT / "docs" / "deployment" / "GCP_DEPLOY_GUIDE.md").read_text(encoding="utf-8")
     assert "`ODP_AUTH_MODE`" in guide
     assert "product_ops/deployment/auth_mode.sh" in guide
+    # The guide claims one resolver, so it has to state the two rules that make
+    # the claim true rather than leaving them implicit in two implementations.
+    assert "lower-cased before they are compared" in guide
+    assert "placeholder token" in guide
+    assert "`ODP_WEB_BASE_URL`" in guide
 
     terraform_readme = (TERRAFORM_ROOT / "README.md").read_text(encoding="utf-8")
     assert "service_auth_issuer" in terraform_readme

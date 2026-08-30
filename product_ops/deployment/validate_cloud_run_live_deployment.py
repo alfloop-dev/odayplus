@@ -89,6 +89,10 @@ REQUIRED_PUBLIC_CONFIG = (
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
+    # The Web runtime derives cookie, CSRF, and redirect origins from this and
+    # fails closed without it in production (apps/web/src/lib/auth/runtime.ts),
+    # so it is required in every auth mode, not only under OIDC.
+    "ODP_WEB_BASE_URL",
     "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
     "ODP_OPERATOR_SMOKE_ROLE",
 )
@@ -146,6 +150,13 @@ def resolve_auth_mode(env: Mapping[str, str]) -> tuple[str, str | None]:
     deployments on OIDC until they opt into an explicit mode. Returns the mode
     and, when the configuration is invalid or self-contradicting, the reason the
     release must not proceed.
+
+    The shell half normalises and decides "configured" exactly as this function
+    does -- ``strip().lower()`` and :data:`PLACEHOLDER_VALUES`. That symmetry is
+    the whole point of having one resolver: while only this half folded case and
+    rejected placeholders, ``ODP_AUTH_MODE=LOCAL`` passed the preflight and then
+    aborted the deploy, and a placeholder issuer alone resolved to two different
+    modes.
     """
     mode = env.get("ODP_AUTH_MODE", "").strip().lower()
     legacy_flag = env.get("ODP_AUTH_OIDC_ENABLED", "").strip().lower()
