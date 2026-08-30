@@ -315,14 +315,13 @@ def require_permission(
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
         from modules.opsboard.auth.errors import AuthFailureReason
         from shared.audit.policy import (
-            ALWAYS_AUDITED_ACTIONS,
             build_security_event,
             is_high_risk,
         )
 
         principal = principal_from_headers(request.headers, boundary=boundary)
 
-        # Immediate session validation for high-risk / write actions (Contract §5.4 / T21)
+        # Immediate session validation for high-risk actions (Contract §5.4 / T21)
         effective_session_svc = session_service
         if effective_session_svc is None and boundary is not None:
             effective_session_svc = getattr(boundary, "_session_service", None)
@@ -331,26 +330,22 @@ def require_permission(
             if def_b is not None:
                 effective_session_svc = getattr(def_b, "_session_service", None)
 
-        if (
-            (is_high_risk(action) or action in ALWAYS_AUDITED_ACTIONS)
-            and principal.authenticated
-            and effective_session_svc is not None
-        ):
+        if principal.authenticated and effective_session_svc is not None:
             sid_val = principal.attributes.get("sid")
-            if not sid_val:
+            if sid_val:
+                from uuid import UUID
+
+                try:
+                    sid_uuid = UUID(str(sid_val))
+                    session = effective_session_svc.validate_session(sid_uuid)
+                    if session is None:
+                        _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
+                except (ValueError, TypeError):
+                    _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
+            elif is_high_risk(action):
                 # A high-risk action without a session reference is denied
                 # when a session layer is wired (Contract §5.4 / T21).
                 _raise_unauthenticated(AuthFailureReason.SESSION_NOT_FOUND)
-
-            from uuid import UUID
-
-            try:
-                sid_uuid = UUID(str(sid_val))
-                session = effective_session_svc.validate_session(sid_uuid)
-                if session is None:
-                    _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
-            except (ValueError, TypeError):
-                _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
 
         source_ip = request.client.host if request.client else None
         correlation_id = _correlation_id_from_request(request)
@@ -667,7 +662,6 @@ def require_operator_permission(
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
         from modules.opsboard.auth.errors import AuthFailureReason
         from shared.audit.policy import (
-            ALWAYS_AUDITED_ACTIONS,
             build_security_event,
             is_high_risk,
         )
@@ -696,11 +690,7 @@ def require_operator_permission(
             if def_b is not None:
                 effective_session_svc = getattr(def_b, "_session_service", None)
 
-        if (
-            (is_high_risk(action) or action in ALWAYS_AUDITED_ACTIONS)
-            and principal.attributes.get("sid")
-            and effective_session_svc is not None
-        ):
+        if principal.attributes.get("sid") and effective_session_svc is not None:
             from uuid import UUID
 
             try:
@@ -715,7 +705,7 @@ def require_operator_permission(
             except (ValueError, TypeError):
                 _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
         elif (
-            (is_high_risk(action) or action in ALWAYS_AUDITED_ACTIONS)
+            is_high_risk(action)
             and effective_session_svc is not None
             and not principal.attributes.get("sid")
         ):
