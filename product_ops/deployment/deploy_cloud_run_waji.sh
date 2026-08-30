@@ -261,10 +261,11 @@ keys = [
     # The resolved auth mode travels to the API too. The boundary reads it as
     # the authoritative "is the OIDC provider on?" gate, so an API that never
     # received it would keep trusting OIDC tokens for a password-first release
-    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001). resolve_auth_mode exports both as a
-    # consistent pair before this runs.
+    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001). resolve_auth_mode has already run, so
+    # this is the resolved mode and not a raw operator input; the legacy
+    # ODP_AUTH_OIDC_ENABLED alias is deliberately not forwarded, because a pair
+    # that arrives split is a configuration the boundary would have to refuse.
     "ODP_AUTH_MODE",
-    "ODP_AUTH_OIDC_ENABLED",
     "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
     "ODP_SCHEDULED_INGESTION_TENANT_ID",
     "ODP_TENANT_ID",

@@ -93,7 +93,6 @@ locals {
     "ODP_AUTH_JWKS_URI",
     "ODP_AUTH_LEEWAY_SECONDS",
     "ODP_AUTH_MODE",
-    "ODP_AUTH_OIDC_ENABLED",
     "ODP_DEPLOY_ENV",
     "ODP_EXTERNAL_PROVIDER_MODE",
     "ODP_JOBS_DLQ_TOPIC",
@@ -159,7 +158,6 @@ locals {
     ODAY_RELEASE_SHA                = var.release_sha
     ODP_AUTH_LEEWAY_SECONDS         = tostring(var.oidc_leeway_seconds)
     ODP_AUTH_MODE                   = var.auth_mode
-    ODP_AUTH_OIDC_ENABLED           = tostring(local.oidc_enabled)
     ODP_DEPLOY_ENV                  = var.environment
     ODP_EXTERNAL_PROVIDER_MODE      = "fixture"
     ODP_OBJECT_STORE                = "gcs"

@@ -1119,6 +1119,24 @@ def test_regression_create_app_binds_its_audit_sink_to_the_boundary(monkeypatch)
     assert events[0].outcome == "failure"
 
 
+def test_regression_create_app_wires_the_boundary_audit_sink_end_to_end(monkeypatch):
+    """The same assertion, made through ``create_app`` rather than its parts."""
+    from apps.api.oday_api.main import create_app
+    from apps.api.oday_api.security.dependencies import default_boundary
+    from shared.infrastructure.persistence import build_persistence
+
+    monkeypatch.setenv("ODP_AUTH_LOCAL_ISSUER", LOCAL_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_LOCAL_HS256_KEYS", f"local-k1:{LOCAL_SECRET.decode()}")
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
+
+    bundle = build_persistence(mode="memory")
+    app = create_app(persistence=bundle)
+
+    active_boundary = default_boundary()
+    assert active_boundary is not None
+    assert active_boundary.audit_log is app.state.audit_log
+
+
 def test_regression_default_boundary_falls_back_to_the_bundle_audit_log(monkeypatch):
     """Without an explicit sink the boundary still uses the bundle's, never a private log."""
     from apps.api.oday_api.security.dependencies import (

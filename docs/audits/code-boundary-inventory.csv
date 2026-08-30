@@ -695,6 +695,7 @@ shared/auth/abac.py,product_system,product_required,true,,engineering;operations
 shared/auth/engine.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/auth/feature_flags.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/auth/identity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/auth/mode.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/auth/rbac.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/domain/events.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
