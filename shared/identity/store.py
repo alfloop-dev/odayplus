@@ -191,7 +191,9 @@ class InMemoryIdentityStore:
 class SqlIdentityStore:
     """PostgreSQL identity schema 查詢實作。
 
-    支援透過連線工廠或 SQLAlchemy / psycopg 連線執行查詢。
+    ``connection_factory`` 語意見 :mod:`shared.identity.sql_support`：交出
+    context manager 時（例如 ``PostgresEngine.pooled_connection``）連線由
+    pool 擁有，每次查詢用完即歸還；交出裸連線時由呼叫端擁有。
     """
 
     def __init__(self, connection_factory: Any = None) -> None:
