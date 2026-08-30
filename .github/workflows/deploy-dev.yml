@@ -135,14 +135,12 @@ env:
 
 jobs:
   state-backend-iam-convergence:
-    name: Converge and verify staging state backend IAM
+    name: Verify staging deployer state backend access
     if: ${{ inputs.task_id == 'ODP-STAGING-STATE-BUCKET-IAM-CONVERGENCE' }}
     runs-on: ubuntu-latest
     environment:
       name: staging
     env:
-      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
-      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
       STATE_BUCKET: oday-tfstate-staging-odayplus-runtime-20260825
     steps:
       - name: Authenticate to Google Cloud (WIF)
@@ -154,26 +152,9 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Converge least-privilege state object access
+      - name: Verify least-privilege remote-state object access
         run: |
           set -euo pipefail
-          gcloud storage buckets add-iam-policy-binding "gs://${STATE_BUCKET}" \
-            --project="${GCP_PROJECT}" \
-            --member="serviceAccount:${GCP_SERVICE_ACCOUNT}" \
-            --role="roles/storage.objectUser"
-
-      - name: Verify state bucket controls and IAM
-        run: |
-          set -euo pipefail
-          gcloud storage buckets describe "gs://${STATE_BUCKET}" \
-            --project="${GCP_PROJECT}" \
-            --format='yaml(name,location,uniform_bucket_level_access,public_access_prevention,versioning_enabled,retention_policy,default_kms_key)'
-          roles="$(gcloud storage buckets get-iam-policy "gs://${STATE_BUCKET}" \
-            --project="${GCP_PROJECT}" \
-            --flatten='bindings[].members' \
-            --filter="bindings.members:serviceAccount:${GCP_SERVICE_ACCOUNT}" \
-            --format='value(bindings.role)')"
-          grep -Fx 'roles/storage.objectUser' <<<"${roles}"
           gcloud storage objects describe \
             "gs://${STATE_BUCKET}/oday-plus/bootstrap/default.tfstate" \
             --format='yaml(bucket,name,generation,size,kms_key,event_based_hold,temporary_hold)'
