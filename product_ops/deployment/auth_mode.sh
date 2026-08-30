@@ -34,9 +34,15 @@
 AUTH_MODE_PLACEHOLDER_VALUES="changeme change-me dummy example fixture mock placeholder seed todo"
 
 # Trims surrounding whitespace and folds case, mirroring the preflight's
-# `value.strip().lower()`.
+# `value.strip().lower()`. Built entirely from shell parameter expansion: the
+# release script calls this before it has verified anything about the runner, and
+# a resolver that needs `tr` or `sed` on PATH turns a minimal environment into a
+# "command not found" mid-deploy instead of a clean auth-mode decision.
 auth_mode_normalize() {
-  printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+  local value="${1:-}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "${value,,}"
 }
 
 # Mirrors `_configured()` in the preflight: a value that is empty or is only a

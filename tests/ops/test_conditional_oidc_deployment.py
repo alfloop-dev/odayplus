@@ -272,6 +272,33 @@ def test_the_two_resolvers_share_one_placeholder_vocabulary() -> None:
     assert _shell_resolve({"ODP_WEB_OIDC_ISSUER": ""})[1] == "local"
 
 
+def test_the_resolver_needs_no_external_commands() -> None:
+    """It runs before the release script has proven anything about the runner.
+
+    Normalising through ``tr``/``sed`` made the resolver depend on PATH, which
+    turns a minimal environment into "command not found" partway through the
+    deploy rather than a clean auth-mode decision.
+    """
+    bash = shutil.which("bash")
+    assert bash, "bash is required to run the release-path resolver"
+    completed = subprocess.run(
+        [
+            bash,
+            "-c",
+            f"source {AUTH_MODE_SCRIPT}\n"
+            "resolve_auth_mode\n"
+            'printf "%s %s\\n" "${ODP_AUTH_MODE}" "${ODP_AUTH_OIDC_ENABLED}"\n',
+        ],
+        # An empty PATH, so the resolver cannot reach any helper binary.
+        env={"PATH": "", "ODP_AUTH_MODE": "  LOCAL  "},
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.split() == ["local", "false"]
+
+
 def test_normalisation_is_shared_by_both_resolvers() -> None:
     """Case and padding are not a configuration difference."""
     for raw, expected in (("LOCAL", "local"), ("Local", "local"), ("  local  ", "local")):
