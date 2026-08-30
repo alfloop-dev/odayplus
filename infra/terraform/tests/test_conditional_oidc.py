@@ -143,6 +143,7 @@ class ConditionalOidcTerraformTests(unittest.TestCase):
         text = script.read_text(encoding="utf-8")
         # OIDC env vars should use os.environ.get() pattern
         self.assertIn('os.environ.get("ODP_WEB_OIDC_ISSUER")', text)
+        self.assertIn('"ODP_AUTH_MODE": os.environ.get("ODP_AUTH_MODE", "local")', text)
 
     def test_workflow_passes_oidc_enabled(self) -> None:
         """deploy-dev.yml must pass ODP_AUTH_OIDC_ENABLED."""

@@ -32,7 +32,7 @@ provider "google-beta" {
 locals {
   is_prod      = var.environment == "prod"
   oidc_enabled = var.auth_mode == "oidc"
-  name_prefix = "oday-${var.environment}"
+  name_prefix  = "oday-${var.environment}"
   labels = merge(
     {
       app         = "oday-plus"
@@ -131,9 +131,9 @@ locals {
       ODP_WEB_OIDC_SCOPES    = var.web_oidc_scopes
     } : {},
   )
-  web_oidc_secret_refs = var.web_oidc_client_secret_ref == null ? {} : {
+  web_oidc_secret_refs = local.oidc_enabled && var.web_oidc_client_secret_ref != null ? {
     ODP_WEB_OIDC_CLIENT_SECRET = var.web_oidc_client_secret_ref
-  }
+  } : {}
 
   fixed_runtime_env = merge(
     {
