@@ -8912,6 +8912,149 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertIn("Task returned to todo until Codex starts a fresh run.", kwargs["message"])
 
 
+class HumanContinuationApprovalSupervisorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "schema": {"tasks_path": "tasks"},
+            "paths": {
+                "status_file": "ai-status.json",
+                "activity_log": "ai-activity-log.jsonl",
+            },
+        }
+
+    @staticmethod
+    def _approval(**updates: Any) -> dict[str, Any]:
+        approval: dict[str, Any] = {
+            "approval_id": "apr-continuation-1",
+            "approval_type": "human_ops_continuation",
+            "status": "issued",
+            "task_id": "ODP-CONTINUATION-001",
+            "task_scope": "ODP-CONTINUATION-001",
+            "scope": {"task_id": "ODP-CONTINUATION-001"},
+            "reason": "Human reviewed the churn evidence and authorized one continuation.",
+            "issued_by": "Human/Ops",
+            "issued_at": "2026-08-30T00:00:00Z",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "nonce": "nonce-supervisor-1",
+            "consumed_at": None,
+            "consumed_by": None,
+            "consumption_reason": None,
+        }
+        approval.update(updates)
+        return approval
+
+    def _task(self, approval: dict[str, Any] | None = None, **updates: Any) -> dict[str, Any]:
+        task: dict[str, Any] = {
+            "id": "ODP-CONTINUATION-001",
+            "owner": "Codex2",
+            "reviewer": "Claude2",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+            "next": "Escalated to Human/Ops after repeated review churn.",
+        }
+        if approval is not None:
+            task["human_continuation_approval"] = approval
+        task.update(updates)
+        return task
+
+    def test_consumes_valid_approval_once_and_returns_task_to_todo(self) -> None:
+        status = {"tasks": [self._task(self._approval())], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.consume_human_continuation_approvals(self.config, {})
+
+        self.assertTrue(changed)
+        task = status["tasks"][0]
+        self.assertEqual(task["status"], "todo")
+        self.assertNotIn("waiting_for", task)
+        self.assertNotIn("human_continuation_approval", task)
+        consumed = task["human_continuation_approval_history"][-1]
+        self.assertEqual(consumed["status"], "consumed")
+        self.assertEqual(consumed["consumed_by"], "Orchestrator")
+        self.assertEqual(task["review_churn_reassigned_at_count"], 6)
+        commit.assert_called_once_with(self.config, status)
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"],
+            "human_continuation_approval_consumed",
+        )
+
+        with mock.patch.object(supervisor, "load_status", return_value=status):
+            self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
+
+    def test_expired_scope_mismatch_and_replay_fail_closed(self) -> None:
+        expired_task = self._task(self._approval(expires_at="2020-01-01T00:00:00Z"))
+        expired_status = {"tasks": [expired_task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=expired_status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, {}))
+        self.assertEqual(expired_task["status"], "blocked")
+        self.assertEqual(expired_task["human_continuation_approval_history"][-1]["status"], "expired")
+        commit.assert_called_once()
+
+        cases = [
+            self._approval(task_id="OTHER-TASK", task_scope="OTHER-TASK", scope={"task_id": "OTHER-TASK"}),
+            self._approval(issued_by="Codex2"),
+            self._approval(nonce="nonce-used"),
+        ]
+        for approval in cases:
+            with self.subTest(approval=approval):
+                task = self._task(approval)
+                if approval["nonce"] == "nonce-used":
+                    task["human_continuation_approval_history"] = [
+                        self._approval(approval_id="apr-old", nonce="nonce-used", status="consumed")
+                    ]
+                status = {"tasks": [task], "blockers": []}
+                with (
+                    mock.patch.object(supervisor, "load_status", return_value=status),
+                    mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+                ):
+                    self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
+                self.assertEqual(task["status"], "blocked")
+                commit.assert_not_called()
+
+    def test_independent_production_gate_is_not_released_by_continuation_approval(self) -> None:
+        task = self._task(
+            self._approval(),
+            next="Review churn is also blocked pending production deployment approval.",
+        )
+        status = {"tasks": [task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+        ):
+            self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
+        self.assertEqual(task["status"], "blocked")
+        commit.assert_not_called()
+
+    def test_production_deployment_title_does_not_block_review_churn_consumption(self) -> None:
+        task = self._task(
+            self._approval(),
+            title="Production deployment continuation",
+            summary="Deployment recovery for the production lane",
+            summary_zh="production deployment 修復",
+            blocker="Review churn only after repeated reviewer reopenings.",
+        )
+        status = {"tasks": [task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, {}))
+
+        self.assertEqual(task["status"], "todo")
+        self.assertEqual(task["human_continuation_approval_history"][-1]["status"], "consumed")
+
+
 class AutomaticRecoveryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
