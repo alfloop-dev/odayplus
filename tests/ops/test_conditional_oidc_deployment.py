@@ -618,6 +618,16 @@ def test_production_requires_the_service_identity_contract_in_every_mode() -> No
     assert "var.oidc_issuer" in gated
 
 
+def test_web_oidc_client_secret_ref_production_contract_is_gated_on_oidc_mode() -> None:
+    """In local mode, leftover OIDC client secret ref must not enter production_contract_values."""
+    main_tf = (TERRAFORM_ROOT / "main.tf").read_text(encoding="utf-8")
+    values = _hcl_block(main_tf, "production_contract_values = concat(")
+    assert re.search(
+        r"\(?\s*local\.oidc_enabled\s*&&\s*var\.web_oidc_client_secret_ref\s*!=\s*null\s*\)?\s*\?\s*\[",
+        values,
+    ), "web_oidc_client_secret_ref in production_contract_values must be gated on local.oidc_enabled"
+
+
 def test_auth_mode_variable_defaults_to_password_first() -> None:
     variables = (TERRAFORM_ROOT / "variables.tf").read_text(encoding="utf-8")
     auth_mode = _hcl_block(variables, 'variable "auth_mode"')

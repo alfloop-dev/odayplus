@@ -226,10 +226,10 @@ locals {
       for ref in values(var.runtime_additional_secret_refs) :
       [ref.secret_id, ref.version]
     ]),
-    var.web_oidc_client_secret_ref == null ? [] : [
+    (local.oidc_enabled && var.web_oidc_client_secret_ref != null) ? [
       var.web_oidc_client_secret_ref.secret_id,
       var.web_oidc_client_secret_ref.version,
-    ],
+    ] : [],
   )
 }
 
