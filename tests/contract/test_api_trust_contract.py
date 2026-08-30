@@ -1535,3 +1535,195 @@ def test_regression_placeholder_oidc_issuer_does_not_enable_the_provider():
 
     assert config.oidc_enabled is False
     assert config.oidc_issuer is None
+
+
+# --- Regression: Terraform deployment-shape auth bypass (reopen #5) ---
+
+
+def test_regression_terraform_deploy_shape_oidc_token_requires_identity_link(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """An unlinked OIDC token must be rejected in the actual Terraform deploy shape.
+
+    Terraform sends only global ODP_AUTH_ISSUER / ODP_AUTH_JWKS_URI /
+    ODP_AUTH_AUDIENCES plus ODP_AUTH_MODE to the API runtime — it never sends
+    the OIDC-specific ODP_AUTH_OIDC_ISSUER / ODP_AUTH_OIDC_JWKS_URI /
+    ODP_AUTH_OIDC_AUDIENCES variables.
+
+    Before the fix, oidc_issuer was None (because ODP_AUTH_OIDC_ISSUER was
+    absent), service_issuer fell back to ODP_AUTH_ISSUER (the OIDC provider),
+    and a token from the OIDC provider matched is_service instead of is_oidc.
+    The service path called principal_from_claims which trusts token-embedded
+    roles and never performs find_account_by_federated_identity, allowing an
+    attacker to present an unlinked signed token with arbitrary roles.
+
+    This test reproduces the exact Terraform env shape and asserts the token
+    goes through the OIDC path (requiring identity store linkage).
+    """
+    from dataclasses import replace as dc_replace
+
+    from modules.opsboard.auth.config import config_from_env
+
+    # Exact env shape from infra/terraform/main.tf:153-177 — only globals.
+    terraform_env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+        "ODP_AUTH_LEEWAY_SECONDS": "120",
+        "ODP_AUTH_JWKS_CACHE_TTL_SECONDS": "300",
+        # Crucially: NO ODP_AUTH_OIDC_ISSUER, NO ODP_AUTH_OIDC_JWKS_URI,
+        # NO ODP_AUTH_OIDC_AUDIENCES — this is the real deployed shape.
+    }
+    config = config_from_env(
+        terraform_env, identity_store=identity_store, session_service=session_service
+    )
+
+    # The OIDC path must claim the global issuer.
+    assert config.oidc_enabled is True
+    assert config.oidc_issuer == OIDC_ISSUER
+    assert config.oidc_audiences == frozenset([AUDIENCE])
+    # Service path must NOT shadow the OIDC provider.
+    assert config.service_issuer is None
+    assert config.is_configured is True
+
+    # In real deployment the OIDC path resolves keys from the JWKS URI, which
+    # isn't available in a unit test. Supply the test signing key via
+    # dataclasses.replace so the boundary can verify the token signature and
+    # reach the identity store lookup — the part this test is about.
+    config = dc_replace(config, oidc_signing_keys={"oidc-k1": OIDC_KEY})
+
+    boundary = AuthenticationBoundary(config)
+
+    # An attacker presents a properly signed token with the OIDC provider's
+    # issuer, an unlinked subject, and self-assigned platform_admin roles.
+    attacker_token = make_jwt(
+        OIDC_KEY,
+        iss=OIDC_ISSUER,
+        sub="unlinked-attacker-sub",
+        extra_claims={
+            "roles": ["platform_admin"],
+            "tenant_id": "attacker-tenant",
+            "email": "attacker@example.com",
+        },
+    )
+
+    outcome = boundary.authenticate(
+        Credentials(bearer_token=attacker_token, correlation_id="cid-deploy-shape")
+    )
+
+    # The token must be rejected because the OIDC identity is not linked in the
+    # identity store — it must NOT be accepted as a service identity with the
+    # attacker's self-declared roles.
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+    assert outcome.token_type == "oidc"
+
+
+def test_regression_terraform_deploy_shape_linked_oidc_token_accepted(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """A properly linked OIDC identity is accepted in the Terraform deploy shape.
+
+    Companion to the rejection test: when the OIDC identity IS linked to an
+    account in the identity store, the token must be accepted and the principal
+    must carry the account's authoritative roles (not the token's claims).
+    """
+    from dataclasses import replace as dc_replace
+
+    from modules.opsboard.auth.config import config_from_env
+
+    terraform_env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+    }
+    config = config_from_env(
+        terraform_env, identity_store=identity_store, session_service=session_service
+    )
+    config = dc_replace(config, oidc_signing_keys={"oidc-k1": OIDC_KEY})
+
+    # Link a legitimate user identity.
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            email="legit-user@example.com",
+            username="legit-user",
+            tenant_id=tenant_id,
+        )
+    )
+    identity_store.link_federated_identity(
+        account_id=account_id, issuer=OIDC_ISSUER, subject="google-user-legit"
+    )
+    identity_store.set_account_roles(account_id, frozenset([Role.SITE_REVIEWER]))
+
+    boundary = AuthenticationBoundary(config)
+
+    legit_token = make_jwt(
+        OIDC_KEY,
+        iss=OIDC_ISSUER,
+        sub="google-user-legit",
+        extra_claims={
+            # Token claims self-declare platform_admin — but the authoritative
+            # store says only operator.
+            "roles": ["platform_admin"],
+            "email": "legit-user@example.com",
+        },
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=legit_token))
+
+    assert outcome.authenticated is True
+    assert outcome.token_type == "oidc"
+    principal = outcome.principal
+    assert principal.subject_id == str(account_id)
+    # Roles come from the identity store, NOT the token claims.
+    assert principal.roles == frozenset([Role.SITE_REVIEWER])
+    assert Role.PLATFORM_ADMIN not in principal.roles
+
+
+def test_regression_terraform_deploy_shape_service_token_still_works(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """A service token with a distinct issuer still works in the Terraform shape.
+
+    When ODP_AUTH_SERVICE_ISSUER is explicitly set (different from the OIDC
+    provider), the service path remains available for Cloud Run service-to-service
+    auth even with ODP_AUTH_MODE=oidc.
+    """
+    from modules.opsboard.auth.config import config_from_env
+
+    terraform_env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+        "ODP_AUTH_SERVICE_ISSUER": SERVICE_ISSUER,
+        "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+        "ODP_AUTH_PRINCIPAL_MAP": '{"service-cron-sa": {"roles": ["platform_admin"], "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}}}',
+    }
+    config = config_from_env(
+        terraform_env, identity_store=identity_store, session_service=session_service
+    )
+
+    assert config.oidc_enabled is True
+    assert config.oidc_issuer == OIDC_ISSUER
+    assert config.service_issuer == SERVICE_ISSUER
+    assert config.service_issuer != config.oidc_issuer
+
+    boundary = AuthenticationBoundary(config)
+
+    service_token = make_jwt(
+        SERVICE_KEY,
+        iss=SERVICE_ISSUER,
+        sub="service-cron-sa",
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=service_token))
+    assert outcome.authenticated is True
+    assert outcome.token_type == "service"
+    assert outcome.principal.subject_id == "service-cron-sa"
+

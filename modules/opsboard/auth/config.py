@@ -231,20 +231,51 @@ def config_from_env(
     # (ODP-WEB-LOCAL-AUTH-API-TRUST-001). An invalid or self-contradicting mode
     # resolves to "not enabled" so a broken configuration narrows trust rather
     # than widening it.
+    #
+    # Deployment-shape fallback (ODP-WEB-LOCAL-AUTH-API-TRUST-001 reopen #5):
+    # Terraform sends only the global ODP_AUTH_ISSUER / ODP_AUTH_JWKS_URI /
+    # ODP_AUTH_AUDIENCES to the API runtime and never the OIDC-specific
+    # variables. When ODP_AUTH_MODE=oidc, the global issuer IS the OIDC
+    # provider, so the OIDC path must claim it. Without this fallback a token
+    # from the OIDC provider matched service_issuer instead and went through
+    # principal_from_claims (trusting token roles) rather than through the
+    # identity-store lookup in _authenticate_oidc_token.
     oidc_enabled = oidc_provider_enabled(source, oidc_issuer_vars=API_OIDC_ISSUER_VARS)
-    oidc_issuer = (source.get("ODP_AUTH_OIDC_ISSUER") or "").strip() or None
-    oidc_jwks_uri = (source.get("ODP_AUTH_OIDC_JWKS_URI") or "").strip() or None
-    if not oidc_enabled:
+    oidc_issuer_explicit = (source.get("ODP_AUTH_OIDC_ISSUER") or "").strip() or None
+    oidc_jwks_uri_explicit = (source.get("ODP_AUTH_OIDC_JWKS_URI") or "").strip() or None
+    if oidc_enabled:
+        # Fall back to global issuer/JWKS/audiences when OIDC-specific vars
+        # are absent — this matches the actual Terraform deployment shape.
+        oidc_issuer = (
+            oidc_issuer_explicit
+            or (source.get("ODP_AUTH_ISSUER") or "").strip()
+            or None
+        )
+        oidc_jwks_uri = (
+            oidc_jwks_uri_explicit
+            or (source.get("ODP_AUTH_JWKS_URI") or "").strip()
+            or None
+        )
+        if not oidc_audiences:
+            oidc_audiences = audiences
+    else:
         oidc_issuer = None
         oidc_jwks_uri = None
         oidc_audiences = frozenset()
 
-    # Service config
-    service_issuer = (
-        (source.get("ODP_AUTH_SERVICE_ISSUER") or "").strip()
-        or (source.get("ODP_AUTH_ISSUER") or "").strip()
-        or None
-    )
+    # Service config. When OIDC is enabled, the global ODP_AUTH_ISSUER belongs
+    # to the OIDC provider path, so service_issuer must NOT fall back to it —
+    # otherwise a token from the OIDC provider matches is_service instead of
+    # is_oidc and skips the identity-store lookup. Service tokens must use the
+    # explicit ODP_AUTH_SERVICE_ISSUER or remain unconfigured.
+    if oidc_enabled:
+        service_issuer = (source.get("ODP_AUTH_SERVICE_ISSUER") or "").strip() or None
+    else:
+        service_issuer = (
+            (source.get("ODP_AUTH_SERVICE_ISSUER") or "").strip()
+            or (source.get("ODP_AUTH_ISSUER") or "").strip()
+            or None
+        )
     service_jwks_uri = (
         (source.get("ODP_AUTH_SERVICE_JWKS_URI") or "").strip()
         or (source.get("ODP_AUTH_JWKS_URI") or "").strip()
