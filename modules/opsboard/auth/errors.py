@@ -38,6 +38,15 @@ class AuthFailureReason(StrEnum):
     UNKNOWN_SERVICE = "unknown_service"
     BAD_SERVICE_SECRET = "bad_service_secret"
 
+    # Identity store / federated / session problems (ODP-WEB-LOCAL-AUTH-API-TRUST-001)
+    FEDERATED_IDENTITY_NOT_LINKED = "federated_identity_not_linked"
+    ACCOUNT_NOT_FOUND = "account_not_found"
+    ACCOUNT_INACTIVE = "account_inactive"
+    SESSION_REVOKED = "session_revoked"
+    SESSION_EXPIRED = "session_expired"
+    SESSION_NOT_FOUND = "session_not_found"
+    ISSUER_NOT_REGISTERED = "issuer_not_registered"
+
 
 class AuthenticationError(Exception):
     """Raised when authentication fails and a caller opts into exceptions.

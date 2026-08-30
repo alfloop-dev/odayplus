@@ -140,11 +140,24 @@ def decode_header(token: str) -> dict[str, Any]:
     return header
 
 
+def decode_unverified_claims(token: str) -> dict[str, Any]:
+    """Decode the JWT claims set without verifying (to read ``iss``/``aud``)."""
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise MalformedTokenError("compact JWS must have three segments")
+    claims = _decode_json(parts[1])
+    if not isinstance(claims, dict):
+        raise MalformedTokenError("JWT claims set must be an object")
+    return claims
+
+
 def _decode_json(segment: str) -> Any:
     try:
         return json.loads(_b64url_decode(segment))
     except (ValueError, UnicodeDecodeError) as exc:
         raise MalformedTokenError("segment is not valid JSON") from exc
+
 
 
 def verify_compact_jwt(token: str, key: SigningKey) -> dict[str, Any]:

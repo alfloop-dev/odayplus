@@ -74,9 +74,15 @@ def principal_from_claims(
     mapping_is_authoritative = principal_mapping is not None
 
     def value(key: str) -> Any:
-        return mapping.get(key) if mapping_is_authoritative else _lookup(
-            claims, key, claim_prefix
-        )
+        if mapping_is_authoritative:
+            if key in mapping:
+                return mapping[key]
+            scope_dict = mapping.get("scope")
+            if isinstance(scope_dict, dict) and key in scope_dict:
+                return scope_dict[key]
+            return None
+        return _lookup(claims, key, claim_prefix)
+
 
     scope = Scope(
         tenant_id=(value("tenant_id") or None),

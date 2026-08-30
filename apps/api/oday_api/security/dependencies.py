@@ -29,8 +29,10 @@ returned dependencies are plain callables that still enforce policy and raise
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Iterable, Mapping
 from datetime import date
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -147,13 +149,18 @@ def principal_from_headers(
     env-configured default), the request's credentials — an
     ``Authorization: Bearer <jwt>`` token or a service identity — are verified
     by :class:`modules.opsboard.auth.AuthenticationBoundary` (ODP-SD-09 §3,
-    ODP-GAP-AUTH-001). A verified credential yields an authenticated principal;
-    any authentication failure (untrusted/expired token, or — since the
-    configured boundary fails closed — no credentials at all) raises HTTP 401.
+    ODP-GAP-AUTH-001, ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §4). A verified
+    credential yields an authenticated principal; any authentication failure
+    raises HTTP 401.
 
-    When no boundary is configured, the legacy header-trust stub is used so
-    local dev and the existing integration tests are unaffected.
+    When ODP_PRODUCT_MODE == "production", browser-supplied spoofable headers
+    are NEVER trusted under any circumstances (Contract §4.2, T16).
+
+    When no boundary is configured in non-production mode, the legacy
+    header-trust stub is used so local dev and unit tests are unaffected.
     """
+
+    is_production = os.environ.get("ODP_PRODUCT_MODE") == "production"
 
     boundary = boundary if boundary is not None else default_boundary()
     if boundary is not None:
@@ -163,6 +170,11 @@ def principal_from_headers(
         if outcome.authenticated:
             return outcome.principal
         _raise_unauthenticated(outcome.reason)
+
+    if is_production:
+        from modules.opsboard.auth.errors import AuthFailureReason
+
+        _raise_unauthenticated(AuthFailureReason.NO_CREDENTIALS)
 
     return _principal_from_trusted_headers(headers)
 
@@ -253,31 +265,78 @@ def require_permission(
     data_classification: DataClassification = DataClassification.CONFIDENTIAL,
     engine: AuthorizationEngine | None = None,
     boundary: AuthenticationBoundary | None = None,
+    session_service: Any = None,
 ):
     """FastAPI dependency factory enforcing RBAC on a route.
 
     This guards a route at the **type level**: it answers only "does the
     caller's role permit ``action`` on ``resource_type``" (RBAC, ODP-SA-04 §6).
-    A denial returns HTTP 403 and writes a security audit event
-    (ODP-AC-AUTH-005 / "403 paths write security audit events").
-
-    Object-level policy is intentionally *not* evaluated here. Resource-instance
-    attributes (tenant/region/store scope, proposer identity, risk level) are
-    unknown at dependency time, so scope ABAC and the high-risk feature-flag /
-    separation-of-duties hooks (SD-09 §5, which fail closed without object
-    context) are enforced inside the handler and the domain workflow once the
-    target object is loaded — call :func:`authorize_request` there for the full
-    engine evaluation. Running the whole engine at type level would deny every
-    high-risk verb (approve/execute/publish/override/rollback) unconditionally.
+    Both allow and denial decisions write a security audit event (Contract §8.1, T20).
+    High-risk actions immediately verify session validity (Contract §5.4, T21).
     """
 
     active_engine = engine or build_engine()
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
-        from shared.audit.policy import build_security_event
+        from shared.audit.policy import (
+            ALWAYS_AUDITED_ACTIONS,
+            HIGH_RISK_ACTIONS,
+            build_security_event,
+            is_high_risk,
+        )
+        from modules.opsboard.auth.errors import AuthFailureReason
 
         principal = principal_from_headers(request.headers, boundary=boundary)
+
+        # Immediate session validation for high-risk / write actions (Contract §5.4 / T21)
+        effective_session_svc = session_service
+        if effective_session_svc is None and boundary is not None:
+            effective_session_svc = getattr(boundary, "_session_service", None)
+        if effective_session_svc is None:
+            def_b = default_boundary()
+            if def_b is not None:
+                effective_session_svc = getattr(def_b, "_session_service", None)
+
+        if (
+            (is_high_risk(action) or action in ALWAYS_AUDITED_ACTIONS)
+            and principal.authenticated
+            and principal.attributes.get("sid")
+            and effective_session_svc is not None
+        ):
+            from uuid import UUID
+
+            try:
+                sid_uuid = UUID(str(principal.attributes["sid"]))
+                session = effective_session_svc.validate_session(sid_uuid)
+                if session is None:
+                    _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
+            except (ValueError, TypeError):
+                _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
+
+        source_ip = request.client.host if request.client else None
+        correlation_id = _correlation_id_from_request(request)
+
         if rbac_allows(principal, resource_type, action):
+            decision = Decision.allow(
+                f"role permits {action.value} on {resource_type}"
+            )
+            access = AccessRequest(
+                principal=principal,
+                action=action,
+                resource=ResourceDescriptor(
+                    type=resource_type,
+                    tenant_id=principal.tenant_id,
+                    data_classification=data_classification,
+                ),
+                environment=Environment(
+                    source_ip=source_ip, attributes={"correlation_id": correlation_id}
+                ),
+            )
+            try:
+                active_engine.audit_log.record(build_security_event(access, decision))
+            except Exception:
+                _LOGGER.exception("RBAC allow audit failed; access still granted")
+
             request.state.operator_principal = principal
             request.state.operator_subject_id = principal.subject_id
             request.state.operator_system_roles = ",".join(
@@ -285,7 +344,6 @@ def require_permission(
             )
             return principal
 
-        source_ip = request.client.host if request.client else None
         decision = Decision.deny(
             f"role does not permit {action.value} on {resource_type}",
             policy_id="rbac",
@@ -294,14 +352,19 @@ def require_permission(
             principal=principal,
             action=action,
             resource=ResourceDescriptor(
-                type=resource_type, data_classification=data_classification
+                type=resource_type,
+                tenant_id=principal.tenant_id,
+                data_classification=data_classification,
             ),
-            environment=Environment(source_ip=source_ip),
+            environment=Environment(
+                source_ip=source_ip, attributes={"correlation_id": correlation_id}
+            ),
         )
         active_engine.audit_log.record(build_security_event(access, decision))
         _raise_forbidden(decision)
 
     return dependency
+
 
 
 def require_feature_flag(key: str, *, flags: FeatureFlagRegistry | None = None):
@@ -553,6 +616,7 @@ def require_operator_permission(
     data_classification: DataClassification = DataClassification.CONFIDENTIAL,
     engine: AuthorizationEngine | None = None,
     boundary: AuthenticationBoundary | None = None,
+    session_service: Any = None,
 ):
     """FastAPI dependency for Operator Console auth/RBAC/tenant isolation.
 
@@ -562,11 +626,21 @@ def require_operator_permission(
     required role/scope is HTTP 403. The guard also writes the verified
     principal and server-selected Operator role to ``request.state`` so route
     handlers do not rely on spoofable role headers.
+    Both allow and denial decisions write a security audit event (Contract §8.1, T20).
+    High-risk actions immediately verify session validity (Contract §5.4, T21).
     """
 
     active_engine = engine or build_engine()
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
+        from shared.audit.policy import (
+            ALWAYS_AUDITED_ACTIONS,
+            HIGH_RISK_ACTIONS,
+            build_security_event,
+            is_high_risk,
+        )
+        from modules.opsboard.auth.errors import AuthFailureReason
+
         principal = principal_from_headers(request.headers, boundary=boundary)
         effective_tenant_id = tenant_id or principal.tenant_id
         resource = ResourceDescriptor(
@@ -583,6 +657,34 @@ def require_operator_permission(
             )
             _record_operator_denial(active_engine, access, decision)
             _raise_unauthenticated(None)
+
+        # High risk / session validation check (Contract §5.4 / T21)
+        effective_session_svc = session_service
+        if effective_session_svc is None and boundary is not None:
+            effective_session_svc = getattr(boundary, "_session_service", None)
+        if effective_session_svc is None:
+            def_b = default_boundary()
+            if def_b is not None:
+                effective_session_svc = getattr(def_b, "_session_service", None)
+
+        if (
+            (is_high_risk(action) or action in ALWAYS_AUDITED_ACTIONS)
+            and principal.attributes.get("sid")
+            and effective_session_svc is not None
+        ):
+            from uuid import UUID
+
+            try:
+                sid_uuid = UUID(str(principal.attributes["sid"]))
+                session = effective_session_svc.validate_session(sid_uuid)
+                if session is None:
+                    decision = Decision.deny(
+                        "session has been revoked or expired", policy_id="session.revoked"
+                    )
+                    _record_operator_denial(active_engine, access, decision)
+                    _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
+            except (ValueError, TypeError):
+                _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
 
         if not effective_tenant_id:
             decision = Decision.deny(
@@ -610,6 +712,17 @@ def require_operator_permission(
             _record_operator_denial(active_engine, access, scope_decision)
             _raise_forbidden(scope_decision)
 
+        # Audit on allow (T20)
+        allow_decision = Decision.allow("Operator Console access accepted")
+        try:
+            active_engine.audit_log.record(build_security_event(access, allow_decision))
+        except Exception:
+            _LOGGER.exception(
+                "operator allow audit failed; access still granted (actor=%s resource=%s)",
+                access.principal.subject_id,
+                access.resource.type,
+            )
+
         request.state.operator_principal = principal
         request.state.operator_tenant_id = effective_tenant_id
         request.state.operator_role_id = selected_role
@@ -620,3 +733,4 @@ def require_operator_permission(
         return principal
 
     return dependency
+

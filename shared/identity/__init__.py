@@ -1,11 +1,71 @@
-"""Identity services — Argon2id 密碼憑證、密碼政策與 session 管理。
+"""Identity services — Argon2id 密碼憑證、密碼政策、session 管理與權威身份庫。
 
-Task: ODP-WEB-LOCAL-IDENTITY-CORE-001
-Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §5, §6, §7
+Task: ODP-WEB-LOCAL-IDENTITY-CORE-001, ODP-WEB-LOCAL-AUTH-API-TRUST-001
+Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §2, §3, §4, §5, §6, §7
 
-本模組實作 invite-only 本地帳號的核心服務層：
+本模組實作 invite-only 本地帳號的核心服務層與權威身份庫：
+- Account, FederatedIdentity, IdentityStore, InMemoryIdentityStore, SqlIdentityStore
 - CredentialService: Argon2id 雜湊、驗證、rehash-on-verify、dummy verify
 - PasswordPolicy: 長度、NFKC、弱密碼比對、近似 username/email 檢查
-- SessionService: 建立、輪替、撤銷、idle/absolute 到期
+- Session, SessionService, SessionRepository, SessionConfig, RevocationReason
 - LoginThrottleService: 帳號與 IP 維度的節流與鎖定
 """
+
+from .credential_service import Argon2Policy, CURRENT_POLICY, CredentialService
+from .login_throttle import (
+    LoginAttemptRecord,
+    LoginThrottleService,
+    ThrottleRepository,
+    account_attempt_key,
+    ip_attempt_key,
+)
+from .password_policy import (
+    PasswordPolicy,
+    PasswordPolicyError,
+    PasswordPolicyResult,
+    PolicyViolation,
+)
+from .session_service import (
+    InMemorySessionRepository,
+    RevocationReason,
+    Session,
+    SessionConfig,
+    SessionRepository,
+    SessionService,
+)
+from .store import (
+    Account,
+    FederatedIdentity,
+    IdentityStore,
+    InMemoryIdentityStore,
+    SqlIdentityStore,
+)
+
+__all__ = [
+    "Account",
+    "Argon2Policy",
+    "CURRENT_POLICY",
+    "CredentialService",
+    "FederatedIdentity",
+    "IdentityStore",
+    "InMemoryIdentityStore",
+    "InMemorySessionRepository",
+    "LoginAttemptRecord",
+    "LoginThrottleService",
+    "PasswordPolicy",
+    "PasswordPolicyError",
+    "PasswordPolicyResult",
+    "PolicyViolation",
+    "RevocationReason",
+    "Session",
+    "SessionConfig",
+    "SessionRepository",
+    "SessionService",
+    "SqlIdentityStore",
+    "ThrottleRepository",
+    "account_attempt_key",
+    "ip_attempt_key",
+]
+
+
+

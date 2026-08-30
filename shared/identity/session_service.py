@@ -119,6 +119,61 @@ class SessionRepository(Protocol):
         ...
 
 
+class InMemorySessionRepository:
+    """記憶體 Session 持久化實作（供測試與開發使用）。"""
+
+    def __init__(self) -> None:
+        self._sessions: dict[UUID, Session] = {}
+
+    def save(self, session: Session) -> None:
+        self._sessions[session.session_id] = session
+
+    def find_by_id(self, session_id: UUID) -> Session | None:
+        return self._sessions.get(session_id)
+
+    def find_active_by_account(self, account_id: UUID) -> list[Session]:
+        return [
+            s for s in self._sessions.values()
+            if s.account_id == account_id and s.is_active
+        ]
+
+    def revoke(
+        self, session_id: UUID, reason: str, revoked_at: datetime | None = None
+    ) -> None:
+        session = self._sessions.get(session_id)
+        if session is not None:
+            session.revoked_at = revoked_at or datetime.now(UTC)
+            session.revoked_reason = reason
+
+    def revoke_all_for_account(
+        self,
+        account_id: UUID,
+        reason: str,
+        *,
+        except_session_id: UUID | None = None,
+        revoked_at: datetime | None = None,
+    ) -> int:
+        ts = revoked_at or datetime.now(UTC)
+        count = 0
+        for s in self._sessions.values():
+            if s.account_id == account_id and s.revoked_at is None:
+                if except_session_id and s.session_id == except_session_id:
+                    continue
+                s.revoked_at = ts
+                s.revoked_reason = reason
+                count += 1
+        return count
+
+    def update_last_seen(
+        self, session_id: UUID, last_seen_at: datetime, idle_expires_at: datetime
+    ) -> None:
+        session = self._sessions.get(session_id)
+        if session is not None:
+            session.last_seen_at = last_seen_at
+            session.idle_expires_at = idle_expires_at
+
+
+
 # ────────────────────────────────────────────────────────────────────────────
 # Session 撤銷原因常數
 # ────────────────────────────────────────────────────────────────────────────
