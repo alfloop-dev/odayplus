@@ -379,6 +379,7 @@ def test_t19_fail_closed_on_bad_signature_or_expired(
 def test_t20_rbac_allow_and_deny_audit_logging(
     boundary: AuthenticationBoundary,
     identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
 ):
     """T20: Both RBAC allow and deny decisions generate security.authorization audit events."""
     engine = AuthorizationEngine(audit_log=InMemoryAuditLog())
@@ -432,7 +433,17 @@ def test_t20_rbac_allow_and_deny_audit_logging(
     identity_store.set_account_roles(account_id, [Role.AUDITOR])
     identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
 
-    token = make_jwt(LOCAL_KEY, iss=LOCAL_ISSUER, sub=str(account_id))
+    # Session is required for local tokens when session_service is wired
+    session = session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=str(account_id),
+        extra_claims={"sid": str(session.session_id)},
+    )
 
     # 1. Allowed request (VIEW) -> 200 + audit outcome=allow
     resp_allow = client.get(
@@ -546,3 +557,155 @@ def test_t21_high_risk_session_revocation_propagation(
     )
     assert resp2.status_code == 401
     assert resp2.json()["detail"] == AuthFailureReason.SESSION_REVOKED.value
+
+
+# --- T19b: Local Token Without Required sid Fails Closed ---
+
+
+def test_t19b_local_token_without_sid_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+):
+    """T19b: Local token without sid claim is rejected when session_service is wired."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="no_sid_user",
+        email="nosid@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+
+    # Token is signed correctly but omits the sid claim
+    token = make_jwt(LOCAL_KEY, iss=LOCAL_ISSUER, sub=str(account_id))
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.SESSION_NOT_FOUND
+    assert outcome.token_type == "local"
+
+
+# --- T19c: Malformed UUID Subject Fails Closed ---
+
+
+def test_t19c_malformed_uuid_subject_fails_closed(
+    boundary: AuthenticationBoundary,
+    session_service: SessionService,
+):
+    """T19c: Local token with a non-UUID subject returns 401 instead of raising ValueError."""
+    # Create a session for the token (sid required)
+    dummy_account_id = uuid4()
+    session = session_service.create_session(
+        account_id=dummy_account_id,
+        provider="local_password",
+    )
+
+    # Token with a non-UUID subject like "not-a-uuid"
+    token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub="not-a-valid-uuid",
+        extra_claims={"sid": str(session.session_id)},
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.MALFORMED_TOKEN
+    assert outcome.token_type == "local"
+
+
+# --- T21b: High-Risk Guard Denies When sid Missing ---
+
+
+def test_t21b_high_risk_guard_denies_missing_sid(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """T21b: High-risk action guard denies when session_service is wired but sid is absent."""
+    engine = AuthorizationEngine(audit_log=InMemoryAuditLog())
+    app = FastAPI()
+
+    @app.post(
+        "/api/operator/approve",
+        dependencies=[
+            Depends(
+                require_permission(
+                    resource_type="intervention",
+                    action=Action.APPROVE,
+                    engine=engine,
+                    boundary=boundary,
+                    session_service=session_service,
+                )
+            )
+        ],
+    )
+    def approve_action():
+        return {"status": "approved"}
+
+    client = TestClient(app)
+
+    # Create an account with a session, but build a boundary WITHOUT
+    # session_service so the token passes initial auth without sid
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="ops_no_sid",
+        email="ops_nosid@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+    # Build a boundary without session_service so the initial authentication
+    # succeeds without requiring sid (but the route guard has session_service
+    # and should catch it).
+    from modules.opsboard.auth.config import AuthBoundaryConfig as _Config
+
+    no_session_config = _Config(
+        audiences=frozenset([AUDIENCE]),
+        local_issuer=LOCAL_ISSUER,
+        local_signing_keys={"local-k1": LOCAL_KEY},
+        local_audiences=frozenset([AUDIENCE]),
+        identity_store=identity_store,
+        session_service=None,  # No session enforcement at boundary level
+    )
+    no_session_boundary = AuthenticationBoundary(no_session_config)
+
+    # Rebuild the route with this boundary
+    app2 = FastAPI()
+
+    @app2.post(
+        "/api/operator/approve2",
+        dependencies=[
+            Depends(
+                require_permission(
+                    resource_type="intervention",
+                    action=Action.APPROVE,
+                    engine=engine,
+                    boundary=no_session_boundary,
+                    session_service=session_service,
+                )
+            )
+        ],
+    )
+    def approve_action2():
+        return {"status": "approved"}
+
+    client2 = TestClient(app2)
+
+    # Token without sid claim
+    token = make_jwt(LOCAL_KEY, iss=LOCAL_ISSUER, sub=str(account_id))
+
+    resp = client2.post(
+        "/api/operator/approve2",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 401
+    assert resp.json()["detail"] == AuthFailureReason.SESSION_NOT_FOUND.value

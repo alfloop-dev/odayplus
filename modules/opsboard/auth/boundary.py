@@ -270,8 +270,13 @@ class AuthenticationBoundary:
             return ANONYMOUS, reason, token_type
 
         # Check session validity (Contract §5.4 / T21)
+        # When a session_service is wired, the sid claim is REQUIRED on local
+        # tokens.  A token that omits sid when the API has a durable session
+        # layer is treated as missing a required claim and fails closed.
         sid = claims.get("sid")
-        if sid is not None and self._session_service is not None:
+        if self._session_service is not None:
+            if sid is None:
+                return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND, token_type
             from uuid import UUID
 
             try:
@@ -281,6 +286,10 @@ class AuthenticationBoundary:
                     return ANONYMOUS, AuthFailureReason.SESSION_REVOKED, token_type
             except (ValueError, TypeError):
                 return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN, token_type
+        elif sid is not None:
+            # Legacy path: no session_service wired but sid present — skip
+            # validation (backwards compat with unit-test boundaries).
+            pass
 
         subject = str(claims["sub"])
         if self._identity_store is not None:
@@ -288,9 +297,11 @@ class AuthenticationBoundary:
 
             try:
                 aid = UUID(subject)
-                account = self._identity_store.find_account_by_id(aid)
             except (ValueError, TypeError):
-                account = self._identity_store.find_account_by_id(subject)
+                # Malformed UUID subject → fail closed with a stable 401,
+                # never let ValueError propagate (review issue #4).
+                return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN, token_type
+            account = self._identity_store.find_account_by_id(aid)
 
             if account is None:
                 return ANONYMOUS, AuthFailureReason.ACCOUNT_NOT_FOUND, token_type

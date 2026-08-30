@@ -125,7 +125,29 @@ def default_boundary() -> AuthenticationBoundary | None:
         from modules.opsboard.auth import AuthenticationBoundary
         from modules.opsboard.auth.config import config_from_env
 
-        config = config_from_env()
+        # Wire durable backing stores into the default boundary so that
+        # it is always connected to an identity store and a session
+        # repository (review requirement #1).  In production, callers
+        # should supply SqlIdentityStore + a durable SessionRepository;
+        # the InMemory fallbacks here ensure every path has a boundary
+        # that requires sid/account instead of silently skipping.
+        from shared.identity import (
+            InMemoryIdentityStore,
+            InMemorySessionRepository,
+            SessionConfig,
+            SessionService,
+        )
+
+        default_identity_store = InMemoryIdentityStore()
+        default_session_service = SessionService(
+            repository=InMemorySessionRepository(),
+            config=SessionConfig(),
+        )
+
+        config = config_from_env(
+            identity_store=default_identity_store,
+            session_service=default_session_service,
+        )
         _default_boundary = AuthenticationBoundary(config) if config.has_live_inputs else None
     return _default_boundary  # type: ignore[return-value]
 
@@ -296,13 +318,18 @@ def require_permission(
         if (
             (is_high_risk(action) or action in ALWAYS_AUDITED_ACTIONS)
             and principal.authenticated
-            and principal.attributes.get("sid")
             and effective_session_svc is not None
         ):
+            sid_val = principal.attributes.get("sid")
+            if not sid_val:
+                # A high-risk action without a session reference is denied
+                # when a session layer is wired (Contract §5.4 / T21).
+                _raise_unauthenticated(AuthFailureReason.SESSION_NOT_FOUND)
+
             from uuid import UUID
 
             try:
-                sid_uuid = UUID(str(principal.attributes["sid"]))
+                sid_uuid = UUID(str(sid_val))
                 session = effective_session_svc.validate_session(sid_uuid)
                 if session is None:
                     _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
@@ -671,6 +698,19 @@ def require_operator_permission(
                     _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
             except (ValueError, TypeError):
                 _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
+        elif (
+            (is_high_risk(action) or action in ALWAYS_AUDITED_ACTIONS)
+            and effective_session_svc is not None
+            and not principal.attributes.get("sid")
+        ):
+            # High-risk action without a session reference when a session
+            # layer is wired → deny (Contract §5.4 / T21).
+            decision = Decision.deny(
+                "session reference required for high-risk action",
+                policy_id="session.required",
+            )
+            _record_operator_denial(active_engine, access, decision)
+            _raise_unauthenticated(AuthFailureReason.SESSION_NOT_FOUND)
 
         if not effective_tenant_id:
             decision = Decision.deny(
