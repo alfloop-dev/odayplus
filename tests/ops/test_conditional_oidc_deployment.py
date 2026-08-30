@@ -688,4 +688,3 @@ def test_documentation_states_the_single_auth_mode_contract() -> None:
     terraform_readme = (TERRAFORM_ROOT / "README.md").read_text(encoding="utf-8")
     assert "service_auth_issuer" in terraform_readme
     assert 'when `auth_mode = "oidc"`' in terraform_readme
-
