@@ -290,7 +290,7 @@ export async function readWebSession(
     // The old signed payload is accepted only by the test runtime while the
     // migration fixtures are exercised. A deployed production process always
     // has to resolve an opaque cookie through identity.sessions.
-    if (isProductionWebRuntime(environment) && process.env.NODE_ENV !== "test") {
+    if (isProductionWebRuntime(environment)) {
       return null;
     }
     if (value.accessToken && value.subject) return value as WebSession;
@@ -302,7 +302,7 @@ export async function readWebSession(
     // Compatibility for pre-P2 unit fixtures that seal the former payload
     // directly. It is deliberately unavailable to a deployed process.
     if (
-      process.env.NODE_ENV === "test" &&
+      !isProductionWebRuntime(environment) &&
       options.sessionStore === undefined &&
       value.accessToken &&
       value.subject

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { openJson } from "../crypto";
 import {
   readWebSession,
+  sealLegacyWebSession,
   sealWebSessionReference,
 } from "../session";
 import { MockSessionStore } from "../sessionStore";
@@ -80,5 +81,28 @@ describe("authoritative server-side web sessions", () => {
     expect(payload).not.toHaveProperty("accessToken");
     expect(payload).not.toHaveProperty("subject");
     expect(payload).not.toHaveProperty("tenantId");
+  });
+
+  it("does not accept a legacy bearer payload in a production read without a store", async () => {
+    const cookie = await sealLegacyWebSession(
+      {
+        kind: "web-session",
+        accessToken: "legacy-bearer",
+        tokenType: "Bearer",
+        subject: "operator",
+        issuedAt: 100,
+        expiresAt: 200,
+      },
+      SECRET,
+    );
+
+    await expect(
+      readWebSession(cookie, {
+        secret: SECRET,
+        nowSeconds: 150,
+        environment: { NODE_ENV: "production" },
+        sessionStore: null,
+      }),
+    ).resolves.toBeNull();
   });
 });
