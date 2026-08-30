@@ -19,6 +19,8 @@ export type WebSession = ExpiringPayload & {
   accessToken: string;
   tokenType: "Bearer";
   subject: string;
+  sid?: string;
+  provider?: "local_password" | "oidc";
 };
 
 export type OidcTransaction = ExpiringPayload & {
@@ -43,7 +45,7 @@ function validExpiry(
 }
 
 function isWebSession(
-  value: WebSession | null,
+  value: Partial<WebSession> | null,
   nowSeconds?: number,
 ): value is WebSession {
   return Boolean(
@@ -52,7 +54,7 @@ function isWebSession(
       value.tokenType === "Bearer" &&
       value.accessToken &&
       value.subject &&
-      validExpiry(value, nowSeconds),
+      validExpiry(value as ExpiringPayload, nowSeconds),
   );
 }
 
@@ -83,12 +85,57 @@ export async function readWebSession(
   cookieValue: string | null | undefined,
   options: { secret?: string; nowSeconds?: number } = {},
 ): Promise<WebSession | null> {
-  const value = await openJson<WebSession>(
+  const value = await openJson<Partial<WebSession>>(
     cookieValue,
     SESSION_PURPOSE,
     options.secret,
   );
-  return isWebSession(value, options.nowSeconds) ? value : null;
+  if (!isWebSession(value, options.nowSeconds)) {
+    return null;
+  }
+
+  // Contract §5.5: Legacy payload compatibility and in-place upgrade.
+  // Legacy payloads do not have `sid`. We assign a synthetic `sid` and
+  // `provider: "oidc"` while strictly retaining the original `expiresAt`.
+  if (!value.sid) {
+    return {
+      ...value,
+      sid: crypto.randomUUID(),
+      provider: value.provider || "oidc",
+    } as WebSession;
+  }
+
+  return value as WebSession;
+}
+
+export async function rotateWebSession(
+  currentSession: WebSession,
+  options: {
+    newAccessToken?: string;
+    nowSeconds?: number;
+    ttlSeconds?: number;
+  } = {},
+): Promise<WebSession> {
+  const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
+  const ttl = options.ttlSeconds ?? (currentSession.expiresAt - nowSeconds);
+  const cappedTtl = Math.min(
+    Math.max(ttl, 1),
+    SESSION_COOKIE_MAX_AGE_SECONDS,
+  );
+
+  return {
+    kind: "web-session",
+    accessToken: options.newAccessToken ?? currentSession.accessToken,
+    tokenType: "Bearer",
+    subject: currentSession.subject,
+    sid: crypto.randomUUID(),
+    provider: currentSession.provider ?? "local_password",
+    issuedAt: nowSeconds,
+    expiresAt: Math.min(
+      nowSeconds + cappedTtl,
+      nowSeconds + SESSION_COOKIE_MAX_AGE_SECONDS,
+    ),
+  };
 }
 
 export async function sealOidcTransaction(

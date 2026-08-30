@@ -9,7 +9,7 @@ import {
   webSessionCookieName,
   webSessionCookieOptions,
 } from "../../../lib/auth/session";
-import { resolveWebBaseUrl } from "../../../lib/auth/runtime";
+import { isOidcEnabled, resolveWebBaseUrl } from "../../../lib/auth/runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,7 +21,7 @@ function clearTransaction(response: NextResponse): void {
   });
 }
 
-function callbackFailure(code: string): NextResponse {
+function callbackFailure(code: string, status = 401): NextResponse {
   const response = NextResponse.json(
     {
       error: {
@@ -29,13 +29,33 @@ function callbackFailure(code: string): NextResponse {
         summary: "OIDC authentication could not be completed.",
       },
     },
-    { status: 401, headers: { "cache-control": "no-store" } },
+    { status, headers: { "cache-control": "no-store" } },
   );
   clearTransaction(response);
   return response;
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  // 1. Fail closed if OIDC is disabled / not configured (Contract §3.2, T14)
+  let oidcActive = false;
+  try {
+    oidcActive = isOidcEnabled(process.env);
+  } catch {
+    oidcActive = false;
+  }
+
+  if (!oidcActive) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_PROVIDER_DISABLED",
+          summary: "OIDC authentication provider is disabled.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+
   if (request.nextUrl.searchParams.has("error")) {
     return callbackFailure("OIDC_PROVIDER_ERROR");
   }
@@ -78,4 +98,3 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return callbackFailure("OIDC_CALLBACK_REJECTED");
   }
 }
-

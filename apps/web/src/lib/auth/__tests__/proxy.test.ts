@@ -56,6 +56,8 @@ describe("production BFF", () => {
       accessToken: "real-access-token",
       tokenType: "Bearer",
       subject: "user-123",
+      sid: "session-123",
+      provider: "oidc",
       issuedAt: now,
       expiresAt: now + 600,
     };
@@ -329,6 +331,8 @@ async function productionSessionCookie(): Promise<string> {
       accessToken: "real-access-token",
       tokenType: "Bearer",
       subject: "user-123",
+      sid: "session-123",
+      provider: "oidc",
       issuedAt: now,
       expiresAt: now + 600,
     },
