@@ -109,6 +109,15 @@ variable "web_oidc_client_secret_ref" {
   default     = null
 }
 
+variable "identity_token_signing_key_ref" {
+  type = object({
+    secret_id = string
+    version   = string
+  })
+  description = "Pinned Secret Manager reference for the local Web-to-API access-token signing key. The same version is mounted into API and Web."
+  default     = null
+}
+
 variable "web_invoker_members" {
   type        = set(string)
   description = "IAM members allowed to invoke the Web service. The web login surface may be public while application access remains OIDC-protected."

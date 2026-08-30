@@ -728,6 +728,9 @@ jobs:
       ODP_AUTH_MODE: ${{ vars.ODP_AUTH_MODE }}
       ODP_AUTH_OIDC_ENABLED: ${{ vars.ODP_AUTH_OIDC_ENABLED }}
       ODP_WEB_SESSION_SECRET_SECRET: ${{ vars.ODP_WEB_SESSION_SECRET_SECRET }}
+      # One Secret Manager version is mounted into both API and Web. Web signs
+      # local access tokens and API verifies them as kid=local-default.
+      ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET: ${{ vars.ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET }}
       ODP_DEPLOY_ENV: ${{ inputs.environment }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
       ODP_REQUIRE_LIVE_DATA: "true"

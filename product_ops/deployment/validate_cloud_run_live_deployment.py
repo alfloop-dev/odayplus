@@ -103,6 +103,10 @@ OIDC_REQUIRED_PUBLIC_CONFIG = (
 REQUIRED_SECRET_REFERENCES = (
     "ODAY_DATABASE_URL_SECRET",
     "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+    # The same Secret Manager version is bound to API and Web. Web signs the
+    # local access token while API verifies it through its local issuer/key
+    # resolver; accepting only one half would make production login unusable.
+    "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
     "ODP_WEB_SESSION_SECRET_SECRET",
 )
 OIDC_REQUIRED_SECRET_REFERENCES = ("ODP_WEB_OIDC_CLIENT_SECRET_SECRET",)

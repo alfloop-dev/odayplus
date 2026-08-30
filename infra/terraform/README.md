@@ -11,7 +11,7 @@ memory persistence.
 | Cloud Run API | Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/healthz` liveness probe. |
 | Cloud Run Web | Immutable digest, exact release SHA, OIDC session enforcement, service-to-service identity token, private API invocation, Gen2, Direct VPC egress. |
 | Cloud SQL PostgreSQL 16 | Private IP only, `REGIONAL` HA, SSD/autoresize, PITR, 30+ backups, CMEK, encrypted connections, deletion protection. |
-| Secret Manager | Terraform-generated database URL, cursor key, and Web session secret plus references to environment-owned model credentials. External provider credentials and direct external data acquisition are disabled in consumer deployment. No secret payload is accepted as a variable or exposed as an output. |
+| Secret Manager | Terraform-generated database URL, cursor key, and Web session secret plus references to the shared Web/API local identity signing key and environment-owned model credentials. External provider credentials and direct external data acquisition are disabled in consumer deployment. No secret payload is accepted as a variable or exposed as an output. |
 | Cloud Storage | Separate CMEK-encrypted, versioned artifact and source-snapshot buckets plus the WORM audit-evidence module. |
 | Pub/Sub | CMEK job topic, ordered subscription, bounded retry, DLQ topic/subscription, regional persistence. |
 | IAM | Separate API, worker, audit-writer, and audit-retention identities with resource-level grants. |
@@ -66,6 +66,10 @@ Values, approvals, and secret payloads are owned outside Terraform:
    password-only authentication and no Google OAuth client or OIDC secret; when
    `service_auth_audiences` is empty it falls back to `oidc_audiences` so
    pre-contract deployments keep their existing accepted audience list.
+   `identity_token_signing_key_ref` is also required in production; its one
+   pinned Secret Manager version is mounted into both API and Web as
+   `ODP_IDENTITY_TOKEN_SIGNING_KEY`, and the API resolver uses `local-default`
+   for that plain key.
 5. External provider live endpoints, credentials, and Cloud NAT egress IPs are
    disabled in consumer-only platform snapshot deployment. Direct external
    provider acquisition is off.

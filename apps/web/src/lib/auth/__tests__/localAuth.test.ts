@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   authenticateLocalCredentials,
   mintLocalJwt,
@@ -7,6 +7,10 @@ import { base64UrlDecode } from "../crypto";
 import { MockIdentityStore } from "../identityStore";
 
 describe("local identity authentication", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("does not reveal a locked account until its password is correct", async () => {
     const store = new MockIdentityStore([
       {
@@ -56,5 +60,48 @@ describe("local identity authentication", () => {
     expect(claims.tenant_id).toBe("tenant-1");
     expect(claims.exp).toBe(1300);
     expect(claims).not.toHaveProperty("roles");
+  });
+
+  it("mints the production Web-to-API local token contract", async () => {
+    const signingSecret = "production-local-signing-key-at-least-32-bytes";
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ODP_IDENTITY_TOKEN_SIGNING_KEY", signingSecret);
+    vi.stubEnv("ODP_AUTH_LOCAL_ISSUER", "urn:odp:identity:local");
+    vi.stubEnv("ODP_AUTH_AUDIENCES", "https://api.example.run.app");
+
+    const token = await mintLocalJwt({
+      subject: "account-1",
+      sid: "session-1",
+      tenantId: "tenant-1",
+      nowSeconds: 1000,
+    });
+    const [encodedHeader, encodedClaims] = token.split(".");
+    const header = JSON.parse(
+      new TextDecoder().decode(base64UrlDecode(encodedHeader || "")),
+    ) as Record<string, unknown>;
+    const claims = JSON.parse(
+      new TextDecoder().decode(base64UrlDecode(encodedClaims || "")),
+    ) as Record<string, unknown>;
+
+    // This is the exact key id and issuer/audience tuple consumed by the API
+    // multi-issuer resolver for a plain ODP_IDENTITY_TOKEN_SIGNING_KEY.
+    expect(header).toMatchObject({ alg: "HS256", kid: "local-default" });
+    expect(claims).toMatchObject({
+      iss: "urn:odp:identity:local",
+      aud: "https://api.example.run.app",
+      sub: "account-1",
+      sid: "session-1",
+      tenant_id: "tenant-1",
+    });
+    expect(claims.roles).toBeUndefined();
+  });
+
+  it("fails closed in production when the local signing key is absent", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ODP_IDENTITY_TOKEN_SIGNING_KEY", "");
+
+    await expect(
+      mintLocalJwt({ subject: "account-1", sid: "session-1" }),
+    ).rejects.toThrow("ODP_IDENTITY_TOKEN_SIGNING_KEY is required in production");
   });
 });

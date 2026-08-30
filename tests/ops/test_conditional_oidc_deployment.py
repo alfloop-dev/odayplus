@@ -360,6 +360,9 @@ def test_local_mode_web_env_carries_no_oidc_configuration(tmp_path: Path) -> Non
     payload = _render_web_env({"ODP_AUTH_MODE": "local", "ODP_AUTH_OIDC_ENABLED": "false"}, tmp_path)
     assert payload["ODP_AUTH_MODE"] == "local"
     assert payload["ODP_AUTH_OIDC_ENABLED"] == "false"
+    assert payload["ODP_AUTH_LOCAL_ISSUER"] == "urn:odp:identity:local"
+    assert payload["ODP_AUTH_LOCAL_AUDIENCES"] == "https://api.example.com"
+    assert payload["ODP_AUTH_AUDIENCES"] == "https://api.example.com"
     assert not [name for name in payload if name.startswith("ODP_WEB_OIDC_")]
 
 
@@ -436,8 +439,16 @@ def test_release_payload_refuses_to_omit_the_web_origin(tmp_path: Path) -> None:
 
 def test_web_secret_bindings_are_gated_on_the_same_resolved_flag() -> None:
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert (
+        'API_SECRET_BINDINGS+=",ODP_IDENTITY_TOKEN_SIGNING_KEY='
+        '${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"'
+    ) in text
     binding = text[text.index('WEB_SECRET_BINDINGS="'):text.index("# gcloud's shortcut")]
     assert 'WEB_SECRET_BINDINGS="ODP_WEB_SESSION_SECRET=' in binding
+    assert (
+        'WEB_SECRET_BINDINGS+=",ODP_IDENTITY_TOKEN_SIGNING_KEY='
+        '${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"'
+    ) in binding
     assert (
         'if [ "${ODP_AUTH_OIDC_ENABLED}" = "true" ]; then\n'
         '  WEB_SECRET_BINDINGS+=",ODP_WEB_OIDC_CLIENT_SECRET='
@@ -538,6 +549,14 @@ def test_service_identity_inputs_stay_required_in_every_mode() -> None:
     assert by_name["config:ODP_AUTH_ISSUER"].ok is False
 
 
+def test_local_identity_signing_key_reference_is_required() -> None:
+    assert "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET" in validator.REQUIRED_SECRET_REFERENCES
+    by_name = _named_checks(
+        _preflight_env(ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET="")
+    )
+    assert by_name["secret-reference:ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET"].ok is False
+
+
 # --------------------------------------------------------------------------
 # Terraform
 # --------------------------------------------------------------------------
@@ -563,6 +582,8 @@ def test_api_runtime_auth_env_is_injected_in_every_mode() -> None:
     main_tf = (TERRAFORM_ROOT / "main.tf").read_text(encoding="utf-8")
     block = _hcl_block(main_tf, "fixed_runtime_env = ")
     for name in ("ODP_AUTH_ISSUER", "ODP_AUTH_JWKS_URI", "ODP_AUTH_AUDIENCES"):
+        assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), name
+    for name in ("ODP_AUTH_LOCAL_ISSUER", "ODP_AUTH_LOCAL_AUDIENCES"):
         assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), name
     assert "oidc_enabled" not in block, "API auth env must not be gated on the OIDC mode"
 
@@ -635,6 +656,7 @@ def test_auth_mode_variable_defaults_to_password_first() -> None:
     assert re.search(r'contains\(\["local", "oidc"\], var\.auth_mode\)', auth_mode)
     for name in ("service_auth_issuer", "service_auth_jwks_uri", "service_auth_audiences"):
         assert f'variable "{name}"' in variables, name
+    assert 'variable "identity_token_signing_key_ref"' in variables
 
 
 # --------------------------------------------------------------------------
@@ -650,6 +672,7 @@ def test_deploy_workflow_passes_both_the_mode_and_its_legacy_alias() -> None:
     assert deploy_env["ODP_AUTH_OIDC_ENABLED"] == "${{ vars.ODP_AUTH_OIDC_ENABLED }}"
     for name in ("ODP_AUTH_ISSUER", "ODP_AUTH_AUDIENCES", "ODP_AUTH_JWKS_URI"):
         assert name in deploy_env, f"{name} verifies the smoke token in every mode"
+    assert "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET" in deploy_env
 
 
 def test_deploy_workflow_supplies_the_canonical_web_origin() -> None:

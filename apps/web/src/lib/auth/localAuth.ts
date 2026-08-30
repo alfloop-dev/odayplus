@@ -4,6 +4,12 @@ import { isProductionWebRuntime } from "./runtime";
 
 const encoder = new TextEncoder();
 
+// The API trust boundary resolves the plain Secret Manager-backed
+// ODP_IDENTITY_TOKEN_SIGNING_KEY as this single local key. Keep the JOSE key
+// id explicit here so a Web-issued token can never drift from that resolver.
+export const LOCAL_IDENTITY_KEY_ID = "local-default";
+export const LOCAL_IDENTITY_ISSUER = "urn:odp:identity:local";
+
 export const COMMON_WEAK_PASSWORDS = new Set([
   "password123456",
   "123456789012",
@@ -107,10 +113,11 @@ export async function mintLocalJwt(options: {
   const header = {
     alg: "HS256",
     typ: "JWT",
-    kid: "local-identity-key",
+    kid: LOCAL_IDENTITY_KEY_ID,
   };
   const claims = {
-    iss: options.issuer || process.env.ODP_AUTH_LOCAL_ISSUER || "urn:odp:identity:local",
+    iss:
+      options.issuer || process.env.ODP_AUTH_LOCAL_ISSUER || LOCAL_IDENTITY_ISSUER,
     aud: options.audience || process.env.ODP_AUTH_AUDIENCES || "oday-plus",
     sub: options.subject,
     sid: options.sid,

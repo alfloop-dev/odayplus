@@ -85,6 +85,20 @@ resource "google_cloud_run_v2_service" "api" {
         }
       }
 
+      dynamic "env" {
+        # ODP_IDENTITY_TOKEN_SIGNING_KEY is the shared local JWT secret.
+        for_each = local.identity_token_secret_refs
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = data.google_secret_manager_secret.identity_token_signing_key[env.key].secret_id
+              version = env.value.version
+            }
+          }
+        }
+      }
+
       startup_probe {
         initial_delay_seconds = 5
         timeout_seconds       = 5
@@ -210,6 +224,20 @@ resource "google_cloud_run_v2_service" "web" {
       }
 
       dynamic "env" {
+        # ODP_IDENTITY_TOKEN_SIGNING_KEY is the shared local JWT secret.
+        for_each = local.identity_token_secret_refs
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = data.google_secret_manager_secret.identity_token_signing_key[env.key].secret_id
+              version = env.value.version
+            }
+          }
+        }
+      }
+
+      dynamic "env" {
         for_each = local.web_oidc_secret_refs
         content {
           name = env.key
@@ -260,6 +288,8 @@ resource "google_cloud_run_v2_service" "web" {
     google_compute_subnetwork_iam_member.web_network_user,
     google_secret_manager_secret_iam_member.web_session_secret,
     google_secret_manager_secret_iam_member.web_oidc_client_secret,
+    google_secret_manager_secret_iam_member.web_identity_token_signing_key,
+    google_secret_manager_secret_iam_member.api_identity_token_signing_key,
     google_secret_manager_secret_version.web_session_secret,
   ]
 }
