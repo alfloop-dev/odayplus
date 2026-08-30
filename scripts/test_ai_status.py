@@ -11,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -4771,6 +4772,7 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "done": [TASK_ID, "finished"],
         "supersede": [TASK_ID, "superseded"],
         "approve": [TASK_ID, "approved"],
+        "approve_continuation": [TASK_ID, "operator approved review-churn continuation", "2099-01-01T00:00:00Z", "nonce-test"],
         "archive_migrate": [],
         "wave open": ["open", "W-2026-07-29"],
         "wave close": ["close"],
@@ -4815,6 +4817,98 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         ]
         self.assertEqual([], offenders)
         self.assertFalse(hasattr(ai_status, "current_actor"))
+
+
+class HumanContinuationApprovalTests(unittest.TestCase):
+    def _task(self, **updates: Any) -> dict[str, Any]:
+        task: dict[str, Any] = {
+            "id": "ODP-CONTINUATION-001",
+            "title": "Review churn recovery",
+            "owner": "Codex2",
+            "reviewer": "Claude2",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T18:00:00Z",
+            "next": "Escalated to Human/Ops after repeated review churn.",
+        }
+        task.update(updates)
+        return task
+
+    def _state(self, task: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "tasks": [task or self._task()],
+            "agents": [],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+    def test_human_ops_issues_scoped_expiring_nonce_bound_approval(self) -> None:
+        state = self._state()
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "append_log") as append_log,
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            ai_status.command_approve_continuation(
+                state,
+                [
+                    "ODP-CONTINUATION-001",
+                    "Reviewed the churn evidence and authorize one implementation continuation.",
+                    "2099-01-01T00:00:00Z",
+                    "nonce-continuation-1",
+                ],
+            )
+
+        approval = state["tasks"][0]["human_continuation_approval"]
+        self.assertEqual(approval["status"], "issued")
+        self.assertEqual(approval["task_id"], "ODP-CONTINUATION-001")
+        self.assertEqual(approval["task_scope"], "ODP-CONTINUATION-001")
+        self.assertEqual(approval["scope"], {"task_id": "ODP-CONTINUATION-001"})
+        self.assertEqual(approval["issued_by"], "Human/Ops")
+        self.assertEqual(approval["nonce"], "nonce-continuation-1")
+        self.assertEqual(
+            state["human_continuation_approval_nonce_registry"]["nonce-continuation-1"]["approval_id"],
+            approval["approval_id"],
+        )
+        self.assertEqual(append_log.call_args.args[0]["type"], "human_continuation_approval_issued")
+
+    def test_non_human_cannot_issue_and_hard_gate_is_not_eligible(self) -> None:
+        state = self._state()
+        before = json.dumps(state, sort_keys=True)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex2"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+                ai_status.command_approve_continuation(
+                    state,
+                    ["ODP-CONTINUATION-001", "reason", "2099-01-01T00:00:00Z"],
+                )
+        self.assertEqual(before, json.dumps(state, sort_keys=True))
+
+        deployment_task = self._task(next="Review churn is also blocked pending production deployment approval.")
+        self.assertIn("independent", ai_status.continuation_approval_gate_error(deployment_task) or "")
+
+    def test_expired_and_reused_nonce_are_rejected_before_mutation(self) -> None:
+        state = self._state()
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "future"):
+                ai_status.command_approve_continuation(
+                    state,
+                    ["ODP-CONTINUATION-001", "too late", "2020-01-01T00:00:00Z", "nonce-expired"],
+                )
+            ai_status.command_approve_continuation(
+                state,
+                ["ODP-CONTINUATION-001", "one use", "2099-01-01T00:00:00Z", "nonce-once"],
+            )
+        approval = state["tasks"][0].pop("human_continuation_approval")
+        approval["status"] = "consumed"
+        state["tasks"][0]["human_continuation_approval_history"] = [approval]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "already been used"):
+                ai_status.command_approve_continuation(
+                    state,
+                    ["ODP-CONTINUATION-001", "replay", "2099-01-01T00:00:00Z", "nonce-once"],
+                )
 
 
 class HistoricalClosemergeProvenanceTests(unittest.TestCase):
