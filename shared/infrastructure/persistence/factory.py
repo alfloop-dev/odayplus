@@ -270,6 +270,7 @@ def _durable_bundle(
         repository=InMemorySessionRepository(),
         config=SessionConfig(),
     )
+
     worm_root = Path(db_path).parent / f"{Path(db_path).stem}-audit-worm"
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env(
         default_root=worm_root
