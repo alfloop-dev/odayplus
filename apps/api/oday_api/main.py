@@ -137,7 +137,7 @@ else:
         # Defaults come from the persistence factory, including the production
         # PostgreSQL runtime. Explicit arguments still win so tests can inject
         # hand-built doubles. See ODP-PV-009.
-        from apps.api.oday_api.security.dependencies import bind_persistence
+        from apps.api.oday_api.security.dependencies import bind_audit_log, bind_persistence
         from shared.infrastructure.persistence import build_persistence
         from shared.observability import (
             RouteTemplateResolver,
@@ -211,6 +211,11 @@ else:
             "mlflow-production-unverified" if require_live_data else "local-baseline-seed"
         )
         audit_log = audit_log or bundle.audit_log
+        # Every router below records through this one sink; the authentication
+        # boundary must too, otherwise its success/failure events land in a
+        # private in-memory log nothing can read
+        # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+        bind_audit_log(audit_log)
         evidence_store = evidence_store or bundle.evidence_store
         job_queue = job_queue or bundle.job_queue
         heatzone_store = heatzone_store or bundle.heatzone_store

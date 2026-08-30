@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from modules.opsboard.auth.jwt import SigningKey
+from shared.auth.mode import API_OIDC_ISSUER_VARS, oidc_provider_enabled
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,11 @@ class AuthBoundaryConfig:
     service_audiences: frozenset[str] = frozenset()
     identity_store: Any = None
     session_service: Any = None
+    # Whether the deployment *authoritatively* enables the OIDC provider
+    # (ODP_AUTH_MODE / ODP_AUTH_OIDC_ENABLED). Defaults to True so a config
+    # built directly in code keeps its OIDC fields meaningful; only
+    # :func:`config_from_env` consults the deployment gate.
+    oidc_enabled: bool = True
 
     @property
     def is_configured(self) -> bool:
@@ -74,9 +80,12 @@ class AuthBoundaryConfig:
         ):
             return True
 
-        # OIDC provider configured
+        # OIDC provider configured. A provider the deployment turned off is not
+        # a configuration, however complete its leftover inputs look
+        # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
         if (
-            bool(self.oidc_issuer)
+            self.oidc_enabled
+            and bool(self.oidc_issuer)
             and (bool(self.oidc_audiences) or bool(self.audiences))
             and (bool(self.oidc_signing_keys) or bool(self.oidc_jwks_uri))
         ):
@@ -159,6 +168,10 @@ def config_from_env(
     - ODP_AUTH_SERVICE_ISSUER, ODP_AUTH_SERVICE_JWKS_URI
     - ODP_AUTH_ISSUER, ODP_AUTH_AUDIENCES, ODP_AUTH_HS256_KEYS, ODP_AUTH_JWKS_URI
     - ODP_AUTH_PRINCIPAL_MAP, ODP_AUTH_LEEWAY_SECONDS, ODP_AUTH_JWKS_CACHE_TTL_SECONDS
+    - ODP_AUTH_MODE / ODP_AUTH_OIDC_ENABLED (the authoritative OIDC gate)
+
+    The OIDC inputs are only accepted when the deployment mode enables the OIDC
+    provider; see :mod:`shared.auth.mode`.
     """
     source = os.environ if env is None else env
 
@@ -209,9 +222,22 @@ def config_from_env(
         )
     )
 
-    # OIDC config
+    # OIDC config, gated on the authoritative deployment mode. ODP_AUTH_MODE
+    # (or its legacy ODP_AUTH_OIDC_ENABLED alias) decides whether this
+    # deployment runs the OIDC provider at all; without the gate, an
+    # environment that selected password-first still carried its previous OIDC
+    # issuer/JWKS values, and the boundary went on verifying and trusting
+    # OIDC-issued tokens that the deployment had turned off
+    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001). An invalid or self-contradicting mode
+    # resolves to "not enabled" so a broken configuration narrows trust rather
+    # than widening it.
+    oidc_enabled = oidc_provider_enabled(source, oidc_issuer_vars=API_OIDC_ISSUER_VARS)
     oidc_issuer = (source.get("ODP_AUTH_OIDC_ISSUER") or "").strip() or None
     oidc_jwks_uri = (source.get("ODP_AUTH_OIDC_JWKS_URI") or "").strip() or None
+    if not oidc_enabled:
+        oidc_issuer = None
+        oidc_jwks_uri = None
+        oidc_audiences = frozenset()
 
     # Service config
     service_issuer = (
@@ -295,6 +321,7 @@ def config_from_env(
         oidc_issuer=oidc_issuer,
         oidc_jwks_uri=oidc_jwks_uri,
         oidc_audiences=oidc_audiences,
+        oidc_enabled=oidc_enabled,
         service_issuer=service_issuer,
         service_signing_keys=keys,
         service_jwks_uri=service_jwks_uri,

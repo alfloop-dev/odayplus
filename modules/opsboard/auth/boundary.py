@@ -219,7 +219,14 @@ class AuthenticationBoundary:
         is_local = (iss == local_issuer) or (
             bool(self._config.local_signing_keys) and iss == "urn:odp:identity:local"
         )
-        is_oidc = bool(self._config.oidc_issuer and iss == self._config.oidc_issuer)
+        # The deployment mode gate is checked before the issuer match, not
+        # after: a disabled OIDC provider must not reach key resolution or
+        # claim validation at all (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+        is_oidc = bool(
+            self._config.oidc_enabled
+            and self._config.oidc_issuer
+            and iss == self._config.oidc_issuer
+        )
         is_service = bool(
             (self._config.service_issuer and iss == self._config.service_issuer)
             or (

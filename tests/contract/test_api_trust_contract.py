@@ -33,6 +33,7 @@ from apps.api.oday_api.security.dependencies import (
     reset_default_boundary,
 )
 from modules.opsboard.auth import (
+    AUTHENTICATION_EVENT_TYPE,
     AuthBoundaryConfig,
     AuthenticationBoundary,
     AuthFailureReason,
@@ -1070,3 +1071,409 @@ def test_regression_bound_persistence_backs_the_default_boundary(monkeypatch):
         principal_from_headers({"authorization": f"Bearer {token}"})
     assert excinfo.value.status_code == 401
     assert excinfo.value.detail == AuthFailureReason.SESSION_REVOKED.value
+
+
+# --- Regression: the running app's audit sink backs the auth boundary ---
+
+
+def test_regression_create_app_binds_its_audit_sink_to_the_boundary(monkeypatch):
+    """``security.authentication`` events must reach the app's durable sink.
+
+    ``default_boundary()`` used to construct ``AuthenticationBoundary(config)``
+    with no sink, so the boundary kept a private ``InMemoryAuditLog`` while
+    every router recorded through ``bundle.audit_log``. Authentication
+    successes and failures were therefore written where nothing could read
+    them: the contract's authentication audit requirement was satisfied in
+    form only.
+    """
+    from apps.api.oday_api.security.dependencies import (
+        bind_audit_log,
+        bind_persistence,
+        default_boundary,
+    )
+    from shared.infrastructure.persistence import build_persistence
+
+    monkeypatch.setenv("ODP_AUTH_LOCAL_ISSUER", LOCAL_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_LOCAL_HS256_KEYS", f"local-k1:{LOCAL_SECRET.decode()}")
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
+
+    bundle = build_persistence(mode="memory")
+    bind_persistence(bundle)
+    # create_app resolves one effective sink and hands it to every router; it
+    # binds that same object to the boundary.
+    bind_audit_log(bundle.audit_log)
+
+    active_boundary = default_boundary()
+    assert active_boundary is not None
+    assert active_boundary.audit_log is bundle.audit_log
+
+    # A real failed authentication lands in the app's sink, not a private one.
+    with pytest.raises(HTTPException) as excinfo:
+        principal_from_headers(
+            {"authorization": "Bearer not-a-jwt", "x-correlation-id": "cid-auth-sink"}
+        )
+    assert excinfo.value.status_code == 401
+
+    events = bundle.audit_log.list_events(correlation_id="cid-auth-sink")
+    assert [event.event_type for event in events] == [AUTHENTICATION_EVENT_TYPE]
+    assert events[0].outcome == "failure"
+
+
+def test_regression_default_boundary_falls_back_to_the_bundle_audit_log(monkeypatch):
+    """Without an explicit sink the boundary still uses the bundle's, never a private log."""
+    from apps.api.oday_api.security.dependencies import (
+        bind_persistence,
+        default_boundary,
+    )
+    from shared.infrastructure.persistence import build_persistence
+
+    monkeypatch.setenv("ODP_AUTH_LOCAL_ISSUER", LOCAL_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_LOCAL_HS256_KEYS", f"local-k1:{LOCAL_SECRET.decode()}")
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
+
+    bundle = build_persistence(mode="memory")
+    bind_persistence(bundle)
+
+    active_boundary = default_boundary()
+    assert active_boundary is not None
+    assert active_boundary.audit_log is bundle.audit_log
+
+
+# --- Regression: an allow that cannot be audited is not granted ---
+
+
+class _FailingAuditLog:
+    """Audit sink whose ``record`` always fails."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    def record(self, event):
+        self.attempts += 1
+        raise RuntimeError("audit sink unavailable")
+
+    def list_events(self, **_kwargs):
+        return []
+
+
+class _CapturingDeadLetter:
+    def __init__(self) -> None:
+        self.events: list[Any] = []
+
+    def record(self, event):
+        self.events.append(event)
+        return event
+
+
+def _operator_view_client(engine, boundary) -> TestClient:
+    app = FastAPI()
+
+    @app.get(
+        "/api/operator/view",
+        dependencies=[
+            Depends(
+                require_operator_permission(
+                    resource_type=OPERATOR_CONSOLE_RESOURCE,
+                    action=Action.VIEW,
+                    engine=engine,
+                    boundary=boundary,
+                )
+            )
+        ],
+    )
+    def view_route():
+        return {"status": "ok"}
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _seed_auditor(identity_store, session_service) -> str:
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="allow_audit_user",
+            email="allow_audit@example.com",
+            status="active",
+        )
+    )
+    identity_store.set_account_roles(account_id, [Role.AUDITOR])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+    session = session_service.create_session(account_id=account_id, provider="local_password")
+    return make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+
+
+def test_regression_allow_audit_sink_failure_is_dead_lettered(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """A failing primary sink must not produce an unaudited allow.
+
+    The guard used to log the exception and grant access anyway, so a sink
+    outage silently turned every permitted request into a grant with no
+    auditable event behind it. The event is now dead-lettered instead.
+    """
+    from apps.api.oday_api.security.dependencies import (
+        reset_audit_dead_letter,
+        set_audit_dead_letter,
+    )
+
+    failing = _FailingAuditLog()
+    dead_letter = _CapturingDeadLetter()
+    engine = AuthorizationEngine(audit_log=failing)
+    token = _seed_auditor(identity_store, session_service)
+
+    set_audit_dead_letter(dead_letter)
+    try:
+        client = _operator_view_client(engine, boundary)
+        resp = client.get(
+            "/api/operator/view",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "x-correlation-id": "cid-allow-dead-letter",
+            },
+        )
+    finally:
+        reset_audit_dead_letter()
+
+    assert resp.status_code == 200
+    assert failing.attempts == 1
+    assert len(dead_letter.events) == 1
+    assert dead_letter.events[0].outcome == "allow"
+    assert dead_letter.events[0].correlation_id == "cid-allow-dead-letter"
+
+
+def test_regression_allow_fails_closed_when_audit_is_unrecoverable(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """With both the sink and the dead-letter gone, the allow is refused, not granted."""
+    from apps.api.oday_api.security.dependencies import (
+        AUDIT_UNAVAILABLE_DETAIL,
+        reset_audit_dead_letter,
+        set_audit_dead_letter,
+    )
+
+    engine = AuthorizationEngine(audit_log=_FailingAuditLog())
+    token = _seed_auditor(identity_store, session_service)
+
+    set_audit_dead_letter(_FailingAuditLog())
+    try:
+        client = _operator_view_client(engine, boundary)
+        resp = client.get(
+            "/api/operator/view",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    finally:
+        reset_audit_dead_letter()
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == AUDIT_UNAVAILABLE_DETAIL
+
+
+def test_regression_require_permission_allow_fails_closed_without_audit(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """The same rule applies to the plain ``require_permission`` guard."""
+    from apps.api.oday_api.security.dependencies import (
+        AUDIT_UNAVAILABLE_DETAIL,
+        reset_audit_dead_letter,
+        set_audit_dead_letter,
+    )
+
+    engine = AuthorizationEngine(audit_log=_FailingAuditLog())
+    token = _seed_auditor(identity_store, session_service)
+
+    app = FastAPI()
+
+    @app.get(
+        "/api/listing",
+        dependencies=[
+            Depends(
+                require_permission(
+                    "listing",
+                    Action.VIEW,
+                    engine=engine,
+                    boundary=boundary,
+                    data_classification=DataClassification.INTERNAL,
+                )
+            )
+        ],
+    )
+    def listing_route():
+        return {"status": "ok"}
+
+    set_audit_dead_letter(_FailingAuditLog())
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/api/listing", headers={"Authorization": f"Bearer {token}"})
+    finally:
+        reset_audit_dead_letter()
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == AUDIT_UNAVAILABLE_DETAIL
+
+
+def test_regression_default_dead_letter_logs_the_event(caplog):
+    """The default dead-letter emits the full canonical event as one ERROR line."""
+    import json
+    import logging
+
+    from apps.api.oday_api.security.dependencies import LoggingAuditDeadLetter
+    from shared.audit.events import AuditEvent
+
+    event = AuditEvent(
+        event_type="security.authorization",
+        actor="actor-1",
+        action="view",
+        resource="operator_console",
+        outcome="allow",
+        correlation_id="cid-dead-letter-log",
+    )
+    with caplog.at_level(logging.ERROR):
+        LoggingAuditDeadLetter().record(event)
+
+    records = [r for r in caplog.records if LoggingAuditDeadLetter.marker in r.getMessage()]
+    assert len(records) == 1
+    payload = json.loads(records[0].getMessage().split(" ", 1)[1])
+    assert payload["correlation_id"] == "cid-dead-letter-log"
+    assert payload["outcome"] == "allow"
+
+
+# --- Regression: ODP_AUTH_MODE is the authoritative OIDC gate ---
+
+
+def test_regression_local_mode_discards_complete_oidc_inputs():
+    """mode=local + complete OIDC inputs must not report OIDC as configured."""
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_MODE": "local",
+        "ODP_AUTH_OIDC_ENABLED": "false",
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_JWKS_URI": "https://accounts.google.com/jwks",
+    }
+    config = config_from_env(env)
+
+    assert config.oidc_enabled is False
+    assert config.oidc_issuer is None
+    assert config.oidc_jwks_uri is None
+    assert config.oidc_audiences == frozenset()
+    assert config.is_configured is False
+
+
+def test_regression_local_mode_rejects_an_oidc_token(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """An OIDC token is refused when the deployment selected password-first.
+
+    The boundary previously verified and trusted it: only the deploy path read
+    ODP_AUTH_MODE, so an environment that turned OIDC off while leaving its
+    issuer/JWKS values behind kept accepting OIDC-issued identities.
+    """
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_MODE": "local",
+        "ODP_AUTH_LOCAL_ISSUER": LOCAL_ISSUER,
+        "ODP_AUTH_LOCAL_HS256_KEYS": f"local-k1:{LOCAL_SECRET.decode()}",
+        "ODP_AUTH_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+    }
+    config = config_from_env(
+        env, identity_store=identity_store, session_service=session_service
+    )
+    # The local provider still works, so this is a gate on OIDC, not an outage.
+    assert config.is_configured is True
+
+    gated = AuthenticationBoundary(config)
+    oidc_token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="google-user-1")
+    outcome = gated.authenticate(Credentials(bearer_token=oidc_token))
+
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.ISSUER_MISMATCH
+
+
+def test_regression_conflicting_mode_and_flag_disable_oidc():
+    """A self-contradicting configuration narrows trust instead of picking a winner."""
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_OIDC_ENABLED": "false",
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_JWKS_URI": "https://accounts.google.com/jwks",
+    }
+    config = config_from_env(env)
+
+    assert config.oidc_enabled is False
+    assert config.oidc_issuer is None
+
+
+def test_regression_oidc_mode_still_accepts_oidc_inputs(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """The gate keeps OIDC working when the deployment actually selected it."""
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_MODE": "oidc",
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_JWKS_URI": "https://accounts.google.com/jwks",
+    }
+    config = config_from_env(
+        env, identity_store=identity_store, session_service=session_service
+    )
+
+    assert config.oidc_enabled is True
+    assert config.oidc_issuer == OIDC_ISSUER
+    assert config.is_configured is True
+
+
+def test_regression_unset_mode_keeps_pre_contract_oidc_deployments_working(
+    identity_store: InMemoryIdentityStore, session_service: SessionService
+):
+    """No explicit mode + a configured API OIDC issuer stays on OIDC.
+
+    The API process never receives ODP_WEB_OIDC_ISSUER, so the deployment
+    resolver's pre-contract signal is read from ODP_AUTH_OIDC_ISSUER here. A
+    deployment that configured OIDC before ODP_AUTH_MODE existed must not lose
+    its provider to this gate.
+    """
+    from modules.opsboard.auth.config import config_from_env
+
+    env = {
+        "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        "ODP_AUTH_OIDC_JWKS_URI": "https://accounts.google.com/jwks",
+    }
+    config = config_from_env(
+        env, identity_store=identity_store, session_service=session_service
+    )
+
+    assert config.oidc_enabled is True
+    assert config.oidc_issuer == OIDC_ISSUER
+
+
+def test_regression_placeholder_oidc_issuer_does_not_enable_the_provider():
+    """A placeholder issuer is not a configuration, on either side of the release."""
+    from modules.opsboard.auth.config import config_from_env
+
+    config = config_from_env({"ODP_AUTH_OIDC_ISSUER": "placeholder"})
+
+    assert config.oidc_enabled is False
+    assert config.oidc_issuer is None
