@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "../../../app/login/route";
+import { openJson } from "../crypto";
 import {
   readWebSession,
   sealWebSession,
@@ -159,6 +160,14 @@ describe("password-first login route handler", () => {
     expect(decrypted?.subject).toBe("admin");
     expect(decrypted?.provider).toBe("local_password");
     expect(decrypted?.sid).toBeTruthy();
+    const cookiePayload = await openJson<Record<string, unknown>>(
+      cookieValue,
+      "web-session",
+      SECRET,
+    );
+    expect(cookiePayload).not.toHaveProperty("accessToken");
+    expect(cookiePayload).not.toHaveProperty("subject");
+    expect(cookiePayload).not.toHaveProperty("tenantId");
   });
 
   it("T12: redirects to safe target and sanitizes hostile returnTo on login", async () => {

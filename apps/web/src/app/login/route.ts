@@ -11,7 +11,7 @@ import {
   oidcTransactionCookieOptions,
   readWebSession,
   sealOidcTransaction,
-  sealWebSession,
+  sealWebSessionReference,
   webSessionCookieName,
   webSessionCookieOptions,
   type WebSession,
@@ -21,7 +21,11 @@ import {
   authenticateLocalCredentials,
   mintLocalJwt,
 } from "../../lib/auth/localAuth";
-import { getDefaultSessionStore } from "../../lib/auth/sessionStore";
+import {
+  DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+  getDefaultSessionStore,
+  MAX_SESSION_ABSOLUTE_LIFETIME_MS,
+} from "../../lib/auth/sessionStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -233,9 +237,23 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     request.cookies.get(webSessionCookieName)?.value,
   ).catch(() => null);
   if (existingSession) {
-    return NextResponse.redirect(
+    const response = NextResponse.redirect(
       new URL(returnTo, resolveWebBaseUrl(request.nextUrl.origin)),
     );
+    if (existingSession.legacyUpgrade) {
+      response.cookies.set(
+        webSessionCookieName,
+        await sealWebSessionReference(existingSession),
+        {
+          ...webSessionCookieOptions,
+          maxAge: Math.max(
+            1,
+            existingSession.expiresAt - Math.floor(Date.now() / 1000),
+          ),
+        },
+      );
+    }
+    return response;
   }
 
   // 2. Explicit OIDC flow request
@@ -390,7 +408,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const now = Math.floor(Date.now() / 1000);
   const sid = crypto.randomUUID();
   const accessToken = await mintLocalJwt({
-    subject: authResult.account.username || authResult.account.id,
+    // The API contract requires sub=account_id, never a browser-facing name.
+    subject: authResult.account.id,
     sid,
     tenantId: authResult.account.tenantId,
     nowSeconds: now,
@@ -400,25 +419,55 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     kind: "web-session",
     accessToken,
     tokenType: "Bearer",
-    subject: authResult.account.username || authResult.account.id,
+    subject: authResult.account.username,
+    accountId: authResult.account.id,
+    tenantId: authResult.account.tenantId,
     sid,
     provider: "local_password",
     issuedAt: now,
     expiresAt: now + webSessionCookieOptions.maxAge,
   };
 
-  const store = getDefaultSessionStore();
-  if (store) {
+  const store = getDefaultSessionStore(process.env);
+  if (!store) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_NOT_CONFIGURED",
+          summary: "Web authentication is not configured.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+  try {
     await store.createSession({
       sessionId: sid,
       accountId: authResult.account.id,
       provider: "local_password",
-      idleTimeoutMs: webSessionCookieOptions.maxAge * 1000,
-      absoluteLifetimeMs: webSessionCookieOptions.maxAge * 1000,
-    }).catch(() => {});
+      accessToken,
+      subject: authResult.account.username,
+      tenantId: authResult.account.tenantId,
+      idleTimeoutMs: DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+      absoluteLifetimeMs: MAX_SESSION_ABSOLUTE_LIFETIME_MS,
+    });
+  } catch {
+    // Never issue a cookie that cannot be checked against the authoritative
+    // session store. This is fail-closed on a database outage.
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_UNAVAILABLE",
+          summary: "Web authentication is temporarily unavailable.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
   }
 
-  const sealedCookie = await sealWebSession(session);
+  // Only the opaque sid reference is sealed into the browser cookie. The
+  // bearer remains in identity.sessions for the BFF to retrieve server-side.
+  const sealedCookie = await sealWebSessionReference(session);
 
   // 5. Build Response
   const accept = request.headers.get("accept") || "";

@@ -3,15 +3,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../../../app/auth/password/route";
 import {
   readWebSession,
+  sealWebSessionReference,
   sealWebSession,
   webSessionCookieName,
   type WebSession,
 } from "../session";
 import { validatePasswordPolicy } from "../localAuth";
+import { MockIdentityStore, setIdentityStoreForTests } from "../identityStore";
+import { MockSessionStore, setSessionStoreForTests } from "../sessionStore";
 
 const SECRET = "test-session-secret-with-at-least-32-bytes";
 
 afterEach(() => {
+  setIdentityStoreForTests(undefined);
+  setSessionStoreForTests(undefined);
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -146,5 +151,78 @@ describe("password policy & change route", () => {
     // SID must be rotated
     expect(decrypted?.sid).not.toBe(originalSession.sid);
     expect(decrypted?.issuedAt).toBeGreaterThanOrEqual(now);
+  });
+
+  it("persists the new password and revokes the old and other sessions", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    const identityStore = new MockIdentityStore([
+      {
+        accountId: "account-1",
+        tenantId: "tenant-1",
+        username: "operator",
+        email: "operator@example.com",
+        status: "active",
+        password: "OldPassword123!",
+      },
+    ]);
+    const sessionStore = new MockSessionStore();
+    setIdentityStoreForTests(identityStore);
+    setSessionStoreForTests(sessionStore);
+    const now = Math.floor(Date.now() / 1000);
+    await sessionStore.createSession({
+      sessionId: "old-session",
+      accountId: "account-1",
+      provider: "local_password",
+      accessToken: "old-token",
+      subject: "operator",
+      tenantId: "tenant-1",
+      idleTimeoutMs: 30 * 60 * 1000,
+      absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+    });
+    await sessionStore.createSession({
+      sessionId: "other-session",
+      accountId: "account-1",
+      provider: "local_password",
+      accessToken: "other-token",
+      subject: "operator",
+      tenantId: "tenant-1",
+      idleTimeoutMs: 30 * 60 * 1000,
+      absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+    });
+    const cookie = await sealWebSessionReference(
+      {
+        kind: "web-session",
+        sid: "old-session",
+        provider: "local_password",
+        issuedAt: now,
+        expiresAt: now + 3600,
+      },
+      SECRET,
+    );
+    const request = new NextRequest("https://ops.oday.plus/auth/password", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        currentPassword: "OldPassword123!",
+        newPassword: "NewStrongPassword2026!",
+      }),
+    });
+    request.headers.set("origin", "https://ops.oday.plus");
+    request.cookies.set(webSessionCookieName, cookie);
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    await expect(sessionStore.validateSession("old-session")).resolves.toBeNull();
+    await expect(sessionStore.validateSession("other-session")).resolves.toBeNull();
+    const credential = await identityStore.getPasswordCredential("account-1");
+    await expect(
+      identityStore.verifyPassword(
+        credential?.phcHash || "",
+        "NewStrongPassword2026!",
+      ),
+    ).resolves.toMatchObject({ valid: true });
+    expect(sessionStore.sessions.size).toBe(3);
   });
 });

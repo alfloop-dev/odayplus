@@ -24,6 +24,13 @@ export interface PasswordCredential {
 export interface IdentityStore {
   /** Find an active account by username (case-insensitive, within any tenant). */
   findAccountByUsername(username: string): Promise<IdentityAccount | null>;
+  /** Resolve a session account without trusting the browser subject. */
+  findAccountById?(accountId: string): Promise<IdentityAccount | null>;
+  /** Resolve an OIDC identity only when it is explicitly linked. */
+  findAccountByFederatedIdentity?(
+    issuer: string,
+    subject: string,
+  ): Promise<IdentityAccount | null>;
   /** Fetch password credential for an account. */
   getPasswordCredential(accountId: string): Promise<PasswordCredential | null>;
   /** Verify password against stored Argon2id hash. Returns { valid, newHash? }. */
@@ -82,6 +89,50 @@ export class PostgresIdentityStore implements IdentityStore {
        WHERE lower(username) = lower($1)
        LIMIT 1`,
       [username.trim()],
+    );
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      accountId: row.account_id,
+      tenantId: row.tenant_id,
+      username: row.username,
+      email: row.email,
+      status: row.status,
+    };
+  }
+
+  async findAccountById(accountId: string): Promise<IdentityAccount | null> {
+    const pool = await this.pool();
+    const result = await pool.query(
+      `SELECT account_id, tenant_id, username, email, status
+       FROM identity.accounts
+       WHERE account_id = $1
+       LIMIT 1`,
+      [accountId],
+    );
+    if (result.rows.length === 0) return null;
+    const row = result.rows[0];
+    return {
+      accountId: row.account_id,
+      tenantId: row.tenant_id,
+      username: row.username,
+      email: row.email,
+      status: row.status,
+    };
+  }
+
+  async findAccountByFederatedIdentity(
+    issuer: string,
+    subject: string,
+  ): Promise<IdentityAccount | null> {
+    const pool = await this.pool();
+    const result = await pool.query(
+      `SELECT a.account_id, a.tenant_id, a.username, a.email, a.status
+       FROM identity.federated_identities f
+       JOIN identity.accounts a ON a.account_id = f.account_id
+       WHERE f.issuer = $1 AND f.subject = $2
+       LIMIT 1`,
+      [issuer, subject],
     );
     if (result.rows.length === 0) return null;
     const row = result.rows[0];
@@ -153,7 +204,7 @@ export class PostgresIdentityStore implements IdentityStore {
 
   async hashPassword(password: string): Promise<string> {
     const argon2 = await this.argon2();
-    return argon2.hash(password, {
+    return argon2.hash(password.normalize("NFKC"), {
       type: argon2.argon2id,
       memoryCost: 65536,
       timeCost: 3,
@@ -232,6 +283,30 @@ export class MockIdentityStore implements IdentityStore {
     };
   }
 
+  async findAccountById(accountId: string): Promise<IdentityAccount | null> {
+    for (const entry of this.accounts.values()) {
+      if (entry.accountId === accountId) {
+        return {
+          accountId: entry.accountId,
+          tenantId: entry.tenantId,
+          username: entry.username,
+          email: entry.email,
+          status: entry.status,
+        };
+      }
+    }
+    return null;
+  }
+
+  async findAccountByFederatedIdentity(
+    _issuer: string,
+    _subject: string,
+  ): Promise<IdentityAccount | null> {
+    // The mock has no separate federated identity table. Tests that exercise
+    // callback linking can provide a store implementation with this method.
+    return null;
+  }
+
   async getPasswordCredential(accountId: string): Promise<PasswordCredential | null> {
     for (const entry of this.accounts.values()) {
       if (entry.accountId === accountId) {
@@ -264,11 +339,17 @@ export class MockIdentityStore implements IdentityStore {
   }
 
   async hashPassword(password: string): Promise<string> {
-    return password; // Mock: store plaintext
+    return password.normalize("NFKC"); // Mock: store plaintext
   }
 
   async changePassword(accountId: string, newHash: string): Promise<void> {
-    await this.updatePasswordHash(accountId, newHash);
+    for (const [key, entry] of this.accounts.entries()) {
+      if (entry.accountId === accountId) {
+        this.accounts.set(key, { ...entry, phcHash: newHash, mustChange: false });
+        return;
+      }
+    }
+    throw new Error("Account not found");
   }
 
   async dummyVerify(): Promise<void> {
@@ -279,6 +360,12 @@ export class MockIdentityStore implements IdentityStore {
 }
 
 let _defaultStore: IdentityStore | null = null;
+let _overrideStore: IdentityStore | null | undefined;
+
+/** Test hook; production callers always use the configured PostgreSQL store. */
+export function setIdentityStoreForTests(store: IdentityStore | null | undefined): void {
+  _overrideStore = store;
+}
 
 /**
  * Get or create the default identity store.
@@ -286,6 +373,7 @@ let _defaultStore: IdentityStore | null = null;
  * In dev without DB: returns null (caller falls back to dev accounts).
  */
 export function getDefaultIdentityStore(): IdentityStore | null {
+  if (_overrideStore !== undefined) return _overrideStore;
   const hasDbUrl = Boolean(
     process.env.ODP_IDENTITY_DATABASE_URL ||
     process.env.ODAY_DATABASE_URL ||

@@ -2,7 +2,9 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import {
   readWebSession,
+  sealWebSessionReference,
   webSessionCookieName,
+  webSessionCookieOptions,
 } from "./lib/auth/session";
 import {
   isProductionWebRuntime,
@@ -15,7 +17,23 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const session = await readWebSession(
     request.cookies.get(webSessionCookieName)?.value,
   ).catch(() => null);
-  if (session) return NextResponse.next();
+  if (session) {
+    const response = NextResponse.next();
+    if (session.legacyUpgrade) {
+      response.cookies.set(
+        webSessionCookieName,
+        await sealWebSessionReference(session),
+        {
+          ...webSessionCookieOptions,
+          maxAge: Math.max(
+            1,
+            session.expiresAt - Math.floor(Date.now() / 1000),
+          ),
+        },
+      );
+    }
+    return response;
+  }
 
   const loginUrl = new URL("/login", request.url);
   loginUrl.searchParams.set(
@@ -38,4 +56,3 @@ export const config = {
     "/((?!api/v1(?:/|$)|avm(?:/|$)|login(?:/|$)|auth/callback(?:/|$)|auth/logout(?:/|$)|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)",
   ],
 };
-

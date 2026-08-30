@@ -1,19 +1,26 @@
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   resolveGoogleMetadataIdentityToken,
 } from "../cloudRunIdentity";
 import { buildUpstreamHeaders, proxyApiRequest } from "../proxy";
 import {
   readWebSession,
-  sealWebSession,
+  sealWebSessionReference,
   webSessionCookieName,
-  type WebSession,
 } from "../session";
+import { MockSessionStore, setSessionStoreForTests } from "../sessionStore";
 
 const SECRET = "test-session-secret-with-at-least-32-bytes";
+let testSessionStore: MockSessionStore;
+
+beforeEach(() => {
+  testSessionStore = new MockSessionStore();
+  setSessionStoreForTests(testSessionStore);
+});
 
 afterEach(() => {
+  setSessionStoreForTests(undefined);
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -51,17 +58,23 @@ describe("production BFF", () => {
   it("forwards through the configured upstream with only session identity", async () => {
     vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
     const now = Math.floor(Date.now() / 1000);
-    const session: WebSession = {
+    const session = {
       kind: "web-session",
-      accessToken: "real-access-token",
-      tokenType: "Bearer",
-      subject: "user-123",
       sid: "session-123",
       provider: "oidc",
       issuedAt: now,
       expiresAt: now + 600,
-    };
-    const cookie = await sealWebSession(session, SECRET);
+    } as const;
+    await testSessionStore.createSession({
+      sessionId: "session-123",
+      accountId: "account-123",
+      provider: "oidc",
+      accessToken: "real-access-token",
+      subject: "user-123",
+      idleTimeoutMs: 30 * 60 * 1000,
+      absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+    });
+    const cookie = await sealWebSessionReference(session, SECRET);
     const fetchMock = vi.fn(async (_url: URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       expect(headers.get("authorization")).toBe("Bearer real-access-token");
@@ -92,7 +105,11 @@ describe("production BFF", () => {
     );
     request.cookies.set(webSessionCookieName, cookie);
     expect(request.cookies.get(webSessionCookieName)?.value).toBe(cookie);
-    await expect(readWebSession(cookie)).resolves.toEqual(session);
+    await expect(readWebSession(cookie)).resolves.toMatchObject({
+      sid: session.sid,
+      subject: "user-123",
+      accessToken: "real-access-token",
+    });
 
     const response = await proxyApiRequest(
       request,
@@ -325,12 +342,18 @@ describe("production BFF", () => {
 
 async function productionSessionCookie(): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return sealWebSession(
+  await testSessionStore.createSession({
+    sessionId: "session-123",
+    accountId: "account-123",
+    provider: "oidc",
+    accessToken: "real-access-token",
+    subject: "user-123",
+    idleTimeoutMs: 30 * 60 * 1000,
+    absoluteLifetimeMs: 8 * 60 * 60 * 1000,
+  });
+  return sealWebSessionReference(
     {
       kind: "web-session",
-      accessToken: "real-access-token",
-      tokenType: "Bearer",
-      subject: "user-123",
       sid: "session-123",
       provider: "oidc",
       issuedAt: now,

@@ -102,7 +102,8 @@ export async function mintLocalJwt(options: {
   signingSecret?: string;
 }): Promise<string> {
   const now = options.nowSeconds ?? Math.floor(Date.now() / 1000);
-  const ttl = options.expiresInSeconds ?? 120;
+  const requestedTtl = options.expiresInSeconds ?? 120;
+  const ttl = Math.min(Math.max(requestedTtl, 1), 300);
   const header = {
     alg: "HS256",
     typ: "JWT",
@@ -122,9 +123,13 @@ export async function mintLocalJwt(options: {
   const payloadB64 = base64UrlEncode(encoder.encode(JSON.stringify(claims)));
   const signingInput = `${headerB64}.${payloadB64}`;
 
+  const configuredSecret =
+    options.signingSecret ?? process.env.ODP_IDENTITY_TOKEN_SIGNING_KEY;
+  if (isProductionWebRuntime() && !configuredSecret) {
+    throw new Error("ODP_IDENTITY_TOKEN_SIGNING_KEY is required in production");
+  }
   const rawSecret =
-    options.signingSecret ??
-    process.env.ODP_IDENTITY_TOKEN_SIGNING_KEY ??
+    configuredSecret ??
     process.env.ODP_WEB_SESSION_SECRET ??
     "default-secret-with-at-least-32-characters-key";
 
@@ -152,6 +157,7 @@ export type LocalAuthResult =
       account: {
         id: string;
         username: string;
+        email?: string;
         tenantId: string;
       };
       mustChangePassword?: boolean;
@@ -211,20 +217,21 @@ export async function authenticateLocalCredentials(
       };
     }
 
-    if (candidate.locked) {
-      return {
-        ok: false,
-        code: "AUTH_ACCOUNT_LOCKED",
-        summary: "Account is temporarily locked.",
-      };
-    }
-
     if (!constantTimeEqual(candidate.password, password)) {
       await dummyTimingEqualization();
       return {
         ok: false,
         code: "AUTH_INVALID_CREDENTIALS",
         summary: "Invalid username or password.",
+      };
+    }
+
+    // Do not reveal a lock before the password has been proven correct.
+    if (candidate.locked) {
+      return {
+        ok: false,
+        code: "AUTH_ACCOUNT_LOCKED",
+        summary: "Account is temporarily locked.",
       };
     }
 
@@ -244,70 +251,85 @@ export async function authenticateLocalCredentials(
     : getDefaultIdentityStore();
 
   if (store) {
-    const account = await store.findAccountByUsername(username);
-    if (!account) {
-      await store.dummyVerify();
-      return {
-        ok: false,
-        code: "AUTH_INVALID_CREDENTIALS",
-        summary: "Invalid username or password.",
-      };
-    }
-
-    if (account.status === "disabled" || account.status === "invited") {
-      await store.dummyVerify();
-      return {
-        ok: false,
-        code: "AUTH_INVALID_CREDENTIALS",
-        summary: "Invalid username or password.",
-      };
-    }
-
-    if (account.status === "locked") {
-      return {
-        ok: false,
-        code: "AUTH_ACCOUNT_LOCKED",
-        summary: "Account is temporarily locked.",
-      };
-    }
-
-    const credential = await store.getPasswordCredential(account.accountId);
-    if (!credential) {
-      await store.dummyVerify();
-      return {
-        ok: false,
-        code: "AUTH_INVALID_CREDENTIALS",
-        summary: "Invalid username or password.",
-      };
-    }
-
-    const { valid, newHash } = await store.verifyPassword(credential.phcHash, password);
-    if (!valid) {
-      return {
-        ok: false,
-        code: "AUTH_INVALID_CREDENTIALS",
-        summary: "Invalid username or password.",
-      };
-    }
-
-    // Rehash-on-verify (Contract §6.1)
-    if (newHash) {
-      try {
-        await store.updatePasswordHash(account.accountId, newHash);
-      } catch {
-        // Non-fatal: login succeeds even if rehash write fails
+    try {
+      const account = await store.findAccountByUsername(username);
+      if (!account) {
+        await store.dummyVerify();
+        return {
+          ok: false,
+          code: "AUTH_INVALID_CREDENTIALS",
+          summary: "Invalid username or password.",
+        };
       }
-    }
 
-    return {
-      ok: true,
-      account: {
-        id: account.accountId,
-        username: account.username,
-        tenantId: account.tenantId,
-      },
-      mustChangePassword: credential.mustChange,
-    };
+      const credential = await store.getPasswordCredential(account.accountId);
+      if (!credential) {
+        await store.dummyVerify();
+        return {
+          ok: false,
+          code: "AUTH_INVALID_CREDENTIALS",
+          summary: "Invalid username or password.",
+        };
+      }
+
+      // Verify the password before revealing that the account is locked. This
+      // keeps AUTH_ACCOUNT_LOCKED from becoming an account-enumeration oracle.
+      const { valid, newHash } = await store.verifyPassword(
+        credential.phcHash,
+        password,
+      );
+      if (!valid) {
+        return {
+          ok: false,
+          code: "AUTH_INVALID_CREDENTIALS",
+          summary: "Invalid username or password.",
+        };
+      }
+
+      if (account.status === "locked") {
+        return {
+          ok: false,
+          code: "AUTH_ACCOUNT_LOCKED",
+          summary: "Account is temporarily locked.",
+        };
+      }
+      if (account.status === "disabled" || account.status === "invited") {
+        return {
+          ok: false,
+          code: "AUTH_INVALID_CREDENTIALS",
+          summary: "Invalid username or password.",
+        };
+      }
+
+      // Rehash-on-verify (Contract §6.1). A failed write must not turn a
+      // verified login into a false credential failure.
+      if (newHash) {
+        try {
+          await store.updatePasswordHash(account.accountId, newHash);
+        } catch {
+          // Non-fatal: login succeeds even if rehash write fails.
+        }
+      }
+
+      return {
+        ok: true,
+        account: {
+          id: account.accountId,
+          username: account.username,
+          email: account.email,
+          tenantId: account.tenantId,
+        },
+        mustChangePassword: credential.mustChange,
+      };
+    } catch {
+      // Database outages and malformed credentials fail closed with the same
+      // public response as an unknown account.
+      return {
+        ok: false,
+        code: "AUTH_INVALID_CREDENTIALS",
+        summary: "Invalid username or password.",
+      };
+    }
   }
 
   // Dev fallback: non-production without DB
@@ -324,6 +346,7 @@ export async function authenticateLocalCredentials(
         account: {
           id: `acc-${username}`,
           username,
+          email: `${username}@example.invalid`,
           tenantId: "default",
         },
       };

@@ -30,6 +30,7 @@ describe("logout route", () => {
     const cookie = await sealWebSession(session, SECRET);
 
     const request = new NextRequest("https://ops.oday.plus/auth/logout");
+    request.headers.set("origin", "https://ops.oday.plus");
     request.cookies.set(webSessionCookieName, cookie);
 
     const response = await GET(request);

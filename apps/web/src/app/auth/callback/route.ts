@@ -5,11 +5,16 @@ import {
   oidcTransactionCookieName,
   oidcTransactionCookieOptions,
   readOidcTransaction,
-  sealWebSession,
+  sealWebSessionReference,
   webSessionCookieName,
   webSessionCookieOptions,
 } from "../../../lib/auth/session";
 import { isOidcEnabled, resolveWebBaseUrl } from "../../../lib/auth/runtime";
+import { getDefaultIdentityStore } from "../../../lib/auth/identityStore";
+import {
+  DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+  getDefaultSessionStore,
+} from "../../../lib/auth/sessionStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -75,6 +80,46 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       returnedState: state,
       transaction,
     });
+    const identityStore = getDefaultIdentityStore();
+    const sessionStore = getDefaultSessionStore(process.env);
+    if (
+      !identityStore ||
+      !sessionStore ||
+      !identityStore.findAccountByFederatedIdentity ||
+      !session.subject ||
+      !session.accessToken
+    ) {
+      return callbackFailure("OIDC_CALLBACK_REJECTED");
+    }
+    const account = await identityStore.findAccountByFederatedIdentity(
+      process.env.ODP_WEB_OIDC_ISSUER?.trim() || "",
+      session.subject,
+    );
+    if (!account || account.status !== "active") {
+      // OIDC never provisions an account. A missing federation link is
+      // intentionally indistinguishable from other callback failures here.
+      return callbackFailure("OIDC_CALLBACK_REJECTED");
+    }
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const sid = crypto.randomUUID();
+    await sessionStore.createSession({
+      sessionId: sid,
+      accountId: account.accountId,
+      provider: "oidc",
+      accessToken: session.accessToken,
+      subject: account.username,
+      tenantId: account.tenantId,
+      idleTimeoutMs: DEFAULT_SESSION_IDLE_TIMEOUT_MS,
+      absoluteLifetimeMs: Math.max(1, (session.expiresAt - nowSeconds) * 1000),
+    });
+    const serverSession = {
+      ...session,
+      sid,
+      accountId: account.accountId,
+      tenantId: account.tenantId,
+      subject: account.username,
+      provider: "oidc" as const,
+    };
     const returnUrl = new URL(
       transaction.returnTo,
       resolveWebBaseUrl(request.nextUrl.origin),
@@ -82,12 +127,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const response = NextResponse.redirect(returnUrl);
     response.cookies.set(
       webSessionCookieName,
-      await sealWebSession(session),
+      await sealWebSessionReference(serverSession),
       {
         ...webSessionCookieOptions,
         maxAge: Math.max(
           1,
-          session.expiresAt - Math.floor(Date.now() / 1000),
+          serverSession.expiresAt - nowSeconds,
         ),
       },
     );
