@@ -43,6 +43,7 @@ describe("password-first login route handler", () => {
     vi.stubEnv("ODP_AUTH_MODE", "oidc");
     vi.stubEnv("ODP_WEB_OIDC_ISSUER", "https://accounts.google.com");
     vi.stubEnv("ODP_WEB_OIDC_CLIENT_ID", "web-client-id.apps.googleusercontent.com");
+    vi.stubEnv("ODP_WEB_OIDC_CLIENT_SECRET", "GOCSPX-test-secret-value");
 
     const request = new NextRequest("https://ops.oday.plus/login?returnTo=%2Foperator");
     const response = await GET(request);

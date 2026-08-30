@@ -31,6 +31,7 @@ describe("OIDC callback route", () => {
     vi.stubEnv("ODP_AUTH_MODE", "oidc");
     vi.stubEnv("ODP_WEB_OIDC_ISSUER", "https://accounts.google.com");
     vi.stubEnv("ODP_WEB_OIDC_CLIENT_ID", "client-id.apps.googleusercontent.com");
+    vi.stubEnv("ODP_WEB_OIDC_CLIENT_SECRET", "GOCSPX-test-secret-value");
 
     const request = new NextRequest("https://ops.oday.plus/auth/callback");
     const response = await GET(request);

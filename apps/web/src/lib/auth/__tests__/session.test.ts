@@ -65,6 +65,13 @@ describe("encrypted web session", () => {
     expect(upgraded?.provider).toBe("oidc");
     expect(typeof upgraded?.sid).toBe("string");
     expect(upgraded?.sid).toBeTruthy();
+
+    // Verify the sid is deterministic across repeated reads
+    const upgraded2 = await readWebSession(sealed, {
+      secret: SECRET,
+      nowSeconds: 1_600,
+    });
+    expect(upgraded2?.sid).toBe(upgraded?.sid);
   });
 
   it("T10: ensures cookie options are HttpOnly, Secure, SameSite=Lax, and capped to 8h", () => {

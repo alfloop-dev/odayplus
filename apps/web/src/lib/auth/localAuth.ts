@@ -1,4 +1,5 @@
 import { base64UrlEncode, constantTimeEqual } from "./crypto";
+import { getDefaultIdentityStore, type IdentityStore } from "./identityStore";
 import { isProductionWebRuntime } from "./runtime";
 
 const encoder = new TextEncoder();
@@ -173,6 +174,7 @@ export async function authenticateLocalCredentials(
   options: {
     environment?: Record<string, string | undefined>;
     fetchImpl?: typeof fetch;
+    identityStore?: IdentityStore | null;
     mockAccounts?: Map<
       string,
       {
@@ -236,7 +238,79 @@ export async function authenticateLocalCredentials(
     };
   }
 
-  // Standard non-production / development fallback accounts
+  // Try the identity store (production path)
+  const store = options.identityStore !== undefined
+    ? options.identityStore
+    : getDefaultIdentityStore();
+
+  if (store) {
+    const account = await store.findAccountByUsername(username);
+    if (!account) {
+      await store.dummyVerify();
+      return {
+        ok: false,
+        code: "AUTH_INVALID_CREDENTIALS",
+        summary: "Invalid username or password.",
+      };
+    }
+
+    if (account.status === "disabled" || account.status === "invited") {
+      await store.dummyVerify();
+      return {
+        ok: false,
+        code: "AUTH_INVALID_CREDENTIALS",
+        summary: "Invalid username or password.",
+      };
+    }
+
+    if (account.status === "locked") {
+      return {
+        ok: false,
+        code: "AUTH_ACCOUNT_LOCKED",
+        summary: "Account is temporarily locked.",
+      };
+    }
+
+    const credential = await store.getPasswordCredential(account.accountId);
+    if (!credential) {
+      await store.dummyVerify();
+      return {
+        ok: false,
+        code: "AUTH_INVALID_CREDENTIALS",
+        summary: "Invalid username or password.",
+      };
+    }
+
+    const { valid, newHash } = await store.verifyPassword(credential.phcHash, password);
+    if (!valid) {
+      return {
+        ok: false,
+        code: "AUTH_INVALID_CREDENTIALS",
+        summary: "Invalid username or password.",
+      };
+    }
+
+    // Rehash-on-verify (Contract §6.1)
+    if (newHash) {
+      try {
+        await store.updatePasswordHash(account.accountId, newHash);
+      } catch {
+        // Non-fatal: login succeeds even if rehash write fails
+      }
+    }
+
+    return {
+      ok: true,
+      account: {
+        id: account.accountId,
+        username: account.username,
+        tenantId: account.tenantId,
+      },
+      mustChangePassword: credential.mustChange,
+    };
+  }
+
+  // Dev fallback: non-production without DB
   const env = options.environment ?? process.env;
   if (!isProductionWebRuntime(env)) {
     // In development / testing mode, support standard test users if no external store

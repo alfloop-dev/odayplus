@@ -106,14 +106,24 @@ describe("web auth runtime policy", () => {
     expect(isOidcEnabled({ ODP_AUTH_MODE: "local" })).toBe(false);
     expect(isOidcEnabled({})).toBe(false);
 
-    // Complete OIDC configuration
+    // Complete OIDC configuration (issuer + client_id + client_secret)
     expect(
       isOidcEnabled({
         ODP_AUTH_MODE: "oidc",
         ODP_WEB_OIDC_ISSUER: "https://accounts.google.com",
         ODP_WEB_OIDC_CLIENT_ID: "client-id-123.apps.googleusercontent.com",
+        ODP_WEB_OIDC_CLIENT_SECRET: "GOCSPX-real-secret-value",
       }),
     ).toBe(true);
+
+    // Missing client_secret -> fail closed
+    expect(() =>
+      isOidcEnabled({
+        ODP_AUTH_MODE: "oidc",
+        ODP_WEB_OIDC_ISSUER: "https://accounts.google.com",
+        ODP_WEB_OIDC_CLIENT_ID: "client-id-123.apps.googleusercontent.com",
+      }),
+    ).toThrow("OIDC mode requires complete configuration");
 
     // Incomplete OIDC configuration -> fail closed
     expect(() =>

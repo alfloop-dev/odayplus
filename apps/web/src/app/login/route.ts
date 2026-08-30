@@ -21,6 +21,7 @@ import {
   authenticateLocalCredentials,
   mintLocalJwt,
 } from "../../lib/auth/localAuth";
+import { getDefaultSessionStore } from "../../lib/auth/sessionStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -405,6 +406,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     issuedAt: now,
     expiresAt: now + webSessionCookieOptions.maxAge,
   };
+
+  const store = getDefaultSessionStore();
+  if (store) {
+    await store.createSession({
+      sessionId: sid,
+      accountId: authResult.account.id,
+      provider: "local_password",
+      idleTimeoutMs: webSessionCookieOptions.maxAge * 1000,
+      absoluteLifetimeMs: webSessionCookieOptions.maxAge * 1000,
+    }).catch(() => {});
+  }
 
   const sealedCookie = await sealWebSession(session);
 

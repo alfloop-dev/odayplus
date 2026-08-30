@@ -98,9 +98,20 @@ export async function readWebSession(
   // Legacy payloads do not have `sid`. We assign a synthetic `sid` and
   // `provider: "oidc"` while strictly retaining the original `expiresAt`.
   if (!value.sid) {
+    // Generate a stable synthetic sid from session content so repeated reads
+    // return the same sid without requiring a cookie rewrite.
+    const sidSource = `legacy-sid:${value.subject}:${value.issuedAt}`;
+    const sidHash = await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(sidSource),
+    );
+    const sidBytes = new Uint8Array(sidHash).slice(0, 16);
+    // Format as UUID-like hex string
+    const hex = Array.from(sidBytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    const stableSid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
     return {
       ...value,
-      sid: crypto.randomUUID(),
+      sid: stableSid,
       provider: value.provider || "oidc",
     } as WebSession;
   }

@@ -123,7 +123,8 @@ export function isOidcConfigured(
 ): boolean {
   return (
     isConfiguredAuthValue(environment.ODP_WEB_OIDC_ISSUER) &&
-    isConfiguredAuthValue(environment.ODP_WEB_OIDC_CLIENT_ID)
+    isConfiguredAuthValue(environment.ODP_WEB_OIDC_CLIENT_ID) &&
+    isConfiguredAuthValue(environment.ODP_WEB_OIDC_CLIENT_SECRET)
   );
 }
 
@@ -137,7 +138,7 @@ export function isOidcEnabled(
 
   if (!isOidcConfigured(environment)) {
     throw new Error(
-      "OIDC mode requires complete configuration (ODP_WEB_OIDC_ISSUER, ODP_WEB_OIDC_CLIENT_ID)",
+      "OIDC mode requires complete configuration (ODP_WEB_OIDC_ISSUER, ODP_WEB_OIDC_CLIENT_ID, ODP_WEB_OIDC_CLIENT_SECRET)",
     );
   }
 

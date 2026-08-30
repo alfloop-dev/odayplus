@@ -12,6 +12,10 @@ import {
   mintLocalJwt,
   validatePasswordPolicy,
 } from "../../../lib/auth/localAuth";
+import {
+  getDefaultIdentityStore,
+  type IdentityStore,
+} from "../../../lib/auth/identityStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -100,7 +104,56 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // 5. Rotate session upon password change (Contract §5.3.2)
+  // 5. Verify current password against identity store (Contract §6)
+  const store = getDefaultIdentityStore();
+  if (store) {
+    // Production path: verify against PostgreSQL identity.password_credentials
+    const account = await store.findAccountByUsername(session.subject);
+    if (!account) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "AUTH_INVALID_CREDENTIALS",
+            summary: "Current password verification failed.",
+          },
+        },
+        { status: 401, headers: { "cache-control": "no-store" } },
+      );
+    }
+
+    const credential = await store.getPasswordCredential(account.accountId);
+    if (!credential) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "AUTH_INVALID_CREDENTIALS",
+            summary: "Current password verification failed.",
+          },
+        },
+        { status: 401, headers: { "cache-control": "no-store" } },
+      );
+    }
+
+    const { valid } = await store.verifyPassword(credential.phcHash, currentPassword);
+    if (!valid) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "AUTH_INVALID_CREDENTIALS",
+            summary: "Current password is incorrect.",
+          },
+        },
+        { status: 401, headers: { "cache-control": "no-store" } },
+      );
+    }
+
+    // Write new password hash to identity.password_credentials
+    const newHash = await store.hashPassword(newPassword);
+    await store.changePassword(account.accountId, newHash);
+  }
+  // In dev/test without identity store: password change only rotates the session cookie
+
+  // 6. Rotate session upon password change (Contract §5.3.2)
   const now = Math.floor(Date.now() / 1000);
   const newSid = crypto.randomUUID();
   const newAccessToken = await mintLocalJwt({

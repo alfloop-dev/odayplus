@@ -7,6 +7,7 @@ import {
   webSessionCookieOptions,
 } from "../../../lib/auth/session";
 import { isOidcEnabled, resolveWebBaseUrl } from "../../../lib/auth/runtime";
+import { getDefaultSessionStore } from "../../../lib/auth/sessionStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,6 +17,13 @@ async function logout(request: NextRequest): Promise<NextResponse> {
   const session = await readWebSession(
     request.cookies.get(webSessionCookieName)?.value,
   ).catch(() => null);
+
+  if (session && session.sid) {
+    const store = getDefaultSessionStore();
+    if (store) {
+      await store.revokeSession(session.sid, "User logged out").catch(() => {});
+    }
+  }
 
   let endpoint: string | null = null;
   if (session?.provider === "oidc") {
