@@ -147,18 +147,28 @@ class LoginThrottleService:
     ) -> None:
         """記錄一次登入失敗。
 
-        同時更新帳號與 IP 兩個維度。
+        同時更新帳號與 IP 兩個維度。帳號維度達門檻後設定指數退避鎖定；
+        IP 維度達門檻後同樣設定鎖定以拒絕後續請求（Contract §6.4）。
         """
         ts = now or datetime.now(UTC)
         self._increment(account_attempt_key(account_id), ts)
         self._increment(ip_attempt_key(ip_address), ts)
 
-        # 檢查帳號是否需要鎖定
-        record = self._repo.get(account_attempt_key(account_id))
-        if record and record.failure_count >= self._config.account_max_failures:
-            lockout = self._calculate_lockout(record.failure_count)
-            record.locked_until = ts + lockout
-            self._repo.upsert(record)
+        # 帳號維度：達門檻 → 指數退避鎖定
+        acct_record = self._repo.get(account_attempt_key(account_id))
+        if acct_record and acct_record.failure_count >= self._config.account_max_failures:
+            lockout = self._calculate_lockout(
+                acct_record.failure_count, self._config.account_max_failures
+            )
+            acct_record.locked_until = ts + lockout
+            self._repo.upsert(acct_record)
+
+        # IP 維度：達門檻 → 鎖定（使 check_ip 回傳 allowed=False）
+        ip_record = self._repo.get(ip_attempt_key(ip_address))
+        if ip_record and ip_record.failure_count >= self._config.ip_max_failures:
+            # IP 鎖定使用與帳號相同的視窗長度作為基礎鎖定時間
+            ip_record.locked_until = ts + self._config.base_lockout
+            self._repo.upsert(ip_record)
 
     # ── 記錄成功（清除帳號計數） ──────────────────────────────────────────
 
@@ -181,12 +191,9 @@ class LoginThrottleService:
         if record is None:
             return ThrottleResult(allowed=True)
 
-        # 視窗過期 → 重置
-        if ts - record.window_started_at > self._config.window:
-            self._repo.delete(attempt_key)
-            return ThrottleResult(allowed=True)
-
-        # 鎖定中？
+        # ── 鎖定檢查（必須在視窗過期檢查之前） ──
+        # 指數退避鎖定時間可能超過計數視窗（例如 60 分鐘鎖定 > 15 分鐘視窗），
+        # 若先刪除視窗過期記錄，鎖定會被提前清掉。
         if record.locked_until and ts < record.locked_until:
             return ThrottleResult(
                 allowed=False,
@@ -194,10 +201,17 @@ class LoginThrottleService:
                 reason="account_locked" if "account:" in attempt_key else "ip_blocked",
             )
 
-        # 超過門檻（但鎖定已過期）？
-        if record.failure_count >= max_failures:
-            # 鎖定已過期，允許但保留記錄
+        # 視窗過期且無有效鎖定 → 重置
+        if ts - record.window_started_at > self._config.window:
+            self._repo.delete(attempt_key)
             return ThrottleResult(allowed=True)
+
+        # 超過門檻（鎖定已過期或從未設定） → 仍拒絕直到視窗重置
+        if record.failure_count >= max_failures:
+            return ThrottleResult(
+                allowed=False,
+                reason="account_locked" if "account:" in attempt_key else "ip_blocked",
+            )
 
         return ThrottleResult(allowed=True)
 
@@ -222,11 +236,11 @@ class LoginThrottleService:
 
         self._repo.upsert(record)
 
-    def _calculate_lockout(self, failure_count: int) -> timedelta:
+    def _calculate_lockout(self, failure_count: int, max_failures: int) -> timedelta:
         """指數退避鎖定時間（每次再鎖定加倍，上限 60 分鐘）。"""
         # 第一次超過門檻 → base_lockout
         # 後續每次加倍
-        excess = max(0, failure_count - self._config.account_max_failures)
+        excess = max(0, failure_count - max_failures)
         lockout_seconds = self._config.base_lockout.total_seconds() * (2 ** excess)
         max_seconds = self._config.max_lockout.total_seconds()
         return timedelta(seconds=min(lockout_seconds, max_seconds))

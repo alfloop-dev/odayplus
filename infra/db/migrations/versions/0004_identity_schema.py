@@ -36,8 +36,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Expand-only: downgrade preserves the schema for P1 rollback.
+    # Expand-only: downgrade preserves the schema for P1 rollback
+    # (Contract §9 — P1–P4 不得執行破壞性 down migration).
     # The tables are empty and the code path is controlled by
     # ODP_AUTH_LOCAL_PASSWORD_ENABLED (default false).
-    # Only drop the schema if explicitly intended (P5 contract phase).
-    op.execute("DROP SCHEMA IF EXISTS identity CASCADE")
+    # 與 0003 一致：回退保留已落地結構，以關閉新路徑取代刪除。
+    op.execute(sa.text("SELECT 1"))

@@ -17,7 +17,6 @@ from shared.identity.login_throttle import (
     LoginAttemptRecord,
     LoginThrottleService,
     account_attempt_key,
-    ip_attempt_key,
 )
 from shared.identity.session_service import (
     RevocationReason,
@@ -175,20 +174,18 @@ class TestT05LoginThrottle:
         assert record is None
 
     def test_ip_blocking_after_50_failures(self) -> None:
-        """每來源 IP 15 分鐘內 50 次失敗 → 拒絕。"""
+        """每來源 IP 15 分鐘內 50 次失敗 → 拒絕（Contract §6.4）。"""
         now = datetime.now(UTC)
         # 用不同帳號來避免帳號鎖定
         for _i in range(50):
             acct = str(uuid4())
             self.svc.record_failure(acct, self.ip, now=now)
 
-        self.svc.check_ip(self.ip, now=now)
-        # IP 維度沒有鎖定機制，但超過門檻後也可以繼續
-        # 實際的 IP 阻擋需要在呼叫端檢查 failure_count
-        # 這裡驗證 IP 記錄有被累計
-        ip_record = self.repo.get(ip_attempt_key(self.ip))
-        assert ip_record is not None
-        assert ip_record.failure_count >= 50
+        result = self.svc.check_ip(self.ip, now=now)
+        assert result.allowed is False, (
+            "IP 超過 50 次失敗後必須拒絕（Contract §6.4: 拒絕並記錄）"
+        )
+        assert result.reason == "ip_blocked"
 
     def test_window_expiry_resets_count(self) -> None:
         """視窗過期重置計數。"""
@@ -202,26 +199,89 @@ class TestT05LoginThrottle:
         assert result.allowed is True
 
     def test_exponential_backoff(self) -> None:
-        """指數退避：每次再鎖定加倍。"""
+        """指數退避：每次再鎖定加倍，透過 check_account 驗證。"""
         now = datetime.now(UTC)
         # 第一輪鎖定 (5 次失敗)
         for _i in range(5):
             self.svc.record_failure(self.account_id, self.ip, now=now)
 
-        record = self.repo.get(account_attempt_key(self.account_id))
-        assert record is not None
-        assert record.locked_until is not None
-        first_lockout = record.locked_until - now
+        # check_account 必須回報鎖定
+        result = self.svc.check_account(self.account_id, now=now)
+        assert result.allowed is False
+        assert result.locked_until is not None
+        first_lockout_end = result.locked_until
 
         # 繼續失敗 (第 6 次)
         self.svc.record_failure(self.account_id, self.ip, now=now)
-        record = self.repo.get(account_attempt_key(self.account_id))
-        assert record is not None
-        assert record.locked_until is not None
-        second_lockout = record.locked_until - now
+        result2 = self.svc.check_account(self.account_id, now=now)
+        assert result2.allowed is False
+        assert result2.locked_until is not None
+        second_lockout_end = result2.locked_until
 
-        # 第二次鎖定應該比第一次長
-        assert second_lockout > first_lockout
+        # 第二次鎖定結束時間應該比第一次晚（鎖定時間加倍）
+        assert second_lockout_end > first_lockout_end
+
+    def test_exponential_backoff_lock_survives_past_window(self) -> None:
+        """迴歸測試：60 分鐘指數退避鎖定不得在 t0+16m（視窗過期）被清掉。
+
+        Contract §6.4: 指數退避上限 60 分鐘。若 _check() 在鎖定檢查前
+        先刪除視窗過期記錄，鎖定實際上限只有 15 分鐘。
+        """
+        now = datetime.now(UTC)
+        # 累積足夠失敗以觸發接近 60 分鐘的鎖定
+        # 5 次 → 15m, 6 次 → 30m, 7 次 → 60m
+        for _i in range(7):
+            self.svc.record_failure(self.account_id, self.ip, now=now)
+
+        # 確認已鎖定且鎖定時間 ≥ 30 分鐘
+        result = self.svc.check_account(self.account_id, now=now)
+        assert result.allowed is False
+        assert result.locked_until is not None
+        lockout_duration = result.locked_until - now
+        assert lockout_duration >= timedelta(minutes=30), (
+            f"7 次失敗的鎖定應至少 30 分鐘，實際 {lockout_duration}"
+        )
+
+        # t0 + 16 分鐘（視窗已過期）— 鎖定必須仍然生效
+        at_16m = now + timedelta(minutes=16)
+        result_16m = self.svc.check_account(self.account_id, now=at_16m)
+        assert result_16m.allowed is False, (
+            "鎖定在視窗過期後仍必須生效（60 分鐘鎖定 > 15 分鐘視窗）"
+        )
+
+        # t0 + 59 分鐘 — 仍在 60 分鐘鎖定內
+        at_59m = now + timedelta(minutes=59)
+        result_59m = self.svc.check_account(self.account_id, now=at_59m)
+        assert result_59m.allowed is False, (
+            "60 分鐘鎖定在 t0+59m 仍必須生效"
+        )
+
+        # t0 + 61 分鐘 — 鎖定已過期且視窗已過期，應允許
+        at_61m = now + timedelta(minutes=61)
+        result_61m = self.svc.check_account(self.account_id, now=at_61m)
+        assert result_61m.allowed is True, (
+            "60 分鐘鎖定在 t0+61m 應已解除"
+        )
+
+    def test_ip_49_failures_still_allowed(self) -> None:
+        """迴歸測試：IP 49 次失敗仍允許，50 次才拒絕。"""
+        now = datetime.now(UTC)
+        for _i in range(49):
+            acct = str(uuid4())
+            self.svc.record_failure(acct, self.ip, now=now)
+
+        result = self.svc.check_ip(self.ip, now=now)
+        assert result.allowed is True, "49 次失敗不應觸發 IP 阻擋"
+
+    def test_account_locked_check_returns_false(self) -> None:
+        """迴歸測試：帳號鎖定後 check_account 必須回傳 allowed=False。"""
+        now = datetime.now(UTC)
+        for _i in range(5):
+            self.svc.record_failure(self.account_id, self.ip, now=now)
+
+        result = self.svc.check_account(self.account_id, now=now)
+        assert result.allowed is False
+        assert result.reason == "account_locked"
 
 
 # ============================================================================
