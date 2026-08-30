@@ -66,9 +66,7 @@ class SigningKey:
 _ASYMMETRIC_VERIFIERS: dict[str, Callable[[SigningKey, bytes, bytes], bool]] = {}
 
 
-def register_verifier(
-    algorithm: str, verifier: Callable[[SigningKey, bytes, bytes], bool]
-) -> None:
+def register_verifier(algorithm: str, verifier: Callable[[SigningKey, bytes, bytes], bool]) -> None:
     """Register an asymmetric verifier for ``algorithm`` (e.g. ``RS256``)."""
 
     _ASYMMETRIC_VERIFIERS[algorithm] = verifier
@@ -157,7 +155,6 @@ def _decode_json(segment: str) -> Any:
         return json.loads(_b64url_decode(segment))
     except (ValueError, UnicodeDecodeError) as exc:
         raise MalformedTokenError("segment is not valid JSON") from exc
-
 
 
 def verify_compact_jwt(token: str, key: SigningKey) -> dict[str, Any]:

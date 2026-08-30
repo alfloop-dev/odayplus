@@ -83,7 +83,6 @@ def principal_from_claims(
             return None
         return _lookup(claims, key, claim_prefix)
 
-
     scope = Scope(
         tenant_id=(value("tenant_id") or None),
         brand_ids=_as_str_set(value("brand_ids")),

@@ -11,7 +11,7 @@ Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §2, §3, §4, §5, §6, §7
 - LoginThrottleService: 帳號與 IP 維度的節流與鎖定
 """
 
-from .credential_service import Argon2Policy, CURRENT_POLICY, CredentialService
+from .credential_service import CURRENT_POLICY, Argon2Policy, CredentialService
 from .login_throttle import (
     LoginAttemptRecord,
     LoginThrottleService,
@@ -66,6 +66,3 @@ __all__ = [
     "account_attempt_key",
     "ip_attempt_key",
 ]
-
-
-

@@ -36,7 +36,6 @@ from modules.opsboard.auth.jwks import JwksResolver, KeyResolver
 from modules.opsboard.auth.jwt import (
     BadSignatureError,
     JwtError,
-    MalformedTokenError,
     UnsupportedAlgorithmError,
     decode_header,
     decode_unverified_claims,
@@ -175,9 +174,7 @@ class AuthenticationBoundary:
     def audit_log(self) -> AuditRecorder:
         return self._audit
 
-    def authenticate(
-        self, credentials: Credentials, *, now: datetime | None = None
-    ) -> AuthOutcome:
+    def authenticate(self, credentials: Credentials, *, now: datetime | None = None) -> AuthOutcome:
         """Authenticate ``credentials`` and record the decision."""
 
         correlation_id = credentials.correlation_id or new_correlation_id()
@@ -194,9 +191,7 @@ class AuthenticationBoundary:
             token_type = "none"
             principal, reason = ANONYMOUS, AuthFailureReason.NO_CREDENTIALS
 
-        return self._finalize(
-            credentials, correlation_id, token_type, principal, reason
-        )
+        return self._finalize(credentials, correlation_id, token_type, principal, reason)
 
     # -- Token verification (multi-issuer) -----------------------------------
 
@@ -252,9 +247,7 @@ class AuthenticationBoundary:
         now: datetime,
     ) -> tuple[Principal, AuthFailureReason | None, str]:
         token_type = "local"
-        key = self._config.resolve_key(
-            kid if isinstance(kid, str) else None, category="local"
-        )
+        key = self._config.resolve_key(kid if isinstance(kid, str) else None, category="local")
         if key is None:
             return ANONYMOUS, AuthFailureReason.UNKNOWN_KEY, token_type
 
@@ -333,9 +326,7 @@ class AuthenticationBoundary:
         now: datetime,
     ) -> tuple[Principal, AuthFailureReason | None, str]:
         token_type = "oidc"
-        key = self._config.resolve_key(
-            kid if isinstance(kid, str) else None, category="oidc"
-        )
+        key = self._config.resolve_key(kid if isinstance(kid, str) else None, category="oidc")
         if key is None and self._oidc_key_resolver is not None:
             key = self._oidc_key_resolver.resolve(kid if isinstance(kid, str) else None)
         if key is None and self._key_resolver is not None:
@@ -399,9 +390,7 @@ class AuthenticationBoundary:
         now: datetime,
     ) -> tuple[Principal, AuthFailureReason | None, str]:
         token_type = "service" if self._config.service_issuer else "oidc"
-        key = self._config.resolve_key(
-            kid if isinstance(kid, str) else None, category="service"
-        )
+        key = self._config.resolve_key(kid if isinstance(kid, str) else None, category="service")
         if key is None and self._service_key_resolver is not None:
             key = self._service_key_resolver.resolve(kid if isinstance(kid, str) else None)
         if key is None and self._key_resolver is not None:
@@ -449,20 +438,13 @@ class AuthenticationBoundary:
     def _principal_mapping(
         self, claims: Mapping[str, Any], subject: str
     ) -> Mapping[str, object] | None:
-        if (
-            not self._config.principal_mapping_declared
-            and not self._config.principal_mappings
-        ):
+        if not self._config.principal_mapping_declared and not self._config.principal_mappings:
             return None
         direct = self._config.principal_mappings.get(subject)
         if direct is not None:
             return direct
         email = claims.get("email")
-        if (
-            claims.get("email_verified") is True
-            and isinstance(email, str)
-            and email.strip()
-        ):
+        if claims.get("email_verified") is True and isinstance(email, str) and email.strip():
             mapped = self._config.principal_mappings.get(email.strip())
             if mapped is not None:
                 return mapped
@@ -520,9 +502,7 @@ class AuthenticationBoundary:
     def _authenticate_service(
         self, credentials: Credentials
     ) -> tuple[Principal, AuthFailureReason | None]:
-        result = self._services.verify(
-            credentials.service_id, credentials.service_secret
-        )
+        result = self._services.verify(credentials.service_id, credentials.service_secret)
         if result.ok and result.principal is not None:
             return result.principal, None
         return ANONYMOUS, result.reason
@@ -543,7 +523,10 @@ class AuthenticationBoundary:
             "token_type": token_type,
             "reason": reason.value if reason else None,
             "source_ip": credentials.source_ip,
-            "issuer": self._config.issuer or self._config.local_issuer or self._config.oidc_issuer or self._config.service_issuer,
+            "issuer": self._config.issuer
+            or self._config.local_issuer
+            or self._config.oidc_issuer
+            or self._config.service_issuer,
         }
         if principal.tenant_id:
             metadata["tenant_id"] = principal.tenant_id
@@ -595,4 +578,3 @@ def _as_epoch(value: Any) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
     return None
-

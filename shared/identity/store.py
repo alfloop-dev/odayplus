@@ -13,7 +13,7 @@ import dataclasses
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any, Protocol
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from shared.auth import DataClassification, Role, Scope
 
@@ -64,21 +64,15 @@ class IdentityStore(Protocol):
         """以 account_id 查找帳號。"""
         ...
 
-    def find_account_by_username(
-        self, tenant_id: UUID | str, username: str
-    ) -> Account | None:
+    def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         """以 tenant_id 與 username 查找帳號（case-insensitive）。"""
         ...
 
-    def find_account_by_email(
-        self, tenant_id: UUID | str, email: str
-    ) -> Account | None:
+    def find_account_by_email(self, tenant_id: UUID | str, email: str) -> Account | None:
         """以 tenant_id 與 email 查找帳號（case-insensitive）。"""
         ...
 
-    def find_account_by_federated_identity(
-        self, issuer: str, subject: str
-    ) -> Account | None:
+    def find_account_by_federated_identity(self, issuer: str, subject: str) -> Account | None:
         """以 OIDC (issuer, subject) 查找對應帳號。"""
         ...
 
@@ -94,9 +88,7 @@ class IdentityStore(Protocol):
         """儲存或更新帳號記錄。"""
         ...
 
-    def set_account_roles(
-        self, account_id: UUID | str, roles: Iterable[Role | str]
-    ) -> None:
+    def set_account_roles(self, account_id: UUID | str, roles: Iterable[Role | str]) -> None:
         """設定帳號角色。"""
         ...
 
@@ -132,9 +124,7 @@ class InMemoryIdentityStore:
         aid = _parse_uuid(account_id)
         return self._accounts.get(aid)
 
-    def find_account_by_username(
-        self, tenant_id: UUID | str, username: str
-    ) -> Account | None:
+    def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
         u_lower = username.strip().lower()
         for acc in self._accounts.values():
@@ -142,9 +132,7 @@ class InMemoryIdentityStore:
                 return acc
         return None
 
-    def find_account_by_email(
-        self, tenant_id: UUID | str, email: str
-    ) -> Account | None:
+    def find_account_by_email(self, tenant_id: UUID | str, email: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
         e_lower = email.strip().lower()
         for acc in self._accounts.values():
@@ -152,9 +140,7 @@ class InMemoryIdentityStore:
                 return acc
         return None
 
-    def find_account_by_federated_identity(
-        self, issuer: str, subject: str
-    ) -> Account | None:
+    def find_account_by_federated_identity(self, issuer: str, subject: str) -> Account | None:
         aid = self._federated_links.get((issuer, subject))
         if aid is None:
             return None
@@ -170,9 +156,7 @@ class InMemoryIdentityStore:
         aid = _parse_uuid(account_id)
         self._federated_links[(issuer, subject)] = aid
 
-    def set_account_roles(
-        self, account_id: UUID | str, roles: Iterable[Role | str]
-    ) -> None:
+    def set_account_roles(self, account_id: UUID | str, roles: Iterable[Role | str]) -> None:
         aid = _parse_uuid(account_id)
         parsed: set[Role] = set()
         for r in roles:
@@ -248,9 +232,7 @@ class SqlIdentityStore:
                 disabled_reason=row[10],
             )
 
-    def find_account_by_username(
-        self, tenant_id: UUID | str, username: str
-    ) -> Account | None:
+    def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
         conn = self._get_connection()
         if conn is None:
@@ -282,9 +264,7 @@ class SqlIdentityStore:
                 disabled_reason=row[10],
             )
 
-    def find_account_by_email(
-        self, tenant_id: UUID | str, email: str
-    ) -> Account | None:
+    def find_account_by_email(self, tenant_id: UUID | str, email: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
         conn = self._get_connection()
         if conn is None:
@@ -316,9 +296,7 @@ class SqlIdentityStore:
                 disabled_reason=row[10],
             )
 
-    def find_account_by_federated_identity(
-        self, issuer: str, subject: str
-    ) -> Account | None:
+    def find_account_by_federated_identity(self, issuer: str, subject: str) -> Account | None:
         conn = self._get_connection()
         if conn is None:
             return None
@@ -452,9 +430,7 @@ class SqlIdentityStore:
             )
             conn.commit()
 
-    def set_account_roles(
-        self, account_id: UUID | str, roles: Iterable[Role | str]
-    ) -> None:
+    def set_account_roles(self, account_id: UUID | str, roles: Iterable[Role | str]) -> None:
         aid = _parse_uuid(account_id)
         conn = self._get_connection()
         if conn is None:

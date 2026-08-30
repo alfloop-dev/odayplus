@@ -32,8 +32,7 @@ import logging
 import os
 from collections.abc import Iterable, Mapping
 from datetime import date
-
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from modules.opsboard.auth import AuthenticationBoundary
@@ -127,9 +126,7 @@ def default_boundary() -> AuthenticationBoundary | None:
         from modules.opsboard.auth.config import config_from_env
 
         config = config_from_env()
-        _default_boundary = (
-            AuthenticationBoundary(config) if config.has_live_inputs else None
-        )
+        _default_boundary = AuthenticationBoundary(config) if config.has_live_inputs else None
     return _default_boundary  # type: ignore[return-value]
 
 
@@ -278,13 +275,12 @@ def require_permission(
     active_engine = engine or build_engine()
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
+        from modules.opsboard.auth.errors import AuthFailureReason
         from shared.audit.policy import (
             ALWAYS_AUDITED_ACTIONS,
-            HIGH_RISK_ACTIONS,
             build_security_event,
             is_high_risk,
         )
-        from modules.opsboard.auth.errors import AuthFailureReason
 
         principal = principal_from_headers(request.headers, boundary=boundary)
 
@@ -317,9 +313,7 @@ def require_permission(
         correlation_id = _correlation_id_from_request(request)
 
         if rbac_allows(principal, resource_type, action):
-            decision = Decision.allow(
-                f"role permits {action.value} on {resource_type}"
-            )
+            decision = Decision.allow(f"role permits {action.value} on {resource_type}")
             access = AccessRequest(
                 principal=principal,
                 action=action,
@@ -366,7 +360,6 @@ def require_permission(
     return dependency
 
 
-
 def require_feature_flag(key: str, *, flags: FeatureFlagRegistry | None = None):
     """FastAPI dependency factory gating a route on a feature flag."""
 
@@ -374,9 +367,7 @@ def require_feature_flag(key: str, *, flags: FeatureFlagRegistry | None = None):
 
     def dependency() -> None:
         if not registry.is_enabled(key, on=date.today()):
-            decision = Decision.deny(
-                f"feature flag {key!r} is disabled", policy_id="feature_flag"
-            )
+            decision = Decision.deny(f"feature flag {key!r} is disabled", policy_id="feature_flag")
             _raise_forbidden(decision)
 
     return dependency
@@ -471,7 +462,9 @@ def operator_role_ids_for(principal: Principal) -> frozenset[str]:
     return frozenset(roles)
 
 
-def _select_operator_role(request: Request, principal: Principal) -> tuple[str | None, Decision | None]:  # type: ignore[name-defined]
+def _select_operator_role(
+    request: Request, principal: Principal
+) -> tuple[str | None, Decision | None]:  # type: ignore[name-defined]
     allowed = operator_role_ids_for(principal)
     if not allowed:
         return None, Decision.deny(
@@ -481,9 +474,7 @@ def _select_operator_role(request: Request, principal: Principal) -> tuple[str |
     requested = _normalize_operator_role(request.headers.get("x-operator-role"))
     subject_role = None
     if principal.subject_id.startswith("operator-"):
-        subject_role = _normalize_operator_role(
-            principal.subject_id.removeprefix("operator-")
-        )
+        subject_role = _normalize_operator_role(principal.subject_id.removeprefix("operator-"))
 
     for candidate in (requested, subject_role):
         if candidate is None:
@@ -561,9 +552,7 @@ def _record_operator_denial(
         )
 
 
-def _operator_scope_decision(
-    principal: Principal, resource: ResourceDescriptor
-) -> Decision:
+def _operator_scope_decision(principal: Principal, resource: ResourceDescriptor) -> Decision:
     if resource.tenant_id and principal.tenant_id != resource.tenant_id:
         return Decision.deny(
             "Operator Console tenant scope mismatch",
@@ -633,13 +622,12 @@ def require_operator_permission(
     active_engine = engine or build_engine()
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
+        from modules.opsboard.auth.errors import AuthFailureReason
         from shared.audit.policy import (
             ALWAYS_AUDITED_ACTIONS,
-            HIGH_RISK_ACTIONS,
             build_security_event,
             is_high_risk,
         )
-        from modules.opsboard.auth.errors import AuthFailureReason
 
         principal = principal_from_headers(request.headers, boundary=boundary)
         effective_tenant_id = tenant_id or principal.tenant_id
@@ -652,9 +640,7 @@ def require_operator_permission(
         access = _operator_access_request(request, principal, action, resource)
 
         if not principal.authenticated:
-            decision = Decision.deny(
-                "principal not authenticated", policy_id="authenticated"
-            )
+            decision = Decision.deny("principal not authenticated", policy_id="authenticated")
             _record_operator_denial(active_engine, access, decision)
             _raise_unauthenticated(None)
 
@@ -733,4 +719,3 @@ def require_operator_permission(
         return principal
 
     return dependency
-

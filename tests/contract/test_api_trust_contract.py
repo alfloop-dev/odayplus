@@ -21,7 +21,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.security.dependencies import (
@@ -512,7 +512,6 @@ def test_t21_high_risk_session_revocation_propagation(
     identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
     identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
 
-
     # Create active session
     session = session_service.create_session(
         account_id=account_id,
@@ -535,9 +534,7 @@ def test_t21_high_risk_session_revocation_propagation(
     assert resp1.json() == {"status": "approved"}
 
     # 2. Revoke session (e.g. security admin revocation or logout)
-    session_service.revoke_session(
-        session.session_id, RevocationReason.ADMIN_REVOKE
-    )
+    session_service.revoke_session(session.session_id, RevocationReason.ADMIN_REVOKE)
 
     # 3. Immediate next high-risk request with same token fails with 401 session_revoked
     resp2 = client.post(

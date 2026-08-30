@@ -17,6 +17,7 @@ import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from modules.opsboard.auth.jwt import SigningKey
 
@@ -41,9 +42,7 @@ class AuthBoundaryConfig:
     live_input_declared: bool = False
     subject_role_bindings: Mapping[str, frozenset[str]] = field(default_factory=dict)
     principal_mapping_declared: bool = False
-    principal_mappings: Mapping[str, Mapping[str, object]] = field(
-        default_factory=dict
-    )
+    principal_mappings: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
     # Multi-issuer extension fields
     local_issuer: str | None = None
@@ -68,7 +67,11 @@ class AuthBoundaryConfig:
         effective_audiences = (
             self.local_audiences or self.audiences or self.service_audiences or self.oidc_audiences
         )
-        if bool(effective_local_issuer) and bool(self.local_signing_keys) and bool(effective_audiences):
+        if (
+            bool(effective_local_issuer)
+            and bool(self.local_signing_keys)
+            and bool(effective_audiences)
+        ):
             return True
 
         # OIDC provider configured
@@ -116,9 +119,7 @@ class AuthBoundaryConfig:
             or bool(self.service_audiences)
         )
 
-    def resolve_key(
-        self, kid: str | None, *, category: str | None = None
-    ) -> SigningKey | None:
+    def resolve_key(self, kid: str | None, *, category: str | None = None) -> SigningKey | None:
         """Resolve a verification key by ``kid`` (fail-closed on miss)."""
         keys_pool: Mapping[str, SigningKey]
         if category == "local":
@@ -201,7 +202,11 @@ def config_from_env(
     local_issuer = (
         local_issuer_raw.strip()
         if local_issuer_raw
-        else ("urn:odp:identity:local" if local_keys or "ODP_IDENTITY_TOKEN_SIGNING_KEY" in source else None)
+        else (
+            "urn:odp:identity:local"
+            if local_keys or "ODP_IDENTITY_TOKEN_SIGNING_KEY" in source
+            else None
+        )
     )
 
     # OIDC config
@@ -321,8 +326,5 @@ def _parse_principal_mappings(
     return {
         identifier.strip(): attributes
         for identifier, attributes in payload.items()
-        if isinstance(identifier, str)
-        and identifier.strip()
-        and isinstance(attributes, dict)
+        if isinstance(identifier, str) and identifier.strip() and isinstance(attributes, dict)
     }
-

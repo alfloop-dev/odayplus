@@ -8,6 +8,7 @@ Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §5
 本模組實作 session 的業務邏輯層，不直接操作資料庫。
 實際持久化由 SessionRepository (Protocol) 負責。
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -18,6 +19,7 @@ from uuid import UUID, uuid4
 # ────────────────────────────────────────────────────────────────────────────
 # Session 生命週期參數（Contract §5.2）
 # ────────────────────────────────────────────────────────────────────────────
+
 
 @dataclasses.dataclass(frozen=True)
 class SessionConfig:
@@ -45,6 +47,7 @@ class SessionConfig:
 # ────────────────────────────────────────────────────────────────────────────
 # Session 資料模型
 # ────────────────────────────────────────────────────────────────────────────
+
 
 @dataclasses.dataclass
 class Session:
@@ -74,6 +77,7 @@ class Session:
 # Session Repository Protocol
 # ────────────────────────────────────────────────────────────────────────────
 
+
 class SessionRepository(Protocol):
     """Session 持久化介面。
 
@@ -92,9 +96,7 @@ class SessionRepository(Protocol):
         """查找帳號的所有活躍 session。"""
         ...
 
-    def revoke(
-        self, session_id: UUID, reason: str, revoked_at: datetime | None = None
-    ) -> None:
+    def revoke(self, session_id: UUID, reason: str, revoked_at: datetime | None = None) -> None:
         """撤銷單一 session。"""
         ...
 
@@ -132,14 +134,9 @@ class InMemorySessionRepository:
         return self._sessions.get(session_id)
 
     def find_active_by_account(self, account_id: UUID) -> list[Session]:
-        return [
-            s for s in self._sessions.values()
-            if s.account_id == account_id and s.is_active
-        ]
+        return [s for s in self._sessions.values() if s.account_id == account_id and s.is_active]
 
-    def revoke(
-        self, session_id: UUID, reason: str, revoked_at: datetime | None = None
-    ) -> None:
+    def revoke(self, session_id: UUID, reason: str, revoked_at: datetime | None = None) -> None:
         session = self._sessions.get(session_id)
         if session is not None:
             session.revoked_at = revoked_at or datetime.now(UTC)
@@ -173,10 +170,10 @@ class InMemorySessionRepository:
             session.idle_expires_at = idle_expires_at
 
 
-
 # ────────────────────────────────────────────────────────────────────────────
 # Session 撤銷原因常數
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class RevocationReason:
     """撤銷原因常數（供稽核事件使用）。"""
@@ -193,6 +190,7 @@ class RevocationReason:
 # ────────────────────────────────────────────────────────────────────────────
 # Session 服務
 # ────────────────────────────────────────────────────────────────────────────
+
 
 class SessionService:
     """Session 管理業務邏輯（Contract §5）。
@@ -302,9 +300,7 @@ class SessionService:
 
     # ── 觸碰 session（滑動到期）────────────────────────────────────────
 
-    def touch_session(
-        self, session: Session, *, now: datetime | None = None
-    ) -> Session:
+    def touch_session(self, session: Session, *, now: datetime | None = None) -> Session:
         """更新 last_seen_at 與滑動 idle_expires_at。
 
         Contract §5.2: 每次成功請求更新 last_seen_at。
@@ -361,15 +357,11 @@ class SessionService:
 
     def on_account_disabled(self, account_id: UUID) -> int:
         """帳號停用時立即撤銷所有 session（Contract §7.3）。"""
-        return self.revoke_all_for_account(
-            account_id, RevocationReason.ADMIN_DISABLE
-        )
+        return self.revoke_all_for_account(account_id, RevocationReason.ADMIN_DISABLE)
 
     # ── 密碼變更 → 撤銷其他 session ──────────────────────────────────────
 
-    def on_password_changed(
-        self, account_id: UUID, current_session_id: UUID
-    ) -> int:
+    def on_password_changed(self, account_id: UUID, current_session_id: UUID) -> int:
         """密碼變更後撤銷該帳號其他所有 session（Contract §5.4）。"""
         return self.revoke_all_for_account(
             account_id,
