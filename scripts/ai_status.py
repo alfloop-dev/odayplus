@@ -511,6 +511,35 @@ def _continuation_nonnegative_int(value: Any) -> int:
         return 0
 
 
+def blocked_task_prose_context(task: dict[str, Any]) -> str:
+    """Return blocker prose without task/dependency identifiers.
+
+    Titles and summaries describe the work, not why a blocked task is waiting.
+    Continuation eligibility must therefore inspect only the same blocker-facing
+    fields used by Supervisor, while removing identifiers whose tokens can look
+    like hard-gate markers (for example ``...-DATASET-...``).
+    """
+    identifiers = [str(task.get("id") or "")]
+    identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
+    context = " ".join(
+        str(task.get(key) or "")
+        for key in (
+            "next",
+            "waiting_for",
+            "blocker",
+            "blocked_by",
+            "failure_reason",
+            "last_failure_reason",
+            "push_status",
+        )
+    ).casefold()
+    for identifier in identifiers:
+        token = identifier.strip().casefold()
+        if token:
+            context = context.replace(token, " ")
+    return context
+
+
 def continuation_approval_gate_error(task: dict[str, Any]) -> str | None:
     """Return why a task is not eligible for Human/Ops continuation.
 
@@ -545,19 +574,7 @@ def continuation_approval_gate_error(task: dict[str, Any]) -> str | None:
     if gate_status.startswith("pending_human"):
         return "task carries an independent human gate status"
 
-    review_fields = (
-        "title",
-        "summary",
-        "summary_zh",
-        "next",
-        "assignment_note",
-        "blocked_reason",
-        "blocker",
-        "gate_reason",
-        "failure_reason",
-        "last_failure_reason",
-    )
-    review_context = " ".join(str(task.get(key) or "") for key in review_fields).casefold()
+    blocker_context = blocked_task_prose_context(task)
     try:
         churn_reassigned_count = max(0, int(task.get("review_churn_reassigned_at_count", 0) or 0))
     except (TypeError, ValueError):
@@ -572,7 +589,7 @@ def continuation_approval_gate_error(task: dict[str, Any]) -> str | None:
         task.get("review_churn_escalated_at")
         or churn_escalated_count
         or churn_reassigned_count
-        or "review churn" in review_context
+        or "review churn" in blocker_context
     ):
         return "task was not escalated by review churn"
 
@@ -602,7 +619,7 @@ def continuation_approval_gate_error(task: dict[str, Any]) -> str | None:
         "sign-off",
         "signoff",
     )
-    if any(marker in review_context for marker in hard_gate_markers):
+    if any(marker in blocker_context for marker in hard_gate_markers):
         return "task carries an independent credentials/deployment/production or human gate"
     return None
 

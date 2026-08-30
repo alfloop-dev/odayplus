@@ -4888,6 +4888,33 @@ class HumanContinuationApprovalTests(unittest.TestCase):
         deployment_task = self._task(next="Review churn is also blocked pending production deployment approval.")
         self.assertIn("independent", ai_status.continuation_approval_gate_error(deployment_task) or "")
 
+    def test_production_deployment_title_does_not_block_review_churn_approval(self) -> None:
+        task = self._task(
+            title="Production deployment continuation",
+            summary="Deployment recovery for the production lane",
+            summary_zh="production deployment 修復",
+            blocker="Review churn only after repeated reviewer reopenings.",
+        )
+        state = self._state(task)
+        self.assertNotIn("production", ai_status.blocked_task_prose_context(task))
+        self.assertNotIn("deployment", ai_status.blocked_task_prose_context(task))
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            ai_status.command_approve_continuation(
+                state,
+                [
+                    "ODP-CONTINUATION-001",
+                    "Authorize one continuation for the review-churn epoch.",
+                    "2099-01-01T00:00:00Z",
+                    "nonce-production-topic-only",
+                ],
+            )
+
+        self.assertEqual(state["tasks"][0]["human_continuation_approval"]["status"], "issued")
+
     def test_expired_and_reused_nonce_are_rejected_before_mutation(self) -> None:
         state = self._state()
         with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):

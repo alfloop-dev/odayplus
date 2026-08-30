@@ -9035,6 +9035,25 @@ class HumanContinuationApprovalSupervisorTests(unittest.TestCase):
         self.assertEqual(task["status"], "blocked")
         commit.assert_not_called()
 
+    def test_production_deployment_title_does_not_block_review_churn_consumption(self) -> None:
+        task = self._task(
+            self._approval(),
+            title="Production deployment continuation",
+            summary="Deployment recovery for the production lane",
+            summary_zh="production deployment 修復",
+            blocker="Review churn only after repeated reviewer reopenings.",
+        )
+        status = {"tasks": [task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, {}))
+
+        self.assertEqual(task["status"], "todo")
+        self.assertEqual(task["human_continuation_approval_history"][-1]["status"], "consumed")
+
 
 class AutomaticRecoveryTests(unittest.TestCase):
     def setUp(self) -> None:
