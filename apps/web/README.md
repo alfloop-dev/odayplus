@@ -34,12 +34,12 @@ When OIDC is enabled, the following additional variables are required:
 |---|---|
 | `ODP_WEB_OIDC_ISSUER` | Exact OIDC issuer |
 | `ODP_WEB_OIDC_CLIENT_ID` | Registered web client ID |
+| `ODP_WEB_OIDC_CLIENT_SECRET` | Web OIDC client secret (bound via Secret Manager `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` in deployment) |
 
 Optional OIDC environment:
 
 | Variable | Purpose |
 |---|---|
-| `ODP_WEB_OIDC_CLIENT_SECRET` | Confidential-client secret; omitted for a public PKCE client |
 | `ODP_WEB_OIDC_REDIRECT_URI` | Override callback URI; defaults to `<ODP_WEB_BASE_URL>/auth/callback` |
 | `ODP_WEB_OIDC_SCOPES` | Defaults to `openid profile email` |
 | `ODP_WEB_OIDC_ALLOWED_ALGS` | Comma-separated ID-token algorithms; defaults to `RS256` |

@@ -672,6 +672,10 @@ def test_documentation_states_the_single_auth_mode_contract() -> None:
     assert "`ODP_WEB_BASE_URL`" in all_modes_table
     assert "ODP_WEB_OIDC_" not in all_modes_table
 
+    oidc_mode_table = web_readme.partition("### OIDC mode (`ODP_AUTH_MODE=oidc`)")[2].partition("Optional OIDC environment:")[0]
+    assert "`ODP_WEB_OIDC_CLIENT_SECRET`" in oidc_mode_table
+    assert "omitted for a public PKCE client" not in web_readme
+
     guide = (ROOT / "docs" / "deployment" / "GCP_DEPLOY_GUIDE.md").read_text(encoding="utf-8")
     assert "`ODP_AUTH_MODE`" in guide
     assert "product_ops/deployment/auth_mode.sh" in guide
@@ -684,3 +688,4 @@ def test_documentation_states_the_single_auth_mode_contract() -> None:
     terraform_readme = (TERRAFORM_ROOT / "README.md").read_text(encoding="utf-8")
     assert "service_auth_issuer" in terraform_readme
     assert 'when `auth_mode = "oidc"`' in terraform_readme
+
