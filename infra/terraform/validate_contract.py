@@ -44,6 +44,7 @@ REQUIRED_TOKENS = {
         'MLFLOW_TRACKING_URI',
         'ODP_API_SERVICE_AUDIENCE',
         'ODP_DATA_BINDING_MODE',
+        'ODP_AUTH_MODE',
         'ODP_WEB_BASE_URL',
         'ODP_WEB_OIDC_CLIENT_ID',
     },

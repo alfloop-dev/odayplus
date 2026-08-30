@@ -99,6 +99,14 @@ case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
     ;;
 esac
 
+# Password-first is the default and OIDC is optional, so the preflight, the Web
+# secret bindings, and the Web runtime environment must all read one resolved
+# mode. Resolve it before the preflight so a split configuration is rejected
+# before anything is built or deployed.
+source product_ops/deployment/auth_mode.sh
+resolve_auth_mode
+echo "Authentication mode: ${ODP_AUTH_MODE} (ODP_AUTH_OIDC_ENABLED=${ODP_AUTH_OIDC_ENABLED})."
+
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
 MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
@@ -300,8 +308,12 @@ build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dock
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
-WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
-WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+WEB_SECRET_BINDINGS="ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+# Only the enabled provider's secrets reach Cloud Run. resolve_auth_mode has
+# already proven ODP_WEB_OIDC_CLIENT_SECRET_SECRET is set whenever OIDC is on.
+if [ "${ODP_AUTH_OIDC_ENABLED}" = "true" ]; then
+  WEB_SECRET_BINDINGS+=",ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
+fi
 
 # gcloud's shortcut for describing a job's newest execution only exists on
 # recent releases, so job proof capture used to depend on the runner's CLI
@@ -571,10 +583,20 @@ payload = {
     "ODP_API_BASE_URL": sys.argv[2],
     "ODP_API_SERVICE_AUDIENCE": sys.argv[3],
     "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
-    "ODP_WEB_OIDC_ISSUER": os.environ["ODP_WEB_OIDC_ISSUER"],
-    "ODP_WEB_OIDC_CLIENT_ID": os.environ["ODP_WEB_OIDC_CLIENT_ID"],
-    "ODP_WEB_OIDC_ALLOWED_ALGS": "RS256",
+    # The canonical web origin backs cookies, CSRF, and redirects in every auth
+    # mode; the Web runtime fails closed without it in production, so it is not
+    # part of the OIDC-only block below. The preflight has already proven it is
+    # set, which is why this is a direct lookup.
+    "ODP_WEB_BASE_URL": os.environ["ODP_WEB_BASE_URL"],
+    "ODP_AUTH_MODE": os.environ["ODP_AUTH_MODE"],
+    "ODP_AUTH_OIDC_ENABLED": os.environ["ODP_AUTH_OIDC_ENABLED"],
 }
+# resolve_auth_mode owns the decision; this stage only follows it, so the Web
+# runtime can never disagree with the secrets bound to the same revision.
+if payload["ODP_AUTH_OIDC_ENABLED"] == "true":
+    payload["ODP_WEB_OIDC_ISSUER"] = os.environ["ODP_WEB_OIDC_ISSUER"]
+    payload["ODP_WEB_OIDC_CLIENT_ID"] = os.environ["ODP_WEB_OIDC_CLIENT_ID"]
+    payload["ODP_WEB_OIDC_ALLOWED_ALGS"] = "RS256"
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
 

@@ -707,6 +707,10 @@ jobs:
       ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
+      # Canonical web origin for cookies, CSRF, and redirects. Required in both
+      # auth modes -- the Web runtime fails closed without it in production --
+      # so it is passed unconditionally, not alongside the OIDC inputs.
+      ODP_WEB_BASE_URL: ${{ vars.ODP_WEB_BASE_URL }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
       # ODP-LIVE-E2E-001: the post-promotion live E2E gate runs inside
       # deploy_cloud_run_waji.sh before the release is committed, so a failure
@@ -715,6 +719,14 @@ jobs:
       ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS: ${{ vars.ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS }}
       ODAY_DATABASE_URL_SECRET: ${{ vars.ODAY_DATABASE_URL_SECRET }}
       ODP_WEB_OIDC_CLIENT_SECRET_SECRET: ${{ vars.ODP_WEB_OIDC_CLIENT_SECRET_SECRET }}
+      # ODP_AUTH_MODE is the authoritative auth-mode input; ODP_AUTH_OIDC_ENABLED
+      # is its legacy boolean alias. Both are passed so an environment that has
+      # only ever set the legacy flag keeps deploying, and so a disagreement
+      # between them fails the preflight instead of producing a half-OIDC
+      # revision. Unset variables arrive as empty strings and fall through to
+      # the password-first default.
+      ODP_AUTH_MODE: ${{ vars.ODP_AUTH_MODE }}
+      ODP_AUTH_OIDC_ENABLED: ${{ vars.ODP_AUTH_OIDC_ENABLED }}
       ODP_WEB_SESSION_SECRET_SECRET: ${{ vars.ODP_WEB_SESSION_SECRET_SECRET }}
       ODP_DEPLOY_ENV: ${{ inputs.environment }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
