@@ -217,4 +217,73 @@ describe("password-first login route handler", () => {
       },
     });
   });
+
+  it("T14: fails closed with 503 WEB_AUTH_NOT_CONFIGURED on GET /login when OIDC mode is selected but configuration is incomplete", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    vi.stubEnv("ODP_AUTH_MODE", "oidc");
+    vi.stubEnv("ODP_WEB_OIDC_ISSUER", "https://accounts.google.com");
+    vi.stubEnv("ODP_WEB_OIDC_CLIENT_ID", "web-client-id.apps.googleusercontent.com");
+    // ODP_WEB_OIDC_CLIENT_SECRET intentionally omitted -> incomplete
+
+    const request = new NextRequest("https://ops.oday.plus/login?returnTo=%2Foperator");
+    const response = await GET(request);
+
+    expect(response.status).toBe(503);
+    const data = await response.json();
+    expect(data).toMatchObject({
+      error: { code: "WEB_AUTH_NOT_CONFIGURED" },
+    });
+  });
+
+  it("T14: fails closed with 503 WEB_AUTH_NOT_CONFIGURED on POST /login when OIDC mode is selected but configuration is incomplete", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    vi.stubEnv("ODP_AUTH_MODE", "oidc");
+    vi.stubEnv("ODP_WEB_OIDC_ISSUER", "https://accounts.google.com");
+    vi.stubEnv("ODP_WEB_OIDC_CLIENT_ID", "web-client-id.apps.googleusercontent.com");
+    // ODP_WEB_OIDC_CLIENT_SECRET intentionally omitted -> incomplete
+
+    const request = new NextRequest("https://ops.oday.plus/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        username: "admin",
+        password: "Admin12345678!",
+      }),
+    });
+    request.headers.set("origin", "https://ops.oday.plus");
+
+    const response = await POST(request);
+    expect(response.status).toBe(503);
+    const data = await response.json();
+    expect(data).toMatchObject({
+      error: { code: "WEB_AUTH_NOT_CONFIGURED" },
+    });
+  });
+
+  it("fails closed with 503 on conflicting auth mode configuration in GET and POST /login", async () => {
+    vi.stubEnv("ODP_WEB_SESSION_SECRET", SECRET);
+    vi.stubEnv("ODP_AUTH_MODE", "local");
+    vi.stubEnv("ODP_AUTH_OIDC_ENABLED", "true");
+
+    const getReq = new NextRequest("https://ops.oday.plus/login");
+    const getRes = await GET(getReq);
+    expect(getRes.status).toBe(503);
+
+    const postReq = new NextRequest("https://ops.oday.plus/login", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        username: "admin",
+        password: "Admin12345678!",
+      }),
+    });
+    postReq.headers.set("origin", "https://ops.oday.plus");
+    const postRes = await POST(postReq);
+    expect(postRes.status).toBe(503);
+  });
 });

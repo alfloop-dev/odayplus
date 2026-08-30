@@ -9,7 +9,11 @@ import {
   webSessionCookieName,
   webSessionCookieOptions,
 } from "../../../lib/auth/session";
-import { isOidcEnabled, resolveWebBaseUrl } from "../../../lib/auth/runtime";
+import {
+  isOidcEnabled,
+  resolveAuthMode,
+  resolveWebBaseUrl,
+} from "../../../lib/auth/runtime";
 import { getDefaultIdentityStore } from "../../../lib/auth/identityStore";
 import {
   DEFAULT_SESSION_IDLE_TIMEOUT_MS,
@@ -41,20 +45,42 @@ function callbackFailure(code: string, status = 401): NextResponse {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  // 1. Fail closed if OIDC is disabled / not configured (Contract §3.2, T14)
-  let oidcActive = false;
+  // 1. Fail closed if auth mode is invalid, local, or OIDC is incomplete (Contract §3.2, T14)
+  let authMode: "local" | "oidc";
   try {
-    oidcActive = isOidcEnabled(process.env);
+    authMode = resolveAuthMode(process.env);
   } catch {
-    oidcActive = false;
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_NOT_CONFIGURED",
+          summary: "Web authentication configuration is invalid.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
   }
 
-  if (!oidcActive) {
+  if (authMode === "local") {
     return NextResponse.json(
       {
         error: {
           code: "WEB_AUTH_PROVIDER_DISABLED",
           summary: "OIDC authentication provider is disabled.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  try {
+    isOidcEnabled(process.env);
+  } catch {
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_NOT_CONFIGURED",
+          summary: "OIDC authentication configuration is incomplete.",
         },
       },
       { status: 503, headers: { "cache-control": "no-store" } },

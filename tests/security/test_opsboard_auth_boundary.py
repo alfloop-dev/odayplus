@@ -478,3 +478,60 @@ def test_config_from_env_with_local_identity_signing_key():
     outcome = boundary.authenticate(Credentials(bearer_token=local_token), now=NOW)
     assert outcome.authenticated is True
     assert outcome.principal.subject_id == "user-local-123"
+
+
+def test_web_to_api_local_token_roundtrip_with_coexisting_issuers():
+    """Verify production local Web->API token roundtrip when both Google and local issuers coexist."""
+    secret = "b" * 32
+    # In production local deployment, both ODP_AUTH_ISSUER (Google smoke) and
+    # ODP_AUTH_LOCAL_ISSUER (Web local identity) are present in the environment.
+    cfg = config_from_env(
+        {
+            "ODP_AUTH_ISSUER": "https://accounts.google.com",
+            "ODP_AUTH_LOCAL_ISSUER": "urn:odp:identity:local",
+            "ODP_AUTH_AUDIENCES": "https://api.example.com",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": secret,
+        }
+    )
+    assert cfg.is_configured is True
+    assert "urn:odp:identity:local" in cfg.trusted_issuers
+    assert "https://accounts.google.com" in cfg.trusted_issuers
+    assert "https://api.example.com" in cfg.audiences
+
+    local_key = cfg.resolve_key("local-default")
+    assert local_key is not None
+
+    # Web-minted local access token
+    web_local_token = encode_compact_jwt(
+        {
+            "iss": "urn:odp:identity:local",
+            "aud": "https://api.example.com",
+            "sub": "account-uuid-456",
+            "sid": "00000000-0000-0000-0000-000000000002",
+            "tenant_id": "tenant-default",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=2)).timestamp(),
+        },
+        local_key,
+    )
+    boundary = _boundary(cfg)
+    outcome = boundary.authenticate(Credentials(bearer_token=web_local_token), now=NOW)
+    assert outcome.authenticated is True
+    assert outcome.reason is None
+    assert outcome.principal.subject_id == "account-uuid-456"
+
+    # Mismatched/untrusted issuer is still rejected
+    foreign_token = encode_compact_jwt(
+        {
+            "iss": "https://evil.example",
+            "aud": "https://api.example.com",
+            "sub": "account-uuid-456",
+            "sid": "00000000-0000-0000-0000-000000000002",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=2)).timestamp(),
+        },
+        local_key,
+    )
+    foreign_outcome = boundary.authenticate(Credentials(bearer_token=foreign_token), now=NOW)
+    assert foreign_outcome.authenticated is False
+    assert foreign_outcome.reason is AuthFailureReason.ISSUER_MISMATCH

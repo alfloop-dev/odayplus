@@ -31,6 +31,7 @@ class AuthBoundaryConfig:
     """
 
     issuer: str | None = None
+    issuers: frozenset[str] = frozenset()
     audiences: frozenset[str] = frozenset()
     signing_keys: Mapping[str, SigningKey] = field(default_factory=dict)
     jwks_uri: str | None = None
@@ -44,11 +45,19 @@ class AuthBoundaryConfig:
     )
 
     @property
+    def trusted_issuers(self) -> frozenset[str]:
+        """All trusted issuers (composed from `issuer` and `issuers`)."""
+        items = set(self.issuers)
+        if self.issuer:
+            items.add(self.issuer)
+        return frozenset(items)
+
+    @property
     def is_configured(self) -> bool:
         """True only when the live IdP inputs required to verify a token exist."""
 
         return (
-            bool(self.issuer)
+            bool(self.trusted_issuers)
             and bool(self.audiences)
             and (bool(self.signing_keys) or bool(self.jwks_uri))
         )
@@ -74,7 +83,7 @@ class AuthBoundaryConfig:
 
         return (
             self.live_input_declared
-            or bool(self.issuer)
+            or bool(self.trusted_issuers)
             or bool(self.audiences)
             or bool(self.signing_keys)
             or bool(self.jwks_uri)
@@ -104,12 +113,17 @@ def config_from_env(
     boundary):
 
     - ``ODP_AUTH_ISSUER``
+    - ``ODP_AUTH_LOCAL_ISSUER``
+    - ``ODP_AUTH_OIDC_ISSUER``
+    - ``ODP_AUTH_SERVICE_ISSUER``
     - ``ODP_AUTH_AUDIENCES`` (comma-separated)
+    - ``ODP_AUTH_LOCAL_AUDIENCES`` (comma-separated)
     - ``ODP_AUTH_HS256_KEYS`` (``kid:secret`` pairs, comma-separated; local/test)
     - ``ODP_AUTH_JWKS_URI`` (production IdP JSON Web Key Set endpoint)
     - ``ODP_AUTH_JWKS_CACHE_TTL_SECONDS``
     - ``ODP_AUTH_LEEWAY_SECONDS``
     - ``ODP_AUTH_PRINCIPAL_MAP`` (deployment-owned JSON keyed by subject/email)
+    - ``ODP_IDENTITY_TOKEN_SIGNING_KEY`` (Secret Manager injected local key)
 
     Only symmetric (HS256) keys are read from the environment; asymmetric JWKS
     material is injected programmatically via :class:`AuthBoundaryConfig` so
@@ -117,10 +131,28 @@ def config_from_env(
     """
 
     source = os.environ if env is None else env
-    issuer = (
+    trusted_issuers: set[str] = set()
+    for var in (
+        "ODP_AUTH_ISSUER",
+        "ODP_AUTH_LOCAL_ISSUER",
+        "ODP_AUTH_OIDC_ISSUER",
+        "ODP_AUTH_SERVICE_ISSUER",
+    ):
+        val = (source.get(var) or "").strip()
+        if val:
+            trusted_issuers.add(val)
+
+    identity_token_key = (source.get("ODP_IDENTITY_TOKEN_SIGNING_KEY") or "").strip()
+    if identity_token_key:
+        local_iss = (source.get("ODP_AUTH_LOCAL_ISSUER") or "").strip() or "urn:odp:identity:local"
+        trusted_issuers.add(local_iss)
+
+    primary_issuer = (
         (source.get("ODP_AUTH_ISSUER") or "").strip()
         or (source.get("ODP_AUTH_LOCAL_ISSUER") or "").strip()
-        or None
+        or (source.get("ODP_AUTH_OIDC_ISSUER") or "").strip()
+        or (source.get("ODP_AUTH_SERVICE_ISSUER") or "").strip()
+        or (next(iter(trusted_issuers)) if trusted_issuers else None)
     )
     audiences = frozenset(
         _split_csv(source.get("ODP_AUTH_AUDIENCES"))
@@ -133,7 +165,6 @@ def config_from_env(
         if not sep or not kid or not secret:
             continue
         keys[kid] = SigningKey(kid=kid, algorithm="HS256", secret=secret.encode("utf-8"))
-    identity_token_key = (source.get("ODP_IDENTITY_TOKEN_SIGNING_KEY") or "").strip()
     if identity_token_key:
         keys["local-default"] = SigningKey(
             kid="local-default",
@@ -152,6 +183,8 @@ def config_from_env(
         for var in (
             "ODP_AUTH_ISSUER",
             "ODP_AUTH_LOCAL_ISSUER",
+            "ODP_AUTH_OIDC_ISSUER",
+            "ODP_AUTH_SERVICE_ISSUER",
             "ODP_AUTH_AUDIENCES",
             "ODP_AUTH_LOCAL_AUDIENCES",
             "ODP_AUTH_HS256_KEYS",
@@ -183,7 +216,8 @@ def config_from_env(
         except json.JSONDecodeError:
             pass
     return AuthBoundaryConfig(
-        issuer=issuer,
+        issuer=primary_issuer,
+        issuers=frozenset(trusted_issuers),
         audiences=audiences,
         signing_keys=keys,
         jwks_uri=jwks_uri,

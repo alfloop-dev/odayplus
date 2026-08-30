@@ -2,6 +2,7 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import {
   isOidcEnabled,
+  resolveAuthMode,
   resolveWebBaseUrl,
   safeReturnTo,
   verifyCsrfOrigin,
@@ -256,16 +257,43 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return response;
   }
 
-  // 2. Explicit OIDC flow request
-  if (provider === "oidc") {
-    let oidcActive = false;
-    try {
-      oidcActive = isOidcEnabled(process.env);
-    } catch {
-      oidcActive = false;
-    }
+  // 2. Validate overall auth mode configuration (Contract §3.2, T14, T19)
+  let authMode: "local" | "oidc";
+  try {
+    authMode = resolveAuthMode(process.env);
+  } catch {
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_NOT_CONFIGURED",
+          summary: "Web authentication configuration is invalid.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
 
-    if (!oidcActive) {
+  if (authMode === "oidc") {
+    try {
+      isOidcEnabled(process.env);
+    } catch {
+      // Explicitly selected OIDC with incomplete config must fail closed,
+      // never silently downgrade to local password form.
+      return NextResponse.json(
+        {
+          error: {
+            code: "WEB_AUTH_NOT_CONFIGURED",
+            summary: "OIDC authentication configuration is incomplete.",
+          },
+        },
+        { status: 503, headers: { "cache-control": "no-store" } },
+      );
+    }
+  }
+
+  // 3. Explicit OIDC flow request
+  if (provider === "oidc") {
+    if (authMode !== "oidc") {
       return NextResponse.json(
         {
           error: {
@@ -303,13 +331,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // 3. Default: Password-first Login Screen
-  let showOidc = false;
-  try {
-    showOidc = isOidcEnabled(process.env);
-  } catch {
-    showOidc = false;
-  }
+  // 4. Default: Password-first Login Screen
+  const showOidc = authMode === "oidc";
 
   const html = renderLoginFormHtml({
     returnTo,
@@ -338,6 +361,39 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       },
       { status: 403, headers: { "cache-control": "no-store" } },
     );
+  }
+
+  // 2. Validate overall auth mode configuration (Contract §3.2, T14, T19)
+  let authMode: "local" | "oidc";
+  try {
+    authMode = resolveAuthMode(process.env);
+  } catch {
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_NOT_CONFIGURED",
+          summary: "Web authentication configuration is invalid.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  if (authMode === "oidc") {
+    try {
+      isOidcEnabled(process.env);
+    } catch {
+      // Incomplete OIDC config must not allow login fallback to local password.
+      return NextResponse.json(
+        {
+          error: {
+            code: "WEB_AUTH_NOT_CONFIGURED",
+            summary: "OIDC authentication configuration is incomplete.",
+          },
+        },
+        { status: 503, headers: { "cache-control": "no-store" } },
+      );
+    }
   }
 
   // 2. Parse request payload

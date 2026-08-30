@@ -257,7 +257,8 @@ class AuthenticationBoundary:
         if not isinstance(subject, str) or not subject.strip():
             return AuthFailureReason.MISSING_SUBJECT
 
-        if claims.get("iss") != self._config.issuer:
+        iss = claims.get("iss")
+        if not iss or iss not in self._config.trusted_issuers:
             return AuthFailureReason.ISSUER_MISMATCH
 
         if not self._audience_ok(claims.get("aud")):
