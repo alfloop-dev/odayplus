@@ -284,6 +284,15 @@ class AuthenticationBoundary:
                 session = self._session_service.validate_session(sid_uuid)
                 if session is None:
                     return ANONYMOUS, AuthFailureReason.SESSION_REVOKED, token_type
+                # Same-identity/session trust binding (review defect #2):
+                # The session's account_id and provider must match the token's
+                # sub and expected provider. Without this check, sub=A with an
+                # active sid belonging to account B returns authenticated=True.
+                token_sub_uuid = UUID(str(claims["sub"]))
+                if session.account_id != token_sub_uuid:
+                    return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND, token_type
+                if session.provider != "local_password":
+                    return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND, token_type
             except (ValueError, TypeError):
                 return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN, token_type
         elif sid is not None:
@@ -491,8 +500,12 @@ class AuthenticationBoundary:
         if nbf is not None and epoch < nbf - leeway:
             return AuthFailureReason.TOKEN_NOT_YET_VALID
 
+        # iat is required — a token without an issued-at timestamp fails
+        # closed (review defect #3: ODP-WEB-LOCAL-AUTH-API-TRUST-001).
         iat = _as_epoch(claims.get("iat"))
-        if iat is not None and epoch < iat - leeway:
+        if iat is None:
+            return AuthFailureReason.MALFORMED_TOKEN
+        if epoch < iat - leeway:
             return AuthFailureReason.TOKEN_NOT_YET_VALID
 
         return None

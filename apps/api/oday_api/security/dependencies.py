@@ -125,28 +125,44 @@ def default_boundary() -> AuthenticationBoundary | None:
         from modules.opsboard.auth import AuthenticationBoundary
         from modules.opsboard.auth.config import config_from_env
 
-        # Wire durable backing stores into the default boundary so that
-        # it is always connected to an identity store and a session
-        # repository (review requirement #1).  In production, callers
-        # should supply SqlIdentityStore + a durable SessionRepository;
-        # the InMemory fallbacks here ensure every path has a boundary
-        # that requires sid/account instead of silently skipping.
-        from shared.identity import (
-            InMemoryIdentityStore,
-            InMemorySessionRepository,
-            SessionConfig,
-            SessionService,
-        )
+        # Pull durable identity/session stores from the persistence bundle so
+        # that production PostgreSQL deployments use SqlIdentityStore and the
+        # boundary can resolve persisted accounts and sessions (review defect
+        # #1 fix: ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+        identity_store = None
+        session_service = None
+        try:
+            from shared.infrastructure.persistence import build_persistence
 
-        default_identity_store = InMemoryIdentityStore()
-        default_session_service = SessionService(
-            repository=InMemorySessionRepository(),
-            config=SessionConfig(),
-        )
+            bundle = build_persistence()
+            identity_store = getattr(bundle, "identity_store", None)
+            session_service = getattr(bundle, "session_service", None)
+        except Exception:
+            # Persistence may not be available (e.g. missing DATABASE_URL in a
+            # lean test environment). Fall back to in-memory doubles so the
+            # boundary still requires sid/account instead of silently skipping.
+            _LOGGER.debug(
+                "default_boundary: persistence bundle unavailable; "
+                "falling back to in-memory identity/session stores"
+            )
+
+        if identity_store is None or session_service is None:
+            from shared.identity import (
+                InMemoryIdentityStore,
+                InMemorySessionRepository,
+                SessionConfig,
+                SessionService,
+            )
+
+            identity_store = identity_store or InMemoryIdentityStore()
+            session_service = session_service or SessionService(
+                repository=InMemorySessionRepository(),
+                config=SessionConfig(),
+            )
 
         config = config_from_env(
-            identity_store=default_identity_store,
-            session_service=default_session_service,
+            identity_store=identity_store,
+            session_service=session_service,
         )
         _default_boundary = AuthenticationBoundary(config) if config.has_live_inputs else None
     return _default_boundary  # type: ignore[return-value]

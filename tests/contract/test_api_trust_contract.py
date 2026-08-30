@@ -707,3 +707,180 @@ def test_t21b_high_risk_guard_denies_missing_sid(
     )
     assert resp.status_code == 401
     assert resp.json()["detail"] == AuthFailureReason.SESSION_NOT_FOUND.value
+
+
+# --- Regression: Defect #1 PersistenceBundle Carries Identity/Session Stores ---
+
+
+def test_regression_persistence_bundle_carries_identity_stores():
+    """Defect #1: PersistenceBundle must expose identity_store and session_service.
+
+    Previously the PersistenceBundle never carried identity or session stores,
+    so default_boundary() constructed empty InMemory doubles that could never
+    resolve persisted accounts or sessions.
+    """
+    from shared.infrastructure.persistence import build_persistence
+
+    bundle = build_persistence(mode="memory")
+    assert bundle.identity_store is not None, (
+        "PersistenceBundle.identity_store must not be None"
+    )
+    assert bundle.session_service is not None, (
+        "PersistenceBundle.session_service must not be None"
+    )
+    # Verify the identity store implements the required protocol
+    assert hasattr(bundle.identity_store, "find_account_by_id")
+    assert hasattr(bundle.identity_store, "get_account_roles")
+    # Verify the session service implements validate_session
+    assert hasattr(bundle.session_service, "validate_session")
+    assert hasattr(bundle.session_service, "create_session")
+
+
+# --- Regression: Defect #2 Cross-Identity Session Binding ---
+
+
+def test_regression_cross_identity_session_binding_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """Defect #2: sub=A with active sid(B) must fail closed.
+
+    Previously the boundary validated that sid was active but never checked
+    that session.account_id matched the token sub. This allowed a token with
+    sub=A to authenticate using any active session belonging to account B.
+    """
+    # Create two accounts
+    account_a_id = uuid4()
+    account_b_id = uuid4()
+    tenant_id = uuid4()
+
+    account_a = Account(
+        account_id=account_a_id,
+        tenant_id=tenant_id,
+        username="user_a",
+        email="user_a@example.com",
+        status="active",
+    )
+    account_b = Account(
+        account_id=account_b_id,
+        tenant_id=tenant_id,
+        username="user_b",
+        email="user_b@example.com",
+        status="active",
+    )
+    identity_store.save_account(account_a)
+    identity_store.save_account(account_b)
+    identity_store.set_account_roles(account_a_id, [Role.OPERATIONS_MANAGER])
+    identity_store.set_account_roles(account_b_id, [Role.OPERATIONS_MANAGER])
+
+    # Create session for account B
+    session_b = session_service.create_session(
+        account_id=account_b_id,
+        provider="local_password",
+    )
+
+    # Token has sub=A but sid=session_B (cross-identity attack)
+    token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=str(account_a_id),
+        extra_claims={"sid": str(session_b.session_id)},
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False, (
+        "Cross-identity session binding must be rejected: "
+        "sub=A should not authenticate with sid belonging to account B"
+    )
+    assert outcome.reason == AuthFailureReason.SESSION_NOT_FOUND
+
+
+def test_regression_wrong_provider_session_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """Defect #2 variant: A local token using an OIDC session must be rejected."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="provider_mismatch",
+        email="pmismatch@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+
+    # Create session with provider='oidc' (not 'local_password')
+    session = session_service.create_session(
+        account_id=account_id,
+        provider="oidc",
+    )
+
+    # Local token referencing an OIDC session
+    token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=str(account_id),
+        extra_claims={"sid": str(session.session_id)},
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False, (
+        "Local token must not use a session with provider='oidc'"
+    )
+    assert outcome.reason == AuthFailureReason.SESSION_NOT_FOUND
+
+
+# --- Regression: Defect #3 Required iat Claim ---
+
+
+def test_regression_missing_iat_fails_closed(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """Defect #3: A token missing the iat claim must fail closed.
+
+    Previously iat was optional and never required. A token without iat was
+    accepted. Now iat is required on all token types.
+    """
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="no_iat_user",
+        email="noiat@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+
+    session = session_service.create_session(
+        account_id=account_id,
+        provider="local_password",
+    )
+
+    # Build a JWT without iat by directly constructing the payload
+    now = int(time.time())
+    payload: dict[str, Any] = {
+        "iss": LOCAL_ISSUER,
+        "sub": str(account_id),
+        "aud": AUDIENCE,
+        "nbf": now - 10,
+        "exp": now + 3600,
+        "sid": str(session.session_id),
+        # iat intentionally omitted
+    }
+    token = encode_compact_jwt(payload, LOCAL_KEY)
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False, (
+        "A token missing the required iat claim must fail closed"
+    )
+    assert outcome.reason == AuthFailureReason.MALFORMED_TOKEN
+
