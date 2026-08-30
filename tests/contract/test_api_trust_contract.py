@@ -29,6 +29,7 @@ from apps.api.oday_api.security.dependencies import (
     principal_from_headers,
     require_operator_permission,
     require_permission,
+    reset_bound_persistence,
     reset_default_boundary,
 )
 from modules.opsboard.auth import (
@@ -94,6 +95,31 @@ def make_jwt(
     return encode_compact_jwt(payload, key)
 
 
+def make_local_jwt(
+    *,
+    sub: str,
+    sid: str,
+    tenant_id: str,
+    exp_offset: int = 3600,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    """Local access token carrying every Contract §4.3 required claim.
+
+    §4.3 requires sub, sid, iat, exp and tenant_id; tests that probe a missing
+    required claim build their payload explicitly instead of using this helper.
+    """
+    claims: dict[str, Any] = {"sid": sid, "tenant_id": tenant_id}
+    if extra_claims:
+        claims.update(extra_claims)
+    return make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=sub,
+        exp_offset=exp_offset,
+        extra_claims=claims,
+    )
+
+
 @pytest.fixture
 def identity_store() -> InMemoryIdentityStore:
     return InMemoryIdentityStore()
@@ -139,9 +165,9 @@ def boundary(boundary_config: AuthBoundaryConfig) -> AuthenticationBoundary:
 
 @pytest.fixture(autouse=True)
 def clean_boundary_state():
-    reset_default_boundary()
+    reset_bound_persistence()
     yield
-    reset_default_boundary()
+    reset_bound_persistence()
 
 
 # --- T16: Production Mode Rejects Spoofable Browser Headers ---
@@ -211,14 +237,11 @@ def test_t17_multi_issuer_local_token(
     )
 
     # Token claims might try to self-assert extra roles (which must be ignored per contract §4.4)
-    token = make_jwt(
-        LOCAL_KEY,
-        iss=LOCAL_ISSUER,
+    token = make_local_jwt(
         sub=str(account_id),
-        extra_claims={
-            "sid": str(session.session_id),
-            "roles": ["operations_manager"],  # Must be ignored!
-        },
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+        extra_claims={"roles": ["operations_manager"]},  # Must be ignored!
     )
 
     outcome = boundary.authenticate(Credentials(bearer_token=token))
@@ -438,11 +461,10 @@ def test_t20_rbac_allow_and_deny_audit_logging(
         account_id=account_id, provider="local_password"
     )
 
-    token = make_jwt(
-        LOCAL_KEY,
-        iss=LOCAL_ISSUER,
+    token = make_local_jwt(
         sub=str(account_id),
-        extra_claims={"sid": str(session.session_id)},
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
     )
 
     # 1. Allowed request (VIEW) -> 200 + audit outcome=allow
@@ -529,11 +551,10 @@ def test_t21_high_risk_session_revocation_propagation(
         provider="local_password",
     )
 
-    token = make_jwt(
-        LOCAL_KEY,
-        iss=LOCAL_ISSUER,
+    token = make_local_jwt(
         sub=str(account_id),
-        extra_claims={"sid": str(session.session_id)},
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
     )
 
     # 1. Before revocation: High-risk action succeeds (200)
@@ -566,7 +587,7 @@ def test_t19b_local_token_without_sid_rejected(
     boundary: AuthenticationBoundary,
     identity_store: InMemoryIdentityStore,
 ):
-    """T19b: Local token without sid claim is rejected when session_service is wired."""
+    """T19b: Local token without the required sid claim is rejected."""
     account_id = uuid4()
     tenant_id = uuid4()
     account = Account(
@@ -580,11 +601,16 @@ def test_t19b_local_token_without_sid_rejected(
     identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
 
     # Token is signed correctly but omits the sid claim
-    token = make_jwt(LOCAL_KEY, iss=LOCAL_ISSUER, sub=str(account_id))
+    token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=str(account_id),
+        extra_claims={"tenant_id": str(tenant_id)},
+    )
 
     outcome = boundary.authenticate(Credentials(bearer_token=token))
     assert outcome.authenticated is False
-    assert outcome.reason == AuthFailureReason.SESSION_NOT_FOUND
+    assert outcome.reason == AuthFailureReason.MISSING_REQUIRED_CLAIM
     assert outcome.token_type == "local"
 
 
@@ -604,11 +630,10 @@ def test_t19c_malformed_uuid_subject_fails_closed(
     )
 
     # Token with a non-UUID subject like "not-a-uuid"
-    token = make_jwt(
-        LOCAL_KEY,
-        iss=LOCAL_ISSUER,
+    token = make_local_jwt(
         sub="not-a-valid-uuid",
-        extra_claims={"sid": str(session.session_id)},
+        sid=str(session.session_id),
+        tenant_id=str(uuid4()),
     )
 
     outcome = boundary.authenticate(Credentials(bearer_token=token))
@@ -617,16 +642,48 @@ def test_t19c_malformed_uuid_subject_fails_closed(
     assert outcome.token_type == "local"
 
 
-# --- T21b: High-Risk Guard Denies When sid Missing ---
+# --- T21b: Boundary Without a Session Verifier Fails Closed ---
 
 
-def test_t21b_high_risk_guard_denies_missing_sid(
-    boundary: AuthenticationBoundary,
+def test_t21b_boundary_without_session_service_fails_closed(
     identity_store: InMemoryIdentityStore,
-    session_service: SessionService,
 ):
-    """T21b: High-risk action guard denies when session_service is wired but sid is absent."""
+    """T21b: A local token is denied when no server-side session verifier is wired.
+
+    Contract §5.4 makes server-side session trust mandatory for local tokens.
+    A boundary built without a session_service cannot establish that the sid
+    still maps to a live session, so it must deny rather than accept the
+    token's own sid claim. Previously it skipped sid verification entirely,
+    which let a signed token carry an arbitrary sid.
+    """
     engine = AuthorizationEngine(audit_log=InMemoryAuditLog())
+
+    account_id = uuid4()
+    tenant_id = uuid4()
+    account = Account(
+        account_id=account_id,
+        tenant_id=tenant_id,
+        username="ops_no_verifier",
+        email="ops_noverifier@example.com",
+        status="active",
+    )
+    identity_store.save_account(account)
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+    from modules.opsboard.auth.config import AuthBoundaryConfig as _Config
+
+    no_session_boundary = AuthenticationBoundary(
+        _Config(
+            audiences=frozenset([AUDIENCE]),
+            local_issuer=LOCAL_ISSUER,
+            local_signing_keys={"local-k1": LOCAL_KEY},
+            local_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=None,  # No server-side session verifier
+        )
+    )
+
     app = FastAPI()
 
     @app.post(
@@ -637,8 +694,7 @@ def test_t21b_high_risk_guard_denies_missing_sid(
                     resource_type="intervention",
                     action=Action.APPROVE,
                     engine=engine,
-                    boundary=boundary,
-                    session_service=session_service,
+                    boundary=no_session_boundary,
                 )
             )
         ],
@@ -646,67 +702,25 @@ def test_t21b_high_risk_guard_denies_missing_sid(
     def approve_action():
         return {"status": "approved"}
 
-    # Create an account with a session, but build a boundary WITHOUT
-    # session_service so the token passes initial auth without sid
-    account_id = uuid4()
-    tenant_id = uuid4()
-    account = Account(
-        account_id=account_id,
-        tenant_id=tenant_id,
-        username="ops_no_sid",
-        email="ops_nosid@example.com",
-        status="active",
+    client = TestClient(app)
+
+    # An arbitrary, never-issued sid must not be taken at face value.
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(uuid4()),
+        tenant_id=str(tenant_id),
     )
-    identity_store.save_account(account)
-    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
-    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
 
-    # Build a boundary without session_service so the initial authentication
-    # succeeds without requiring sid (but the route guard has session_service
-    # and should catch it).
-    from modules.opsboard.auth.config import AuthBoundaryConfig as _Config
+    outcome = no_session_boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.BOUNDARY_NOT_CONFIGURED
 
-    no_session_config = _Config(
-        audiences=frozenset([AUDIENCE]),
-        local_issuer=LOCAL_ISSUER,
-        local_signing_keys={"local-k1": LOCAL_KEY},
-        local_audiences=frozenset([AUDIENCE]),
-        identity_store=identity_store,
-        session_service=None,  # No session enforcement at boundary level
-    )
-    no_session_boundary = AuthenticationBoundary(no_session_config)
-
-    # Rebuild the route with this boundary
-    app2 = FastAPI()
-
-    @app2.post(
-        "/api/operator/approve2",
-        dependencies=[
-            Depends(
-                require_permission(
-                    resource_type="intervention",
-                    action=Action.APPROVE,
-                    engine=engine,
-                    boundary=no_session_boundary,
-                    session_service=session_service,
-                )
-            )
-        ],
-    )
-    def approve_action2():
-        return {"status": "approved"}
-
-    client2 = TestClient(app2)
-
-    # Token without sid claim
-    token = make_jwt(LOCAL_KEY, iss=LOCAL_ISSUER, sub=str(account_id))
-
-    resp = client2.post(
-        "/api/operator/approve2",
+    resp = client.post(
+        "/api/operator/approve",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert resp.status_code == 401
-    assert resp.json()["detail"] == AuthFailureReason.SESSION_NOT_FOUND.value
+    assert resp.json()["detail"] == AuthFailureReason.BOUNDARY_NOT_CONFIGURED.value
 
 
 # --- Regression: Defect #1 PersistenceBundle Carries Identity/Session Stores ---
@@ -781,11 +795,10 @@ def test_regression_cross_identity_session_binding_rejected(
     )
 
     # Token has sub=A but sid=session_B (cross-identity attack)
-    token = make_jwt(
-        LOCAL_KEY,
-        iss=LOCAL_ISSUER,
+    token = make_local_jwt(
         sub=str(account_a_id),
-        extra_claims={"sid": str(session_b.session_id)},
+        sid=str(session_b.session_id),
+        tenant_id=str(tenant_id),
     )
 
     outcome = boundary.authenticate(Credentials(bearer_token=token))
@@ -821,11 +834,10 @@ def test_regression_wrong_provider_session_rejected(
     )
 
     # Local token referencing an OIDC session
-    token = make_jwt(
-        LOCAL_KEY,
-        iss=LOCAL_ISSUER,
+    token = make_local_jwt(
         sub=str(account_id),
-        extra_claims={"sid": str(session.session_id)},
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
     )
 
     outcome = boundary.authenticate(Credentials(bearer_token=token))
@@ -874,6 +886,7 @@ def test_regression_missing_iat_fails_closed(
         "nbf": now - 10,
         "exp": now + 3600,
         "sid": str(session.session_id),
+        "tenant_id": str(tenant_id),
         # iat intentionally omitted
     }
     token = encode_compact_jwt(payload, LOCAL_KEY)
@@ -884,3 +897,176 @@ def test_regression_missing_iat_fails_closed(
     )
     assert outcome.reason == AuthFailureReason.MALFORMED_TOKEN
 
+
+
+# --- Regression: Contract §4.3 required tenant_id claim ---
+
+
+def test_regression_local_token_without_tenant_id_rejected(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """§4.3 lists tenant_id as a required claim on local access tokens.
+
+    Previously a correctly signed token that omitted tenant_id still
+    authenticated, and the tenant was silently taken from the account row —
+    so the token never had to state which tenant it was issued for.
+    """
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="no_tenant_claim",
+            email="no_tenant@example.com",
+            status="active",
+        )
+    )
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    session = session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    token = make_jwt(
+        LOCAL_KEY,
+        iss=LOCAL_ISSUER,
+        sub=str(account_id),
+        extra_claims={"sid": str(session.session_id)},  # tenant_id omitted
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.MISSING_REQUIRED_CLAIM
+    assert outcome.token_type == "local"
+
+
+def test_regression_local_token_tenant_claim_must_match_account(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """A tenant_id claim disagreeing with the account row fails closed."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="tenant_mismatch",
+            email="tenant_mismatch@example.com",
+            status="active",
+        )
+    )
+    identity_store.set_account_roles(account_id, [Role.OPERATIONS_MANAGER])
+    session = session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(uuid4()),  # a tenant the account does not belong to
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is False
+    assert outcome.reason == AuthFailureReason.TENANT_MISMATCH
+
+
+def test_regression_authoritative_tenant_comes_from_account_not_token(
+    boundary: AuthenticationBoundary,
+    identity_store: InMemoryIdentityStore,
+    session_service: SessionService,
+):
+    """The account row stays authoritative for tenant even once the claim matches."""
+    account_id = uuid4()
+    tenant_id = uuid4()
+    identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="tenant_ok",
+            email="tenant_ok@example.com",
+            status="active",
+        )
+    )
+    identity_store.set_account_roles(account_id, [Role.AUDITOR])
+    identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+    session = session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token))
+    assert outcome.authenticated is True
+    assert outcome.principal.tenant_id == str(tenant_id)
+    assert outcome.principal.attributes["tenant_id"] == str(tenant_id)
+
+
+# --- Regression: create_app binds its persistence bundle to the boundary ---
+
+
+def test_regression_bound_persistence_backs_the_default_boundary(monkeypatch):
+    """The boundary must read the same stores the app writes through.
+
+    Previously ``default_boundary()`` called ``build_persistence()`` itself, so
+    a session created through the app's bundle was invisible to the boundary
+    and every local token was rejected (or, worse, revocations were never
+    seen). ``create_app`` now binds its bundle.
+    """
+    from apps.api.oday_api.security.dependencies import (
+        bind_persistence,
+        default_boundary,
+    )
+    from shared.infrastructure.persistence import build_persistence
+
+    monkeypatch.setenv("ODP_AUTH_LOCAL_ISSUER", LOCAL_ISSUER)
+    monkeypatch.setenv("ODP_AUTH_LOCAL_HS256_KEYS", f"local-k1:{LOCAL_SECRET.decode()}")
+    monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
+
+    bundle = build_persistence(mode="memory")
+    bind_persistence(bundle)
+
+    account_id = uuid4()
+    tenant_id = uuid4()
+    bundle.identity_store.save_account(
+        Account(
+            account_id=account_id,
+            tenant_id=tenant_id,
+            username="bundle_user",
+            email="bundle_user@example.com",
+            status="active",
+        )
+    )
+    bundle.identity_store.set_account_roles(account_id, [Role.AUDITOR])
+    session = bundle.session_service.create_session(
+        account_id=account_id, provider="local_password"
+    )
+
+    active_boundary = default_boundary()
+    assert active_boundary is not None
+
+    token = make_local_jwt(
+        sub=str(account_id),
+        sid=str(session.session_id),
+        tenant_id=str(tenant_id),
+    )
+    principal = principal_from_headers({"authorization": f"Bearer {token}"})
+    assert principal.authenticated is True
+    assert principal.subject_id == str(account_id)
+
+    # A revocation written through the app's bundle is seen by the boundary.
+    bundle.session_service.revoke_session(
+        session.session_id, RevocationReason.ADMIN_REVOKE
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        principal_from_headers({"authorization": f"Bearer {token}"})
+    assert excinfo.value.status_code == 401
+    assert excinfo.value.detail == AuthFailureReason.SESSION_REVOKED.value

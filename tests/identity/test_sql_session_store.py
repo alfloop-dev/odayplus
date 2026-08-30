@@ -1,0 +1,304 @@
+"""identity.sessions 持久化與連線生命週期的回歸測試。
+
+Task: ODP-WEB-LOCAL-AUTH-API-TRUST-001
+Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §5.1, §5.4
+
+涵蓋 review 指出的第三項缺陷：
+1. PostgreSQL 模式必須接上 identity.sessions 的持久 repository，否則撤銷只在
+   單一 process 內生效。
+2. 連線必須歸還 pool；只 getconn 不 putconn 會耗盡連線池。
+"""
+
+from __future__ import annotations
+
+from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from uuid import uuid4
+
+import pytest
+
+from shared.identity import (
+    InMemorySessionRepository,
+    Session,
+    SessionService,
+    SqlIdentityStore,
+    SqlSessionRepository,
+)
+
+
+class _FakeCursor:
+    def __init__(self, connection: _FakeConnection) -> None:
+        self._connection = connection
+        self.rowcount = 1
+
+    def __enter__(self) -> _FakeCursor:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
+        self._connection.executed.append((" ".join(sql.split()), params))
+
+    def fetchone(self) -> Any:
+        return self._connection.next_row
+
+    def fetchall(self) -> list[Any]:
+        return self._connection.next_rows
+
+
+class _FakeConnection:
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, tuple[Any, ...]]] = []
+        self.commits = 0
+        self.next_row: Any = None
+        self.next_rows: list[Any] = []
+
+    def cursor(self) -> _FakeCursor:
+        return _FakeCursor(self)
+
+    def commit(self) -> None:
+        self.commits += 1
+
+    # The engine's own transaction/execute surface, used when a bundle is
+    # constructed over this fake pool.
+    @contextmanager
+    def transaction(self) -> Any:
+        yield self
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _FakeCursor:
+        cursor = _FakeCursor(self)
+        cursor.execute(sql, params)
+        return cursor
+
+
+class _FakePool:
+    """A pool that fails the test if a borrowed connection is never returned."""
+
+    def __init__(self) -> None:
+        self.connection_obj = _FakeConnection()
+        self.checked_out = 0
+        self.peak_checked_out = 0
+        self.borrows = 0
+
+    @contextmanager
+    def connection(self) -> Any:
+        self.borrows += 1
+        self.checked_out += 1
+        self.peak_checked_out = max(self.peak_checked_out, self.checked_out)
+        try:
+            yield self.connection_obj
+        finally:
+            self.checked_out -= 1
+
+
+@pytest.fixture
+def pool() -> _FakePool:
+    return _FakePool()
+
+
+def _session(account_id: Any = None, session_id: Any = None) -> Session:
+    now = datetime.now(UTC)
+    return Session(
+        session_id=session_id or uuid4(),
+        account_id=account_id or uuid4(),
+        provider="local_password",
+        created_at=now,
+        last_seen_at=now,
+        idle_expires_at=now + timedelta(minutes=30),
+        absolute_expires_at=now + timedelta(hours=8),
+    )
+
+
+# --- Durable session persistence (Contract §5.1) ---------------------------
+
+
+def test_sql_session_repository_writes_revocation_to_identity_sessions(pool: _FakePool):
+    """撤銷必須寫進 identity.sessions，而不是只留在 process 記憶體。"""
+    repo = SqlSessionRepository(connection_factory=pool.connection)
+    session = _session()
+
+    repo.revoke(session.session_id, "admin_manual_revoke")
+
+    statements = [sql for sql, _ in pool.connection_obj.executed]
+    assert any("UPDATE identity.sessions" in sql for sql in statements)
+    assert any("revoked_at" in sql and "revoked_reason" in sql for sql in statements)
+    assert pool.connection_obj.commits == 1
+
+
+def test_sql_session_repository_round_trips_a_session(pool: _FakePool):
+    session = _session()
+    pool.connection_obj.next_row = (
+        str(session.session_id),
+        str(session.account_id),
+        "local_password",
+        session.created_at,
+        session.last_seen_at,
+        session.idle_expires_at,
+        session.absolute_expires_at,
+        None,
+        None,
+        None,
+    )
+    repo = SqlSessionRepository(connection_factory=pool.connection)
+
+    found = repo.find_by_id(session.session_id)
+
+    assert found is not None
+    assert found.session_id == session.session_id
+    assert found.account_id == session.account_id
+    assert found.provider == "local_password"
+    assert found.is_active is True
+
+
+def test_sql_session_repository_revoke_all_excludes_current_session(pool: _FakePool):
+    repo = SqlSessionRepository(connection_factory=pool.connection)
+    account_id = uuid4()
+    keep = uuid4()
+
+    repo.revoke_all_for_account(account_id, "password_change", except_session_id=keep)
+
+    sql, params = pool.connection_obj.executed[-1]
+    assert "session_id <> %s" in sql
+    assert params[-1] == str(keep)
+
+
+def test_session_service_over_sql_repository_denies_revoked_session(pool: _FakePool):
+    """撤銷後 validate_session 必須回 None（§5.4 立即生效）。"""
+    session = _session()
+    revoked_at = datetime.now(UTC)
+    pool.connection_obj.next_row = (
+        str(session.session_id),
+        str(session.account_id),
+        "local_password",
+        session.created_at,
+        session.last_seen_at,
+        session.idle_expires_at,
+        session.absolute_expires_at,
+        revoked_at,
+        "admin_manual_revoke",
+        None,
+    )
+    service = SessionService(repository=SqlSessionRepository(connection_factory=pool.connection))
+
+    assert service.validate_session(session.session_id) is None
+
+
+# --- Connection lifecycle (pool exhaustion) --------------------------------
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        pytest.param(
+            lambda store, pool: store.find_account_by_id(uuid4()),
+            id="identity_store.find_account_by_id",
+        ),
+        pytest.param(
+            lambda store, pool: store.get_account_roles(uuid4()),
+            id="identity_store.get_account_roles",
+        ),
+        pytest.param(
+            lambda store, pool: store.get_account_scope(uuid4()),
+            id="identity_store.get_account_scope",
+        ),
+    ],
+)
+def test_sql_identity_store_returns_pooled_connections(pool: _FakePool, call):
+    """每次查詢借一條連線並歸還；否則 pool 會被耗盡。"""
+    store = SqlIdentityStore(connection_factory=pool.connection)
+
+    for _ in range(5):
+        call(store, pool)
+
+    assert pool.borrows == 5
+    assert pool.checked_out == 0, "borrowed connection was never returned to the pool"
+    assert pool.peak_checked_out == 1, "a single query must not hold two connections"
+
+
+def test_sql_session_repository_returns_pooled_connections(pool: _FakePool):
+    repo = SqlSessionRepository(connection_factory=pool.connection)
+
+    for _ in range(5):
+        repo.find_by_id(uuid4())
+        repo.revoke(uuid4(), "user_logout")
+
+    assert pool.checked_out == 0
+    assert pool.peak_checked_out == 1
+
+
+def test_open_connection_leaves_caller_owned_connections_alone():
+    """裸連線（非 context manager）由呼叫端擁有，這裡不得關閉。"""
+    from shared.identity.sql_support import open_connection
+
+    connection = _FakeConnection()
+    with open_connection(lambda: connection) as acquired:
+        assert acquired is connection
+
+    connection_2 = _FakeConnection()
+    with open_connection(connection_2) as acquired:
+        assert acquired is connection_2
+
+
+def test_open_connection_yields_none_when_unavailable():
+    from shared.identity.sql_support import open_connection
+
+    with open_connection(lambda: None) as acquired:
+        assert acquired is None
+    with open_connection(None) as acquired:
+        assert acquired is None
+
+
+def test_postgres_engine_pooled_connection_returns_to_pool(pool: _FakePool):
+    from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+    engine = PostgresEngine(
+        "postgresql://user:pass@localhost:5432/odp",
+        pool=pool,
+        bootstrap=False,
+        validate_schema=False,
+    )
+
+    with engine.pooled_connection() as connection:
+        assert connection is pool.connection_obj
+        assert pool.checked_out == 1
+
+    assert pool.checked_out == 0
+
+
+# --- PostgreSQL bundle wiring ----------------------------------------------
+
+
+def test_postgres_bundle_wires_durable_session_repository(monkeypatch: pytest.MonkeyPatch):
+    """PostgreSQL 模式必須用 SqlSessionRepository，不得用 InMemorySessionRepository。
+
+    用 in-memory repository 會讓撤銷只在單一 instance 生效，其他 instance 仍把
+    已撤銷的 sid 當成有效（Contract §5.1、§5.4）。
+    """
+    from shared.infrastructure.persistence import factory, postgresql
+
+    fake_pool = _FakePool()
+    real_engine_cls = postgresql.PostgresEngine
+
+    def _engine_factory(database_url: str, **kwargs: Any) -> Any:
+        # Same engine class, but backed by a fake pool so no database is needed.
+        return real_engine_cls(
+            database_url,
+            pool=fake_pool,
+            bootstrap=False,
+            validate_schema=False,
+        )
+
+    monkeypatch.setattr(postgresql, "PostgresEngine", _engine_factory)
+    monkeypatch.setattr(
+        "shared.infrastructure.persistence.assisted_listing_intake.validate_required_tables",
+        lambda engine: None,
+    )
+
+    bundle = factory._postgres_bundle("postgresql://user:pass@localhost:5432/odp")
+
+    repository = bundle.session_service._repo
+    assert isinstance(repository, SqlSessionRepository)
+    assert not isinstance(repository, InMemorySessionRepository)
+    assert isinstance(bundle.identity_store, SqlIdentityStore)

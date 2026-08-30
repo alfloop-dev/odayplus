@@ -28,6 +28,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from modules.opsboard.auth.claims import principal_from_claims
 from modules.opsboard.auth.config import AuthBoundaryConfig
@@ -269,74 +270,68 @@ class AuthenticationBoundary:
         if reason is not None:
             return ANONYMOUS, reason, token_type
 
-        # Check session validity (Contract §5.4 / T21)
-        # When a session_service is wired, the sid claim is REQUIRED on local
-        # tokens.  A token that omits sid when the API has a durable session
-        # layer is treated as missing a required claim and fails closed.
+        # Contract §4.3 required claims: sub, sid, iat, exp, tenant_id.
+        # sub/iat/exp are already enforced by _validate_claims_generic; sid and
+        # tenant_id are required here, independently of what is injected.
         sid = claims.get("sid")
-        if self._session_service is not None:
-            if sid is None:
-                return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND, token_type
-            from uuid import UUID
+        if not isinstance(sid, str) or not sid.strip():
+            return ANONYMOUS, AuthFailureReason.MISSING_REQUIRED_CLAIM, token_type
+        token_tenant = claims.get("tenant_id")
+        if not isinstance(token_tenant, str) or not token_tenant.strip():
+            return ANONYMOUS, AuthFailureReason.MISSING_REQUIRED_CLAIM, token_type
 
-            try:
-                sid_uuid = UUID(str(sid))
-                session = self._session_service.validate_session(sid_uuid)
-                if session is None:
-                    return ANONYMOUS, AuthFailureReason.SESSION_REVOKED, token_type
-                # Same-identity/session trust binding (review defect #2):
-                # The session's account_id and provider must match the token's
-                # sub and expected provider. Without this check, sub=A with an
-                # active sid belonging to account B returns authenticated=True.
-                token_sub_uuid = UUID(str(claims["sub"]))
-                if session.account_id != token_sub_uuid:
-                    return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND, token_type
-                if session.provider != "local_password":
-                    return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND, token_type
-            except (ValueError, TypeError):
-                return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN, token_type
-        elif sid is not None:
-            # Legacy path: no session_service wired but sid present — skip
-            # validation (backwards compat with unit-test boundaries).
-            pass
+        try:
+            sid_uuid = UUID(sid.strip())
+            account_uuid = UUID(str(claims["sub"]))
+            tenant_uuid = UUID(token_tenant.strip())
+        except (ValueError, TypeError):
+            # Malformed identifiers fail closed with a stable 401; a ValueError
+            # must never escape the boundary.
+            return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN, token_type
 
-        subject = str(claims["sub"])
-        if self._identity_store is not None:
-            from uuid import UUID
+        # Server-side session trust is not optional (Contract §5.4). Without a
+        # session verifier the boundary cannot establish that this token still
+        # maps to a live session, so it denies instead of trusting the claim.
+        if self._session_service is None or self._identity_store is None:
+            return ANONYMOUS, AuthFailureReason.BOUNDARY_NOT_CONFIGURED, token_type
 
-            try:
-                aid = UUID(subject)
-            except (ValueError, TypeError):
-                # Malformed UUID subject → fail closed with a stable 401,
-                # never let ValueError propagate (review issue #4).
-                return ANONYMOUS, AuthFailureReason.MALFORMED_TOKEN, token_type
-            account = self._identity_store.find_account_by_id(aid)
+        session = self._session_service.validate_session(sid_uuid)
+        if session is None:
+            return ANONYMOUS, AuthFailureReason.SESSION_REVOKED, token_type
+        # Same-identity/session binding: the session must belong to the token's
+        # subject and have been issued by the local password provider. Without
+        # this, sub=A presented with an active sid owned by account B passes.
+        if session.account_id != account_uuid:
+            return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND, token_type
+        if session.provider != "local_password":
+            return ANONYMOUS, AuthFailureReason.SESSION_NOT_FOUND, token_type
 
-            if account is None:
-                return ANONYMOUS, AuthFailureReason.ACCOUNT_NOT_FOUND, token_type
-            if not account.is_active:
-                return ANONYMOUS, AuthFailureReason.ACCOUNT_INACTIVE, token_type
-
-            roles = self._identity_store.get_account_roles(account.account_id)
-            scope = self._identity_store.get_account_scope(account.account_id)
-            principal = Principal(
-                subject_id=str(account.account_id),
-                roles=roles,
-                scope=scope,
-                attributes={
-                    "email": account.email,
-                    "username": account.username,
-                    "tenant_id": str(account.tenant_id),
-                    "sid": str(sid) if sid else None,
-                    "provider": "local_password",
-                    "token_type": "local",
-                    "iss": claims.get("iss"),
-                },
-                authenticated=True,
-            )
-            return principal, None, token_type
-        else:
+        account = self._identity_store.find_account_by_id(account_uuid)
+        if account is None:
             return ANONYMOUS, AuthFailureReason.ACCOUNT_NOT_FOUND, token_type
+        if not account.is_active:
+            return ANONYMOUS, AuthFailureReason.ACCOUNT_INACTIVE, token_type
+        # The tenant claim is never an authorization fact on its own: it must
+        # agree with the authoritative account row, and the row wins.
+        if account.tenant_id != tenant_uuid:
+            return ANONYMOUS, AuthFailureReason.TENANT_MISMATCH, token_type
+
+        principal = Principal(
+            subject_id=str(account.account_id),
+            roles=self._identity_store.get_account_roles(account.account_id),
+            scope=self._identity_store.get_account_scope(account.account_id),
+            attributes={
+                "email": account.email,
+                "username": account.username,
+                "tenant_id": str(account.tenant_id),
+                "sid": str(sid_uuid),
+                "provider": "local_password",
+                "token_type": "local",
+                "iss": claims.get("iss"),
+            },
+            authenticated=True,
+        )
+        return principal, None, token_type
 
     def _authenticate_oidc_token(
         self,

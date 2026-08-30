@@ -98,6 +98,24 @@ def _split(value: str | None) -> frozenset[str]:
 # most once.
 _UNSET: object = object()
 _default_boundary: object = _UNSET
+# Persistence bundle bound by ``create_app`` so the boundary resolves accounts
+# and sessions through the *same* stores the rest of the app writes through,
+# instead of building a second bundle of its own.
+_bound_persistence: Any = None
+
+
+def bind_persistence(bundle: Any) -> None:
+    """Bind the app's persistence bundle to the process-wide auth boundary.
+
+    ``create_app`` calls this with the bundle it just built. Without it,
+    :func:`default_boundary` would call ``build_persistence()`` a second time
+    and end up with a *different* set of identity/session stores than the one
+    the API writes sessions into, so revocations would never be observed.
+    """
+
+    global _bound_persistence
+    _bound_persistence = bundle
+    reset_default_boundary()
 
 
 def default_boundary() -> AuthenticationBoundary | None:
@@ -132,9 +150,11 @@ def default_boundary() -> AuthenticationBoundary | None:
         identity_store = None
         session_service = None
         try:
-            from shared.infrastructure.persistence import build_persistence
+            bundle = _bound_persistence
+            if bundle is None:
+                from shared.infrastructure.persistence import build_persistence
 
-            bundle = build_persistence()
+                bundle = build_persistence()
             identity_store = getattr(bundle, "identity_store", None)
             session_service = getattr(bundle, "session_service", None)
         except Exception:
@@ -173,6 +193,14 @@ def reset_default_boundary() -> None:
 
     global _default_boundary
     _default_boundary = _UNSET
+
+
+def reset_bound_persistence() -> None:
+    """Forget the bundle bound by :func:`bind_persistence` (test hook)."""
+
+    global _bound_persistence
+    _bound_persistence = None
+    reset_default_boundary()
 
 
 def principal_from_headers(

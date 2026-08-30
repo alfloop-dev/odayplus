@@ -255,6 +255,21 @@ def _durable_bundle(
 
     engine = SqliteEngine(db_path)
     store = SqliteDocumentStore(engine)
+    # The identity schema is PostgreSQL-only (migration 000011), so SQLite mode
+    # carries in-memory doubles rather than None: the auth boundary always has
+    # an identity store and a session verifier and never silently skips them.
+    from shared.identity import (
+        InMemoryIdentityStore,
+        InMemorySessionRepository,
+        SessionConfig,
+        SessionService,
+    )
+
+    durable_identity_store = InMemoryIdentityStore()
+    durable_session_service = SessionService(
+        repository=InMemorySessionRepository(),
+        config=SessionConfig(),
+    )
     worm_root = Path(db_path).parent / f"{Path(db_path).stem}-audit-worm"
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env(
         default_root=worm_root
@@ -292,6 +307,8 @@ def _durable_bundle(
         outbox_repository=DurableOutboxRepository(engine),
         operator_intake_repository=DurableAssistedIntakeRepository(store),
         engine=engine,
+        identity_store=durable_identity_store,
+        session_service=durable_session_service,
     )
 
 
@@ -352,26 +369,22 @@ def _postgres_bundle(
         engine.close()
         raise
 
-    # Wire durable identity store backed by identity.* PostgreSQL tables.
-    # SessionRepository does not yet have a SQL implementation
-    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001 scope note); InMemorySessionRepository
-    # is used until a SqlSessionRepository is added in a follow-up task.
+    # Wire durable identity and session stores backed by the identity.* tables.
+    # Both must be durable: an in-memory session repository would make
+    # revocations process-local, so a revoked sid stays valid on every other
+    # instance (Contract §5.1, §5.4).
     from shared.identity import (
-        InMemorySessionRepository,
         SessionConfig,
         SessionService,
         SqlIdentityStore,
+        SqlSessionRepository,
     )
 
-    # SqlIdentityStore._get_connection() calls connection_factory() when it is
-    # callable and then uses conn.cursor(). psycopg_pool.ConnectionPool.getconn()
-    # returns a raw psycopg.Connection suitable for this interface.
-    def _pg_conn_factory() -> Any:
-        return engine._pool.getconn()
-
-    pg_identity_store = SqlIdentityStore(connection_factory=_pg_conn_factory)
+    # engine.pooled_connection is a context manager factory, so each query
+    # borrows a pooled connection and returns it on exit.
+    pg_identity_store = SqlIdentityStore(connection_factory=engine.pooled_connection)
     pg_session_service = SessionService(
-        repository=InMemorySessionRepository(),
+        repository=SqlSessionRepository(connection_factory=engine.pooled_connection),
         config=SessionConfig(),
     )
 

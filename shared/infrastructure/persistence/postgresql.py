@@ -168,6 +168,20 @@ class PostgresEngine:
         return self._lock
 
     @contextmanager
+    def pooled_connection(self) -> Iterator[Any]:
+        """Lend one pooled connection and return it to the pool on exit.
+
+        Repositories outside the ``odp_runtime`` document-store path (the
+        ``identity`` schema stores) need a raw connection rather than the
+        thread-bound transaction. Borrowing via ``getconn()`` without the
+        matching ``putconn()`` leaks the connection and eventually exhausts
+        the pool, so the pool's own context manager owns the lifecycle here.
+        """
+
+        with self._pool.connection() as connection:
+            yield connection
+
+    @contextmanager
     def transaction(self) -> Iterator[PostgresEngine]:
         """Bind all calls on this thread to one pooled PostgreSQL transaction."""
 

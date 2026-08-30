@@ -17,6 +17,8 @@ from uuid import UUID
 
 from shared.auth import DataClassification, Role, Scope
 
+from .sql_support import open_connection
+
 
 @dataclasses.dataclass(frozen=True)
 class Account:
@@ -195,297 +197,299 @@ class SqlIdentityStore:
     def __init__(self, connection_factory: Any = None) -> None:
         self._conn_factory = connection_factory
 
-    def _get_connection(self) -> Any:
-        if callable(self._conn_factory):
-            return self._conn_factory()
-        return self._conn_factory
-
     def find_account_by_id(self, account_id: UUID | str) -> Account | None:
         aid = _parse_uuid(account_id)
-        conn = self._get_connection()
-        if conn is None:
-            return None
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT account_id, tenant_id, username, email, display_name, status,
-                       created_at, created_by, updated_at, disabled_at, disabled_reason
-                FROM identity.accounts
-                WHERE account_id = %s
-                """,
-                (str(aid),),
-            )
-            row = cur.fetchone()
-            if not row:
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
                 return None
-            return Account(
-                account_id=UUID(str(row[0])),
-                tenant_id=UUID(str(row[1])),
-                username=row[2],
-                email=row[3],
-                display_name=row[4],
-                status=row[5],
-                created_at=row[6],
-                created_by=row[7],
-                updated_at=row[8],
-                disabled_at=row[9],
-                disabled_reason=row[10],
-            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT account_id, tenant_id, username, email, display_name, status,
+                           created_at, created_by, updated_at, disabled_at, disabled_reason
+                    FROM identity.accounts
+                    WHERE account_id = %s
+                    """,
+                    (str(aid),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return Account(
+                    account_id=UUID(str(row[0])),
+                    tenant_id=UUID(str(row[1])),
+                    username=row[2],
+                    email=row[3],
+                    display_name=row[4],
+                    status=row[5],
+                    created_at=row[6],
+                    created_by=row[7],
+                    updated_at=row[8],
+                    disabled_at=row[9],
+                    disabled_reason=row[10],
+                )
 
     def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
-        conn = self._get_connection()
-        if conn is None:
-            return None
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT account_id, tenant_id, username, email, display_name, status,
-                       created_at, created_by, updated_at, disabled_at, disabled_reason
-                FROM identity.accounts
-                WHERE tenant_id = %s AND lower(username) = lower(%s)
-                """,
-                (str(tid), username.strip()),
-            )
-            row = cur.fetchone()
-            if not row:
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
                 return None
-            return Account(
-                account_id=UUID(str(row[0])),
-                tenant_id=UUID(str(row[1])),
-                username=row[2],
-                email=row[3],
-                display_name=row[4],
-                status=row[5],
-                created_at=row[6],
-                created_by=row[7],
-                updated_at=row[8],
-                disabled_at=row[9],
-                disabled_reason=row[10],
-            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT account_id, tenant_id, username, email, display_name, status,
+                           created_at, created_by, updated_at, disabled_at, disabled_reason
+                    FROM identity.accounts
+                    WHERE tenant_id = %s AND lower(username) = lower(%s)
+                    """,
+                    (str(tid), username.strip()),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return Account(
+                    account_id=UUID(str(row[0])),
+                    tenant_id=UUID(str(row[1])),
+                    username=row[2],
+                    email=row[3],
+                    display_name=row[4],
+                    status=row[5],
+                    created_at=row[6],
+                    created_by=row[7],
+                    updated_at=row[8],
+                    disabled_at=row[9],
+                    disabled_reason=row[10],
+                )
 
     def find_account_by_email(self, tenant_id: UUID | str, email: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
-        conn = self._get_connection()
-        if conn is None:
-            return None
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT account_id, tenant_id, username, email, display_name, status,
-                       created_at, created_by, updated_at, disabled_at, disabled_reason
-                FROM identity.accounts
-                WHERE tenant_id = %s AND lower(email) = lower(%s)
-                """,
-                (str(tid), email.strip()),
-            )
-            row = cur.fetchone()
-            if not row:
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
                 return None
-            return Account(
-                account_id=UUID(str(row[0])),
-                tenant_id=UUID(str(row[1])),
-                username=row[2],
-                email=row[3],
-                display_name=row[4],
-                status=row[5],
-                created_at=row[6],
-                created_by=row[7],
-                updated_at=row[8],
-                disabled_at=row[9],
-                disabled_reason=row[10],
-            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT account_id, tenant_id, username, email, display_name, status,
+                           created_at, created_by, updated_at, disabled_at, disabled_reason
+                    FROM identity.accounts
+                    WHERE tenant_id = %s AND lower(email) = lower(%s)
+                    """,
+                    (str(tid), email.strip()),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return Account(
+                    account_id=UUID(str(row[0])),
+                    tenant_id=UUID(str(row[1])),
+                    username=row[2],
+                    email=row[3],
+                    display_name=row[4],
+                    status=row[5],
+                    created_at=row[6],
+                    created_by=row[7],
+                    updated_at=row[8],
+                    disabled_at=row[9],
+                    disabled_reason=row[10],
+                )
 
     def find_account_by_federated_identity(self, issuer: str, subject: str) -> Account | None:
-        conn = self._get_connection()
-        if conn is None:
-            return None
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT a.account_id, a.tenant_id, a.username, a.email, a.display_name, a.status,
-                       a.created_at, a.created_by, a.updated_at, a.disabled_at, a.disabled_reason
-                FROM identity.federated_identities f
-                JOIN identity.accounts a ON f.account_id = a.account_id
-                WHERE f.issuer = %s AND f.subject = %s
-                """,
-                (issuer, subject),
-            )
-            row = cur.fetchone()
-            if not row:
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
                 return None
-            return Account(
-                account_id=UUID(str(row[0])),
-                tenant_id=UUID(str(row[1])),
-                username=row[2],
-                email=row[3],
-                display_name=row[4],
-                status=row[5],
-                created_at=row[6],
-                created_by=row[7],
-                updated_at=row[8],
-                disabled_at=row[9],
-                disabled_reason=row[10],
-            )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT a.account_id, a.tenant_id, a.username, a.email, a.display_name, a.status,
+                           a.created_at, a.created_by, a.updated_at, a.disabled_at, a.disabled_reason
+                    FROM identity.federated_identities f
+                    JOIN identity.accounts a ON f.account_id = a.account_id
+                    WHERE f.issuer = %s AND f.subject = %s
+                    """,
+                    (issuer, subject),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return Account(
+                    account_id=UUID(str(row[0])),
+                    tenant_id=UUID(str(row[1])),
+                    username=row[2],
+                    email=row[3],
+                    display_name=row[4],
+                    status=row[5],
+                    created_at=row[6],
+                    created_by=row[7],
+                    updated_at=row[8],
+                    disabled_at=row[9],
+                    disabled_reason=row[10],
+                )
 
     def get_account_roles(self, account_id: UUID | str) -> frozenset[Role]:
         aid = _parse_uuid(account_id)
-        conn = self._get_connection()
-        if conn is None:
-            return frozenset()
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT role FROM identity.account_roles
-                WHERE account_id = %s
-                """,
-                (str(aid),),
-            )
-            rows = cur.fetchall()
-            roles: set[Role] = set()
-            for row in rows:
-                try:
-                    roles.add(Role(row[0]))
-                except ValueError:
-                    pass
-            return frozenset(roles)
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                return frozenset()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT role FROM identity.account_roles
+                    WHERE account_id = %s
+                    """,
+                    (str(aid),),
+                )
+                rows = cur.fetchall()
+                roles: set[Role] = set()
+                for row in rows:
+                    try:
+                        roles.add(Role(row[0]))
+                    except ValueError:
+                        pass
+                return frozenset(roles)
 
     def get_account_scope(self, account_id: UUID | str) -> Scope:
         aid = _parse_uuid(account_id)
-        conn = self._get_connection()
-        if conn is None:
-            return Scope()
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT s.brand_ids, s.region_ids, s.store_ids, s.assigned_area_ids,
-                       s.heat_zone_ids, s.modules, s.clearance, a.tenant_id
-                FROM identity.account_scopes s
-                JOIN identity.accounts a ON s.account_id = a.account_id
-                WHERE s.account_id = %s
-                """,
-                (str(aid),),
-            )
-            row = cur.fetchone()
-            if not row:
-                acc = self.find_account_by_id(aid)
-                tenant_id = str(acc.tenant_id) if acc else None
-                return Scope(tenant_id=tenant_id, clearance=DataClassification.CONFIDENTIAL)
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                return Scope()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT s.brand_ids, s.region_ids, s.store_ids, s.assigned_area_ids,
+                           s.heat_zone_ids, s.modules, s.clearance, a.tenant_id
+                    FROM identity.account_scopes s
+                    JOIN identity.accounts a ON s.account_id = a.account_id
+                    WHERE s.account_id = %s
+                    """,
+                    (str(aid),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    # Resolve the tenant on the connection already held: going
+                    # back to the pool here would hold two connections for one
+                    # read and can deadlock a small pool.
+                    cur.execute(
+                        "SELECT tenant_id FROM identity.accounts WHERE account_id = %s",
+                        (str(aid),),
+                    )
+                    account_row = cur.fetchone()
+                    tenant_id = str(account_row[0]) if account_row else None
+                    return Scope(tenant_id=tenant_id, clearance=DataClassification.CONFIDENTIAL)
 
-            def _parse_list(val: Any) -> frozenset[str]:
-                if isinstance(val, list):
-                    return frozenset(str(x) for x in val if x)
-                return frozenset()
+                def _parse_list(val: Any) -> frozenset[str]:
+                    if isinstance(val, list):
+                        return frozenset(str(x) for x in val if x)
+                    return frozenset()
 
-            try:
-                clearance = DataClassification[str(row[6]).upper()]
-            except (KeyError, AttributeError):
-                clearance = DataClassification.CONFIDENTIAL
+                try:
+                    clearance = DataClassification[str(row[6]).upper()]
+                except (KeyError, AttributeError):
+                    clearance = DataClassification.CONFIDENTIAL
 
-            return Scope(
-                tenant_id=str(row[7]) if row[7] else None,
-                brand_ids=_parse_list(row[0]),
-                region_ids=_parse_list(row[1]),
-                store_ids=_parse_list(row[2]),
-                assigned_area_ids=_parse_list(row[3]),
-                heat_zone_ids=_parse_list(row[4]),
-                modules=_parse_list(row[5]),
-                clearance=clearance,
-            )
+                return Scope(
+                    tenant_id=str(row[7]) if row[7] else None,
+                    brand_ids=_parse_list(row[0]),
+                    region_ids=_parse_list(row[1]),
+                    store_ids=_parse_list(row[2]),
+                    assigned_area_ids=_parse_list(row[3]),
+                    heat_zone_ids=_parse_list(row[4]),
+                    modules=_parse_list(row[5]),
+                    clearance=clearance,
+                )
 
     def save_account(self, account: Account) -> None:
-        conn = self._get_connection()
-        if conn is None:
-            return
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO identity.accounts (
-                    account_id, tenant_id, username, email, display_name, status,
-                    created_at, created_by, updated_at, disabled_at, disabled_reason
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (account_id) DO UPDATE SET
-                    tenant_id = EXCLUDED.tenant_id,
-                    username = EXCLUDED.username,
-                    email = EXCLUDED.email,
-                    display_name = EXCLUDED.display_name,
-                    status = EXCLUDED.status,
-                    updated_at = now(),
-                    disabled_at = EXCLUDED.disabled_at,
-                    disabled_reason = EXCLUDED.disabled_reason
-                """,
-                (
-                    str(account.account_id),
-                    str(account.tenant_id),
-                    account.username,
-                    account.email,
-                    account.display_name,
-                    account.status,
-                    account.created_at or datetime.now(UTC),
-                    account.created_by,
-                    account.updated_at or datetime.now(UTC),
-                    account.disabled_at,
-                    account.disabled_reason,
-                ),
-            )
-            conn.commit()
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                return
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO identity.accounts (
+                        account_id, tenant_id, username, email, display_name, status,
+                        created_at, created_by, updated_at, disabled_at, disabled_reason
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (account_id) DO UPDATE SET
+                        tenant_id = EXCLUDED.tenant_id,
+                        username = EXCLUDED.username,
+                        email = EXCLUDED.email,
+                        display_name = EXCLUDED.display_name,
+                        status = EXCLUDED.status,
+                        updated_at = now(),
+                        disabled_at = EXCLUDED.disabled_at,
+                        disabled_reason = EXCLUDED.disabled_reason
+                    """,
+                    (
+                        str(account.account_id),
+                        str(account.tenant_id),
+                        account.username,
+                        account.email,
+                        account.display_name,
+                        account.status,
+                        account.created_at or datetime.now(UTC),
+                        account.created_by,
+                        account.updated_at or datetime.now(UTC),
+                        account.disabled_at,
+                        account.disabled_reason,
+                    ),
+                )
+                conn.commit()
 
     def set_account_roles(self, account_id: UUID | str, roles: Iterable[Role | str]) -> None:
         aid = _parse_uuid(account_id)
-        conn = self._get_connection()
-        if conn is None:
-            return
-        with conn.cursor() as cur:
-            cur.execute(
-                "DELETE FROM identity.account_roles WHERE account_id = %s",
-                (str(aid),),
-            )
-            for r in roles:
-                role_val = r.value if isinstance(r, Role) else str(r)
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                return
+            with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO identity.account_roles (account_id, role, granted_at, granted_by)
-                    VALUES (%s, %s, now(), 'system')
-                    """,
-                    (str(aid), role_val),
+                    "DELETE FROM identity.account_roles WHERE account_id = %s",
+                    (str(aid),),
                 )
-            conn.commit()
+                for r in roles:
+                    role_val = r.value if isinstance(r, Role) else str(r)
+                    cur.execute(
+                        """
+                        INSERT INTO identity.account_roles (account_id, role, granted_at, granted_by)
+                        VALUES (%s, %s, now(), 'system')
+                        """,
+                        (str(aid), role_val),
+                    )
+                conn.commit()
 
     def set_account_scope(self, account_id: UUID | str, scope: Scope) -> None:
         aid = _parse_uuid(account_id)
-        conn = self._get_connection()
-        if conn is None:
-            return
-        import json
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                return
+            import json
 
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO identity.account_scopes (
-                    account_id, brand_ids, region_ids, store_ids, assigned_area_ids,
-                    heat_zone_ids, modules, clearance
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (account_id) DO UPDATE SET
-                    brand_ids = EXCLUDED.brand_ids,
-                    region_ids = EXCLUDED.region_ids,
-                    store_ids = EXCLUDED.store_ids,
-                    assigned_area_ids = EXCLUDED.assigned_area_ids,
-                    heat_zone_ids = EXCLUDED.heat_zone_ids,
-                    modules = EXCLUDED.modules,
-                    clearance = EXCLUDED.clearance
-                """,
-                (
-                    str(aid),
-                    json.dumps(sorted(scope.brand_ids)),
-                    json.dumps(sorted(scope.region_ids)),
-                    json.dumps(sorted(scope.store_ids)),
-                    json.dumps(sorted(scope.assigned_area_ids)),
-                    json.dumps(sorted(scope.heat_zone_ids)),
-                    json.dumps(sorted(scope.modules)),
-                    scope.clearance.name,
-                ),
-            )
-            conn.commit()
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO identity.account_scopes (
+                        account_id, brand_ids, region_ids, store_ids, assigned_area_ids,
+                        heat_zone_ids, modules, clearance
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (account_id) DO UPDATE SET
+                        brand_ids = EXCLUDED.brand_ids,
+                        region_ids = EXCLUDED.region_ids,
+                        store_ids = EXCLUDED.store_ids,
+                        assigned_area_ids = EXCLUDED.assigned_area_ids,
+                        heat_zone_ids = EXCLUDED.heat_zone_ids,
+                        modules = EXCLUDED.modules,
+                        clearance = EXCLUDED.clearance
+                    """,
+                    (
+                        str(aid),
+                        json.dumps(sorted(scope.brand_ids)),
+                        json.dumps(sorted(scope.region_ids)),
+                        json.dumps(sorted(scope.store_ids)),
+                        json.dumps(sorted(scope.assigned_area_ids)),
+                        json.dumps(sorted(scope.heat_zone_ids)),
+                        json.dumps(sorted(scope.modules)),
+                        scope.clearance.name,
+                    ),
+                )
+                conn.commit()
 
     def link_federated_identity(
         self,
@@ -495,19 +499,19 @@ class SqlIdentityStore:
         linked_by: str = "system",
     ) -> None:
         aid = _parse_uuid(account_id)
-        conn = self._get_connection()
-        if conn is None:
-            return
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO identity.federated_identities (account_id, issuer, subject, linked_at, linked_by)
-                VALUES (%s, %s, %s, now(), %s)
-                ON CONFLICT (issuer, subject) DO UPDATE SET
-                    account_id = EXCLUDED.account_id,
-                    linked_at = now(),
-                    linked_by = EXCLUDED.linked_by
-                """,
-                (str(aid), issuer, subject, linked_by),
-            )
-            conn.commit()
+        with open_connection(self._conn_factory) as conn:
+            if conn is None:
+                return
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO identity.federated_identities (account_id, issuer, subject, linked_at, linked_by)
+                    VALUES (%s, %s, %s, now(), %s)
+                    ON CONFLICT (issuer, subject) DO UPDATE SET
+                        account_id = EXCLUDED.account_id,
+                        linked_at = now(),
+                        linked_by = EXCLUDED.linked_by
+                    """,
+                    (str(aid), issuer, subject, linked_by),
+                )
+                conn.commit()

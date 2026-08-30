@@ -33,6 +33,12 @@ class AuthFailureReason(StrEnum):
     TOKEN_EXPIRED = "token_expired"
     TOKEN_NOT_YET_VALID = "token_not_yet_valid"
     MISSING_SUBJECT = "missing_subject"
+    # Contract §4.3 declares sub/sid/iat/exp/tenant_id as required on local
+    # access tokens; a token missing one of them is rejected before any
+    # identity lookup.
+    MISSING_REQUIRED_CLAIM = "missing_required_claim"
+    # The token's tenant_id claim disagrees with the authoritative account row.
+    TENANT_MISMATCH = "tenant_mismatch"
 
     # Service identity problems.
     UNKNOWN_SERVICE = "unknown_service"
