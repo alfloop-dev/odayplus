@@ -1,10 +1,10 @@
 {
   "receipt_type": "staging_foundation_live_readback",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-  "verified_at": "2026-08-27T09:27:25Z",
+  "verified_at": "2026-08-30T15:52:48Z",
   "origin_dev_sha": "1fdec6cbed15660bdf89531cb1bb69d4c36aa00b",
   "environment": "staging",
-  "receipt_status": "BLOCKED_SECURITY_QUARANTINE_AND_IAM_PERMISSION",
+  "receipt_status": "BLOCKED_SECURITY_QUARANTINE",
   "project_id": "odayplus-runtime-20260825",
   "project_number": "767864276141",
   "region": "asia-east1",
@@ -140,7 +140,7 @@
       }
     },
     "state_backend": {
-      "status": "LIVE_CONTROLS_PARTIAL_SECURITY_QUARANTINE_AND_IAM_BLOCKED",
+      "status": "LIVE_CONTROLS_VERIFIED_SECURITY_QUARANTINE_OPEN",
       "completion_claims_withheld": true,
       "bucket_name": "oday-tfstate-staging-odayplus-runtime-20260825",
       "bucket_url": "gs://oday-tfstate-staging-odayplus-runtime-20260825",
@@ -160,21 +160,39 @@
       "security_quarantine_incident_ref": "live-apply-plan-receipt.json#security_quarantine_incident",
       "retention_expires_at": "2026-09-26T09:24:24Z",
       "least_privilege_iam": {
-        "status": "BLOCKED_HUMAN_PERMISSION",
-        "verified": false,
-        "active_principal_missing_permissions": [
-          "storage.buckets.get",
-          "storage.buckets.getIamPolicy"
-        ],
-        "project_missing_role": "roles/storage.admin",
-        "human_action_required": "由具備 project IAM authority 的人類 operator 授予必要的唯讀 bucket readback 權限及收斂所需 authority，完成後重新執行 IAM readback；在此之前不得宣稱 least-privilege IAM 完成。",
-        "completion_claim": "WITHHELD"
+        "status": "LIVE_VERIFIED",
+        "verified": true,
+        "verified_at": "2026-08-30T15:52:48Z",
+        "admin_readback": {
+          "principal": "user:admin@dev.cctech-support.com",
+          "role": "roles/storage.admin",
+          "scope": "bucket:oday-tfstate-staging-odayplus-runtime-20260825",
+          "verified_permissions": [
+            "storage.buckets.get",
+            "storage.buckets.getIamPolicy"
+          ]
+        },
+        "deployer_readback": {
+          "principal": "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "role": "roles/storage.objectUser",
+          "scope": "bucket:oday-tfstate-staging-odayplus-runtime-20260825",
+          "github_actions_run_id": "33320822376",
+          "github_actions_run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33320822376",
+          "workflow_head_sha": "3e2c4c094eccdf533f5dca5fa4064b9226792498",
+          "remote_state_objects_verified": [
+            "oday-plus/bootstrap/default.tfstate@generation:1787819267189419",
+            "oday-plus/staging/foundation/default.tfstate@generation:1787822614666629"
+          ]
+        },
+        "project_wide_storage_admin_required": false,
+        "scope_decision": "Bucket-scoped storage.admin is reserved for the human administrator; the WIF deployer remains objectUser only.",
+        "completion_claim": "VERIFIED"
       },
       "intended_deployer_iam_binding": "roles/storage.objectUser for serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
-      "deployer_iam_binding_status": "UNVERIFIED_HUMAN_PERMISSION_BLOCKER"
+      "deployer_iam_binding_status": "VERIFIED_LIVE_READBACK"
     },
     "deployer_authority": {
-      "status": "DECLARED_CONTRACT_NOT_LIVE_VERIFIED",
+      "status": "LIVE_VERIFIED_FOR_REMOTE_STATE_ACCESS",
       "service_account": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
       "wif_pool": "github-actions",
       "wif_provider": "odayplus",
@@ -234,7 +252,7 @@
     "direct_vpc_all_traffic_live_application_services_verified": false,
     "remote_state_convergence_verified": true,
     "state_bucket_plan_upload_policy": "PROHIBITED",
-    "state_bucket_iam_least_privilege_verified": false,
+    "state_bucket_iam_least_privilege_verified": true,
     "security_quarantine_open": true
   }
 }

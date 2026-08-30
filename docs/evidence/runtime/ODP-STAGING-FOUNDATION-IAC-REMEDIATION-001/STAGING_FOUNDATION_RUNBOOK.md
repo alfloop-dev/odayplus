@@ -16,7 +16,7 @@
 - **CMEK 金鑰**：`oday-staging-runtime` (KeyRing: `oday-staging-runtime`，90天自動輪換，`prevent_destroy = true`)
 - **Cloud SQL 執行個體**：`oday-staging-foundation-sql` (PostgreSQL 16, Private IP Only, CMEK 加密, 啟用 PITR)。既有 `oday-staging-sql` 掛在 default VPC 且 CMEK/private network 不可 in-place 變更，保留為 legacy，不得在本任務刪除。
 - **State Backend**：`oday-tfstate-staging-${PROJECT_ID}` (CMEK 加密, 版本控制, 保留政策)；只允許 Terraform state/lock 物件，不是一般 artifact 儲存區。
-- **Deployer 權限**：`github-deployer@${PROJECT_ID}.iam.gserviceaccount.com` (經由 Workload Identity Federation 認證)；state bucket least-privilege IAM 的 live readback 目前受人類權限 blocker 阻擋，不得視為已完成。
+- **Deployer 權限**：`github-deployer@${PROJECT_ID}.iam.gserviceaccount.com` (經由 Workload Identity Federation 認證)；bucket-scoped `roles/storage.objectUser` 已由 live IAM readback 與 GitHub Actions run `33320822376` 的兩個 remote-state object readback 驗證。
 - **Staging runtime identities**：`oday-staging-runtime@${PROJECT_ID}.iam.gserviceaccount.com` 與 `oday-staging-web@${PROJECT_ID}.iam.gserviceaccount.com`；兩者由 Terraform resource email 接合 subnet IAM。
 
 ### 1.2 短生命週期發布資源 (Ephemeral Staging Per-Release)
@@ -83,7 +83,9 @@ cp /secure/path/live/staging_foundation.backend.hcl /secure/path/staging_foundat
 4. **State Backend 安全隔離與 IAM**：
    - State bucket 只接受 Terraform state/lock 物件；binary plan、一般 release artifact 與任何 `plans/` 上傳一律禁止。Plan 的 digest、generation 與 action summary 寫入 receipt 即可，不得以 state bucket 保存 plan。
    - 若發現 plan 已誤上傳，立即將物件標記為安全隔離事件，記錄 CMEK、object generation、retention expiration 與 expiry-cleanup owner；不得提前刪除、不得解除 retention、不得把事件標成完成。
-   - 目前缺少 `storage.buckets.get`、`storage.buckets.getIamPolicy`，且 project 缺少 `roles/storage.admin`；在具 authority 的人類 operator 完成 readback 前，least-privilege IAM 必須保持 `BLOCKED_HUMAN_PERMISSION`。
+   - bucket policy 必須維持 admin 的 bucket-scoped `roles/storage.admin` 與 WIF deployer 的 `roles/storage.objectUser`；不得為了 readback 把 project-wide `roles/storage.admin` 授給 deployer。
+   - 由 admin 執行 bucket metadata/IAM readback，再由 WIF deployer 讀取 bootstrap 與 foundation state object metadata；兩段都成功才可標記 least-privilege IAM `VERIFIED`。
+   - 2026-08-30 驗證證據為 GitHub Actions run `33320822376`；正常 build、admission 與 deploy jobs 均 skipped。
 
 ## 5. Migration、Rollback 與 Destroy Guard
 
@@ -116,5 +118,5 @@ plan 保存物件；事件詳見 `STATE_BUCKET_SECURITY_QUARANTINE.md` 與
 - expiry-cleanup owner：`Staging Foundation Owner`
 - receipt/runbook completion claim：`WITHHELD`；state bucket plan upload policy：`PROHIBITED`。
 
-完整雜湊、object generation、state serial、IAM blocker 與 live readback 見同目錄
+完整雜湊、object generation、state serial、IAM verification 與 live readback 見同目錄
 的兩份 JSON receipt。

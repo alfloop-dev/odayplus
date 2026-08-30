@@ -5,7 +5,14 @@
   "candidate_sha": "1fdec6cbed15660bdf89531cb1bb69d4c36aa00b",
   "target_project_id": "odayplus-runtime-20260825",
   "target_environment": "staging",
-  "receipt_status": "BLOCKED_SECURITY_QUARANTINE_AND_IAM_PERMISSION",
+  "receipt_status": "BLOCKED_SECURITY_QUARANTINE",
+  "iam_blocker_resolution": {
+    "status": "RESOLVED",
+    "verified_at": "2026-08-30T15:52:48Z",
+    "live_readback_receipt": "live-foundation-readback-receipt.json#foundation_resources.state_backend.least_privilege_iam",
+    "github_actions_run_id": "33320822376",
+    "github_actions_run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33320822376"
+  },
   "backend_config": {
     "backend_type": "gcs",
     "bucket": "oday-tfstate-staging-odayplus-runtime-20260825",
@@ -209,7 +216,7 @@
     "rfc1918_cidr_enforcement": "PASS",
     "unit_test_count": 43,
     "unit_tests_status": "ALL_PASSED",
-    "live_acceptance_status": "BLOCKED_SECURITY_QUARANTINE_AND_IAM_PERMISSION",
+    "live_acceptance_status": "BLOCKED_SECURITY_QUARANTINE",
     "completion_claims_withheld": true
   }
 }

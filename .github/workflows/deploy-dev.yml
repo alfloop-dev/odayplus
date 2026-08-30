@@ -134,41 +134,12 @@ env:
   RELEASE_RECEIPT_DIR: .odp_data/release
 
 jobs:
-  state-backend-iam-convergence:
-    name: Verify staging deployer state backend access
-    if: ${{ inputs.task_id == 'ODP-STAGING-STATE-BUCKET-IAM-CONVERGENCE' }}
-    runs-on: ubuntu-latest
-    environment:
-      name: staging
-    env:
-      STATE_BUCKET: oday-tfstate-staging-odayplus-runtime-20260825
-    steps:
-      - name: Authenticate to Google Cloud (WIF)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Verify least-privilege remote-state object access
-        run: |
-          set -euo pipefail
-          gcloud storage objects describe \
-            "gs://${STATE_BUCKET}/oday-plus/bootstrap/default.tfstate" \
-            --format='yaml(bucket,name,generation,size,kms_key,event_based_hold,temporary_hold)'
-          gcloud storage objects describe \
-            "gs://${STATE_BUCKET}/oday-plus/staging/foundation/default.tfstate" \
-            --format='yaml(bucket,name,generation,size,kms_key,event_based_hold,temporary_hold)'
-
   # Fail closed before anything is built, authenticated, or deployed. This is
   # the one place that states what each phase requires, and it produces a
   # zh-TW receipt for the refusal so a blocked release says why in the language
   # the release evidence is written in.
   release_phase:
     name: Validate release phase inputs
-    if: ${{ inputs.task_id != 'ODP-STAGING-STATE-BUCKET-IAM-CONVERGENCE' }}
     runs-on: ubuntu-latest
     # No `environment:` and no `vars.*` by design -- see the header. This job is
     # pure input validation and must stay reachable without a deploy approval.

@@ -30,7 +30,8 @@ Terraform state bucket 僅允許 state/lock 物件；binary plan、一般 releas
 與 `plans/` prefix 上傳均禁止。Plan 驗證只在受控執行範圍使用，receipt 僅保留
 digest、generation、action summary 等 metadata。
 
-同一份 live readback 亦記錄 state bucket least-privilege IAM 的人類權限 blocker：
-active user 缺少 `storage.buckets.get` 與 `storage.buckets.getIamPolicy`，project
-缺少 `roles/storage.admin`。在具權限的人類 operator 完成 readback/convergence 前，
-不得宣稱 state bucket IAM 已收斂。
+同一份 live readback 原先記錄的 state bucket IAM 人類權限 blocker 已於
+`2026-08-30T15:52:48Z` 解除：bucket-scoped `roles/storage.admin` admin 完成
+metadata/IAM readback，`roles/storage.objectUser` WIF deployer 再由 GitHub Actions
+run `33320822376` 成功讀取兩個 remote-state object metadata。IAM 已收斂不會關閉
+本事件；binary plan quarantine 仍維持 `OPEN` 至 retention 到期並完成精確清理。

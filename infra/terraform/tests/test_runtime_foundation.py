@@ -97,12 +97,26 @@ class RuntimeFoundationModuleContractTests(unittest.TestCase):
         self.assertTrue(state_backend["prevent_destroy"])
         self.assertTrue(apply_receipt["validation_results"]["completion_claims_withheld"])
 
-        self.assertEqual(iam["status"], "BLOCKED_HUMAN_PERMISSION")
-        self.assertFalse(iam["verified"])
-        self.assertIn("storage.buckets.get", iam["active_principal_missing_permissions"])
-        self.assertIn("storage.buckets.getIamPolicy", iam["active_principal_missing_permissions"])
-        self.assertEqual(iam["project_missing_role"], "roles/storage.admin")
-        self.assertFalse(readback["security_compliance"]["state_bucket_iam_least_privilege_verified"])
+        self.assertEqual(readback["receipt_status"], "BLOCKED_SECURITY_QUARANTINE")
+        self.assertEqual(apply_receipt["receipt_status"], "BLOCKED_SECURITY_QUARANTINE")
+        self.assertEqual(apply_receipt["iam_blocker_resolution"]["status"], "RESOLVED")
+        self.assertEqual(iam["status"], "LIVE_VERIFIED")
+        self.assertTrue(iam["verified"])
+        self.assertEqual(iam["admin_readback"]["role"], "roles/storage.admin")
+        self.assertEqual(
+            iam["admin_readback"]["scope"],
+            "bucket:oday-tfstate-staging-odayplus-runtime-20260825",
+        )
+        self.assertIn("storage.buckets.get", iam["admin_readback"]["verified_permissions"])
+        self.assertIn(
+            "storage.buckets.getIamPolicy", iam["admin_readback"]["verified_permissions"]
+        )
+        self.assertEqual(iam["deployer_readback"]["role"], "roles/storage.objectUser")
+        self.assertEqual(iam["deployer_readback"]["github_actions_run_id"], "33320822376")
+        self.assertEqual(len(iam["deployer_readback"]["remote_state_objects_verified"]), 2)
+        self.assertFalse(iam["project_wide_storage_admin_required"])
+        self.assertEqual(iam["completion_claim"], "VERIFIED")
+        self.assertTrue(readback["security_compliance"]["state_bucket_iam_least_privilege_verified"])
 
 
 if __name__ == "__main__":

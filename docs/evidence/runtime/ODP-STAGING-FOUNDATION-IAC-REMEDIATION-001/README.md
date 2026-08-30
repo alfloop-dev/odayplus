@@ -15,13 +15,17 @@
 staging runtime identities 與 Terraform state convergence 已由 Terraform
 apply 及 GCP readback 確認，且 SQL 已採用至同一 remote state。既有
 `oday-staging-sql` 保留不動。State bucket 的 CMEK、versioning、retention、
-PAP 與 UBLA 已讀回，但 least-privilege IAM 因 active user 缺少
-`storage.buckets.get`、`storage.buckets.getIamPolicy`，且 project 缺少
-`roles/storage.admin`，目前明確為 human permission blocker，不能標記完成。
-另有一個誤置於 state bucket 的 binary plan object 已依 CMEK 與 retention
-規則開立安全隔離事件；在 `2026-09-26T09:24:24Z` 前不得刪除或放寬保留政策，
-expiry-cleanup owner 為 `Staging Foundation Owner`。不得將 state bucket 當作
-一般 artifact 儲存區。當前 live 的 `oday-staging-mlflow` 仍是舊的
+PAP 與 UBLA 已讀回。2026-08-30 由具 authority 的
+`admin@dev.cctech-support.com` 完成 bucket IAM readback：管理權限以 bucket-scoped
+`roles/storage.admin` 保留給 admin，WIF deployer
+`github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` 則只有
+`roles/storage.objectUser`。GitHub Actions run `33320822376` 再以該 deployer
+成功讀取 bootstrap 與 foundation state object metadata；原
+`BLOCKED_HUMAN_PERMISSION` 已解除，未授予 deployer project-wide storage admin。
+另有一個誤置於 state bucket 的 binary plan object 已依 CMEK 與 retention 規則
+開立安全隔離事件；在 `2026-09-26T09:24:24Z` 前不得刪除或放寬保留政策，
+expiry-cleanup owner 為 `Staging Foundation Owner`。不得將 state bucket 當作一般
+artifact 儲存區。當前 live 的 `oday-staging-mlflow` 仍是舊的
 Serverless VPC connector `PRIVATE_RANGES_ONLY` 並連接 legacy SQL；API/Web
 尚未由 ephemeral release 部署，因此 receipts 只把 API/Web 的
 Direct VPC `ALL_TRAFFIC` 記為 Terraform contract，維持 live readback pending。
