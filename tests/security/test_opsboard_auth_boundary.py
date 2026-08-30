@@ -441,3 +441,40 @@ def test_credentials_from_headers_parses_bearer_and_service():
     assert creds.service_id == "scheduler"
     assert creds.service_secret == b"s3cr3t"
     assert creds.correlation_id == "corr-9"
+
+
+def test_config_from_env_with_local_identity_signing_key():
+    secret = "a" * 32
+    cfg = config_from_env(
+        {
+            "ODP_AUTH_LOCAL_ISSUER": "urn:odp:identity:local",
+            "ODP_AUTH_LOCAL_AUDIENCES": "https://api.example.com",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": secret,
+        }
+    )
+    assert cfg.is_configured is True
+    assert cfg.has_live_inputs is True
+    assert cfg.issuer == "urn:odp:identity:local"
+    assert "https://api.example.com" in cfg.audiences
+    assert "local-default" in cfg.signing_keys
+    local_key = cfg.resolve_key("local-default")
+    assert local_key is not None
+    assert local_key.algorithm == "HS256"
+
+    # Verify a token issued by the Web BFF using this signing key
+    local_token = encode_compact_jwt(
+        {
+            "iss": "urn:odp:identity:local",
+            "aud": "https://api.example.com",
+            "sub": "user-local-123",
+            "sid": "00000000-0000-0000-0000-000000000001",
+            "tenant_id": "tenant-local",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=5)).timestamp(),
+        },
+        local_key,
+    )
+    boundary = _boundary(cfg)
+    outcome = boundary.authenticate(Credentials(bearer_token=local_token), now=NOW)
+    assert outcome.authenticated is True
+    assert outcome.principal.subject_id == "user-local-123"

@@ -117,8 +117,15 @@ def config_from_env(
     """
 
     source = os.environ if env is None else env
-    issuer = source.get("ODP_AUTH_ISSUER") or None
-    audiences = frozenset(_split_csv(source.get("ODP_AUTH_AUDIENCES")))
+    issuer = (
+        (source.get("ODP_AUTH_ISSUER") or "").strip()
+        or (source.get("ODP_AUTH_LOCAL_ISSUER") or "").strip()
+        or None
+    )
+    audiences = frozenset(
+        _split_csv(source.get("ODP_AUTH_AUDIENCES"))
+        + _split_csv(source.get("ODP_AUTH_LOCAL_AUDIENCES"))
+    )
     jwks_uri = (source.get("ODP_AUTH_JWKS_URI") or "").strip() or None
     keys: dict[str, SigningKey] = {}
     for pair in _split_csv(source.get("ODP_AUTH_HS256_KEYS")):
@@ -126,6 +133,13 @@ def config_from_env(
         if not sep or not kid or not secret:
             continue
         keys[kid] = SigningKey(kid=kid, algorithm="HS256", secret=secret.encode("utf-8"))
+    identity_token_key = (source.get("ODP_IDENTITY_TOKEN_SIGNING_KEY") or "").strip()
+    if identity_token_key:
+        keys["local-default"] = SigningKey(
+            kid="local-default",
+            algorithm="HS256",
+            secret=identity_token_key.encode("utf-8"),
+        )
     principal_mapping_value = source.get("ODP_AUTH_PRINCIPAL_MAP")
     principal_mappings = _parse_principal_mappings(principal_mapping_value)
     # Record raw live-input presence *before* parsing can discard it. A set but
@@ -137,9 +151,12 @@ def config_from_env(
         (source.get(var) or "").strip()
         for var in (
             "ODP_AUTH_ISSUER",
+            "ODP_AUTH_LOCAL_ISSUER",
             "ODP_AUTH_AUDIENCES",
+            "ODP_AUTH_LOCAL_AUDIENCES",
             "ODP_AUTH_HS256_KEYS",
             "ODP_AUTH_JWKS_URI",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY",
         )
     )
     leeway_raw = source.get("ODP_AUTH_LEEWAY_SECONDS")
