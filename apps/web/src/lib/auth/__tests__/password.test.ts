@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../../../app/auth/password/route";
 import {
   readWebSession,
+  sealLegacyWebSession,
   sealWebSessionReference,
-  sealWebSession,
   webSessionCookieName,
   type WebSession,
 } from "../session";
@@ -83,7 +83,7 @@ describe("password policy & change route", () => {
       issuedAt: now,
       expiresAt: now + 3600,
     };
-    const cookie = await sealWebSession(session, SECRET);
+    const cookie = await sealLegacyWebSession(session, SECRET);
     const request = new NextRequest("https://ops.oday.plus/auth/password", {
       method: "POST",
       headers: {
@@ -117,7 +117,7 @@ describe("password policy & change route", () => {
       issuedAt: now - 300,
       expiresAt: now + 3300,
     };
-    const cookie = await sealWebSession(originalSession, SECRET);
+    const cookie = await sealLegacyWebSession(originalSession, SECRET);
 
     const request = new NextRequest("https://ops.oday.plus/auth/password", {
       method: "POST",

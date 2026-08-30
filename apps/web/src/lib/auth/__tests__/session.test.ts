@@ -3,8 +3,8 @@ import {
   readOidcTransaction,
   readWebSession,
   rotateWebSession,
+  sealLegacyWebSession,
   sealOidcTransaction,
-  sealWebSession,
   webSessionCookieOptions,
   type OidcTransaction,
   type WebSession,
@@ -24,7 +24,7 @@ describe("encrypted web session", () => {
       issuedAt: 1_000,
       expiresAt: 2_000,
     };
-    const sealed = await sealWebSession(session, SECRET);
+    const sealed = await sealLegacyWebSession(session, SECRET);
 
     await expect(
       readWebSession(sealed, { secret: SECRET, nowSeconds: 1_500 }),
@@ -50,7 +50,7 @@ describe("encrypted web session", () => {
       issuedAt: 1_000,
       expiresAt: 2_000,
     };
-    const sealed = await sealWebSession(legacySession as unknown as WebSession, SECRET);
+    const sealed = await sealLegacyWebSession(legacySession as unknown as WebSession, SECRET);
 
     const upgraded = await readWebSession(sealed, {
       secret: SECRET,

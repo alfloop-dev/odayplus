@@ -133,21 +133,35 @@ async function stableLegacySid(subject: string, issuedAt: number): Promise<strin
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
-/**
- * Kept as a compatibility helper for callers that create legacy payloads.
- * New application paths must use sealWebSessionReference, which strips all
- * credentials and identity facts before sealing.
- */
+/** Seal a browser-safe session reference. */
 export async function sealWebSession(
   session: WebSession,
   explicitSecret?: string,
 ): Promise<string> {
+  return sealWebSessionReference(session, explicitSecret);
+}
+
+/**
+ * Compatibility-only encoder for migration fixtures. Application response
+ * paths must never call this function because it deliberately represents the
+ * pre-P2 cookie shape.
+ */
+export async function sealLegacyWebSession(
+  session: WebSession,
+  explicitSecret?: string,
+): Promise<string> {
+  if (!session.accessToken || !session.subject) {
+    throw new Error("Legacy session requires accessToken and subject");
+  }
   return sealJson(session, SESSION_PURPOSE, explicitSecret);
 }
 
 /** Seal the only payload shape that application responses may give the browser. */
 export async function sealWebSessionReference(
-  session: Pick<WebSession, "sid" | "issuedAt" | "expiresAt" | "provider">,
+  session: Pick<
+    WebSession,
+    "kind" | "sid" | "issuedAt" | "expiresAt" | "provider"
+  >,
   explicitSecret?: string,
 ): Promise<string> {
   if (!session.sid) throw new Error("A session id is required");

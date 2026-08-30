@@ -4,7 +4,7 @@ import { GET, POST } from "../../../app/login/route";
 import { openJson } from "../crypto";
 import {
   readWebSession,
-  sealWebSession,
+  sealLegacyWebSession,
   webSessionCookieName,
   type WebSession,
 } from "../session";
@@ -69,7 +69,7 @@ describe("password-first login route handler", () => {
       issuedAt: now,
       expiresAt: now + 3600,
     };
-    const cookie = await sealWebSession(session, SECRET);
+    const cookie = await sealLegacyWebSession(session, SECRET);
     const request = new NextRequest("https://ops.oday.plus/login?returnTo=%2Foperator%3Fws%3Dgrowth");
     request.cookies.set(webSessionCookieName, cookie);
 

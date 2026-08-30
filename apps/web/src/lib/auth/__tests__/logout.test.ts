@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "../../../app/auth/logout/route";
 import {
-  sealWebSession,
+  sealLegacyWebSession,
   webSessionCookieName,
   type WebSession,
 } from "../session";
@@ -27,7 +27,7 @@ describe("logout route", () => {
       issuedAt: now,
       expiresAt: now + 3600,
     };
-    const cookie = await sealWebSession(session, SECRET);
+    const cookie = await sealLegacyWebSession(session, SECRET);
 
     const request = new NextRequest("https://ops.oday.plus/auth/logout");
     request.headers.set("origin", "https://ops.oday.plus");
