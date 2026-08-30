@@ -22,7 +22,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
     assert plan.database_url_env == "ODAY_DATABASE_URL"
     assert plan.target_revision == "head"
     assert plan.dry_run is True
-    assert [step.revision for step in plan.steps] == ["0001", "0002", "0003"]
+    assert [step.revision for step in plan.steps] == ["0001", "0002", "0003", "0004"]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
     assert all(any(asset.role == "sql" for asset in step.assets) for step in plan.steps)

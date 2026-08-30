@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy.engine import URL
 
 from modules.external_data.providers.taiwan_real_estate import (
@@ -230,11 +231,17 @@ def test_alembic_head_installs_official_schema_and_both_view_branches(
             with_official["listing_property_avm"]["contract_state"]
             == "ACTIVE"
         )
+        heads = ScriptDirectory.from_config(
+            _alembic_config(intake_blank_db)
+        ).get_heads()
+        assert len(heads) == 1, (
+            f"migration chain must stay linear, found heads: {heads}"
+        )
         with intake_blank_db.connect() as connection:
             current = connection.execute(
                 "SELECT version_num FROM alembic_version"
             ).fetchone()
-        assert current == ("0003",)
+        assert current == (heads[0],)
     finally:
         engine.close()
 
