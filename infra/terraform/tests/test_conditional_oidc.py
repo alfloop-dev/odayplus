@@ -8,7 +8,6 @@ strictly validated when auth_mode='oidc' and that password-first deployments
 from __future__ import annotations
 
 import importlib.util
-import tempfile
 import unittest
 from pathlib import Path
 
