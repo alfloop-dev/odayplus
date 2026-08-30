@@ -363,7 +363,13 @@ def _postgres_bundle(
         SqlIdentityStore,
     )
 
-    pg_identity_store = SqlIdentityStore(connection_factory=engine.connect)
+    # SqlIdentityStore._get_connection() calls connection_factory() when it is
+    # callable and then uses conn.cursor(). psycopg_pool.ConnectionPool.getconn()
+    # returns a raw psycopg.Connection suitable for this interface.
+    def _pg_conn_factory() -> Any:
+        return engine._pool.getconn()
+
+    pg_identity_store = SqlIdentityStore(connection_factory=_pg_conn_factory)
     pg_session_service = SessionService(
         repository=InMemorySessionRepository(),
         config=SessionConfig(),
