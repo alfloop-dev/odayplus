@@ -1172,16 +1172,26 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
     dependency_done_statuses = normalized_status_set(
         ready_dispatch_settings(config).get("dependency_done_statuses"), ["done"]
     )
-    dependency_ready = dependencies_satisfied(task, task_map, dependency_done_statuses) if task else False
+    dependency_ready = (
+        dependencies_satisfied(task, task_map, dependency_done_statuses)
+        if task
+        and reason
+        in {
+            REASON_OWNED_READY,
+            REASON_OWNED_IN_PROGRESS,
+            REASON_HELPER_CLAIM,
+        }
+        else True
+    )
 
-    # The finalize event key historically remained stable even when a newly
-    # declared dependency became incomplete.  Do not let a matching queued
-    # key bypass the same gate used by the other execution paths.
+    # Finalize is an immutable closeout for an already merged PR, not executable
+    # task work. Its event is deliberately not subject to the dependency gate;
+    # only execution and helper dispatches must be stopped when dependencies
+    # become incomplete after their event was queued.
     if not dependency_ready and reason in {
         REASON_OWNED_READY,
         REASON_OWNED_IN_PROGRESS,
         REASON_HELPER_CLAIM,
-        REASON_OWNED_FINALIZE,
     }:
         return (
             f"Skipped stale queued wake event for {task_id}: task state changed; "
@@ -1217,7 +1227,10 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
     # `last_update` is deliberately excluded. Notes, status-check retries, and
     # generated-view synchronization may update that timestamp after a wake is
     # queued without changing who may execute the task. Role/status/dependency
-    # changes below remain part of the key and still invalidate stale wakes.
+    # changes below remain part of the key and still invalidate stale execution
+    # wakes. Finalize is different: it closes an already merged PR at an
+    # immutable approved head, so a dependency edge update must not invalidate
+    # or duplicate that closeout event.
     #
     # `branch_head` is included so that a worktree lease block recorded against
     # an old branch head invalidates the moment the head changes (new push,
@@ -1232,20 +1245,22 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
         branch_head = resolve_task_progress_head(task_id) if task_id else None
     except Exception:
         branch_head = None
-    return json.dumps(
-        {
-            "task_id": task.get("id"),
-            "status": task.get("status"),
-            "reason": reason,
-            "owner": task.get("owner"),
-            "reviewer": task.get("reviewer"),
-            "depends_on": list(task.get("depends_on", []) or []),
-            "dependency_signature": task_dependency_signature(task, task_map),
-            "branch_head": branch_head,
-        },
-        sort_keys=True,
-        ensure_ascii=True,
-    )
+    signature = {
+        "task_id": task.get("id"),
+        "status": task.get("status"),
+        "reason": reason,
+        "owner": task.get("owner"),
+        "reviewer": task.get("reviewer"),
+        "branch_head": branch_head,
+    }
+    if reason != REASON_OWNED_FINALIZE:
+        signature.update(
+            {
+                "depends_on": list(task.get("depends_on", []) or []),
+                "dependency_signature": task_dependency_signature(task, task_map),
+            }
+        )
+    return json.dumps(signature, sort_keys=True, ensure_ascii=True)
 
 LEASE_BLOCK_RETRY_AFTER_SECONDS = 1800.0
 # An escalated block retries far more slowly, but it does still retry. See

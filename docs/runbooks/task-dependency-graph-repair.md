@@ -278,8 +278,10 @@ task、同時存在於 live board 與 official archive 的 duplicate lifecycle�
 archive，以及 candidate 可達範圍內的 cycle。檢查失敗時不會改動 task；成功時會
 在 `ai-activity-log.jsonl` 寫入 `type=dependency_update`、舊/新 edge 與修改理由。
 
-Supervisor 對 owner、helper 與 finalize worker 的啟動都用同一份 graph gate；依賴
-未完成、圖譜無法解析或含 self/cycle/dangling 時一律 fail closed。已建立的
+Supervisor 對 owner execution 與 helper 的啟動使用既有 graph gate；依賴未完成、
+圖譜無法解析或含 self/cycle/dangling 時一律 fail closed。finalize 是已合併 PR
+的 immutable closeout，不是可執行 task dispatch，因此不受 dependency edge 影響，
+也不會因 `set_dependencies` 產生第二個 finalize event。已建立的 execution
 `owned_*_dispatch` queue event 只代表當時的候選資格，worker 啟動前會重讀
 canonical board 並重新驗證 dependency；stale blocked recovery 也不得只依
 blocker prose 判定可重派。這是既有 task graph 的 preflight，不另建 pause 或

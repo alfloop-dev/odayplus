@@ -187,6 +187,64 @@ class DependencyDispatchGateTests(unittest.TestCase):
         self.assertIsNotNone(message)
         self.assertIn("dependency gate", message or "")
 
+    def test_finalize_survives_dependency_update_without_duplicate_or_skip(self) -> None:
+        task = {
+            "id": "GATE-FINALIZE-001",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+        }
+        upstream = {
+            "id": "GATE-FINALIZE-UPSTREAM-001",
+            "status": "in_progress",
+            "depends_on": [],
+        }
+        config = self._config()
+        initial_map = {task["id"]: task, upstream["id"]: upstream}
+        with mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None):
+            before = supervisor.build_dispatch_event(
+                task,
+                "Codex",
+                "owned_finalize_dispatch",
+                initial_map,
+            )
+
+        state = {"tasks": [deepcopy(task), deepcopy(upstream)]}
+        with (
+            canonical_test_environment(),
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+        ):
+            ai_status.command_set_dependencies(
+                state,
+                [task["id"], upstream["id"], "保留已合併 PR 的 finalize closeout，不將 dependency 當成執行 gate"],
+            )
+
+        updated_task = state["tasks"][0]
+        updated_map = {updated_task["id"]: updated_task, upstream["id"]: upstream}
+        with mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None):
+            after = supervisor.build_dispatch_event(
+                updated_task,
+                "Codex",
+                "owned_finalize_dispatch",
+                updated_map,
+            )
+            stale_message = supervisor.stale_dispatch_skip_message(
+                config,
+                {
+                    "event_key": before["key"],
+                    "task_id": updated_task["id"],
+                    "target_agent": "codex",
+                    "target_display_name": "Codex",
+                    "reason": "owned_finalize_dispatch",
+                },
+                updated_map,
+            )
+
+        self.assertEqual(before["key"], after["key"])
+        self.assertIsNone(stale_message)
+
     def test_blocked_recovery_requires_a_task_snapshot_when_dependencies_exist(self) -> None:
         task = {
             "id": "GATE-BLOCKED-001",
