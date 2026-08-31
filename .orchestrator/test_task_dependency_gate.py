@@ -18,8 +18,15 @@ SCRIPTS_DIR = ROOT_DIR / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-os.environ.setdefault("PANTHEON_STATUS_ROOT", tempfile.mkdtemp(prefix="pantheon-dependency-gate-status-"))
-os.environ.setdefault("ORCH_STATUS_ROOT", os.environ["PANTHEON_STATUS_ROOT"])
+# Focused tests must not depend on the worker's live coordination environment.
+# In particular, a clean task worktree has no gitignored config.json, while
+# actor validation in the canonical CLI still needs the declared roster.
+_TEST_STATUS_ROOT = Path(tempfile.mkdtemp(prefix="pantheon-dependency-gate-status-")).resolve()
+_TEST_CONFIG = THIS_DIR / "config.example.json"
+os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+os.environ["ORCH_CONFIG_PATH"] = str(_TEST_CONFIG)
+os.environ["PANTHEON_CONFIG_PATH"] = str(_TEST_CONFIG)
 
 import ai_status
 import supervisor
