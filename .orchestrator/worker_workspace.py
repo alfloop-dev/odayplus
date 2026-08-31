@@ -1862,38 +1862,28 @@ def prepare_worker_workspace(
             _git_ref_exists(repo_root, f"refs/heads/{branch}")
             or _git_ref_exists(repo_root, f"refs/remotes/origin/{branch}")
         )
-        if required_review_head and not branch_preexisted:
-            refresh_status = "review_head_unavailable"
-            message = (
-                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                f"review dispatch requires submitted head {required_review_head[:12]}, "
-                f"but task branch {branch} is unavailable ({refresh_status})."
-            )
-            write_activity_log(
-                config,
-                {
-                    "type": "dispatch_blocked_worktree_lease",
-                    "task_id": request.task_id,
-                    "workspace_task_id": workspace_task_id,
-                    "target_agent": target_agent,
-                    "queue_event_id": queue_event_id,
-                    "message": message,
-                    "workspace_branch": branch,
-                    "workspace_path": str(worktree_path),
-                    "refresh_status": refresh_status,
-                },
-            )
-            _record_worktree_lease_block(
-                config,
-                state,
-                task_id=str(request.task_id or workspace_task_id),
-                refresh_status=refresh_status,
-                message=message,
-                worktree_path=worktree_path,
-                materialized_paths=materialized_paths,
-            )
-            return False, message
-        created, error = _create_worker_worktree(repo_root, worktree_path, branch, base.sha)
+        creation_sha = base.sha
+        if required_review_head:
+            resolved_review_head = _git_commit_oid(repo_root, required_review_head)
+            if not resolved_review_head or resolved_review_head != required_review_head:
+                refresh_status = "review_head_unavailable"
+                message = (
+                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                    "submitted review head is unavailable locally; refusing to create a "
+                    "review checkout at the cycle base."
+                )
+                _record_worktree_lease_block(
+                    config,
+                    state,
+                    task_id=str(request.task_id or workspace_task_id),
+                    refresh_status=refresh_status,
+                    message=message,
+                    worktree_path=worktree_path,
+                    materialized_paths=materialized_paths,
+                )
+                return False, message
+            creation_sha = resolved_review_head
+        created, error = _create_worker_worktree(repo_root, worktree_path, branch, creation_sha)
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
             write_activity_log(
