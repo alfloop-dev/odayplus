@@ -184,6 +184,25 @@ if [ -n "$lint_targets" ]; then
   fi
 fi
 
+# 3. Declared verification. A task whose board entry names verification
+#    commands must already have a receipt proving each one passed at this exact
+#    head: an unproven claim is the failure this gate exists to stop, and the
+#    reviewer would otherwise be the first thing to run the tests. Tasks that
+#    declare no verification commands are unaffected -- the obligation follows
+#    the declaration, not the task. Policy: .orchestrator/verification_evidence.py.
+verification_tool="$ROOT/delivery_toolchain/git/task_verification.py"
+if [ -f "$verification_tool" ]; then
+  verification_out=""
+  if verification_out="$(python3 "$verification_tool" check --task-id "$TASK_ID" --repo "$ROOT" 2>&1)"; then
+    if [ -n "$verification_out" ]; then
+      printf '%s\n' "$verification_out" | sed 's/^/  /'
+    fi
+  else
+    printf '%s\n' "$verification_out" | sed 's/^/  /' >&2
+    exit 1
+  fi
+fi
+
 # gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
 # .orchestrator/bin/gh is a broker shim, not the real CLI.
 resolve_gh() {

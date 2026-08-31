@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 
 from common import normalize_agent_id, utc_now
 from dispatch_policy import REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
-
+import verification_evidence
 from runtime_state import ACTIVE_WORKER_STATUSES
 
 # Compatibility aliases remain exports while Supervisor callers migrate to the
@@ -1190,7 +1190,35 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
         body.extend(["", "## Acceptance"])
         body.extend([f"- {item}" for item in acceptance] or ["- none"])
         body.extend(["", "## Verification"])
-        body.extend([f"- `{item}`" for item in verification] or ["- none"])
+        if verification:
+            audits = verification_evidence.audit_commands(verification)
+            for audit in audits:
+                if audit.ok:
+                    body.append(f"- `{audit.command}`")
+                else:
+                    body.append(
+                        f"- `{audit.command}` — REJECTED ({', '.join(audit.violations)}): "
+                        + "; ".join(audit.details)
+                    )
+            body.extend(
+                [
+                    "",
+                    "### Verification Evidence Policy",
+                    "- Run each command so its own exit code survives: no pipe without `set -o pipefail`,",
+                    "  no `|| true`, no `; echo ...` tail, no `set +e`, no backgrounding.",
+                    "- Record a receipt binding head SHA, exact command, real exit code, duration, and test selection.",
+                    "- A run killed by a signal or timeout is `interrupted`, never a pass, and is repeated with the",
+                    "  same selection rather than escalated to a wider suite.",
+                    "- Re-running an already-measured head SHA and selection needs an explicit retry reason.",
+                ]
+            )
+            rejected = [audit for audit in audits if not audit.ok]
+            if rejected:
+                body.append(
+                    f"- {len(rejected)} declared command(s) above are rejected by the policy and must be fixed before use."
+                )
+        else:
+            body.append("- none")
         body.append("")
         return "\n".join(body)
 
@@ -1234,6 +1262,24 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "",
         ]
     )
+
+_GITIGNORE_MAGIC = re.compile(r"([\[\]*?])")
+
+
+def _local_exclude_pattern(rel_path: str) -> str:
+    """Render one materialized path as a literal, root-anchored exclude line.
+
+    The leading ``/`` pins the pattern to the repository root and the escapes
+    keep glob metacharacters in a filename from widening it, so the entry can
+    only ever hide the exact file the supervisor just wrote and hash-verified.
+    Excluding the enclosing directory instead would also hide anything the
+    worker created there, which is dirt that must still be reported.
+    """
+    normalized = str(rel_path or "").strip().replace("\\", "/").lstrip("/")
+    if not normalized:
+        return ""
+    return "/" + _GITIGNORE_MAGIC.sub(r"\\\1", normalized)
+
 
 @_entrypoint
 def materialize_worker_context_files(
@@ -1511,6 +1557,32 @@ def materialize_worker_context_files(
                 ".orchestrator/task-briefs/",
                 ".orchestrator/reviews/",
             ]
+            # The fixed list above only covers the canonical references that
+            # every worker gets. A task's own `source_docs` land wherever the
+            # board points them -- ai-task-archive/tasks/<id>.json, for one --
+            # and the supervisor writing them is what makes the worktree
+            # untracked-dirty, so task_finalize fails closed on the
+            # orchestrator's own copy and the task can never be submitted.
+            # Only manifest entries whose paths are NOT already covered by
+            # the fixed prefix list are added. Files under .orchestrator/
+            # are covered by the existing prefixes or gitignored state and
+            # must remain visible to workspace regression tests.
+            _COVERED_PREFIXES = (
+                "AI_COLLABORATION_GUIDE.md",
+                "ai-status.json",
+                "current-work.md",
+                "ai-activity-log.jsonl",
+                ".orchestrator/",
+            )
+            for entry in manifest_entries:
+                rel = str(entry.get("relative_path") or "").strip().replace("\\", "/").lstrip("/")
+                if not rel:
+                    continue
+                if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _COVERED_PREFIXES):
+                    continue
+                pattern = _local_exclude_pattern(rel)
+                if pattern:
+                    lines_to_add.append(pattern)
             new_lines = [line for line in lines_to_add if line not in existing_exclude.splitlines()]
             if new_lines:
                 with open(exclude_path, "a", encoding="utf-8") as ef:

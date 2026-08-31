@@ -26,6 +26,7 @@ try:  # PyYAML is optional; yaml_dump falls back to JSON without it.
 except ImportError:  # pragma: no cover - exercised only without PyYAML
     yaml = None
 
+import verification_evidence
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1666,7 +1667,35 @@ def generate_task_brief_content(
     body.extend(["", "## Acceptance"])
     body.extend([f"- {item}" for item in acceptance] or ["- none"])
     body.extend(["", "## Verification"])
-    body.extend([f"- `{item}`" for item in verification] or ["- none"])
+    if verification:
+        verification_audits = verification_evidence.audit_commands(verification)
+        for audit in verification_audits:
+            if audit.ok:
+                body.append(f"- `{audit.command}`")
+            else:
+                body.append(
+                    f"- `{audit.command}` — REJECTED ({', '.join(audit.violations)}): "
+                    + "; ".join(audit.details)
+                )
+        body.extend(
+            [
+                "",
+                "### Verification Evidence Policy",
+                "- Run each command so its own exit code survives: no pipe without `set -o pipefail`,",
+                "  no `|| true`, no `; echo ...` tail, no `set +e`, no backgrounding.",
+                "- Record a receipt binding head SHA, exact command, real exit code, duration, and test selection.",
+                "- A run killed by a signal or timeout is `interrupted`, never a pass, and is repeated with the",
+                "  same selection rather than escalated to a wider suite.",
+                "- Re-running an already-measured head SHA and selection needs an explicit retry reason.",
+            ]
+        )
+        rejected = [audit for audit in verification_audits if not audit.ok]
+        if rejected:
+            body.append(
+                f"- {len(rejected)} declared command(s) above are rejected by the policy and must be fixed before use."
+            )
+    else:
+        body.append("- none")
     body.extend(["", "## Recent Task Activity"])
     if recent:
         body.extend(
@@ -1852,6 +1881,23 @@ def write_approval_evidence(
         },
     )
     return relpath(path)
+
+
+def write_verification_receipt(config: dict[str, Any], *, receipt: dict[str, Any]) -> str | None:
+    """Persist a verification receipt into the existing evidence directory.
+
+    Verification evidence reuses the supervisor's one receipt store rather than
+    introducing a parallel results location, so a reader who already knows
+    where failure and approval evidence lives finds this next to it. The store
+    layout lives in ``verification_evidence`` so the finalize gate in
+    ``delivery_toolchain`` reads exactly what this writes.
+    """
+    return relpath(verification_evidence.write_receipt(evidence_dir(config), receipt))
+
+
+def load_verification_receipts(config: dict[str, Any], *, task_id: str | None = None) -> list[dict[str, Any]]:
+    """Return previously recorded verification receipts, oldest first."""
+    return verification_evidence.load_receipts(evidence_dir(config), task_id=task_id)
 
 
 def to_bool(value: Any) -> bool:
