@@ -394,8 +394,6 @@ def _dict_row_account(
 
 def test_sql_identity_store_find_account_by_id_dict_row(pool: _FakePool):
     """find_account_by_id must handle production dict rows."""
-    from uuid import UUID
-
     aid = uuid4()
     tid = uuid4()
     pool.connection_obj.next_row = _dict_row_account(account_id=aid, tenant_id=tid)
@@ -495,10 +493,8 @@ def test_sql_identity_store_get_account_scope_no_scope_dict_row(pool: _FakePool)
     """get_account_scope fallback (no scope row) must handle dict rows."""
     tid = uuid4()
     # First query returns no scope row; second returns the account's tenant_id
-    original_fetchone = pool.connection_obj.__class__.cursor
 
     call_count = {"n": 0}
-    original_next_row = pool.connection_obj.next_row
 
     class _CountingCursor(_FakeCursor):
         def fetchone(self) -> Any:
