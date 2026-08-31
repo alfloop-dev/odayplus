@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Iterable
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -3542,6 +3543,217 @@ def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
     return resolver.dependency_satisfied(dep_id)
 
 
+def _dependency_task_id(task_id: Any) -> str:
+    """Canonical dependency identity, matching what actually resolves at runtime.
+
+    ``task_archive.normalize_task_id`` only strips whitespace, so both the live
+    board index and the archive file lookup are case-sensitive.  The validator
+    has to fold ids the same way or it can certify a graph as clean that
+    ``TaskResolver`` is structurally unable to resolve, leaving the task blocked
+    forever with no reported violation.
+    """
+    return str(task_id or "").strip()
+
+
+def _dependency_task_id_key(task_id: Any) -> str:
+    """Case-insensitive fold, used only to diagnose near-miss ids.
+
+    This must never decide membership: it exists so a dependency that differs
+    from a real task id by case alone is reported as a fixable mismatch instead
+    of falling through to the generic dangling message.
+    """
+    return _dependency_task_id(task_id).casefold()
+
+
+def dependency_graph_errors_for_task(
+    task: dict[str, Any],
+    active_tasks: Iterable[dict[str, Any]] | dict[str, dict[str, Any]],
+) -> list[str]:
+    """Return graph violations reachable from one task candidate.
+
+    Dependency edits are deliberately validated against both sources of task
+    truth.  ``TaskResolver`` is enough to answer whether a dependency is done,
+    but it prefers the live board when an id is duplicated and therefore cannot
+    enforce the Control Pack's exactly-one-source rule.  This validator keeps
+    that distinction explicit and is shared by the canonical CLI and the
+    Supervisor's dispatch gate.
+
+    Identity here is exactly the resolver's identity (whitespace-stripped,
+    case-sensitive).  Reporting on a looser identity than the one that resolves
+    at dispatch time is the worst failure available to this function: the edit
+    is accepted, the graph is certified clean, and the task waits on an edge
+    nothing can ever satisfy.
+    """
+    if isinstance(active_tasks, dict):
+        source_tasks = active_tasks.values()
+    else:
+        source_tasks = active_tasks
+
+    active_by_id: dict[str, dict[str, Any]] = {}
+    for candidate in source_tasks:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = _dependency_task_id(candidate.get("id"))
+        if not candidate_id and isinstance(active_tasks, dict):
+            for source_key, source_task in active_tasks.items():
+                if source_task is candidate:
+                    candidate_id = _dependency_task_id(source_key)
+                    break
+        if candidate_id:
+            active_by_id[candidate_id] = candidate
+
+    task_id = _dependency_task_id(task.get("id"))
+    if not task_id and isinstance(active_tasks, dict):
+        for source_key, source_task in active_tasks.items():
+            if source_task is task or source_task == task:
+                task_id = _dependency_task_id(source_key)
+                task = {**task, "id": task_id}
+                break
+    if task_id:
+        active_by_id[task_id] = task
+
+    # Diagnostic index only. Membership is decided on the exact id above; this
+    # maps a folded id back to the canonical board ids sharing it so a
+    # case-mismatched edge names the id the operator actually meant.
+    board_ids_by_key: dict[str, list[str]] = {}
+    for board_id in active_by_id:
+        board_ids_by_key.setdefault(_dependency_task_id_key(board_id), []).append(board_id)
+
+    errors: list[str] = []
+    seen_errors: set[str] = set()
+
+    def add_error(message: str) -> None:
+        if message not in seen_errors:
+            seen_errors.add(message)
+            errors.append(message)
+
+    def archive_snapshot(dep_id: str) -> dict[str, Any] | None:
+        try:
+            snapshot = load_archived_snapshot(dep_id)
+        except (OSError, ValueError, TypeError):
+            # A broken archive lookup must never turn into a dispatch grant.
+            return None
+        return snapshot if isinstance(snapshot, dict) else None
+
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    def walk(current_id: str) -> None:
+        if current_id in visiting:
+            start = visiting.index(current_id)
+            cycle = visiting[start:] + [current_id]
+            add_error("dependency cycle: " + " -> ".join(cycle))
+            return
+        if current_id in visited:
+            return
+        current = active_by_id.get(current_id)
+        if not isinstance(current, dict):
+            return
+
+        visiting.append(current_id)
+        raw_dependencies = current.get("depends_on")
+        if raw_dependencies is None:
+            dependencies: list[Any] = []
+        elif isinstance(raw_dependencies, list):
+            dependencies = raw_dependencies
+        else:
+            add_error(f"{current.get('id')}: depends_on must be a list")
+            dependencies = []
+
+        # Deduplicate on the exact id: two entries differing only by case are
+        # not a redundant edge, they are one resolvable edge plus one that never
+        # resolves, and each has to be reported on its own terms.
+        seen_dependencies: set[str] = set()
+        for raw_dependency in dependencies:
+            dep_id = _dependency_task_id(raw_dependency)
+            if not dep_id:
+                add_error(f"{current.get('id')}: dependency id must not be empty")
+                continue
+            if dep_id in seen_dependencies:
+                add_error(f"{current.get('id')}: duplicate dependency {dep_id}")
+                continue
+            seen_dependencies.add(dep_id)
+
+            # A self-edge stays case-insensitive: whichever spelling was used,
+            # the operator pointed the task at itself and that is the useful
+            # thing to say.
+            if _dependency_task_id_key(dep_id) == _dependency_task_id_key(current_id):
+                add_error(f"{current.get('id')}: depends on itself ({dep_id})")
+                continue
+
+            on_board = dep_id in active_by_id
+            snapshot = archive_snapshot(dep_id)
+            if on_board and snapshot is not None:
+                add_error(
+                    f"{current.get('id')}: dependency {dep_id} exists on BOTH the live board "
+                    "and the official archive"
+                )
+                continue
+            if not on_board and snapshot is None:
+                near_misses = [
+                    board_id
+                    for board_id in board_ids_by_key.get(_dependency_task_id_key(dep_id), [])
+                    if board_id != dep_id
+                ]
+                if near_misses:
+                    add_error(
+                        f"{current.get('id')}: dependency {dep_id} differs only by case from "
+                        f"{', '.join(sorted(near_misses))}; task ids are case-sensitive and this "
+                        "edge can never resolve"
+                    )
+                else:
+                    add_error(
+                        f"{current.get('id')}: dependency {dep_id} is dangling in neither "
+                        "the live board nor the official archive"
+                    )
+                continue
+            if not on_board:
+                terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()
+                if terminal_status != "done":
+                    add_error(
+                        f"{current.get('id')}: archived dependency {dep_id} has "
+                        f"terminal_status={terminal_status or 'missing'!r} and is not complete"
+                    )
+                continue
+            walk(dep_id)
+
+        visiting.pop()
+        visited.add(current_id)
+
+    if not task_id:
+        return ["dependency update requires a task id"]
+    walk(task_id)
+    return errors
+
+
+def validate_dependency_update(
+    state: dict[str, Any],
+    task_id: str,
+    dependencies: list[str],
+) -> None:
+    """Fail closed before a CLI dependency mutation touches canonical state."""
+    candidate = get_task(state, task_id)
+    if candidate is None:
+        candidate = {"id": task_id}
+    else:
+        candidate = deepcopy(candidate)
+    candidate["depends_on"] = list(dependencies)
+    errors = dependency_graph_errors_for_task(candidate, state.get("tasks", []))
+    if errors:
+        detail = "\n".join(f"  - {error}" for error in errors)
+        raise SystemExit(
+            f"Dependency update rejected for {task_id}; canonical graph remains unchanged:\n{detail}"
+        )
+
+
+def parse_dependency_argument(raw: str | None) -> list[str]:
+    """Parse the CLI dependency field; ``-``/``none`` explicitly clears it."""
+    value = str(raw or "").strip()
+    if value.casefold() in {"", "-", "none", "null", "[]"}:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def ensure_review_finalize_handoff(
     state: dict[str, Any],
     task: dict[str, Any],
@@ -5672,7 +5884,13 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    requested_dependencies = parse_csv_env("TASK_DEPENDS_ON")
     task = get_task(state, task_id)
+    if task is not None and "TASK_DEPENDS_ON" in os.environ:
+        raise SystemExit(
+            "既有 task 的 depends_on 不可由 assign 靜默修改；請使用 "
+            "set_dependencies <task-id> <dep1,dep2|-> <message>，以留下 dependency audit event。"
+        )
     # Do this before priority checks, timestamping, or any task/agent mutation.
     # An invalid source document must fail at assignment time rather than leave
     # a board record that the dispatcher can only reject repeatedly later.
@@ -5692,6 +5910,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
 
     timestamp = iso_now()
     if task is None:
+        validate_dependency_update(state, task_id, requested_dependencies)
         if archived_task_snapshot(task_id):
             raise SystemExit(
                 f"Task {task_id} is archived. Create a new follow-up task instead of reusing the archived task id."
@@ -5704,7 +5923,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "owner": owner,
             "reviewer": reviewer,
             "status": "todo",
-            "depends_on": parse_csv_env("TASK_DEPENDS_ON"),
+            "depends_on": requested_dependencies,
             "artifacts": parse_csv_env("TASK_ARTIFACTS"),
             "acceptance": parse_csv_env("TASK_ACCEPTANCE"),
             "next": "Assignment created",
@@ -5735,6 +5954,78 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "type": "assign",
             "task_id": task_id,
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
+        }
+    )
+    if requested_dependencies:
+        append_log(
+            {
+                "ts": timestamp,
+                "agent": actor,
+                "type": "dependency_update",
+                "task_id": task_id,
+                "old_dependencies": [],
+                "new_dependencies": requested_dependencies,
+                "message": "Initial dependency declaration during canonical task assignment.",
+                "source": "canonical_cli",
+            }
+        )
+
+
+def command_set_dependencies(state: dict[str, Any], args: list[str]) -> None:
+    """Set one task's dependency edges through the audited canonical CLI.
+
+    Usage: ``set_dependencies <task-id> <dep1,dep2|-> <message>``.  The
+    dependency field is parsed before any task field is changed, and the
+    candidate graph must resolve through the live board/archive without a
+    self-edge or reachable cycle.
+    """
+    if len(args) < 2:
+        raise SystemExit(
+            "Usage: set_dependencies <task-id> <dep1,dep2|-> <message>"
+        )
+    task_id = args[0]
+    if len(args) >= 3:
+        raw_dependencies, message = args[1], args[2]
+    elif "TASK_DEPENDS_ON" in os.environ:
+        # Keep the existing task metadata convention usable for operators who
+        # need a long/quoted dependency list while making the mutation itself
+        # explicit and auditable through this command.
+        raw_dependencies = os.environ.get("TASK_DEPENDS_ON", "")
+        message = args[1]
+    else:
+        raw_dependencies = args[1]
+        message = "Dependency list updated via canonical CLI."
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor not in {owner, reviewer}:
+        raise SystemExit(
+            f"Only the owner ({owner}) or reviewer ({reviewer}) can update dependencies for {task_id}"
+        )
+
+    dependencies = parse_dependency_argument(raw_dependencies)
+    validate_dependency_update(state, task_id, dependencies)
+    previous = [str(item).strip() for item in (task.get("depends_on") or []) if str(item).strip()]
+    if previous == dependencies:
+        raise SystemExit(f"Dependency list for {task_id} is unchanged")
+
+    timestamp = iso_now()
+    task["depends_on"] = dependencies
+    task["last_update"] = timestamp
+    task["next"] = message
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "dependency_update",
+            "task_id": task_id,
+            "old_dependencies": previous,
+            "new_dependencies": dependencies,
+            "message": message,
+            "source": "canonical_cli",
         }
     )
 
@@ -7509,6 +7800,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
                 "restore_approved",
                 "restore_approved_head",
                 "approve_continuation",
+                "set_dependencies",
             }
         )
         else None
@@ -7531,6 +7823,7 @@ READ_ONLY_COMMANDS = {
 
 MUTATING_COMMANDS = {
     "assign": command_assign,
+    "set_dependencies": command_set_dependencies,
     "start": command_start,
     "progress": command_progress,
     "note": command_note,
