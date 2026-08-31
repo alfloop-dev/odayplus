@@ -256,6 +256,30 @@ class AuthenticationBoundary:
             subject = unverified_claims.get("sub")
             if isinstance(subject, str) and self._is_declared_service_identity(subject):
                 return self._authenticate_service_or_legacy_token(token, header, kid, now)
+            # A Google service account is issued an opaque *numeric* `sub`,
+            # while ODP_AUTH_PRINCIPAL_MAP declares it by service-account
+            # e-mail (`gcloud auth print-identity-token --include-email`, the
+            # shape the deployment smoke stage mints).  Such a caller is never
+            # matched by the `sub` probe above, so before falling through to
+            # the OIDC identity store the service verifier gets one attempt.
+            #
+            # The e-mail is *not* consulted here: this call runs the full
+            # service verification first — signature, issuer, audience, and
+            # the iat/nbf/exp window — and only then does
+            # _declared_service_mapping look up `email` (and only when the
+            # token also carries `email_verified: true`) in the authoritative
+            # principal map.  An unverified or undeclared e-mail yields
+            # UNKNOWN_SERVICE, and the token's own `roles`/`tenant_id` claims
+            # are never authorization facts on either path
+            # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+            service_principal, service_reason, service_token_type = (
+                self._authenticate_service_or_legacy_token(token, header, kid, now)
+            )
+            if service_reason is None:
+                return service_principal, service_reason, service_token_type
+            # Not a declared service identity (or not verifiable as one under
+            # the service audiences): the OIDC identity-store lookup owns the
+            # outcome, exactly as it did before the e-mail probe existed.
             return self._authenticate_oidc_token(token, header, kid, now)
         elif is_oidc:
             return self._authenticate_oidc_token(token, header, kid, now)

@@ -144,6 +144,19 @@ caller, or when the deployment smoke stage starts returning 401, add the
 service account's `sub` (or its verified `email`) to the principal-map secret
 and redeploy.
 
+For a GCP service account the `email` key is normally the one you want. The
+smoke token is minted with `gcloud auth print-identity-token
+--impersonate-service-account=... --include-email`, and Google puts an opaque
+**numeric** unique id in `sub` while the service-account address travels in
+`email` with `email_verified: true`. In `oidc` mode the service and OIDC
+issuers are both `https://accounts.google.com`, so the boundary first probes
+the principal map by `sub`; when that misses it runs the *full* service
+verification (signature, issuer, audience, `iat`/`nbf`/`exp`) and only then
+looks the caller up by its verified `email`. An unverified `email`, or one
+that is not a principal-map key, is never an identity fact: the token falls
+through to the OIDC identity-store lookup and is rejected as
+`federated_identity_not_linked`.
+
 This gate closes a real bypass. Under the deployed shape both
 `ODP_AUTH_ISSUER` and `ODP_AUTH_SERVICE_ISSUER` are
 `https://accounts.google.com`, and in `local` mode the OIDC path is off, so any

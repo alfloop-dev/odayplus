@@ -14,6 +14,7 @@ Test Matrix:
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from typing import Any
@@ -2265,3 +2266,298 @@ class TestDeploymentShapeCollisionRegressions:
         assert outcome.authenticated is False
         assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
         assert outcome.token_type == "oidc"
+
+    # -- Shape D collision: numeric-sub service accounts (reopen #9) ---------
+    #
+    # `gcloud auth print-identity-token --impersonate-service-account=... \
+    #  --include-email` (product_ops/deployment/deploy_cloud_run_waji.sh, the
+    # ODP_OPERATOR_SMOKE_BEARER_TOKEN path) mints a Google ID token whose
+    # `sub` is an opaque *numeric* unique id and whose service-account e-mail
+    # travels in `email` with `email_verified: true`.  Operators declare that
+    # identity in ODP_AUTH_PRINCIPAL_MAP by e-mail, so routing on `sub` alone
+    # sent the smoke token to the OIDC identity store and rejected it as
+    # federated_identity_not_linked.
+
+    SMOKE_SUB = "103957201948573920184"
+    SMOKE_EMAIL = "odp-smoke@oday-plus-dev.iam.gserviceaccount.com"
+    SMOKE_TENANT = "00000000-0000-0000-0000-000000000001"
+
+    def _collision_config(self, principal_mappings):
+        """Shared-issuer (service_issuer == oidc_issuer) boundary config."""
+        identity_store, session_service = self._make_stores()
+        return AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            service_issuer=OIDC_ISSUER,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            principal_mapping_declared=True,
+            principal_mappings=principal_mappings,
+        )
+
+    def _smoke_map(self, roles=("platform_admin",)):
+        return {
+            self.SMOKE_EMAIL: {
+                "roles": list(roles),
+                "scope": {"tenant_id": self.SMOKE_TENANT},
+            }
+        }
+
+    def test_shape_d_numeric_sub_service_token_maps_by_verified_email(self):
+        """Numeric `sub` + verified e-mail resolves through the principal map.
+
+        The deployment smoke token's `sub` is not a principal-map key, so the
+        boundary must fall through to the service verifier, which looks the
+        caller up by its verified e-mail and grants the *declared* roles.
+        """
+        boundary = AuthenticationBoundary(self._collision_config(self._smoke_map()))
+
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            extra_claims={"email": self.SMOKE_EMAIL, "email_verified": True},
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is True, (
+            f"Expected authenticated=True but got reason={outcome.reason}; "
+            f"token_type={outcome.token_type}"
+        )
+        assert outcome.token_type == "service"
+        # Identity stays the token subject; only roles/scope come from the map.
+        assert outcome.principal.subject_id == self.SMOKE_SUB
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+        assert outcome.principal.tenant_id == self.SMOKE_TENANT
+
+    def test_shape_d_numeric_sub_unverified_email_is_never_a_lookup_key(self):
+        """`email_verified` absent/false: the e-mail is not an identity fact.
+
+        Without the verification flag the e-mail claim is attacker-chosen, so
+        the map lookup must not happen and the token falls through to the OIDC
+        identity store, where it is unlinked and rejected.
+        """
+        boundary = AuthenticationBoundary(self._collision_config(self._smoke_map()))
+
+        for email_verified in (None, False, "true"):
+            claims: dict[str, Any] = {"email": self.SMOKE_EMAIL}
+            if email_verified is not None:
+                claims["email_verified"] = email_verified
+            token = make_jwt(
+                OIDC_KEY, iss=OIDC_ISSUER, sub=self.SMOKE_SUB, extra_claims=claims
+            )
+            outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+            assert outcome.authenticated is False, (
+                f"email_verified={email_verified!r} must not authenticate"
+            )
+            assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+            assert outcome.token_type == "oidc"
+
+    def test_shape_d_verified_email_outside_the_map_is_rejected(self):
+        """A verified e-mail that is not declared grants nothing."""
+        boundary = AuthenticationBoundary(self._collision_config(self._smoke_map()))
+
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            extra_claims={
+                "email": "attacker@example.com",
+                "email_verified": True,
+            },
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is False
+        assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+        assert outcome.token_type == "oidc"
+
+    def test_shape_d_verified_email_lookup_ignores_token_roles_and_tenant(self):
+        """The map is the sole role/scope source for the e-mail-matched caller."""
+        boundary = AuthenticationBoundary(
+            self._collision_config(self._smoke_map(roles=("site_reviewer",)))
+        )
+
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            extra_claims={
+                "email": self.SMOKE_EMAIL,
+                "email_verified": True,
+                # Forged authorization claims: must be ignored entirely.
+                "roles": ["platform_admin"],
+                "tenant_id": "attacker-tenant",
+                "scope": {"tenant_id": "attacker-tenant"},
+            },
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is True
+        assert outcome.principal.roles == frozenset([Role.SITE_REVIEWER])
+        assert Role.PLATFORM_ADMIN not in outcome.principal.roles
+        assert outcome.principal.tenant_id == self.SMOKE_TENANT
+
+    def test_shape_d_verified_email_is_consulted_only_after_verification(self):
+        """Signature, audience and lifetime gate the e-mail lookup.
+
+        Each token below carries the declared verified e-mail and would map to
+        platform_admin if the map were consulted first; every one of them must
+        still fail closed.
+        """
+        config = self._collision_config(self._smoke_map())
+        boundary = AuthenticationBoundary(config)
+        declared = {"email": self.SMOKE_EMAIL, "email_verified": True}
+
+        # 1) Signature forged with a key the boundary does not trust for this
+        #    issuer (the OIDC kid is reused so key resolution still succeeds).
+        forged_key = SigningKey(
+            kid="oidc-k1", algorithm="HS256", secret=b"attacker-signing-key-32-bytes-long!!"
+        )
+        forged = make_jwt(
+            forged_key, iss=OIDC_ISSUER, sub=self.SMOKE_SUB, extra_claims=declared
+        )
+        forged_outcome = boundary.authenticate(Credentials(bearer_token=forged))
+        assert forged_outcome.authenticated is False
+        assert forged_outcome.reason == AuthFailureReason.BAD_SIGNATURE
+
+        # 2) Audience outside both the service and the OIDC audience sets.
+        wrong_audience = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            aud="some-other-service",
+            extra_claims=declared,
+        )
+        audience_outcome = boundary.authenticate(Credentials(bearer_token=wrong_audience))
+        assert audience_outcome.authenticated is False
+        assert audience_outcome.reason == AuthFailureReason.AUDIENCE_MISMATCH
+
+        # 3) Expired token.
+        expired = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            exp_offset=-3600,
+            extra_claims=declared,
+        )
+        expired_outcome = boundary.authenticate(Credentials(bearer_token=expired))
+        assert expired_outcome.authenticated is False
+        assert expired_outcome.reason == AuthFailureReason.TOKEN_EXPIRED
+
+    def test_shape_d_terraform_env_smoke_token_numeric_sub_regression(self):
+        """End-to-end deployment shape for ODP_OPERATOR_SMOKE_BEARER_TOKEN.
+
+        Terraform-shaped env (auth_mode=oidc, ODP_AUTH_SERVICE_ISSUER ==
+        ODP_AUTH_OIDC_ISSUER == https://accounts.google.com) plus a principal
+        map keyed by the smoke service account's e-mail, exercised with the
+        exact token shape `gcloud auth print-identity-token --include-email`
+        mints: numeric `sub`, verified `email`.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        terraform_env = {
+            "ODP_AUTH_MODE": "oidc",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_OIDC_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+            # Declared by service-account e-mail, as the deploy guide instructs.
+            "ODP_AUTH_PRINCIPAL_MAP": json.dumps(
+                {
+                    self.SMOKE_EMAIL: {
+                        "roles": ["platform_admin"],
+                        "scope": {"tenant_id": self.SMOKE_TENANT},
+                    }
+                }
+            ),
+        }
+        config = config_from_env(
+            terraform_env,
+            identity_store=identity_store,
+            session_service=session_service,
+        )
+        assert config.service_issuer == config.oidc_issuer  # collision!
+
+        boundary = AuthenticationBoundary(config)
+        smoke_token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub=self.SMOKE_SUB,
+            extra_claims={"email": self.SMOKE_EMAIL, "email_verified": True},
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=smoke_token))
+
+        assert outcome.authenticated is True, (
+            f"Expected authenticated=True but got reason={outcome.reason}; "
+            f"token_type={outcome.token_type}"
+        )
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == self.SMOKE_SUB
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+        assert outcome.principal.tenant_id == self.SMOKE_TENANT
+
+    def test_shape_d_linked_oidc_user_still_uses_the_identity_store(self):
+        """The e-mail probe must not divert linked human users.
+
+        Per ADR-0003 the principal map is service-identity-only; a linked OIDC
+        account keeps resolving its roles from the identity store.
+        """
+        identity_store, session_service = self._make_stores()
+        account_id = uuid4()
+        tenant_id = uuid4()
+        identity_store.save_account(
+            Account(
+                account_id=account_id,
+                username="oidc-human",
+                email="oidc-human@example.com",
+                tenant_id=tenant_id,
+            )
+        )
+        identity_store.link_federated_identity(account_id, OIDC_ISSUER, "oidc-sub-human")
+        identity_store.set_account_roles(account_id, frozenset([Role.OPERATIONS_MANAGER]))
+        identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+        config = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            service_issuer=OIDC_ISSUER,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            principal_mapping_declared=True,
+            principal_mappings=self._smoke_map(),
+        )
+        boundary = AuthenticationBoundary(config)
+
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub="oidc-sub-human",
+            extra_claims={
+                "email": "oidc-human@example.com",
+                "email_verified": True,
+            },
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is True
+        assert outcome.token_type == "oidc"
+        assert outcome.principal.subject_id == str(account_id)
+        assert outcome.principal.roles == frozenset([Role.OPERATIONS_MANAGER])
