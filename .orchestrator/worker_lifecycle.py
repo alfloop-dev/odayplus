@@ -453,7 +453,7 @@ def process_queue(
         # not an authorization to start a worker now.
         try:
             latest_status = load_status(config)
-            task_map = task_index_from_status(config, latest_status)
+            latest_task_map = task_index_from_status(config, latest_status)
         except Exception as exc:
             record["status"] = "failed"
             record["processed_at"] = utc_now()
@@ -470,7 +470,7 @@ def process_queue(
             )
             changed = True
             continue
-        skip_message = stale_dispatch_skip_message(config, event, task_map)
+        skip_message = stale_dispatch_skip_message(config, event, latest_task_map)
         if skip_message:
             record["status"] = "completed"
             record["processed_at"] = utc_now()

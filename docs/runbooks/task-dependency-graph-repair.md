@@ -278,6 +278,18 @@ task、同時存在於 live board 與 official archive 的 duplicate lifecycle�
 archive，以及 candidate 可達範圍內的 cycle。檢查失敗時不會改動 task；成功時會
 在 `ai-activity-log.jsonl` 寫入 `type=dependency_update`、舊/新 edge 與修改理由。
 
+驗證會檢查被編輯 task 的可達 dependency closure。若 closure 內已有 dangling、
+self/cycle 或 archive 未完成問題，不以更新另一個 task 的方式放寬 fail-closed
+規則；操作員應先從受損節點開始，用同一個 CLI 清除或修正其 edge（例如
+`set_dependencies <task-id> - "修復既有圖譜"`），再由下游往上重建依賴。這讓修圖
+本身仍可稽核，也不會在修復期間新增另一條不合法邊。
+
+若 dependency 同時出現在 live board 與 official archive，這是 duplicate
+lifecycle，不採用 `TaskResolver` 的 live-precedence 來掩蓋衝突；所有依賴該節點
+的派工會保持 fail closed。操作員必須先依 archive/board 的正式生命週期記錄清理
+重複來源，再重試 `set_dependencies` 或 dispatch；不得用臨時覆寫或第二套 resolver
+繞過檢查。
+
 Supervisor 對 owner execution 與 helper 的啟動使用既有 graph gate；依賴未完成、
 圖譜無法解析或含 self/cycle/dangling 時一律 fail closed。finalize 是已合併 PR
 的 immutable closeout，不是可執行 task dispatch，因此不受 dependency edge 影響，
