@@ -989,7 +989,10 @@ def sealed_owner_continuation_allowed(
     dirt fingerprint was recorded.  Reviewers and helper claims always remain
     fail-closed.
     """
-    if str(request.reason or "") != "owned_in_progress_dispatch":
+    if str(request.reason or "") not in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+    }:
         return False, "not_owner_execution"
     task_id = str(request.task_id or "")
     record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
