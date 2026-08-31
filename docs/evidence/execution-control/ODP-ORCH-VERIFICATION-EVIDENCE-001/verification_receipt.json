@@ -2,7 +2,7 @@
   "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
   "owner": "Claude",
   "reviewer": "Codex2",
-  "head_sha": "e501f1cd98f00032a75adc5caa7b79272debc0ba",
+  "head_sha": "90d920cc50302a8168d1aec238d317b68723e331",
   "generated_by": ".orchestrator/verification_evidence.py",
   "note": "Receipts below were produced by the mechanism under review, not written by hand.",
   "runs": [
@@ -19,7 +19,7 @@
         "schema_version": 1,
         "kind": "verification_receipt",
         "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-        "head_sha": "e501f1cd98f00032a75adc5caa7b79272debc0ba",
+        "head_sha": "90d920cc50302a8168d1aec238d317b68723e331",
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence.py -q",
         "command_audit": {
           "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence.py -q",
@@ -41,16 +41,17 @@
         "timed_out": false,
         "outcome": "passed",
         "passed": true,
-        "duration_seconds": 0.73,
-        "started_at": "2026-08-31T02:36:30Z",
-        "finished_at": "2026-08-31T02:36:31Z",
-        "recorded_at": "2026-08-31T02:36:31Z",
+        "duration_seconds": 0.864,
+        "started_at": "2026-08-31T02:45:14Z",
+        "finished_at": "2026-08-31T02:45:15Z",
+        "recorded_at": "2026-08-31T02:45:15Z",
         "run_kind": "baseline",
         "attempt": 1,
         "retry_reason": null,
         "agent": "Claude",
         "run_id": null,
-        "receipt_id": "d1f011f6867e8b7c"
+        "produced_by": null,
+        "receipt_id": "5027c993b233644b"
       }
     },
     {
@@ -66,7 +67,7 @@
         "schema_version": 1,
         "kind": "verification_receipt",
         "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-        "head_sha": "e501f1cd98f00032a75adc5caa7b79272debc0ba",
+        "head_sha": "90d920cc50302a8168d1aec238d317b68723e331",
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence_integration.py -q",
         "command_audit": {
           "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence_integration.py -q",
@@ -88,16 +89,17 @@
         "timed_out": false,
         "outcome": "passed",
         "passed": true,
-        "duration_seconds": 6.627,
-        "started_at": "2026-08-31T02:36:31Z",
-        "finished_at": "2026-08-31T02:36:37Z",
-        "recorded_at": "2026-08-31T02:36:37Z",
+        "duration_seconds": 5.129,
+        "started_at": "2026-08-31T02:45:15Z",
+        "finished_at": "2026-08-31T02:45:20Z",
+        "recorded_at": "2026-08-31T02:45:20Z",
         "run_kind": "baseline",
         "attempt": 1,
         "retry_reason": null,
         "agent": "Claude",
         "run_id": null,
-        "receipt_id": "b546ad6965575e9e"
+        "produced_by": null,
+        "receipt_id": "0b80ec54167d25eb"
       }
     },
     {
@@ -113,7 +115,55 @@
         "schema_version": 1,
         "kind": "verification_receipt",
         "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-        "head_sha": "e501f1cd98f00032a75adc5caa7b79272debc0ba",
+        "head_sha": "90d920cc50302a8168d1aec238d317b68723e331",
+        "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest delivery_toolchain/git/test_task_verification.py -q",
+        "command_audit": {
+          "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest delivery_toolchain/git/test_task_verification.py -q",
+          "ok": true,
+          "violations": [],
+          "details": [],
+          "runner": "pytest"
+        },
+        "runner": "pytest",
+        "selection": {
+          "scope": "targeted",
+          "items": [
+            "delivery_toolchain/git/test_task_verification.py"
+          ],
+          "fingerprint": "52c8ec68457286eaa51b4887ab3866bc"
+        },
+        "exit_code": 0,
+        "signal": null,
+        "timed_out": false,
+        "outcome": "passed",
+        "passed": true,
+        "duration_seconds": 3.501,
+        "started_at": "2026-08-31T02:45:20Z",
+        "finished_at": "2026-08-31T02:45:24Z",
+        "recorded_at": "2026-08-31T02:45:24Z",
+        "run_kind": "baseline",
+        "attempt": 1,
+        "retry_reason": null,
+        "agent": "Claude",
+        "run_id": null,
+        "produced_by": null,
+        "receipt_id": "d94afa9458e62489"
+      }
+    },
+    {
+      "decision": {
+        "allowed": true,
+        "kind": "baseline",
+        "reason": "no prior receipt for this head SHA and selection",
+        "attempt": 1,
+        "prior_receipt_id": null,
+        "prior_outcome": null
+      },
+      "receipt": {
+        "schema_version": 1,
+        "kind": "verification_receipt",
+        "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
+        "head_sha": "90d920cc50302a8168d1aec238d317b68723e331",
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_common.py .orchestrator/test_task_brief_source_docs.py -q",
         "command_audit": {
           "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_common.py .orchestrator/test_task_brief_source_docs.py -q",
@@ -136,25 +186,26 @@
         "timed_out": false,
         "outcome": "passed",
         "passed": true,
-        "duration_seconds": 1.487,
-        "started_at": "2026-08-31T02:36:37Z",
-        "finished_at": "2026-08-31T02:36:39Z",
-        "recorded_at": "2026-08-31T02:36:39Z",
+        "duration_seconds": 1.368,
+        "started_at": "2026-08-31T02:45:24Z",
+        "finished_at": "2026-08-31T02:45:25Z",
+        "recorded_at": "2026-08-31T02:45:25Z",
         "run_kind": "baseline",
         "attempt": 1,
         "retry_reason": null,
         "agent": "Claude",
         "run_id": null,
-        "receipt_id": "00cac1787aff2e6e"
+        "produced_by": null,
+        "receipt_id": "6efbcb8b299cfc71"
       }
     }
   ],
   "duplicate_baseline_refusal": {
     "allowed": false,
     "kind": "duplicate",
-    "reason": "head SHA e501f1cd98f0 already has a passed receipt for this selection; supply an explicit retry reason (>= 12 chars) to re-run",
+    "reason": "head SHA 90d920cc5030 already has a passed receipt for this selection; supply an explicit retry reason (>= 12 chars) to re-run",
     "attempt": 2,
-    "prior_receipt_id": "d1f011f6867e8b7c",
+    "prior_receipt_id": "5027c993b233644b",
     "prior_outcome": "passed"
   },
   "explicit_retry": {
@@ -163,14 +214,14 @@
       "kind": "retry",
       "reason": "explicit retry reason accepted: evidence artifact: demonstrating the explicit retry path",
       "attempt": 2,
-      "prior_receipt_id": "d1f011f6867e8b7c",
+      "prior_receipt_id": "5027c993b233644b",
       "prior_outcome": "passed"
     },
     "receipt": {
       "schema_version": 1,
       "kind": "verification_receipt",
       "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-      "head_sha": "e501f1cd98f00032a75adc5caa7b79272debc0ba",
+      "head_sha": "90d920cc50302a8168d1aec238d317b68723e331",
       "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence.py -q",
       "command_audit": {
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence.py -q",
@@ -192,16 +243,17 @@
       "timed_out": false,
       "outcome": "passed",
       "passed": true,
-      "duration_seconds": 0.641,
-      "started_at": "2026-08-31T02:36:39Z",
-      "finished_at": "2026-08-31T02:36:39Z",
-      "recorded_at": "2026-08-31T02:36:39Z",
+      "duration_seconds": 0.567,
+      "started_at": "2026-08-31T02:45:25Z",
+      "finished_at": "2026-08-31T02:45:25Z",
+      "recorded_at": "2026-08-31T02:45:25Z",
       "run_kind": "retry",
       "attempt": 2,
       "retry_reason": "evidence artifact: demonstrating the explicit retry path",
       "agent": null,
       "run_id": null,
-      "receipt_id": "8fe962eab3a3bd4c"
+      "produced_by": null,
+      "receipt_id": "11145b079dbe73c3"
     }
   },
   "signal_interruption": {
@@ -209,7 +261,7 @@
       "schema_version": 1,
       "kind": "verification_receipt",
       "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-      "head_sha": "e501f1cd98f00032a75adc5caa7b79272debc0ba",
+      "head_sha": "90d920cc50302a8168d1aec238d317b68723e331",
       "command": "pytest -q .orchestrator/test_verification_evidence.py",
       "command_audit": {
         "command": "pytest -q .orchestrator/test_verification_evidence.py",
@@ -231,16 +283,17 @@
       "timed_out": false,
       "outcome": "interrupted",
       "passed": false,
-      "duration_seconds": 0.045,
-      "started_at": "2026-08-31T02:36:39Z",
-      "finished_at": "2026-08-31T02:36:39Z",
-      "recorded_at": "2026-08-31T02:36:39Z",
+      "duration_seconds": 0.033,
+      "started_at": "2026-08-31T02:45:26Z",
+      "finished_at": "2026-08-31T02:45:26Z",
+      "recorded_at": "2026-08-31T02:45:26Z",
       "run_kind": "baseline",
       "attempt": 1,
       "retry_reason": null,
       "agent": null,
       "run_id": null,
-      "receipt_id": "96841993b26cfdd5"
+      "produced_by": null,
+      "receipt_id": "4183264306aa85e4"
     },
     "escalation_plan": {
       "allowed": false,
@@ -253,6 +306,30 @@
       },
       "reason": "interrupted run must be repeated with the same selection; it is not evidence that a wider rerun is needed",
       "escalated": true
+    }
+  },
+  "finalize_gate": {
+    "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence.py -q",
+    "without_receipt": {
+      "ok": false,
+      "problems": [
+        "no verification receipt at head 90d920cc5030 for: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence.py -q"
+      ],
+      "satisfied": []
+    },
+    "with_passing_receipt": {
+      "ok": true,
+      "problems": [],
+      "satisfied": [
+        "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence.py -q"
+      ]
+    },
+    "with_forged_pass_flag": {
+      "ok": false,
+      "problems": [
+        "newest receipt at head 90d920cc5030 is 'passed' (exit 1), which does not prove: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml pytest .orchestrator/test_verification_evidence.py -q"
+      ],
+      "satisfied": []
     }
   },
   "rejected_command_samples": [
