@@ -100,7 +100,7 @@ def measure(head_sha: str) -> tuple[list[dict], list[dict]]:
             head_sha=head_sha,
             receipts=receipts,
             cwd=str(REPO),
-            agent="Claude2",
+            agent="Antigravity",
             produced_by=str(Path(__file__).relative_to(REPO)),
         )
         if receipt is None:
@@ -133,7 +133,7 @@ def rerun_control(head_sha: str, receipts: list[dict]) -> dict:
         receipts=receipts,
         retry_reason=retry_reason,
         cwd=str(REPO),
-        agent="Claude2",
+        agent="Antigravity",
         produced_by=str(Path(__file__).relative_to(REPO)),
     )
     if receipt is None:
@@ -257,7 +257,7 @@ def main() -> int:
 
     bundle = {
         "task_id": TASK_ID,
-        "owner": "Claude2",
+        "owner": "Antigravity",
         "reviewer": "Codex2",
         "head_sha": head_sha,
         "generated_by": str(Path(__file__).relative_to(REPO)),
