@@ -20,6 +20,7 @@ Required environment (all modes):
 
 | Variable | Purpose |
 |---|---|
+| `ODAY_DATABASE_URL` | PostgreSQL connection string bound from Secret Manager `ODAY_DATABASE_URL_SECRET`; backs `identity.login_attempts` for shared Cloud Run login throttle state |
 | `ODP_WEB_SESSION_SECRET` | Server-only session encryption secret, at least 32 bytes |
 | `ODP_WEB_BASE_URL` | Canonical HTTPS web origin |
 | `ODP_API_BASE_URL` | Server-side API origin used by the BFF and server components |
@@ -28,9 +29,11 @@ Required environment (all modes):
 | `ODP_AUTH_LOCAL_ISSUER` | Issuer for Web-minted local access tokens; defaults to `urn:odp:identity:local` |
 | `ODP_AUTH_AUDIENCES` | API audience for Web-minted local access tokens |
 
-In production, `ODP_IDENTITY_TOKEN_SIGNING_KEY` is injected from Secret
-Manager. The API and Web services must use the same pinned secret version; the
-API trust resolver registers its plain value as the `local-default` HS256 key.
+In production, `ODAY_DATABASE_URL` and `ODP_IDENTITY_TOKEN_SIGNING_KEY` are
+injected from Secret Manager (`ODAY_DATABASE_URL_SECRET` and
+`ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET`). The API and Web services must use the
+same pinned secret versions; the API trust resolver registers the plain value as
+the `local-default` HS256 key.
 
 ### OIDC mode (`ODP_AUTH_MODE=oidc`)
 

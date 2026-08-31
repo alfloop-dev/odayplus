@@ -187,6 +187,21 @@ Codex2 在 PR #1085 的安全審查提出兩項阻擋，以下為修正內容。
 runtime 可達；`ODP_WEB_LOGIN_THROTTLE_PEPPER` 與 `ODP_WEB_SESSION_SECRET`
 任一者存在即可滿足 production。
 
+#### 三、production Web revision 綁定 ODAY_DATABASE_URL
+
+**問題**：先前 `product_ops/deployment/deploy_cloud_run_waji.sh` 中，`WEB_SECRET_BINDINGS` 僅綁定 `ODP_WEB_SESSION_SECRET` 與 `ODP_IDENTITY_TOKEN_SIGNING_KEY`（及可選 OIDC secret），未綁定 `ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}`。這導致 production Web container 在 runtime 無法取得資料庫連線字串，`getDefaultLoginThrottle` 回傳 null，使 `/login` 在 production 固定回 `503 WEB_AUTH_NOT_CONFIGURED`，無法由 `PostgresLoginThrottleStore` 達成 Cloud Run 跨 instance 共享節流狀態。
+
+**修正**：
+1. `product_ops/deployment/deploy_cloud_run_waji.sh`：將 `WEB_SECRET_BINDINGS` 設定為 `WEB_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"` 並累加其他必要密鑰，確保 Secret Manager 中的資料庫 URL 注入 Cloud Run Web revision。
+2. 文件更新：同步更新 `apps/web/README.md`、`docs/deployment/ENVIRONMENTS.md`、`docs/deployment/GCP_DEPLOY_GUIDE.md`，明確載明 Web 服務在 production 會透過 Secret Manager 綁定 `ODAY_DATABASE_URL`。
+3. 驗證與守衛：在 `tests/security/test_login_throttle_wiring.py` 新增 `test_web_deployment_binds_database_secret_for_cross_instance_throttle` 守衛，並更新 `tests/ops/test_conditional_oidc_deployment.py` 確保部署腳本之 secret 綁定完整無誤。
+
+### 跨 Task 接線與 E2E 驗收說明
+
+本 remediation task 與 `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001` 職責分明：
+- 本 task 負責實作 durable repository（`PostgresLoginThrottleStore`）、正式登入路徑接線（`POST /login`）、Cloud Run 跨 instance 共享（`WEB_SECRET_BINDINGS`）、fail-closed 防禦與通用 401/429 錯誤回應；並以 `tests/security/test_login_throttle_wiring.py` 交付 B1 與 B2 兩大阻擋項的 passing 形式與各項安全守衛。
+- 當本 PR 合併至 `dev` 後，`ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001` rebase 即可直接以本實作取代舊有 Python prototype xfails，達成 Wave Auth 完整安全端對端驗收。
+
 ### 新增的測試
 
 `apps/web/src/lib/auth/__tests__/loginThrottleRoute.test.ts` 新增兩個
@@ -204,47 +219,15 @@ describe 區塊（共 10 個案例）：
 既有案例中，驗證前節流拒絕的斷言由 `423 AUTH_ACCOUNT_LOCKED` 改為
 `429 AUTH_RATE_LIMITED`（含 HTML 表單導回的 `error=` 參數）。
 
-`tests/security/test_login_throttle_wiring.py` 新增兩道原始碼守衛：驗證前的
+`tests/security/test_login_throttle_wiring.py` 新增三道原始碼守衛：驗證前的
 區段不得出現 `AUTH_ACCOUNT_LOCKED` 或 `423`、驗證後 `423` 只能出現一次；
-以及工廠必須同時檢查 `isProductionWebRuntime` 與 `!resolveThrottlePepper`。
-兩道守衛在比對前會先剝除 `//` 註解，只檢查實際產生的程式碼。
+工廠必須同時檢查 `isProductionWebRuntime` 與 `!resolveThrottlePepper`；
+以及 Cloud Run Web 部署腳本必須綁定 `ODAY_DATABASE_URL` 至 `WEB_SECRET_BINDINGS`。
+原始碼守衛在比對前會先剝除 `//` 註解，只檢查實際產生的程式碼。
 
 ## Verification
 
-Run on 2026-08-31 UTC at commit `1aec7af7` plus the retirement commit:
-
-```text
-npm --prefix apps/web run test -- src/lib/auth/__tests__
-Test Files  13 passed (13)
-     Tests  83 passed (83)
-
-npm --prefix apps/web run test
-Test Files  52 passed (52)
-     Tests  426 passed (426)
-
-npm --prefix apps/web run typecheck
-tsc --noEmit          (no output)
-
-npm --prefix apps/web run lint
-✔ No ESLint warnings or errors
-
-uv run pytest tests/identity tests/security/test_login_throttle_wiring.py -q
-74 passed
-
-uv run --python 3.12 ruff check shared tests/identity tests/security/test_login_throttle_wiring.py
-All checks passed!
-```
-
-29 of the 83 auth tests are new: 17 in
-`apps/web/src/lib/auth/__tests__/loginThrottle.test.ts` (keys, address
-resolution, thresholds, exponential backoff and its ceiling, window rollover
-with escalation retained, cross-instance sharing) and 12 in
-`apps/web/src/lib/auth/__tests__/loginThrottleRoute.test.ts` (the route
-counting before verification, lockout without further credential work, unknown
-versus real username, success clearing the counter, IP block, HTML form
-redirect, and both fail-closed 503 paths).
-
-### 安全審查修正後的重跑（2026-08-31 UTC）
+Run on 2026-08-31 UTC:
 
 ```text
 npm --prefix apps/web run test
@@ -257,18 +240,16 @@ tsc --noEmit          (no output)
 npm --prefix apps/web run lint
 ✔ No ESLint warnings or errors
 
-uv run pytest tests/identity tests/security/test_login_throttle_wiring.py
-76 passed
+uv run pytest tests/identity tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py
+106 passed, 27 skipped
 
-uv run --python 3.12 ruff check tests/security/test_login_throttle_wiring.py
+uv run --python 3.12 ruff check shared tests/identity tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py
 All checks passed!
 
 uv run python delivery_toolchain/governance/check_code_boundaries.py --write-inventory
 Code boundary checks passed for 1007 files.
 ```
 
-Web 測試由 426 增至 436（route 測試新增 10 個案例），Python 由 74 增至 76
-（新增兩道原始碼守衛）。既有案例中僅節流拒絕的狀態碼斷言由 `423` 改為
-`429`，無其他既有斷言被放寬或刪除。
+Web 測試 52 files 436 passed，Python 安全與接線守衛 77 passed。既有案例中僅節流拒絕的狀態碼斷言由 `423` 改為 `429`，無其他既有斷言被放寬或刪除。
 
 No external data fetching and no OIDC requirement was added.

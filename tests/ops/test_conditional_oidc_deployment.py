@@ -444,7 +444,11 @@ def test_web_secret_bindings_are_gated_on_the_same_resolved_flag() -> None:
         '${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"'
     ) in text
     binding = text[text.index('WEB_SECRET_BINDINGS="'):text.index("# gcloud's shortcut")]
-    assert 'WEB_SECRET_BINDINGS="ODP_WEB_SESSION_SECRET=' in binding
+    assert 'WEB_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"' in binding
+    assert (
+        'WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET='
+        '${ODP_WEB_SESSION_SECRET_SECRET}"'
+    ) in binding
     assert (
         'WEB_SECRET_BINDINGS+=",ODP_IDENTITY_TOKEN_SIGNING_KEY='
         '${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"'

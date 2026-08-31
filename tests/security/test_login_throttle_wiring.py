@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 LOGIN_ROUTE = ROOT / "apps/web/src/app/login/route.ts"
 THROTTLE_MODULE = ROOT / "apps/web/src/lib/auth/loginThrottle.ts"
+DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
 
 
 def _git_grep(pattern: str, *paths: str) -> set[str]:
@@ -141,3 +142,16 @@ def test_throttle_fails_closed_without_a_pepper_in_production() -> None:
     assert "isProductionWebRuntime(environment)" in guard
     assert "!resolveThrottlePepper(environment)" in guard
     assert "return null" in guard
+
+
+def test_web_deployment_binds_database_secret_for_cross_instance_throttle() -> None:
+    """The Cloud Run Web service binds ODAY_DATABASE_URL to share throttle state.
+
+    PostgresLoginThrottleStore connects via ODAY_DATABASE_URL to write
+    identity.login_attempts. The deployment script must inject this secret
+    into the Web revision so replicas share one persistent store rather
+    than falling back or failing closed with 503.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert 'WEB_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"' in text
+
