@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 _TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-ai-status-tests-")
 _TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
+_TEST_CONFIG = Path(__file__).resolve().parents[1] / ".orchestrator" / "config.example.json"
 
 # Pytest imports every test module before it runs any module-level teardown.
 # test_supervisor may therefore have imported ai_status against its own
@@ -25,9 +26,13 @@ _TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
 # setUpModule below rebinds the shared module for this module's actual lifetime.
 _IMPORT_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
 _IMPORT_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+_IMPORT_CONFIG_PATH = os.environ.get("ORCH_CONFIG_PATH")
+_IMPORT_LEGACY_CONFIG_PATH = os.environ.get("PANTHEON_CONFIG_PATH")
 if "ai_status" not in sys.modules:
     os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
     os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    os.environ["ORCH_CONFIG_PATH"] = str(_TEST_CONFIG)
+    os.environ["PANTHEON_CONFIG_PATH"] = str(_TEST_CONFIG)
 try:
     import ai_status
     import multi_repo_registry
@@ -41,6 +46,14 @@ finally:
         os.environ.pop("ORCH_STATUS_ROOT", None)
     else:
         os.environ["ORCH_STATUS_ROOT"] = _IMPORT_ORCH_STATUS_ROOT
+    if _IMPORT_CONFIG_PATH is None:
+        os.environ.pop("ORCH_CONFIG_PATH", None)
+    else:
+        os.environ["ORCH_CONFIG_PATH"] = _IMPORT_CONFIG_PATH
+    if _IMPORT_LEGACY_CONFIG_PATH is None:
+        os.environ.pop("PANTHEON_CONFIG_PATH", None)
+    else:
+        os.environ["PANTHEON_CONFIG_PATH"] = _IMPORT_LEGACY_CONFIG_PATH
 
 
 _AI_STATUS_ROOT_ATTRIBUTES = (
@@ -64,16 +77,21 @@ _TASK_ARCHIVE_ROOT_ATTRIBUTES = (
 )
 _RUNTIME_STATUS_ROOT: str | None = None
 _RUNTIME_ORCH_STATUS_ROOT: str | None = None
+_RUNTIME_CONFIG_PATH: str | None = None
+_RUNTIME_LEGACY_CONFIG_PATH: str | None = None
 _ORIGINAL_AI_STATUS_PATHS: dict[str, Path] = {}
 _ORIGINAL_TASK_ARCHIVE_PATHS: dict[str, Path] = {}
 
 
 def setUpModule() -> None:
     global _RUNTIME_STATUS_ROOT, _RUNTIME_ORCH_STATUS_ROOT
+    global _RUNTIME_CONFIG_PATH, _RUNTIME_LEGACY_CONFIG_PATH
     global _ORIGINAL_AI_STATUS_PATHS, _ORIGINAL_TASK_ARCHIVE_PATHS
 
     _RUNTIME_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
     _RUNTIME_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+    _RUNTIME_CONFIG_PATH = os.environ.get("ORCH_CONFIG_PATH")
+    _RUNTIME_LEGACY_CONFIG_PATH = os.environ.get("PANTHEON_CONFIG_PATH")
     _ORIGINAL_AI_STATUS_PATHS = {
         name: getattr(ai_status, name) for name in _AI_STATUS_ROOT_ATTRIBUTES
     }
@@ -83,6 +101,12 @@ def setUpModule() -> None:
 
     os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
     os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    # A worker inherits the Supervisor's explicit runtime config.  Use the
+    # committed example as this module's fixture so ordinary tests never read
+    # a machine-specific roster. Tests of CONFIG_FILE fallback explicitly
+    # clear these values with no_explicit_config_environment().
+    os.environ["ORCH_CONFIG_PATH"] = str(_TEST_CONFIG)
+    os.environ["PANTHEON_CONFIG_PATH"] = str(_TEST_CONFIG)
     ai_status.STATUS_ROOT = _TEST_STATUS_ROOT
     ai_status.STATUS_FILE = _TEST_STATUS_ROOT / "ai-status.json"
     ai_status.LOG_FILE = _TEST_STATUS_ROOT / "ai-activity-log.jsonl"
@@ -114,7 +138,24 @@ def tearDownModule() -> None:
         os.environ.pop("ORCH_STATUS_ROOT", None)
     else:
         os.environ["ORCH_STATUS_ROOT"] = _RUNTIME_ORCH_STATUS_ROOT
+    if _RUNTIME_CONFIG_PATH is None:
+        os.environ.pop("ORCH_CONFIG_PATH", None)
+    else:
+        os.environ["ORCH_CONFIG_PATH"] = _RUNTIME_CONFIG_PATH
+    if _RUNTIME_LEGACY_CONFIG_PATH is None:
+        os.environ.pop("PANTHEON_CONFIG_PATH", None)
+    else:
+        os.environ["PANTHEON_CONFIG_PATH"] = _RUNTIME_LEGACY_CONFIG_PATH
     _TEST_STATUS_ROOT_HANDLE.cleanup()
+
+
+def no_explicit_config_environment():
+    """Exercise CONFIG_FILE/legacy-overlay resolution without worker env."""
+    return mock.patch.dict(
+        os.environ,
+        {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": ""},
+        clear=False,
+    )
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -3750,6 +3791,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
         mock_res = mock.Mock(returncode=0, stdout=f"{sha_initial}\trefs/heads/task/{task_id}\n")
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "alfloop-dev/odayplus"}, clear=False), \
+             mock.patch.object(ai_status, "task_repository_slug_safe", return_value="alfloop-dev/odayplus"), \
              mock.patch("subprocess.run", return_value=mock_res) as mock_run:
             ai_status.clear_ai_status_caches()
             # First ordinary call populates cache
@@ -3946,6 +3988,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
         mock_run.returncode = 0
 
         with mock.patch.object(ai_status, "resolve_task_sha", return_value="sha123"), \
+             mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"), \
              mock.patch.object(ai_status, "get_repository_slug_safe", return_value="owner/repo"), \
              mock.patch.object(ai_status, "get_gh_executable", return_value="gh"), \
              mock.patch("subprocess.run", return_value=mock_run) as mock_subprocess:
@@ -4441,6 +4484,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
 
             with (
+                no_explicit_config_environment(),
                 mock.patch.object(ai_status, "CONFIG_FILE", config_file),
                 mock.patch.object(
                     ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay
@@ -4469,6 +4513,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
 
             with (
+                no_explicit_config_environment(),
                 mock.patch.object(ai_status, "CONFIG_FILE", config_file),
                 mock.patch.object(
                     ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay
@@ -4494,6 +4539,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             )
 
             with (
+                no_explicit_config_environment(),
                 mock.patch.object(ai_status, "CONFIG_FILE", config_file),
                 mock.patch.object(ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", status_overlay),
             ):
@@ -4507,7 +4553,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
         import common
 
         self.assertEqual(common.DEFAULT_CONFIG_PATH, ai_status.CONFIG_FILE)
-        with mock.patch.object(
+        with no_explicit_config_environment(), mock.patch.object(
             common, "load_config", return_value={"agents": {"nessie": {"display_name": "Nessie9"}}}
         ) as load_config:
             ai_status._MERGED_CONFIG_CACHE.clear()
@@ -4524,7 +4570,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             )
             with mock.patch.dict(
                 ai_status.os.environ,
-                {"PANTHEON_CONFIG_PATH": str(runtime)},
+                {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime)},
                 clear=False,
             ):
                 names = ai_status.configured_agent_names()
@@ -4555,7 +4601,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             with (
                 mock.patch.dict(
                     ai_status.os.environ,
-                    {"PANTHEON_CONFIG_PATH": str(runtime)},
+                    {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime)},
                     clear=False,
                 ),
                 mock.patch.object(
