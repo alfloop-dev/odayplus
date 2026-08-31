@@ -239,47 +239,32 @@ class AuthenticationBoundary:
             return self._authenticate_local_token(token, header, kid, local_issuer, now)
         elif is_oidc and is_service:
             # Issuer collision: service_issuer == oidc_issuer (e.g. both
-            # https://accounts.google.com).  Disambiguate with a verified,
-            # fail-closed criterion: if the token's sub is pre-declared in
-            # ODP_AUTH_PRINCIPAL_MAP, treat it as a service token; otherwise
-            # route to the OIDC identity-store lookup.  A service identity
-            # that is *not* declared in the principal map is intentionally
-            # rejected rather than silently promoted to an OIDC user or
-            # silently granted service-level roles.
+            # https://accounts.google.com).  Routing is decided from *verified*
+            # claims only: the service verifier gets exactly one attempt, and
+            # the OIDC identity-store lookup owns the outcome when it declines.
             #
-            # The check is on unverified claims (sub parsed from the JWT body
-            # before signature verification).  This is safe because the actual
-            # token signature and claims are validated inside the downstream
-            # handler — _authenticate_service_or_legacy_token or
-            # _authenticate_oidc_token — which will reject a forged token
-            # regardless of the routing decision made here.
-            subject = unverified_claims.get("sub")
-            if isinstance(subject, str) and self._is_declared_service_identity(subject):
-                return self._authenticate_service_or_legacy_token(token, header, kid, now)
-            # A Google service account is issued an opaque *numeric* `sub`,
-            # while ODP_AUTH_PRINCIPAL_MAP declares it by service-account
-            # e-mail (`gcloud auth print-identity-token --include-email`, the
-            # shape the deployment smoke stage mints).  Such a caller is never
-            # matched by the `sub` probe above, so before falling through to
-            # the OIDC identity store the service verifier gets one attempt.
-            #
-            # The e-mail is *not* consulted here: this call runs the full
-            # service verification first — signature, issuer, audience, and
+            # Nothing is routed on the unverified JWT body.  This call runs the
+            # full service verification first — signature, issuer, audience and
             # the iat/nbf/exp window — and only then does
-            # _declared_service_mapping look up `email` (and only when the
-            # token also carries `email_verified: true`) in the authoritative
-            # principal map.  An unverified or undeclared e-mail yields
-            # UNKNOWN_SERVICE, and the token's own `roles`/`tenant_id` claims
-            # are never authorization facts on either path
+            # _declared_service_mapping consult the authoritative principal map,
+            # by `sub` and then by `email` (and only when the token also carries
+            # `email_verified: true`).  Both keys are needed because a Google
+            # service account is issued an opaque *numeric* `sub` while
+            # ODP_AUTH_PRINCIPAL_MAP declares it by service-account e-mail
+            # (`gcloud auth print-identity-token --include-email`, the shape the
+            # deployment smoke stage mints).
+            #
+            # Fail-closed on every other path: an undeclared subject, an
+            # unverified e-mail, or an empty map yields UNKNOWN_SERVICE and falls
+            # through to OIDC rather than being promoted to a service principal,
+            # and the token's own `roles`/`tenant_id` claims are never
+            # authorization facts on either path
             # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
             service_principal, service_reason, service_token_type = (
                 self._authenticate_service_or_legacy_token(token, header, kid, now)
             )
             if service_reason is None:
                 return service_principal, service_reason, service_token_type
-            # Not a declared service identity (or not verifiable as one under
-            # the service audiences): the OIDC identity-store lookup owns the
-            # outcome, exactly as it did before the e-mail probe existed.
             return self._authenticate_oidc_token(token, header, kid, now)
         elif is_oidc:
             return self._authenticate_oidc_token(token, header, kid, now)
@@ -556,29 +541,6 @@ class AuthenticationBoundary:
             for role in self._config.subject_role_bindings.get(subject, ())
             if role in known_roles
         )
-
-    def _is_declared_service_identity(self, subject: str) -> bool:
-        """Return True when *subject* is pre-declared as a service identity.
-
-        Used by the issuer-collision branch to route a token whose issuer
-        matches both the OIDC and service paths.  A subject is considered a
-        declared service identity when it appears in either:
-
-        * ``ODP_AUTH_PRINCIPAL_MAP`` (``config.principal_mappings``) — the
-          canonical way to grant roles/scope to a service account, or
-        * ``config.subject_role_bindings`` — a secondary role-grant surface.
-
-        The check is intentionally on the *unverified* ``sub`` claim, which is
-        safe because the downstream handler still performs full signature and
-        claims validation.  Fail-closed: an undeclared subject is never
-        promoted to a service principal; it falls through to the OIDC
-        identity-store lookup instead.
-        """
-        if subject in self._config.principal_mappings:
-            return True
-        if subject in self._config.subject_role_bindings:
-            return True
-        return False
 
     def _validate_claims_generic(
         self,
