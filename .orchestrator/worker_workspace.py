@@ -1245,6 +1245,24 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
         ]
     )
 
+_GITIGNORE_MAGIC = re.compile(r"([\[\]*?])")
+
+
+def _local_exclude_pattern(rel_path: str) -> str:
+    """Render one materialized path as a literal, root-anchored exclude line.
+
+    The leading ``/`` pins the pattern to the repository root and the escapes
+    keep glob metacharacters in a filename from widening it, so the entry can
+    only ever hide the exact file the supervisor just wrote and hash-verified.
+    Excluding the enclosing directory instead would also hide anything the
+    worker created there, which is dirt that must still be reported.
+    """
+    normalized = str(rel_path or "").strip().replace("\\", "/").lstrip("/")
+    if not normalized:
+        return ""
+    return "/" + _GITIGNORE_MAGIC.sub(r"\\\1", normalized)
+
+
 @_entrypoint
 def materialize_worker_context_files(
     config: dict[str, Any],
@@ -1521,6 +1539,19 @@ def materialize_worker_context_files(
                 ".orchestrator/task-briefs/",
                 ".orchestrator/reviews/",
             ]
+            # The fixed list above only covers the canonical references that
+            # every worker gets. A task's own `source_docs` land wherever the
+            # board points them -- ai-task-archive/tasks/<id>.json, for one --
+            # and the supervisor writing them is what makes the worktree
+            # untracked-dirty, so task_finalize fails closed on the
+            # orchestrator's own copy and the task can never be submitted.
+            # Only manifest entries are excluded here: each one was byte-for-
+            # byte hash-verified against its canonical source above, so it is
+            # provably the supervisor's own seed and not worker output.
+            for entry in manifest_entries:
+                pattern = _local_exclude_pattern(entry.get("relative_path"))
+                if pattern:
+                    lines_to_add.append(pattern)
             new_lines = [line for line in lines_to_add if line not in existing_exclude.splitlines()]
             if new_lines:
                 with open(exclude_path, "a", encoding="utf-8") as ef:

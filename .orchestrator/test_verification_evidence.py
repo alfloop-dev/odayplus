@@ -130,6 +130,24 @@ class SelectionTests(unittest.TestCase):
         self.assertTrue(ve.selection_is_broader(wide, narrow))
         self.assertFalse(ve.selection_is_broader(narrow, narrow))
 
+    def test_redirect_target_is_not_a_selected_test(self) -> None:
+        # A log path with a slash in it reads like a test path. Counting it
+        # would give the same tests two fingerprints depending on where the
+        # output was sent, and the rerun control keys off that fingerprint.
+        redirected = ve.extract_selection("pytest -q tests/unit > reports/run.log 2>&1")
+        plain = ve.extract_selection("pytest -q tests/unit")
+        self.assertEqual(redirected["items"], ["tests/unit"])
+        self.assertEqual(redirected["fingerprint"], plain["fingerprint"])
+
+    def test_appending_redirect_is_also_ignored(self) -> None:
+        selection = ve.extract_selection("pytest tests/a.py >> logs/pytest.log")
+        self.assertEqual(selection["items"], ["tests/a.py"])
+
+    def test_quoted_angle_bracket_is_not_a_redirect(self) -> None:
+        selection = ve.extract_selection("pytest -k 'a>b' tests/a.py")
+        self.assertIn("tests/a.py", selection["items"])
+        self.assertIn("-k=a>b", selection["items"])
+
 
 class OutcomeClassificationTests(unittest.TestCase):
     def test_zero_is_the_only_pass(self) -> None:
@@ -226,6 +244,34 @@ class ReceiptTests(unittest.TestCase):
         receipt = self._receipt(exit_code=-15)
         receipt["passed"] = True
         self.assertTrue(any("claims passed" in item for item in ve.validate_receipt(receipt)))
+
+    def test_validate_receipt_requires_a_command_audit(self) -> None:
+        receipt = self._receipt()
+        del receipt["command_audit"]
+        problems = ve.validate_receipt(receipt)
+        self.assertTrue(any("missing field: command_audit" in item for item in problems))
+        self.assertFalse(ve.receipt_proves(receipt))
+
+    def test_validate_receipt_rejects_a_null_command_audit(self) -> None:
+        receipt = self._receipt()
+        receipt["command_audit"] = None
+        self.assertTrue(any("missing field: command_audit" in item for item in ve.validate_receipt(receipt)))
+
+    def test_forged_clean_audit_on_a_masked_command_is_rejected(self) -> None:
+        # The audit is re-derived from the recorded command, so stamping
+        # `ok: true` onto a piped command does not launder it.
+        receipt = self._receipt()
+        receipt["command"] = "pytest -q tests/unit | tail -1"
+        receipt["command_audit"] = {"command": receipt["command"], "ok": True, "violations": [], "details": []}
+        problems = ve.validate_receipt(receipt)
+        self.assertTrue(any("re-auditing the recorded command" in item for item in problems))
+        self.assertFalse(ve.receipt_proves(receipt))
+
+    def test_audit_recorded_for_another_command_is_rejected(self) -> None:
+        receipt = self._receipt(command="pytest -q tests/unit")
+        receipt["command_audit"]["command"] = "pytest -q tests/integration"
+        problems = ve.validate_receipt(receipt)
+        self.assertTrue(any("different command" in item for item in problems))
 
     def test_receipt_id_is_stable_for_the_same_run(self) -> None:
         first = self._receipt(started_at="2026-08-31T00:00:00Z")
@@ -523,6 +569,108 @@ class FinalizeGateTests(unittest.TestCase):
         result = ve.evaluate_finalize_gate(commands=[self.COMMAND], head_sha="", receipts=[])
         self.assertFalse(result.ok)
         self.assertTrue(any("head SHA" in item for item in result.problems))
+
+    def test_an_invalid_receipt_is_reported_as_invalid_not_just_unproving(self) -> None:
+        # "'passed' (exit 0), which does not prove" reads as a contradiction
+        # unless the gate says what is wrong with the receipt.
+        receipt = self._receipt()
+        del receipt["command_audit"]
+        result = self._gate([receipt])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("not valid evidence" in item for item in result.problems))
+        self.assertTrue(any("command_audit" in item for item in result.problems))
+
+    def test_receipt_for_a_different_command_over_the_same_tests_does_not_count(self) -> None:
+        # `pytest -q tests/unit` and `pytest tests/unit` select the same files,
+        # so they share a selection fingerprint. They are still not the same
+        # command, and a receipt for one must not be read as proof of the other.
+        ran = "pytest -q tests/unit"
+        declared = "pytest tests/unit"
+        self.assertEqual(
+            ve.extract_selection(ran)["fingerprint"],
+            ve.extract_selection(declared)["fingerprint"],
+        )
+        result = self._gate([self._receipt(command=ran)], commands=[declared])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("no verification receipt" in item for item in result.problems))
+        self.assertTrue(any(ran in item for item in result.problems))
+        self.assertEqual(result.satisfied, ())
+
+    def test_extra_flags_on_the_receipt_do_not_prove_the_declaration(self) -> None:
+        result = self._gate(
+            [self._receipt(command="pytest -q -x tests/unit")],
+            commands=["pytest -q tests/unit"],
+        )
+        self.assertFalse(result.ok)
+
+    def test_whitespace_only_differences_still_match(self) -> None:
+        result = self._gate([self._receipt(command="pytest  -q   tests/unit")], commands=[self.COMMAND])
+        self.assertTrue(result.ok, result.problems)
+
+    def test_required_declaration_with_no_commands_fails_closed(self) -> None:
+        requirement = ve.declaration_requirement({"verification_required": True})
+        self.assertTrue(requirement.required)
+        result = ve.evaluate_finalize_gate(
+            commands=[], head_sha=self.HEAD, receipts=[], requirement=requirement
+        )
+        self.assertFalse(result.ok)
+        self.assertTrue(any("owes one" in item for item in result.problems))
+
+    def test_corrupted_requirement_marker_fails_closed(self) -> None:
+        requirement = ve.declaration_requirement({"verification_required": "maybe"})
+        result = ve.evaluate_finalize_gate(
+            commands=[], head_sha=self.HEAD, receipts=[], requirement=requirement
+        )
+        self.assertFalse(result.ok)
+
+    def test_legacy_task_without_the_marker_owes_no_declaration(self) -> None:
+        requirement = ve.declaration_requirement({"id": "T-OLD"})
+        self.assertTrue(requirement.legacy)
+        self.assertTrue(
+            ve.evaluate_finalize_gate(
+                commands=[], head_sha=self.HEAD, receipts=[], requirement=requirement
+            ).ok
+        )
+
+    def test_marker_set_false_owes_no_declaration(self) -> None:
+        requirement = ve.declaration_requirement({"verification_required": False})
+        self.assertFalse(requirement.required)
+        self.assertTrue(
+            ve.evaluate_finalize_gate(
+                commands=[], head_sha=self.HEAD, receipts=[], requirement=requirement
+            ).ok
+        )
+
+    def test_a_required_task_that_does_declare_is_judged_on_its_proof(self) -> None:
+        requirement = ve.declaration_requirement({"verification_required": True})
+        result = ve.evaluate_finalize_gate(
+            commands=[self.COMMAND],
+            head_sha=self.HEAD,
+            receipts=[self._receipt()],
+            task_id="T-GATE",
+            requirement=requirement,
+        )
+        self.assertTrue(result.ok, result.problems)
+
+
+class CommandKeyTests(unittest.TestCase):
+    """The key that decides whether a receipt is about the declared command."""
+
+    def test_whitespace_is_normalized(self) -> None:
+        self.assertEqual(ve.command_key("pytest  -q\ttests"), ve.command_key("pytest -q tests"))
+
+    def test_flags_are_not_normalized_away(self) -> None:
+        self.assertNotEqual(ve.command_key("pytest -q tests"), ve.command_key("pytest tests"))
+
+    def test_argument_order_is_significant(self) -> None:
+        self.assertNotEqual(ve.command_key("pytest -q tests"), ve.command_key("pytest tests -q"))
+
+    def test_empty_command_has_an_empty_key(self) -> None:
+        self.assertEqual(ve.command_key("   "), "")
+        self.assertEqual(ve.command_key(None), "")
+
+    def test_unparsable_command_still_yields_a_key(self) -> None:
+        self.assertEqual(ve.command_key("pytest 'unterminated"), "pytest 'unterminated")
 
 
 if __name__ == "__main__":

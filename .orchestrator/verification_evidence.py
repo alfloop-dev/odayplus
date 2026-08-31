@@ -79,6 +79,12 @@ _VIOLATION_HINTS = {
 # --- shell tokenization -----------------------------------------------------
 
 _CONTROL_OPERATORS = frozenset({"|", "|&", "||", "&&", ";", ";;", "&"})
+
+#: A token that only moves a stream around: ``>``, ``>>``, ``2>&1``'s ``>&``,
+#: ``&>``, ``<``. It never changes the exit code, but it is also not an
+#: argument -- it must reach a shell rather than the runner's argv.
+_REDIRECTION_RE = re.compile(r"^[<>&]+$")
+
 _SUCCESS_TAIL_TOKENS = frozenset({"true", ":", "echo", "printf"})
 _PIPEFAIL_RE = re.compile(r"set\s+-o\s+pipefail\b|set\s+-[a-zA-Z]*o[a-zA-Z]*\s+pipefail\b")
 _DISABLE_ERREXIT_RE = re.compile(r"set\s+\+[a-zA-Z]*e[a-zA-Z]*\b")
@@ -119,6 +125,51 @@ def _strip_quotes(token: str) -> str:
 
 def _is_runner_token(token: str) -> bool:
     return os.path.basename(_strip_quotes(token)) in RUNNER_TOKENS
+
+
+def _is_redirection_token(token: str) -> bool:
+    """True for a bare redirection operator, not for a quoted ``'>'`` argument."""
+    return bool(_REDIRECTION_RE.match(token)) and token not in _CONTROL_OPERATORS
+
+
+def strip_redirections(tokens: list[str]) -> list[str]:
+    """Drop redirection operators together with their fd prefix and target.
+
+    ``pytest tests/unit > reports/run.log`` selects ``tests/unit``; the log
+    path is where output went, not a test that was run. Leaving it in would
+    put it in the selection fingerprint and make two runs of the same tests
+    look like two different selections.
+    """
+    kept: list[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if _is_redirection_token(token):
+            # `2>&1` tokenizes as `2`, `>&`, `1`: the fd prefix already landed
+            # in `kept`, and the target is the token after the operator.
+            if kept and _strip_quotes(kept[-1]).isdigit():
+                kept.pop()
+            index += 2
+            continue
+        kept.append(token)
+        index += 1
+    return kept
+
+
+def command_key(command: str) -> str:
+    """Normalize a command so a declaration and a receipt compare exactly.
+
+    Only whitespace is normalized. ``pytest -q tests`` and ``pytest tests``
+    are deliberately different keys: they run the same files but they are not
+    the same command, and a receipt for one does not prove the other.
+    """
+    text = str(command or "").strip()
+    if not text:
+        return ""
+    try:
+        return " ".join(_tokenize(text))
+    except ValueError:
+        return " ".join(text.split())
 
 
 def _split_segments(tokens: list[str]) -> tuple[list[list[str]], list[str]]:
@@ -298,7 +349,7 @@ def extract_selection(command: str) -> dict[str, Any]:
     """
     text = str(command or "").strip()
     try:
-        tokens = [tok for tok in _tokenize(text) if tok not in _CONTROL_OPERATORS]
+        tokens = [tok for tok in strip_redirections(_tokenize(text)) if tok not in _CONTROL_OPERATORS]
     except ValueError:
         tokens = []
 
@@ -549,10 +600,28 @@ def validate_receipt(receipt: dict[str, Any] | None) -> list[str]:
     if duration is not None and (not isinstance(duration, (int, float)) or duration < 0):
         problems.append("duration_seconds must be a non-negative number")
 
+    # The audit is what makes the recorded exit code mean anything, so a
+    # receipt without one proves nothing and is not merely under-annotated.
+    # Its `ok` flag is re-derived from the recorded command rather than
+    # trusted: a hand-written receipt can claim a clean audit for a command
+    # that masks its own status, and that is exactly the forgery this gate
+    # exists to refuse.
+    command_text = str(receipt.get("command") or "").strip()
     audit_payload = receipt.get("command_audit")
-    if isinstance(audit_payload, dict) and not audit_payload.get("ok"):
+    if not isinstance(audit_payload, dict):
+        problems.append("missing field: command_audit (a receipt must carry the audit that cleared its command)")
+    elif not audit_payload.get("ok"):
         codes = ", ".join(str(item) for item in (audit_payload.get("violations") or []))
         problems.append(f"command failed the exit-code masking audit: {codes}")
+    elif command_text:
+        recomputed = audit_command(command_text)
+        if not recomputed.ok:
+            problems.append(
+                "command_audit claims ok, but re-auditing the recorded command rejects it "
+                f"({', '.join(recomputed.violations)})"
+            )
+        elif command_key(audit_payload.get("command")) != command_key(command_text):
+            problems.append("command_audit records a different command than the receipt")
 
     outcome = str(receipt.get("outcome") or "")
     if outcome not in {OUTCOME_PASSED, OUTCOME_FAILED, OUTCOME_INTERRUPTED, OUTCOME_NO_TESTS, OUTCOME_REJECTED}:
@@ -618,8 +687,18 @@ def matching_receipts(
     head_sha: str,
     selection_id: str,
     task_id: str | None = None,
+    command: str | None = None,
 ) -> list[dict[str, Any]]:
+    """Receipts measured against this head and selection, oldest first.
+
+    ``command`` narrows the match to receipts for that exact command. Rerun
+    control leaves it unset on purpose -- two commands that select the same
+    tests are the same measurement for dedupe purposes -- while the finalize
+    gate always sets it, because there a receipt only proves the command it
+    actually ran.
+    """
     sha = str(head_sha or "").strip().lower()
+    wanted_command = command_key(command) if command is not None else None
     matches = []
     for receipt in receipts or []:
         if not isinstance(receipt, dict):
@@ -630,6 +709,8 @@ def matching_receipts(
         if str(selection.get("fingerprint") or "") != str(selection_id):
             continue
         if task_id and str(receipt.get("task_id") or "") != str(task_id):
+            continue
+        if wanted_command is not None and command_key(receipt.get("command")) != wanted_command:
             continue
         matches.append(receipt)
     matches.sort(key=lambda item: (str(item.get("started_at") or ""), int(item.get("attempt") or 0)))
@@ -822,12 +903,6 @@ def load_receipts(directory: Path | str, *, task_id: str | None = None) -> list[
 # stamped once, when the task is created, and read here.
 VERIFICATION_REQUIRED_FIELD = "verification_required"
 
-# Task classes that must name their verification up front. Every other class
-# on the board -- rollout, verification, control_plane, human_gate, sidecar --
-# is left alone: their work is not a code change whose tests can be named in
-# advance.
-DECLARATION_REQUIRED_TASK_CLASSES = frozenset({"implementation"})
-
 _MARKER_TRUE = frozenset({"1", "true", "yes", "on"})
 _MARKER_FALSE = frozenset({"0", "false", "no", "off"})
 
@@ -842,11 +917,6 @@ class DeclarationRequirement:
 
     def as_dict(self) -> dict[str, Any]:
         return {"required": self.required, "legacy": self.legacy, "reason": self.reason}
-
-
-def task_class_requires_declaration(task_class: Any) -> bool:
-    """Whether a task of this class should be stamped as owing a declaration."""
-    return str(task_class or "").strip().lower() in DECLARATION_REQUIRED_TASK_CLASSES
 
 
 def _coerce_marker(value: Any) -> bool | None:
@@ -928,14 +998,28 @@ def evaluate_finalize_gate(
     head_sha: str,
     receipts: Any,
     task_id: str | None = None,
+    requirement: DeclarationRequirement | None = None,
 ) -> GateResult:
     """Fail closed when a declared verification command is not proven at HEAD.
 
-    A task that declares no verification commands has nothing to prove and
-    passes; the obligation follows the declaration, not the task.
+    A task that declares no verification commands normally has nothing to
+    prove and passes: the obligation follows the declaration, not the task.
+    ``requirement`` is the one exception. A task whose board entry is marked
+    ``verification_required`` owes a declaration, so declaring nothing is
+    itself the violation and is refused here -- otherwise the marker would be
+    a note in a file that no gate ever reads.
     """
     declared = [str(item).strip() for item in (commands or []) if str(item).strip()]
     if not declared:
+        if requirement is not None and requirement.required:
+            return GateResult(
+                ok=False,
+                problems=(
+                    "task declares no verification commands but owes one "
+                    f"({requirement.reason}); name the commands that prove this change in the "
+                    "task's `verification` field",
+                ),
+            )
         return GateResult(ok=True)
 
     sha = str(head_sha or "").strip().lower()
@@ -955,22 +1039,48 @@ def evaluate_finalize_gate(
             continue
 
         selection = extract_selection(command)
+        selection_id = str(selection.get("fingerprint") or "")
         matches = matching_receipts(
             receipts,
             head_sha=sha,
-            selection_id=str(selection.get("fingerprint") or ""),
+            selection_id=selection_id,
             task_id=task_id,
+            command=command,
         )
         if not matches:
-            problems.append(f"no verification receipt at head {sha[:12]} for: {command}")
+            # Same tests is not the same command. Report the near miss rather
+            # than a bare "no receipt", because a receipt for `pytest -q x` is
+            # exactly what a reader would otherwise point at as proof of
+            # `pytest x`, and the difference can be the whole result.
+            near = matching_receipts(
+                receipts,
+                head_sha=sha,
+                selection_id=selection_id,
+                task_id=task_id,
+            )
+            if near:
+                others = ", ".join(sorted({str(item.get("command") or "") for item in near}))
+                problems.append(
+                    f"no verification receipt at head {sha[:12]} for: {command} "
+                    f"(the receipts at this head select the same tests but ran: {others})"
+                )
+            else:
+                problems.append(f"no verification receipt at head {sha[:12]} for: {command}")
             continue
 
         proving = [item for item in matches if receipt_proves(item)]
         if not proving:
             newest = matches[-1]
+            # A receipt can fail to prove its command for two different
+            # reasons: the run did not pass, or the receipt is not valid
+            # evidence. Reporting only the outcome makes the second case read
+            # as a contradiction -- "'passed' (exit 0), which does not prove"
+            # -- so name the defect when there is one.
+            defects = validate_receipt(newest)
+            detail = f"; the receipt is not valid evidence: {defects[0]}" if defects else ""
             problems.append(
                 f"newest receipt at head {sha[:12]} is {newest.get('outcome')!r} "
-                f"(exit {newest.get('exit_code')!r}), which does not prove: {command}"
+                f"(exit {newest.get('exit_code')!r}), which does not prove: {command}{detail}"
             )
             continue
 
@@ -1014,7 +1124,11 @@ def run_verification_command(
         tokens = _tokenize(text)
     except ValueError:
         tokens = []
-    uses_shell = any(tok in _CONTROL_OPERATORS for tok in tokens)
+    # Redirections are audited as harmless because they do not touch the exit
+    # code -- but only a shell can honour them. Splitting `pytest -q > log
+    # 2>&1` into argv would hand `>`, `log` and `2>&1` to pytest as arguments,
+    # so the command that ran would not be the command the receipt records.
+    uses_shell = any(tok in _CONTROL_OPERATORS or _is_redirection_token(tok) for tok in tokens)
     argv: list[str] | str
     if uses_shell:
         argv = ["bash", "-c", text]

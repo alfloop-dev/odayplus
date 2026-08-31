@@ -48,11 +48,10 @@ class TaskVerificationGateTests(unittest.TestCase):
         )
         return result.stdout.strip()
 
-    def _write_status(self, verification: list[str], *, task_id: str = TASK_ID) -> None:
-        self.status_file.write_text(
-            json.dumps({"tasks": [{"id": task_id, "verification": verification}]}),
-            encoding="utf-8",
-        )
+    def _write_status(self, verification: list[str], *, task_id: str = TASK_ID, **fields) -> None:
+        task = {"id": task_id, "verification": verification}
+        task.update(fields)
+        self.status_file.write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
 
     def _cli(self, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -91,6 +90,54 @@ class TaskVerificationGateTests(unittest.TestCase):
         result = self._cli("check")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("not on the board", result.stdout)
+
+    def test_task_marked_verification_required_must_declare_something(self) -> None:
+        # Without this, the marker is a field nothing reads: a task could be
+        # stamped as owing a declaration, declare nothing, and publish.
+        self._write_status([], verification_required=True)
+        result = self._cli("check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("owes one", result.stderr)
+
+    def test_corrupted_verification_required_marker_fails_closed(self) -> None:
+        self._write_status([], verification_required="sometimes")
+        self.assertEqual(self._cli("check").returncode, 1)
+
+    def test_verification_required_false_still_passes_without_commands(self) -> None:
+        self._write_status([], verification_required=False)
+        result = self._cli("check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("nothing to prove", result.stdout)
+
+    def test_required_task_that_declares_and_proves_can_finalize(self) -> None:
+        command = f"{sys.executable} -c 'pass'"
+        self._write_status([command], verification_required=True)
+        self.assertEqual(self._cli("run").returncode, 0)
+        self.assertEqual(self._cli("check").returncode, 0)
+
+    def test_receipt_for_a_different_command_over_the_same_tests_cannot_finalize(self) -> None:
+        # The receipt ran `-c 'pass'`; the board declares the same program with
+        # an extra flag. Same selection, different command, so it proves nothing.
+        ran = f"{sys.executable} -c 'pass'"
+        declared = f"{sys.executable} -X faulthandler -c 'pass'"
+        ve.write_receipt(self.store, self._receipt(ran))
+        self._write_status([declared])
+        result = self._cli("check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("select the same tests but ran", result.stderr)
+
+    def test_receipt_without_a_command_audit_cannot_finalize(self) -> None:
+        command = f"{sys.executable} -c 'pass'"
+        receipt = self._receipt(command)
+        del receipt["command_audit"]
+        # write_receipt validates, so the forged receipt is planted in the
+        # store under the name the loader looks for.
+        self.store.mkdir(parents=True, exist_ok=True)
+        (self.store / ve.receipt_filename(receipt)).write_text(json.dumps(receipt), encoding="utf-8")
+        self._write_status([command])
+        result = self._cli("check")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("does not prove", result.stderr)
 
     def test_declared_command_without_a_receipt_cannot_finalize(self) -> None:
         self._write_status(["pytest -q tests/unit"])

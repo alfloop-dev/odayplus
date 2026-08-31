@@ -181,8 +181,12 @@ def cmd_check(args: argparse.Namespace) -> int:
         print(f"task_verification: {args.task_id} is not on the board; no declared verification to prove.")
         return 0
 
+    # A task marked `verification_required` owes a declaration, so "declares
+    # nothing" is not an exemption for it. The gate decides that, so the rule
+    # lives in one place with the proof rule it belongs to.
+    requirement = ve.declaration_requirement(task)
     commands = declared_commands(task)
-    if not commands:
+    if not commands and not requirement.required:
         print(f"task_verification: {args.task_id} declares no verification commands; nothing to prove.")
         return 0
 
@@ -193,6 +197,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         head_sha=head_sha,
         receipts=receipts,
         task_id=args.task_id,
+        requirement=requirement,
     )
 
     for command in result.satisfied:

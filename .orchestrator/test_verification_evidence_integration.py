@@ -66,6 +66,49 @@ class RealExitCodeTests(unittest.TestCase):
             self.assertIn(ve.V_MASKED_PIPELINE, result["audit"].violations)
             self.assertFalse(sentinel.exists(), "a masked command must not run at all")
 
+    def test_redirection_actually_redirects(self) -> None:
+        # The audit passes redirections on the grounds that they do not touch
+        # the exit code. That only holds if a shell interprets them: run as
+        # argv, `>` and the log path become arguments to the program itself.
+        if shutil.which("bash") is None:
+            self.skipTest("bash is required to honour a redirection")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log = Path(tmpdir) / "run.log"
+            script = Path(tmpdir) / "emit.py"
+            script.write_text(
+                "import sys\n"
+                "if len(sys.argv) > 1:\n"
+                "    raise SystemExit('unexpected argv: ' + repr(sys.argv[1:]))\n"
+                "print('stdout line')\n"
+                "print('stderr line', file=sys.stderr)\n",
+                encoding="utf-8",
+            )
+            result = ve.run_verification_command(f"{sys.executable} {script} > {log} 2>&1")
+
+            self.assertTrue(result["executed"])
+            self.assertTrue(result["shell"], "a redirection must be handed to a shell")
+            self.assertEqual(result["exit_code"], 0)
+            self.assertTrue(log.exists(), "the redirect target was never written")
+            written = log.read_text(encoding="utf-8")
+            self.assertIn("stdout line", written)
+            self.assertIn("stderr line", written, "2>&1 must fold stderr into the same file")
+
+    def test_redirection_does_not_hide_a_failing_exit_code(self) -> None:
+        if shutil.which("bash") is None:
+            self.skipTest("bash is required to honour a redirection")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log = Path(tmpdir) / "run.log"
+            result = ve.run_verification_command(
+                f"{sys.executable} -c 'raise SystemExit(7)' > {log} 2>&1"
+            )
+            self.assertEqual(result["exit_code"], 7)
+            self.assertEqual(ve.classify_outcome(result["exit_code"]), ve.OUTCOME_FAILED)
+
+    def test_command_without_shell_metacharacters_stays_on_argv(self) -> None:
+        result = ve.run_verification_command(f"{sys.executable} -c 'pass'")
+        self.assertTrue(result["executed"])
+        self.assertFalse(result["shell"], "a plain command must not gain a shell it did not ask for")
+
     def test_pipefail_pipeline_reports_the_failing_stage(self) -> None:
         if shutil.which("bash") is None:
             self.skipTest("bash is required for a pipefail pipeline")
