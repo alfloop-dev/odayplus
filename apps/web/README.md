@@ -25,6 +25,12 @@ Required environment (all modes):
 | `ODP_API_BASE_URL` | Server-side API origin used by the BFF and server components |
 | `ODP_API_SERVICE_AUDIENCE` | Cloud Run API audience used to mint the BFF service identity token |
 | `ODP_AUTH_MODE` | `local` (default) or `oidc` |
+| `ODP_AUTH_LOCAL_ISSUER` | Issuer for Web-minted local access tokens; defaults to `urn:odp:identity:local` |
+| `ODP_AUTH_AUDIENCES` | API audience for Web-minted local access tokens |
+
+In production, `ODP_IDENTITY_TOKEN_SIGNING_KEY` is injected from Secret
+Manager. The API and Web services must use the same pinned secret version; the
+API trust resolver registers its plain value as the `local-default` HS256 key.
 
 ### OIDC mode (`ODP_AUTH_MODE=oidc`)
 

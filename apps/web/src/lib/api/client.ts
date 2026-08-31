@@ -21,7 +21,7 @@ export async function getServerApiClient(): Promise<OdpApiClient | null> {
     const session = await readWebSession(
       cookieStore.get(webSessionCookieName)?.value,
     );
-    if (session) {
+    if (session?.accessToken) {
       defaultHeaders.authorization = `Bearer ${session.accessToken}`;
     } else if (production) {
       return null;

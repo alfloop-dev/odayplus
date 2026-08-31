@@ -20,9 +20,12 @@
     "@oday-plus/domain-types": "0.1.0",
     "@oday-plus/openapi-client": "0.1.0",
     "@oday-plus/ui": "0.1.0",
+    "@types/pg": "^8.23.1",
+    "argon2": "^0.45.1",
     "h3-js": "^4.4.0",
     "maplibre-gl": "^5.24.0",
     "next": "15.5.21",
+    "pg": "^8.23.0",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },

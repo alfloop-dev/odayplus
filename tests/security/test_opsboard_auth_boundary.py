@@ -496,3 +496,101 @@ def test_credentials_from_headers_parses_bearer_and_service():
     assert creds.service_id == "scheduler"
     assert creds.service_secret == b"s3cr3t"
     assert creds.correlation_id == "corr-9"
+
+
+def test_config_from_env_with_local_identity_signing_key():
+    secret = "a" * 32
+    cfg = config_from_env(
+        {
+            "ODP_AUTH_LOCAL_ISSUER": "urn:odp:identity:local",
+            "ODP_AUTH_LOCAL_AUDIENCES": "https://api.example.com",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": secret,
+        }
+    )
+    assert cfg.is_configured is True
+    assert cfg.has_live_inputs is True
+    assert cfg.issuer == "urn:odp:identity:local"
+    assert "https://api.example.com" in cfg.local_audiences
+    assert "local-default" in cfg.local_signing_keys
+    local_key = cfg.resolve_key("local-default")
+    assert local_key is not None
+    assert local_key.algorithm == "HS256"
+
+    # Verify a token issued by the Web BFF using this signing key can be
+    # decoded and its claims validated (signature + issuer + audience).
+    # Full authentication requires session/identity store support which is
+    # exercised in the integration tests; here we confirm config wiring.
+    local_token = encode_compact_jwt(
+        {
+            "iss": "urn:odp:identity:local",
+            "aud": "https://api.example.com",
+            "sub": "00000000-0000-0000-0000-000000000002",
+            "sid": "00000000-0000-0000-0000-000000000001",
+            "tenant_id": "00000000-0000-0000-0000-000000000003",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=5)).timestamp(),
+        },
+        local_key,
+    )
+    # The token can be verified with the signing key
+    from modules.opsboard.auth.jwt import verify_compact_jwt
+    verified_claims = verify_compact_jwt(local_token, local_key)
+    assert verified_claims["sub"] == "00000000-0000-0000-0000-000000000002"
+    assert verified_claims["iss"] == "urn:odp:identity:local"
+
+
+def test_web_to_api_local_token_roundtrip_with_coexisting_issuers():
+    """Verify production local Web->API token roundtrip when both Google and local issuers coexist."""
+    secret = "b" * 32
+    # In production local deployment, both ODP_AUTH_ISSUER (Google smoke) and
+    # ODP_AUTH_LOCAL_ISSUER (Web local identity) are present in the environment.
+    cfg = config_from_env(
+        {
+            "ODP_AUTH_ISSUER": "https://accounts.google.com",
+            "ODP_AUTH_LOCAL_ISSUER": "urn:odp:identity:local",
+            "ODP_AUTH_AUDIENCES": "https://api.example.com",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": secret,
+        }
+    )
+    assert cfg.is_configured is True
+    assert "urn:odp:identity:local" in cfg.trusted_issuers
+    assert "https://accounts.google.com" in cfg.trusted_issuers
+    assert "https://api.example.com" in cfg.audiences
+
+    local_key = cfg.resolve_key("local-default")
+    assert local_key is not None
+
+    # Web-minted local access token: verify signature and claims structure
+    web_local_token = encode_compact_jwt(
+        {
+            "iss": "urn:odp:identity:local",
+            "aud": "https://api.example.com",
+            "sub": "00000000-0000-0000-0000-000000000456",
+            "sid": "00000000-0000-0000-0000-000000000002",
+            "tenant_id": "00000000-0000-0000-0000-000000000789",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=2)).timestamp(),
+        },
+        local_key,
+    )
+    from modules.opsboard.auth.jwt import verify_compact_jwt
+    verified = verify_compact_jwt(web_local_token, local_key)
+    assert verified["sub"] == "00000000-0000-0000-0000-000000000456"
+    assert verified["iss"] == "urn:odp:identity:local"
+
+    # Mismatched/untrusted issuer is still rejected
+    foreign_token = encode_compact_jwt(
+        {
+            "iss": "https://evil.example",
+            "aud": "https://api.example.com",
+            "sub": "00000000-0000-0000-0000-000000000456",
+            "sid": "00000000-0000-0000-0000-000000000002",
+            "iat": NOW.timestamp(),
+            "exp": (NOW + timedelta(minutes=2)).timestamp(),
+        },
+        local_key,
+    )
+    boundary = _boundary(cfg)
+    foreign_outcome = boundary.authenticate(Credentials(bearer_token=foreign_token), now=NOW)
+    assert foreign_outcome.authenticated is False
+    assert foreign_outcome.reason is AuthFailureReason.ISSUER_MISMATCH

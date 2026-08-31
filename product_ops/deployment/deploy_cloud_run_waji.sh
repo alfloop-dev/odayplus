@@ -258,6 +258,8 @@ keys = [
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
+    "ODP_AUTH_LOCAL_ISSUER",
+    "ODP_AUTH_LOCAL_AUDIENCES",
     # The resolved auth mode travels to the API too. The boundary reads it as
     # the authoritative "is the OIDC provider on?" gate, so an API that never
     # received it would keep trusting OIDC tokens for a password-first release
@@ -281,6 +283,14 @@ keys = [
     "ODP_TENANT_ID",
 ]
 payload = {key: os.environ[key] for key in keys if key in os.environ}
+# Keep the local issuer contract explicit in the API manifest. The plain
+# signing-key binding is interpreted as kid=local-default by the API resolver.
+payload["ODP_AUTH_LOCAL_ISSUER"] = os.environ.get(
+    "ODP_AUTH_LOCAL_ISSUER", "urn:odp:identity:local"
+)
+payload["ODP_AUTH_LOCAL_AUDIENCES"] = os.environ.get(
+    "ODP_AUTH_LOCAL_AUDIENCES", os.environ.get("ODP_AUTH_AUDIENCES", "")
+)
 tenant_id = os.environ.get("ODP_SCHEDULED_INGESTION_TENANT_ID") or os.environ.get("ODP_TENANT_ID")
 if not tenant_id:
     raise ValueError("ODP_SCHEDULED_INGESTION_TENANT_ID or ODP_TENANT_ID is required for Cloud Run deployment")
@@ -326,7 +336,11 @@ build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dock
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
 API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
+API_SECRET_BINDINGS+=",ODP_IDENTITY_TOKEN_SIGNING_KEY=${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"
 WEB_SECRET_BINDINGS="ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+# The API and Web must consume the same Secret Manager version. The API
+# resolver assigns a plain key this task's canonical kid, local-default.
+WEB_SECRET_BINDINGS+=",ODP_IDENTITY_TOKEN_SIGNING_KEY=${ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET}"
 # Only the enabled provider's secrets reach Cloud Run. resolve_auth_mode has
 # already proven ODP_WEB_OIDC_CLIENT_SECRET_SECRET is set whenever OIDC is on.
 if [ "${ODP_AUTH_OIDC_ENABLED}" = "true" ]; then
@@ -608,6 +622,14 @@ payload = {
     "ODP_WEB_BASE_URL": os.environ["ODP_WEB_BASE_URL"],
     "ODP_AUTH_MODE": os.environ["ODP_AUTH_MODE"],
     "ODP_AUTH_OIDC_ENABLED": os.environ["ODP_AUTH_OIDC_ENABLED"],
+    # These values are part of the Web-to-API local JWT contract. The API
+    # resolver uses the same defaults when the optional env vars are absent,
+    # but writing them explicitly keeps both runtime manifests auditable.
+    "ODP_AUTH_LOCAL_ISSUER": os.environ.get(
+        "ODP_AUTH_LOCAL_ISSUER", "urn:odp:identity:local"
+    ),
+    "ODP_AUTH_LOCAL_AUDIENCES": sys.argv[3],
+    "ODP_AUTH_AUDIENCES": sys.argv[3],
 }
 # resolve_auth_mode owns the decision; this stage only follows it, so the Web
 # runtime can never disagree with the secrets bound to the same revision.

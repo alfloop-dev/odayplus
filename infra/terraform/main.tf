@@ -89,6 +89,8 @@ locals {
     "ODP_AUDIT_WORM_SINK_URI",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_ISSUER",
+    "ODP_AUTH_LOCAL_AUDIENCES",
+    "ODP_AUTH_LOCAL_ISSUER",
     "ODP_AUTH_JWKS_CACHE_TTL_SECONDS",
     "ODP_AUTH_JWKS_URI",
     "ODP_AUTH_LEEWAY_SECONDS",
@@ -115,6 +117,7 @@ locals {
   managed_runtime_secret_env_names = toset([
     "ODAY_DATABASE_URL",
     "ODP_INTAKE_CURSOR_SIGNING_KEY",
+    "ODP_IDENTITY_TOKEN_SIGNING_KEY",
   ])
   managed_web_secret_env_names = toset([
     "ODP_WEB_SESSION_SECRET",
@@ -139,6 +142,9 @@ locals {
       ODP_API_SERVICE_AUDIENCE             = google_cloud_run_v2_service.api.uri
       ODP_AUTH_MODE                        = var.auth_mode
       ODP_AUTH_OIDC_ENABLED                = tostring(local.oidc_enabled)
+      ODP_AUTH_LOCAL_ISSUER                = "urn:odp:identity:local"
+      ODP_AUTH_LOCAL_AUDIENCES             = google_cloud_run_v2_service.api.uri
+      ODP_AUTH_AUDIENCES                   = google_cloud_run_v2_service.api.uri
       ODP_DATA_BINDING_MODE                = "live"
       ODP_DEPLOY_ENV                       = var.environment
       ODP_PRODUCT_MODE                     = (local.is_prod || var.live_data_enabled) ? "production" : "poc"
@@ -155,6 +161,9 @@ locals {
   web_oidc_secret_refs = local.oidc_enabled && var.web_oidc_client_secret_ref != null ? {
     ODP_WEB_OIDC_CLIENT_SECRET = var.web_oidc_client_secret_ref
   } : {}
+  identity_token_secret_refs = var.identity_token_signing_key_ref != null ? {
+    ODP_IDENTITY_TOKEN_SIGNING_KEY = var.identity_token_signing_key_ref
+  } : {}
 
   fixed_runtime_env = {
     APP_ENV                         = var.environment
@@ -163,6 +172,8 @@ locals {
     ODAY_LOG_FORMAT                 = "json"
     ODAY_RELEASE_SHA                = var.release_sha
     ODP_AUTH_LEEWAY_SECONDS         = tostring(var.oidc_leeway_seconds)
+    ODP_AUTH_LOCAL_ISSUER           = "urn:odp:identity:local"
+    ODP_AUTH_LOCAL_AUDIENCES        = join(",", local.service_auth_audiences)
     ODP_AUTH_MODE                   = var.auth_mode
     ODP_DEPLOY_ENV                  = var.environment
     ODP_EXTERNAL_PROVIDER_MODE      = "fixture"
@@ -248,6 +259,10 @@ locals {
     (local.oidc_enabled && var.web_oidc_client_secret_ref != null) ? [
       var.web_oidc_client_secret_ref.secret_id,
       var.web_oidc_client_secret_ref.version,
+    ] : [],
+    var.identity_token_signing_key_ref != null ? [
+      var.identity_token_signing_key_ref.secret_id,
+      var.identity_token_signing_key_ref.version,
     ] : [],
   )
 }

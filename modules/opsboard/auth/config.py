@@ -35,6 +35,7 @@ class AuthBoundaryConfig:
     """
 
     issuer: str | None = None
+    issuers: frozenset[str] = frozenset()
     audiences: frozenset[str] = frozenset()
     signing_keys: Mapping[str, SigningKey] = field(default_factory=dict)
     jwks_uri: str | None = None
@@ -72,6 +73,14 @@ class AuthBoundaryConfig:
     oidc_enabled: bool = True
 
     @property
+    def trusted_issuers(self) -> frozenset[str]:
+        """All trusted issuers (composed from `issuer` and `issuers`)."""
+        items = set(self.issuers)
+        if self.issuer:
+            items.add(self.issuer)
+        return frozenset(items)
+
+    @property
     def is_configured(self) -> bool:
         """True only when live inputs required to verify at least one token class exist."""
         # Local provider configured
@@ -107,7 +116,7 @@ class AuthBoundaryConfig:
 
         # Legacy single-issuer configured
         return (
-            bool(self.issuer)
+            bool(self.trusted_issuers)
             and bool(self.audiences)
             and (bool(self.signing_keys) or bool(self.jwks_uri))
         )
@@ -117,7 +126,7 @@ class AuthBoundaryConfig:
         """True when *any* live auth input is present (even a partial set)."""
         return (
             self.live_input_declared
-            or bool(self.issuer)
+            or bool(self.trusted_issuers)
             or bool(self.audiences)
             or bool(self.signing_keys)
             or bool(self.jwks_uri)
@@ -176,16 +185,60 @@ def config_from_env(
     - ODP_AUTH_PRINCIPAL_MAP, ODP_AUTH_LEEWAY_SECONDS, ODP_AUTH_JWKS_CACHE_TTL_SECONDS
     - ODP_AUTH_MODE / ODP_AUTH_OIDC_ENABLED (the authoritative OIDC gate)
 
+    - ``ODP_AUTH_ISSUER``
+    - ``ODP_AUTH_LOCAL_ISSUER``
+    - ``ODP_AUTH_OIDC_ISSUER``
+    - ``ODP_AUTH_SERVICE_ISSUER``
+    - ``ODP_AUTH_AUDIENCES`` (comma-separated)
+    - ``ODP_AUTH_LOCAL_AUDIENCES`` (comma-separated)
+    - ``ODP_AUTH_HS256_KEYS`` (``kid:secret`` pairs, comma-separated; local/test)
+    - ``ODP_AUTH_JWKS_URI`` (production IdP JSON Web Key Set endpoint)
+    - ``ODP_AUTH_JWKS_CACHE_TTL_SECONDS``
+    - ``ODP_AUTH_LEEWAY_SECONDS``
+    - ``ODP_AUTH_PRINCIPAL_MAP`` (deployment-owned JSON keyed by subject/email)
+    - ``ODP_IDENTITY_TOKEN_SIGNING_KEY`` (Secret Manager injected local key)
+
+    Only symmetric (HS256) keys are read from the environment; asymmetric JWKS
+    material is injected programmatically via :class:`AuthBoundaryConfig` so
+    secrets are not required to live in process env in production.
+
     The OIDC inputs are only accepted when the deployment mode enables the OIDC
     provider; see :mod:`shared.auth.mode`.
     """
     source = os.environ if env is None else env
+
+    # Collect trusted issuers for the legacy trusted_issuers set
+    trusted_issuers: set[str] = set()
+    for var in (
+        "ODP_AUTH_ISSUER",
+        "ODP_AUTH_LOCAL_ISSUER",
+        "ODP_AUTH_OIDC_ISSUER",
+        "ODP_AUTH_SERVICE_ISSUER",
+    ):
+        val = (source.get(var) or "").strip()
+        if val:
+            trusted_issuers.add(val)
+
+    identity_token_key = (source.get("ODP_IDENTITY_TOKEN_SIGNING_KEY") or "").strip()
+    if identity_token_key:
+        local_iss = (source.get("ODP_AUTH_LOCAL_ISSUER") or "").strip() or "urn:odp:identity:local"
+        trusted_issuers.add(local_iss)
+
+    primary_issuer = (
+        (source.get("ODP_AUTH_ISSUER") or "").strip()
+        or (source.get("ODP_AUTH_LOCAL_ISSUER") or "").strip()
+        or (source.get("ODP_AUTH_OIDC_ISSUER") or "").strip()
+        or (source.get("ODP_AUTH_SERVICE_ISSUER") or "").strip()
+        or (next(iter(trusted_issuers)) if trusted_issuers else None)
+    )
 
     # Audiences
     audiences = frozenset(_split_csv(source.get("ODP_AUTH_AUDIENCES")))
     oidc_audiences = frozenset(_split_csv(source.get("ODP_AUTH_OIDC_AUDIENCES")))
     service_audiences = frozenset(_split_csv(source.get("ODP_AUTH_SERVICE_AUDIENCES")))
     local_audiences = frozenset(_split_csv(source.get("ODP_AUTH_LOCAL_AUDIENCES")))
+
+    jwks_uri = (source.get("ODP_AUTH_JWKS_URI") or "").strip() or None
 
     # Legacy / shared keys
     keys: dict[str, SigningKey] = {}
@@ -288,9 +341,6 @@ def config_from_env(
         or None
     )
 
-    # Legacy fallback
-    issuer = (source.get("ODP_AUTH_ISSUER") or "").strip() or None
-    jwks_uri = (source.get("ODP_AUTH_JWKS_URI") or "").strip() or None
 
     principal_mapping_value = source.get("ODP_AUTH_PRINCIPAL_MAP")
     principal_mappings = _parse_principal_mappings(principal_mapping_value)
@@ -299,13 +349,15 @@ def config_from_env(
         (source.get(var) or "").strip()
         for var in (
             "ODP_AUTH_ISSUER",
+            "ODP_AUTH_LOCAL_ISSUER",
+            "ODP_AUTH_OIDC_ISSUER",
+            "ODP_AUTH_SERVICE_ISSUER",
             "ODP_AUTH_AUDIENCES",
+            "ODP_AUTH_LOCAL_AUDIENCES",
             "ODP_AUTH_HS256_KEYS",
             "ODP_AUTH_JWKS_URI",
             "ODP_IDENTITY_TOKEN_SIGNING_KEY",
-            "ODP_AUTH_LOCAL_ISSUER",
             "ODP_AUTH_LOCAL_HS256_KEYS",
-            "ODP_AUTH_LOCAL_AUDIENCES",
             "ODP_AUTH_OIDC_ISSUER",
             "ODP_AUTH_OIDC_JWKS_URI",
             "ODP_AUTH_OIDC_AUDIENCES",
@@ -342,7 +394,8 @@ def config_from_env(
             pass
 
     return AuthBoundaryConfig(
-        issuer=issuer,
+        issuer=primary_issuer,
+        issuers=frozenset(trusted_issuers),
         audiences=audiences,
         signing_keys=keys,
         jwks_uri=jwks_uri,
