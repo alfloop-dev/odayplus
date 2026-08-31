@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import verification_evidence as ve
 
@@ -376,6 +378,151 @@ class RerunScopeTests(unittest.TestCase):
     def test_no_prior_receipt_is_unconstrained(self) -> None:
         plan = ve.plan_rerun(None, requested_selection=ve.extract_selection("pytest -q"))
         self.assertTrue(plan.allowed)
+
+
+class ReceiptStoreTests(unittest.TestCase):
+    """The store layout is shared by the writer and the finalize gate."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.store = Path(self.tmpdir.name) / "evidence"
+
+    def _receipt(self, *, task="T-1", command="pytest -q tests/unit", exit_code=0):
+        return ve.build_receipt(
+            task_id=task,
+            head_sha="a" * 40,
+            command=command,
+            exit_code=exit_code,
+            duration_seconds=1.0,
+        )
+
+    def test_write_then_load(self) -> None:
+        path = ve.write_receipt(self.store, self._receipt())
+        self.assertTrue(path.exists())
+        loaded = ve.load_receipts(self.store, task_id="T-1")
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(loaded[0]["command"], "pytest -q tests/unit")
+
+    def test_load_is_scoped_by_task(self) -> None:
+        ve.write_receipt(self.store, self._receipt(task="T-1"))
+        ve.write_receipt(self.store, self._receipt(task="T-2"))
+        self.assertEqual(len(ve.load_receipts(self.store, task_id="T-1")), 1)
+        self.assertEqual(len(ve.load_receipts(self.store)), 2)
+
+    def test_invalid_receipt_is_not_persisted(self) -> None:
+        with self.assertRaises(ValueError):
+            ve.write_receipt(self.store, self._receipt(command="pytest -q | tail -1"))
+        self.assertEqual(ve.load_receipts(self.store), [])
+
+    def test_missing_store_reads_as_empty(self) -> None:
+        self.assertEqual(ve.load_receipts(self.store, task_id="T-1"), [])
+
+    def test_unreadable_file_is_skipped_not_trusted(self) -> None:
+        ve.write_receipt(self.store, self._receipt())
+        (self.store / "verification-t_1-corrupt.json").write_text("{not json", encoding="utf-8")
+        self.assertEqual(len(ve.load_receipts(self.store, task_id="T-1")), 1)
+
+    def test_foreign_json_in_the_store_is_ignored(self) -> None:
+        self.store.mkdir(parents=True, exist_ok=True)
+        (self.store / "verification-t_1-foreign.json").write_text('{"kind": "something-else"}', encoding="utf-8")
+        self.assertEqual(ve.load_receipts(self.store, task_id="T-1"), [])
+
+
+class FinalizeGateTests(unittest.TestCase):
+    """Declared verification must be proven at the exact head being published."""
+
+    HEAD = "f" * 40
+    COMMAND = "pytest -q tests/unit"
+
+    def _receipt(self, *, exit_code=0, head=None, command=None, outcome=None, task="T-GATE"):
+        receipt = ve.build_receipt(
+            task_id=task,
+            head_sha=head or self.HEAD,
+            command=command or self.COMMAND,
+            exit_code=exit_code,
+            duration_seconds=1.0,
+        )
+        if outcome is not None:
+            receipt["outcome"] = outcome
+            receipt["passed"] = ve.outcome_is_pass(outcome)
+        return receipt
+
+    def _gate(self, receipts, commands=None):
+        return ve.evaluate_finalize_gate(
+            commands=commands if commands is not None else [self.COMMAND],
+            head_sha=self.HEAD,
+            receipts=receipts,
+            task_id="T-GATE",
+        )
+
+    def test_no_declared_commands_passes(self) -> None:
+        self.assertTrue(self._gate([], commands=[]).ok)
+
+    def test_passing_receipt_at_head_satisfies_the_gate(self) -> None:
+        result = self._gate([self._receipt()])
+        self.assertTrue(result.ok, result.problems)
+        self.assertEqual(result.satisfied, (self.COMMAND,))
+
+    def test_no_receipt_fails_closed(self) -> None:
+        result = self._gate([])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("no verification receipt" in item for item in result.problems))
+
+    def test_receipt_for_another_head_does_not_count(self) -> None:
+        result = self._gate([self._receipt(head="0" * 40)])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("no verification receipt" in item for item in result.problems))
+
+    def test_receipt_for_another_selection_does_not_count(self) -> None:
+        result = self._gate([self._receipt(command="pytest -q tests/integration")])
+        self.assertFalse(result.ok)
+
+    def test_nonzero_exit_receipt_fails_closed(self) -> None:
+        result = self._gate([self._receipt(exit_code=1)])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("does not prove" in item for item in result.problems))
+
+    def test_interrupted_receipt_fails_closed(self) -> None:
+        result = self._gate([self._receipt(exit_code=-15)])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("interrupted" in item for item in result.problems))
+
+    def test_no_tests_collected_receipt_fails_closed(self) -> None:
+        result = self._gate([self._receipt(exit_code=5, command=self.COMMAND)])
+        self.assertFalse(result.ok)
+
+    def test_rejected_receipt_fails_closed(self) -> None:
+        masked = "pytest -q tests/unit | tail -1"
+        receipt = self._receipt(command=masked)
+        self.assertEqual(receipt["outcome"], ve.OUTCOME_REJECTED)
+        result = self._gate([receipt], commands=[masked])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("masking policy" in item for item in result.problems))
+
+    def test_forged_pass_flag_does_not_satisfy_the_gate(self) -> None:
+        receipt = self._receipt(exit_code=1)
+        receipt["passed"] = True
+        receipt["outcome"] = ve.OUTCOME_PASSED
+        self.assertFalse(ve.receipt_proves(receipt))
+        self.assertFalse(self._gate([receipt]).ok)
+
+    def test_a_later_passing_receipt_satisfies_an_earlier_failure(self) -> None:
+        failed = self._receipt(exit_code=1)
+        passed = self._receipt()
+        self.assertTrue(self._gate([failed, passed]).ok)
+
+    def test_every_declared_command_must_be_proven(self) -> None:
+        second = "pytest -q tests/integration"
+        result = self._gate([self._receipt()], commands=[self.COMMAND, second])
+        self.assertFalse(result.ok)
+        self.assertEqual(result.satisfied, (self.COMMAND,))
+        self.assertTrue(any(second in item for item in result.problems))
+
+    def test_unresolvable_head_fails_closed(self) -> None:
+        result = ve.evaluate_finalize_gate(commands=[self.COMMAND], head_sha="", receipts=[])
+        self.assertFalse(result.ok)
+        self.assertTrue(any("head SHA" in item for item in result.problems))
 
 
 if __name__ == "__main__":

@@ -33,6 +33,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = 1
@@ -447,6 +448,7 @@ def build_receipt(
     kind: str = "baseline",
     agent: str | None = None,
     run_id: str | None = None,
+    produced_by: str | None = None,
     audit: CommandAudit | None = None,
     timed_out: bool = False,
     output_tail: str | None = None,
@@ -504,6 +506,7 @@ def build_receipt(
         "retry_reason": (retry_reason or "").strip() or None,
         "agent": agent,
         "run_id": run_id,
+        "produced_by": produced_by,
     }
     if output_tail:
         receipt["output_tail"] = output_tail
@@ -764,6 +767,136 @@ def plan_rerun(
     )
 
 
+# --- receipt store ----------------------------------------------------------
+
+RECEIPT_FILE_PREFIX = "verification"
+
+
+def receipt_slug(task_id: str | None) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", str(task_id or "task").lower()).strip("_")
+    return slug or "task"
+
+
+def receipt_filename(receipt: dict[str, Any]) -> str:
+    slug = receipt_slug(receipt.get("task_id"))
+    ident = str(receipt.get("receipt_id") or receipt_id(receipt))
+    return f"{RECEIPT_FILE_PREFIX}-{slug}-{ident}.json"
+
+
+def write_receipt(directory: Path | str, receipt: dict[str, Any]) -> Path:
+    """Persist a receipt, refusing anything that would not survive validation.
+
+    A receipt that cannot be trusted must not exist on disk: a later reader
+    finding a file named like evidence will read it as evidence.
+    """
+    problems = validate_receipt(receipt)
+    if problems:
+        raise ValueError("refusing to persist an invalid verification receipt: " + "; ".join(problems))
+    path = Path(directory) / receipt_filename(receipt)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(receipt, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
+def load_receipts(directory: Path | str, *, task_id: str | None = None) -> list[dict[str, Any]]:
+    """Return recorded receipts, oldest first; unreadable files are skipped."""
+    root = Path(directory)
+    if not root.is_dir():
+        return []
+    slug = receipt_slug(task_id) if task_id else "*"
+    receipts: list[dict[str, Any]] = []
+    for path in sorted(root.glob(f"{RECEIPT_FILE_PREFIX}-{slug}-*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and payload.get("kind") == "verification_receipt":
+            receipts.append(payload)
+    receipts.sort(key=lambda item: (str(item.get("started_at") or ""), int(item.get("attempt") or 0)))
+    return receipts
+
+
+# --- finalize gate ----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class GateResult:
+    """Whether a task's declared verification is actually proven at this head."""
+
+    ok: bool
+    problems: tuple[str, ...] = ()
+    satisfied: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"ok": self.ok, "problems": list(self.problems), "satisfied": list(self.satisfied)}
+
+
+def receipt_proves(receipt: dict[str, Any] | None) -> bool:
+    """A receipt only proves a command passed if it is valid and exited zero."""
+    if not isinstance(receipt, dict):
+        return False
+    if validate_receipt(receipt):
+        return False
+    return bool(receipt.get("passed")) and receipt.get("exit_code") == 0
+
+
+def evaluate_finalize_gate(
+    *,
+    commands: Any,
+    head_sha: str,
+    receipts: Any,
+    task_id: str | None = None,
+) -> GateResult:
+    """Fail closed when a declared verification command is not proven at HEAD.
+
+    A task that declares no verification commands has nothing to prove and
+    passes; the obligation follows the declaration, not the task.
+    """
+    declared = [str(item).strip() for item in (commands or []) if str(item).strip()]
+    if not declared:
+        return GateResult(ok=True)
+
+    sha = str(head_sha or "").strip().lower()
+    if not _SHA_RE.match(sha):
+        return GateResult(ok=False, problems=(f"cannot resolve a head SHA to verify against, got {head_sha!r}",))
+
+    problems: list[str] = []
+    satisfied: list[str] = []
+
+    for command in declared:
+        audit = audit_command(command)
+        if not audit.ok:
+            problems.append(
+                f"declared command is rejected by the exit-code masking policy "
+                f"({', '.join(audit.violations)}): {command}"
+            )
+            continue
+
+        selection = extract_selection(command)
+        matches = matching_receipts(
+            receipts,
+            head_sha=sha,
+            selection_id=str(selection.get("fingerprint") or ""),
+            task_id=task_id,
+        )
+        if not matches:
+            problems.append(f"no verification receipt at head {sha[:12]} for: {command}")
+            continue
+
+        proving = [item for item in matches if receipt_proves(item)]
+        if not proving:
+            newest = matches[-1]
+            problems.append(
+                f"newest receipt at head {sha[:12]} is {newest.get('outcome')!r} "
+                f"(exit {newest.get('exit_code')!r}), which does not prove: {command}"
+            )
+            continue
+
+        satisfied.append(command)
+
+    return GateResult(ok=not problems, problems=tuple(problems), satisfied=tuple(satisfied))
+
+
 # --- execution --------------------------------------------------------------
 
 
@@ -875,6 +1008,7 @@ def verify_and_build_receipt(
     timeout: float | None = None,
     agent: str | None = None,
     run_id: str | None = None,
+    produced_by: str | None = None,
 ) -> tuple[BaselineDecision, dict[str, Any] | None]:
     """Audit, dedupe, run, and receipt a single verification command."""
     selection = extract_selection(command)
@@ -903,6 +1037,7 @@ def verify_and_build_receipt(
         kind=decision.kind,
         agent=agent,
         run_id=run_id,
+        produced_by=produced_by,
         audit=result["audit"],
         timed_out=result["timed_out"],
         output_tail=result.get("output_tail"),

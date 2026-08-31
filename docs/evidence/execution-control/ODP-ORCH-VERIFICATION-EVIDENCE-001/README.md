@@ -85,6 +85,36 @@
 `_generated_worker_task_brief` 的 fallback 路徑套用相同標記，
 避免兩條 prompt 產生路徑對同一份命令給出不同說法。
 
+### 4. 送審 fail-closed 閘（`delivery_toolchain/git/task_verification.py` + `task_finalize.sh`）
+
+**第一輪審查阻塞指出：只有 brief 提示、沒有 caller，worker 仍可不產生 receipt 就發布。**
+這是對的——政策模組若沒有接上任何閘門，它就只是一份建議。因此本輪把它接到
+**既有的** `task_finalize.sh` preflight 上（該處已有 boundary inventory 與 ruff 兩道閘），
+不新增 scheduler、不新增第二個狀態檔、不開平行流程。
+
+`delivery_toolchain/git/task_verification.py` 是單一受控入口，兩個子命令共用同一個
+receipt store（`.orchestrator/evidence/`，即既有 supervisor evidence 目錄）：
+
+| 子命令 | 行為 |
+| --- | --- |
+| `run` | 執行 task `verification` 欄位宣告的命令，每條產出一份綁定 head SHA／命令／真實 exit code／耗時／selection 的 receipt；審核不過的命令不執行也不落 receipt；同 SHA 重複需 `--retry-reason` |
+| `check` | 對每條宣告命令，要求當前 head SHA 上存在「有效且 exit 0」的 receipt，否則拒絕發布 |
+
+`task_finalize.sh` 在 boundary／ruff preflight 之後呼叫 `check`。fail-closed 的具體範圍：
+
+- 宣告了命令但**沒有 receipt** → 拒絕。
+- receipt 屬於**別的 head SHA** 或**別的 selection** → 不算數，拒絕。
+- receipt 是 `rejected`／非零 exit／`interrupted`／`no_tests_collected` → 拒絕。
+- 宣告的命令本身**過不了遮蔽審核** → 拒絕（它根本不該被執行）。
+- **讀不到 status file** → 拒絕；無法判斷是否有宣告時，不能當作沒有宣告。
+- 沒有宣告 verification 命令的 task → 放行。**義務跟著宣告走，不是跟著 task 走**；
+  否則這道閘會擋住所有既有 task，變成必須繞過的閘，那就等於沒有閘。
+
+`receipt_proves()` 不信任 receipt 自報的 `passed` 旗標：它會重跑 `validate_receipt()`
+並要求 `exit_code == 0`，所以把 `passed` 手動改成 `true` 不會讓閘門放行。
+receipt 另帶 `produced_by` 標記產生者。誠實地說：receipt store 是 gitignore 的本機目錄，
+這個標記是可追溯性用的，不是防偽邊界；要真正防偽需要簽章，超出本 task 範圍。
+
 ## 驗證證據
 
 `verification_receipt.json` 中的 receipt **由本次新增的機制自己產生**，
@@ -109,6 +139,11 @@ uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml 
 
 - `.orchestrator/test_verification_evidence.py` — 單元測試，涵蓋命令審核（含刻意放行的樣態）、
   selection 指紋、exit code 分類、receipt 必填欄位、重複 baseline 去重、重跑範圍控制。
+- `delivery_toolchain/git/test_task_verification.py` — 閘門回歸測試，對一個拋棄式 git repo
+  以 subprocess 驅動 CLI（`task_finalize.sh` 就是這樣呼叫它）：無 receipt、跨 SHA receipt、
+  非零 exit、interrupted、被遮蔽的宣告命令、讀不到 status file 一律不可送審；
+  `run` 產生 receipt 後閘門才放行；同 SHA 重跑需明示 retry reason（`flaky` 這類佔位字串不算）；
+  被遮蔽的命令不會被執行（sentinel 檔驗證）也不會落 receipt。
 - `.orchestrator/test_verification_evidence_integration.py` — 整合測試，實際起 subprocess：
   真實 exit code 保存、被遮蔽的命令**完全沒有執行**（以 sentinel 檔驗證）、
   SIGTERM 與 timeout 判為 interrupted、真實 pytest 的 `1`／`0`／`5`、
@@ -120,6 +155,8 @@ uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml 
 
 ## 邊界
 
-- 不改動 supervisor 的派工、排程或 worker lifecycle。
+- 不改動 supervisor 的派工、排程或 worker lifecycle；沒有新增 scheduler、
+  第二個狀態檔或平行流程。
 - 不自動把政策套用到既有 task 的 `verification` 欄位上做批次改寫；
-  現有命令會在 brief 中被標示，由 owner 修正。
+  現有命令會在 brief 中被標示、在送審時被擋，由 owner 修正。
+- receipt store 的防偽不在本 task 範圍內（見上）。

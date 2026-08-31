@@ -1883,45 +1883,21 @@ def write_approval_evidence(
     return relpath(path)
 
 
-VERIFICATION_RECEIPT_PREFIX = "verification"
-
-
-def verification_receipt_slug(task_id: str | None) -> str:
-    return normalize_agent_id(task_id or "task") or "task"
-
-
 def write_verification_receipt(config: dict[str, Any], *, receipt: dict[str, Any]) -> str | None:
     """Persist a verification receipt into the existing evidence directory.
 
     Verification evidence reuses the supervisor's one receipt store rather than
     introducing a parallel results location, so a reader who already knows
-    where failure and approval evidence lives finds this next to it.
+    where failure and approval evidence lives finds this next to it. The store
+    layout lives in ``verification_evidence`` so the finalize gate in
+    ``delivery_toolchain`` reads exactly what this writes.
     """
-    problems = verification_evidence.validate_receipt(receipt)
-    if problems:
-        raise ValueError("refusing to persist an invalid verification receipt: " + "; ".join(problems))
-
-    slug = verification_receipt_slug(receipt.get("task_id"))
-    ident = str(receipt.get("receipt_id") or verification_evidence.receipt_id(receipt))
-    path = evidence_dir(config) / f"{VERIFICATION_RECEIPT_PREFIX}-{slug}-{ident}.json"
-    ensure_parent(path)
-    write_json(path, receipt)
-    return relpath(path)
+    return relpath(verification_evidence.write_receipt(evidence_dir(config), receipt))
 
 
 def load_verification_receipts(config: dict[str, Any], *, task_id: str | None = None) -> list[dict[str, Any]]:
     """Return previously recorded verification receipts, oldest first."""
-    directory = evidence_dir(config)
-    if not directory.exists():
-        return []
-    slug = verification_receipt_slug(task_id) if task_id else "*"
-    receipts: list[dict[str, Any]] = []
-    for path in sorted(directory.glob(f"{VERIFICATION_RECEIPT_PREFIX}-{slug}-*.json")):
-        payload = load_json(path, default=None)
-        if isinstance(payload, dict) and payload.get("kind") == "verification_receipt":
-            receipts.append(payload)
-    receipts.sort(key=lambda item: (str(item.get("started_at") or ""), int(item.get("attempt") or 0)))
-    return receipts
+    return verification_evidence.load_receipts(evidence_dir(config), task_id=task_id)
 
 
 def audit_task_verification(task: dict[str, Any] | None) -> list[verification_evidence.CommandAudit]:
