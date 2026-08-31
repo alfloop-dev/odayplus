@@ -170,6 +170,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "materialize_worker_context_files",
     "prepare_worker_workspace",
     "prune_orphan_worktrees",
+    "_dead_owner_continuation_eligible",
     "preserve_dead_worker_worktree",
     "WorkerHandoffSeal",
     "seal_worker_handoff",
@@ -3208,6 +3209,24 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
+        if worker.get("status") == "failed":
+            task_id = str(worker.get("task_id") or "")
+            task = task_map.get(task_id)
+            handoff_blocks = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {})
+            if (
+                str((task or {}).get("status") or "").lower() in {"todo", "in_progress"}
+                and task_id not in handoff_blocks
+                and _dead_owner_continuation_eligible(config, worker, task)
+            ):
+                if preserve_dead_worker_worktree(
+                    config,
+                    state,
+                    worker,
+                    task=task,
+                    trigger="boot_handoff_recovery",
+                ):
+                    changed = True
+            continue
         if worker.get("status") not in active_statuses:
             continue
         marker_changed = update_worker_runtime_markers(worker)

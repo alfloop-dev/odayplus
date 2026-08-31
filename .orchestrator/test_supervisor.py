@@ -17212,6 +17212,80 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
         self.assertFalse(outcome)
         self.assertEqual(outcome.reason, "preserve_raised")
 
+    def test_preserved_owner_dirt_records_same_owner_continuation(self) -> None:
+        worker = {
+            "run_id": "run-1",
+            "task_id": "T-1",
+            "status": "running",
+            "logical_agent_id": "Claude2",
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": "/tmp/owner-worktree",
+            "workspace_branch": "task/T-1",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        task = {"id": "T-1", "owner": "Claude2", "status": "in_progress"}
+        state = {"workers": {"run-1": worker}}
+        seal = supervisor.WorkerHandoffSeal(False, "owner_dirty", "dirt", "a" * 40, "fingerprint")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "_quarantine_and_preserve_dirty_worktree",
+                    return_value=supervisor.QuarantineOutcome(True, "preserved"),
+                ),
+                mock.patch.object(supervisor, "seal_worker_handoff", return_value=seal),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(
+                    supervisor.preserve_dead_worker_worktree(
+                        self._config(tmpdir), state, worker, task=task
+                    )
+                )
+        record = state["worker_worktrees"]["handoff_blocks"]["T-1"]
+        self.assertEqual(record["owner"], "Claude2")
+        self.assertEqual(record["head_sha"], "a" * 40)
+        self.assertEqual(record["dirt_fingerprint"], "fingerprint")
+
+    def test_owner_continuation_recovery_requires_owner_execution(self) -> None:
+        config = {"schema": {"assignee_field": "owner"}}
+        task = {"id": "T-1", "owner": "Claude2", "status": "in_progress"}
+        worker = {
+            "logical_agent_id": "Claude2",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        self.assertTrue(supervisor._dead_owner_continuation_eligible(config, worker, task))
+        worker["request_snapshot"] = {"reason": "review_ready_dispatch"}
+        self.assertFalse(supervisor._dead_owner_continuation_eligible(config, worker, task))
+        worker["request_snapshot"] = {"reason": "owned_in_progress_dispatch"}
+        worker["logical_agent_id"] = "Codex2"
+        self.assertFalse(supervisor._dead_owner_continuation_eligible(config, worker, task))
+
+    def test_boot_retries_preservation_for_an_unsealed_failed_owner(self) -> None:
+        task = {"id": "T-1", "owner": "Claude2", "status": "in_progress"}
+        worker = {
+            "run_id": "run-1",
+            "task_id": "T-1",
+            "status": "failed",
+            "logical_agent_id": "Claude2",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        state = {"workers": {"run-1": worker}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(tmpdir)
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "_dead_owner_continuation_eligible", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "preserve_dead_worker_worktree",
+                    return_value=supervisor.QuarantineOutcome(True, "preserved"),
+                ) as preserve,
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+        self.assertTrue(changed)
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "boot_handoff_recovery")
+
     def test_the_orphan_path_preserves_before_the_record_disappears(self) -> None:
         """Ordering, checked at the source.
 
