@@ -4,7 +4,7 @@
 
 - **任務 ID**: ODP-ORCH-VERIFICATION-EVIDENCE-001
 - **標題**: 收斂 Worker 驗證證據與重跑控制
-- **負責人**: Claude2
+- **負責人**: Antigravity
 - **評審人**: Codex2
 - **階段**: Wave Auth 0 - Execution Integrity
 - **來源文件**: `docs/evidence/execution-control/ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001.md`、`ai-task-archive/tasks/ODP-ORCH-WORKER-ACTIVITY-001.json`
@@ -34,8 +34,8 @@
   規則刻意收斂：
   | 違規碼 | 觸發樣態 |
   | --- | --- |
-  | `masked_pipeline` | 有 `\|` 但未宣告 `set -o pipefail` |
-  | `forced_success` | `\|\| true`、`\|\| :`、`\|\| echo ...`、`\|\| exit 0` |
+  | `masked_pipeline` | 有 `\|` 但在第一個 pipe 之前的 segment 中沒有真正的 `set -o pipefail`（引號內的 `-k 'set -o pipefail'` 不算；pipe 之後的 `set -o pipefail` 也不算） |
+  | `forced_success` | `\|\|` 後接任何命令（除 `exit N`（N≠0）與 `exit $?` 外），包含 `\|\| true`、`\|\| python -c 'pass'`、`\|\| cat /dev/null` 等 |
   | `trailing_command_mask` | runner 之後接 `; <其他命令>`（`; exit $?` 例外放行） |
   | `disabled_errexit` | `set +e` |
   | `backgrounded_command` | runner 被 `&` 丟到背景 |
@@ -177,13 +177,18 @@ canonical reference。`source_docs` 落在哪裡由看板決定，不在那份�
 於是 Supervisor 自己寫進去的檔案成了 untracked dirt，
 `task_finalize` 的 worktree cleanliness 檢查 fail closed，**task 永遠送不出去**。
 
-修法是把 manifest 裡的每一筆都寫成一條 root-anchored、glob 字元已跳脫的 exclude
-（`/ai-task-archive/tasks/ODP-ORCH-WORKER-ACTIVITY-001.json`）。刻意不做的事：
+修法是把 manifest 裡**不在已涵蓋前綴清單內**的路徑，各寫成一條 root-anchored、
+glob 字元已跳脫的 exclude（例如 `/ai-task-archive/tasks/ODP-ORCH-WORKER-ACTIVITY-001.json`）。
+`.orchestrator/` 底下的路徑已被前綴清單覆蓋或 gitignore 處理，
+不再額外加入 exclude——否則會隱藏 workspace 回歸測試依賴的 skill 檔案。刻意不做的事：
 
 - **不忽略整個目錄。** `ai-task-archive/` 這種掃除會連 worker 自己在同目錄下
   建立的檔案一起藏起來，那是必須被報出來的 dirt。
 - **不忽略未知的 untracked 檔。** 只有通過 hash 驗證、確定就是 Supervisor 那份 seed
   的路徑才進 exclude；沒進 manifest 的東西一律照舊視為 dirt。
+- **不忽略 `.orchestrator/` 底下的 manifest 路徑。** 那些路徑已經由
+  前綴清單或 gitignore 處理，重複 exclude 會隱藏 regression test 所依賴的
+  untracked skill 檔案（`UnversionedOrchestratorWorkspaceLeaseTests` CI regression）。
 
 ## 驗證證據
 
@@ -262,6 +267,15 @@ uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml 
 | 重導向沒有真的重導向 | `test_redirection_actually_redirects`、`test_command_without_shell_metacharacters_stays_on_argv`、`test_redirect_target_is_not_a_selected_test` |
 
 每一項都先在未修補的程式碼上確認**會紅**，再確認修補後轉綠。
+
+### 第三輪修補（Antigravity 重新實作）帶回歸測試
+
+| 缺口 | 測試 |
+| --- | --- |
+| `\|\|` 後接任意命令仍可通過 audit | `test_or_python_pass_is_rejected`、`test_or_cat_devnull_is_rejected`、`test_or_arbitrary_command_after_runner_is_rejected`；反例 `test_or_exit_dollar_question_is_allowed`、`test_or_exit_nonzero_preserves_failure`、`test_or_before_runner_is_allowed` |
+| pipefail regex 被引號內文字假授權 | `test_pipefail_in_k_expression_is_not_honoured` |
+| pipefail 出現在 pipe 之後仍被視為有效 | `test_pipefail_after_pipe_is_not_honoured`；反例 `test_pipefail_before_pipe_is_honoured` |
+| `.git/info/exclude` 掃到 `.orchestrator/skills/*` 破壞 `UnversionedOrchestratorWorkspaceLeaseTests` | `test_repeated_dispatch_never_accumulates_a_materialized_context_block`（5/5 通過） |
 
 其中 `test_piped_failing_suite_would_have_reported_success` 直接示範這道閘要擋的東西：
 一個失敗的 pytest 接上 `| tail -1` 之後，shell 回報 `0`。
