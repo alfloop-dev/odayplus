@@ -11,7 +11,7 @@ from typing import Any, NamedTuple
 
 from common import normalize_agent_id, utc_now
 from dispatch_policy import REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
-
+import verification_evidence
 from runtime_state import ACTIVE_WORKER_STATUSES
 
 # Compatibility aliases remain exports while Supervisor callers migrate to the
@@ -1190,7 +1190,17 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
         body.extend(["", "## Acceptance"])
         body.extend([f"- {item}" for item in acceptance] or ["- none"])
         body.extend(["", "## Verification"])
-        body.extend([f"- `{item}`" for item in verification] or ["- none"])
+        if verification:
+            for audit in verification_evidence.audit_commands(verification):
+                if audit.ok:
+                    body.append(f"- `{audit.command}`")
+                else:
+                    body.append(
+                        f"- `{audit.command}` — REJECTED ({', '.join(audit.violations)}): "
+                        + "; ".join(audit.details)
+                    )
+        else:
+            body.append("- none")
         body.append("")
         return "\n".join(body)
 

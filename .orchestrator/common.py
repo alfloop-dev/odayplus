@@ -26,6 +26,7 @@ try:  # PyYAML is optional; yaml_dump falls back to JSON without it.
 except ImportError:  # pragma: no cover - exercised only without PyYAML
     yaml = None
 
+import verification_evidence
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1666,7 +1667,35 @@ def generate_task_brief_content(
     body.extend(["", "## Acceptance"])
     body.extend([f"- {item}" for item in acceptance] or ["- none"])
     body.extend(["", "## Verification"])
-    body.extend([f"- `{item}`" for item in verification] or ["- none"])
+    if verification:
+        verification_audits = verification_evidence.audit_commands(verification)
+        for audit in verification_audits:
+            if audit.ok:
+                body.append(f"- `{audit.command}`")
+            else:
+                body.append(
+                    f"- `{audit.command}` — REJECTED ({', '.join(audit.violations)}): "
+                    + "; ".join(audit.details)
+                )
+        body.extend(
+            [
+                "",
+                "### Verification Evidence Policy",
+                "- Run each command so its own exit code survives: no pipe without `set -o pipefail`,",
+                "  no `|| true`, no `; echo ...` tail, no `set +e`, no backgrounding.",
+                "- Record a receipt binding head SHA, exact command, real exit code, duration, and test selection.",
+                "- A run killed by a signal or timeout is `interrupted`, never a pass, and is repeated with the",
+                "  same selection rather than escalated to a wider suite.",
+                "- Re-running an already-measured head SHA and selection needs an explicit retry reason.",
+            ]
+        )
+        rejected = [audit for audit in verification_audits if not audit.ok]
+        if rejected:
+            body.append(
+                f"- {len(rejected)} declared command(s) above are rejected by the policy and must be fixed before use."
+            )
+    else:
+        body.append("- none")
     body.extend(["", "## Recent Task Activity"])
     if recent:
         body.extend(
@@ -1852,6 +1881,53 @@ def write_approval_evidence(
         },
     )
     return relpath(path)
+
+
+VERIFICATION_RECEIPT_PREFIX = "verification"
+
+
+def verification_receipt_slug(task_id: str | None) -> str:
+    return normalize_agent_id(task_id or "task") or "task"
+
+
+def write_verification_receipt(config: dict[str, Any], *, receipt: dict[str, Any]) -> str | None:
+    """Persist a verification receipt into the existing evidence directory.
+
+    Verification evidence reuses the supervisor's one receipt store rather than
+    introducing a parallel results location, so a reader who already knows
+    where failure and approval evidence lives finds this next to it.
+    """
+    problems = verification_evidence.validate_receipt(receipt)
+    if problems:
+        raise ValueError("refusing to persist an invalid verification receipt: " + "; ".join(problems))
+
+    slug = verification_receipt_slug(receipt.get("task_id"))
+    ident = str(receipt.get("receipt_id") or verification_evidence.receipt_id(receipt))
+    path = evidence_dir(config) / f"{VERIFICATION_RECEIPT_PREFIX}-{slug}-{ident}.json"
+    ensure_parent(path)
+    write_json(path, receipt)
+    return relpath(path)
+
+
+def load_verification_receipts(config: dict[str, Any], *, task_id: str | None = None) -> list[dict[str, Any]]:
+    """Return previously recorded verification receipts, oldest first."""
+    directory = evidence_dir(config)
+    if not directory.exists():
+        return []
+    slug = verification_receipt_slug(task_id) if task_id else "*"
+    receipts: list[dict[str, Any]] = []
+    for path in sorted(directory.glob(f"{VERIFICATION_RECEIPT_PREFIX}-{slug}-*.json")):
+        payload = load_json(path, default=None)
+        if isinstance(payload, dict) and payload.get("kind") == "verification_receipt":
+            receipts.append(payload)
+    receipts.sort(key=lambda item: (str(item.get("started_at") or ""), int(item.get("attempt") or 0)))
+    return receipts
+
+
+def audit_task_verification(task: dict[str, Any] | None) -> list[verification_evidence.CommandAudit]:
+    """Audit a task's declared verification commands for exit-code masking."""
+    commands = [str(item).strip() for item in ((task or {}).get("verification") or []) if str(item).strip()]
+    return verification_evidence.audit_commands(commands)
 
 
 def to_bool(value: Any) -> bool:
