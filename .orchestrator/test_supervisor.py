@@ -11775,9 +11775,17 @@ class RunSupervisorShellGuardTests(unittest.TestCase):
 
 
 class ReviewHeadFreezeTests(unittest.TestCase):
+    _REDIRECTED_PATHS = ("STATUS_FILE", "LOG_FILE", "CURRENT_WORK_FILE")
+
     def setUp(self) -> None:
         self.test_dir = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.test_dir.name)
+        # Restored in tearDown: these are module globals, so leaving them
+        # pointed at this temporary directory would make every later test in
+        # the process write through a path that cleanup() has already removed.
+        self._original_paths = {
+            name: getattr(ai_status, name) for name in self._REDIRECTED_PATHS
+        }
         ai_status.STATUS_FILE = self.tmp_path / "ai-status.json"
         ai_status.LOG_FILE = self.tmp_path / "ai-activity-log.jsonl"
         ai_status.CURRENT_WORK_FILE = self.tmp_path / "current-work.md"
@@ -11786,6 +11794,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         ai_status.clear_ai_status_caches()
 
     def tearDown(self) -> None:
+        for name, value in self._original_paths.items():
+            setattr(ai_status, name, value)
         ai_status.clear_ai_status_caches()
         self.test_dir.cleanup()
 

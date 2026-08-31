@@ -314,15 +314,25 @@ class DependencyDispatchGateTests(unittest.TestCase):
             )
 
         state = {"tasks": [deepcopy(task), deepcopy(upstream)]}
+        # This is the only test here whose update is accepted, so it is the only
+        # one that reaches append_log. Point LOG_FILE at a directory this test
+        # owns: the module global is whatever the last test to touch it left
+        # behind, which under the full suite is a deleted temporary directory.
         with (
             canonical_test_environment(),
+            tempfile.TemporaryDirectory(prefix="pantheon-dependency-finalize-") as tmpdir,
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+            mock.patch.object(ai_status, "LOG_FILE", Path(tmpdir) / "activity.jsonl"),
         ):
             ai_status.command_set_dependencies(
                 state,
                 [task["id"], upstream["id"], "保留已合併 PR 的 finalize closeout，不將 dependency 當成執行 gate"],
             )
+            audit = json.loads((Path(tmpdir) / "activity.jsonl").read_text(encoding="utf-8"))
+
+        self.assertEqual(audit["type"], "dependency_update")
+        self.assertEqual(audit["new_dependencies"], [upstream["id"]])
 
         updated_task = state["tasks"][0]
         updated_map = {updated_task["id"]: updated_task, upstream["id"]: upstream}
