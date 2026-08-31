@@ -20,6 +20,7 @@ own suite):
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -39,11 +40,32 @@ AUDIENCE = "oday-plus-api"
 KEY = SigningKey(kid="k1", algorithm="HS256", secret=b"api-wiring-secret")
 
 
+# Contract §4.4: roles and scope for the service issuer class (and its legacy
+# ODP_AUTH_ISSUER alias, §8.4) come from ODP_AUTH_PRINCIPAL_MAP, never from the
+# token's own claims, so every subject these tests authenticate must be
+# declared here (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+PRINCIPAL_MAP = {
+    "user-42": {
+        "roles": [Role.OPERATIONS_MANAGER.value],
+        "scope": {"tenant_id": "tenant-a"},
+    },
+    "auditor-42": {
+        "roles": [Role.AUDITOR.value],
+        "scope": {"tenant_id": "tenant-a"},
+    },
+    "expansion-42": {
+        "roles": [Role.EXPANSION_USER.value],
+        "scope": {"tenant_id": "tenant-a"},
+    },
+}
+
+
 def _config(**overrides) -> AuthBoundaryConfig:
     base = {
         "issuer": ISSUER,
         "audiences": frozenset({AUDIENCE}),
         "signing_keys": {KEY.kid: KEY},
+        "principal_mappings": PRINCIPAL_MAP,
     }
     base.update(overrides)
     return AuthBoundaryConfig(**base)
@@ -105,13 +127,29 @@ def _assert_401(exc_info, expected_reason: AuthFailureReason) -> None:
 
 
 def test_valid_bearer_token_yields_authenticated_principal():
-    token = _token(roles=[Role.OPERATIONS_MANAGER.value], tenant_id="tenant-a")
+    # The token also self-asserts platform_admin / another tenant; the
+    # declared mapping must win (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+    token = _token(roles=[Role.PLATFORM_ADMIN.value], tenant_id="attacker-tenant")
     principal = deps.principal_from_headers(_bearer(token), boundary=_boundary())
 
     assert principal.authenticated is True
     assert principal.subject_id == "user-42"
-    assert principal.has_role(Role.OPERATIONS_MANAGER)
+    assert principal.roles == frozenset({Role.OPERATIONS_MANAGER})
     assert principal.scope.tenant_id == "tenant-a"
+
+
+def test_undeclared_subject_is_401():
+    """A validly signed token for an undeclared subject fails closed.
+
+    Regression for ODP-WEB-LOCAL-AUTH-API-TRUST-001: it used to authenticate
+    and carry its own `roles`/`tenant_id` into the request.
+    """
+    token = _token(
+        sub="attacker", roles=[Role.PLATFORM_ADMIN.value], tenant_id="attacker-tenant"
+    )
+    with pytest.raises(_UNAUTH_EXC) as exc_info:
+        deps.principal_from_headers(_bearer(token), boundary=_boundary())
+    _assert_401(exc_info, AuthFailureReason.UNKNOWN_SERVICE)
 
 
 def test_verified_subject_role_binding_grants_only_allowlisted_subject():
@@ -127,11 +165,16 @@ def test_verified_subject_role_binding_grants_only_allowlisted_subject():
     bound = deps.principal_from_headers(
         _bearer(_token(sub="smoke-service-account-id")), boundary=boundary
     )
-    unbound = deps.principal_from_headers(
-        _bearer(_token(sub="different-service-account-id")), boundary=boundary
-    )
     assert bound.has_role(Role.OPERATIONS_MANAGER)
-    assert not unbound.roles
+
+    # A subject that is in neither the role bindings nor the principal map has
+    # no authoritative role source, so it is rejected outright rather than
+    # authenticated with zero roles (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+    with pytest.raises(_UNAUTH_EXC) as exc_info:
+        deps.principal_from_headers(
+            _bearer(_token(sub="different-service-account-id")), boundary=boundary
+        )
+    _assert_401(exc_info, AuthFailureReason.UNKNOWN_SERVICE)
 
 
 def test_expired_token_is_401():
@@ -273,6 +316,10 @@ def test_default_boundary_built_from_env(monkeypatch):
     monkeypatch.setenv("ODP_AUTH_ISSUER", ISSUER)
     monkeypatch.setenv("ODP_AUTH_AUDIENCES", AUDIENCE)
     monkeypatch.setenv("ODP_AUTH_HS256_KEYS", "k1:api-wiring-secret")
+    monkeypatch.setenv(
+        "ODP_AUTH_PRINCIPAL_MAP",
+        json.dumps({"user-42": {"roles": [Role.OPERATIONS_MANAGER.value]}}),
+    )
     deps.reset_default_boundary()
     try:
         boundary = deps.default_boundary()
@@ -289,7 +336,7 @@ def test_default_boundary_built_from_env(monkeypatch):
 
 
 def test_rbac_still_denies_verified_but_underprivileged_principal():
-    token = _token(roles=[Role.AUDITOR.value])
+    token = _token(sub="auditor-42", roles=[Role.AUDITOR.value])
     principal = deps.principal_from_headers(_bearer(token), boundary=_boundary())
     # Auditor cannot approve a pricing action -> RBAC would 403.
     assert rbac_allows(principal, "priceops", Action.APPROVE) is False
@@ -328,9 +375,22 @@ def test_route_distinguishes_401_403_200():
     assert client.get("/guarded").status_code == 401
 
     # Verified token but role lacks heatzone:view -> 403 authorization.
-    forbidden = client.get("/guarded", headers=_bearer(_token(roles=[Role.AUDITOR.value])))
+    forbidden = client.get(
+        "/guarded",
+        headers=_bearer(_token(sub="auditor-42", roles=[Role.AUDITOR.value])),
+    )
     assert forbidden.status_code == 403
 
     # Verified token with the granting role -> 200.
-    ok = client.get("/guarded", headers=_bearer(_token(roles=[Role.EXPANSION_USER.value])))
+    ok = client.get(
+        "/guarded",
+        headers=_bearer(_token(sub="expansion-42", roles=[Role.EXPANSION_USER.value])),
+    )
     assert ok.status_code == 200
+
+    # An undeclared subject is an authentication failure (401), not a 403.
+    undeclared = client.get(
+        "/guarded",
+        headers=_bearer(_token(sub="attacker", roles=[Role.EXPANSION_USER.value])),
+    )
+    assert undeclared.status_code == 401

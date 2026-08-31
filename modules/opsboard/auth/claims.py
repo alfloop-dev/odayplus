@@ -1,18 +1,28 @@
-"""Map verified OIDC claims onto a canonical :class:`shared.auth.Principal`.
+"""Build a canonical :class:`shared.auth.Principal` for a verified token.
 
 The boundary calls this only *after* signature + issuer/audience/expiry
-validation, so the claims are trusted here. Unknown role strings are dropped
-(never trusted), mirroring ``principal_from_headers``' conservative parsing.
+validation. Even then, the token's claims are **not** authorization facts:
+per contract §4.4 the caller must supply an authoritative
+``principal_mapping`` (from ``ODP_AUTH_PRINCIPAL_MAP``), and roles/scope are
+read from that mapping alone. The claims contribute only identity and
+descriptive attributes (``sub``, ``iss``, ``email``).
 
-Recognised claims (namespaced under a configurable prefix, default
-``odp``, plus bare fallbacks):
+This is deliberately not optional. An earlier version fell back to reading
+``roles``/``tenant_id``/scope axes straight off the token whenever no mapping
+was supplied, which let a validly signed token from the service issuer
+self-assign ``platform_admin`` and an arbitrary tenant
+(ODP-WEB-LOCAL-AUTH-API-TRUST-001).
 
-- ``sub``            -> subject id (required by the caller)
+Mapping keys (also accepted nested under a ``scope`` dict):
+
 - ``roles``          -> list[str] of canonical role ids
 - ``tenant_id``      -> home tenant for isolation
 - ``brand_ids`` / ``region_ids`` / ``store_ids`` / ``assigned_area_ids`` /
   ``heat_zone_ids`` / ``modules`` -> scope axes
 - ``clearance``      -> data-classification name (default CONFIDENTIAL)
+
+Unknown role strings are dropped (never trusted), mirroring
+``principal_from_headers``' conservative parsing.
 """
 
 from __future__ import annotations
@@ -52,31 +62,28 @@ def _parse_clearance(value: Any) -> DataClassification:
         return DataClassification.CONFIDENTIAL
 
 
-def _lookup(claims: Mapping[str, Any], key: str, prefix: str) -> Any:
-    """Prefer a namespaced claim (``{prefix}/{key}``) then a bare ``key``."""
-
-    namespaced = f"{prefix}/{key}"
-    if namespaced in claims:
-        return claims[namespaced]
-    return claims.get(key)
-
-
 def principal_from_claims(
     claims: Mapping[str, Any],
     *,
     subject: str,
-    claim_prefix: str = "odp",
-    principal_mapping: Mapping[str, Any] | None = None,
+    principal_mapping: Mapping[str, Any],
 ) -> Principal:
-    """Build an authenticated :class:`Principal` from verified ``claims``."""
+    """Build an authenticated :class:`Principal` for a verified token.
 
-    mapping = principal_mapping or {}
-    mapping_is_authoritative = principal_mapping is not None
+    ``principal_mapping`` is required and is the sole source of roles and
+    scope. Pass an empty mapping for a declared identity that is granted
+    nothing; callers must reject undeclared subjects before getting here.
+    """
+
+    mapping = principal_mapping
 
     def value(key: str) -> Any:
-        return mapping.get(key) if mapping_is_authoritative else _lookup(
-            claims, key, claim_prefix
-        )
+        if key in mapping:
+            return mapping[key]
+        scope_dict = mapping.get("scope")
+        if isinstance(scope_dict, dict) and key in scope_dict:
+            return scope_dict[key]
+        return None
 
     scope = Scope(
         tenant_id=(value("tenant_id") or None),

@@ -570,11 +570,21 @@ def test_live_franchisee_routes_enforce_verified_store_scope_and_audit_denials(
         }
         assert {event.metadata["policy_id"] for event in denials} == {"scope.store"}
 
-        missing_scope_denials = bundle.audit_log.list_events(
+        missing_scope_events = bundle.audit_log.list_events(
             correlation_id="corr-franchisee-missing-store-scope"
         )
+        # Two audit events: the type-level RBAC guard (require_permission)
+        # emits an allow before the object-level store scope check
+        # (authorize_franchisee_store) emits a deny.
+        assert len(missing_scope_events) == 2
+        missing_scope_allows = [
+            e for e in missing_scope_events if e.outcome == "allow"
+        ]
+        missing_scope_denials = [
+            e for e in missing_scope_events if e.outcome == "deny"
+        ]
+        assert len(missing_scope_allows) == 1
         assert len(missing_scope_denials) == 1
-        assert missing_scope_denials[0].outcome == "deny"
         assert missing_scope_denials[0].metadata["policy_id"] == (
             "franchisee_isolation"
         )

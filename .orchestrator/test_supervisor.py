@@ -1950,6 +1950,137 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "a" * 40,
         )
 
+    def test_review_dispatch_blocks_when_submitted_head_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            task_id = "ODP-PLAN-REVIEW-MISSING-BRANCH-001"
+            branch = f"task/{task_id}"
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="review exact task head",
+                task_id=task_id,
+                reason="review_ready_dispatch",
+                metadata={
+                    "task": {
+                        "id": task_id,
+                        "status": "review",
+                        "branch": branch,
+                        "review_submission": {
+                            "remote_sha": "b" * 40,
+                            "pr_number": 42,
+                        },
+                    }
+                },
+            )
+            state: dict[str, object] = {}
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_git_ref_exists", return_value=False),
+                mock.patch.object(supervisor, "_git_commit_oid", return_value=None),
+                mock.patch.object(
+                    supervisor,
+                    "_create_worker_worktree",
+                    return_value=(True, None),
+                ) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-review-missing-branch",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("submitted review head is unavailable locally", message or "")
+        create_worktree.assert_not_called()
+        self.assertEqual(
+            state["worker_worktree_lease_blocks"]["odp_plan_review_missing_branch_001"]["refresh_status"],
+            "review_head_unavailable",
+        )
+
+    def test_review_dispatch_creates_missing_branch_at_submitted_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            task_id = "ODP-PLAN-REVIEW-CREATE-BRANCH-001"
+            review_head = "b" * 40
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="review exact task head",
+                task_id=task_id,
+                reason="review_ready_dispatch",
+            )
+            request.metadata["task"] = {
+                "id": task_id,
+                "status": "review",
+                "review_submission": {"remote_sha": review_head},
+            }
+            state: dict[str, object] = {}
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_git_ref_exists", return_value=False),
+                mock.patch.object(supervisor, "_git_commit_oid", return_value=review_head),
+                mock.patch.object(
+                    supervisor, "_create_worker_worktree", return_value=(True, None)
+                ) as create_worktree,
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(True, f"review_head_pinned_at_{review_head[:12]}"),
+                ) as refresh_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-review-create-branch",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon" / "odp-plan-review-create-branch-001"
+        self.assertTrue(ok, message)
+        self.assertIsNone(message)
+        create_worktree.assert_called_once_with(
+            repo_root.resolve(), expected_path, f"task/{task_id}", review_head
+        )
+        self.assertEqual(refresh_worktree.call_args.kwargs["required_head"], review_head)
+        self.assertEqual(request.metadata["base_relation"], "review_head_pinned")
 
     def test_prepare_worker_workspace_materializes_task_brief_into_isolated_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -8910,6 +9041,149 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertEqual(kwargs["new_status"], "todo")
         self.assertIn("Task returned to todo until Codex starts a fresh run.", kwargs["message"])
+
+
+class HumanContinuationApprovalSupervisorTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "schema": {"tasks_path": "tasks"},
+            "paths": {
+                "status_file": "ai-status.json",
+                "activity_log": "ai-activity-log.jsonl",
+            },
+        }
+
+    @staticmethod
+    def _approval(**updates: Any) -> dict[str, Any]:
+        approval: dict[str, Any] = {
+            "approval_id": "apr-continuation-1",
+            "approval_type": "human_ops_continuation",
+            "status": "issued",
+            "task_id": "ODP-CONTINUATION-001",
+            "task_scope": "ODP-CONTINUATION-001",
+            "scope": {"task_id": "ODP-CONTINUATION-001"},
+            "reason": "Human reviewed the churn evidence and authorized one continuation.",
+            "issued_by": "Human/Ops",
+            "issued_at": "2026-08-30T00:00:00Z",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "nonce": "nonce-supervisor-1",
+            "consumed_at": None,
+            "consumed_by": None,
+            "consumption_reason": None,
+        }
+        approval.update(updates)
+        return approval
+
+    def _task(self, approval: dict[str, Any] | None = None, **updates: Any) -> dict[str, Any]:
+        task: dict[str, Any] = {
+            "id": "ODP-CONTINUATION-001",
+            "owner": "Codex2",
+            "reviewer": "Claude2",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T00:00:00Z",
+            "next": "Escalated to Human/Ops after repeated review churn.",
+        }
+        if approval is not None:
+            task["human_continuation_approval"] = approval
+        task.update(updates)
+        return task
+
+    def test_consumes_valid_approval_once_and_returns_task_to_todo(self) -> None:
+        status = {"tasks": [self._task(self._approval())], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.consume_human_continuation_approvals(self.config, {})
+
+        self.assertTrue(changed)
+        task = status["tasks"][0]
+        self.assertEqual(task["status"], "todo")
+        self.assertNotIn("waiting_for", task)
+        self.assertNotIn("human_continuation_approval", task)
+        consumed = task["human_continuation_approval_history"][-1]
+        self.assertEqual(consumed["status"], "consumed")
+        self.assertEqual(consumed["consumed_by"], "Orchestrator")
+        self.assertEqual(task["review_churn_reassigned_at_count"], 6)
+        commit.assert_called_once_with(self.config, status)
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"],
+            "human_continuation_approval_consumed",
+        )
+
+        with mock.patch.object(supervisor, "load_status", return_value=status):
+            self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
+
+    def test_expired_scope_mismatch_and_replay_fail_closed(self) -> None:
+        expired_task = self._task(self._approval(expires_at="2020-01-01T00:00:00Z"))
+        expired_status = {"tasks": [expired_task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=expired_status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, {}))
+        self.assertEqual(expired_task["status"], "blocked")
+        self.assertEqual(expired_task["human_continuation_approval_history"][-1]["status"], "expired")
+        commit.assert_called_once()
+
+        cases = [
+            self._approval(task_id="OTHER-TASK", task_scope="OTHER-TASK", scope={"task_id": "OTHER-TASK"}),
+            self._approval(issued_by="Codex2"),
+            self._approval(nonce="nonce-used"),
+        ]
+        for approval in cases:
+            with self.subTest(approval=approval):
+                task = self._task(approval)
+                if approval["nonce"] == "nonce-used":
+                    task["human_continuation_approval_history"] = [
+                        self._approval(approval_id="apr-old", nonce="nonce-used", status="consumed")
+                    ]
+                status = {"tasks": [task], "blockers": []}
+                with (
+                    mock.patch.object(supervisor, "load_status", return_value=status),
+                    mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+                ):
+                    self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
+                self.assertEqual(task["status"], "blocked")
+                commit.assert_not_called()
+
+    def test_independent_production_gate_is_not_released_by_continuation_approval(self) -> None:
+        task = self._task(
+            self._approval(),
+            next="Review churn is also blocked pending production deployment approval.",
+        )
+        status = {"tasks": [task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition") as commit,
+        ):
+            self.assertFalse(supervisor.consume_human_continuation_approvals(self.config, {}))
+        self.assertEqual(task["status"], "blocked")
+        commit.assert_not_called()
+
+    def test_production_deployment_title_does_not_block_review_churn_consumption(self) -> None:
+        task = self._task(
+            self._approval(),
+            title="Production deployment continuation",
+            summary="Deployment recovery for the production lane",
+            summary_zh="production deployment 修復",
+            blocker="Review churn only after repeated reviewer reopenings.",
+        )
+        status = {"tasks": [task], "blockers": []}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.consume_human_continuation_approvals(self.config, {}))
+
+        self.assertEqual(task["status"], "todo")
+        self.assertEqual(task["human_continuation_approval_history"][-1]["status"], "consumed")
 
 
 class AutomaticRecoveryTests(unittest.TestCase):
@@ -17068,6 +17342,80 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
                 )
         self.assertFalse(outcome)
         self.assertEqual(outcome.reason, "preserve_raised")
+
+    def test_preserved_owner_dirt_records_same_owner_continuation(self) -> None:
+        worker = {
+            "run_id": "run-1",
+            "task_id": "T-1",
+            "status": "running",
+            "logical_agent_id": "Claude2",
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": "/tmp/owner-worktree",
+            "workspace_branch": "task/T-1",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        task = {"id": "T-1", "owner": "Claude2", "status": "in_progress"}
+        state = {"workers": {"run-1": worker}}
+        seal = supervisor.WorkerHandoffSeal(False, "owner_dirty", "dirt", "a" * 40, "fingerprint")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "_quarantine_and_preserve_dirty_worktree",
+                    return_value=supervisor.QuarantineOutcome(True, "preserved"),
+                ),
+                mock.patch.object(supervisor, "seal_worker_handoff", return_value=seal),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(
+                    supervisor.preserve_dead_worker_worktree(
+                        self._config(tmpdir), state, worker, task=task
+                    )
+                )
+        record = state["worker_worktrees"]["handoff_blocks"]["T-1"]
+        self.assertEqual(record["owner"], "Claude2")
+        self.assertEqual(record["head_sha"], "a" * 40)
+        self.assertEqual(record["dirt_fingerprint"], "fingerprint")
+
+    def test_owner_continuation_recovery_requires_owner_execution(self) -> None:
+        config = {"schema": {"assignee_field": "owner"}}
+        task = {"id": "T-1", "owner": "Claude2", "status": "in_progress"}
+        worker = {
+            "logical_agent_id": "Claude2",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        self.assertTrue(supervisor._dead_owner_continuation_eligible(config, worker, task))
+        worker["request_snapshot"] = {"reason": "review_ready_dispatch"}
+        self.assertFalse(supervisor._dead_owner_continuation_eligible(config, worker, task))
+        worker["request_snapshot"] = {"reason": "owned_in_progress_dispatch"}
+        worker["logical_agent_id"] = "Codex2"
+        self.assertFalse(supervisor._dead_owner_continuation_eligible(config, worker, task))
+
+    def test_boot_retries_preservation_for_an_unsealed_failed_owner(self) -> None:
+        task = {"id": "T-1", "owner": "Claude2", "status": "in_progress"}
+        worker = {
+            "run_id": "run-1",
+            "task_id": "T-1",
+            "status": "failed",
+            "logical_agent_id": "Claude2",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        state = {"workers": {"run-1": worker}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(tmpdir)
+            with (
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(supervisor, "_dead_owner_continuation_eligible", return_value=True),
+                mock.patch.object(
+                    supervisor,
+                    "preserve_dead_worker_worktree",
+                    return_value=supervisor.QuarantineOutcome(True, "preserved"),
+                ) as preserve,
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+        self.assertTrue(changed)
+        self.assertEqual(preserve.call_args.kwargs["trigger"], "boot_handoff_recovery")
 
     def test_the_orphan_path_preserves_before_the_record_disappears(self) -> None:
         """Ordering, checked at the source.

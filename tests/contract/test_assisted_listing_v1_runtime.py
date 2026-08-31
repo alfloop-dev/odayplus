@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -119,6 +120,22 @@ def test_live_expansion_user_cannot_forge_manager_role(monkeypatch) -> None:
         "ODP_AUTH_HS256_KEYS",
         "intake-key:assisted-intake-live-test-secret",
     )
+    # Contract §4.4: with a live boundary configured, roles and scope come
+    # only from this server-side declaration. Leaving the subject undeclared
+    # fails closed at 401 before any RBAC decision is reached, which would
+    # make the 403 assertion below unreachable and leave the role-forging
+    # path untested (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+    monkeypatch.setenv(
+        "ODP_AUTH_PRINCIPAL_MAP",
+        json.dumps(
+            {
+                HEADERS["X-Subject-Id"]: {
+                    "roles": ["expansion_user"],
+                    "scope": {"tenant_id": "tenant-a"},
+                }
+            }
+        ),
+    )
     auth_dependencies.reset_default_boundary()
     now = datetime.now(UTC)
     token = encode_compact_jwt(
@@ -128,8 +145,12 @@ def test_live_expansion_user_cannot_forge_manager_role(monkeypatch) -> None:
             "aud": audience,
             "iat": now.timestamp(),
             "exp": (now + timedelta(hours=1)).timestamp(),
-            "tenant_id": "tenant-a",
-            "roles": ["expansion_user"],
+            # Forged authorization claims. The declaration above grants only
+            # expansion_user (-> operator role "expansion-staff"), whereas
+            # site_reviewer would grant "expansion-manager" and let the merge
+            # through. Honouring either claim turns the 403 below into a 2xx.
+            "tenant_id": "tenant-b",
+            "roles": ["site_reviewer"],
         },
         signing_key,
     )

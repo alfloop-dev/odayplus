@@ -585,7 +585,56 @@ def test_api_runtime_auth_env_is_injected_in_every_mode() -> None:
         assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), name
     for name in ("ODP_AUTH_LOCAL_ISSUER", "ODP_AUTH_LOCAL_AUDIENCES"):
         assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), name
-    assert "oidc_enabled" not in block, "API auth env must not be gated on the OIDC mode"
+    assert "oidc_enabled" not in block.split("ODP_AUTH_OIDC")[0].rsplit("\n", 1)[-1], (
+        "Legacy API auth env must not be gated on the OIDC mode"
+    )
+    # True service/OIDC env separation: separated vars are present
+    for name in ("ODP_AUTH_SERVICE_ISSUER", "ODP_AUTH_SERVICE_JWKS_URI", "ODP_AUTH_SERVICE_AUDIENCES"):
+        assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), (
+            f"{name} must be injected unconditionally"
+        )
+    for name in ("ODP_AUTH_OIDC_ISSUER", "ODP_AUTH_OIDC_JWKS_URI", "ODP_AUTH_OIDC_AUDIENCES"):
+        assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), (
+            f"{name} must be present in fixed_runtime_env (gated by value, not by key)"
+        )
+
+
+def test_api_runtime_receives_the_resolved_auth_mode() -> None:
+    """The API is told the mode; it must not infer one from leftover inputs.
+
+    ``modules.opsboard.auth.config.config_from_env`` treats ODP_AUTH_MODE as
+    the authoritative "is the OIDC provider on?" gate. A release that resolved
+    the mode for the Web service and the preflight but never forwarded it to
+    the API left that gate reading an absent variable, so an environment that
+    had switched to password-first kept verifying OIDC tokens against its old
+    issuer (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+    """
+    main_tf = (TERRAFORM_ROOT / "main.tf").read_text(encoding="utf-8")
+    block = _hcl_block(main_tf, "fixed_runtime_env = ")
+    assert re.search(r"^\s*ODP_AUTH_MODE\s*=\s*var\.auth_mode", block, re.MULTILINE)
+
+    deploy_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    api_env_block = deploy_text.partition('python3 - "${API_ENV_FILE}"')[2].partition("PY\n")[0]
+    assert '"ODP_AUTH_MODE"' in api_env_block
+    # The mode is forwarded alone. Both halves of the pair could only reach the
+    # API split by a later edit, and a split pair is a configuration the
+    # boundary refuses rather than resolves.
+    assert '"ODP_AUTH_OIDC_ENABLED"' not in api_env_block
+
+    # True service/OIDC runtime env separation: the deploy script must forward
+    # the separated variables to the API runtime so config_from_env resolves
+    # each issuer path deterministically.
+    for name in (
+        "ODP_AUTH_SERVICE_ISSUER",
+        "ODP_AUTH_SERVICE_JWKS_URI",
+        "ODP_AUTH_SERVICE_AUDIENCES",
+        "ODP_AUTH_OIDC_ISSUER",
+        "ODP_AUTH_OIDC_JWKS_URI",
+        "ODP_AUTH_OIDC_AUDIENCES",
+    ):
+        assert f'"{name}"' in api_env_block, (
+            f"deploy script must forward {name} to the API runtime"
+        )
 
 
 def test_declared_runtime_env_names_match_what_is_injected() -> None:
@@ -707,6 +756,11 @@ def test_documentation_states_the_single_auth_mode_contract() -> None:
     assert "lower-cased before they are compared" in guide
     assert "placeholder token" in guide
     assert "`ODP_WEB_BASE_URL`" in guide
+    # The API boundary became the fourth consumer of the resolved mode
+    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001). A guide that still lists three would
+    # leave an operator believing ODP_AUTH_MODE=local only affects the release.
+    assert "shared/auth/mode.py" in guide
+    assert "`ODP_AUTH_OIDC_ISSUER`" in guide
 
     terraform_readme = (TERRAFORM_ROOT / "README.md").read_text(encoding="utf-8")
     assert "service_auth_issuer" in terraform_readme

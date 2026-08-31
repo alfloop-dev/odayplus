@@ -170,6 +170,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "materialize_worker_context_files",
     "prepare_worker_workspace",
     "prune_orphan_worktrees",
+    "_dead_owner_continuation_eligible",
     "preserve_dead_worker_worktree",
     "WorkerHandoffSeal",
     "seal_worker_handoff",
@@ -3208,6 +3209,24 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     workers = state.setdefault("workers", {})
 
     for run_id, worker in list(workers.items()):
+        if worker.get("status") == "failed":
+            task_id = str(worker.get("task_id") or "")
+            task = task_map.get(task_id)
+            handoff_blocks = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {})
+            if (
+                str((task or {}).get("status") or "").lower() in {"todo", "in_progress"}
+                and task_id not in handoff_blocks
+                and _dead_owner_continuation_eligible(config, worker, task)
+            ):
+                if preserve_dead_worker_worktree(
+                    config,
+                    state,
+                    worker,
+                    task=task,
+                    trigger="boot_handoff_recovery",
+                ):
+                    changed = True
+            continue
         if worker.get("status") not in active_statuses:
             continue
         marker_changed = update_worker_runtime_markers(worker)
@@ -3835,6 +3854,217 @@ def blocked_task_prose_context(task: dict[str, Any]) -> str:
         if token:
             context = context.replace(token, " ")
     return context
+
+
+def _continuation_approval_nonce_reused(
+    status: dict[str, Any],
+    approval: dict[str, Any],
+    *,
+    tasks_path: str,
+) -> bool:
+    """Reject a duplicated nonce even when durable state was hand-edited."""
+    nonce = str(approval.get("nonce") or "").strip()
+    approval_id = str(approval.get("approval_id") or "").strip()
+    if not nonce:
+        return True
+    registry = status.get("human_continuation_approval_nonce_registry")
+    if isinstance(registry, dict):
+        registry_entry = registry.get(nonce)
+        if registry_entry is not None:
+            if not isinstance(registry_entry, dict):
+                return True
+            if (
+                str(registry_entry.get("task_id") or "").strip()
+                != str(approval.get("task_id") or "").strip()
+                or str(registry_entry.get("approval_id") or "").strip() != approval_id
+            ):
+                return True
+    for candidate_task in status.get(tasks_path, []) or []:
+        if not isinstance(candidate_task, dict):
+            continue
+        candidate_records: list[dict[str, Any]] = []
+        current = candidate_task.get("human_continuation_approval")
+        if isinstance(current, dict):
+            candidate_records.append(current)
+        history = candidate_task.get("human_continuation_approval_history")
+        if isinstance(history, list):
+            candidate_records.extend(item for item in history if isinstance(item, dict))
+        for candidate in candidate_records:
+            # The active record being checked is not a replay of itself.  Any
+            # matching record elsewhere, including a matching approval id, is
+            # treated as tampered/replayed state and fails closed.
+            if candidate is approval:
+                continue
+            if str(candidate.get("nonce") or "").strip() == nonce:
+                return True
+            if approval_id and str(candidate.get("approval_id") or "").strip() == approval_id:
+                return True
+    return False
+
+
+def _expire_continuation_approval(task: dict[str, Any], *, now: str) -> dict[str, Any]:
+    approval = task["human_continuation_approval"]
+    expired = dict(approval)
+    expired.update(
+        {
+            "status": "expired",
+            "expired_at": now,
+            "consumed_at": None,
+            "consumed_by": None,
+            "consumption_reason": "approval expired before Supervisor consumption",
+        }
+    )
+    history = task.get("human_continuation_approval_history")
+    history = list(history) if isinstance(history, list) else []
+    history.append(expired)
+    task["human_continuation_approval_history"] = history
+    task.pop("human_continuation_approval", None)
+    return expired
+
+
+def consume_human_continuation_approvals(
+    config: dict[str, Any],
+    state: dict[str, Any],
+) -> bool:
+    """Consume valid Human/Ops approvals before the normal owner dispatch pass.
+
+    This is intentionally the sole Supervisor transition out of the
+    review-churn Human/Ops block.  It never uses generic blocker prose to infer
+    authorization and never resolves credentials, deployment, production, or
+    other independent human gates.
+    """
+    status = load_status(config)
+    schema = config.get("schema", {}) or {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    tasks = status.get(tasks_path, []) or []
+    if not isinstance(tasks, list):
+        return False
+
+    now_dt = datetime.now(UTC)
+    now = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    audit_events: list[tuple[str, dict[str, Any]]] = []
+    changed = False
+
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        approval = task.get("human_continuation_approval")
+        if not isinstance(approval, dict):
+            continue
+
+        if runtime_ai_status.continuation_approval_is_expired(approval, now=now_dt):
+            expired = _expire_continuation_approval(task, now=now)
+            audit_events.append(("expired", expired))
+            changed = True
+            continue
+
+        validation_error = runtime_ai_status.continuation_approval_validation_error(
+            task,
+            approval,
+            now=now_dt,
+        )
+        if validation_error or _continuation_approval_nonce_reused(
+            status,
+            approval,
+            tasks_path=tasks_path,
+        ):
+            # Do not mutate a malformed, unauthorized, or replayed record. The
+            # task remains blocked, so a later cycle cannot turn bad state into
+            # an execution capability.
+            continue
+
+        task_id = str(task.get("id") or "").strip()
+        consumed = dict(approval)
+        consumed.update(
+            {
+                "status": "consumed",
+                "consumed_at": now,
+                "consumed_by": "Orchestrator",
+                "consumption_reason": "review-churn continuation resumed through the owner dispatch path",
+            }
+        )
+        history = task.get("human_continuation_approval_history")
+        history = list(history) if isinstance(history, list) else []
+        history.append(consumed)
+        task["human_continuation_approval_history"] = history
+        task.pop("human_continuation_approval", None)
+
+        try:
+            reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0))
+            reassigned_count = max(
+                0,
+                int(task.get("review_churn_reassigned_at_count", 0) or 0),
+            )
+        except (TypeError, ValueError):
+            reopen_count = 0
+            reassigned_count = 0
+        # The existing review-churn policy uses this checkpoint to avoid
+        # re-escalating the same reopen epoch on every ready-dispatch tick.
+        task["review_churn_reassigned_at_count"] = max(reassigned_count, reopen_count)
+        task["review_churn_continuation_consumed_at"] = now
+        task["review_churn_continuation_consumed_by"] = consumed.get("issued_by")
+        task["status"] = "todo"
+        task.pop("waiting_for", None)
+        task.pop("helper_execution_lease", None)
+        task["last_update"] = now
+        task["next"] = (
+            "Human/Ops continuation approval consumed for review-churn recovery; "
+            "owner returned to the normal dispatch path."
+        )
+
+        # Churn escalation itself does not create a blocker entry. If an older
+        # record did, resolve only an explicitly review-churn blocker; leave any
+        # other Human/Ops blocker untouched so this transition cannot clear a
+        # separate credential/deployment/production gate.
+        for blocker in status.get("blockers", []) or []:
+            if not isinstance(blocker, dict) or blocker.get("task_id") != task_id:
+                continue
+            if str(blocker.get("status") or "").lower() != "open":
+                continue
+            blocker_waiting_for = str(blocker.get("waiting_for") or "").strip().casefold()
+            blocker_context = " ".join(
+                str(blocker.get(key) or "")
+                for key in ("kind", "message", "reason")
+            ).casefold()
+            if blocker_waiting_for in {"human/ops", "human", "ops"} and (
+                blocker.get("kind") == "review_churn" or "review churn" in blocker_context
+            ):
+                blocker["status"] = "resolved"
+                blocker["resolved_at"] = now
+                blocker["resolution_ref"] = f"human_continuation_approval:{consumed['approval_id']}"
+
+        audit_events.append(("consumed", consumed))
+        changed = True
+
+    if not changed:
+        return False
+    if not commit_canonical_task_transition(config, status):
+        return False
+
+    for event_type, approval in audit_events:
+        write_activity_log(
+            config,
+            {
+                "type": f"human_continuation_approval_{event_type}",
+                "task_id": approval.get("task_id"),
+                "approval_id": approval.get("approval_id"),
+                "task_scope": approval.get("task_scope"),
+                "reason": approval.get("reason"),
+                "issued_by": approval.get("issued_by"),
+                "issued_at": approval.get("issued_at"),
+                "expires_at": approval.get("expires_at"),
+                "nonce": approval.get("nonce"),
+                **(
+                    {
+                        "consumed_at": approval.get("consumed_at"),
+                        "consumed_by": approval.get("consumed_by"),
+                    }
+                    if event_type == "consumed"
+                    else {"expired_at": approval.get("expired_at")}
+                ),
+            },
+        )
+    return True
 
 
 def blocked_task_auto_recovery_eligible(
@@ -4691,6 +4921,10 @@ def run_once(
                     quiet=SUPERVISOR_LOG_QUIET,
                 )
             else:
+                # Consume the approval immediately before the existing ready
+                # dispatcher. The dispatcher then re-reads canonical status and
+                # remains the only path that decides whether execution starts.
+                changed = consume_human_continuation_approvals(config, state) or changed
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             # An in-memory cycle cache fixes every repository base to exactly

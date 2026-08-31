@@ -42,11 +42,27 @@ def key() -> SigningKey:
 
 @pytest.fixture
 def config(key: SigningKey) -> AuthBoundaryConfig:
+    # Contract §4.4: roles and scope for the service issuer class (and its
+    # legacy ODP_AUTH_ISSUER alias, §8.4) come from ODP_AUTH_PRINCIPAL_MAP,
+    # never from the token's own claims, so `user-1` must be declared here to
+    # authenticate at all (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
     return AuthBoundaryConfig(
         issuer=ISSUER,
         audiences=frozenset({AUDIENCE}),
         signing_keys={key.kid: key},
         leeway_seconds=60,
+        principal_mappings={
+            "user-1": {
+                "roles": ["operations_manager"],
+                "scope": {
+                    "tenant_id": "tenant-a",
+                    "brand_ids": ["brand-x"],
+                    "region_ids": ["north"],
+                    "assigned_area_ids": ["area-7"],
+                    "heat_zone_ids": ["heat-zone-9"],
+                },
+            }
+        },
     )
 
 
@@ -75,7 +91,7 @@ def _boundary(config: AuthBoundaryConfig, **kw: object) -> AuthenticationBoundar
 # --- happy path -------------------------------------------------------------
 
 
-def test_valid_token_authenticates_and_maps_claims(config, key):
+def test_valid_token_authenticates_and_maps_declared_principal(config, key):
     boundary = _boundary(config)
     token = encode_compact_jwt(_claims(), key)
 
@@ -91,6 +107,41 @@ def test_valid_token_authenticates_and_maps_claims(config, key):
     assert outcome.principal.scope.region_ids == frozenset({"north"})
     assert outcome.principal.scope.assigned_area_ids == frozenset({"area-7"})
     assert outcome.principal.scope.heat_zone_ids == frozenset({"heat-zone-9"})
+
+
+def test_declared_principal_overrides_escalated_token_claims(config, key):
+    """The declared mapping is the only role/scope source, even when the
+    token asks for more (ODP-WEB-LOCAL-AUTH-API-TRUST-001)."""
+    boundary = _boundary(config)
+    token = encode_compact_jwt(
+        _claims(roles=["platform_admin"], tenant_id="attacker-tenant"), key
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is True
+    assert outcome.principal.roles == frozenset({Role.OPERATIONS_MANAGER})
+    assert outcome.principal.tenant_id == "tenant-a"
+
+
+def test_undeclared_subject_fails_closed(config, key):
+    """A validly signed token for an undeclared `sub` is rejected outright.
+
+    Regression for ODP-WEB-LOCAL-AUTH-API-TRUST-001: previously such a token
+    authenticated and kept its self-asserted roles/tenant.
+    """
+    boundary = _boundary(config)
+    token = encode_compact_jwt(
+        _claims(sub="attacker", roles=["platform_admin"], tenant_id="attacker-tenant"),
+        key,
+    )
+
+    outcome = boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+    assert outcome.principal.roles == frozenset()
+    assert outcome.principal.tenant_id is None
 
 
 def test_verified_email_mapping_supplies_platform_authorization(config, key):
@@ -140,7 +191,11 @@ def test_unknown_verified_principal_cannot_self_assign_authorization(config, key
         now=NOW,
     )
 
-    assert outcome.authenticated is True
+    # ODP-WEB-LOCAL-AUTH-API-TRUST-001 tightened this from "authenticated
+    # with no privileges" to a fail-closed denial: an undeclared subject has
+    # no authoritative role/scope source at all (contract §4.4).
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
     assert outcome.principal.roles == frozenset()
     assert outcome.principal.tenant_id is None
 

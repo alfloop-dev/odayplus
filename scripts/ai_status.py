@@ -6,6 +6,7 @@ import gzip
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -490,6 +491,220 @@ def parse_timestamp(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed
+
+
+CONTINUATION_APPROVAL_MAX_REASON_LENGTH = 2000
+CONTINUATION_APPROVAL_MAX_NONCE_LENGTH = 128
+
+
+def _continuation_approval_nonce_is_valid(nonce: Any) -> bool:
+    value = str(nonce or "").strip()
+    return bool(value) and len(value) <= CONTINUATION_APPROVAL_MAX_NONCE_LENGTH and not any(
+        character.isspace() or ord(character) < 32 for character in value
+    )
+
+
+def _continuation_nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def blocked_task_prose_context(task: dict[str, Any]) -> str:
+    """Return blocker prose without task/dependency identifiers.
+
+    Titles and summaries describe the work, not why a blocked task is waiting.
+    Continuation eligibility must therefore inspect only the same blocker-facing
+    fields used by Supervisor, while removing identifiers whose tokens can look
+    like hard-gate markers (for example ``...-DATASET-...``).
+    """
+    identifiers = [str(task.get("id") or "")]
+    identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
+    context = " ".join(
+        str(task.get(key) or "")
+        for key in (
+            "next",
+            "waiting_for",
+            "blocker",
+            "blocked_by",
+            "failure_reason",
+            "last_failure_reason",
+            "push_status",
+        )
+    ).casefold()
+    for identifier in identifiers:
+        token = identifier.strip().casefold()
+        if token:
+            context = context.replace(token, " ")
+    return context
+
+
+def continuation_approval_gate_error(task: dict[str, Any]) -> str | None:
+    """Return why a task is not eligible for Human/Ops continuation.
+
+    Continuation approval is deliberately narrower than a generic human gate:
+    it is the release valve for review-churn escalation only.  Credentials,
+    deployment, production, external-data, and other human gates remain
+    independently fail-closed even when an operator is able to issue an
+    approval for some other task.
+    """
+    if not isinstance(task, dict):
+        return "task record is not an object"
+    if str(task.get("status") or "").strip().lower() != "blocked":
+        return "task is not blocked"
+    waiting_for = str(task.get("waiting_for") or "").strip().casefold()
+    if waiting_for not in {"human/ops", "human", "ops"}:
+        return "task is not waiting for Human/Ops"
+    if task.get("task_class") == "human_gate" or bool(task.get("non_dispatchable")):
+        return "task is a separate human or non-dispatchable gate"
+    if task.get("requires_human_approval") is True or task.get("human_required_roles"):
+        return "task carries an independent human approval gate"
+    for gate_field in (
+        "credentials_gate",
+        "credential_gate",
+        "deployment_gate",
+        "production_gate",
+        "external_data_gate",
+        "human_gate",
+    ):
+        if task.get(gate_field):
+            return f"task carries an independent {gate_field}"
+    gate_status = str(task.get("gate_status") or "").strip().casefold()
+    if gate_status.startswith("pending_human"):
+        return "task carries an independent human gate status"
+
+    blocker_context = blocked_task_prose_context(task)
+    try:
+        churn_reassigned_count = max(0, int(task.get("review_churn_reassigned_at_count", 0) or 0))
+    except (TypeError, ValueError):
+        churn_reassigned_count = 0
+    try:
+        churn_escalated_count = max(
+            0, int(task.get("review_churn_escalated_at_count", 0) or 0)
+        )
+    except (TypeError, ValueError):
+        churn_escalated_count = 0
+    if not (
+        task.get("review_churn_escalated_at")
+        or churn_escalated_count
+        or churn_reassigned_count
+        or "review churn" in blocker_context
+    ):
+        return "task was not escalated by review churn"
+
+    hard_gate_markers = (
+        "credential",
+        "secret",
+        "password",
+        "token",
+        "deploy",
+        "deployment",
+        "production",
+        "prod ",
+        "live-e2e",
+        "live rollout",
+        "dataset",
+        "attestation",
+        "external-data",
+        "external data",
+        "external authorization",
+        "approval required",
+        "approval gate",
+        "authorization",
+        "manual approval",
+        "human gate",
+        "operator intervention",
+        "merge queue",
+        "sign-off",
+        "signoff",
+    )
+    if any(marker in blocker_context for marker in hard_gate_markers):
+        return "task carries an independent credentials/deployment/production or human gate"
+    return None
+
+
+def continuation_approval_is_expired(
+    approval: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not isinstance(approval, dict) or str(approval.get("status") or "").lower() != "issued":
+        return False
+    expires_at = parse_timestamp(approval.get("expires_at"))
+    if expires_at is None:
+        return False
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return expires_at.astimezone(UTC) <= current.astimezone(UTC)
+
+
+def continuation_approval_validation_error(
+    task: dict[str, Any],
+    approval: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Validate the immutable facts Supervisor needs before consuming approval."""
+    gate_error = continuation_approval_gate_error(task)
+    if gate_error:
+        return gate_error
+    if not isinstance(approval, dict):
+        return "approval record is not an object"
+    if str(approval.get("status") or "").strip().lower() != "issued":
+        return "approval is not in issued state"
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return "task has no id"
+    if str(approval.get("task_id") or "").strip() != task_id:
+        return "approval task scope does not match the task"
+    if str(approval.get("task_scope") or "").strip() != task_id:
+        return "approval task_scope does not match the task"
+    scope = approval.get("scope")
+    scoped_task_id = scope.get("task_id") if isinstance(scope, dict) else scope
+    if str(scoped_task_id or "").strip() != task_id:
+        return "approval scope does not match the task"
+    for epoch_field in ("review_reopen_count", "review_churn_escalated_at_count"):
+        if epoch_field not in approval:
+            continue
+        try:
+            approval_epoch = max(0, int(approval.get(epoch_field) or 0))
+            task_epoch = max(0, int(task.get(epoch_field) or 0))
+        except (TypeError, ValueError):
+            return f"approval {epoch_field} is malformed"
+        if approval_epoch != task_epoch:
+            return f"approval {epoch_field} does not match the task"
+    if "review_churn_escalated_at" in approval and approval.get("review_churn_escalated_at") != task.get(
+        "review_churn_escalated_at"
+    ):
+        return "approval review-churn escalation epoch does not match the task"
+    if canonical_agent_name(approval.get("issued_by")) != "Human/Ops":
+        return "approval issuer is not Human/Ops"
+    if not str(approval.get("approval_id") or "").strip():
+        return "approval id is missing"
+    if not _continuation_approval_nonce_is_valid(approval.get("nonce")):
+        return "approval nonce is missing or malformed"
+    reason = str(approval.get("reason") or "").strip()
+    if not reason or len(reason) > CONTINUATION_APPROVAL_MAX_REASON_LENGTH:
+        return "approval reason is missing or too long"
+
+    issued_at = parse_timestamp(approval.get("issued_at"))
+    expires_at = parse_timestamp(approval.get("expires_at"))
+    if issued_at is None or expires_at is None:
+        return "approval issued_at and expires_at must be timezone-aware timestamps"
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    current = current.astimezone(UTC)
+    if issued_at.astimezone(UTC) > current:
+        return "approval was issued in the future"
+    if expires_at.astimezone(UTC) <= issued_at.astimezone(UTC):
+        return "approval expires before or at issue time"
+    if expires_at.astimezone(UTC) <= current:
+        return "approval has expired"
+    return None
 
 
 def format_display_timestamp(value: Any) -> str:
@@ -5580,6 +5795,133 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     append_log({"ts": timestamp, "agent": actor, "type": "progress", "task_id": task_id, "message": message})
 
 
+def _continuation_approval_nonce_in_use(state: dict[str, Any], nonce: str) -> bool:
+    registry = state.get("human_continuation_approval_nonce_registry")
+    if isinstance(registry, dict) and nonce in registry:
+        return True
+    for candidate_task in state.get("tasks", []) or []:
+        if not isinstance(candidate_task, dict):
+            continue
+        records = []
+        current = candidate_task.get("human_continuation_approval")
+        if isinstance(current, dict):
+            records.append(current)
+        history = candidate_task.get("human_continuation_approval_history")
+        if isinstance(history, list):
+            records.extend(item for item in history if isinstance(item, dict))
+        if any(str(item.get("nonce") or "").strip() == nonce for item in records):
+            return True
+    return False
+
+
+def command_approve_continuation(state: dict[str, Any], args: list[str]) -> None:
+    """Issue the only approval that can release a review-churn task.
+
+    Usage: approve_continuation <task-id> <reason> <expires-at> [nonce]
+
+    The caller must be the declared Human/Ops actor.  A nonce is generated when
+    omitted, but it is always persisted and consumed exactly once by the
+    Supervisor; it is never a capability inferred from task prose or status.
+    """
+    if len(args) < 3 or len(args) > 4:
+        raise SystemExit(
+            "Usage: approve_continuation <task-id> <reason> <expires-at> [nonce]"
+        )
+    actor = current_actor_validated()
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops can issue a continuation approval")
+
+    task_id, reason, expires_value = args[:3]
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    gate_error = continuation_approval_gate_error(task)
+    if gate_error:
+        raise SystemExit(
+            f"Cannot issue continuation approval for {task_id}: {gate_error}. No approval was recorded."
+        )
+
+    reason = str(reason or "").strip()
+    if not reason or len(reason) > CONTINUATION_APPROVAL_MAX_REASON_LENGTH:
+        raise SystemExit(
+            f"Continuation approval reason must be 1-{CONTINUATION_APPROVAL_MAX_REASON_LENGTH} characters"
+        )
+    expires_at = parse_timestamp(expires_value)
+    now = datetime.now(UTC)
+    if expires_at is None or expires_at.astimezone(UTC) <= now:
+        raise SystemExit(
+            "Continuation approval expires-at must be a future timezone-aware timestamp"
+        )
+
+    existing = task.get("human_continuation_approval")
+    if isinstance(existing, dict) and str(existing.get("status") or "").lower() not in {
+        "consumed",
+        "expired",
+        "rejected",
+    }:
+        raise SystemExit(
+            f"Task {task_id} already has an active continuation approval; consume or expire it before issuing another"
+        )
+
+    nonce = str(args[3]).strip() if len(args) == 4 else ""
+    if nonce and not _continuation_approval_nonce_is_valid(nonce):
+        raise SystemExit("Continuation approval nonce is missing or malformed")
+    if not nonce:
+        for _ in range(5):
+            candidate = secrets.token_urlsafe(24)
+            if not _continuation_approval_nonce_in_use(state, candidate):
+                nonce = candidate
+                break
+        if not nonce:
+            raise SystemExit("Unable to allocate a unique continuation approval nonce")
+    elif _continuation_approval_nonce_in_use(state, nonce):
+        raise SystemExit("Continuation approval nonce has already been used; choose a new nonce")
+
+    timestamp = iso_now()
+    approval = {
+        "approval_id": uuid.uuid4().hex,
+        "approval_type": "human_ops_continuation",
+        "status": "issued",
+        "task_id": task_id,
+        "task_scope": task_id,
+        "scope": {"task_id": task_id},
+        "reason": reason,
+        "issued_by": actor,
+        "issued_at": timestamp,
+        "expires_at": expires_at.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "nonce": nonce,
+        "review_reopen_count": _continuation_nonnegative_int(task.get("review_reopen_count")),
+        "review_churn_escalated_at_count": _continuation_nonnegative_int(
+            task.get("review_churn_escalated_at_count")
+        ),
+        "consumed_at": None,
+        "consumed_by": None,
+        "consumption_reason": None,
+    }
+    state.setdefault("human_continuation_approval_nonce_registry", {})[nonce] = {
+        "task_id": task_id,
+        "approval_id": approval["approval_id"],
+        "issued_at": timestamp,
+    }
+    task["human_continuation_approval"] = approval
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "human_continuation_approval_issued",
+            "task_id": task_id,
+            "approval_id": approval["approval_id"],
+            "task_scope": task_id,
+            "reason": reason,
+            "issued_by": actor,
+            "issued_at": timestamp,
+            "expires_at": approval["expires_at"],
+            "nonce": nonce,
+        }
+    )
+    print(json.dumps(approval, ensure_ascii=False))
+
+
 def command_note(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: note <task-id> <message>")
@@ -7166,6 +7508,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
                 "re-review",
                 "restore_approved",
                 "restore_approved_head",
+                "approve_continuation",
             }
         )
         else None
@@ -7205,6 +7548,7 @@ MUTATING_COMMANDS = {
     "retarget_branch": command_retarget_branch,
     "supersede": command_supersede,
     "approve": command_approve,
+    "approve_continuation": command_approve_continuation,
     "archive_migrate": command_archive_migrate,
     "sync": command_sync,
     "wave": command_wave,
