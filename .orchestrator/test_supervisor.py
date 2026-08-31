@@ -1950,6 +1950,137 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "a" * 40,
         )
 
+    def test_review_dispatch_blocks_when_submitted_head_is_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            task_id = "ODP-PLAN-REVIEW-MISSING-BRANCH-001"
+            branch = f"task/{task_id}"
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="review exact task head",
+                task_id=task_id,
+                reason="review_ready_dispatch",
+                metadata={
+                    "task": {
+                        "id": task_id,
+                        "status": "review",
+                        "branch": branch,
+                        "review_submission": {
+                            "remote_sha": "b" * 40,
+                            "pr_number": 42,
+                        },
+                    }
+                },
+            )
+            state: dict[str, object] = {}
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_git_ref_exists", return_value=False),
+                mock.patch.object(supervisor, "_git_commit_oid", return_value=None),
+                mock.patch.object(
+                    supervisor,
+                    "_create_worker_worktree",
+                    return_value=(True, None),
+                ) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-review-missing-branch",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("submitted review head is unavailable locally", message or "")
+        create_worktree.assert_not_called()
+        self.assertEqual(
+            state["worker_worktree_lease_blocks"]["odp_plan_review_missing_branch_001"]["refresh_status"],
+            "review_head_unavailable",
+        )
+
+    def test_review_dispatch_creates_missing_branch_at_submitted_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            task_id = "ODP-PLAN-REVIEW-CREATE-BRANCH-001"
+            review_head = "b" * 40
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="review exact task head",
+                task_id=task_id,
+                reason="review_ready_dispatch",
+            )
+            request.metadata["task"] = {
+                "id": task_id,
+                "status": "review",
+                "review_submission": {"remote_sha": review_head},
+            }
+            state: dict[str, object] = {}
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_git_ref_exists", return_value=False),
+                mock.patch.object(supervisor, "_git_commit_oid", return_value=review_head),
+                mock.patch.object(
+                    supervisor, "_create_worker_worktree", return_value=(True, None)
+                ) as create_worktree,
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(True, f"review_head_pinned_at_{review_head[:12]}"),
+                ) as refresh_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-review-create-branch",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon" / "odp-plan-review-create-branch-001"
+        self.assertTrue(ok, message)
+        self.assertIsNone(message)
+        create_worktree.assert_called_once_with(
+            repo_root.resolve(), expected_path, f"task/{task_id}", review_head
+        )
+        self.assertEqual(refresh_worktree.call_args.kwargs["required_head"], review_head)
+        self.assertEqual(request.metadata["base_relation"], "review_head_pinned")
 
     def test_prepare_worker_workspace_materializes_task_brief_into_isolated_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
