@@ -341,9 +341,6 @@ def config_from_env(
         or None
     )
 
-    # Legacy fallback
-    issuer = (source.get("ODP_AUTH_ISSUER") or "").strip() or None
-    jwks_uri = (source.get("ODP_AUTH_JWKS_URI") or "").strip() or None
 
     principal_mapping_value = source.get("ODP_AUTH_PRINCIPAL_MAP")
     principal_mappings = _parse_principal_mappings(principal_mapping_value)
