@@ -7754,12 +7754,6 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
                 "restore_approved_head",
                 "approve_continuation",
                 "set_dependencies",
-                "set-dependencies",
-                "set_dependency",
-                "set-dependency",
-                "update_dependencies",
-                "update-dependencies",
-                "dependency",
             }
         )
         else None
@@ -7783,12 +7777,6 @@ READ_ONLY_COMMANDS = {
 MUTATING_COMMANDS = {
     "assign": command_assign,
     "set_dependencies": command_set_dependencies,
-    "set-dependencies": command_set_dependencies,
-    "set_dependency": command_set_dependencies,
-    "set-dependency": command_set_dependencies,
-    "update_dependencies": command_set_dependencies,
-    "update-dependencies": command_set_dependencies,
-    "dependency": command_set_dependencies,
     "start": command_start,
     "progress": command_progress,
     "note": command_note,

@@ -69,6 +69,19 @@ class DependencyGraphValidationTests(unittest.TestCase):
         self.assertEqual(audit["new_dependencies"], ["GATE-UPSTREAM-001"])
         self.assertEqual(audit["source"], "canonical_cli")
 
+    def test_dependency_mutation_exposes_only_the_canonical_command(self) -> None:
+        self.assertIs(ai_status.MUTATING_COMMANDS["set_dependencies"], ai_status.command_set_dependencies)
+        for alias in (
+            "set-dependencies",
+            "set_dependency",
+            "set-dependency",
+            "update_dependencies",
+            "update-dependencies",
+            "dependency",
+        ):
+            with self.subTest(alias=alias):
+                self.assertNotIn(alias, ai_status.MUTATING_COMMANDS)
+
     def test_invalid_dependency_update_does_not_mutate_state(self) -> None:
         state = {"tasks": [deepcopy(self.target), deepcopy(self.upstream)]}
         before = deepcopy(state)
