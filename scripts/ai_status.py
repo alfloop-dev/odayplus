@@ -3543,8 +3543,26 @@ def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
     return resolver.dependency_satisfied(dep_id)
 
 
+def _dependency_task_id(task_id: Any) -> str:
+    """Canonical dependency identity, matching what actually resolves at runtime.
+
+    ``task_archive.normalize_task_id`` only strips whitespace, so both the live
+    board index and the archive file lookup are case-sensitive.  The validator
+    has to fold ids the same way or it can certify a graph as clean that
+    ``TaskResolver`` is structurally unable to resolve, leaving the task blocked
+    forever with no reported violation.
+    """
+    return str(task_id or "").strip()
+
+
 def _dependency_task_id_key(task_id: Any) -> str:
-    return str(task_id or "").strip().casefold()
+    """Case-insensitive fold, used only to diagnose near-miss ids.
+
+    This must never decide membership: it exists so a dependency that differs
+    from a real task id by case alone is reported as a fixable mismatch instead
+    of falling through to the generic dangling message.
+    """
+    return _dependency_task_id(task_id).casefold()
 
 
 def dependency_graph_errors_for_task(
@@ -3559,36 +3577,47 @@ def dependency_graph_errors_for_task(
     enforce the Control Pack's exactly-one-source rule.  This validator keeps
     that distinction explicit and is shared by the canonical CLI and the
     Supervisor's dispatch gate.
+
+    Identity here is exactly the resolver's identity (whitespace-stripped,
+    case-sensitive).  Reporting on a looser identity than the one that resolves
+    at dispatch time is the worst failure available to this function: the edit
+    is accepted, the graph is certified clean, and the task waits on an edge
+    nothing can ever satisfy.
     """
     if isinstance(active_tasks, dict):
         source_tasks = active_tasks.values()
     else:
         source_tasks = active_tasks
 
-    active_by_key: dict[str, dict[str, Any]] = {}
+    active_by_id: dict[str, dict[str, Any]] = {}
     for candidate in source_tasks:
         if not isinstance(candidate, dict):
             continue
-        task_key = _dependency_task_id_key(candidate.get("id"))
-        if not task_key and isinstance(active_tasks, dict):
+        candidate_id = _dependency_task_id(candidate.get("id"))
+        if not candidate_id and isinstance(active_tasks, dict):
             for source_key, source_task in active_tasks.items():
                 if source_task is candidate:
-                    task_key = _dependency_task_id_key(source_key)
+                    candidate_id = _dependency_task_id(source_key)
                     break
-        if task_key:
-            active_by_key[task_key] = candidate
+        if candidate_id:
+            active_by_id[candidate_id] = candidate
 
-    task_id = str(task.get("id") or "").strip()
-    task_key = _dependency_task_id_key(task_id)
-    if not task_key and isinstance(active_tasks, dict):
+    task_id = _dependency_task_id(task.get("id"))
+    if not task_id and isinstance(active_tasks, dict):
         for source_key, source_task in active_tasks.items():
             if source_task is task or source_task == task:
-                task_id = str(source_key).strip()
-                task_key = _dependency_task_id_key(task_id)
+                task_id = _dependency_task_id(source_key)
                 task = {**task, "id": task_id}
                 break
-    if task_key:
-        active_by_key[task_key] = task
+    if task_id:
+        active_by_id[task_id] = task
+
+    # Diagnostic index only. Membership is decided on the exact id above; this
+    # maps a folded id back to the canonical board ids sharing it so a
+    # case-mismatched edge names the id the operator actually meant.
+    board_ids_by_key: dict[str, list[str]] = {}
+    for board_id in active_by_id:
+        board_ids_by_key.setdefault(_dependency_task_id_key(board_id), []).append(board_id)
 
     errors: list[str] = []
     seen_errors: set[str] = set()
@@ -3609,19 +3638,19 @@ def dependency_graph_errors_for_task(
     visiting: list[str] = []
     visited: set[str] = set()
 
-    def walk(current_key: str) -> None:
-        if current_key in visiting:
-            start = visiting.index(current_key)
-            cycle = visiting[start:] + [current_key]
+    def walk(current_id: str) -> None:
+        if current_id in visiting:
+            start = visiting.index(current_id)
+            cycle = visiting[start:] + [current_id]
             add_error("dependency cycle: " + " -> ".join(cycle))
             return
-        if current_key in visited:
+        if current_id in visited:
             return
-        current = active_by_key.get(current_key)
+        current = active_by_id.get(current_id)
         if not isinstance(current, dict):
             return
 
-        visiting.append(current_key)
+        visiting.append(current_id)
         raw_dependencies = current.get("depends_on")
         if raw_dependencies is None:
             dependencies: list[Any] = []
@@ -3631,23 +3660,28 @@ def dependency_graph_errors_for_task(
             add_error(f"{current.get('id')}: depends_on must be a list")
             dependencies = []
 
-        dependency_keys: set[str] = set()
+        # Deduplicate on the exact id: two entries differing only by case are
+        # not a redundant edge, they are one resolvable edge plus one that never
+        # resolves, and each has to be reported on its own terms.
+        seen_dependencies: set[str] = set()
         for raw_dependency in dependencies:
-            dep_id = str(raw_dependency or "").strip()
-            dep_key = _dependency_task_id_key(dep_id)
-            if not dep_key:
+            dep_id = _dependency_task_id(raw_dependency)
+            if not dep_id:
                 add_error(f"{current.get('id')}: dependency id must not be empty")
                 continue
-            if dep_key in dependency_keys:
+            if dep_id in seen_dependencies:
                 add_error(f"{current.get('id')}: duplicate dependency {dep_id}")
                 continue
-            dependency_keys.add(dep_key)
+            seen_dependencies.add(dep_id)
 
-            if dep_key == current_key:
+            # A self-edge stays case-insensitive: whichever spelling was used,
+            # the operator pointed the task at itself and that is the useful
+            # thing to say.
+            if _dependency_task_id_key(dep_id) == _dependency_task_id_key(current_id):
                 add_error(f"{current.get('id')}: depends on itself ({dep_id})")
                 continue
 
-            on_board = dep_key in active_by_key
+            on_board = dep_id in active_by_id
             snapshot = archive_snapshot(dep_id)
             if on_board and snapshot is not None:
                 add_error(
@@ -3656,10 +3690,22 @@ def dependency_graph_errors_for_task(
                 )
                 continue
             if not on_board and snapshot is None:
-                add_error(
-                    f"{current.get('id')}: dependency {dep_id} is dangling in neither "
-                    "the live board nor the official archive"
-                )
+                near_misses = [
+                    board_id
+                    for board_id in board_ids_by_key.get(_dependency_task_id_key(dep_id), [])
+                    if board_id != dep_id
+                ]
+                if near_misses:
+                    add_error(
+                        f"{current.get('id')}: dependency {dep_id} differs only by case from "
+                        f"{', '.join(sorted(near_misses))}; task ids are case-sensitive and this "
+                        "edge can never resolve"
+                    )
+                else:
+                    add_error(
+                        f"{current.get('id')}: dependency {dep_id} is dangling in neither "
+                        "the live board nor the official archive"
+                    )
                 continue
             if not on_board:
                 terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()
@@ -3669,14 +3715,14 @@ def dependency_graph_errors_for_task(
                         f"terminal_status={terminal_status or 'missing'!r} and is not complete"
                     )
                 continue
-            walk(dep_key)
+            walk(dep_id)
 
         visiting.pop()
-        visited.add(current_key)
+        visited.add(current_id)
 
     if not task_id:
         return ["dependency update requires a task id"]
-    walk(task_key)
+    walk(task_id)
     return errors
 
 

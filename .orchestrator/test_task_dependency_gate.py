@@ -27,6 +27,7 @@ _TEST_CONFIG = THIS_DIR / "config.example.json"
 
 import ai_status
 import supervisor
+from task_archive import TaskResolver
 
 
 def canonical_test_environment():
@@ -145,6 +146,108 @@ class DependencyGraphValidationTests(unittest.TestCase):
                     duplicate_state,
                     ["GATE-TARGET-001", "GATE-UPSTREAM-001", "duplicate lifecycle"],
                 )
+
+
+class DependencyIdentityConsistencyTests(unittest.TestCase):
+    """The validator's verdict must match what the runtime can actually resolve.
+
+    Board lookup (``task_index_from_status``) and archive lookup
+    (``archive_task_path``) are both case-sensitive, so a dependency that
+    differs from a real task id by case alone resolves nowhere.  If the graph
+    validator folded case it would call that edge satisfied-in-principle, let
+    the edit land, and leave the task waiting on it forever while reporting a
+    clean graph.
+    """
+
+    def setUp(self) -> None:
+        self.target = {
+            "id": "GATE-CASE-TARGET-001",
+            "status": "todo",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+        }
+        self.upstream = {
+            "id": "GATE-CASE-UPSTREAM-001",
+            "status": "done",
+            "owner": "Claude",
+            "reviewer": "Codex",
+            "depends_on": [],
+        }
+
+    def test_case_mismatched_dependency_is_rejected_by_the_canonical_cli(self) -> None:
+        state = {"tasks": [deepcopy(self.target), deepcopy(self.upstream)]}
+        before = deepcopy(state)
+        with (
+            canonical_test_environment(),
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+        ):
+            with self.assertRaisesRegex(SystemExit, "case-sensitive"):
+                ai_status.command_set_dependencies(
+                    state,
+                    [self.target["id"], self.upstream["id"].lower(), "case mismatch"],
+                )
+        self.assertEqual(state, before)
+
+    def test_clean_graph_verdict_implies_the_resolver_can_resolve_every_edge(self) -> None:
+        for spelling in (
+            self.upstream["id"],
+            self.upstream["id"].lower(),
+            self.upstream["id"].title(),
+            # Surrounding whitespace is the one difference the resolver does
+            # fold away, so this spelling must stay clean on both sides.
+            "  " + self.upstream["id"] + "  ",
+        ):
+            with self.subTest(spelling=spelling):
+                candidate = {**deepcopy(self.target), "depends_on": [spelling]}
+                board = [candidate, deepcopy(self.upstream)]
+                with mock.patch.object(ai_status, "load_archived_snapshot", return_value=None):
+                    errors = ai_status.dependency_graph_errors_for_task(candidate, board)
+
+                resolver = TaskResolver({item["id"]: item for item in board})
+                resolvable = resolver.get(spelling) is not None
+                # The invariant under test: a clean verdict is only permitted
+                # when every declared edge actually resolves.
+                self.assertEqual(
+                    not errors,
+                    resolvable,
+                    f"validator verdict disagrees with resolver for {spelling!r}: {errors}",
+                )
+
+    def test_case_variant_of_the_task_itself_is_reported_as_a_self_edge(self) -> None:
+        candidate = {**deepcopy(self.target), "depends_on": [self.target["id"].lower()]}
+        with mock.patch.object(ai_status, "load_archived_snapshot", return_value=None):
+            errors = ai_status.dependency_graph_errors_for_task(
+                candidate, [candidate, deepcopy(self.upstream)]
+            )
+        self.assertTrue(any("depends on itself" in error for error in errors), errors)
+
+    def test_case_variant_alongside_the_real_edge_is_still_rejected(self) -> None:
+        # Folding these two spellings into one "duplicate" would hide the fact
+        # that the second edge can never resolve.
+        candidate = {
+            **deepcopy(self.target),
+            "depends_on": [self.upstream["id"], self.upstream["id"].lower()],
+        }
+        with mock.patch.object(ai_status, "load_archived_snapshot", return_value=None):
+            errors = ai_status.dependency_graph_errors_for_task(
+                candidate, [candidate, deepcopy(self.upstream)]
+            )
+        self.assertTrue(any("case-sensitive" in error for error in errors), errors)
+
+    def test_case_mismatched_dependency_never_reaches_the_dispatch_gate_as_ready(self) -> None:
+        task = {
+            "id": "GATE-CASE-DISPATCH-001",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": ["gate-case-upstream-001"],
+        }
+        upstream = deepcopy(self.upstream)
+        task_map = {task["id"]: task, upstream["id"]: upstream}
+        with mock.patch.object(ai_status, "load_archived_snapshot", return_value=None):
+            self.assertFalse(supervisor.dependencies_satisfied(task, task_map, {"done"}))
 
 
 class DependencyDispatchGateTests(unittest.TestCase):
