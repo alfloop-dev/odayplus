@@ -39,6 +39,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from task_archive import archive_task_path, task_status  # noqa: E402
+
 from delivery_toolchain.release.check_runtime_admission import (  # noqa: E402
     registry_admission_errors,
 )
@@ -129,16 +131,31 @@ def _dependency_state(
         return str(task.get("status"))
     if archive_dir is None:
         return None
-    path = archive_dir / f"{dependency_id.lower()}.json"
-    if not path.exists():
-        return None
+    # Name the snapshot with the archiver's own rule instead of a second
+    # guess at it. `archive_task_path` keeps the task id verbatim, so the
+    # files on disk are upper-case; lower-casing the name here missed every
+    # one of them on a case-sensitive filesystem, and a miss is reported as
+    # "cannot be resolved" -- a finished prerequisite blocked its own release
+    # while `scripts/orchestrator/check_task_dependency_resolvability.py`
+    # called the very same graph fully resolvable.
+    path = archive_dir / archive_task_path(dependency_id).name
     try:
         archived = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
+        # A missing or malformed snapshot must not satisfy a dependency.
         return None
     if not isinstance(archived, dict):
         return None
-    return str(archived.get("status"))
+    # The archive envelope carries the terminal state in `terminal_status`
+    # and preserves the task under `task`. It has no top-level `status`, so
+    # reading one resolved every archived dependency to the string "None".
+    snapshot = archived.get("task")
+    if isinstance(snapshot, dict):
+        status = task_status(snapshot)
+        if status:
+            return status
+    terminal_status = str(archived.get("terminal_status") or "").strip().lower()
+    return terminal_status or None
 
 
 def issuance_errors(

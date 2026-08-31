@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from release_lease import dependency_errors, issue_release_lease, main
+from task_archive import archive_task_path
 
 from delivery_toolchain.release.release_lease import (
     STATE_ISSUED,
@@ -175,25 +176,72 @@ def test_an_unresolvable_dependency_is_a_blocker_not_a_pass() -> None:
     assert any("cannot be resolved" in error for error in errors)
 
 
+ARCHIVED_ID = "ODP-ARCHIVED-001"
+
+
+def write_archive_snapshot(archive: Path, task_id: str, terminal_status: str) -> Path:
+    """Write a snapshot the way `task_archive` writes one, not the way the
+    reader used to guess.
+
+    The previous fixtures named the file `odp-archived-001.json` and carried a
+    top-level `status`. The archiver produces neither: it names the file from
+    the task id verbatim and records the outcome as `terminal_status`, with the
+    task preserved under `task`. Those fixtures kept these tests green while
+    every real archived dependency resolved as unresolvable, so the fixture is
+    now derived from `archive_task_path` and the real envelope.
+    """
+
+    path = archive / archive_task_path(task_id).name
+    path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "task_id": task_id,
+                "archived_at": "2026-08-25T16:44:53Z",
+                "terminal_status": terminal_status,
+                "terminal_outcome": "completed",
+                "task": {"id": task_id, "status": terminal_status},
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
 def test_a_dependency_completed_before_archival_still_resolves(tmp_path: Path) -> None:
     archive = tmp_path / "tasks"
     archive.mkdir()
-    (archive / "odp-archived-001.json").write_text(
-        json.dumps({"id": "ODP-ARCHIVED-001", "status": "done"}), encoding="utf-8"
-    )
-    status = build_status(depends_on=["ODP-ARCHIVED-001"])
+    write_archive_snapshot(archive, ARCHIVED_ID, "done")
+    status = build_status(depends_on=[ARCHIVED_ID])
     assert dependency_errors(status, TASK_ID, archive_dir=archive) == []
 
 
 def test_an_archived_dependency_that_never_finished_still_blocks(tmp_path: Path) -> None:
     archive = tmp_path / "tasks"
     archive.mkdir()
-    (archive / "odp-archived-001.json").write_text(
-        json.dumps({"id": "ODP-ARCHIVED-001", "status": "blocked"}), encoding="utf-8"
-    )
-    status = build_status(depends_on=["ODP-ARCHIVED-001"])
+    write_archive_snapshot(archive, ARCHIVED_ID, "blocked")
+    status = build_status(depends_on=[ARCHIVED_ID])
     errors = dependency_errors(status, TASK_ID, archive_dir=archive)
     assert any("is 'blocked', expected 'done'" in error for error in errors)
+
+
+def test_the_archive_snapshot_is_read_under_the_name_the_archiver_writes(
+    tmp_path: Path,
+) -> None:
+    """The upper-case name is the whole bug, so pin it explicitly.
+
+    Reading `<task-id>.json` lower-cased found nothing on a case-sensitive
+    filesystem. That turned every completed, archived prerequisite into
+    "cannot be resolved" and made the issuer refuse releases whose dependency
+    graph `check_task_dependency_resolvability.py` reported as satisfied.
+    """
+
+    archive = tmp_path / "tasks"
+    archive.mkdir()
+    path = write_archive_snapshot(archive, ARCHIVED_ID, "done")
+    assert path.name == f"{ARCHIVED_ID}.json"
+    assert not (archive / f"{ARCHIVED_ID.lower()}.json").exists()
+    assert dependency_errors(build_status(depends_on=[ARCHIVED_ID]), TASK_ID, archive_dir=archive) == []
 
 
 def test_an_unknown_task_cannot_request_a_lease() -> None:
