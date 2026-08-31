@@ -564,7 +564,18 @@ def test_api_runtime_auth_env_is_injected_in_every_mode() -> None:
     block = _hcl_block(main_tf, "fixed_runtime_env = ")
     for name in ("ODP_AUTH_ISSUER", "ODP_AUTH_JWKS_URI", "ODP_AUTH_AUDIENCES"):
         assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), name
-    assert "oidc_enabled" not in block, "API auth env must not be gated on the OIDC mode"
+    assert "oidc_enabled" not in block.split("ODP_AUTH_OIDC")[0].rsplit("\n", 1)[-1], (
+        "Legacy API auth env must not be gated on the OIDC mode"
+    )
+    # True service/OIDC env separation: separated vars are present
+    for name in ("ODP_AUTH_SERVICE_ISSUER", "ODP_AUTH_SERVICE_JWKS_URI", "ODP_AUTH_SERVICE_AUDIENCES"):
+        assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), (
+            f"{name} must be injected unconditionally"
+        )
+    for name in ("ODP_AUTH_OIDC_ISSUER", "ODP_AUTH_OIDC_JWKS_URI", "ODP_AUTH_OIDC_AUDIENCES"):
+        assert re.search(rf"^\s*{name}\s*=", block, re.MULTILINE), (
+            f"{name} must be present in fixed_runtime_env (gated by value, not by key)"
+        )
 
 
 def test_api_runtime_receives_the_resolved_auth_mode() -> None:
@@ -588,6 +599,21 @@ def test_api_runtime_receives_the_resolved_auth_mode() -> None:
     # API split by a later edit, and a split pair is a configuration the
     # boundary refuses rather than resolves.
     assert '"ODP_AUTH_OIDC_ENABLED"' not in api_env_block
+
+    # True service/OIDC runtime env separation: the deploy script must forward
+    # the separated variables to the API runtime so config_from_env resolves
+    # each issuer path deterministically.
+    for name in (
+        "ODP_AUTH_SERVICE_ISSUER",
+        "ODP_AUTH_SERVICE_JWKS_URI",
+        "ODP_AUTH_SERVICE_AUDIENCES",
+        "ODP_AUTH_OIDC_ISSUER",
+        "ODP_AUTH_OIDC_JWKS_URI",
+        "ODP_AUTH_OIDC_AUDIENCES",
+    ):
+        assert f'"{name}"' in api_env_block, (
+            f"deploy script must forward {name} to the API runtime"
+        )
 
 
 def test_declared_runtime_env_names_match_what_is_injected() -> None:

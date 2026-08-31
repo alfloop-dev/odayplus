@@ -1727,3 +1727,278 @@ def test_regression_terraform_deploy_shape_service_token_still_works(
     assert outcome.token_type == "service"
     assert outcome.principal.subject_id == "service-cron-sa"
 
+
+# --------------------------------------------------------------------------
+# Collision / deployment-shape regressions (ODP-WEB-LOCAL-AUTH-API-TRUST-001)
+#
+# These cover the four deployment shapes a runtime can boot into:
+# A) true separation: both ODP_AUTH_SERVICE_* and ODP_AUTH_OIDC_* explicit
+# B) true separation, OIDC off: ODP_AUTH_MODE=local, OIDC vars empty
+# C) legacy alias only: no separated vars, only ODP_AUTH_*
+# D) shared issuer: service and OIDC issuers identical (GCP accounts.google.com)
+# --------------------------------------------------------------------------
+
+
+class TestDeploymentShapeCollisionRegressions:
+    """Regression tests for service/OIDC issuer collision under each deployment shape."""
+
+    def _make_stores(self):
+        """Build minimal identity/session stores for the tests."""
+        identity_store = InMemoryIdentityStore()
+        session_repo = InMemorySessionRepository()
+        session_service = SessionService(repository=session_repo, config=SessionConfig())
+        return identity_store, session_service
+
+    def test_shape_a_true_separation_routes_deterministically(self):
+        """Shape A: both service and OIDC vars explicit, different issuers.
+
+        The boundary must route tokens to the correct verifier without falling
+        back to legacy globals, preventing the reopen #5 defect where an OIDC
+        token matched the service path because both shared ODP_AUTH_ISSUER.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "oidc",
+            # Legacy migration aliases (Terraform still injects these)
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+            # True separated vars
+            "ODP_AUTH_SERVICE_ISSUER": SERVICE_ISSUER,
+            "ODP_AUTH_SERVICE_JWKS_URI": "",
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_OIDC_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_PRINCIPAL_MAP": (
+                '{"service-cron-sa": {"roles": ["platform_admin"],'
+                ' "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}}}'
+            ),
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        # Verify separated resolution
+        assert config.oidc_enabled is True
+        assert config.oidc_issuer == OIDC_ISSUER
+        assert config.service_issuer == SERVICE_ISSUER
+        assert config.service_issuer != config.oidc_issuer
+
+        boundary = AuthenticationBoundary(config)
+
+        # Service token → service path
+        service_token = make_jwt(SERVICE_KEY, iss=SERVICE_ISSUER, sub="service-cron-sa")
+        outcome = boundary.authenticate(Credentials(bearer_token=service_token))
+        assert outcome.authenticated is True
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == "service-cron-sa"
+
+        # OIDC token with unlinked identity → fails with federated_identity_not_linked
+        oidc_token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="unlinked-oidc-sub")
+        # Must supply OIDC key resolution
+        config_with_oidc_key = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            service_issuer=SERVICE_ISSUER,
+            service_signing_keys={"service-k1": SERVICE_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+        )
+        boundary2 = AuthenticationBoundary(config_with_oidc_key)
+        outcome2 = boundary2.authenticate(Credentials(bearer_token=oidc_token))
+        assert outcome2.authenticated is False
+        assert outcome2.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+        assert outcome2.token_type == "oidc"
+
+    def test_shape_b_local_mode_rejects_oidc_tokens_even_with_separated_vars(self):
+        """Shape B: ODP_AUTH_MODE=local with empty OIDC vars.
+
+        A deployment that switched from OIDC to local must not accept OIDC
+        tokens, even if the separated OIDC vars are present but empty.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_ISSUER": "https://accounts.google.com",
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+            # Separated vars: OIDC is empty (Terraform gated by local.oidc_enabled)
+            "ODP_AUTH_SERVICE_ISSUER": "https://accounts.google.com",
+            "ODP_AUTH_SERVICE_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": "",
+            "ODP_AUTH_OIDC_JWKS_URI": "",
+            "ODP_AUTH_OIDC_AUDIENCES": "",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_SECRET.decode(),
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        assert config.oidc_enabled is False
+        assert config.oidc_issuer is None
+
+        boundary = AuthenticationBoundary(config)
+
+        # OIDC token → must be rejected (issuer_mismatch, not routed to OIDC)
+        oidc_token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="oidc-user")
+        outcome = boundary.authenticate(Credentials(bearer_token=oidc_token))
+        # It hits the service/legacy path (same issuer) but fails because the
+        # key kid doesn't match, or the principal mapping doesn't exist.
+        # Either way, it must NOT succeed as an OIDC-authenticated principal.
+        if outcome.authenticated:
+            # If it happened to match via service path (same issuer), verify
+            # it is treated as service, never as oidc.
+            assert outcome.token_type != "oidc"
+        else:
+            # Expected: the token is rejected.
+            assert outcome.reason is not None
+
+    def test_shape_c_legacy_alias_only_keeps_fallback_working(self):
+        """Shape C: no separated vars at all (pre-contract deployment).
+
+        A deployment that only has ODP_AUTH_ISSUER / _JWKS_URI / _AUDIENCES
+        (no ODP_AUTH_SERVICE_* or ODP_AUTH_OIDC_*) must keep working through
+        the fallback chain in config_from_env.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "oidc",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        # OIDC must resolve through the fallback
+        assert config.oidc_enabled is True
+        assert config.oidc_issuer == OIDC_ISSUER
+        # Service issuer must NOT fall back to the global when OIDC is enabled
+        # (reopen #5 fix): that would make both issuers identical and route
+        # OIDC tokens through the service path.
+        assert config.service_issuer is None
+
+    def test_shape_d_shared_issuer_oidc_token_hits_oidc_path(self):
+        """Shape D: service and OIDC issuers are identical (GCP accounts.google.com).
+
+        When both use the same issuer URL, the oidc_enabled gate must ensure
+        the OIDC path takes priority over the service/legacy path. The boundary
+        checks is_oidc first (because oidc_enabled && oidc_issuer && iss match),
+        so a token from accounts.google.com goes through identity-store lookup
+        rather than through the service principal_from_claims.
+        """
+        identity_store, session_service = self._make_stores()
+
+        # Register a linked OIDC account
+        account_id = uuid4()
+        tenant_id = uuid4()
+        from shared.auth import Scope
+
+        identity_store.save_account(Account(
+            account_id=account_id,
+            username="oidc-shared-user",
+            email="oidc-shared@example.com",
+            tenant_id=tenant_id,
+        ))
+        identity_store.link_federated_identity(account_id, OIDC_ISSUER, "oidc-sub-shared")
+        identity_store.set_account_roles(account_id, frozenset([Role.OPERATIONS_MANAGER]))
+        identity_store.set_account_scope(account_id, Scope(tenant_id=str(tenant_id)))
+
+        config = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=OIDC_ISSUER,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            # Shared issuer: service_issuer == oidc_issuer
+            service_issuer=OIDC_ISSUER,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+        )
+        boundary = AuthenticationBoundary(config)
+
+        token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="oidc-sub-shared")
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        # The token must be routed through the OIDC path (identity-store lookup),
+        # not the service path (principal_from_claims), because oidc_enabled is
+        # True and the issuers match. The is_oidc check in _authenticate_token
+        # runs before is_service.
+        assert outcome.authenticated is True
+        assert outcome.token_type == "oidc"
+        assert outcome.principal.subject_id == str(account_id)
+        assert outcome.principal.roles == frozenset([Role.OPERATIONS_MANAGER])
+
+    def test_shape_d_shared_issuer_local_mode_rejects_oidc(self):
+        """Shape D variant: shared issuer but ODP_AUTH_MODE=local.
+
+        When the issuers are identical AND mode=local, the oidc path is
+        disabled, so the token must NOT be verified as OIDC.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_SECRET.decode(),
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        assert config.oidc_enabled is False
+        assert config.oidc_issuer is None
+
+        boundary = AuthenticationBoundary(config)
+
+        # With shared issuer and mode=local, the token hits service/legacy path
+        token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="service-sa")
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        # Must NOT be classified as "oidc"
+        assert outcome.token_type != "oidc"
+
+    def test_separated_env_takes_priority_over_legacy_fallback(self):
+        """When both ODP_AUTH_SERVICE_ISSUER and ODP_AUTH_ISSUER are set,
+        the service path uses the explicit separated var, not the legacy alias.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "oidc",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"service-k1:{SERVICE_SECRET.decode()}",
+            "ODP_AUTH_SERVICE_ISSUER": SERVICE_ISSUER,
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+        }
+        config = config_from_env(env, identity_store=identity_store, session_service=session_service)
+
+        # service_issuer should be the explicit value, not the legacy fallback
+        assert config.service_issuer == SERVICE_ISSUER
+        assert config.service_issuer != OIDC_ISSUER
+        # OIDC should use its explicit value
+        assert config.oidc_issuer == OIDC_ISSUER

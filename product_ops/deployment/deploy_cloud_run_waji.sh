@@ -266,6 +266,16 @@ keys = [
     # ODP_AUTH_OIDC_ENABLED alias is deliberately not forwarded, because a pair
     # that arrives split is a configuration the boundary would have to refuse.
     "ODP_AUTH_MODE",
+    # True service/OIDC runtime env separation (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+    # These separated variables let config_from_env route each issuer path
+    # deterministically. The legacy ODP_AUTH_ISSUER / _JWKS_URI / _AUDIENCES
+    # stay present as migration aliases.
+    "ODP_AUTH_SERVICE_ISSUER",
+    "ODP_AUTH_SERVICE_JWKS_URI",
+    "ODP_AUTH_SERVICE_AUDIENCES",
+    "ODP_AUTH_OIDC_ISSUER",
+    "ODP_AUTH_OIDC_JWKS_URI",
+    "ODP_AUTH_OIDC_AUDIENCES",
     "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
     "ODP_SCHEDULED_INGESTION_TENANT_ID",
     "ODP_TENANT_ID",

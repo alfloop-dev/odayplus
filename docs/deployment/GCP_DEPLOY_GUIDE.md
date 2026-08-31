@@ -111,7 +111,21 @@ resolver" is otherwise only true on the happy path:
 
 `ODP_AUTH_ISSUER`, `ODP_AUTH_AUDIENCES`, and `ODP_AUTH_JWKS_URI` stay required
 in **both** modes: they also verify the Cloud Run service-identity token that
-the deployment smoke stage mints, so they are not OIDC-only inputs.
+the deployment smoke stage mints, so they are not OIDC-only inputs. These are
+the **migration aliases**; true runtime env separation is now provided by:
+
+- `ODP_AUTH_SERVICE_ISSUER`, `ODP_AUTH_SERVICE_JWKS_URI`,
+  `ODP_AUTH_SERVICE_AUDIENCES` — always injected, carry the Cloud Run
+  service-identity provider (typically `https://accounts.google.com`).
+- `ODP_AUTH_OIDC_ISSUER`, `ODP_AUTH_OIDC_JWKS_URI`,
+  `ODP_AUTH_OIDC_AUDIENCES` — injected only when `auth_mode = "oidc"`;
+  empty strings in `local` mode.
+
+The API boundary's `config_from_env` prioritises the separated vars and falls
+back to the legacy globals when they are absent, so both pre-contract
+(legacy-only) and post-contract (separated) deployments work. The separated
+vars prevent the reopen #5 defect where an OIDC token matched the service
+path because both shared `ODP_AUTH_ISSUER`.
 
 ### 3.2 Secret Reference Governance (Zero Plaintext Secrets in GitHub)
 
