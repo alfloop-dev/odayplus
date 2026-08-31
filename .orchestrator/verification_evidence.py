@@ -816,6 +816,88 @@ def load_receipts(directory: Path | str, *, task_id: str | None = None) -> list[
     return receipts
 
 
+# --- declaration requirement ------------------------------------------------
+
+# The marker a task carries to say it owes a verification declaration. It is
+# stamped once, when the task is created, and read here.
+VERIFICATION_REQUIRED_FIELD = "verification_required"
+
+# Task classes that must name their verification up front. Every other class
+# on the board -- rollout, verification, control_plane, human_gate, sidecar --
+# is left alone: their work is not a code change whose tests can be named in
+# advance.
+DECLARATION_REQUIRED_TASK_CLASSES = frozenset({"implementation"})
+
+_MARKER_TRUE = frozenset({"1", "true", "yes", "on"})
+_MARKER_FALSE = frozenset({"0", "false", "no", "off"})
+
+
+@dataclass(frozen=True)
+class DeclarationRequirement:
+    """Whether a task must declare verification commands, and on what basis."""
+
+    required: bool
+    legacy: bool
+    reason: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {"required": self.required, "legacy": self.legacy, "reason": self.reason}
+
+
+def task_class_requires_declaration(task_class: Any) -> bool:
+    """Whether a task of this class should be stamped as owing a declaration."""
+    return str(task_class or "").strip().lower() in DECLARATION_REQUIRED_TASK_CLASSES
+
+
+def _coerce_marker(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _MARKER_TRUE:
+            return True
+        if normalized in _MARKER_FALSE:
+            return False
+    return None
+
+
+def declaration_requirement(task: Any) -> DeclarationRequirement:
+    """Read the verification-declaration obligation off a board task.
+
+    The marker is the whole policy. Present and true means the task must name
+    the commands that prove it before it can publish; present and false means
+    it was created after the field existed and judged not to need one.
+
+    An absent marker is the legacy fallback: the task predates the field, so no
+    obligation is retrofitted onto it. Keying the requirement to the stamp
+    rather than to the task class is deliberate -- it confines the new rule to
+    tasks created under it and leaves every task already on the board
+    publishable, so turning this on cannot strand in-flight work.
+
+    A marker that is present but not a boolean is a corrupted declaration, not
+    an absent one, so it fails closed.
+    """
+    if not isinstance(task, dict):
+        return DeclarationRequirement(False, False, "no board task to carry a verification requirement")
+    if VERIFICATION_REQUIRED_FIELD not in task:
+        return DeclarationRequirement(
+            False,
+            True,
+            f"legacy task: created before {VERIFICATION_REQUIRED_FIELD} existed, so no declaration is required of it",
+        )
+    raw = task.get(VERIFICATION_REQUIRED_FIELD)
+    marker = _coerce_marker(raw)
+    if marker is None:
+        return DeclarationRequirement(
+            True,
+            False,
+            f"{VERIFICATION_REQUIRED_FIELD}={raw!r} is not a boolean; the requirement is treated as in force",
+        )
+    if marker:
+        return DeclarationRequirement(True, False, f"task is marked {VERIFICATION_REQUIRED_FIELD}=true")
+    return DeclarationRequirement(False, False, f"task is marked {VERIFICATION_REQUIRED_FIELD}=false")
+
+
 # --- finalize gate ----------------------------------------------------------
 
 
