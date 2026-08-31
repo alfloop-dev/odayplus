@@ -306,6 +306,24 @@ def test_franchisee_x_subject_id_spoof_and_idempotency_live_boundary(monkeypatch
     monkeypatch.setenv("ODP_AUTH_ISSUER", issuer)
     monkeypatch.setenv("ODP_AUTH_AUDIENCES", audience)
     monkeypatch.setenv("ODP_AUTH_HS256_KEYS", "k1:api-wiring-secret")
+    # Contract §4.4: roles and scope come from ODP_AUTH_PRINCIPAL_MAP, never
+    # from the token's own claims, so every subject this test drives must be
+    # declared (ODP-WEB-LOCAL-AUTH-API-TRUST-001). The spoofing assertions
+    # below are unchanged: they still prove that X-Subject-Id cannot override
+    # the verified token identity.
+    import json as _json
+
+    scope = {"tenant_id": "tenant-a", "store_ids": ["STORE-001"]}
+    monkeypatch.setenv(
+        "ODP_AUTH_PRINCIPAL_MAP",
+        _json.dumps(
+            {
+                "franchisee-002": {"roles": ["franchisee"], "scope": scope},
+                "subject-a": {"roles": ["operations_manager"], "scope": scope},
+                "subject-b": {"roles": ["operations_manager"], "scope": scope},
+            }
+        ),
+    )
     deps.reset_default_boundary()
 
     try:
