@@ -153,6 +153,25 @@ class OwnerContinuationTests(unittest.TestCase):
             )
             self.assertTrue(allowed)
 
+            owner_ready_request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="resume the existing worktree",
+                task_id="SEAL-001",
+                reason="owned_ready_dispatch",
+            )
+            allowed, _detail = supervisor.sealed_owner_continuation_allowed(
+                {"schema": {"assignee_field": "owner"}},
+                state,
+                owner_ready_request,
+                task,
+                target_agent="codex",
+                worktree_path=repo,
+                branch="task/SEAL-001",
+            )
+            self.assertTrue(allowed)
+
             reviewer_request = supervisor.DeliveryRequest(
                 agent_id="claude",
                 provider="claude",

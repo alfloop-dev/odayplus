@@ -9,6 +9,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from common import normalize_agent_id, utc_now
+from dispatch_policy import REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, worker_logical_dispatch_agent_id
+
 from runtime_state import ACTIVE_WORKER_STATUSES
 
 # Compatibility aliases remain exports while Supervisor callers migrate to the
@@ -834,6 +837,34 @@ def _worker_materialized_context_paths(state: dict[str, Any], worker: dict[str, 
             paths.append(str(raw))
     return paths
 
+@_entrypoint
+def _dead_owner_continuation_eligible(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> bool:
+    """Allow recovery only for the dead task owner's execution worker."""
+    request = worker.get("request_snapshot")
+    raw_reason = (
+        request.get("reason")
+        if isinstance(request, dict)
+        else worker.get("reason")
+    )
+    if str(raw_reason or "").strip() not in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+    }:
+        return False
+    if not isinstance(task, dict):
+        return False
+    schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
+    owner = str(task.get(schema.get("assignee_field", "owner")) or "")
+    worker_agent = worker_logical_dispatch_agent_id(config, worker)
+    return bool(
+        owner
+        and worker_agent
+        and normalize_agent_id(owner) == normalize_agent_id(worker_agent)
+    )
 
 @_entrypoint
 def seal_worker_handoff(
@@ -958,7 +989,10 @@ def sealed_owner_continuation_allowed(
     dirt fingerprint was recorded.  Reviewers and helper claims always remain
     fail-closed.
     """
-    if str(request.reason or "") != "owned_in_progress_dispatch":
+    if str(request.reason or "") not in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+    }:
         return False, "not_owner_execution"
     task_id = str(request.task_id or "")
     record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
@@ -2459,6 +2493,21 @@ def preserve_dead_worker_worktree(
             ),
         },
     )
+    if outcome and _dead_owner_continuation_eligible(config, worker, record):
+        handoff_seal = seal_worker_handoff(config, state, worker, record)
+        if (
+            not handoff_seal.accepted
+            and handoff_seal.reason == "owner_dirty"
+            and handoff_seal.head_sha
+            and handoff_seal.dirt_fingerprint
+        ):
+            record_unsealed_worker_handoff(
+                config,
+                state,
+                worker,
+                record,
+                handoff_seal,
+            )
     return outcome
 
 
