@@ -205,6 +205,33 @@ class OwnerContinuationTests(unittest.TestCase):
             self.assertFalse(allowed)
             self.assertEqual(reason, "dirt_changed")
 
+    def test_review_refresh_fast_forwards_to_the_immutable_submitted_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            git(repo, "init", "--quiet")
+            git(repo, "config", "user.email", "test@example.invalid")
+            git(repo, "config", "user.name", "Test")
+            (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+            git(repo, "add", "tracked.txt")
+            git(repo, "commit", "--quiet", "-m", "base")
+            git(repo, "switch", "--quiet", "--create", "task/SEAL-REVIEW-001")
+            (repo / "reviewed.txt").write_text("review head\n", encoding="utf-8")
+            git(repo, "add", "reviewed.txt")
+            git(repo, "commit", "--quiet", "-m", "review head")
+            expected_head = git(repo, "rev-parse", "HEAD")
+            git(repo, "reset", "--hard", "HEAD~1")
+
+            ok, status = supervisor._refresh_reused_worker_worktree(
+                repo,
+                repo,
+                expected_head,
+                "task/SEAL-REVIEW-001",
+                required_head=expected_head,
+            )
+
+            self.assertTrue(ok, status)
+            self.assertEqual(git(repo, "rev-parse", "HEAD"), expected_head)
+
 
 class HandoffTransitionTests(unittest.TestCase):
     def test_rejected_owner_exit_reopens_review_without_discarding_its_submission(self) -> None:
