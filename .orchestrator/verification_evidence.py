@@ -86,8 +86,49 @@ _CONTROL_OPERATORS = frozenset({"|", "|&", "||", "&&", ";", ";;", "&"})
 _REDIRECTION_RE = re.compile(r"^[<>&]+$")
 
 _SUCCESS_TAIL_TOKENS = frozenset({"true", ":", "echo", "printf"})
-_PIPEFAIL_RE = re.compile(r"set\s+-o\s+pipefail\b|set\s+-[a-zA-Z]*o[a-zA-Z]*\s+pipefail\b")
 _DISABLE_ERREXIT_RE = re.compile(r"set\s+\+[a-zA-Z]*e[a-zA-Z]*\b")
+
+
+def _segment_enables_pipefail(segment: list[str]) -> bool:
+    """True when a segment is a standalone ``set -o pipefail`` command.
+
+    Only unquoted tokens in a command segment (no pipes, no control operators)
+    can enable the option.  A ``-k "set -o pipefail"`` test-selection string
+    tokenizes as a single quoted token and never reaches here unquoted.
+    """
+    stripped = [_strip_quotes(tok) for tok in segment]
+    if "set" not in stripped:
+        return False
+    idx = stripped.index("set")
+    rest = stripped[idx + 1:]
+    # `set -o pipefail` or `set -eo pipefail` (the option name follows -o)
+    for i, token in enumerate(rest):
+        if token == "-o" and i + 1 < len(rest) and rest[i + 1] == "pipefail":
+            return True
+        # combined form: -eo, -xo etc. where `o` is followed by pipefail arg
+        if token.startswith("-") and "o" in token[1:] and token.endswith("o"):
+            if i + 1 < len(rest) and rest[i + 1] == "pipefail":
+                return True
+    return False
+
+
+def _pipefail_before_pipe(segments: list[list[str]], operators: list[str]) -> bool:
+    """True only when ``set -o pipefail`` precedes the first pipe operator.
+
+    A ``set -o pipefail`` that appears *after* a pipe in the same compound
+    command does not protect that pipe's exit code.
+    """
+    first_pipe = None
+    for i, op in enumerate(operators):
+        if op in {"|", "|&"}:
+            first_pipe = i
+            break
+    if first_pipe is None:
+        return False  # no pipe, so pipefail is irrelevant
+    for seg_idx in range(first_pipe + 1):  # segments before and including the pipe's left
+        if _segment_enables_pipefail(segments[seg_idx]):
+            return True
+    return False
 
 #: Tokens that mark the segment which actually produces the verification result.
 RUNNER_TOKENS = frozenset(
@@ -250,7 +291,7 @@ def audit_command(command: str) -> CommandAudit:
         )
 
     segments, operators = _split_segments(tokens)
-    pipefail = bool(_PIPEFAIL_RE.search(text))
+    pipefail = _pipefail_before_pipe(segments, operators)
     runner_indexes = [idx for idx, seg in enumerate(segments) if any(_is_runner_token(tok) for tok in seg)]
     first_runner = runner_indexes[0] if runner_indexes else None
 
@@ -281,8 +322,20 @@ def audit_command(command: str) -> CommandAudit:
             continue
 
         if operator == "||":
-            if tail_head in _SUCCESS_TAIL_TOKENS or (tail_head == "exit" and _exit_status_arg(tail) == 0):
-                flag(V_FORCED_SUCCESS)
+            # `||` after the runner replaces the runner's failing exit code
+            # with whatever the tail produces. Only `exit N` where N != 0
+            # preserves the failure signal; everything else masks it.
+            if first_runner is not None and first_runner <= op_index:
+                if tail_head == "exit":
+                    exit_arg = _exit_status_arg(tail)
+                    if exit_arg is not None and exit_arg == 0:
+                        flag(V_FORCED_SUCCESS)
+                    elif exit_arg is None and _strip_quotes(tail[1]) not in {"$?", "${?}"} if len(tail) > 1 else True:
+                        # bare `exit` without argument exits 0 by spec
+                        flag(V_FORCED_SUCCESS)
+                    # `|| exit 1`, `|| exit $?` keep the failure visible
+                else:
+                    flag(V_FORCED_SUCCESS)
             continue
 
         if operator in {";", ";;"}:

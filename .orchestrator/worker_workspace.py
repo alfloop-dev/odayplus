@@ -1545,11 +1545,24 @@ def materialize_worker_context_files(
             # and the supervisor writing them is what makes the worktree
             # untracked-dirty, so task_finalize fails closed on the
             # orchestrator's own copy and the task can never be submitted.
-            # Only manifest entries are excluded here: each one was byte-for-
-            # byte hash-verified against its canonical source above, so it is
-            # provably the supervisor's own seed and not worker output.
+            # Only manifest entries whose paths are NOT already covered by
+            # the fixed prefix list are added. Files under .orchestrator/
+            # are covered by the existing prefixes or gitignored state and
+            # must remain visible to workspace regression tests.
+            _COVERED_PREFIXES = (
+                "AI_COLLABORATION_GUIDE.md",
+                "ai-status.json",
+                "current-work.md",
+                "ai-activity-log.jsonl",
+                ".orchestrator/",
+            )
             for entry in manifest_entries:
-                pattern = _local_exclude_pattern(entry.get("relative_path"))
+                rel = str(entry.get("relative_path") or "").strip().replace("\\", "/").lstrip("/")
+                if not rel:
+                    continue
+                if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _COVERED_PREFIXES):
+                    continue
+                pattern = _local_exclude_pattern(rel)
                 if pattern:
                     lines_to_add.append(pattern)
             new_lines = [line for line in lines_to_add if line not in existing_exclude.splitlines()]

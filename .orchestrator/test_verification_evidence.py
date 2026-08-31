@@ -92,6 +92,59 @@ class CommandAuditTests(unittest.TestCase):
         audit = ve.audit_command("pytest -q | head -1")
         self.assertTrue(any("pipefail" in detail for detail in audit.details))
 
+    # --- R2-reopen regressions: || masking with arbitrary commands ----------
+
+    def test_or_python_pass_is_rejected(self) -> None:
+        """Reviewer R2.2: `pytest ... || python -c 'pass'` masks pytest failure."""
+        audit = ve.audit_command("pytest tests/unit || python -c 'pass'")
+        self.assertFalse(audit.ok)
+        self.assertIn(ve.V_FORCED_SUCCESS, audit.violations)
+
+    def test_or_cat_devnull_is_rejected(self) -> None:
+        audit = ve.audit_command("pytest -q || cat /dev/null")
+        self.assertFalse(audit.ok)
+        self.assertIn(ve.V_FORCED_SUCCESS, audit.violations)
+
+    def test_or_arbitrary_command_after_runner_is_rejected(self) -> None:
+        for tail in ("python3 -c 'pass'", "bash -c 'exit 0'", "sleep 0", "/bin/true"):
+            with self.subTest(tail=tail):
+                audit = ve.audit_command(f"pytest -q || {tail}")
+                self.assertFalse(audit.ok, f"should reject || {tail}")
+                self.assertIn(ve.V_FORCED_SUCCESS, audit.violations)
+
+    def test_or_exit_dollar_question_is_allowed(self) -> None:
+        """|| exit $? propagates the runner's own exit code."""
+        audit = ve.audit_command("pytest -q || exit $?")
+        self.assertTrue(audit.ok, audit.details)
+
+    def test_or_exit_nonzero_preserves_failure(self) -> None:
+        audit = ve.audit_command("pytest -q || exit 1")
+        self.assertTrue(audit.ok, audit.details)
+
+    def test_or_before_runner_is_allowed(self) -> None:
+        """|| before the runner segment does not affect the runner's status."""
+        audit = ve.audit_command("command -v pytest || exit 1; pytest -q")
+        # The || is on segment 0 (command -v), not on the runner segment
+        self.assertNotIn(ve.V_FORCED_SUCCESS, audit.violations)
+
+    # --- R2-reopen regressions: pipefail inside quotes and after pipe ------
+
+    def test_pipefail_in_k_expression_is_not_honoured(self) -> None:
+        """Reviewer R2.3: `-k 'set -o pipefail'` is a test selector, not a shell option."""
+        audit = ve.audit_command("pytest -k 'set -o pipefail' | cat")
+        self.assertFalse(audit.ok)
+        self.assertIn(ve.V_MASKED_PIPELINE, audit.violations)
+
+    def test_pipefail_after_pipe_is_not_honoured(self) -> None:
+        """set -o pipefail after the pipe does not protect the left side."""
+        audit = ve.audit_command("pytest -q | tee log; set -o pipefail")
+        self.assertFalse(audit.ok)
+        self.assertIn(ve.V_MASKED_PIPELINE, audit.violations)
+
+    def test_pipefail_before_pipe_is_honoured(self) -> None:
+        audit = ve.audit_command("set -o pipefail; pytest -q | tee log")
+        self.assertTrue(audit.ok, audit.details)
+
 
 class SelectionTests(unittest.TestCase):
     def test_selection_reads_tokens_after_the_runner(self) -> None:
