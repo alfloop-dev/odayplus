@@ -1308,7 +1308,12 @@ class SidecarTaskTests(unittest.TestCase):
                 {"name": "Copilot", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Helper", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
             ],
-            "tasks": [],
+            "tasks": [
+                # The sidecar below intentionally declares this dependency;
+                # keep the upstream task on the live board so the fixture
+                # satisfies the canonical no-dangling graph rule.
+                {"id": "PER-001", "status": "done", "depends_on": []},
+            ],
             "handoffs": [],
             "blockers": [],
             "workload": {},
@@ -4762,6 +4767,7 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "re_review": [TASK_ID, "re-reviewing"],
         "re-review": [TASK_ID, "re-reviewing"],
         "submit_review": [TASK_ID, "123", "submit for review"],
+        "set_dependencies": [TASK_ID, "-", "clear dependencies"],
         "handoff": [TASK_ID, "Codex2", "please review"],
         "blocker": [TASK_ID, "blocked", "Codex2"],
         "retarget_blocker": [TASK_ID, "Codex2", "repair"],

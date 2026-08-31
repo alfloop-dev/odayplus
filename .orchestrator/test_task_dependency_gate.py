@@ -20,16 +20,24 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 # Focused tests must not depend on the worker's live coordination environment.
 # In particular, a clean task worktree has no gitignored config.json, while
-# actor validation in the canonical CLI still needs the declared roster.
-_TEST_STATUS_ROOT = Path(tempfile.mkdtemp(prefix="pantheon-dependency-gate-status-")).resolve()
+# actor validation in the canonical CLI still needs the declared roster. Keep
+# this override local to each test: module-level environment writes can leak
+# into scripts/test_ai_status.py during pytest collection.
 _TEST_CONFIG = THIS_DIR / "config.example.json"
-os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
-os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
-os.environ["ORCH_CONFIG_PATH"] = str(_TEST_CONFIG)
-os.environ["PANTHEON_CONFIG_PATH"] = str(_TEST_CONFIG)
 
 import ai_status
 import supervisor
+
+
+def canonical_test_environment():
+    return mock.patch.dict(
+        os.environ,
+        {
+            "ORCH_CONFIG_PATH": str(_TEST_CONFIG),
+            "PANTHEON_CONFIG_PATH": str(_TEST_CONFIG),
+        },
+        clear=False,
+    )
 
 
 class DependencyGraphValidationTests(unittest.TestCase):
@@ -52,6 +60,7 @@ class DependencyGraphValidationTests(unittest.TestCase):
     def test_update_is_audited_after_graph_validation(self) -> None:
         state = {"tasks": [deepcopy(self.target), deepcopy(self.upstream)]}
         with (
+            canonical_test_environment(),
             tempfile.TemporaryDirectory(prefix="pantheon-dependency-audit-") as tmpdir,
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
@@ -90,7 +99,12 @@ class DependencyGraphValidationTests(unittest.TestCase):
             ["GATE-MISSING-001"],
             ["GATE-UPSTREAM-001", "GATE-UPSTREAM-001"],
         ):
-            with self.subTest(dependencies=dependencies), mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), mock.patch.object(ai_status, "load_archived_snapshot", return_value=None):
+            with (
+                self.subTest(dependencies=dependencies),
+                canonical_test_environment(),
+                mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+                mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
+            ):
                 with self.assertRaises(SystemExit):
                     ai_status.command_set_dependencies(
                         state,
@@ -106,6 +120,7 @@ class DependencyGraphValidationTests(unittest.TestCase):
             ]
         }
         with (
+            canonical_test_environment(),
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(ai_status, "load_archived_snapshot", return_value=None),
         ):
@@ -117,6 +132,7 @@ class DependencyGraphValidationTests(unittest.TestCase):
 
         duplicate_state = {"tasks": [deepcopy(self.target), deepcopy(self.upstream)]}
         with (
+            canonical_test_environment(),
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
             mock.patch.object(
                 ai_status,
