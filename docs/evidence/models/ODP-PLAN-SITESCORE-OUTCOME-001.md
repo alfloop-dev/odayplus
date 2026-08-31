@@ -1,11 +1,11 @@
 # Gate 2 Receipt: SiteScore Opening Outcome Calibration Benchmark (ODP-PLAN-SITESCORE-OUTCOME-001)
 
 - **Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-001`
-- **Observed At**: `2026-08-01T14:59:51.147392Z`
+- **Observed At**: `2026-08-31T16:06:05.300715Z`
 - **Gate Status**: `REJECTED_GOVERNED_DISABLED`
 - **Data Provenance**: `no_source`
 - **Is Governed Disabled**: `True`
-- **Integrity Content SHA256**: `fbd76b8b279971ea1d00cd4791768611808dc777667a16e6077127bcbb5e6b7b`
+- **Integrity Content SHA256**: `f557abb7e6058d6716d6636c17d2b2c9011ddec7f4c5392c3e2babdae73fed43`
 
 ## Benchmark Inventory & Coverage Summary
 
@@ -27,7 +27,7 @@
 - **Backfill Owner**: `Human/Ops`
 - **Backfill Task ID**: `ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001`
 - **Prediction Source Task ID**: `ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001`
-- **Discovery Inventory Query**: `SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;`
+- **Discovery Inventory Query**: `SELECT c.entity_id, c.store_id, c.target_format_code, c.opened_on, c.is_training_eligible, c.realized_90d_net_revenue, c.realized_180d_net_revenue, c.realized_365d_net_revenue, (CURRENT_DATE - c.opened_on)::integer AS store_age_days, p.prediction_as_of, p.model_version, p.horizon_code, p.predicted_revenue, p.p10, p.p90, p.p50, p.dataset_snapshot_id, p.artifact_lineage_id FROM model_ready.candidate_site_view c LEFT JOIN model_ready.sitescore_predictions p ON (c.entity_id = p.entity_id OR c.store_id = p.store_id) AND c.opened_on = p.prediction_as_of AND p.model_version = 'candidate-site-view-v2';`
 - **Backfill Receipt Required**: `True`
 - **Audit Reasons**:
   - No database connection or candidate site records were provided
