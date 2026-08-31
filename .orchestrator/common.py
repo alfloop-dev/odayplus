@@ -1900,12 +1900,6 @@ def load_verification_receipts(config: dict[str, Any], *, task_id: str | None = 
     return verification_evidence.load_receipts(evidence_dir(config), task_id=task_id)
 
 
-def audit_task_verification(task: dict[str, Any] | None) -> list[verification_evidence.CommandAudit]:
-    """Audit a task's declared verification commands for exit-code masking."""
-    commands = [str(item).strip() for item in ((task or {}).get("verification") or []) if str(item).strip()]
-    return verification_evidence.audit_commands(commands)
-
-
 def to_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
