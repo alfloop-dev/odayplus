@@ -239,6 +239,26 @@ class AuthenticationBoundary:
 
         if is_local:
             return self._authenticate_local_token(token, header, kid, local_issuer, now)
+        elif is_oidc and is_service:
+            # Issuer collision: service_issuer == oidc_issuer (e.g. both
+            # https://accounts.google.com).  Disambiguate with a verified,
+            # fail-closed criterion: if the token's sub is pre-declared in
+            # ODP_AUTH_PRINCIPAL_MAP, treat it as a service token; otherwise
+            # route to the OIDC identity-store lookup.  A service identity
+            # that is *not* declared in the principal map is intentionally
+            # rejected rather than silently promoted to an OIDC user or
+            # silently granted service-level roles.
+            #
+            # The check is on unverified claims (sub parsed from the JWT body
+            # before signature verification).  This is safe because the actual
+            # token signature and claims are validated inside the downstream
+            # handler — _authenticate_service_or_legacy_token or
+            # _authenticate_oidc_token — which will reject a forged token
+            # regardless of the routing decision made here.
+            subject = unverified_claims.get("sub")
+            if isinstance(subject, str) and self._is_declared_service_identity(subject):
+                return self._authenticate_service_or_legacy_token(token, header, kid, now)
+            return self._authenticate_oidc_token(token, header, kid, now)
         elif is_oidc:
             return self._authenticate_oidc_token(token, header, kid, now)
         elif is_service or is_legacy:
@@ -471,6 +491,29 @@ class AuthenticationBoundary:
             if mapped is not None:
                 return mapped
         return {}
+
+    def _is_declared_service_identity(self, subject: str) -> bool:
+        """Return True when *subject* is pre-declared as a service identity.
+
+        Used by the issuer-collision branch to route a token whose issuer
+        matches both the OIDC and service paths.  A subject is considered a
+        declared service identity when it appears in either:
+
+        * ``ODP_AUTH_PRINCIPAL_MAP`` (``config.principal_mappings``) — the
+          canonical way to grant roles/scope to a service account, or
+        * ``config.subject_role_bindings`` — a secondary role-grant surface.
+
+        The check is intentionally on the *unverified* ``sub`` claim, which is
+        safe because the downstream handler still performs full signature and
+        claims validation.  Fail-closed: an undeclared subject is never
+        promoted to a service principal; it falls through to the OIDC
+        identity-store lookup instead.
+        """
+        if subject in self._config.principal_mappings:
+            return True
+        if subject in self._config.subject_role_bindings:
+            return True
+        return False
 
     def _validate_claims_generic(
         self,

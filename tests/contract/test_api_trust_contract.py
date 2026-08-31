@@ -1894,11 +1894,11 @@ class TestDeploymentShapeCollisionRegressions:
     def test_shape_d_shared_issuer_oidc_token_hits_oidc_path(self):
         """Shape D: service and OIDC issuers are identical (GCP accounts.google.com).
 
-        When both use the same issuer URL, the oidc_enabled gate must ensure
-        the OIDC path takes priority over the service/legacy path. The boundary
-        checks is_oidc first (because oidc_enabled && oidc_issuer && iss match),
-        so a token from accounts.google.com goes through identity-store lookup
-        rather than through the service principal_from_claims.
+        When both use the same issuer URL (issuer collision), the boundary
+        disambiguates by checking ODP_AUTH_PRINCIPAL_MAP: a token whose sub is
+        declared in the principal map routes to the service path; an
+        undeclared sub routes to OIDC identity-store lookup.  The linked OIDC
+        user's sub is not in the principal map, so it must take the OIDC path.
         """
         identity_store, session_service = self._make_stores()
 
@@ -1928,16 +1928,16 @@ class TestDeploymentShapeCollisionRegressions:
             service_audiences=frozenset([AUDIENCE]),
             identity_store=identity_store,
             session_service=session_service,
+            # No principal_mappings: oidc-sub-shared is NOT a declared
+            # service identity, so the collision branch routes to OIDC.
         )
         boundary = AuthenticationBoundary(config)
 
         token = make_jwt(OIDC_KEY, iss=OIDC_ISSUER, sub="oidc-sub-shared")
         outcome = boundary.authenticate(Credentials(bearer_token=token))
 
-        # The token must be routed through the OIDC path (identity-store lookup),
-        # not the service path (principal_from_claims), because oidc_enabled is
-        # True and the issuers match. The is_oidc check in _authenticate_token
-        # runs before is_service.
+        # The token must be routed through the OIDC path (identity-store
+        # lookup) because the sub is not declared in the principal map.
         assert outcome.authenticated is True
         assert outcome.token_type == "oidc"
         assert outcome.principal.subject_id == str(account_id)
@@ -2002,3 +2002,165 @@ class TestDeploymentShapeCollisionRegressions:
         assert config.service_issuer != OIDC_ISSUER
         # OIDC should use its explicit value
         assert config.oidc_issuer == OIDC_ISSUER
+
+    # -- Shape D collision with service tokens (reopen #8 regressions) -------
+
+    def test_shape_d_shared_issuer_service_token_routes_to_service_path(self):
+        """Shape D: service token with shared issuer routes to service path.
+
+        Reopen #8 regression: when ODP_AUTH_SERVICE_ISSUER ==
+        ODP_AUTH_OIDC_ISSUER (both https://accounts.google.com as in the
+        Terraform default), a service token whose sub is declared in
+        ODP_AUTH_PRINCIPAL_MAP must route to the service path, not the OIDC
+        identity-store lookup.  The previous code always routed to OIDC first,
+        causing federated_identity_not_linked for legitimate service accounts.
+        """
+        identity_store, session_service = self._make_stores()
+
+        # The collision scenario: both issuers are the same
+        shared_issuer = OIDC_ISSUER  # "https://accounts.google.com"
+
+        principal_map = {
+            "service-cron-sa": {
+                "roles": ["platform_admin"],
+                "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"},
+            },
+        }
+
+        config = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=shared_issuer,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            # Shared issuer: service_issuer == oidc_issuer
+            service_issuer=shared_issuer,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            principal_mapping_declared=True,
+            principal_mappings=principal_map,
+        )
+        boundary = AuthenticationBoundary(config)
+
+        # Service token: sub is declared in principal map
+        service_token = make_jwt(
+            OIDC_KEY, iss=shared_issuer, sub="service-cron-sa"
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=service_token))
+
+        # Must succeed via the service path, NOT the OIDC path
+        assert outcome.authenticated is True, (
+            f"Expected authenticated=True but got reason={outcome.reason}"
+        )
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == "service-cron-sa"
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+        assert outcome.principal.tenant_id == "00000000-0000-0000-0000-000000000001"
+
+    def test_shape_d_terraform_env_service_token_collision_regression(self):
+        """Terraform-shaped env with issuer collision: service-to-service auth works.
+
+        Reopen #8 end-to-end regression using config_from_env with the exact
+        Terraform deployment shape where:
+        - ODP_AUTH_MODE=oidc
+        - ODP_AUTH_SERVICE_ISSUER=https://accounts.google.com (Terraform default)
+        - ODP_AUTH_OIDC_ISSUER=https://accounts.google.com (Google as OIDC IdP)
+        - ODP_AUTH_PRINCIPAL_MAP contains the service account's sub
+
+        This exercises the config_from_env → AuthBoundaryConfig → boundary
+        routing chain for the ODP_OPERATOR_SMOKE_BEARER_TOKEN scenario.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        # Exact Terraform-shaped environment: both issuers collide
+        terraform_collision_env = {
+            "ODP_AUTH_MODE": "oidc",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            # Separated vars — both point to accounts.google.com
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_SERVICE_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_OIDC_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_OIDC_JWKS_URI": "https://www.googleapis.com/oauth2/v3/certs",
+            "ODP_AUTH_OIDC_AUDIENCES": AUDIENCE,
+            # The service account is declared in the principal map
+            "ODP_AUTH_PRINCIPAL_MAP": (
+                '{"service-smoke-sa@project.iam.gserviceaccount.com":'
+                ' {"roles": ["platform_admin"],'
+                ' "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}}}'
+            ),
+        }
+        config = config_from_env(
+            terraform_collision_env,
+            identity_store=identity_store,
+            session_service=session_service,
+        )
+
+        # Verify the collision exists in the resolved config
+        assert config.oidc_enabled is True
+        assert config.oidc_issuer == OIDC_ISSUER
+        assert config.service_issuer == OIDC_ISSUER
+        assert config.service_issuer == config.oidc_issuer  # collision!
+
+        boundary = AuthenticationBoundary(config)
+
+        # Service token from the deployment smoke stage
+        service_token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub="service-smoke-sa@project.iam.gserviceaccount.com",
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=service_token))
+
+        # Must succeed: the sub is in principal_map → service path
+        assert outcome.authenticated is True, (
+            f"Expected authenticated=True but got reason={outcome.reason}; "
+            f"token_type={outcome.token_type}"
+        )
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == (
+            "service-smoke-sa@project.iam.gserviceaccount.com"
+        )
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+
+    def test_shape_d_shared_issuer_unknown_sub_falls_to_oidc_and_rejects(self):
+        """Shape D: unknown sub under issuer collision falls through to OIDC.
+
+        A token whose sub is NOT declared in ODP_AUTH_PRINCIPAL_MAP and NOT
+        linked in the identity store must be rejected, not silently promoted
+        to a service principal.  This is the fail-closed guarantee.
+        """
+        identity_store, session_service = self._make_stores()
+
+        shared_issuer = OIDC_ISSUER
+
+        config = AuthBoundaryConfig(
+            oidc_enabled=True,
+            oidc_issuer=shared_issuer,
+            oidc_signing_keys={"oidc-k1": OIDC_KEY},
+            oidc_audiences=frozenset([AUDIENCE]),
+            service_issuer=shared_issuer,
+            service_signing_keys={"oidc-k1": OIDC_KEY},
+            service_audiences=frozenset([AUDIENCE]),
+            identity_store=identity_store,
+            session_service=session_service,
+            # principal_mappings is empty: no declared service identities
+            principal_mapping_declared=True,
+            principal_mappings={},
+        )
+        boundary = AuthenticationBoundary(config)
+
+        # Token from an unknown subject (not in principal map, not linked)
+        token = make_jwt(OIDC_KEY, iss=shared_issuer, sub="unknown-identity")
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        # Must be rejected via OIDC path: federated_identity_not_linked
+        assert outcome.authenticated is False
+        assert outcome.reason == AuthFailureReason.FEDERATED_IDENTITY_NOT_LINKED
+        assert outcome.token_type == "oidc"
