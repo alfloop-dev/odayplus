@@ -2,7 +2,7 @@
   "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
   "owner": "Antigravity",
   "reviewer": "Codex2",
-  "head_sha": "a8a663d46b29c68b04aac3537d061e34f48ff658",
+  "head_sha": "8fd60b090f4515a5d8b63dbfe5664bd7f38a5331",
   "generated_by": "docs/evidence/execution-control/ODP-ORCH-VERIFICATION-EVIDENCE-001/generate_receipt_bundle.py",
   "note": "Produced by the mechanism under review, not written by hand. head_sha is the repository HEAD at generation time and the parent of the commit that records this file, so `git merge-base --is-ancestor <head_sha> HEAD` holds.",
   "runs": [
@@ -19,7 +19,7 @@
         "schema_version": 1,
         "kind": "verification_receipt",
         "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-        "head_sha": "a8a663d46b29c68b04aac3537d061e34f48ff658",
+        "head_sha": "8fd60b090f4515a5d8b63dbfe5664bd7f38a5331",
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q",
         "command_audit": {
           "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q",
@@ -41,18 +41,18 @@
         "timed_out": false,
         "outcome": "passed",
         "passed": true,
-        "duration_seconds": 2.277,
-        "started_at": "2026-08-31T12:32:33Z",
-        "finished_at": "2026-08-31T12:32:35Z",
-        "recorded_at": "2026-08-31T12:32:35Z",
+        "duration_seconds": 2.309,
+        "started_at": "2026-08-31T12:59:31Z",
+        "finished_at": "2026-08-31T12:59:33Z",
+        "recorded_at": "2026-08-31T12:59:33Z",
         "run_kind": "baseline",
         "attempt": 1,
         "retry_reason": null,
         "agent": "Antigravity",
         "run_id": null,
         "produced_by": "docs/evidence/execution-control/ODP-ORCH-VERIFICATION-EVIDENCE-001/generate_receipt_bundle.py",
-        "output_tail": ".......................................................................................................                            [100%]\n",
-        "receipt_id": "048d90da4b2fc49d"
+        "output_tail": "................................................................ [ 60%]\n.........................................                          [100%]\n",
+        "receipt_id": "4a908280f77c7ee2"
       }
     },
     {
@@ -68,7 +68,7 @@
         "schema_version": 1,
         "kind": "verification_receipt",
         "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-        "head_sha": "a8a663d46b29c68b04aac3537d061e34f48ff658",
+        "head_sha": "8fd60b090f4515a5d8b63dbfe5664bd7f38a5331",
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence_integration.py -q",
         "command_audit": {
           "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence_integration.py -q",
@@ -90,18 +90,18 @@
         "timed_out": false,
         "outcome": "passed",
         "passed": true,
-        "duration_seconds": 13.782,
-        "started_at": "2026-08-31T12:32:35Z",
-        "finished_at": "2026-08-31T12:32:49Z",
-        "recorded_at": "2026-08-31T12:32:49Z",
+        "duration_seconds": 13.482,
+        "started_at": "2026-08-31T12:59:33Z",
+        "finished_at": "2026-08-31T12:59:47Z",
+        "recorded_at": "2026-08-31T12:59:47Z",
         "run_kind": "baseline",
         "attempt": 1,
         "retry_reason": null,
         "agent": "Antigravity",
         "run_id": null,
         "produced_by": "docs/evidence/execution-control/ODP-ORCH-VERIFICATION-EVIDENCE-001/generate_receipt_bundle.py",
-        "output_tail": "............................                                             [100%]\n",
-        "receipt_id": "a4768380a79734cc"
+        "output_tail": ".................................                                        [100%]\n",
+        "receipt_id": "a56d9b157403cf27"
       }
     },
     {
@@ -117,7 +117,7 @@
         "schema_version": 1,
         "kind": "verification_receipt",
         "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-        "head_sha": "a8a663d46b29c68b04aac3537d061e34f48ff658",
+        "head_sha": "8fd60b090f4515a5d8b63dbfe5664bd7f38a5331",
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_task_brief_source_docs.py -q",
         "command_audit": {
           "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_task_brief_source_docs.py -q",
@@ -139,10 +139,10 @@
         "timed_out": false,
         "outcome": "passed",
         "passed": true,
-        "duration_seconds": 2.714,
-        "started_at": "2026-08-31T12:32:49Z",
-        "finished_at": "2026-08-31T12:32:52Z",
-        "recorded_at": "2026-08-31T12:32:52Z",
+        "duration_seconds": 2.833,
+        "started_at": "2026-08-31T12:59:47Z",
+        "finished_at": "2026-08-31T12:59:50Z",
+        "recorded_at": "2026-08-31T12:59:50Z",
         "run_kind": "baseline",
         "attempt": 1,
         "retry_reason": null,
@@ -150,7 +150,7 @@
         "run_id": null,
         "produced_by": "docs/evidence/execution-control/ODP-ORCH-VERIFICATION-EVIDENCE-001/generate_receipt_bundle.py",
         "output_tail": "..................................                                       [100%]\n",
-        "receipt_id": "580a48d230ff8de8"
+        "receipt_id": "815ff59eb5e6973e"
       }
     },
     {
@@ -166,7 +166,7 @@
         "schema_version": 1,
         "kind": "verification_receipt",
         "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-        "head_sha": "a8a663d46b29c68b04aac3537d061e34f48ff658",
+        "head_sha": "8fd60b090f4515a5d8b63dbfe5664bd7f38a5331",
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest delivery_toolchain/git/test_task_verification.py -q",
         "command_audit": {
           "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest delivery_toolchain/git/test_task_verification.py -q",
@@ -188,10 +188,10 @@
         "timed_out": false,
         "outcome": "passed",
         "passed": true,
-        "duration_seconds": 5.929,
-        "started_at": "2026-08-31T12:32:52Z",
-        "finished_at": "2026-08-31T12:32:58Z",
-        "recorded_at": "2026-08-31T12:32:58Z",
+        "duration_seconds": 6.463,
+        "started_at": "2026-08-31T12:59:50Z",
+        "finished_at": "2026-08-31T12:59:56Z",
+        "recorded_at": "2026-08-31T12:59:56Z",
         "run_kind": "baseline",
         "attempt": 1,
         "retry_reason": null,
@@ -199,16 +199,16 @@
         "run_id": null,
         "produced_by": "docs/evidence/execution-control/ODP-ORCH-VERIFICATION-EVIDENCE-001/generate_receipt_bundle.py",
         "output_tail": ".....................                                                    [100%]\n",
-        "receipt_id": "cf638b2d81d481fd"
+        "receipt_id": "dd69f4a2c482c7bd"
       }
     }
   ],
   "duplicate_baseline_refusal": {
     "allowed": false,
     "kind": "duplicate",
-    "reason": "head SHA a8a663d46b29 already has a passed receipt for this selection; supply an explicit retry reason (>= 12 chars) to re-run",
+    "reason": "head SHA 8fd60b090f45 already has a passed receipt for this selection; supply an explicit retry reason (>= 12 chars) to re-run",
     "attempt": 2,
-    "prior_receipt_id": "048d90da4b2fc49d",
+    "prior_receipt_id": "4a908280f77c7ee2",
     "prior_outcome": "passed"
   },
   "explicit_retry": {
@@ -217,14 +217,14 @@
       "kind": "retry",
       "reason": "explicit retry reason accepted: evidence artifact: demonstrating the explicit retry path",
       "attempt": 2,
-      "prior_receipt_id": "048d90da4b2fc49d",
+      "prior_receipt_id": "4a908280f77c7ee2",
       "prior_outcome": "passed"
     },
     "receipt": {
       "schema_version": 1,
       "kind": "verification_receipt",
       "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-      "head_sha": "a8a663d46b29c68b04aac3537d061e34f48ff658",
+      "head_sha": "8fd60b090f4515a5d8b63dbfe5664bd7f38a5331",
       "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q",
       "command_audit": {
         "command": "uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q",
@@ -246,18 +246,18 @@
       "timed_out": false,
       "outcome": "passed",
       "passed": true,
-      "duration_seconds": 2.03,
-      "started_at": "2026-08-31T12:32:58Z",
-      "finished_at": "2026-08-31T12:33:00Z",
-      "recorded_at": "2026-08-31T12:33:00Z",
+      "duration_seconds": 2.115,
+      "started_at": "2026-08-31T12:59:56Z",
+      "finished_at": "2026-08-31T12:59:58Z",
+      "recorded_at": "2026-08-31T12:59:58Z",
       "run_kind": "retry",
       "attempt": 2,
       "retry_reason": "evidence artifact: demonstrating the explicit retry path",
       "agent": "Antigravity",
       "run_id": null,
       "produced_by": "docs/evidence/execution-control/ODP-ORCH-VERIFICATION-EVIDENCE-001/generate_receipt_bundle.py",
-      "output_tail": ".......................................................................................................                            [100%]\n",
-      "receipt_id": "c4f4aa2dd82d1e42"
+      "output_tail": "................................................................ [ 60%]\n.........................................                          [100%]\n",
+      "receipt_id": "b722b7fbcb0e50e1"
     }
   },
   "signal_interruption": {
@@ -265,7 +265,7 @@
       "schema_version": 1,
       "kind": "verification_receipt",
       "task_id": "ODP-ORCH-VERIFICATION-EVIDENCE-001",
-      "head_sha": "a8a663d46b29c68b04aac3537d061e34f48ff658",
+      "head_sha": "8fd60b090f4515a5d8b63dbfe5664bd7f38a5331",
       "command": "/usr/bin/python3 -c 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)'",
       "command_audit": {
         "command": "/usr/bin/python3 -c 'import os, signal; os.kill(os.getpid(), signal.SIGTERM)'",
@@ -287,17 +287,17 @@
       "timed_out": false,
       "outcome": "interrupted",
       "passed": false,
-      "duration_seconds": 0.033,
-      "started_at": "2026-08-31T12:33:00Z",
-      "finished_at": "2026-08-31T12:33:00Z",
-      "recorded_at": "2026-08-31T12:33:00Z",
+      "duration_seconds": 0.035,
+      "started_at": "2026-08-31T12:59:58Z",
+      "finished_at": "2026-08-31T12:59:58Z",
+      "recorded_at": "2026-08-31T12:59:58Z",
       "run_kind": "baseline",
       "attempt": 1,
       "retry_reason": null,
       "agent": null,
       "run_id": null,
       "produced_by": "docs/evidence/execution-control/ODP-ORCH-VERIFICATION-EVIDENCE-001/generate_receipt_bundle.py",
-      "receipt_id": "43b9001292994dc4"
+      "receipt_id": "2493190c52484f98"
     },
     "escalation_plan": {
       "allowed": false,
@@ -317,7 +317,7 @@
     "without_receipt": {
       "ok": false,
       "problems": [
-        "no verification receipt at head a8a663d46b29 for: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q"
+        "no verification receipt at head 8fd60b090f45 for: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q"
       ],
       "satisfied": []
     },
@@ -331,14 +331,14 @@
     "with_forged_pass_flag": {
       "ok": false,
       "problems": [
-        "newest receipt at head a8a663d46b29 is 'passed' (exit 1), which does not prove: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q; the receipt is not valid evidence: outcome 'passed' requires exit_code 0, got 1"
+        "newest receipt at head 8fd60b090f45 is 'passed' (exit 1), which does not prove: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q; the receipt is not valid evidence: outcome 'passed' requires exit_code 0, got 1"
       ],
       "satisfied": []
     },
     "with_receipt_missing_its_audit": {
       "ok": false,
       "problems": [
-        "newest receipt at head a8a663d46b29 is 'passed' (exit 0), which does not prove: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q; the receipt is not valid evidence: missing field: command_audit (a receipt must carry the audit that cleared its command)"
+        "newest receipt at head 8fd60b090f45 is 'passed' (exit 0), which does not prove: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q; the receipt is not valid evidence: missing field: command_audit (a receipt must carry the audit that cleared its command)"
       ],
       "satisfied": []
     },
@@ -356,7 +356,7 @@
       "result": {
         "ok": false,
         "problems": [
-          "no verification receipt at head a8a663d46b29 for: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py (the receipts at this head select the same tests but ran: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q)"
+          "no verification receipt at head 8fd60b090f45 for: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py (the receipts at this head select the same tests but ran: uv run --no-project --python 3.12 --with pytest --with jsonschema --with pyyaml --with cryptography pytest .orchestrator/test_verification_evidence.py -q)"
         ],
         "satisfied": []
       }
