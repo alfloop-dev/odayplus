@@ -68,6 +68,15 @@ def test_rs256_jwks_token_authenticates_and_maps_real_scope() -> None:
             issuer="https://idp.example.test",
             audiences=frozenset({"oday-api"}),
             jwks_uri="https://idp.example.test/.well-known/jwks.json",
+            # Contract §4.4: the subject's roles/scope come from
+            # ODP_AUTH_PRINCIPAL_MAP, not from the token's claims
+            # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+            principal_mappings={
+                "operator-real-1": {
+                    "roles": ["operations_manager"],
+                    "scope": {"tenant_id": "tenant-real-1"},
+                }
+            },
         ),
         key_resolver=resolver,
     )
@@ -77,6 +86,40 @@ def test_rs256_jwks_token_authenticates_and_maps_real_scope() -> None:
     assert outcome.authenticated is True
     assert outcome.principal.subject_id == "operator-real-1"
     assert outcome.principal.tenant_id == "tenant-real-1"
+
+
+def test_rs256_jwks_token_for_undeclared_subject_fails_closed() -> None:
+    """A correctly signed RS256 token still needs an authoritative mapping.
+
+    Regression for ODP-WEB-LOCAL-AUTH-API-TRUST-001: signature validity alone
+    never makes the token's own `roles`/`tenant_id` authorization facts.
+    """
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    resolver = JwksResolver(
+        "https://idp.example.test/.well-known/jwks.json",
+        fetch=lambda _: {"keys": [_jwk(key, "key-1")]},
+    )
+    boundary = AuthenticationBoundary(
+        AuthBoundaryConfig(
+            issuer="https://idp.example.test",
+            audiences=frozenset({"oday-api"}),
+            jwks_uri="https://idp.example.test/.well-known/jwks.json",
+        ),
+        key_resolver=resolver,
+    )
+
+    outcome = boundary.authenticate(
+        Credentials(
+            bearer_token=_token(
+                key, "key-1", roles=["platform_admin"], tenant_id="attacker-tenant"
+            )
+        )
+    )
+
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+    assert outcome.principal.roles == frozenset()
+    assert outcome.principal.tenant_id is None
 
 
 def test_unknown_or_bad_rs256_key_fails_closed() -> None:

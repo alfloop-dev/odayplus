@@ -41,3 +41,14 @@ The User & Role Management capability (`ODP-CAP-USER-ROLE-UI-001`, `UX-SCR-ADMIN
 ## Consequences
 - Dynamic user role management operates durably across process restarts and Cloud Run instances without in-memory state loss.
 - Static secret authentication fallback remains secure and fail-closed.
+
+## Amendment: Wave Auth 1 / ODP-WEB-LOCAL-AUTH-API-TRUST-001 (2026-08-30)
+
+As specified in `docs/design/ODP_WEB_PASSWORD_FIRST_AUTH_CONTRACT.md` §2.3:
+1. **Scope Reduction for `ODP_AUTH_PRINCIPAL_MAP`**:
+   - `ODP_AUTH_PRINCIPAL_MAP` (and its Secret Manager secret `ODP_AUTH_PRINCIPAL_MAP_SECRET`) is strictly reserved for **service identities** (GCP service accounts, deployment smoke token verification, service-to-service calls).
+   - `ODP_AUTH_PRINCIPAL_MAP` is **no longer used** as the authoritative source of roles or scopes for human users (neither local password accounts nor OIDC federated identities).
+2. **Authoritative Identity Store**:
+   - The PostgreSQL `identity` schema (`identity.accounts`, `identity.account_roles`, `identity.account_scopes`, `identity.federated_identities`) is the **sole authoritative source** for human user authentication, status, roles, and data scopes.
+   - User & Role Management operations in Operator Console update this `identity` schema directly.
+
