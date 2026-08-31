@@ -127,6 +127,31 @@ back to the legacy globals when they are absent, so both pre-contract
 vars prevent the reopen #5 defect where an OIDC token matched the service
 path because both shared `ODP_AUTH_ISSUER`.
 
+#### Service identities must be declared in `ODP_AUTH_PRINCIPAL_MAP`
+
+A token that verifies against the service issuer proves *who* the caller is.
+It never proves *what* the caller may do. Per the auth contract §4.4 and
+ADR-0003, the roles and scope of a service identity come from
+`ODP_AUTH_PRINCIPAL_MAP` (bound from `ODP_AUTH_PRINCIPAL_MAP_SECRET`) alone —
+the boundary ignores any `roles`, `tenant_id`, or scope claims carried in the
+token itself.
+
+The practical consequence for operators: **a service account that is not a key
+in `ODP_AUTH_PRINCIPAL_MAP` cannot authenticate at all.** The boundary fails
+closed with `unknown_service` (HTTP 401) rather than admitting the caller with
+whatever privileges its token asserts. When adding a new service-to-service
+caller, or when the deployment smoke stage starts returning 401, add the
+service account's `sub` (or its verified `email`) to the principal-map secret
+and redeploy.
+
+This gate closes a real bypass. Under the deployed shape both
+`ODP_AUTH_ISSUER` and `ODP_AUTH_SERVICE_ISSUER` are
+`https://accounts.google.com`, and in `local` mode the OIDC path is off, so any
+token signed by a trusted key fell through to the service path. Without the
+gate that path read `roles` straight off the token, so an unlinked token
+claiming `roles: ["platform_admin"]` and an attacker-chosen `tenant_id` was
+authenticated as a platform admin.
+
 ### 3.2 Secret Reference Governance (Zero Plaintext Secrets in GitHub)
 
 Secrets are never stored as plaintext strings in GitHub repository settings or workflow files. GitHub Environment Variables hold only the Secret Manager secret name/reference (`<secret-name>:latest`):

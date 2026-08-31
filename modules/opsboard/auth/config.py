@@ -42,6 +42,12 @@ class AuthBoundaryConfig:
     leeway_seconds: int = 60
     live_input_declared: bool = False
     subject_role_bindings: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    # Informational only: records whether ODP_AUTH_PRINCIPAL_MAP was set at
+    # all. It is deliberately *not* a trust switch. It used to select between
+    # "mapping is authoritative" and "read roles off the token", which is what
+    # let an undeclared subject self-assign roles
+    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001). The boundary now always requires a
+    # declaration in principal_mappings or subject_role_bindings.
     principal_mapping_declared: bool = False
     principal_mappings: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
