@@ -9,17 +9,9 @@ Contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §2, §3, §4, §5, §6, §7
 - PasswordPolicy: 長度、NFKC、弱密碼比對、近似 username/email 檢查
 - Session, SessionService, SessionRepository, SessionConfig, RevocationReason
 - SqlSessionRepository: identity.sessions 的持久實作（撤銷跨 process 生效）
-- LoginThrottleService: 帳號與 IP 維度的節流與鎖定
 """
 
 from .credential_service import CURRENT_POLICY, Argon2Policy, CredentialService
-from .login_throttle import (
-    LoginAttemptRecord,
-    LoginThrottleService,
-    ThrottleRepository,
-    account_attempt_key,
-    ip_attempt_key,
-)
 from .password_policy import (
     PasswordPolicy,
     PasswordPolicyError,
@@ -52,8 +44,6 @@ __all__ = [
     "IdentityStore",
     "InMemoryIdentityStore",
     "InMemorySessionRepository",
-    "LoginAttemptRecord",
-    "LoginThrottleService",
     "PasswordPolicy",
     "PasswordPolicyError",
     "PasswordPolicyResult",
@@ -65,7 +55,4 @@ __all__ = [
     "SessionService",
     "SqlIdentityStore",
     "SqlSessionRepository",
-    "ThrottleRepository",
-    "account_attempt_key",
-    "ip_attempt_key",
 ]

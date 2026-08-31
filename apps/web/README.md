@@ -63,6 +63,41 @@ General optional environment:
 |---|---|
 | `ODP_WEB_SESSION_TTL_SECONDS` | Session cap, no more than eight hours |
 | `ODP_WEB_ALLOW_LEGACY_TRUSTED_HEADERS` | Local/test compatibility only; ignored in production |
+| `ODP_WEB_LOGIN_THROTTLE_PEPPER` | Overrides the login throttle digest pepper; defaults to `ODP_WEB_SESSION_SECRET` |
+| `ODP_WEB_TRUSTED_PROXY_HOPS` | Trusted proxies in front of the service; defaults to `1` |
+
+## Login throttle
+
+`POST /login` is throttled before any credential is verified. The counters
+live in `identity.login_attempts`, so every Cloud Run instance shares one
+view of them:
+
+- five failures per account within fifteen minutes lock that account for
+  fifteen minutes, doubling on each further lockout round up to sixty minutes;
+- fifty failures per source IP within fifteen minutes reject further attempts
+  from it;
+- a successful login clears the account counter and returns the attempt it
+  charged to the source IP.
+
+The attempt is counted before verification and only given back on success, so
+a request that dies before reaching a verdict still counts. The gate refuses
+with `AUTH_ACCOUNT_LOCKED` (423) or `AUTH_RATE_LIMITED` (429); because the
+account key is derived from the submitted username rather than a resolved
+account, an unknown username throttles exactly like a real one and the
+response is not an account-existence oracle.
+
+`attempt_key` stores an HMAC-SHA256 digest, never a plaintext client IP or
+username. The pepper defaults to `ODP_WEB_SESSION_SECRET`; rotating that
+secret re-keys the table and clears in-flight lockouts.
+
+The client address is taken from the last `X-Forwarded-For` entry, which the
+platform appends and a client cannot forge. Deployments with additional
+trusted proxies in front set `ODP_WEB_TRUSTED_PROXY_HOPS` to the number of
+hops to skip.
+
+In production the throttle fails closed: without a database URL `/login`
+returns `503 WEB_AUTH_NOT_CONFIGURED` rather than serving an unthrottled
+login form, and an unreachable store returns `503 WEB_AUTH_UNAVAILABLE`.
 
 The Web runtime service account must have permission to invoke the API Cloud
 Run service. Production requests fail closed before contacting the API when

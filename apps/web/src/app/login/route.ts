@@ -27,6 +27,11 @@ import {
   getDefaultSessionStore,
   MAX_SESSION_ABSOLUTE_LIFETIME_MS,
 } from "../../lib/auth/sessionStore";
+import {
+  getDefaultLoginThrottle,
+  resolveClientIp,
+  type ThrottleDecision,
+} from "../../lib/auth/loginThrottle";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,6 +57,8 @@ function renderLoginFormHtml(options: {
     errorMessageHtml = `<div class="error-banner" role="alert">帳號或密碼錯誤，請重新輸入。</div>`;
   } else if (options.error === "AUTH_ACCOUNT_LOCKED") {
     errorMessageHtml = `<div class="error-banner" role="alert">帳號已被暫時鎖定，請稍後再試。</div>`;
+  } else if (options.error === "AUTH_RATE_LIMITED") {
+    errorMessageHtml = `<div class="error-banner" role="alert">嘗試次數過多，請稍後再試。</div>`;
   } else if (options.error === "CSRF_VERIFICATION_FAILED") {
     errorMessageHtml = `<div class="error-banner" role="alert">請求驗證失敗，請重新整理頁面後重試。</div>`;
   } else if (options.error) {
@@ -430,37 +437,113 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const targetReturnTo = safeReturnTo(returnTo);
 
-  // 3. Authenticate credentials
-  const authResult = await authenticateLocalCredentials(username, password);
-
-  if (!authResult.ok) {
-    const status = authResult.code === "AUTH_ACCOUNT_LOCKED" ? 423 : 401;
-
-    // Check if client expects JSON
-    const accept = request.headers.get("accept") || "";
-    if (accept.includes("application/json") || contentType.includes("application/json")) {
+  // A throttle refusal and a credential refusal must look the same on the
+  // wire apart from their code, so both go through one response builder.
+  const wantsJson =
+    (request.headers.get("accept") || "").includes("application/json") ||
+    contentType.includes("application/json");
+  const loginFailureResponse = (
+    status: number,
+    code: string,
+    summary: string,
+  ): NextResponse => {
+    if (wantsJson) {
       return NextResponse.json(
-        {
-          error: {
-            code: authResult.code,
-            summary: authResult.summary,
-          },
-        },
+        { error: { code, summary } },
         { status, headers: { "cache-control": "no-store" } },
       );
     }
 
     // HTML Form Submission: Redirect back to /login with error query
     const loginRedirectUrl = new URL("/login", request.nextUrl.origin);
-    loginRedirectUrl.searchParams.set("error", authResult.code);
+    loginRedirectUrl.searchParams.set("error", code);
     loginRedirectUrl.searchParams.set("returnTo", targetReturnTo);
 
     const redirectResponse = NextResponse.redirect(loginRedirectUrl, 303);
     redirectResponse.headers.set("cache-control", "no-store");
     return redirectResponse;
+  };
+
+  // 3. Login throttle (Contract §6.4). The gate reads and counts this attempt
+  //    in identity.login_attempts before any credential work, so the counter is
+  //    shared by every Cloud Run instance and a request that dies mid-verify
+  //    still leaves its attempt counted.
+  const throttle = getDefaultLoginThrottle(process.env);
+  if (!throttle) {
+    // Without a durable store there is no throttle shared across instances,
+    // and serving an unthrottled login form is not an acceptable degradation.
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_NOT_CONFIGURED",
+          summary: "Web authentication is not configured.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
   }
 
-  // 4. Session & Token Creation
+  const clientIp = resolveClientIp(request.headers);
+  let gate: ThrottleDecision;
+  try {
+    gate = await throttle.beginAttempt(username, clientIp);
+  } catch {
+    // Fail closed: an unreachable throttle store must not disable the control.
+    return NextResponse.json(
+      {
+        error: {
+          code: "WEB_AUTH_UNAVAILABLE",
+          summary: "Web authentication is temporarily unavailable.",
+        },
+      },
+      { status: 503, headers: { "cache-control": "no-store" } },
+    );
+  }
+
+  if (!gate.allowed) {
+    // The account key is derived from the submitted username and never from a
+    // resolved account, so an unknown username throttles exactly like a real
+    // one and this response reveals nothing about account existence.
+    return gate.reason === "ip_blocked"
+      ? loginFailureResponse(
+          429,
+          "AUTH_RATE_LIMITED",
+          "Too many login attempts. Try again later.",
+        )
+      : loginFailureResponse(
+          423,
+          "AUTH_ACCOUNT_LOCKED",
+          "Account is temporarily locked.",
+        );
+  }
+
+  // 4. Authenticate credentials
+  const authResult = await authenticateLocalCredentials(username, password);
+
+  if (!authResult.ok) {
+    try {
+      await throttle.recordFailure(username, clientIp);
+    } catch {
+      // The attempt is already counted durably and the counter alone refuses
+      // further attempts, so opening the lockout round is best effort and must
+      // not turn a failed login into a 503.
+    }
+    return loginFailureResponse(
+      authResult.code === "AUTH_ACCOUNT_LOCKED" ? 423 : 401,
+      authResult.code,
+      authResult.summary,
+    );
+  }
+
+  // A verified credential clears the account counter (§6.4) and gives back the
+  // attempt counted against the source IP, which only budgets failures.
+  try {
+    await throttle.recordSuccess(username, clientIp);
+  } catch {
+    // Non-fatal: a stale counter must not reject a proven-valid credential.
+  }
+
+  // 5. Session & Token Creation
   const now = Math.floor(Date.now() / 1000);
   const sid = crypto.randomUUID();
   const accessToken = await mintLocalJwt({
@@ -525,7 +608,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // bearer remains in identity.sessions for the BFF to retrieve server-side.
   const sealedCookie = await sealWebSessionReference(session);
 
-  // 5. Build Response
+  // 6. Build Response
   const accept = request.headers.get("accept") || "";
   let response: NextResponse;
 
