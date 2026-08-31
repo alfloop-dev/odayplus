@@ -219,17 +219,24 @@ class OwnerContinuationTests(unittest.TestCase):
             git(repo, "add", "reviewed.txt")
             git(repo, "commit", "--quiet", "-m", "review head")
             expected_head = git(repo, "rev-parse", "HEAD")
+            git(repo, "switch", "--quiet", "--create", "dev")
+            (repo / "dev-only.txt").write_text("newer dev head\n", encoding="utf-8")
+            git(repo, "add", "dev-only.txt")
+            git(repo, "commit", "--quiet", "-m", "dev advance")
+            dev_head = git(repo, "rev-parse", "HEAD")
+            git(repo, "switch", "--quiet", "task/SEAL-REVIEW-001")
             git(repo, "reset", "--hard", "HEAD~1")
 
             ok, status = supervisor._refresh_reused_worker_worktree(
                 repo,
                 repo,
-                expected_head,
+                dev_head,
                 "task/SEAL-REVIEW-001",
                 required_head=expected_head,
             )
 
             self.assertTrue(ok, status)
+            self.assertEqual(status, f"review_head_pinned_at_{expected_head[:12]}")
             self.assertEqual(git(repo, "rev-parse", "HEAD"), expected_head)
 
 

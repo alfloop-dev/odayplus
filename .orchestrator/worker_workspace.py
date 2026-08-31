@@ -802,6 +802,10 @@ def _refresh_reused_worker_worktree(
             local_head = _git_commit_oid(worktree_path, "HEAD")
             if local_head != expected_head:
                 return False, "review_head_fast_forward_incomplete"
+        # A reviewer must see the exact submitted commit. Once that commit has
+        # been established, the ordinary base refresh below must not advance
+        # this checkout when dev already contains it.
+        return True, f"review_head_pinned_at_{expected_head[:12]}"
     # Production passes the SHA resolved once at the beginning of this cycle.
     # Symbolic refs remain accepted only for direct diagnostic/test callers.
     base_head = _git_commit_oid(worktree_path, base_sha)
@@ -1795,7 +1799,16 @@ def prepare_worker_workspace(
         _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
         if not owner_continuation:
             clear_unsealed_worker_handoff(state, str(request.task_id or workspace_task_id))
-        if refresh_status.startswith("ff_to_"):
+        if refresh_status.startswith("review_head_pinned_at_"):
+            base_relation = "review_head_pinned"
+            request.metadata.update(
+                {
+                    "review_head_immutable": True,
+                    "review_head": required_review_head,
+                    "worktree_refresh_status": refresh_status,
+                }
+            )
+        elif refresh_status.startswith("ff_to_"):
             base_relation = "fast_forwarded"
         elif refresh_status.startswith("base_present_at_"):
             base_relation = "contains_base"
@@ -1849,6 +1862,37 @@ def prepare_worker_workspace(
             _git_ref_exists(repo_root, f"refs/heads/{branch}")
             or _git_ref_exists(repo_root, f"refs/remotes/origin/{branch}")
         )
+        if required_review_head and not branch_preexisted:
+            refresh_status = "review_head_unavailable"
+            message = (
+                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                f"review dispatch requires submitted head {required_review_head[:12]}, "
+                f"but task branch {branch} is unavailable ({refresh_status})."
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_blocked_worktree_lease",
+                    "task_id": request.task_id,
+                    "workspace_task_id": workspace_task_id,
+                    "target_agent": target_agent,
+                    "queue_event_id": queue_event_id,
+                    "message": message,
+                    "workspace_branch": branch,
+                    "workspace_path": str(worktree_path),
+                    "refresh_status": refresh_status,
+                },
+            )
+            _record_worktree_lease_block(
+                config,
+                state,
+                task_id=str(request.task_id or workspace_task_id),
+                refresh_status=refresh_status,
+                message=message,
+                worktree_path=worktree_path,
+                materialized_paths=materialized_paths,
+            )
+            return False, message
         created, error = _create_worker_worktree(repo_root, worktree_path, branch, base.sha)
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
@@ -1866,7 +1910,7 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        if branch_preexisted:
+        if branch_preexisted or required_review_head:
             # A branch without a currently registered checkout is still an
             # existing task branch, not a new task.  Apply the same exact-SHA
             # relation check before handing it to a worker.
@@ -1894,7 +1938,16 @@ def prepare_worker_workspace(
                     materialized_paths=materialized_paths,
                 )
                 return False, message
-            if refresh_status.startswith("ff_to_"):
+            if refresh_status.startswith("review_head_pinned_at_"):
+                base_relation = "review_head_pinned"
+                request.metadata.update(
+                    {
+                        "review_head_immutable": True,
+                        "review_head": required_review_head,
+                        "worktree_refresh_status": refresh_status,
+                    }
+                )
+            elif refresh_status.startswith("ff_to_"):
                 base_relation = "fast_forwarded"
             elif refresh_status.startswith("base_present_at_"):
                 base_relation = "contains_base"
