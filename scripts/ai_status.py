@@ -13,11 +13,12 @@ import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Iterable
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 COMMAND_TIMEOUT_SECONDS = 8.0
 from zoneinfo import ZoneInfo
