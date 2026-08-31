@@ -72,6 +72,11 @@ class CommandAuditTests(unittest.TestCase):
         audit = ve.audit_command("pytest -q -k 'alpha|beta'")
         self.assertTrue(audit.ok, audit.details)
 
+    def test_unbalanced_quotes_are_rejected(self) -> None:
+        audit = ve.audit_command("pytest -k 'unclosed")
+        self.assertFalse(audit.ok)
+        self.assertIn(ve.V_UNPARSABLE, audit.violations)
+
     def test_empty_command_is_rejected(self) -> None:
         audit = ve.audit_command("   ")
         self.assertFalse(audit.ok)

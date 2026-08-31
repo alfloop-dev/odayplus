@@ -277,7 +277,7 @@ def audit_commands(commands: Any) -> list[CommandAudit]:
 
 # --- test selection ---------------------------------------------------------
 
-_SELECTION_VALUE_FLAGS = frozenset({"-k", "-m", "--deselect", "--ignore", "--rootdir", "-p"})
+_SELECTION_VALUE_FLAGS = frozenset({"-k", "-m", "--deselect", "--ignore"})
 _SCOPE_TARGETED = "targeted"
 _SCOPE_SUITE = "suite"
 
@@ -828,10 +828,13 @@ def run_verification_command(
         exit_code = None
         output = _decode_stream(exc.stdout) + _decode_stream(exc.stderr)
     except FileNotFoundError as exc:
+        # 127 is the shell's own "command not found" status. Reporting it keeps
+        # the receipt honest: the command did not work, and it is not a pass and
+        # not an interruption that a resume would fix.
         return {
             "audit": audit,
             "executed": False,
-            "exit_code": None,
+            "exit_code": 127,
             "duration_seconds": round(time.monotonic() - start, 3),
             "started_at": started_at,
             "finished_at": _utc_now(),
