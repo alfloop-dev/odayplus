@@ -501,20 +501,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (!gate.allowed) {
-    // The account key is derived from the submitted username and never from a
-    // resolved account, so an unknown username throttles exactly like a real
-    // one and this response reveals nothing about account existence.
-    return gate.reason === "ip_blocked"
-      ? loginFailureResponse(
-          429,
-          "AUTH_RATE_LIMITED",
-          "Too many login attempts. Try again later.",
-        )
-      : loginFailureResponse(
-          423,
-          "AUTH_ACCOUNT_LOCKED",
-          "Account is temporarily locked.",
-        );
+    // Both throttle dimensions answer 429 AUTH_RATE_LIMITED, and neither ever
+    // answers 423. A refusal here happens before the credential is verified, so
+    // it describes the attempt rate and not the account: reserving
+    // AUTH_ACCOUNT_LOCKED for the post-verification path is what keeps 423 from
+    // being reachable without a proven-correct password. The account key is
+    // also derived from the submitted username rather than a resolved account,
+    // so an unknown username throttles exactly like a real one and the two
+    // reasons stay indistinguishable from outside.
+    return loginFailureResponse(
+      429,
+      "AUTH_RATE_LIMITED",
+      "Too many login attempts. Try again later.",
+    );
   }
 
   // 4. Authenticate credentials
@@ -528,10 +527,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // further attempts, so opening the lockout round is best effort and must
       // not turn a failed login into a 503.
     }
+    // AUTH_ACCOUNT_LOCKED is only produced after the password has been proven
+    // correct, so 423 tells an attacker nothing they did not already supply.
+    // Every other refusal — unknown username, wrong password, disabled or
+    // invited account, identity-store outage — collapses into one 401 with a
+    // fixed summary. The summary is written here rather than forwarded from
+    // authResult so no detail added downstream can widen the response.
+    if (authResult.code === "AUTH_ACCOUNT_LOCKED") {
+      // No session is created on this path: the response is built and returned
+      // before any session or token work below.
+      return loginFailureResponse(
+        423,
+        "AUTH_ACCOUNT_LOCKED",
+        "Account is temporarily locked.",
+      );
+    }
     return loginFailureResponse(
-      authResult.code === "AUTH_ACCOUNT_LOCKED" ? 423 : 401,
-      authResult.code,
-      authResult.summary,
+      401,
+      "AUTH_INVALID_CREDENTIALS",
+      "Invalid username or password.",
     );
   }
 

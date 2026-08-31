@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { POST } from "../../../app/login/route";
+import { webSessionCookieName } from "../session";
 import {
   MockIdentityStore,
   setIdentityStoreForTests,
@@ -78,6 +79,8 @@ afterEach(() => {
   process.env.ODP_WEB_SESSION_SECRET = undefined;
   delete process.env.ODP_WEB_SESSION_SECRET;
   delete process.env.ODP_DEPLOY_ENV;
+  delete process.env.ODP_WEB_LOGIN_THROTTLE_PEPPER;
+  delete process.env.DATABASE_URL;
 });
 
 describe("POST /login is throttled by identity.login_attempts (Contract §6.4)", () => {
@@ -124,15 +127,17 @@ describe("POST /login is throttled by identity.login_attempts (Contract §6.4)",
       loginRequest({ username: "admin", password: "wrong-password-123" }),
     );
 
-    expect(locked.status).toBe(423);
+    // 429, never 423: this refusal precedes verification, so it must not claim
+    // anything about the account behind the submitted username.
+    expect(locked.status).toBe(429);
     expect(await locked.json()).toMatchObject({
-      error: { code: "AUTH_ACCOUNT_LOCKED" },
+      error: { code: "AUTH_RATE_LIMITED" },
     });
     // The refusal happens before any credential work.
     expect(identity.verifyCalls).toBe(CONFIG.accountMaxFailures);
   });
 
-  it("refuses the correct password too while the account is locked", async () => {
+  it("refuses the correct password too while the throttle lockout holds", async () => {
     process.env.ODP_WEB_SESSION_SECRET = SECRET;
     installThrottle();
     setIdentityStoreForTests(new MockIdentityStore(ACCOUNTS));
@@ -144,7 +149,7 @@ describe("POST /login is throttled by identity.login_attempts (Contract §6.4)",
     const response = await POST(
       loginRequest({ username: "admin", password: "Admin12345678!" }),
     );
-    expect(response.status).toBe(423);
+    expect(response.status).toBe(429);
     expect(response.headers.get("set-cookie")).toBeNull();
   });
 
@@ -170,7 +175,7 @@ describe("POST /login is throttled by identity.login_attempts (Contract §6.4)",
     // Same status sequence and same bodies: the lockout is keyed on the
     // submitted username, so it is not an account existence oracle.
     expect(unknown).toEqual(known);
-    expect(known[CONFIG.accountMaxFailures].status).toBe(423);
+    expect(known[CONFIG.accountMaxFailures].status).toBe(429);
   });
 
   it("clears the account counter on a successful login", async () => {
@@ -274,7 +279,7 @@ describe("POST /login is throttled by identity.login_attempts (Contract §6.4)",
 
     expect(response.status).toBe(303);
     const location = response.headers.get("location");
-    expect(location).toContain("error=AUTH_ACCOUNT_LOCKED");
+    expect(location).toContain("error=AUTH_RATE_LIMITED");
     expect(location).toContain("returnTo=%2Foperator");
   });
 
@@ -300,6 +305,7 @@ describe("POST /login fails closed when the throttle is unavailable", () => {
       getDefaultLoginThrottle({
         ODP_DEPLOY_ENV: "production",
         DATABASE_URL: "postgresql://localhost/identity",
+        ODP_WEB_SESSION_SECRET: SECRET,
       }),
     ).not.toBeNull();
   });
@@ -346,5 +352,212 @@ describe("POST /login fails closed when the throttle is unavailable", () => {
       error: { code: "WEB_AUTH_UNAVAILABLE" },
     });
     expect(response.headers.get("set-cookie")).toBeNull();
+  });
+});
+
+// Accounts covering every status the identity store can hold, so a wrong
+// password can be posted against each one and the answers compared.
+const STATUS_ACCOUNTS = [
+  {
+    accountId: "acc-active",
+    tenantId: "tenant-a",
+    username: "active-user",
+    email: "active@example.invalid",
+    status: "active" as const,
+    password: "Active12345678!",
+  },
+  {
+    accountId: "acc-locked",
+    tenantId: "tenant-a",
+    username: "locked-user",
+    email: "locked@example.invalid",
+    status: "locked" as const,
+    password: "Locked12345678!",
+  },
+  {
+    accountId: "acc-disabled",
+    tenantId: "tenant-a",
+    username: "disabled-user",
+    email: "disabled@example.invalid",
+    status: "disabled" as const,
+    password: "Disabled12345678!",
+  },
+  {
+    accountId: "acc-invited",
+    tenantId: "tenant-a",
+    username: "invited-user",
+    email: "invited@example.invalid",
+    status: "invited" as const,
+    password: "Invited12345678!",
+  },
+];
+
+describe("POST /login does not leak account existence or status", () => {
+  /** Post one attempt and reduce the response to what a caller can observe. */
+  async function observe(username: string, password: string) {
+    const response = await POST(loginRequest({ username, password }));
+    return {
+      status: response.status,
+      body: await response.json(),
+      setCookie: response.headers.get("set-cookie"),
+    };
+  }
+
+  it("answers one generic 401 for every wrong password, whatever the status", async () => {
+    process.env.ODP_WEB_SESSION_SECRET = SECRET;
+    installThrottle();
+    setIdentityStoreForTests(new MockIdentityStore(STATUS_ACCOUNTS));
+
+    // Each username gets its own throttle budget, so one attempt apiece stays
+    // well inside the lockout threshold and isolates the credential verdict.
+    const answers = await Promise.all(
+      [
+        "no-such-account",
+        "active-user",
+        "locked-user",
+        "disabled-user",
+        "invited-user",
+      ].map((username) => observe(username, "wrong-password-123")),
+    );
+
+    // Every answer is byte-identical, so an attacker holding an invalid
+    // password learns nothing: not whether the account exists, and not whether
+    // it is locked, disabled or merely invited.
+    for (const answer of answers) {
+      expect(answer).toEqual({
+        status: 401,
+        body: {
+          error: {
+            code: "AUTH_INVALID_CREDENTIALS",
+            summary: "Invalid username or password.",
+          },
+        },
+        setCookie: null,
+      });
+    }
+  });
+
+  it("keeps 423 unreachable without a correct password", async () => {
+    process.env.ODP_WEB_SESSION_SECRET = SECRET;
+    installThrottle();
+    setIdentityStoreForTests(new MockIdentityStore(STATUS_ACCOUNTS));
+
+    const wrong = await observe("locked-user", "wrong-password-123");
+    expect(wrong.status).toBe(401);
+
+    // Only the proven-correct password promotes the same account to 423, which
+    // is why 423 cannot be used to probe for locked accounts.
+    const right = await observe("locked-user", "Locked12345678!");
+    expect(right.status).toBe(423);
+    expect(right.body).toMatchObject({
+      error: { code: "AUTH_ACCOUNT_LOCKED" },
+    });
+  });
+
+  it("issues no session when a valid credential meets a locked account", async () => {
+    process.env.ODP_WEB_SESSION_SECRET = SECRET;
+    installThrottle();
+    setIdentityStoreForTests(new MockIdentityStore(STATUS_ACCOUNTS));
+
+    const response = await POST(
+      loginRequest({ username: "locked-user", password: "Locked12345678!" }),
+    );
+
+    expect(response.status).toBe(423);
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("answers 401, not 423, for a correct password on a disabled account", async () => {
+    process.env.ODP_WEB_SESSION_SECRET = SECRET;
+    installThrottle();
+    setIdentityStoreForTests(new MockIdentityStore(STATUS_ACCOUNTS));
+
+    for (const username of ["disabled-user", "invited-user"]) {
+      const password =
+        username === "disabled-user" ? "Disabled12345678!" : "Invited12345678!";
+      const answer = await observe(username, password);
+      expect(answer.status).toBe(401);
+      expect(answer.body).toMatchObject({
+        error: { code: "AUTH_INVALID_CREDENTIALS" },
+      });
+      expect(answer.setCookie).toBeNull();
+    }
+  });
+
+  it("still logs an active account in", async () => {
+    process.env.ODP_WEB_SESSION_SECRET = SECRET;
+    installThrottle();
+    setIdentityStoreForTests(new MockIdentityStore(STATUS_ACCOUNTS));
+
+    const response = await POST(
+      loginRequest({ username: "active-user", password: "Active12345678!" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain(webSessionCookieName);
+  });
+});
+
+describe("The throttle refuses to write reversible attempt keys", () => {
+  const DB = "postgresql://localhost/identity";
+
+  it("returns no throttle in production when a database has no pepper", () => {
+    expect(
+      getDefaultLoginThrottle({ ODP_DEPLOY_ENV: "production", DATABASE_URL: DB }),
+    ).toBeNull();
+  });
+
+  it("accepts either pepper variable in production", () => {
+    expect(
+      getDefaultLoginThrottle({
+        ODP_DEPLOY_ENV: "production",
+        DATABASE_URL: DB,
+        ODP_WEB_LOGIN_THROTTLE_PEPPER: PEPPER,
+      }),
+    ).not.toBeNull();
+    expect(
+      getDefaultLoginThrottle({
+        ODP_DEPLOY_ENV: "production",
+        DATABASE_URL: DB,
+        ODP_WEB_SESSION_SECRET: SECRET,
+      }),
+    ).not.toBeNull();
+  });
+
+  it("treats a blank pepper as no pepper at all", () => {
+    expect(
+      getDefaultLoginThrottle({
+        ODP_DEPLOY_ENV: "production",
+        DATABASE_URL: DB,
+        ODP_WEB_LOGIN_THROTTLE_PEPPER: "   ",
+        ODP_WEB_SESSION_SECRET: "  ",
+      }),
+    ).toBeNull();
+  });
+
+  it("returns 503 from /login rather than hashing without a pepper", async () => {
+    process.env.ODP_DEPLOY_ENV = "production";
+    process.env.DATABASE_URL = DB;
+    setLoginThrottleForTests(undefined);
+    setIdentityStoreForTests(new MockIdentityStore(ACCOUNTS));
+
+    const response = await POST(
+      loginRequest({ username: "admin", password: "Admin12345678!" }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({
+      error: { code: "WEB_AUTH_NOT_CONFIGURED" },
+    });
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("leaves local development working without a pepper", () => {
+    // resolveProductMode treats an unmarked environment as production, so the
+    // dev case has to say so explicitly — which is also the only way the
+    // unpeppered digest branch stays reachable.
+    expect(
+      getDefaultLoginThrottle({ DATABASE_URL: DB, NODE_ENV: "test" }),
+    ).not.toBeNull();
   });
 });

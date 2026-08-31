@@ -92,3 +92,52 @@ def test_no_parallel_throttle_mechanism_remains() -> None:
         "product_ops",
     )
     assert writers == {"apps/web/src/lib/auth/loginThrottle.ts"}
+
+
+def _without_comments(source: str) -> str:
+    """Drop ``//`` lines so a guard reads emitted code, not the prose about it."""
+    return "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith("//")
+    )
+
+
+def test_pre_verification_refusals_never_claim_the_account_is_locked() -> None:
+    """423 must be reachable only after a password has been proven correct.
+
+    The throttle gate runs before ``authenticateLocalCredentials``. If that gate
+    answered ``AUTH_ACCOUNT_LOCKED`` it would put an account-shaped statement on
+    a response an attacker can trigger with any password, so both throttle
+    dimensions answer ``AUTH_RATE_LIMITED`` instead.
+    """
+    source = _without_comments(LOGIN_ROUTE.read_text(encoding="utf-8"))
+
+    gate = source.index("if (!gate.allowed)")
+    verify = source.index("authenticateLocalCredentials(username, password)")
+    pre_verification = source[gate:verify]
+
+    assert "AUTH_RATE_LIMITED" in pre_verification
+    assert "AUTH_ACCOUNT_LOCKED" not in pre_verification
+    assert "423" not in pre_verification
+
+    # After verification, a lock is the only thing that may answer 423.
+    post_verification = source[verify:]
+    assert 'AUTH_ACCOUNT_LOCKED"' in post_verification
+    assert post_verification.count("423") == 1
+
+
+def test_throttle_fails_closed_without_a_pepper_in_production() -> None:
+    """An unpeppered attempt key is reversible, so production refuses to write one.
+
+    Both attempt-key inputs are enumerable offline: the IPv4 space is 2^32 and
+    usernames come from a dictionary. A production runtime that has a database
+    but neither ``ODP_WEB_LOGIN_THROTTLE_PEPPER`` nor ``ODP_WEB_SESSION_SECRET``
+    therefore resolves no throttle at all, which the route turns into a 503.
+    """
+    source = _without_comments(THROTTLE_MODULE.read_text(encoding="utf-8"))
+
+    factory = source[source.index("export function getDefaultLoginThrottle") :]
+    guard = factory[: factory.index("_defaultStore = new PostgresLoginThrottleStore()")]
+
+    assert "isProductionWebRuntime(environment)" in guard
+    assert "!resolveThrottlePepper(environment)" in guard
+    assert "return null" in guard

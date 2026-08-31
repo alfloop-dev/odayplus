@@ -148,6 +148,67 @@ change, it must delete its two xfail guards and its
 longer exists), and re-point its strict guards at the TypeScript route and the
 durable datastore, as the same architecture note directs.
 
+## 安全審查退回後的修正（2026-08-31）
+
+Codex2 在 PR #1085 的安全審查提出兩項阻擋，以下為修正內容。
+
+### 一、`423` 曾是帳號列舉的破口
+
+**問題**：節流閘門跑在憑證驗證之前，而它在帳號維度鎖定時直接回
+`423 AUTH_ACCOUNT_LOCKED`。`423` 是一個關於「帳號」的陳述，卻出現在攻擊者
+用任意密碼就能觸發的回應上。加上驗證後路徑同樣可能回 `423`，攻擊者便能藉由
+狀態碼分辨 known／unknown／disabled 帳號的無效憑證。
+
+**修正**（`apps/web/src/app/login/route.ts`）：
+
+- 驗證前的節流拒絕，帳號維度與 IP 維度**一律**回 `429 AUTH_RATE_LIMITED`。
+  節流描述的是嘗試速率，不是帳號狀態，所以這條路徑不再出現 `423`。兩個維度
+  對外完全同形，無法區分。
+- 驗證後的失敗改為顯式分支：只有 `AUTH_ACCOUNT_LOCKED`（即密碼已驗證正確、
+  帳號為 locked）回 `423`，且在建立 session／token 的程式碼之前就 return，
+  不會發出任何 cookie。其餘一律回 `401 AUTH_INVALID_CREDENTIALS`。
+- `401` 的 summary 固定寫在 route 內，不再從 `authResult.summary` 轉發，
+  避免日後 `localAuth` 加入更細的訊息時悄悄擴大回應面。
+
+`localAuth.ts` 本身早已先驗證密碼再揭露 lock，因此 `AUTH_ACCOUNT_LOCKED`
+在架構上就只能出現在密碼正確之後——`423` 無法在不握有正確密碼的前提下觸發。
+
+### 二、production 缺 pepper 時會退回 raw SHA-256
+
+**問題**：`resolveThrottlePepper` 在 `ODP_WEB_LOGIN_THROTTLE_PEPPER` 與
+`ODP_WEB_SESSION_SECRET` 皆未設定時回傳 null，`digest` 隨即退回未加 pepper
+的 SHA-256。摘要的兩種輸入都可離線窮舉（IPv4 空間 2^32、使用者名稱來自
+字典），等於把 `identity.login_attempts` 變成一份可還原的登入嘗試紀錄。
+
+**修正**（`apps/web/src/lib/auth/loginThrottle.ts`）：
+`getDefaultLoginThrottle` 在「production 且有資料庫 URL 卻解不出 pepper」時
+回傳 null，route 既有的 null 處理即產生 `503 WEB_AUTH_NOT_CONFIGURED`。
+空白字串經 `trim()` 後視同未設定。未加 pepper 的分支因此只在本機與測試
+runtime 可達；`ODP_WEB_LOGIN_THROTTLE_PEPPER` 與 `ODP_WEB_SESSION_SECRET`
+任一者存在即可滿足 production。
+
+### 新增的測試
+
+`apps/web/src/lib/auth/__tests__/loginThrottleRoute.test.ts` 新增兩個
+describe 區塊（共 10 個案例）：
+
+- **不洩漏帳號存在性與狀態**：對 unknown／active／locked／disabled／invited
+  五種帳號送出錯誤密碼，斷言五筆回應（status、body、set-cookie）**逐欄相同**
+  且皆為 `401 AUTH_INVALID_CREDENTIALS`；locked 帳號配正確密碼才升級為
+  `423` 且無 cookie；disabled 與 invited 即使密碼正確仍為 `401`；active
+  帳號仍能正常登入並取得 session cookie。
+- **拒絕寫入可還原的 attempt key**：production + DB 無 pepper 時工廠回 null、
+  `/login` 回 `503`；兩個 pepper 變數任一皆可滿足；空白 pepper 視同未設定；
+  本機開發（`NODE_ENV=test`）不受影響。
+
+既有案例中，驗證前節流拒絕的斷言由 `423 AUTH_ACCOUNT_LOCKED` 改為
+`429 AUTH_RATE_LIMITED`（含 HTML 表單導回的 `error=` 參數）。
+
+`tests/security/test_login_throttle_wiring.py` 新增兩道原始碼守衛：驗證前的
+區段不得出現 `AUTH_ACCOUNT_LOCKED` 或 `423`、驗證後 `423` 只能出現一次；
+以及工廠必須同時檢查 `isProductionWebRuntime` 與 `!resolveThrottlePepper`。
+兩道守衛在比對前會先剝除 `//` 註解，只檢查實際產生的程式碼。
+
 ## Verification
 
 Run on 2026-08-31 UTC at commit `1aec7af7` plus the retirement commit:
@@ -182,5 +243,32 @@ with escalation retained, cross-instance sharing) and 12 in
 counting before verification, lockout without further credential work, unknown
 versus real username, success clearing the counter, IP block, HTML form
 redirect, and both fail-closed 503 paths).
+
+### 安全審查修正後的重跑（2026-08-31 UTC）
+
+```text
+npm --prefix apps/web run test
+Test Files  52 passed (52)
+     Tests  436 passed (436)
+
+npm --prefix apps/web run typecheck
+tsc --noEmit          (no output)
+
+npm --prefix apps/web run lint
+✔ No ESLint warnings or errors
+
+uv run pytest tests/identity tests/security/test_login_throttle_wiring.py
+76 passed
+
+uv run --python 3.12 ruff check tests/security/test_login_throttle_wiring.py
+All checks passed!
+
+uv run python delivery_toolchain/governance/check_code_boundaries.py --write-inventory
+Code boundary checks passed for 1007 files.
+```
+
+Web 測試由 426 增至 436（route 測試新增 10 個案例），Python 由 74 增至 76
+（新增兩道原始碼守衛）。既有案例中僅節流拒絕的狀態碼斷言由 `423` 改為
+`429`，無其他既有斷言被放寬或刪除。
 
 No external data fetching and no OIDC requirement was added.

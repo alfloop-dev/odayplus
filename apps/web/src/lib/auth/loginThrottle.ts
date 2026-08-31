@@ -90,6 +90,11 @@ export interface ThrottleDecision {
  * becomes mandatory. Rotating the session secret re-keys the table, which
  * clears in-flight lockouts; lockouts last at most an hour, so that is an
  * acceptable consequence of a rare operation.
+ *
+ * Null means "no pepper is configured", which is a legitimate answer only
+ * outside production. `getDefaultLoginThrottle` refuses to build a database
+ * -backed throttle on a null pepper in production, so the unpeppered branch of
+ * `digest` is reachable only from local and test runtimes.
  */
 export function resolveThrottlePepper(
   environment: Record<string, string | undefined> = process.env,
@@ -790,7 +795,9 @@ export function setLoginThrottleForTests(
  *
  * Returns null in production when no database is configured: an in-process
  * counter would not be shared between Cloud Run instances, so /login fails
- * closed rather than serving an unthrottled login form.
+ * closed rather than serving an unthrottled login form. It also returns null in
+ * production when a database is configured but no pepper is, rather than
+ * writing reversible attempt keys. Both cases surface as 503 at the route.
  */
 export function getDefaultLoginThrottle(
   environment: Record<string, string | undefined> = process.env,
@@ -803,6 +810,18 @@ export function getDefaultLoginThrottle(
       environment.DATABASE_URL,
   );
   if (hasDbUrl) {
+    // Fail closed when a production runtime has a database but no pepper.
+    // `digest` would otherwise fall back to a raw SHA-256, and the attempt-key
+    // inputs are both small enough to enumerate offline: the IPv4 space is
+    // 2^32, and usernames come from a dictionary. An unpeppered digest column
+    // is therefore a reversible record of who tried to log in and from where,
+    // so /login answers 503 rather than writing one.
+    if (
+      isProductionWebRuntime(environment) &&
+      !resolveThrottlePepper(environment)
+    ) {
+      return null;
+    }
     if (!(_defaultStore instanceof PostgresLoginThrottleStore)) {
       _defaultStore = new PostgresLoginThrottleStore();
     }
