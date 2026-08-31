@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from common import normalize_agent_id, utc_now
-from dispatch_policy import REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, worker_logical_dispatch_agent_id
+from dispatch_policy import REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
 
 from runtime_state import ACTIVE_WORKER_STATUSES
 
@@ -710,6 +710,7 @@ def _refresh_reused_worker_worktree(
     *,
     network_timeout_seconds: float | None = None,
     materialized_paths=None,
+    required_head: str | None = None,
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree against one immutable cycle base.
 
@@ -775,6 +776,32 @@ def _refresh_reused_worker_worktree(
             return False, f"{_SKIPPED_DIRTY_WORKTREE}: {inspection.detail}"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
+    if required_head:
+        required_head = str(required_head).strip()
+        expected_head = _git_commit_oid(repo_root, required_head)
+        if not expected_head or expected_head != required_head:
+            return False, "review_head_unavailable"
+        if not local_head:
+            return False, "unverifiable_refs: missing local HEAD"
+        if local_head != expected_head:
+            review_contains_rc, _ = _git_output(
+                worktree_path, "merge-base", "--is-ancestor", local_head, expected_head
+            )
+            if review_contains_rc != 0:
+                return False, f"review_head_mismatch: local={local_head}, expected={expected_head}"
+            merge_proc = subprocess.run(
+                ["git", "merge", "--ff-only", expected_head],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if merge_proc.returncode != 0:
+                details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
+                return False, f"review_head_fast_forward_failed: {details[0] if details else 'unknown'}"
+            local_head = _git_commit_oid(worktree_path, "HEAD")
+            if local_head != expected_head:
+                return False, "review_head_fast_forward_incomplete"
     # Production passes the SHA resolved once at the beginning of this cycle.
     # Symbolic refs remain accepted only for direct diagnostic/test callers.
     base_head = _git_commit_oid(worktree_path, base_sha)
@@ -1613,6 +1640,12 @@ def prepare_worker_workspace(
     reused = False
     base_relation = "created_from_exact_base"
     materialized_paths = _orchestrator_materialized_paths(state, request, workspace_task_id)
+    review_submission = task_record.get("review_submission") if isinstance(task_record, dict) else None
+    required_review_head = (
+        str(review_submission.get("remote_sha") or "").strip()
+        if str(request.reason or "") == REASON_REVIEW_READY and isinstance(review_submission, dict)
+        else None
+    )
 
     # A task branch has exactly one registered lease.  `reuse_existing=false`
     # never had a safe meaning for a single branch (Git cannot check it out in
@@ -1629,6 +1662,7 @@ def prepare_worker_workspace(
             branch,
             network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
             materialized_paths=materialized_paths,
+            required_head=required_review_head,
         )
         if not refresh_ok and _is_skipped_dirty_worktree(refresh_status):
             allowed, continuation_detail = sealed_owner_continuation_allowed(
@@ -1843,6 +1877,7 @@ def prepare_worker_workspace(
                 branch,
                 network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                 materialized_paths=materialized_paths,
+                required_head=required_review_head,
             )
             if not refresh_ok:
                 message = (
