@@ -88,10 +88,26 @@ def resolve_clean_head() -> str:
         ".orchestrator/task-briefs/",
         ".orchestrator/reviews/",
     )
+    def _porcelain_path(line: str) -> str:
+        """Extract the file path from a ``git status --porcelain`` line.
+
+        Porcelain v1 format: ``XY path`` or ``XY original -> path`` for renames.
+        """
+        raw = line[3:]  # skip the two-char status + space
+        if " -> " in raw:
+            raw = raw.split(" -> ", 1)[1]
+        return raw.strip()
+
     remaining = [
         line
         for line in dirt.splitlines()
-        if not any(prefix in line for prefix in _ALLOWED_PREFIXES)
+        if not any(
+            _porcelain_path(line) == prefix
+            or _porcelain_path(line).startswith(
+                prefix if prefix.endswith("/") else prefix + "/"
+            )
+            for prefix in _ALLOWED_PREFIXES
+        )
     ]
     if remaining:
         raise SystemExit(

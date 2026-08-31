@@ -430,6 +430,118 @@ class WorkerPromptTests(unittest.TestCase):
         self.assertIn("REJECTED", text)
         self.assertIn(ve.V_MASKED_PIPELINE, text)
 
+    # --- PR-1081 P2 regression: fallback brief policy parity ----------------
+
+    def test_fallback_worker_brief_includes_verification_evidence_policy(self) -> None:
+        """PR #1081 P2: the fallback brief must include the same Verification
+        Evidence Policy section as the canonical brief."""
+        task = self._task([self.CLEAN])
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor,
+                "generate_task_brief_content",
+                side_effect=ValueError("no brief on the supervisor root"),
+            ),
+        ):
+            text = supervisor._generated_worker_task_brief({}, "ODP-VERIF-BRIEF-TEST")
+
+        self.assertIn("### Verification Evidence Policy", text)
+        self.assertIn("head SHA", text)
+        self.assertIn("test selection", text)
+        self.assertIn("never a pass", text)
+        self.assertIn("explicit retry reason", text)
+
+    def test_fallback_worker_brief_without_verification_omits_policy(self) -> None:
+        """No policy section when there are no verification commands."""
+        task = self._task([])
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor,
+                "generate_task_brief_content",
+                side_effect=ValueError("no brief on the supervisor root"),
+            ),
+        ):
+            text = supervisor._generated_worker_task_brief({}, "ODP-VERIF-BRIEF-TEST")
+
+        self.assertNotIn("### Verification Evidence Policy", text)
+
+    def test_fallback_worker_brief_counts_rejected(self) -> None:
+        """Rejected-command count appears in the fallback brief."""
+        task = self._task([self.MASKED, self.CLEAN])
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(
+                supervisor,
+                "generate_task_brief_content",
+                side_effect=ValueError("no brief on the supervisor root"),
+            ),
+        ):
+            text = supervisor._generated_worker_task_brief({}, "ODP-VERIF-BRIEF-TEST")
+
+        self.assertIn("1 declared command(s) above are rejected", text)
+
+
+class DirtyWorktreePathParsingTests(unittest.TestCase):
+    """PR #1081 P1: generate_receipt_bundle must use exact porcelain path
+    matching, not substring containment."""
+
+    def test_substring_match_is_rejected(self) -> None:
+        """A file like `unrelated-ai-status.json` must NOT be accepted just
+        because `ai-status.json` is a substring."""
+        # Replicate the _porcelain_path + prefix matching logic that
+        # generate_receipt_bundle.py now uses, since importing the module
+        # directly triggers top-level side effects.
+        _ALLOWED_PREFIXES = (
+            "AI_COLLABORATION_GUIDE.md",
+            "ai-status.json",
+            "ai-activity-log.jsonl",
+            "current-work.md",
+            "ai-task-archive/",
+            ".orchestrator/task-briefs/",
+            ".orchestrator/reviews/",
+        )
+
+        def _porcelain_path(line: str) -> str:
+            raw = line[3:]
+            if " -> " in raw:
+                raw = raw.split(" -> ", 1)[1]
+            return raw.strip()
+
+        def _is_allowed(line: str) -> bool:
+            p = _porcelain_path(line)
+            return any(
+                p == prefix or p.startswith(
+                    prefix if prefix.endswith("/") else prefix + "/"
+                )
+                for prefix in _ALLOWED_PREFIXES
+            )
+
+        # Exact matches: should be allowed
+        self.assertTrue(_is_allowed("?? ai-status.json"))
+        self.assertTrue(_is_allowed("?? ai-task-archive/tasks/FOO.json"))
+        self.assertTrue(_is_allowed("?? .orchestrator/task-briefs/foo.md"))
+        self.assertTrue(_is_allowed("?? AI_COLLABORATION_GUIDE.md"))
+
+        # Substring false positives: must NOT be allowed
+        self.assertFalse(_is_allowed("?? unrelated-ai-status.json"))
+        self.assertFalse(_is_allowed("?? verification_receipt.json.bak"))
+        self.assertFalse(_is_allowed("?? ai-status.json.bak"))
+        self.assertFalse(_is_allowed("?? my-ai-activity-log.jsonl"))
+        self.assertFalse(_is_allowed("?? foo/ai-status.json"))
+
+    def test_rename_path_uses_destination(self) -> None:
+        """For renames, the destination (after `->`) is what matters."""
+        def _porcelain_path(line: str) -> str:
+            raw = line[3:]
+            if " -> " in raw:
+                raw = raw.split(" -> ", 1)[1]
+            return raw.strip()
+
+        self.assertEqual(_porcelain_path("R  old.txt -> ai-status.json"), "ai-status.json")
+        self.assertEqual(_porcelain_path("R  old.txt -> new.txt"), "new.txt")
+
 
 if __name__ == "__main__":
     unittest.main()

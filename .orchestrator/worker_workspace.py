@@ -1191,7 +1191,8 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
         body.extend([f"- {item}" for item in acceptance] or ["- none"])
         body.extend(["", "## Verification"])
         if verification:
-            for audit in verification_evidence.audit_commands(verification):
+            audits = verification_evidence.audit_commands(verification)
+            for audit in audits:
                 if audit.ok:
                     body.append(f"- `{audit.command}`")
                 else:
@@ -1199,6 +1200,23 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
                         f"- `{audit.command}` — REJECTED ({', '.join(audit.violations)}): "
                         + "; ".join(audit.details)
                     )
+            body.extend(
+                [
+                    "",
+                    "### Verification Evidence Policy",
+                    "- Run each command so its own exit code survives: no pipe without `set -o pipefail`,",
+                    "  no `|| true`, no `; echo ...` tail, no `set +e`, no backgrounding.",
+                    "- Record a receipt binding head SHA, exact command, real exit code, duration, and test selection.",
+                    "- A run killed by a signal or timeout is `interrupted`, never a pass, and is repeated with the",
+                    "  same selection rather than escalated to a wider suite.",
+                    "- Re-running an already-measured head SHA and selection needs an explicit retry reason.",
+                ]
+            )
+            rejected = [audit for audit in audits if not audit.ok]
+            if rejected:
+                body.append(
+                    f"- {len(rejected)} declared command(s) above are rejected by the policy and must be fixed before use."
+                )
         else:
             body.append("- none")
         body.append("")

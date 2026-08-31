@@ -145,6 +145,22 @@ class CommandAuditTests(unittest.TestCase):
         audit = ve.audit_command("set -o pipefail; pytest -q | tee log")
         self.assertTrue(audit.ok, audit.details)
 
+    # --- PR-1081 P1 regressions: set as argument, not command --------------
+
+    def test_set_in_k_flag_with_o_pipefail_pytest_arg_is_rejected(self) -> None:
+        """PR #1081 P1: `pytest -k "set" -o pipefail | tail -1` is NOT a shell
+        `set -o pipefail`; `set` is a test-selection string and `-o pipefail`
+        is a pytest override.  The pipe must be rejected as masked."""
+        audit = ve.audit_command('pytest -k "set" -o pipefail | tail -1')
+        self.assertFalse(audit.ok)
+        self.assertIn(ve.V_MASKED_PIPELINE, audit.violations)
+
+    def test_set_as_second_token_with_pipefail_is_rejected(self) -> None:
+        """set appearing after the runner is never the shell builtin."""
+        audit = ve.audit_command("python3 set -o pipefail | cat")
+        self.assertFalse(audit.ok)
+        self.assertIn(ve.V_MASKED_PIPELINE, audit.violations)
+
 
 class SelectionTests(unittest.TestCase):
     def test_selection_reads_tokens_after_the_runner(self) -> None:

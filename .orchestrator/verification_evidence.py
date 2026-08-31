@@ -92,15 +92,18 @@ _DISABLE_ERREXIT_RE = re.compile(r"set\s+\+[a-zA-Z]*e[a-zA-Z]*\b")
 def _segment_enables_pipefail(segment: list[str]) -> bool:
     """True when a segment is a standalone ``set -o pipefail`` command.
 
-    Only unquoted tokens in a command segment (no pipes, no control operators)
-    can enable the option.  A ``-k "set -o pipefail"`` test-selection string
-    tokenizes as a single quoted token and never reaches here unquoted.
+    ``set`` must be the first token in the segment (the command position).
+    A ``-k "set"`` test-selector or a ``pytest -o pipefail`` option never
+    occupies position 0, so stripping quotes and scanning the *entire*
+    segment would produce false positives like
+    ``pytest -k "set" -o pipefail | tail -1``.
     """
-    stripped = [_strip_quotes(tok) for tok in segment]
-    if "set" not in stripped:
+    if not segment:
         return False
-    idx = stripped.index("set")
-    rest = stripped[idx + 1:]
+    head = _strip_quotes(segment[0])
+    if head != "set":
+        return False
+    rest = [_strip_quotes(tok) for tok in segment[1:]]
     # `set -o pipefail` or `set -eo pipefail` (the option name follows -o)
     for i, token in enumerate(rest):
         if token == "-o" and i + 1 < len(rest) and rest[i + 1] == "pipefail":
