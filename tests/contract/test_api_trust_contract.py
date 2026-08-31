@@ -1975,6 +1975,107 @@ class TestDeploymentShapeCollisionRegressions:
 
         # Must NOT be classified as "oidc"
         assert outcome.token_type != "oidc"
+        # ...and must not be authenticated either: `service-sa` has no
+        # ODP_AUTH_PRINCIPAL_MAP entry, so there is no authoritative
+        # role/scope source for it (contract §4.4).
+        assert outcome.authenticated is False
+        assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+
+    def test_shape_d_local_mode_rejects_unlinked_token_with_escalated_claims(self):
+        """Shape D, the deployed local-mode shape: an undeclared signed token
+        carrying `roles`/`tenant_id` must be rejected outright.
+
+        Regression for ODP-WEB-LOCAL-AUTH-API-TRUST-001. Under the real
+        Terraform shape both ODP_AUTH_ISSUER and ODP_AUTH_SERVICE_ISSUER are
+        https://accounts.google.com. With ODP_AUTH_MODE=local the OIDC path is
+        disabled, so the token fell through to the service/legacy path, whose
+        no-mapping branch trusted the token's own claims: sub=attacker with
+        roles=["platform_admin"] and tenant_id="attacker-tenant"
+        authenticated as a platform admin.
+
+        The boundary must now fail closed and leak neither role nor tenant.
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_SECRET.decode(),
+            # Deliberately no ODP_AUTH_PRINCIPAL_MAP entry for "attacker".
+        }
+        config = config_from_env(
+            env, identity_store=identity_store, session_service=session_service
+        )
+        assert config.oidc_enabled is False
+        assert config.service_issuer == OIDC_ISSUER
+
+        boundary = AuthenticationBoundary(config)
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub="attacker",
+            extra_claims={
+                "roles": ["platform_admin"],
+                "tenant_id": "attacker-tenant",
+            },
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is False
+        assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+        assert outcome.principal.roles == frozenset()
+        assert outcome.principal.scope.tenant_id is None
+        assert outcome.principal.subject_id != "attacker"
+
+    def test_shape_d_local_mode_declared_service_identity_still_authenticates(self):
+        """The same shape must keep declared service identities working.
+
+        Guards the fix against over-correcting: ODP_OPERATOR_SMOKE_BEARER_TOKEN
+        and service-to-service callers are declared in ODP_AUTH_PRINCIPAL_MAP
+        and must still authenticate with exactly the declared roles/scope
+        (contract §4.4 / §8.4).
+        """
+        from modules.opsboard.auth.config import config_from_env
+
+        identity_store, session_service = self._make_stores()
+
+        env = {
+            "ODP_AUTH_MODE": "local",
+            "ODP_AUTH_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_SERVICE_ISSUER": OIDC_ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_HS256_KEYS": f"oidc-k1:{OIDC_SECRET.decode()}",
+            "ODP_IDENTITY_TOKEN_SIGNING_KEY": LOCAL_SECRET.decode(),
+            "ODP_AUTH_PRINCIPAL_MAP": (
+                '{"service-cron-sa": {"roles": ["platform_admin"],'
+                ' "scope": {"tenant_id": "00000000-0000-0000-0000-000000000001"}}}'
+            ),
+        }
+        config = config_from_env(
+            env, identity_store=identity_store, session_service=session_service
+        )
+        boundary = AuthenticationBoundary(config)
+
+        # The declared service account keeps working...
+        token = make_jwt(
+            OIDC_KEY,
+            iss=OIDC_ISSUER,
+            sub="service-cron-sa",
+            # ...and its self-asserted claims are still ignored.
+            extra_claims={"roles": ["site_reviewer"], "tenant_id": "attacker-tenant"},
+        )
+        outcome = boundary.authenticate(Credentials(bearer_token=token))
+
+        assert outcome.authenticated is True
+        assert outcome.token_type == "service"
+        assert outcome.principal.subject_id == "service-cron-sa"
+        assert outcome.principal.roles == frozenset([Role.PLATFORM_ADMIN])
+        assert outcome.principal.tenant_id == "00000000-0000-0000-0000-000000000001"
 
     def test_separated_env_takes_priority_over_legacy_fallback(self):
         """When both ODP_AUTH_SERVICE_ISSUER and ODP_AUTH_ISSUER are set,

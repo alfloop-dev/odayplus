@@ -16,6 +16,7 @@ import pytest
 from modules.opsboard.auth import (
     AuthBoundaryConfig,
     AuthenticationBoundary,
+    AuthFailureReason,
     Credentials,
     SigningKey,
     encode_compact_jwt,
@@ -43,10 +44,21 @@ def audit_log() -> InMemoryAuditLog:
 
 @pytest.fixture
 def boundary(audit_log: InMemoryAuditLog) -> AuthenticationBoundary:
+    # Contract §4.4: the service issuer class (and its legacy ODP_AUTH_ISSUER
+    # alias, §8.4) takes roles and scope from ODP_AUTH_PRINCIPAL_MAP, never
+    # from the token's own claims. The subject must therefore be declared
+    # here for the boundary to authenticate it at all
+    # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
     config = AuthBoundaryConfig(
         issuer=ISSUER,
         audiences=frozenset({AUDIENCE}),
         signing_keys={KEY.kid: KEY},
+        principal_mappings={
+            "user-1": {
+                "roles": ["operations_manager"],
+                "scope": {"tenant_id": "tenant-a", "region_ids": ["north"]},
+            }
+        },
     )
     return AuthenticationBoundary(config, audit_log=audit_log)
 
@@ -58,6 +70,13 @@ def engine(audit_log: InMemoryAuditLog) -> AuthorizationEngine:
 
 
 def _token(roles: list[str], **claims: object) -> str:
+    """Build a signed token for ``user-1``.
+
+    ``roles`` and the scope claims below are deliberately still written into
+    the token: the boundary must ignore them and use the authoritative
+    ODP_AUTH_PRINCIPAL_MAP declaration instead. Tests assert on the resulting
+    principal, not on these claims.
+    """
     payload = {
         "sub": "user-1",
         "iss": ISSUER,
@@ -92,6 +111,36 @@ def test_verified_principal_is_authorized_by_rbac(boundary, engine):
 
     decision = _view_forecast(outcome.principal, engine)
     assert decision.allowed is True
+
+
+def test_undeclared_subject_cannot_authenticate_from_its_own_claims(boundary, engine):
+    """A signed token whose sub is not in ODP_AUTH_PRINCIPAL_MAP fails closed.
+
+    Regression for ODP-WEB-LOCAL-AUTH-API-TRUST-001: the token is validly
+    signed by the trusted key and passes issuer/audience/expiry validation,
+    but its `sub` has no authoritative declaration, so its self-asserted
+    roles and tenant must not become authorization facts.
+    """
+    token = _token(["platform_admin"], sub="attacker", tenant_id="attacker-tenant")
+    outcome = boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is False
+    assert outcome.reason is AuthFailureReason.UNKNOWN_SERVICE
+    assert outcome.principal.roles == frozenset()
+    assert outcome.principal.tenant_id is None
+
+    decision = _view_forecast(outcome.principal, engine)
+    assert decision.allowed is False
+
+
+def test_declared_subject_claim_roles_are_ignored(boundary):
+    """The declared principal wins over an escalated `roles` claim."""
+    token = _token(["platform_admin"], tenant_id="attacker-tenant")
+    outcome = boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is True
+    assert outcome.principal.roles == frozenset({Role.OPERATIONS_MANAGER})
+    assert outcome.principal.tenant_id == "tenant-a"
 
 
 def test_unauthenticated_principal_is_denied_by_engine(boundary, engine):

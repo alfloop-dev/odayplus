@@ -131,7 +131,6 @@ class AuthenticationBoundary:
         audit_log: AuditRecorder | None = None,
         logger: StructuredLogger | None = None,
         metrics: MetricsRegistry | None = None,
-        claim_prefix: str = "odp",
         key_resolver: KeyResolver | None = None,
         identity_store: Any = None,
         session_service: Any = None,
@@ -141,7 +140,6 @@ class AuthenticationBoundary:
         self._audit = audit_log if audit_log is not None else InMemoryAuditLog()
         self._logger = logger
         self._metrics = metrics
-        self._claim_prefix = claim_prefix
         self._identity_store = (
             identity_store if identity_store is not None else config.identity_store
         )
@@ -460,28 +458,58 @@ class AuthenticationBoundary:
             return ANONYMOUS, reason, token_type
 
         subject = str(claims["sub"])
-        principal_mapping = self._principal_mapping(claims, subject)
+
+        # Contract §4.4: for the service issuer class -- and for the legacy
+        # ODP_AUTH_ISSUER alias, which §8.4 defines as an alias of
+        # ODP_AUTH_SERVICE_ISSUER -- the token's `sub` / verified `email` is
+        # only the *identity*. Roles and scope come exclusively from the
+        # authoritative server-side declaration (ODP_AUTH_PRINCIPAL_MAP, or
+        # ODP_AUTH_SUBJECT_ROLE_BINDINGS as a secondary role-grant surface).
+        # Token claims are never authorization facts
+        # (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+        #
+        # An *undeclared* subject therefore fails closed with UNKNOWN_SERVICE
+        # rather than authenticating with claim-derived privileges. Before
+        # this gate, a signed token from the service/legacy issuer carrying
+        # `roles: ["platform_admin"]` and an attacker-chosen `tenant_id` was
+        # authenticated and kept those claims -- reachable in production
+        # because in local mode config_from_env aliases the shared
+        # ODP_AUTH_ISSUER (https://accounts.google.com under the real
+        # Terraform shape) to service_issuer.
+        declared_mapping = self._declared_service_mapping(claims, subject)
+        bound_roles = self._bound_service_roles(subject)
+        if declared_mapping is None and not bound_roles:
+            return ANONYMOUS, AuthFailureReason.UNKNOWN_SERVICE, token_type
+
         principal = principal_from_claims(
             claims,
             subject=subject,
-            claim_prefix=self._claim_prefix,
-            principal_mapping=principal_mapping,
-        )
-        known_roles = {role.value: role for role in Role}
-        bound_roles = frozenset(
-            known_roles[role]
-            for role in self._config.subject_role_bindings.get(subject, ())
-            if role in known_roles
+            # The mapping is the sole role/scope source; the token's own
+            # roles/tenant/scope claims are ignored.
+            principal_mapping=declared_mapping or {},
         )
         if bound_roles:
             principal = replace(principal, roles=principal.roles | bound_roles)
         return principal, None, token_type
 
-    def _principal_mapping(
+    def _declared_service_mapping(
         self, claims: Mapping[str, Any], subject: str
     ) -> Mapping[str, object] | None:
-        if not self._config.principal_mapping_declared and not self._config.principal_mappings:
-            return None
+        """Return the authoritative principal declaration for *subject*.
+
+        Looks the verified token up in ``ODP_AUTH_PRINCIPAL_MAP`` by ``sub``
+        first, then by a **verified** ``email`` (an unverified email claim is
+        attacker-controlled and is never used as a lookup key).
+
+        Returns ``None`` when the subject is not declared at all. Callers must
+        treat ``None`` as fail-closed: contract §4.4 makes
+        ``ODP_AUTH_PRINCIPAL_MAP`` the only role/scope source for the service
+        issuer class, so an undeclared subject has no authorization facts and
+        must not be authenticated from its own claims.
+
+        An empty mapping (``{}``) is a *declared* identity with no roles and
+        no scope, which is different from ``None`` and is allowed.
+        """
         direct = self._config.principal_mappings.get(subject)
         if direct is not None:
             return direct
@@ -490,7 +518,20 @@ class AuthenticationBoundary:
             mapped = self._config.principal_mappings.get(email.strip())
             if mapped is not None:
                 return mapped
-        return {}
+        return None
+
+    def _bound_service_roles(self, subject: str) -> frozenset[Role]:
+        """Roles granted to *subject* by ``ODP_AUTH_SUBJECT_ROLE_BINDINGS``.
+
+        A secondary authoritative grant surface alongside the principal map.
+        Unknown role ids are dropped rather than trusted.
+        """
+        known_roles = {role.value: role for role in Role}
+        return frozenset(
+            known_roles[role]
+            for role in self._config.subject_role_bindings.get(subject, ())
+            if role in known_roles
+        )
 
     def _is_declared_service_identity(self, subject: str) -> bool:
         """Return True when *subject* is pre-declared as a service identity.
