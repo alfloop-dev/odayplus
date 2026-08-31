@@ -445,6 +445,50 @@ def process_queue(
             )
             changed = True
             continue
+
+        # Workspace preparation can take long enough for the canonical task
+        # graph to change (for example while an upstream login-throttling PR
+        # is still merging).  Re-read the board at the final launch boundary;
+        # the event was queued earlier, so its original dependency snapshot is
+        # not an authorization to start a worker now.
+        try:
+            latest_status = load_status(config)
+            task_map = task_index_from_status(config, latest_status)
+        except Exception as exc:
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Dependency gate revalidation failed closed: {type(exc).__name__}: {exc}"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "message": record["error"],
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
+        skip_message = stale_dispatch_skip_message(config, event, task_map)
+        if skip_message:
+            record["status"] = "completed"
+            record["processed_at"] = utc_now()
+            record["skip_reason"] = "stale_dispatch_event"
+            record["requeue_reason"] = "dependency or task state changed before worker launch"
+            write_activity_log(
+                config,
+                {
+                    "type": "wake_skipped",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "message": skip_message,
+                    "queue_event_id": event_id,
+                },
+            )
+            changed = True
+            continue
+
         record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
         record["last_attempt_at"] = utc_now()
         ok, outcome, delivery = start_worker_for_request(

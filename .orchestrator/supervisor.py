@@ -4091,6 +4091,12 @@ def blocked_task_auto_recovery_eligible(
         return False
     declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
     dependency_gate_released = False
+    if declared_dependencies and task_map is None:
+        # Recovery is an execution transition.  A missing snapshot is not
+        # evidence that the dependency gate has cleared; do not fall back to
+        # blocker prose and accidentally wake an E2E task during a dependency
+        # merge window.
+        return False
     if task_map is not None:
         done_statuses = {
             str(value).lower()
@@ -4249,12 +4255,37 @@ def _task_resolver(task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> Tas
     return TaskResolver(task_lookup)
 
 
+def dependency_graph_errors_for_task(
+    task: dict[str, Any],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]],
+) -> list[str]:
+    """Return structural dependency errors for a task and its active closure."""
+    if isinstance(task_lookup, dict):
+        active_tasks = task_lookup
+    elif hasattr(task_lookup, "active_task_map"):
+        # Keep lightweight resolver doubles useful in focused tests and in
+        # adapters that own archive lookup themselves.  The status-backed
+        # TaskResolver exposes the active map needed for structural checks.
+        active_tasks = task_lookup.active_task_map()
+    else:
+        return []
+    return runtime_ai_status.dependency_graph_errors_for_task(task, active_tasks)
+
+
 def dependencies_satisfied(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]], done_statuses: set[str]) -> bool:
     resolver = _task_resolver(task_lookup)
     for dep_id in task.get("depends_on", []) or []:
         dep_status = resolver.dependency_status(dep_id)
         if dep_status not in done_statuses or not resolver.dependency_satisfied(dep_id):
             return False
+    # Lightweight resolver doubles may intentionally provide archive-backed
+    # answers without exposing the active map.  Their semantic answer above is
+    # authoritative; the full graph validator is used by the status-backed
+    # TaskResolver where both board and archive can be inspected.
+    if not hasattr(resolver, "active_task_map"):
+        return True
+    if dependency_graph_errors_for_task(task, resolver):
+        return False
     return True
 
 

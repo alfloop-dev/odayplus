@@ -1169,14 +1169,43 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
     target = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
     task_status = str(task.get("status") or "").lower()
 
+    dependency_done_statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("dependency_done_statuses"), ["done"]
+    )
+    dependency_ready = dependencies_satisfied(task, task_map, dependency_done_statuses) if task else False
+
+    # The finalize event key historically remained stable even when a newly
+    # declared dependency became incomplete.  Do not let a matching queued
+    # key bypass the same gate used by the other execution paths.
+    if not dependency_ready and reason in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_HELPER_CLAIM,
+        REASON_OWNED_FINALIZE,
+    }:
+        return (
+            f"Skipped stale queued wake event for {task_id}: task state changed; "
+            "dependency gate is not satisfied."
+        )
+
     if expected_key is None:
-        if reason == REASON_OWNED_READY and task_status == "in_progress" and owner == target:
+        if (
+            reason == REASON_OWNED_READY
+            and task_status == "in_progress"
+            and owner == target
+            and dependency_ready
+        ):
             return None
         return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
 
     queued_key = str(event.get("event_key") or "")
     if queued_key and queued_key != expected_key:
-        if reason == REASON_OWNED_READY and task_status == "in_progress" and owner == target:
+        if (
+            reason == REASON_OWNED_READY
+            and task_status == "in_progress"
+            and owner == target
+            and dependency_ready
+        ):
             return None
         return f"Skipped stale queued wake event for {task_id}: task state changed after the wake-up was queued."
 
