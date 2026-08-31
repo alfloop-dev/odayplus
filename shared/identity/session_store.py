@@ -20,6 +20,26 @@ from .sql_support import open_connection
 
 
 def _row_to_session(row: Any) -> Session:
+    """Convert a database row to a Session.
+
+    Supports both dict rows (production psycopg ``dict_row`` factory) and
+    tuple/sequence rows (test fakes).
+    """
+    if isinstance(row, dict):
+        rotated = row.get("rotated_from")
+        return Session(
+            session_id=UUID(str(row["session_id"])),
+            account_id=UUID(str(row["account_id"])),
+            provider=row["provider"],
+            created_at=row["created_at"],
+            last_seen_at=row["last_seen_at"],
+            idle_expires_at=row["idle_expires_at"],
+            absolute_expires_at=row["absolute_expires_at"],
+            revoked_at=row.get("revoked_at"),
+            revoked_reason=row.get("revoked_reason"),
+            rotated_from=UUID(str(rotated)) if rotated else None,
+        )
+    # Fallback: tuple / sequence row (legacy or test fakes)
     return Session(
         session_id=UUID(str(row[0])),
         account_id=UUID(str(row[1])),

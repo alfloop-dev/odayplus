@@ -59,6 +59,42 @@ def _parse_uuid(val: UUID | str) -> UUID:
     return UUID(str(val))
 
 
+def _row_to_account(row: Any) -> Account:
+    """Convert a database row to an Account.
+
+    Supports both dict rows (production psycopg ``dict_row`` factory) and
+    tuple/sequence rows (test fakes).
+    """
+    if isinstance(row, dict):
+        return Account(
+            account_id=UUID(str(row["account_id"])),
+            tenant_id=UUID(str(row["tenant_id"])),
+            username=row["username"],
+            email=row["email"],
+            display_name=row.get("display_name", ""),
+            status=row.get("status", "active"),
+            created_at=row.get("created_at"),
+            created_by=row.get("created_by", "system"),
+            updated_at=row.get("updated_at"),
+            disabled_at=row.get("disabled_at"),
+            disabled_reason=row.get("disabled_reason"),
+        )
+    # Fallback: tuple / sequence row (legacy or test fakes)
+    return Account(
+        account_id=UUID(str(row[0])),
+        tenant_id=UUID(str(row[1])),
+        username=row[2],
+        email=row[3],
+        display_name=row[4],
+        status=row[5],
+        created_at=row[6],
+        created_by=row[7],
+        updated_at=row[8],
+        disabled_at=row[9],
+        disabled_reason=row[10],
+    )
+
+
 class IdentityStore(Protocol):
     """權威身份來源（identity schema）查詢與管理介面。"""
 
@@ -217,19 +253,7 @@ class SqlIdentityStore:
                 row = cur.fetchone()
                 if not row:
                     return None
-                return Account(
-                    account_id=UUID(str(row[0])),
-                    tenant_id=UUID(str(row[1])),
-                    username=row[2],
-                    email=row[3],
-                    display_name=row[4],
-                    status=row[5],
-                    created_at=row[6],
-                    created_by=row[7],
-                    updated_at=row[8],
-                    disabled_at=row[9],
-                    disabled_reason=row[10],
-                )
+                return _row_to_account(row)
 
     def find_account_by_username(self, tenant_id: UUID | str, username: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
@@ -249,19 +273,7 @@ class SqlIdentityStore:
                 row = cur.fetchone()
                 if not row:
                     return None
-                return Account(
-                    account_id=UUID(str(row[0])),
-                    tenant_id=UUID(str(row[1])),
-                    username=row[2],
-                    email=row[3],
-                    display_name=row[4],
-                    status=row[5],
-                    created_at=row[6],
-                    created_by=row[7],
-                    updated_at=row[8],
-                    disabled_at=row[9],
-                    disabled_reason=row[10],
-                )
+                return _row_to_account(row)
 
     def find_account_by_email(self, tenant_id: UUID | str, email: str) -> Account | None:
         tid = _parse_uuid(tenant_id)
@@ -281,19 +293,7 @@ class SqlIdentityStore:
                 row = cur.fetchone()
                 if not row:
                     return None
-                return Account(
-                    account_id=UUID(str(row[0])),
-                    tenant_id=UUID(str(row[1])),
-                    username=row[2],
-                    email=row[3],
-                    display_name=row[4],
-                    status=row[5],
-                    created_at=row[6],
-                    created_by=row[7],
-                    updated_at=row[8],
-                    disabled_at=row[9],
-                    disabled_reason=row[10],
-                )
+                return _row_to_account(row)
 
     def find_account_by_federated_identity(self, issuer: str, subject: str) -> Account | None:
         with open_connection(self._conn_factory) as conn:
@@ -313,19 +313,7 @@ class SqlIdentityStore:
                 row = cur.fetchone()
                 if not row:
                     return None
-                return Account(
-                    account_id=UUID(str(row[0])),
-                    tenant_id=UUID(str(row[1])),
-                    username=row[2],
-                    email=row[3],
-                    display_name=row[4],
-                    status=row[5],
-                    created_at=row[6],
-                    created_by=row[7],
-                    updated_at=row[8],
-                    disabled_at=row[9],
-                    disabled_reason=row[10],
-                )
+                return _row_to_account(row)
 
     def get_account_roles(self, account_id: UUID | str) -> frozenset[Role]:
         aid = _parse_uuid(account_id)
@@ -344,7 +332,8 @@ class SqlIdentityStore:
                 roles: set[Role] = set()
                 for row in rows:
                     try:
-                        roles.add(Role(row[0]))
+                        role_val = row["role"] if isinstance(row, dict) else row[0]
+                        roles.add(Role(role_val))
                     except ValueError:
                         pass
                 return frozenset(roles)
@@ -375,7 +364,11 @@ class SqlIdentityStore:
                         (str(aid),),
                     )
                     account_row = cur.fetchone()
-                    tenant_id = str(account_row[0]) if account_row else None
+                    if account_row:
+                        tid = account_row["tenant_id"] if isinstance(account_row, dict) else account_row[0]
+                        tenant_id = str(tid)
+                    else:
+                        tenant_id = None
                     return Scope(tenant_id=tenant_id, clearance=DataClassification.CONFIDENTIAL)
 
                 def _parse_list(val: Any) -> frozenset[str]:
@@ -383,19 +376,23 @@ class SqlIdentityStore:
                         return frozenset(str(x) for x in val if x)
                     return frozenset()
 
+                def _col(name: str, idx: int) -> Any:
+                    return row[name] if isinstance(row, dict) else row[idx]
+
                 try:
-                    clearance = DataClassification[str(row[6]).upper()]
+                    clearance = DataClassification[str(_col("clearance", 6)).upper()]
                 except (KeyError, AttributeError):
                     clearance = DataClassification.CONFIDENTIAL
 
+                raw_tenant = _col("tenant_id", 7)
                 return Scope(
-                    tenant_id=str(row[7]) if row[7] else None,
-                    brand_ids=_parse_list(row[0]),
-                    region_ids=_parse_list(row[1]),
-                    store_ids=_parse_list(row[2]),
-                    assigned_area_ids=_parse_list(row[3]),
-                    heat_zone_ids=_parse_list(row[4]),
-                    modules=_parse_list(row[5]),
+                    tenant_id=str(raw_tenant) if raw_tenant else None,
+                    brand_ids=_parse_list(_col("brand_ids", 0)),
+                    region_ids=_parse_list(_col("region_ids", 1)),
+                    store_ids=_parse_list(_col("store_ids", 2)),
+                    assigned_area_ids=_parse_list(_col("assigned_area_ids", 3)),
+                    heat_zone_ids=_parse_list(_col("heat_zone_ids", 4)),
+                    modules=_parse_list(_col("modules", 5)),
                     clearance=clearance,
                 )
 
