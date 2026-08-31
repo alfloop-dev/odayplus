@@ -75,11 +75,23 @@ def git(*args: str) -> str:
 def resolve_clean_head() -> str:
     dirt = git("status", "--porcelain", "--untracked-files=all")
     # The bundle itself is the one file allowed to be dirty: it is what this
-    # run is about to rewrite.
+    # run is about to rewrite.  Supervisor-seeded context files (AI_COLLABORATION_GUIDE,
+    # ai-status.json, ai-task-archive/, etc.) are also filtered: they are
+    # gitignored materialized context, not owner dirt that changes what HEAD means.
+    _ALLOWED_PREFIXES = (
+        OUTPUT.relative_to(REPO).as_posix(),
+        "AI_COLLABORATION_GUIDE.md",
+        "ai-status.json",
+        "ai-activity-log.jsonl",
+        "current-work.md",
+        "ai-task-archive/",
+        ".orchestrator/task-briefs/",
+        ".orchestrator/reviews/",
+    )
     remaining = [
         line
         for line in dirt.splitlines()
-        if OUTPUT.relative_to(REPO).as_posix() not in line
+        if not any(prefix in line for prefix in _ALLOWED_PREFIXES)
     ]
     if remaining:
         raise SystemExit(
