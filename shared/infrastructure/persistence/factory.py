@@ -73,6 +73,12 @@ class PersistenceBundle:
     operator_intake_repository: Any = None
     assisted_intake_store: Any = None
     engine: Any = None
+    # Auth identity/session stores (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+    # In PostgreSQL mode these are durable (SqlIdentityStore + SessionService);
+    # in memory/SQLite mode they are in-memory doubles so the boundary always
+    # has an identity_store and session_service wired rather than None.
+    identity_store: Any = None
+    session_service: Any = None
 
 
     @property
@@ -145,6 +151,12 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
+    from shared.identity import (
+        InMemoryIdentityStore,
+        InMemorySessionRepository,
+        SessionConfig,
+        SessionService,
+    )
     from shared.infrastructure.persistence.outbox import InMemoryOutboxRepository
     from shared.infrastructure.persistence.repositories import (
         InMemoryAddressLocationRepository,
@@ -157,6 +169,12 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     )
     from shared.jobs.queue import InMemoryJobQueue
     from shared.workflow.sitescore import InMemoryDecisionStore, InMemoryRealizedSiteStore
+
+    mem_identity_store = InMemoryIdentityStore()
+    mem_session_service = SessionService(
+        repository=InMemorySessionRepository(),
+        config=SessionConfig(),
+    )
 
     return PersistenceBundle(
         mode="memory",
@@ -190,6 +208,8 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         external_fetch_state_store=InMemoryExternalFetchStateStore(),
         notification_repository=InMemoryNotificationRepository(),
         outbox_repository=InMemoryOutboxRepository(),
+        identity_store=mem_identity_store,
+        session_service=mem_session_service,
     )
 
 
@@ -235,6 +255,22 @@ def _durable_bundle(
 
     engine = SqliteEngine(db_path)
     store = SqliteDocumentStore(engine)
+    # The identity schema is PostgreSQL-only (migration 000011), so SQLite mode
+    # carries in-memory doubles rather than None: the auth boundary always has
+    # an identity store and a session verifier and never silently skips them.
+    from shared.identity import (
+        InMemoryIdentityStore,
+        InMemorySessionRepository,
+        SessionConfig,
+        SessionService,
+    )
+
+    durable_identity_store = InMemoryIdentityStore()
+    durable_session_service = SessionService(
+        repository=InMemorySessionRepository(),
+        config=SessionConfig(),
+    )
+
     worm_root = Path(db_path).parent / f"{Path(db_path).stem}-audit-worm"
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env(
         default_root=worm_root
@@ -272,6 +308,8 @@ def _durable_bundle(
         outbox_repository=DurableOutboxRepository(engine),
         operator_intake_repository=DurableAssistedIntakeRepository(store),
         engine=engine,
+        identity_store=durable_identity_store,
+        session_service=durable_session_service,
     )
 
 
@@ -331,6 +369,26 @@ def _postgres_bundle(
     except Exception:
         engine.close()
         raise
+
+    # Wire durable identity and session stores backed by the identity.* tables.
+    # Both must be durable: an in-memory session repository would make
+    # revocations process-local, so a revoked sid stays valid on every other
+    # instance (Contract §5.1, §5.4).
+    from shared.identity import (
+        SessionConfig,
+        SessionService,
+        SqlIdentityStore,
+        SqlSessionRepository,
+    )
+
+    # engine.pooled_connection is a context manager factory, so each query
+    # borrows a pooled connection and returns it on exit.
+    pg_identity_store = SqlIdentityStore(connection_factory=engine.pooled_connection)
+    pg_session_service = SessionService(
+        repository=SqlSessionRepository(connection_factory=engine.pooled_connection),
+        config=SessionConfig(),
+    )
+
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
     return PersistenceBundle(
         mode="postgresql",
@@ -369,6 +427,8 @@ def _postgres_bundle(
         operator_intake_repository=DurableAssistedIntakeRepository(store),
         assisted_intake_store=assisted_intake_store,
         engine=engine,
+        identity_store=pg_identity_store,
+        session_service=pg_session_service,
     )
 
 

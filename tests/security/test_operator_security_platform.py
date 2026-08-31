@@ -156,7 +156,7 @@ class _FailingAuditLog(InMemoryAuditLog):
 def test_denial_survives_an_unavailable_audit_sink() -> None:
     """A failing audit sink must not turn a decided denial into a 500.
 
-    _record_operator_denial runs immediately before the raise. Uncaught, its
+    _record_denial runs immediately before the raise. Uncaught, its
     error escapes the guard instead of the 403, so the caller sees a server
     fault rather than a refusal and the reason is lost. Reproduced against the
     live app; surfaced in CI as an intermittently failing e2e that expected 403
