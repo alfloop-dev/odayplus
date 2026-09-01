@@ -280,6 +280,15 @@ FINALIZE_DISPATCH_REASON = "owned_finalize_dispatch"
 FINALIZE_GIT_MESSAGE_FLAGS = {"-m", "--message"}
 FINALIZE_GIT_ALLOWED_COMMIT_FLAGS = {"--amend", *FINALIZE_GIT_MESSAGE_FLAGS}
 
+# Verification runners this repo actually uses. A finalize worker reads the
+# approved head's receipts instead of rerunning any of them.
+FINALIZE_DENIED_VERIFICATION_TOOLS = {"pytest", "ruff", "mypy", "eslint", "vitest", "jest", "playwright"}
+FINALIZE_DENIED_PYTHON_MODULES = {"pytest", "unittest", "ruff", "mypy"}
+FINALIZE_DENIED_NPM_SCRIPTS = {"test", "build", "lint", "typecheck", "e2e"}
+FINALIZE_NPM_LOCATION_FLAGS = {"--prefix", "-C", "--workspace", "-w"}
+FINALIZE_UV_RUN_VALUE_FLAGS = {"--python", "-p", "--with", "--directory", "--project", "--package", "--extra"}
+FINALIZE_UV_RUN_BOOLEAN_FLAGS = {"--frozen", "--locked", "--no-sync", "--no-project", "--isolated", "--offline", "-q", "--quiet"}
+
 
 def _matches_workspace_script(path_token: str, relative_path: str) -> bool:
     candidate = Path(path_token)
@@ -1041,11 +1050,7 @@ def _load_finalize_dispatch_context(config: dict[str, Any]) -> dict[str, Any] | 
     }
 
 
-def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[str, str] | None:
-    context = _load_finalize_dispatch_context(config)
-    if context is None:
-        return None
-
+def _finalize_git_decision(shell_command: str, task_id: str) -> dict[str, str] | None:
     segments = _split_shell_segments(shell_command)
     if not segments or len(segments) > 3:
         return None
@@ -1084,7 +1089,6 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     if saw_push:
         verbs.append("git push")
     verb_phrase = " and ".join(verbs)
-    task_id = context["task_id"]
     return {
         "decision": "deny",
         "reason": (
@@ -1093,6 +1097,125 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
         ),
         "risk_class": "immutable_review_head",
     }
+
+
+def _finalize_verification_verb(segment: list[str]) -> str | None:
+    """Name the verification runner a single command segment invokes directly.
+
+    Bounded on purpose: only the canonical direct invocations are recognised.
+    Anything wrapped (a shell `-c` string, a pipeline, an unknown runner) is not
+    matched here -- the finalize dispatch prompt and
+    `.orchestrator/skills/task-closeout-finalization.md` remain the normative
+    ban on rerunning verification, and this deny is the backstop for the forms
+    the broker would otherwise allow outright.
+    """
+    tokens = [token for token in segment if not _is_shell_redirection_token(token)]
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens = tokens[1:]
+
+    if tokens[:2] == ["uv", "run"]:
+        stripped = _strip_uv_run_flags(tokens[2:])
+        if stripped is None:
+            return None
+        tokens = stripped
+
+    if not tokens:
+        return None
+    command = tokens[0]
+
+    if command in FINALIZE_DENIED_VERIFICATION_TOOLS:
+        return command
+
+    if command in {"python", "python3"}:
+        # `-m <runner>` only; `python -c` stays open for reading receipts.
+        if tokens[1:2] == ["-m"] and len(tokens) > 2 and tokens[2] in FINALIZE_DENIED_PYTHON_MODULES:
+            return f"{command} -m {tokens[2]}"
+        return None
+
+    if command == "npx":
+        if len(tokens) > 1 and tokens[1] in FINALIZE_DENIED_VERIFICATION_TOOLS:
+            return f"npx {tokens[1]}"
+        return None
+
+    if command == "npm":
+        return _finalize_npm_verification_verb(tokens)
+
+    return None
+
+
+def _strip_uv_run_flags(tokens: list[str]) -> list[str] | None:
+    """Drop known `uv run` options so the wrapped command becomes visible.
+
+    Returns None on an unrecognised option so an unfamiliar `uv run` invocation
+    never turns into a deny; `uv run --with pytest python -c ...` must keep
+    reading receipts.
+    """
+    while tokens and tokens[0].startswith("-"):
+        if tokens[0] in FINALIZE_UV_RUN_VALUE_FLAGS:
+            if len(tokens) < 2:
+                return None
+            tokens = tokens[2:]
+            continue
+        if tokens[0] in FINALIZE_UV_RUN_BOOLEAN_FLAGS:
+            tokens = tokens[1:]
+            continue
+        return None
+    return tokens
+
+
+def _finalize_npm_verification_verb(tokens: list[str]) -> str | None:
+    args = tokens[1:]
+    while len(args) > 1 and args[0] in FINALIZE_NPM_LOCATION_FLAGS:
+        args = args[2:]
+    if not args:
+        return None
+    if args[0] == "test":
+        return "npm test"
+    if args[0] in {"run", "run-script"} and len(args) > 1:
+        script = args[1]
+        if script.split(":", 1)[0] in FINALIZE_DENIED_NPM_SCRIPTS:
+            return f"npm run {script}"
+    if args[0] == "exec" and len(args) > 1 and args[1] in FINALIZE_DENIED_VERIFICATION_TOOLS:
+        return f"npm exec {args[1]}"
+    return None
+
+
+def _finalize_verification_decision(shell_command: str, task_id: str) -> dict[str, str] | None:
+    segments = _split_shell_segments(shell_command)
+    if not segments:
+        return None
+    normalized = _strip_workspace_cd_segment(segments)
+    if not normalized:
+        return None
+
+    verb = next(
+        (found for found in (_finalize_verification_verb(segment) for segment in normalized) if found),
+        None,
+    )
+    if verb is None:
+        return None
+
+    return {
+        "decision": "deny",
+        "reason": (
+            f"Denied {verb} for {task_id} during {FINALIZE_DISPATCH_REASON}: "
+            "verification is completed before review submission and the reviewer-approved "
+            "head is immutable, so tests must not be rerun. Read the exact approved head's "
+            "PR, CI status, and verification receipts instead."
+        ),
+        "risk_class": "immutable_review_head",
+    }
+
+
+def _finalize_decision(shell_command: str, config: dict[str, Any]) -> dict[str, str] | None:
+    context = _load_finalize_dispatch_context(config)
+    if context is None:
+        return None
+    task_id = str(context["task_id"])
+    git_decision = _finalize_git_decision(shell_command, task_id)
+    if git_decision is not None:
+        return git_decision
+    return _finalize_verification_decision(shell_command, task_id)
 
 
 def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
@@ -1123,7 +1246,7 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
             risk_class = "out_of_workspace"
     elif tool_name == "Bash":
         shell_command = tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command") or ""
-        finalize_decision = _finalize_git_decision(str(shell_command), config)
+        finalize_decision = _finalize_decision(str(shell_command), config)
         if finalize_decision is not None:
             decision = finalize_decision["decision"]
             risk_class = finalize_decision["risk_class"]

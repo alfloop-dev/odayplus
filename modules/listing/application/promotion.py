@@ -30,6 +30,44 @@ def to_status_str(state: PromotionState) -> str:
     return state.value
 
 
+# Geocode confidence is a property of the address, not of the listing record.
+# A listing's own `confidence` is extraction confidence -- how sure the parser
+# is about the rent, area and floor it read -- and the two are unrelated.
+# Accepting it as a fallback spelling is what let the gate pass a listing whose
+# geocode had failed: V1ListingRepositoryAdapter emits the address value under
+# `geocode_confidence` and the listing value under `confidence`, so a 0.0
+# geocode was masked by a 1.0 extraction confidence one key away.
+_GEOCODE_CONFIDENCE_KEYS = ("geocodeConfidence", "geocode_confidence")
+
+
+def geocode_confidence_of(listing: Any) -> float | None:
+    """Return the address geocode confidence, or None when there is no geocode.
+
+    Zero is absence, not a low-but-real confidence. `AddressLocation`
+    defaults `geocode_confidence` to 0.0 and the persistence layer coerces a
+    NULL column to 0.0, so nothing distinguishes "geocoder returned 0.0" from
+    "never geocoded". `to_sitescore_model_row()` already reads it that way
+    (``if not value.geocode_confidence``) and rejects the row; this gate has to
+    agree, or it hands SiteScore a listing that SiteScore itself would refuse.
+
+    A value that is present but not a number is also treated as absent: the
+    caller cannot act on it, and guessing is the failure mode being removed.
+    The first key that is present decides, rather than the first that looks
+    usable -- the two spellings are aliases of one address field, so
+    disagreeing values are a data fault, not a second opinion to fall back on.
+    """
+    for key in _GEOCODE_CONFIDENCE_KEYS:
+        value = listing.get(key)
+        if value is None:
+            continue
+        try:
+            confidence = float(value)
+        except (TypeError, ValueError):
+            return None
+        return confidence if confidence > 0 else None
+    return None
+
+
 class PromotionService:
     """Manages the Intake-to-Listing-to-Candidate promotion saga."""
 
@@ -201,6 +239,35 @@ class PromotionService:
                 "Tenant isolation mismatch"
             )
 
+        if decision == "APPROVE":
+            listing_id = promo.get("listing_id")
+            if not listing_id:
+                raise ValueError(f"Promotion decision {promotion_decision_id} missing listing_id")
+            listing = self.listing_repository.get_listing(listing_id)
+            if not listing:
+                raise ValueError(f"Listing {listing_id} not found")
+
+            # Re-run the candidate gate on the record actually being promoted,
+            # before mutating approval state or starting the saga.
+            #
+            # request_promotion() gates these fields at intake, but nothing
+            # re-checked them here, and every accessor in the derivation below
+            # supplied a plausible-looking default for a missing value: "HZ-01" for
+            # an absent cell, "" for an absent address, 1.0 for an absent geocode
+            # confidence, 75.0 when heat-zone scoring raised. A listing with no
+            # address therefore reached score_site() carrying full confidence and a
+            # passing demand signal, and could come back GO. ODP-BR-LST-001 is a
+            # Hard Constraint: no address or failed geocode must not enter
+            # SiteScore.
+            #
+            # It runs before state transition so a gate failure leaves the
+            # durable record in PENDING_REVIEW rather than mutating it to APPROVED
+            # without a candidate or stranding the promotion mid-saga.
+            promotion_address = self._assert_promotable(listing)
+        else:
+            listing = None
+            promotion_address = None
+
         current_state = to_state_enum(promo["status"])
         promo_agg = PromotionAggregate(
             id=promotion_decision_id,
@@ -236,11 +303,6 @@ class PromotionService:
             correlation_id=context.correlation_id,
         )
 
-        listing_id = promo["listing_id"]
-        listing = self.listing_repository.get_listing(listing_id)
-        if not listing:
-            raise ValueError(f"Listing {listing_id} not found")
-
         # Remember original listing status and candidate count for compensation
         if hasattr(listing, "get"):
             before_status = listing.get("status")
@@ -266,41 +328,48 @@ class PromotionService:
                         "DUPLICATE_CANDIDATE"
                     )
 
-            # Get fitScore or equivalent demand signal
+            # The gate already ran, above the saga. Every accessor below reads
+            # a value the gate confirmed is present; none of them substitutes
+            # one it does not have.
             if hasattr(listing, "get"):
                 fit_score = listing.get("heat_zone_score") or listing.get("fitScore") or listing.get("fit_score")
-                h3_val = listing.get("heatZoneId") or listing.get("hz") or listing.get("h3Index") or listing.get("h3_index") or "HZ-01"
-                address_val = listing.get("address") or listing.get("address_raw") or ""
-                rent_val = listing.get("rentPerMonth") or listing.get("rent_amount") or 0.0
-                area_val = listing.get("areaPing") or listing.get("area_ping") or 0.0
+                h3_val = listing.get("heatZoneId") or listing.get("hz") or listing.get("h3Index") or listing.get("h3_index")
+                address_val = listing.get("address") or listing.get("address_raw")
+                rent_val = listing.get("rentPerMonth") or listing.get("rent_amount")
+                area_val = listing.get("areaPing") or listing.get("area_ping")
+                # frontage is not a candidate-gate field; 0.0 remains its
+                # documented absent value rather than a substituted one.
                 frontage_val = listing.get("frontage_m") or listing.get("frontage") or 0.0
-                conf_val = listing.get("geocodeConfidence") or listing.get("confidence") or 1.0
+                conf_val = geocode_confidence_of(listing)
                 title_val = listing.get("title") or f"{listing_id} 候選點"
                 ds_id = listing.get("datasetSnapshotId") or listing.get("snapshot_id") or listing.get("dataset_snapshot_id")
             else:
-                # Domain object Listing
-                address_obj = (
-                    self.listing_repository.get_address(listing.address_id)
-                    if hasattr(self.listing_repository, "get_address")
-                    else None
-                )
-                h3_val = address_obj.h3_res_9 if (address_obj and address_obj.h3_res_9) else "HZ-01"
-                address_val = address_obj.normalized_address if address_obj else ""
+                # Domain object Listing. The gate resolved and checked its
+                # address already, so it is reused rather than re-fetched.
+                address_obj = promotion_address
+                h3_val = address_obj.h3_res_9
+                address_val = address_obj.normalized_address
                 rent_val = listing.rent_amount
                 area_val = listing.area_ping
                 frontage_val = listing.frontage_m
-                conf_val = address_obj.geocode_confidence if address_obj else listing.confidence
+                conf_val = address_obj.geocode_confidence
                 fit_score = getattr(listing, "heat_zone_score", None) or getattr(listing, "fit_score", None)
                 title_val = f"{listing_id} 候選點"
                 ds_id = getattr(listing, "snapshot_id", None)
 
             if fit_score is None:
                 from modules.heatzone.domain.scoring import HeatZoneFeatureInput, score_heatzones
-                try:
-                    hz_results = score_heatzones([HeatZoneFeatureInput(h3_index=h3_val)])
-                    fit_score = hz_results[0].score if hz_results else 75.0
-                except Exception:
-                    fit_score = 75.0
+                # No fallback score. Swallowing the exception and substituting
+                # 75.0 turned a scoring failure into a passing demand signal --
+                # the same shape as the defaults above. A promotion that cannot
+                # be scored must fail rather than proceed on a placeholder.
+                hz_results = score_heatzones([HeatZoneFeatureInput(h3_index=h3_val)])
+                if not hz_results:
+                    raise DomainValidationError(
+                        DenialCode.SOURCE_POLICY_DENIED,
+                        f"Heat-zone scoring returned no result for cell {h3_val}"
+                    )
+                fit_score = hz_results[0].score
 
             if ds_id and str(ds_id).startswith("FS-"):
                 ds_snapshot_id = str(ds_id)
@@ -652,6 +721,49 @@ class PromotionService:
 
         return promo
 
+    def _assert_promotable(self, listing: Any) -> Any | None:
+        """Raise unless `listing` still satisfies the candidate gate.
+
+        Returns the resolved `AddressLocation` when the listing is a domain
+        object, so the caller derives the SiteScore input from the same address
+        this checked, and `None` for a mapping, which carries its address
+        fields inline.
+
+        The two branches ask the same questions of two shapes:
+        `_validate_listing_fields` reads a mapping, while a domain `Listing`
+        keeps address, cell and geocode confidence on a separate record.
+        """
+        if hasattr(listing, "get"):
+            errors = self._validate_listing_fields(listing)
+            address_obj = None
+        else:
+            address_obj = (
+                self.listing_repository.get_address(listing.address_id)
+                if hasattr(self.listing_repository, "get_address")
+                else None
+            )
+            errors = []
+            if address_obj is None or not address_obj.normalized_address:
+                errors.append("address")
+            if address_obj is None or not address_obj.h3_res_9:
+                errors.append("H3")
+            if address_obj is None or not address_obj.geocode_confidence:
+                # Same rule as geocode_confidence_of(): 0.0 is what
+                # AddressLocation carries when nothing geocoded it, so it
+                # cannot be read as a real measurement.
+                errors.append("geocode")
+            if not listing.rent_amount or listing.rent_amount <= 0:
+                errors.append("rent")
+            if not listing.area_ping or listing.area_ping <= 0:
+                errors.append("area")
+
+        if errors:
+            raise DomainValidationError(
+                DenialCode.SOURCE_POLICY_DENIED,
+                f"Candidate gate failed at promotion: missing {', '.join(errors)}"
+            )
+        return address_obj
+
     def _validate_listing_fields(self, listing: dict[str, Any]) -> list[str]:
         errors = []
         if not (listing.get("address") or listing.get("address_raw")):
@@ -669,10 +781,27 @@ class PromotionService:
         if not h3:
             errors.append("H3")
 
-        lat = listing.get("lat") or listing.get("latitude") or 25.0339
-        lng = listing.get("lng") or listing.get("longitude") or 121.5645
-        conf = listing.get("geocodeConfidence") or listing.get("confidence")
-        if lat is None or lng is None or conf is None:
+        # Geocode completeness is carried by the H3 cell (checked above) and
+        # the geocode confidence, which is what the SiteScore input downstream
+        # actually consumes -- SiteScoreFeatureInput takes heat_zone_id, not a
+        # coordinate pair.
+        #
+        # This used to read:
+        #
+        #     lat = listing.get("lat") or listing.get("latitude") or 25.0339
+        #     lng = listing.get("lng") or listing.get("longitude") or 121.5645
+        #     conf = listing.get("geocodeConfidence") or listing.get("confidence")
+        #     if lat is None or lng is None or conf is None:
+        #
+        # which rejected almost nothing. The coordinate fallback made
+        # `lat is None` unreachable, so the condition reduced to `conf is None`;
+        # and `conf` fell through to the listing's own extraction confidence, so
+        # a failed geocode still produced a number. Coordinates are deliberately
+        # not restored as a gate field -- AddressLocation defaults
+        # latitude/longitude to 0.0, the promotion payload does not carry them,
+        # and SiteScoreFeatureInput takes heat_zone_id -- so promoting them to a
+        # real requirement belongs with the address contract, not here.
+        if geocode_confidence_of(listing) is None:
             errors.append("geocode")
 
         return errors

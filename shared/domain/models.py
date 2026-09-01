@@ -416,7 +416,12 @@ class InterventionOutcome:
     incremental_revenue: float = 0.0
     incremental_gross_margin: float = 0.0
     method: str = "synthetic"  # before_after/did/synthetic/uplift/manual
-    evidence_level: str = "medium"  # low/medium/high/causal_candidate
+    # ADR-0004: the ML-05 ladder (L0..L5). None means unrated, and there is no
+    # default -- the previous "medium" stored an unassessed outcome as
+    # medium-strength evidence. `causal_candidate` was a dead value: nothing
+    # produced or tested for it, and the concept it named is carried by
+    # CAUSAL_MIN_EVIDENCE = L3 in modules/adlift/domain/incrementality.py.
+    evidence_level: str | None = None
     side_effect_json: dict[str, Any] = field(default_factory=dict)
     label_maturity_time: datetime = field(default_factory=datetime.now)
 
