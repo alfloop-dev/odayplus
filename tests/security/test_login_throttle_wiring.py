@@ -155,3 +155,80 @@ def test_web_deployment_binds_database_secret_for_cross_instance_throttle() -> N
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     assert 'WEB_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"' in text
 
+
+def test_web_deployment_mounts_cloudsql_instance_for_database_socket() -> None:
+    """The Web gcloud run deploy must mount the Cloud SQL Auth Proxy.
+
+    ODAY_DATABASE_URL uses a Unix socket connection string
+    (?host=/cloudsql/<instance>). Without --add-cloudsql-instances the
+    proxy sidecar is not started and pg connect fails with ENOENT, causing
+    every POST /login to 503.
+
+    This is the invariant regression test for the mount — the secret
+    binding alone (tested above) is necessary but not sufficient.
+    """
+    text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    # Isolate the Web deploy block so we don't accidentally match the API block.
+    marker = "Deploying immutable Web candidate"
+    assert marker in text, "Web deploy block marker not found"
+    web_block = text[text.index(marker) :]
+    # Trim to the next gcloud invocation (the describe that follows).
+    next_gcloud = web_block.index("gcloud run services describe")
+    web_deploy_cmd = web_block[:next_gcloud]
+
+    assert "--add-cloudsql-instances" in web_deploy_cmd, (
+        "Web gcloud run deploy is missing --add-cloudsql-instances; "
+        "the database URL secret will have no socket to connect to."
+    )
+    assert "GCP_CLOUD_SQL_INSTANCE" in web_deploy_cmd
+
+
+CLOUD_RUN_TF = ROOT / "infra/terraform/cloud_run.tf"
+IAM_TF = ROOT / "infra/terraform/iam.tf"
+
+
+def test_terraform_web_service_has_cloudsql_volume_and_mount() -> None:
+    """The Terraform web service resource must declare CloudSQL volume and mount.
+
+    Without the volume the Cloud Run revision has no /cloudsql mount point,
+    so the Unix socket path in ODAY_DATABASE_URL resolves to ENOENT.
+    """
+    source = CLOUD_RUN_TF.read_text(encoding="utf-8")
+
+    # Find the web service resource block.
+    assert 'resource "google_cloud_run_v2_service" "web"' in source
+
+    web_block_start = source.index('resource "google_cloud_run_v2_service" "web"')
+    # Find end of the resource block — the next top-level resource.
+    rest = source[web_block_start:]
+    # Look for the next resource declaration after this one.
+    next_resource = rest.find('\nresource "', 1)
+    web_block = rest[:next_resource] if next_resource > 0 else rest
+
+    assert "cloud_sql_instance" in web_block, (
+        "Web service Terraform is missing CloudSQL volume declaration."
+    )
+    assert 'mount_path = "/cloudsql"' in web_block, (
+        "Web service Terraform is missing /cloudsql volume mount."
+    )
+    assert "ODAY_DATABASE_URL" in web_block, (
+        "Web service Terraform is missing ODAY_DATABASE_URL env binding."
+    )
+
+
+def test_terraform_web_sa_has_cloudsql_client_and_database_url_accessor() -> None:
+    """The web service account must have CloudSQL client and database_url accessor.
+
+    Without cloudsql.client the Cloud SQL Auth Proxy cannot connect to the
+    instance. Without the secretAccessor binding the revision cannot read
+    the ODAY_DATABASE_URL secret value.
+    """
+    source = IAM_TF.read_text(encoding="utf-8")
+
+    assert 'resource "google_project_iam_member" "web_cloud_sql_client"' in source, (
+        "iam.tf is missing web_cloud_sql_client IAM binding."
+    )
+    assert 'resource "google_secret_manager_secret_iam_member" "web_database_url"' in source, (
+        "iam.tf is missing web_database_url secret accessor binding."
+    )

@@ -671,6 +671,7 @@ gcloud run deploy "${WEB_SERVICE}" \
   --platform=managed \
   --port=3000 \
   --service-account="${ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT}" \
+  --add-cloudsql-instances="${GCP_CLOUD_SQL_INSTANCE}" \
   --env-vars-file="${WEB_ENV_FILE}" \
   --set-secrets="${WEB_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
