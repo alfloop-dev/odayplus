@@ -961,6 +961,12 @@ else:
                     "longitude": address.longitude,
                     "geocode_precision": address.geocode_precision,
                     "geocode_confidence": address.geocode_confidence,
+                    # Both spellings, like every other field in this dict.
+                    # Emitting only the snake_case one left consumers that read
+                    # `geocodeConfidence` falling through to the listing's own
+                    # `confidence` above, which is extraction confidence and
+                    # says nothing about whether the address was geocoded.
+                    "geocodeConfidence": address.geocode_confidence,
                     "h3Index": address.h3_res_8 or address.h3_res_9 or address.h3_res_10 or "",
                     "h3_index": address.h3_res_8 or address.h3_res_9 or address.h3_res_10 or "",
                     "h3_res_8": address.h3_res_8 or "",
