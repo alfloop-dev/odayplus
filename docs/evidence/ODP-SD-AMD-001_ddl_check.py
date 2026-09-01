@@ -50,6 +50,10 @@ CREATE OR REPLACE FUNCTION uuid_generate_v4() RETURNS uuid
 CREATE TABLE core.tenants (
     tenant_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_name VARCHAR(255) NOT NULL);
+INSERT INTO core.tenants (tenant_id, tenant_name) VALUES
+    ('11111111-1111-1111-1111-111111111111', 't1'),
+    ('11111111-1111-1111-1111-222222222222', 't2')
+ON CONFLICT DO NOTHING;
 CREATE TABLE core.brands  (brand_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
 CREATE TABLE core.stores  (store_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
 CREATE TABLE geo.h3_cells (geo_cell_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
@@ -83,32 +87,25 @@ CREATE TABLE network.network_plans (
 """
 
 TENANT = "'11111111-1111-1111-1111-111111111111'"
+TENANT_2 = "'11111111-1111-1111-1111-222222222222'"
 STORE = "'22222222-2222-2222-2222-222222222222'"
 CELL = "'33333333-3333-3333-3333-333333333333'"
 VALUATION = "'44444444-4444-4444-4444-444444444444'"
 FORECAST = "'55555555-5555-5555-5555-555555555555'"
 ALERT = "'66666666-6666-6666-6666-666666666666'"
-POLICY = "'four-light-policy-v1'"
+POLICY = f"'four-light-policy-v1:{TENANT[1:-1]}'"
+POLICY_T2 = f"'four-light-policy-v1:{TENANT_2[1:-1]}'"
 DECISION = "'77777777-7777-7777-7777-777777777777'"
 GATE_ID = "'88888888-8888-8888-8888-888888888888'"
 
 SEED = f"""
-INSERT INTO core.tenants (tenant_id, tenant_name) VALUES ({TENANT}, 't1') ON CONFLICT DO NOTHING;
+INSERT INTO core.tenants (tenant_id, tenant_name) VALUES ({TENANT}, 't1'), ({TENANT_2}, 't2') ON CONFLICT DO NOTHING;
 INSERT INTO core.stores (store_id) VALUES ({STORE}) ON CONFLICT DO NOTHING;
 INSERT INTO geo.h3_cells (geo_cell_id) VALUES ({CELL}) ON CONFLICT DO NOTHING;
 INSERT INTO asset.valuation_runs (valuation_run_id) VALUES ({VALUATION}) ON CONFLICT DO NOTHING;
 INSERT INTO operations.forecast_outputs (forecast_output_id) VALUES ({FORECAST}) ON CONFLICT DO NOTHING;
 INSERT INTO operations.alerts (alert_id, store_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id)
     VALUES ({ALERT}, {STORE}, 'sitescore_gap', '{{}}'::jsonb, {FORECAST}, {POLICY}) ON CONFLICT DO NOTHING;
-INSERT INTO workflow.decision_policies (
-    policy_version_id, policy_id, policy_version, policy_kind, tenant_id,
-    effective_from, owner_role, approved_by, approved_at,
-    input_contract, output_contract, change_reason, parameters, declared_inputs)
-VALUES ({POLICY}, 'four-light-policy', '1.0.0', 'forecast_alert', {TENANT}, now(),
-    'ops', 'approver', now(), 'in', 'out',
-    'mechanism introduction, thresholds unchanged', '{{"thresholds":[]}}'::jsonb,
-    ARRAY['sitescore_gap_ratio', 'data_quality.staleness_days'])
-ON CONFLICT (policy_version_id) DO NOTHING;
 INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES ({DECISION}, {POLICY}) ON CONFLICT DO NOTHING;
 INSERT INTO pricing.exploration_gates (gate_id, tenant_id, budget_limit, budget_consumed, effective_from, effective_to, approved_by, rollback_condition, decision_policy_version_id)
     VALUES ({GATE_ID}, {TENANT}, 1000, 0, now(), now() + interval '30 day', 'ops', 'rollback on limit', {POLICY})
@@ -218,6 +215,27 @@ CASES: list[tuple[str, str, bool]] = [
      f"({TENANT},{STORE},'OUTCOME_CORRECTION',{FORECAST},'revenue',10,20,'TWD','2026-01-01','2026-01-31','r','u',"
      f"now(),'APPROVED','APPLIED_RECALCULATION',{FORECAST},'approver',now(),'f_rc2')",
      True),
+    ("feedback: OUTCOME_CORRECTION PENDING with APPLIED_RECALCULATION rejected",
+     "INSERT INTO operations.forecast_feedback (tenant_id, store_id, feedback_kind, target_forecast_output_id,"
+     " corrected_metric, observed_value, corrected_value, correction_unit, effective_from, effective_to, reason_code,"
+     " submitted_by, submitted_at, approval_status, applied_status, recalculation_forecast_output_id, correlation_id) VALUES "
+     f"({TENANT},{STORE},'OUTCOME_CORRECTION',{FORECAST},'revenue',10,20,'TWD','2026-01-01','2026-01-31','r','u',"
+     f"now(),'PENDING','APPLIED_RECALCULATION',{FORECAST},'f_pend_recalc')",
+     False),
+    ("feedback: OUTCOME_CORRECTION REJECTED with APPLIED_RECALCULATION rejected",
+     "INSERT INTO operations.forecast_feedback (tenant_id, store_id, feedback_kind, target_forecast_output_id,"
+     " corrected_metric, observed_value, corrected_value, correction_unit, effective_from, effective_to, reason_code,"
+     " submitted_by, submitted_at, approval_status, applied_status, recalculation_forecast_output_id, approved_by, approved_at, correlation_id) VALUES "
+     f"({TENANT},{STORE},'OUTCOME_CORRECTION',{FORECAST},'revenue',10,20,'TWD','2026-01-01','2026-01-31','r','u',"
+     f"now(),'REJECTED','APPLIED_RECALCULATION',{FORECAST},'approver',now(),'f_rej_recalc')",
+     False),
+    ("feedback: CONTEXT_ANNOTATION PENDING with APPLIED_TRAINING_EXCLUSION rejected",
+     "INSERT INTO operations.forecast_feedback (tenant_id, store_id, feedback_kind, target_alert_id,"
+     " effective_from, effective_to, reason_code, submitted_by, submitted_at, approval_status,"
+     " applied_status, correlation_id) VALUES "
+     f"({TENANT},{STORE},'CONTEXT_ANNOTATION',{ALERT},'2026-01-01','2026-01-31','r','u',now(),"
+     "'PENDING','APPLIED_TRAINING_EXCLUSION','f_pend_excl')",
+     False),
 
     ("composition: MERGED decided by system",
      COMPOSITION + f"('MZ-0123456789abcdef',{TENANT},{CELL},'MERGED',NULL,'system',now(),"
@@ -234,6 +252,14 @@ CASES: list[tuple[str, str, bool]] = [
     ("composition: system decision with override",
      COMPOSITION + f"('MZ-00000000000000cc',{TENANT},{CELL},'MERGED',NULL,'system',now(),"
      f"{POLICY},'because')", False),
+    ("composition: concurrent active record on same cell rejected",
+     COMPOSITION + f"('MZ-0123456789abcde1',{TENANT},{CELL},'MERGED',NULL,'system',now(),"
+     f"{POLICY},NULL)", False),
+    ("composition: append-only override after revert accepted",
+     f"UPDATE expansion.heatzone_composition SET reverted_at = now() WHERE tenant_id = {TENANT} AND member_cell_id = {CELL};\n"
+     + COMPOSITION + f"('MZ-0123456789abcde2',{TENANT},{CELL},'MERGED',NULL,'alice',now(),"
+     f"{POLICY},'manual override after revert')", True),
+
     ("gate: valid authorization",
      GATE + f"({TENANT},1000,0,now(),now()+interval '30 day','a','revert on breach',{POLICY})",
      True),
@@ -243,22 +269,37 @@ CASES: list[tuple[str, str, bool]] = [
      GATE + f"({TENANT},1000,0,now(),now(),'a','revert',{POLICY})", False),
     ("gate: empty rollback_condition",
      GATE + f"({TENANT},1000,0,now(),now()+interval '1 day','a','',{POLICY})", False),
+    ("gate: multiple decisions exceed gate budget rejected",
+     f"UPDATE pricing.exploration_gates SET budget_consumed = 1001 WHERE gate_id = {GATE_ID}", False),
+
     ("exploration_decision: valid record",
      EXPLORATION_DECISION + f"({DECISION},{GATE_ID},{TENANT},'SKU-001',{STORE},100.00,105.00,5.00,'THOMPSON_SAMPLING')",
      True),
+    ("exploration_decision: gate tenant mismatch rejected",
+     EXPLORATION_DECISION + f"({DECISION},{GATE_ID},{TENANT_2},'SKU-001',{STORE},100.00,105.00,5.00,'THOMPSON_SAMPLING')",
+     False),
     ("exploration_decision: negative explored price",
      EXPLORATION_DECISION + f"({DECISION},{GATE_ID},{TENANT},'SKU-001',{STORE},100.00,-105.00,5.00,'THOMPSON_SAMPLING')",
      False),
     ("exploration_decision: negative budget_consumed",
      EXPLORATION_DECISION + f"({DECISION},{GATE_ID},{TENANT},'SKU-001',{STORE},100.00,105.00,-5.00,'THOMPSON_SAMPLING')",
      False),
-    ("policy: second active version, same policy_id",
-     POLICY_INSERT + f"('four-light-policy-v2','four-light-policy','2.0.0','forecast_alert',"
+
+    ("policy: tenant 2 receives active policy resolution",
+     f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM workflow.decision_policies WHERE tenant_id = {TENANT_2} AND policy_kind = 'forecast_alert' AND effective_to IS NULL) THEN RAISE EXCEPTION 'no policy for t2'; END IF; END $$;",
+     True),
+    ("policy: second active version for same tenant, same policy_id",
+     POLICY_INSERT + f"('four-light-policy-v2:{TENANT[1:-1]}','four-light-policy','2.0.0','forecast_alert',"
      f"{TENANT},now(),'ops','a',now(),'in','out','x','{{}}'::jsonb,"
      "ARRAY['sitescore_gap_ratio'])", False),
     ("policy: empty declared_inputs",
-     POLICY_INSERT + f"('other-v1','other','1.0.0','heatzone_merge',{TENANT},now(),'ops','a',"
+     POLICY_INSERT + f"('other-v1:{TENANT[1:-1]}','other','1.0.0','heatzone_merge',{TENANT},now(),'ops','a',"
      "now(),'in','out','x','{}'::jsonb, ARRAY[]::text[])", False),
+    ("policy: active version for different tenant with same policy_id",
+     POLICY_INSERT + f"('other-policy-v1:{TENANT_2[1:-1]}','other-policy','1.0.0','forecast_alert',"
+     f"{TENANT_2},now(),'ops','a',now(),'in','out','x','{{}}'::jsonb,ARRAY['sitescore_gap_ratio'])",
+     True),
+
     ("alert: evaluation identity duplicate for same forecast+policy",
      "INSERT INTO operations.alerts (store_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id) VALUES "
      f"({STORE}, 'sitescore_gap', '{{}}'::jsonb, {FORECAST}, {POLICY})", False),

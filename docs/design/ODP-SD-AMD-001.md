@@ -95,7 +95,7 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 
 ```sql
 CREATE TABLE IF NOT EXISTS workflow.decision_policies (
-    policy_version_id       VARCHAR(100) PRIMARY KEY,          -- 例：'four-light-policy-v1'
+    policy_version_id       VARCHAR(100) PRIMARY KEY,          -- 例：'four-light-policy-v1:11111111-1111-1111-1111-111111111111'
     policy_id               VARCHAR(100) NOT NULL,             -- 例：'four-light-policy'
     policy_version          VARCHAR(50)  NOT NULL,             -- semver 或 retrofit 標記
     policy_kind             VARCHAR(100) NOT NULL,
@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS workflow.decision_policies (
     declared_inputs         TEXT[]       NOT NULL,
     created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT uq_decision_policy_id_version UNIQUE (policy_id, policy_version),
+    CONSTRAINT uq_decision_policy_tenant_id_version UNIQUE (tenant_id, policy_id, policy_version),
     CONSTRAINT chk_decision_policy_kind CHECK (
         policy_kind IN ('forecast_alert', 'heatzone_merge', 'heatzone_absorption',
                         'sitescore_recommendation', 'price_exploration', 'netplan_action')
@@ -143,7 +143,7 @@ INSERT INTO workflow.decision_policies (
     rollback_policy_version, parameters, declared_inputs
 )
 SELECT
-    'four-light-policy-0.0.0-retrofit',
+    'four-light-policy-0.0.0-retrofit:' || t.tenant_id::text,
     'four-light-policy',
     '0.0.0-retrofit',
     'forecast_alert',
@@ -170,7 +170,7 @@ INSERT INTO workflow.decision_policies (
     rollback_policy_version, parameters, declared_inputs
 )
 SELECT
-    'four-light-policy-v1',
+    'four-light-policy-v1:' || t.tenant_id::text,
     'four-light-policy',
     '1.0.0',
     'forecast_alert',
@@ -183,7 +183,7 @@ SELECT
     'ForecastOutput',
     'Alert',
     '機制導入，門檻沿用常數，納入資料品質守衛',
-    'four-light-policy-0.0.0-retrofit',
+    'four-light-policy-0.0.0-retrofit:' || t.tenant_id::text,
     '{"thresholds": [{"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35}, {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20}, {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10}], "data_quality_guard": {"max_staleness_days": 2, "on_violation": "SUPPRESS_HIGH_CONFIDENCE"}}'::jsonb,
     ARRAY['sitescore_gap_ratio', 'data_quality.staleness_days']
 FROM core.tenants t
@@ -192,7 +192,7 @@ ON CONFLICT (policy_version_id) DO NOTHING;
 
 `change_reason` 與 `rollback_policy_version` 為 `ODP-SA-07` 第 8 節必填欄位，目前產品根目錄無實作，本表為其唯一承載處。`rollback_policy_version` 自我外鍵，確保可回退目標必須是真實存在的版本。
 
-`tenant_id` 設為 `NOT NULL` 有一項直接後果：平台級政策也必須逐租戶建列，不能以單一 NULL 列涵蓋所有租戶。這是刻意的——`idx_decision_policy_active` 若允許 NULL，Postgres 的 NULL 相異語意會讓同一政策存在多個「現行版本」而不被擋下。以每租戶一列換取唯一性可被資料庫保證。
+`tenant_id` 設為 `NOT NULL` 有一項直接後果：平台級政策也必須逐租戶建列，不能以單一 NULL 列涵蓋所有租戶。這是刻意的——`idx_decision_policy_active` 若允許 NULL，Postgres 的 NULL 相異語意會讓同一政策存在多個「現行版本」而不被擋下。以每租戶一列（`policy_version_id` 格式為 `{policy_version_id}:{tenant_id}` 並搭配 `uq_decision_policy_tenant_id_version`）換取多租戶獨立性與唯一性由資料庫保證，確保後續新增租戶或跨租戶政策解析均能正確執行。
 
 ### 3.3 版本解析
 
@@ -513,6 +513,24 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
         approval_status NOT IN ('APPROVED', 'REJECTED')
         OR (approved_by IS NOT NULL AND approved_at IS NOT NULL)
     ),
+    -- 嚴格治理：回饋進入套用狀態前必須具備相符核准（OUTCOME_CORRECTION 必須為 APPROVED 且有審核人；其餘可為 APPROVED 或 AUTO_ACCEPTED）
+    CONSTRAINT chk_feedback_applied_requires_approval CHECK (
+        applied_status NOT IN ('APPLIED_RECALCULATION', 'APPLIED_TRAINING_EXCLUSION', 'APPLIED_DISPOSITION')
+        OR (
+            (feedback_kind = 'OUTCOME_CORRECTION' AND approval_status = 'APPROVED' AND approved_by IS NOT NULL AND approved_at IS NOT NULL)
+            OR (feedback_kind <> 'OUTCOME_CORRECTION' AND approval_status IN ('APPROVED', 'AUTO_ACCEPTED'))
+        )
+    ),
+    -- PENDING 狀態之套用進度僅能為 PENDING_APPLICATION 或 NOT_APPLIED
+    CONSTRAINT chk_feedback_pending_applied_status CHECK (
+        approval_status <> 'PENDING'
+        OR applied_status IN ('PENDING_APPLICATION', 'NOT_APPLIED')
+    ),
+    -- REJECTED 狀態必須為 NOT_APPLIED
+    CONSTRAINT chk_feedback_rejected_applied_status CHECK (
+        approval_status <> 'REJECTED'
+        OR applied_status = 'NOT_APPLIED'
+    ),
     CONSTRAINT chk_feedback_period CHECK (effective_to >= effective_from)
 );
 
@@ -648,6 +666,7 @@ def compute_absorbed_demand(
 
 ```sql
 CREATE TABLE IF NOT EXISTS expansion.heatzone_composition (
+    composition_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     zone_id             VARCHAR(100) NOT NULL,   -- 合併後熱區識別碼，格式 'MZ-{hash}'
     tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id),
     member_cell_id      UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id),
@@ -661,7 +680,6 @@ CREATE TABLE IF NOT EXISTS expansion.heatzone_composition (
     reverted_at         TIMESTAMP WITH TIME ZONE,-- 撤銷時點；NULL = 生效中
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    PRIMARY KEY (zone_id, member_cell_id),
     CONSTRAINT chk_composition_kind CHECK (
         composition_kind IN ('MERGED', 'SPLIT_CHILD', 'ATOMIC')
     ),
@@ -686,13 +704,17 @@ CREATE TABLE IF NOT EXISTS expansion.heatzone_composition (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_heatzone_composition_active_member
     ON expansion.heatzone_composition (tenant_id, member_cell_id)
     WHERE reverted_at IS NULL;
+
+-- 支援依熱區追溯完整可逆變更與人工推翻歷程之稽核索引
+CREATE INDEX IF NOT EXISTS idx_heatzone_composition_audit
+    ON expansion.heatzone_composition (tenant_id, zone_id, decided_at);
 ```
 
 **識別碼規則**：合併熱區的 `zone_id` **不得**重用任一組成單元的 `geo_cell_id`，避免下游將合併體誤認為原單元。`chk_composition_zone_id_format` 強制 `MZ-` 前綴，而 `geo_cell_id` 為 UUID，兩者格式互斥，故重用在資料庫層即不可能。
 
 **鄰接判定**：以 H3 k-ring（k=1）為預設。跨行政區界是否可合併由 `policy.parameters["allow_cross_admin_boundary"]` 控制，不硬編。`geo.h3_cells` 已有 `admin_city` 與 `admin_district` 兩欄可供判定。
 
-**治理**：屬 Ranking Policy 層級（`ODP-SA-07` 第 2 節）。自動合併可由展店 Owner 推翻，推翻須填 `override_reason` 與 `decided_by`，由 `chk_composition_override_reason` 保證。所有合併與拆分可撤銷（設 `reverted_at`），不實體刪除。
+**治理與可逆稽核**：屬 Ranking Policy 層級（`ODP-SA-07` 第 2 節）。為滿足 `ODP-AC-FR-011` 的可逆稽核軌跡要求，本表採 **Append-Only 版本紀錄模型**（以 `composition_id` 為獨立主鍵），任何自動合併、拆分、人工推翻或撤銷均寫入新列，原生效中記錄則標註 `reverted_at`，不作 destructive 原地覆寫。自動合併可由展店 Owner 推翻，推翻須填 `override_reason` 與 `decided_by`，由 `chk_composition_override_reason` 保證。所有歷史版本均可依 `(tenant_id, zone_id, decided_at)` 完整重現與還原。
 
 **API**（2 個端點）：
 
@@ -856,6 +878,7 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_gates (
         REFERENCES workflow.decision_policies(policy_version_id),
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
+    CONSTRAINT uq_exploration_gates_gate_tenant UNIQUE (gate_id, tenant_id),
     CONSTRAINT chk_gate_window CHECK (effective_to > effective_from),
     CONSTRAINT chk_gate_budget_limit CHECK (budget_limit > 0),
     -- 已消耗不得為負，也不得超出上限：預算用罄在資料庫層即成立
@@ -875,8 +898,8 @@ CREATE INDEX IF NOT EXISTS idx_exploration_gate_active
 -- 每次探索定價決策所關聯之 Gate 紀錄與預算扣抵（逐決策稽核）
 CREATE TABLE IF NOT EXISTS pricing.exploration_decisions (
     decision_id         UUID PRIMARY KEY REFERENCES workflow.decisions(decision_id),
-    gate_id             UUID NOT NULL REFERENCES pricing.exploration_gates(gate_id),
-    tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id),
+    gate_id             UUID NOT NULL,
+    tenant_id           UUID NOT NULL,
     sku_id              VARCHAR(100) NOT NULL,
     store_id            UUID REFERENCES core.stores(store_id),
     baseline_price      NUMERIC(18, 2) NOT NULL,
@@ -885,6 +908,12 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_decisions (
     algorithm           VARCHAR(50) NOT NULL,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
+    CONSTRAINT fk_exploration_decisions_gate_tenant
+        FOREIGN KEY (gate_id, tenant_id)
+        REFERENCES pricing.exploration_gates(gate_id, tenant_id),
+    CONSTRAINT fk_exploration_decisions_tenant
+        FOREIGN KEY (tenant_id)
+        REFERENCES core.tenants(tenant_id),
     CONSTRAINT chk_exploration_decision_prices CHECK (
         baseline_price > 0 AND explored_price > 0
     ),
@@ -894,6 +923,16 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_decisions (
 CREATE INDEX IF NOT EXISTS idx_exploration_decisions_gate
     ON pricing.exploration_decisions (gate_id, created_at);
 ```
+
+**多租戶隔離與 Gate 累計預算扣抵協定**：
+1. **租戶強綁定**：`pricing.exploration_decisions` 透過 `(gate_id, tenant_id)` 複合外鍵直接參照 `pricing.exploration_gates(gate_id, tenant_id)`，由資料庫核心層確保決策租戶與授權 Gate 租戶嚴格一致，防止跨租戶借用 Gate 探索。
+2. **總預算累計扣抵與防超支**：單筆決策之 `budget_consumed` 僅記錄該次探索消耗，而 Gate 之總預算由 `pricing.exploration_gates.budget_consumed` 追蹤。每次執行探索決策時，交易中必須原子執行：
+   ```text
+   UPDATE pricing.exploration_gates
+   SET budget_consumed = budget_consumed + :decision_budget
+   WHERE gate_id = :gate_id AND tenant_id = :tenant_id;
+   ```
+   由於 `pricing.exploration_gates` 設有約束 `chk_gate_budget_consumed (budget_consumed <= budget_limit)`，當多筆決策累計消耗超過 Gate 預算上限時，資料庫將直接拋出 check constraint 違規並回滾該次決策交易，保證多決策並行時不會超出 Gate 授權預算。
 
 **Gate 判定與 Bandit 介面**（新增 `modules/priceops/application/exploration.py` 與 `solver/pricing/bandit.py`）：
 
