@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+  "audit_type": "dev_live_rollout_remediation_and_runtime_reconciliation",
+  "release_status": "blocked",
+  "deployment_success_claimed": false,
+  "historical_receipts_modified": false,
+  "generated_at": "2026-09-01T12:55:30Z",
+  "generated_by": "Antigravity3",
+  "readback_window_utc": {
+    "start_utc": "2026-09-01T12:43:20Z",
+    "end_utc": "2026-09-01T12:55:30Z"
+  },
+  "readback_identity": {
+    "gcloud_account": "deborah.lu@dev.cctech-support.com",
+    "gh_account": "ajoe734",
+    "gcloud_project": "odayplus-runtime-20260825",
+    "region": "asia-east1"
+  },
+  "candidate_reconciliation": {
+    "authoritative_manifest_candidate_sha": "ebc4fca5c2dd5871275aee39a18406dd67464f04",
+    "origin_dev_head_sha": "ae03490480e5a1313d3fdb992172c9b5793053e2",
+    "drift_status": "diverged",
+    "commits_between_count": 251,
+    "product_input_diff": {
+      "apps_files_changed": 43,
+      "apps_lines_inserted": 9337,
+      "apps_lines_deleted": 164,
+      "summary": "Substantial product code added on origin/dev including password-first authentication, login throttling, operator console, and model routes."
+    },
+    "acceptance_rule_applied": "EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN §5.1 / Acceptance Criterion 2: candidate changed on origin/dev, so a new build-once release must be built rather than reusing stale digests."
+  },
+  "hosted_build_execution": {
+    "workflow": "Runtime Release (.github/workflows/deploy-dev.yml)",
+    "run_id": 33509435127,
+    "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33509435127",
+    "event": "workflow_dispatch",
+    "phase": "build",
+    "environment": "dev-build",
+    "release_sha": "ae03490480e5a1313d3fdb992172c9b5793053e2",
+    "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+    "steps_passed": [
+      "Assert exact release SHA is checked out",
+      "確認 build 階段已綁定 environment 且變數齊備",
+      "Publish build environment binding receipt",
+      "Install uv",
+      "Set up Python",
+      "Run Secret Scan",
+      "Run Python SAST Scan",
+      "Generate SBOM",
+      "Install locked project dependencies",
+      "Run E2E deployment health, backup, restore, and rollback proof",
+      "Authenticate to Google Cloud (WIF)",
+      "Set up Cloud SDK",
+      "Install Cosign",
+      "Build, publish, sign, and attest immutable container images"
+    ],
+    "published_images": {
+      "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:0d23643eb58ad161b2a9ebcdf1f30aa329f70603a4db30f92f39a682abe33730",
+      "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:a00ad85a4fa3bd89a27e6066074bb3c3425ccaf8c72bc9bac061473aaff708f2",
+      "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:6dc92f01d67b224f4583b26355d2c395cebe6fe12b08c6adb138a8afb54bc503",
+      "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:1bf9c45898e2446aeae39c7717e2c6c0920fce5a0845cf9cdf6142d8d8f81b41"
+    },
+    "signature_refs": [
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5db3089a0616c2a24dc81585cae29bfff5cd64c728d004f2ade1428f18f8bc7f",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:4f84d23f7fbae75c760fca0b57f048de2b60d7a0e8628cb0a9b44c00f7c57407",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:81959a34c4a06911615bc9a1f2a9aa91f190353580689f9f7d9317000aa495e0",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:94a7be2a3bf4dc4213865f6278e8971fb0837573cb2f5f4e54fac5ff3e43272e"
+    ],
+    "sbom_refs": [
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:c707428bcd9d2d66f204f54f4a768ee3701547dfe96a6d21a8d43af2bf185780",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:00f56581d986806d9a6197309f2c96a43d8081629f1ebe5eccaf51e37e066530",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:0a68d983dc08f12d1101bf8226662e8b51b8a20f9407587d656b3fd11f916109",
+      "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:518bea61190c2ded1d77a5daee84f188b7dca3168dafc23ac9dd93035957f462"
+    ],
+    "failed_step": "Write the build-once artifact handoff",
+    "failure_reason": "delivery_toolchain/release/build_release_handoff.py defaults to Schema Version 2 and requires data_snapshot and rollback_release bindings. The caller in .github/workflows/deploy-dev.yml does not provide data snapshot or rollback inputs, and build_release_handoff.py CLI does not accept --schema-version 1.",
+    "fail_closed_action": "Per Acceptance Criterion 10, workflow and toolchain code defects must fail closed and be remediated via a dedicated toolchain task; code in .github/workflows/ or delivery_toolchain/ is not modified in this rollout task."
+  },
+  "live_gcp_runtime_state": {
+    "project_id": "odayplus-runtime-20260825",
+    "region": "asia-east1",
+    "gke": {
+      "cluster_name": "oday-emgi-gke",
+      "location": "asia-east1-a",
+      "status": "RUNNING",
+      "observed_workloads": [
+        "oday-emgi/deployment.apps/oday-emgi-daemon (1/1 READY)",
+        "oday-emgi/deployment.apps/oday-emgi-webserver (1/1 READY)"
+      ],
+      "data_platform_status": "deployed_sources_off (DPF-EMGI-LIVE-ROLLOUT-001 done)"
+    },
+    "cloud_run_services": {
+      "observed": [
+        "oday-mlflow",
+        "oday-staging-mlflow"
+      ],
+      "api_service_deployed": false,
+      "web_service_deployed": false,
+      "status": "not_deployed"
+    },
+    "cloud_run_jobs": {
+      "observed_count": 0,
+      "migration_job_deployed": false,
+      "worker_job_deployed": false,
+      "scheduler_job_deployed": false,
+      "status": "not_deployed"
+    },
+    "cloud_scheduler": {
+      "observed_count": 0,
+      "worker_trigger_deployed": false,
+      "scheduler_trigger_deployed": false,
+      "status": "not_deployed"
+    },
+    "cloud_sql": {
+      "instances": [
+        "oday-dev-sql",
+        "oday-staging-sql"
+      ],
+      "status": "RUNNABLE"
+    },
+    "secrets": {
+      "observed_non_secret_names": [
+        "oday-dev-web-oidc-client-secret",
+        "oday-plus-dev-api-database-url-pg16",
+        "oday-plus-dev-auth-principal-map",
+        "oday-plus-dev-mlflow-backend-uri",
+        "oday-plus-dev-web-session-secret"
+      ],
+      "status": "provisioned"
+    },
+    "artifact_registry": {
+      "repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
+      "contains_candidate_ebc4fca5_images": true,
+      "contains_candidate_ae034904_images": true
+    }
+  },
+  "reconciliation_findings": [
+    {
+      "id": "FINDING-001",
+      "severity": "P0",
+      "topic": "candidate_drift_and_product_changes",
+      "finding": "authoritative manifest candidate ebc4fca5c2dd has diverged by 251 commits from origin/dev ae03490480e5 with 9,337 lines of product code added. Acceptance Criterion 2 mandates building a fresh release.",
+      "status": "verified"
+    },
+    {
+      "id": "FINDING-002",
+      "severity": "P0",
+      "topic": "build_handoff_schema_v2_defect",
+      "finding": "Hosted build run 33509435127 built, published, and Cosign-signed all 4 images on Artifact Registry, but failed at Write the build-once artifact handoff because build_release_handoff.py requires Schema v2 snapshot and rollback bindings not yet plumbed into deploy-dev.yml.",
+      "status": "fail_closed_defect_isolated"
+    },
+    {
+      "id": "FINDING-003",
+      "severity": "P0",
+      "topic": "runtime_workloads_predeploy_state",
+      "finding": "Live readback of odayplus-runtime-20260825 confirms data platform runs on GKE (EMGI daemon/webserver), but Cloud Run API/Web services, migration/worker/scheduler jobs, and Cloud Scheduler triggers remain absent prior to deploy phase execution.",
+      "status": "reconciled_with_live_state"
+    },
+    {
+      "id": "FINDING-004",
+      "severity": "P0",
+      "topic": "historical_false_receipts_superseded",
+      "finding": "Historical ODP-DEV-ROLLOUT-001 receipts remain byte-unmodified and are explicitly superseded and invalidated by ODP-LIVE-RUNTIME-EVIDENCE-RECONCILE-001 and this remediation audit.",
+      "status": "superseded_without_mutation"
+    }
+  ],
+  "unblock_requirements": [
+    "Execute a dedicated toolchain remediation task to update delivery_toolchain/release/build_release_handoff.py and .github/workflows/deploy-dev.yml so that Schema v1/v2 handoff generation and snapshot/rollback parameter passing are harmonized.",
+    "Re-run Runtime Release build phase to write the authoritative release manifest for candidate ae03490480e5a1313d3fdb992172c9b5793053e2 (or current dev tip).",
+    "Issue a signed Supervisor release lease bound to the admitted manifest digest and trigger the deploy phase via hosted workflow.",
+    "Capture complete post-deploy live readback, Cloud Run job executions, authenticated smoke, and contract receipts."
+  ]
+}
