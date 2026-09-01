@@ -11359,6 +11359,21 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
                 stack.enter_context(c)
             self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
 
+    def test_settled_detached_worktree_not_yet_in_base_is_still_refused(self) -> None:
+        """Settlement cannot waive the ancestry proof for a branchless HEAD."""
+        config, state, ctx = self._detached_case(ancestor=False)
+        with (
+            contextlib.ExitStack() as stack,
+            mock.patch.object(supervisor, "_task_board_settlement_index", return_value={"TASK-X": "settled"}),
+        ):
+            for c in ctx:
+                stack.enter_context(c)
+            self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
+        self.assertEqual(
+            state["worker_worktree_housekeeping"]["last_scan"]["skipped"],
+            {"detached_head_not_merged": 1},
+        )
+
     def test_keeps_dirty_detached_worktree_even_when_merged(self) -> None:
         """Ancestry does not override the dirty-tree guard."""
         config, state, ctx = self._detached_case(ancestor=True, clean=False)
@@ -11846,6 +11861,37 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
         state: dict = {}
         self.assertFalse(self._unmerged_clean_case(state, {}, reclaims=False))
         self.assertEqual(self._last_scan(state)["skipped"], {"branch_not_merged": 1})
+
+    def test_archive_settlement_requires_matching_terminal_statuses(self) -> None:
+        """Malformed or nonterminal archive evidence must fail closed."""
+        cases = [
+            ({"task": {"id": "TASK-X", "status": "done"}}, "unknown"),
+            (
+                {"terminal_status": "done", "task": {"id": "TASK-X", "status": "in_progress"}},
+                "unknown",
+            ),
+            (
+                {"terminal_status": "in_progress", "task": {"id": "TASK-X", "status": "done"}},
+                "unknown",
+            ),
+            (
+                {"terminal_status": "done", "task": {"id": "TASK-X", "status": "review_approved"}},
+                "unknown",
+            ),
+            (
+                {"terminal_status": "done", "task": {"id": "TASK-X", "status": "done"}},
+                "settled",
+            ),
+        ]
+        for snapshot, expected in cases:
+            with self.subTest(snapshot=snapshot):
+                with tempfile.TemporaryDirectory(prefix="pantheon-settlement-test-") as tmpdir:
+                    status_root = Path(tmpdir)
+                    archive_dir = status_root / "ai-task-archive" / "tasks"
+                    archive_dir.mkdir(parents=True)
+                    (archive_dir / "TASK-X.json").write_text(json.dumps(snapshot), encoding="utf-8")
+                    config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+                    self.assertEqual(supervisor._task_settlement(config, "TASK-X", {}), expected)
 
     def test_settlement_does_not_excuse_a_dirty_worktree(self) -> None:
         """Relaxing the merge rule must not relax the one guarding owner work."""

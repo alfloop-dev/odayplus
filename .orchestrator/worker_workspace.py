@@ -2357,7 +2357,18 @@ def _task_settlement(config: dict[str, Any], task_id: str, board_index: dict[str
         snapshot = load_json(archive_file, default=None)
     except (OSError, ValueError):
         return "unknown"
-    if isinstance(snapshot, dict) and isinstance(snapshot.get("task"), dict):
+    if not isinstance(snapshot, dict):
+        return "unknown"
+    task = snapshot.get("task")
+    if not isinstance(task, dict):
+        return "unknown"
+    # The archive envelope is evidence of a terminal task only when both
+    # copies of lifecycle state agree.  A parseable JSON object with a `task`
+    # dict is not enough: a partially written, hand-shaped, or nonterminal
+    # snapshot must not turn a worktree into a deletion candidate.
+    terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()
+    task_status = str(task.get("status") or "").strip().lower()
+    if terminal_status in _SETTLED_TASK_STATUSES and terminal_status == task_status:
         return "settled"
     return "unknown"
 
@@ -2762,10 +2773,13 @@ def prune_orphan_worktrees(
                         continue
                     unmerged = True
             elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
-                if not reclaim_unmerged:
-                    skipped["detached_head_not_merged"] = skipped.get("detached_head_not_merged", 0) + 1
-                    continue
-                unmerged = True
+                # A detached HEAD has no branch ref whose commits remain
+                # reachable after the checkout is removed.  Settlement can
+                # waive the named-branch merge requirement, but it cannot
+                # waive this ancestry proof: the detached commit may be
+                # reachable only through the worktree metadata itself.
+                skipped["detached_head_not_merged"] = skipped.get("detached_head_not_merged", 0) + 1
+                continue
             status_proc = subprocess.run(
                 ["git", "-C", str(wt_path), "status", "--porcelain"],
                 capture_output=True,
