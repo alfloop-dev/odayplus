@@ -48,7 +48,7 @@ related_documents:
 | Recommendation | 由預測推得的建議（policy_version） | timeline `Recommendation generated` 節點 |
 | Human decision | 核准/退回/覆寫（actor、reason、time） | timeline `Human decision submitted` + Decision Card |
 | Execution | 執行/發布/回滾 | timeline `Execution started` 節點 |
-| Outcome | 觀察結果與回授 label registry | timeline `Outcome observed` / `Feedback written` 節點 |
+| Outcome | 觀察結果 | timeline `Outcome observed` 節點 |
 
 ## 3. Backend Vocabulary (authoritative)
 
@@ -82,7 +82,6 @@ related_documents:
 ```text
 Prediction generated → Recommendation generated → Human review requested
   → Human decision submitted → Execution started → Outcome observed
-  → Feedback written to label registry
 ```
 
 - 每節點顯示對應 `AuditEvent`：actor、`occurred_at`、`outcome`、reason、correlation_id；尚未發生的節點以「待發生」灰態呈現，不得偽造。
@@ -190,7 +189,7 @@ Evidence 匯出是高敏感動作，UI 必須讓「匯出了什麼、誰匯出�
 
 ## 12. Handoff Checklist
 
-- [ ] 所有 Decision Detail 用統一 `DecisionAuditTimeline` 7 節點與 `AuditMetadata`，業務模組不自創稽核版面。
+- [ ] 所有 Decision Detail 用統一 `DecisionAuditTimeline` 6 節點與 `AuditMetadata`，業務模組不自創稽核版面。
 - [ ] 列表/詳情呈現 `AuditEvent` 全欄位（actor/action/resource/outcome/correlation_id/metadata/occurred_at），高風險 action 與 deny/failure 警示。
 - [ ] Decision Card 八區塊齊備，System Recommendation 與 Human Decision Status 視覺分離，覆寫以 before/after + override_reason 呈現。
 - [ ] Evidence 匯出顯示欄位與資料分級、依 `mask_*` 遮罩 PII、禁 optimistic、必填 reason、寫 Audit（export）、追加匯出記錄，不靜默截斷。

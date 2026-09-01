@@ -288,8 +288,7 @@ export type DecisionAuditStep =
   | "Human review requested"
   | "Human decision submitted"
   | "Execution started"
-  | "Outcome observed"
-  | "Feedback written to label registry";
+  | "Outcome observed";
 
 export type DecisionAuditTimelineContract = {
   decisionId: string;

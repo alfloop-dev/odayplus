@@ -335,7 +335,7 @@ Rules：solver 無可行解時呈現 Infeasibility Diagnosis（violated_constrai
 
 ### 5.13 DecisionAuditTimeline
 
-固定節點：`Prediction generated → Recommendation generated → Human review requested → Human decision submitted → Execution started → Outcome observed → Feedback written to label registry`。每個 Decision Detail 顯示；可匯出 Evidence（decision_id / entity / model_version / feature_snapshot_time / actor / decision_time / execution_status / outcome_status / audit_status），匯出記 Audit。
+固定節點：`Prediction generated → Recommendation generated → Human review requested → Human decision submitted → Execution started → Outcome observed`。每個 Decision Detail 顯示；可匯出 Evidence（decision_id / entity / model_version / feature_snapshot_time / actor / decision_time / execution_status / outcome_status / audit_status），匯出記 Audit。
 
 ---
 
