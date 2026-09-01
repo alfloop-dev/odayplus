@@ -1095,11 +1095,13 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     }
 
 
-VERIFICATION_CMD_NAMES = {
+VERIFICATION_TOOLS = {
     "pytest",
     "py.test",
+    "unittest",
     "tox",
     "nox",
+    "coverage",
     "ruff",
     "flake8",
     "mypy",
@@ -1108,18 +1110,19 @@ VERIFICATION_CMD_NAMES = {
     "isort",
     "eslint",
     "prettier",
-    "trivy",
-    "semgrep",
-    "bandit",
-    "safety",
-    "cypress",
-    "playwright",
+    "tsc",
+    "biome",
     "vitest",
     "jest",
     "mocha",
     "karma",
     "jasmine",
-    "coverage",
+    "cypress",
+    "playwright",
+    "trivy",
+    "semgrep",
+    "bandit",
+    "safety",
 }
 
 VERIFICATION_PYTHON_MODULES = {
@@ -1203,120 +1206,162 @@ def _split_command_pipeline_segments(shell_command: str) -> list[str]:
     return segments
 
 
-def _is_verification_segment(segment: str) -> bool:
-    segment = segment.strip()
-    if not segment:
-        return False
-    try:
-        tokens = shlex.split(segment)
-    except ValueError:
-        return bool(
-            re.search(
-                r"\b(?:pytest|unittest|smoke_test|npm(?:\s+--prefix\s+\S+)?\s+(?:run\s+)?(?:test|build|lint|e2e)|cargo\s+test|go\s+test|uv\s+run\s+pytest)\b",
-                segment,
-            )
-        )
+def _is_verification_tokens(tokens: list[str]) -> bool:
     if not tokens:
         return False
 
-    index = 0
-    while index < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", tokens[index]):
-        index += 1
-    if index >= len(tokens):
+    idx = 0
+    while idx < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", tokens[idx]):
+        idx += 1
+    tokens = tokens[idx:]
+    if not tokens:
         return False
 
-    tokens = tokens[index:]
-    cmd = tokens[0]
-    while cmd in {"nohup", "time", "sudo", "exec"} and len(tokens) > 1:
+    if tokens[0] == "env":
         tokens = tokens[1:]
-        cmd = tokens[0]
+        while tokens and tokens[0].startswith("-"):
+            if tokens[0] in {"-u", "--unset", "-C", "--chdir"} and len(tokens) > 1:
+                tokens = tokens[2:]
+            else:
+                tokens = tokens[1:]
+        return _is_verification_tokens(tokens)
 
-    if cmd == "cd":
+    if tokens[0] in {"nohup", "time", "sudo", "exec", "nice"} and len(tokens) > 1:
+        return _is_verification_tokens(tokens[1:])
+
+    if tokens[0] in {"bash", "sh", "zsh", "dash"} and "-c" in tokens:
+        c_idx = tokens.index("-c")
+        if c_idx + 1 < len(tokens):
+            return _is_verification_command(tokens[c_idx + 1])
+
+    cmd = tokens[0]
+    cmd_name = Path(cmd).name.lower()
+
+    if cmd_name in {"cd", "git"}:
+        return False
+    if "ai-status.sh" in cmd or "ai_status.py" in cmd:
+        return False
+    if cmd_name in {"bash", "sh"} and len(tokens) > 1 and "ai-status.sh" in tokens[1]:
+        return False
+    if (cmd_name in {"python", "python3"} or cmd_name.startswith("python3.")) and len(tokens) > 1 and "ai_status.py" in tokens[1]:
         return False
 
-    if cmd == "bash" and len(tokens) > 1 and "ai-status.sh" in tokens[1]:
-        return False
-    if "ai-status.sh" in cmd:
-        return False
-    if cmd in {"python", "python3"} and len(tokens) > 1 and "ai_status.py" in tokens[1]:
-        return False
-
-    if cmd == "git":
-        return False
-
-    cmd_name = Path(cmd).name
-    if cmd_name in VERIFICATION_CMD_NAMES:
+    if cmd_name in VERIFICATION_TOOLS:
         return True
 
     if cmd_name == "uv":
         if len(tokens) > 1 and tokens[1] in {"run", "tool"}:
-            return True
+            u_idx = 2
+            if tokens[1] == "tool" and len(tokens) > 2 and tokens[2] == "run":
+                u_idx = 3
+            while u_idx < len(tokens) and tokens[u_idx].startswith("-"):
+                opt = tokens[u_idx]
+                if opt in {"--python", "-p", "--with", "--extra", "--package", "--directory", "--project", "--config-file"} and u_idx + 1 < len(tokens):
+                    u_idx += 2
+                else:
+                    u_idx += 1
+            if u_idx < len(tokens):
+                return _is_verification_tokens(tokens[u_idx:])
+        return False
 
     if cmd_name in {"python", "python3"} or cmd_name.startswith("python3."):
         if "-m" in tokens:
             m_idx = tokens.index("-m")
             if m_idx + 1 < len(tokens):
-                mod = tokens[m_idx + 1]
+                mod = tokens[m_idx + 1].lower()
                 if mod in VERIFICATION_PYTHON_MODULES or mod.startswith("test") or mod.endswith("_test"):
                     return True
+        if "-c" in tokens:
+            c_idx = tokens.index("-c")
+            if c_idx + 1 < len(tokens):
+                code = tokens[c_idx + 1].lower()
+                if any(kw in code for kw in ("pytest", "unittest.main", "unittest.testcase")):
+                    return True
         for arg in tokens[1:]:
-            arg_lower = arg.lower()
-            if "smoke_test" in arg_lower or arg_lower.startswith("test_") or arg_lower.endswith("_test.py"):
-                return True
+            if not arg.startswith("-"):
+                arg_name = Path(arg).name.lower()
+                if "smoke_test" in arg_name or arg_name.startswith("test_") or arg_name.endswith("_test.py"):
+                    return True
+        return False
 
     if cmd_name == "npm":
-        for i, token in enumerate(tokens[1:], start=1):
-            if token in {"test", "t"}:
-                return True
-            if token in {"run", "run-script"}:
-                if i + 1 < len(tokens):
-                    target = tokens[i + 1].lower()
-                    if any(kw in target for kw in VERIFICATION_NPM_KEYWORDS):
-                        return True
-            if any(kw in token.lower() for kw in ("test", "build", "lint", "e2e", "typecheck")):
-                if not token.startswith("-"):
-                    if i > 1 and tokens[i - 1] in {"--prefix", "-C", "--workspace", "-w"}:
-                        continue
-                    if token.lower() in VERIFICATION_NPM_KEYWORDS or any(
-                        token.lower().startswith(f"{kw}:") for kw in VERIFICATION_NPM_KEYWORDS
-                    ):
-                        return True
+        n_idx = 1
+        while n_idx < len(tokens) and tokens[n_idx].startswith("-"):
+            flag = tokens[n_idx]
+            if flag in {"--prefix", "-C", "--workspace", "-w"} and n_idx + 1 < len(tokens):
+                n_idx += 2
+            else:
+                n_idx += 1
+        if n_idx >= len(tokens):
+            return False
+        subcmd = tokens[n_idx].lower()
+        if subcmd in {"test", "t"}:
+            return True
+        if subcmd in {"run", "run-script"}:
+            if n_idx + 1 < len(tokens):
+                target = tokens[n_idx + 1].lower()
+                return any(kw in target for kw in VERIFICATION_NPM_KEYWORDS)
+        if subcmd == "exec" and n_idx + 1 < len(tokens):
+            return _is_verification_tokens(tokens[n_idx + 1:])
+        return any(kw in subcmd for kw in VERIFICATION_NPM_KEYWORDS)
 
     if cmd_name == "npx":
-        for token in tokens[1:]:
-            if not token.startswith("-") and Path(token).name in VERIFICATION_CMD_NAMES:
-                return True
+        sub_tokens = [t for t in tokens[1:] if not t.startswith("-")]
+        if sub_tokens:
+            return _is_verification_tokens(sub_tokens)
+        return False
 
     if cmd_name in {"yarn", "pnpm", "bun"}:
-        for i, token in enumerate(tokens[1:], start=1):
-            tok_lower = token.lower()
-            if any(kw in tok_lower for kw in VERIFICATION_NPM_KEYWORDS) and not token.startswith("-"):
-                if i > 1 and tokens[i - 1] in {"--cwd", "--prefix", "--filter"}:
-                    continue
-                return True
+        y_idx = 1
+        while y_idx < len(tokens) and tokens[y_idx].startswith("-"):
+            flag = tokens[y_idx]
+            if flag in {"--cwd", "--prefix", "--filter", "-C", "-w"} and y_idx + 1 < len(tokens):
+                y_idx += 2
+            else:
+                y_idx += 1
+        if y_idx >= len(tokens):
+            return False
+        subcmd = tokens[y_idx].lower()
+        if subcmd in {"test", "t"}:
+            return True
+        if subcmd in {"run", "run-script", "exec"}:
+            if y_idx + 1 < len(tokens):
+                if subcmd == "exec":
+                    return _is_verification_tokens(tokens[y_idx + 1:])
+                target = tokens[y_idx + 1].lower()
+                return any(kw in target for kw in VERIFICATION_NPM_KEYWORDS)
+        return any(kw in subcmd for kw in VERIFICATION_NPM_KEYWORDS)
 
     if cmd_name == "cargo":
-        for token in tokens[1:]:
-            if token in {"test", "check", "build", "clippy", "bench"}:
-                return True
-
+        return any(t in {"test", "check", "clippy", "build", "bench"} for t in tokens[1:])
     if cmd_name == "go":
-        for token in tokens[1:]:
-            if token in {"test", "build", "vet"}:
-                return True
+        return any(t in {"test", "vet", "build"} for t in tokens[1:])
 
-    if cmd_name in {"apt", "apt-get"}:
-        if "install" in tokens and any("pytest" in tok for tok in tokens):
-            return True
-
-    if cmd_name in {"pip", "pip3"}:
-        if "install" in tokens and any("pytest" in tok for tok in tokens):
-            return True
-
-    if _is_safe_pytest_install_command(segment):
-        return True
+    if cmd_name in {"pip", "pip3"} and "install" in tokens:
+        return any(Path(t).name in {"pytest", "coverage"} or t.startswith("pytest") for t in tokens)
+    if cmd_name in {"apt", "apt-get"} and "install" in tokens:
+        return any("pytest" in t for t in tokens)
 
     return False
+
+
+def _is_verification_segment(segment: str) -> bool:
+    segment = segment.strip()
+    if not segment:
+        return False
+    if _is_safe_pytest_install_command(segment):
+        return True
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        return bool(
+            re.search(
+                r"\b(?:pytest|unittest|smoke_test|cargo\s+test|go\s+test|vitest|jest|ruff|mypy|eslint)\b",
+                segment,
+                re.IGNORECASE,
+            )
+        )
+    return _is_verification_tokens(tokens)
 
 
 def _is_verification_command(shell_command: str) -> bool:

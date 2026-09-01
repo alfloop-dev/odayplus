@@ -1142,8 +1142,14 @@ EOF
     def test_finalize_verification_commands_are_denied_for_immutable_approved_head(self) -> None:
         verification_commands = [
             "uv run pytest",
+            "uv run --python 3.12 pytest",
+            "uv run -p 3.12 pytest",
             "uv run pytest services/test_app.py 2>&1 | tail -50",
+            "env PYTHONPATH=. uv run pytest",
+            "bash -c 'uv run pytest'",
+            "sh -c 'npm test'",
             "npm --prefix apps/web run test",
+            "npm --prefix apps/web exec vitest run",
             "npm test -- --runInBand",
             "npm run test",
             "npm run build",
@@ -1164,6 +1170,7 @@ EOF
             "mypy services/",
             "eslint src/",
             "npx jest",
+            "npx vitest",
             "yarn test",
             "pnpm test",
             "bun test",
@@ -1216,6 +1223,10 @@ EOF
             "cat docs/evidence/receipt.json",
             "head -n 20 ci.log",
             "tail -n 30 test-summary.txt",
+            'uv run python -c "import json; print(json.load(open(\'docs/evidence/receipt.json\')))"',
+            'uv run python -c "import sys; sys.exit(0)"',
+            'env FOO=1 git status',
+            'bash -c "git status"',
             'AI_NAME=Claude python3 scripts/ai_status.py done BG-006 "Closed after PR merge."',
             'AI_NAME=Claude bash scripts/ai-status.sh done BG-006 "Closed after PR merge."',
         ]
