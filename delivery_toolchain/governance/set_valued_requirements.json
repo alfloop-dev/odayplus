@@ -1,0 +1,211 @@
+{
+  "_comment": "Requirements that enumerate a set of members. ODP-SA-06 has no per-requirement acceptance criteria -- its Trigger and Acceptance columns are the same boilerplate seventy-one times -- so nothing said whether the eighth constraint class or the fifth release mode was required. This file is the narrow substitute: for requirements that list N things, the N things are written down, each satisfied member names where it lives, and each absent member says so. Adding a requirement here is cheap; leaving a gap unwritten is what the check refuses.",
+  "_seeded_from": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md, cause 02",
+  "requirements": [
+    {
+      "id": "ODP-FR-NET-002",
+      "statement": "系統必須考量資本、租約、施工、設備、人力、覆蓋、稀釋與時序硬限制。",
+      "member_count": 8,
+      "members": [
+        {
+          "name": "CAPITAL",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_budget"
+        },
+        {
+          "name": "CONSTRUCTION",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_construction_days"
+        },
+        {
+          "name": "EQUIPMENT",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_equipment_units"
+        },
+        {
+          "name": "LABOUR",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_labour_headcount"
+        },
+        {
+          "name": "COVERAGE",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.min_coverage_delta"
+        },
+        {
+          "name": "DILUTION",
+          "status": "satisfied",
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_open_per_dilution_zone",
+          "note": "A per-catchment cap on OPEN actions. Cannibalisation is pairwise between sites and the model is linear, so this is the part of the effect a count can carry, not the whole effect."
+        },
+        {
+          "name": "LEASE",
+          "status": "absent",
+          "note": "Needs a per-option admissibility check (can this lease be signed or broken in the plan window, and at what penalty). No such data source is wired to the solver. Reported through ConstraintClass.LEASE in unmodelled_constraint_classes on every solve."
+        },
+        {
+          "name": "SEQUENCING",
+          "status": "absent",
+          "note": "Needs a time dimension: per-period resource caps and precedence between actions. ActionOption.period_key is carried and reported but never constrained. Reported through ConstraintClass.SEQUENCING on every solve."
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-LH-003",
+      "statement": "系統必須支援 Backtest、Champion/Challenger、Shadow、Canary、Rollback。",
+      "member_count": 5,
+      "members": [
+        {
+          "name": "SHADOW",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/application/release.py::ReleaseType"
+        },
+        {
+          "name": "CANARY",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/application/release.py::ReleaseType"
+        },
+        {
+          "name": "ROLLBACK",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/application/release.py::ReleaseType"
+        },
+        {
+          "name": "CHAMPION_CHALLENGER",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/domain/inference.py::InferenceComparison",
+          "note": "Compares champion and challenger predictions against a tolerance and recommends rollback. Note this compares prediction agreement, not metrics against a baseline -- see ODP-FR-LH-005."
+        },
+        {
+          "name": "BACKTEST",
+          "status": "absent",
+          "note": "run_rolling_backtest exists in models/shared_ml/backtest.py and is used by the training pipeline, but modules/learninghub references it nowhere. It is not a release mode, so a release cannot be gated on a backtest result."
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-INTV-006",
+      "statement": "系統必須支援 Continue/Adjust/Stop/Rollback。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "CONTINUE",
+          "status": "satisfied",
+          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation"
+        },
+        {
+          "name": "STOP",
+          "status": "satisfied",
+          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation"
+        },
+        {
+          "name": "ROLLBACK",
+          "status": "satisfied",
+          "evidence": "modules/intervention/application/workflow.py::InterventionWorkflow.rollback"
+        },
+        {
+          "name": "ADJUST",
+          "status": "absent",
+          "note": "Recommendation is CONTINUE/SCALE/STOP/CHANGE_CHANNEL/INCONCLUSIVE -- AdLift's vocabulary, which satisfies ODP-FR-AD-005 exactly and leaves no place for Adjust. InterventionStatus runs EXECUTING to OBSERVING to EVALUATING to COMPLETED with rollback as the only mid-course exit, so there is no state for 'modify and continue' either."
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-SHARED-001",
+      "statement": "所有長時間任務都能查詢 QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/PARTIAL。",
+      "member_count": 6,
+      "members": [
+        {
+          "name": "QUEUED",
+          "status": "satisfied",
+          "evidence": "shared/jobs/queue.py::JobStatus"
+        },
+        {
+          "name": "RUNNING",
+          "status": "satisfied",
+          "evidence": "shared/jobs/queue.py::JobStatus"
+        },
+        {
+          "name": "SUCCEEDED",
+          "status": "satisfied",
+          "evidence": "shared/jobs/queue.py::JobStatus"
+        },
+        {
+          "name": "FAILED",
+          "status": "satisfied",
+          "evidence": "shared/jobs/queue.py::JobStatus"
+        },
+        {
+          "name": "CANCELLED",
+          "status": "satisfied",
+          "evidence": "shared/jobs/queue.py::JobStatus"
+        },
+        {
+          "name": "PARTIAL",
+          "status": "absent",
+          "note": "Neither shared/jobs/queue.py::JobStatus (lowercase, five states) nor apps/api/app/routes/listings.py::JobStatus (uppercase, seven states including RETRYING and DEAD_LETTER) has it, and no job in the tree reports it. The two enums are also a vocabulary fork -- see the FR report, cause 03."
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-SITE-001",
+      "statement": "系統必須組合 External Demand、Brand Transfer、Format Conversion、Ramp、Seasonality。",
+      "member_count": 5,
+      "members": [
+        {
+          "name": "EXTERNAL_DEMAND",
+          "status": "satisfied",
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput"
+        },
+        {
+          "name": "RAMP",
+          "status": "satisfied",
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput"
+        },
+        {
+          "name": "SEASONALITY",
+          "status": "satisfied",
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput"
+        },
+        {
+          "name": "BRAND_TRANSFER",
+          "status": "absent",
+          "note": "Two hits in the whole tree and neither is an implementation: a view name in tests/data/test_pit_snapshot.py, and a hard-coded brand_transfer_confidence of 0.76 in a sample payload in services/signal-store/client.py, which no product module imports."
+        },
+        {
+          "name": "FORMAT_CONVERSION",
+          "status": "absent",
+          "note": "modules/site_economics/domain/formats.py::TargetFormatRegistry picks a store format by area. That is choosing a format, not converting an existing store from one to another; the simulator has no conversion path."
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-LH-005",
+      "statement": "系統必須監控 Data/Feature/Prediction/Performance Drift。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "DATA_DRIFT",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/infrastructure/evidently_monitor.py::EvidentlyDriftMonitor"
+        },
+        {
+          "name": "FEATURE_DRIFT",
+          "status": "satisfied",
+          "evidence": "modules/learninghub/infrastructure/evidently_monitor.py::EvidentlyDriftResult",
+          "note": "Per-column drift from the same Evidently DataDriftPreset run; drifted_columns and drift_share carry it."
+        },
+        {
+          "name": "PREDICTION_DRIFT",
+          "status": "absent",
+          "note": "Nothing monitors the distribution of model outputs. DataDriftPreset is the only preset used anywhere in the tree."
+        },
+        {
+          "name": "PERFORMANCE_DRIFT",
+          "status": "absent",
+          "note": "What exists is an absolute threshold, not drift. models/shared_ml/validation.py::MetricThreshold.evaluate takes only the observed value; baseline_metrics appears twenty times in the tree and is never compared against. AUC falling 0.92 to 0.80 against a 0.75 floor raises nothing."
+        }
+      ]
+    }
+  ]
+}

@@ -100,6 +100,15 @@ jobs:
       - name: Refuse bounded scores that default to perfect
         run: uv run python delivery_toolchain/governance/check_measurement_defaults.py
 
+      # ODP-SA-06 has no per-requirement acceptance criteria -- its Trigger and
+      # Acceptance columns are the same boilerplate seventy-one times -- so five
+      # of the fifteen verified gaps are simply "implemented three of five and
+      # stopped", with nothing written down to break. For requirements that
+      # enumerate a set, this holds the set: every satisfied member names a
+      # symbol that must resolve, and every absent one must say what is missing.
+      - name: Check set-valued requirements against their member lists
+        run: uv run python delivery_toolchain/governance/check_requirement_members.py
+
       - name: Lint orchestrator code
         run: uv run ruff check .orchestrator delivery_toolchain scripts
 
