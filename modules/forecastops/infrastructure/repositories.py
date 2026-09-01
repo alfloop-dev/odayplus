@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Protocol, runtime_checkable
 
+from modules.forecastops.domain.feedback import ForecastFeedback
 from modules.forecastops.domain.forecasting import (
     Alert,
     ForecastOutput,
@@ -48,6 +49,16 @@ class ForecastOpsRepository(Protocol):
     def get_canonical_forecast(
         self, tenant_id: str, forecast_output_id: str
     ) -> CanonicalForecastOutput | None: ...
+    def save_feedback(self, feedback: ForecastFeedback) -> ForecastFeedback: ...
+    def get_feedback(self, tenant_id: str, feedback_id: str) -> ForecastFeedback | None: ...
+    def list_feedbacks(
+        self,
+        tenant_id: str,
+        *,
+        store_id: str | None = None,
+        feedback_type: str | None = None,
+        status: str | None = None,
+    ) -> list[ForecastFeedback]: ...
 
 
 @dataclass
@@ -61,6 +72,7 @@ class InMemoryForecastOpsRepository:
     _canonical_forecasts: dict[tuple[str, str], CanonicalForecastOutput] = field(
         default_factory=dict
     )
+    _feedbacks: dict[tuple[str, str], ForecastFeedback] = field(default_factory=dict)
     _lock: RLock = field(default_factory=RLock, repr=False)
 
     def save_series(self, series: ForecastSeries) -> ForecastSeries:
@@ -190,6 +202,47 @@ class InMemoryForecastOpsRepository:
     ) -> CanonicalForecastOutput | None:
         tenant_id = _require_tenant_id(tenant_id)
         return self._canonical_forecasts.get((tenant_id, forecast_output_id))
+
+    def save_feedback(self, feedback: ForecastFeedback) -> ForecastFeedback:
+        tenant_id = _require_tenant_id(feedback.tenant_id)
+        self._feedbacks[(tenant_id, feedback.feedback_id)] = feedback
+        return feedback
+
+    def get_feedback(self, tenant_id: str, feedback_id: str) -> ForecastFeedback | None:
+        tenant_id = _require_tenant_id(tenant_id)
+        return self._feedbacks.get((tenant_id, feedback_id))
+
+    def list_feedbacks(
+        self,
+        tenant_id: str,
+        *,
+        store_id: str | None = None,
+        feedback_type: str | None = None,
+        status: str | None = None,
+    ) -> list[ForecastFeedback]:
+        tenant_id = _require_tenant_id(tenant_id)
+        items = [
+            fb
+            for (owner_tenant_id, _), fb in self._feedbacks.items()
+            if owner_tenant_id == tenant_id
+        ]
+        if store_id is not None:
+            items = [fb for fb in items if fb.store_id == store_id]
+        if feedback_type is not None:
+            norm_type = feedback_type.strip().lower()
+            items = [
+                fb
+                for fb in items
+                if getattr(fb.feedback_type, "value", str(fb.feedback_type)).lower() == norm_type
+            ]
+        if status is not None:
+            norm_status = status.strip().lower()
+            items = [
+                fb
+                for fb in items
+                if getattr(fb.status, "value", str(fb.status)).lower() == norm_status
+            ]
+        return sorted(items, key=lambda fb: fb.created_at)
 
 
 __all__ = ["ForecastOpsRepository", "InMemoryForecastOpsRepository"]

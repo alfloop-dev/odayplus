@@ -285,6 +285,9 @@ class Alert:
     acknowledged_by: str | None = None
     acknowledged_at: datetime | None = None
     acknowledgement_note: str | None = None
+    disposition: str | None = None
+    disposition_set_by: str | None = None
+    disposition_set_at: datetime | None = None
 
     def acknowledge(self, *, actor: str, note: str | None = None, now: datetime) -> Alert:
         """Return an acknowledged copy of this alert.
@@ -307,6 +310,24 @@ class Alert:
             acknowledgement_note=note,
         )
 
+    def close_with_disposition(
+        self, *, disposition: str, actor: str, now: datetime, note: str | None = None
+    ) -> Alert:
+        """Return a closed copy of this alert with recorded disposition."""
+        if not disposition or not disposition.strip():
+            raise ForecastOpsError("alert disposition requires a disposition value")
+        if not actor or not actor.strip():
+            raise ForecastOpsError("alert disposition requires an actor")
+        return replace(
+            self,
+            status="closed",
+            closed_at=now,
+            disposition=disposition.strip(),
+            disposition_set_by=actor.strip(),
+            disposition_set_at=now,
+            acknowledgement_note=note or self.acknowledgement_note,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "alert_id": self.alert_id,
@@ -321,6 +342,11 @@ class Alert:
             "acknowledged_by": self.acknowledged_by,
             "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None,
             "acknowledgement_note": self.acknowledgement_note,
+            "disposition": self.disposition,
+            "disposition_set_by": self.disposition_set_by,
+            "disposition_set_at": (
+                self.disposition_set_at.isoformat() if self.disposition_set_at else None
+            ),
         }
 
 

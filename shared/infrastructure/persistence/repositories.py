@@ -28,6 +28,7 @@ from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersi
 from models.shared_ml.validation import ValidationRun
 from modules.adlift.domain.incrementality import IncrementalityReport
 from modules.avm.domain import DataRoom, NormalizedMargin, ValuationCase, ValuationReport
+from modules.forecastops.domain.feedback import ForecastFeedback
 from modules.forecastops.domain.forecasting import (
     Alert,
     ForecastOutput,
@@ -264,6 +265,7 @@ class DurableForecastOpsRepository:
     _PREDICTION_RUNS = "forecastops.prediction_runs"
     _PREDICTIONS = "forecastops.predictions"
     _CANONICAL_FORECASTS = "forecastops.canonical_forecasts"
+    _FEEDBACK = "forecastops.feedback"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -398,6 +400,47 @@ class DurableForecastOpsRepository:
             self._collection(self._CANONICAL_FORECASTS, tenant_id),
             forecast_output_id,
         )
+
+    def save_feedback(self, feedback: ForecastFeedback) -> ForecastFeedback:
+        self._store.put(
+            self._collection(self._FEEDBACK, feedback.tenant_id),
+            feedback.feedback_id,
+            feedback,
+            group_key=feedback.store_id,
+        )
+        return feedback
+
+    def get_feedback(self, tenant_id: str, feedback_id: str) -> ForecastFeedback | None:
+        return self._store.get(self._collection(self._FEEDBACK, tenant_id), feedback_id)
+
+    def list_feedbacks(
+        self,
+        tenant_id: str,
+        *,
+        store_id: str | None = None,
+        feedback_type: str | None = None,
+        status: str | None = None,
+    ) -> list[ForecastFeedback]:
+        collection = self._collection(self._FEEDBACK, tenant_id)
+        if store_id is not None:
+            items = self._store.list_by_group(collection, store_id)
+        else:
+            items = self._store.list_all(collection)
+        if feedback_type is not None:
+            norm_type = feedback_type.strip().lower()
+            items = [
+                fb
+                for fb in items
+                if getattr(fb.feedback_type, "value", str(fb.feedback_type)).lower() == norm_type
+            ]
+        if status is not None:
+            norm_status = status.strip().lower()
+            items = [
+                fb
+                for fb in items
+                if getattr(fb.status, "value", str(fb.status)).lower() == norm_status
+            ]
+        return sorted(items, key=lambda fb: fb.created_at)
 
 
 class DurableAdLiftRepository:

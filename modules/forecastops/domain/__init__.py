@@ -1,5 +1,12 @@
-"""ForecastOps domain model and policy exports."""
-
+from modules.forecastops.domain.feedback import (
+    FORBIDDEN_FEEDBACK_OVERRIDE_KEYS,
+    FeedbackStatus,
+    FeedbackType,
+    ForecastFeedback,
+    calculate_forecast_precision,
+    filter_training_observations,
+    validate_feedback_payload,
+)
 from modules.forecastops.domain.forecasting import (
     FORECASTOPS_FEATURE_VERSION,
     FORECASTOPS_MODEL_VERSION,
@@ -29,6 +36,7 @@ from modules.forecastops.model_contract import (
 )
 
 __all__ = [
+    "FORBIDDEN_FEEDBACK_OVERRIDE_KEYS",
     "FORECASTOPS_FEATURE_SCHEMA_ID",
     "FORECASTOPS_FEATURE_VERSION",
     "FORECASTOPS_MIN_HISTORY_DAYS",
@@ -37,12 +45,15 @@ __all__ = [
     "FOUR_LIGHT_POLICY_VERSION",
     "Alert",
     "AlertLevel",
+    "FeedbackStatus",
+    "FeedbackType",
     "ForecastBand",
     "ForecastEngine",
     "ForecastEngineError",
     "ForecastEngineInputError",
     "ForecastEngineResult",
     "ForecastEngineUnavailableError",
+    "ForecastFeedback",
     "ForecastInput",
     "ForecastOpsError",
     "ForecastOpsNotFoundError",
@@ -51,5 +62,8 @@ __all__ = [
     "InterventionHandoff",
     "StoreDayObservation",
     "build_store_timeseries",
+    "calculate_forecast_precision",
+    "filter_training_observations",
     "forecast_stores",
+    "validate_feedback_payload",
 ]
