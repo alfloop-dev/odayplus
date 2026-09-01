@@ -1301,6 +1301,12 @@ AUTO_MERGE_BLOCKING_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
 ARCHIVE_HOUSEKEEPING_BRANCH_PREFIX = "task/OPS-ARCHIVE-AUTO-COMMIT-"
 
 
+def auto_merge_request_present(pr: Any) -> bool:
+    """Return true only for GitHub's object-shaped auto-merge readback."""
+
+    return isinstance(pr, dict) and isinstance(pr.get("autoMergeRequest"), dict)
+
+
 def task_pr_auto_merge_enabled(config: dict[str, Any]) -> bool:
     """Whether `branch_workflow.task_pr.auto_merge` asks the bus to arm auto-merge."""
 
@@ -1471,7 +1477,7 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
             "message": f"Auto-merge is enabled on PR #{number} into `{expected_base}`.",
             "url": url,
         }
-        if pr.get("autoMergeRequest"):
+        if auto_merge_request_present(pr):
             return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
 
         if merge_state in AUTO_MERGE_BLOCKING_MERGE_STATES:
@@ -1491,6 +1497,36 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
         if pr.get("isDraft"):
             run_gh(["pr", "ready", str(number), "--repo", repo])
         run_gh(["pr", "merge", str(number), "--repo", repo, "--auto", "--merge"])
+
+        # A zero exit from `gh pr merge --auto` is only an acknowledgement that
+        # the mutation was accepted by the CLI.  It is not proof that GitHub
+        # persisted an auto-merge request: queue admission and eventual
+        # consistency can still leave the PR unarmed.  Read back this exact PR
+        # before recording `enabled`, otherwise the next poll reports a false
+        # positive and has no reason to retry the mutation.
+        readback = gh_json(["pr", "view", str(number), "--repo", repo, "--json", AUTO_MERGE_PR_FIELDS])
+        readback_number = readback.get("number") if isinstance(readback, dict) else None
+        readback_state = str(readback.get("state") or "").upper() if isinstance(readback, dict) else ""
+        if readback_number == number and (auto_merge_request_present(readback) or readback_state == "MERGED"):
+            return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
+
+        return _record_auto_merge(
+            config,
+            entry,
+            task_id,
+            {
+                "state": "failed",
+                "number": number,
+                "message": (
+                    f"Auto-merge command returned success for PR #{number}, but the same-PR "
+                    "readback did not confirm `autoMergeRequest` or a merged state; retrying."
+                ),
+                "url": url,
+                "retryable": True,
+                "failure_code": "auto_merge_unconfirmed_readback",
+            },
+            log_type="github_auto_merge_failed",
+        )
     except GitHubBusOffline:
         raise
     except GitHubBusError as exc:
@@ -1507,7 +1543,7 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
             log_type="github_auto_merge_failed",
         )
 
-    return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
+    raise AssertionError("auto-merge mutation must return through its verified readback")
 
 
 def archive_housekeeping_prs(config: dict[str, Any], repo: str) -> list[dict[str, Any]]:
