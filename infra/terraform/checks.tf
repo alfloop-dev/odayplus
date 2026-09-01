@@ -86,6 +86,15 @@ resource "terraform_data" "production_contract" {
     }
 
     precondition {
+      condition = !local.is_prod || (
+        var.identity_token_signing_key_ref != null
+        && length(trimspace(try(var.identity_token_signing_key_ref.secret_id, ""))) > 0
+        && can(regex("^[1-9][0-9]*$", try(var.identity_token_signing_key_ref.version, "")))
+      )
+      error_message = "Production requires one pinned Secret Manager reference for the local Web-to-API identity signing key."
+    }
+
+    precondition {
       condition = !local.is_prod || alltrue([
         for ref in concat(
           values(var.model_secret_refs),
@@ -269,6 +278,15 @@ check "production_identity_contract" {
       && length(var.oidc_audiences) > 0
     )
     error_message = "Production with OIDC enabled requires an HTTPS OIDC issuer, HTTPS JWKS URI, and at least one audience."
+  }
+
+  assert {
+    condition = !local.is_prod || (
+      var.identity_token_signing_key_ref != null
+      && length(trimspace(try(var.identity_token_signing_key_ref.secret_id, ""))) > 0
+      && can(regex("^[1-9][0-9]*$", try(var.identity_token_signing_key_ref.version, "")))
+    )
+    error_message = "Production requires a pinned local identity signing key Secret Manager reference."
   }
 
   assert {

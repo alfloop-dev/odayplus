@@ -153,6 +153,25 @@ class OwnerContinuationTests(unittest.TestCase):
             )
             self.assertTrue(allowed)
 
+            owner_ready_request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="resume the existing worktree",
+                task_id="SEAL-001",
+                reason="owned_ready_dispatch",
+            )
+            allowed, _detail = supervisor.sealed_owner_continuation_allowed(
+                {"schema": {"assignee_field": "owner"}},
+                state,
+                owner_ready_request,
+                task,
+                target_agent="codex",
+                worktree_path=repo,
+                branch="task/SEAL-001",
+            )
+            self.assertTrue(allowed)
+
             reviewer_request = supervisor.DeliveryRequest(
                 agent_id="claude",
                 provider="claude",
@@ -185,6 +204,40 @@ class OwnerContinuationTests(unittest.TestCase):
             )
             self.assertFalse(allowed)
             self.assertEqual(reason, "dirt_changed")
+
+    def test_review_refresh_fast_forwards_to_the_immutable_submitted_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            git(repo, "init", "--quiet")
+            git(repo, "config", "user.email", "test@example.invalid")
+            git(repo, "config", "user.name", "Test")
+            (repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+            git(repo, "add", "tracked.txt")
+            git(repo, "commit", "--quiet", "-m", "base")
+            git(repo, "switch", "--quiet", "--create", "task/SEAL-REVIEW-001")
+            (repo / "reviewed.txt").write_text("review head\n", encoding="utf-8")
+            git(repo, "add", "reviewed.txt")
+            git(repo, "commit", "--quiet", "-m", "review head")
+            expected_head = git(repo, "rev-parse", "HEAD")
+            git(repo, "switch", "--quiet", "--create", "dev")
+            (repo / "dev-only.txt").write_text("newer dev head\n", encoding="utf-8")
+            git(repo, "add", "dev-only.txt")
+            git(repo, "commit", "--quiet", "-m", "dev advance")
+            dev_head = git(repo, "rev-parse", "HEAD")
+            git(repo, "switch", "--quiet", "task/SEAL-REVIEW-001")
+            git(repo, "reset", "--hard", "HEAD~1")
+
+            ok, status = supervisor._refresh_reused_worker_worktree(
+                repo,
+                repo,
+                dev_head,
+                "task/SEAL-REVIEW-001",
+                required_head=expected_head,
+            )
+
+            self.assertTrue(ok, status)
+            self.assertEqual(status, f"review_head_pinned_at_{expected_head[:12]}")
+            self.assertEqual(git(repo, "rev-parse", "HEAD"), expected_head)
 
 
 class HandoffTransitionTests(unittest.TestCase):

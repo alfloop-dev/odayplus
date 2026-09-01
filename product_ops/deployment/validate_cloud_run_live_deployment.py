@@ -29,19 +29,22 @@ from types import SimpleNamespace
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# The auth-mode decision is shared with the running API boundary rather than
+# re-derived here; see shared/auth/mode.py for why the two must not drift
+# (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+from shared.auth.mode import (
+    # Re-exported: tests/ops/test_conditional_oidc_deployment.py reads
+    # PLACEHOLDER_VALUES off this module to pin the shell resolver's token list
+    # to the Python one.
+    PLACEHOLDER_VALUES,  # noqa: F401
+    is_configured_value,
+    resolve_auth_mode,
+)
+
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-PLACEHOLDER_VALUES = {
-    "",
-    "changeme",
-    "change-me",
-    "dummy",
-    "example",
-    "fixture",
-    "mock",
-    "placeholder",
-    "seed",
-    "todo",
-}
 FORBIDDEN_DATA_MARKERS = ("fixture", "mock", "seed", "in-memory", "sqlite")
 PRODUCTION_PROVIDER_IDS_ENV = "ODP_PRODUCTION_PROVIDER_IDS"
 # See modules.external_data.connectors.provider_registry.REQUIRED_PRODUCTION_PROVIDER_IDS
@@ -103,10 +106,13 @@ OIDC_REQUIRED_PUBLIC_CONFIG = (
 REQUIRED_SECRET_REFERENCES = (
     "ODAY_DATABASE_URL_SECRET",
     "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+    # The same Secret Manager version is bound to API and Web. Web signs the
+    # local access token while API verifies it through its local issuer/key
+    # resolver; accepting only one half would make production login unusable.
+    "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
     "ODP_WEB_SESSION_SECRET_SECRET",
 )
 OIDC_REQUIRED_SECRET_REFERENCES = ("ODP_WEB_OIDC_CLIENT_SECRET_SECRET",)
-AUTH_MODES = ("local", "oidc")
 REQUIRED_SECRET_VALUES: tuple[str, ...] = ()
 # The database binding is required by every Cloud Run Job regardless of which
 # external providers the release selects.
@@ -138,48 +144,14 @@ class CheckResult:
 
 
 def _configured(value: str) -> bool:
-    return value.strip().lower() not in PLACEHOLDER_VALUES
+    """Preflight-local alias for the shared placeholder rule.
 
-
-def resolve_auth_mode(env: Mapping[str, str]) -> tuple[str, str | None]:
-    """Resolve the single deployment auth mode.
-
-    Mirrors ``resolve_auth_mode`` in ``product_ops/deployment/auth_mode.sh``:
-    ``ODP_AUTH_MODE`` is authoritative, ``ODP_AUTH_OIDC_ENABLED`` is its legacy
-    boolean alias, and a configured ``ODP_WEB_OIDC_ISSUER`` keeps pre-contract
-    deployments on OIDC until they opt into an explicit mode. Returns the mode
-    and, when the configuration is invalid or self-contradicting, the reason the
-    release must not proceed.
-
-    The shell half normalises and decides "configured" exactly as this function
-    does -- ``strip().lower()`` and :data:`PLACEHOLDER_VALUES`. That symmetry is
-    the whole point of having one resolver: while only this half folded case and
-    rejected placeholders, ``ODP_AUTH_MODE=LOCAL`` passed the preflight and then
-    aborted the deploy, and a placeholder issuer alone resolved to two different
-    modes.
+    Kept as a name because this file reads it a dozen times; the rule itself
+    lives in :mod:`shared.auth.mode` so the release path, this preflight, and
+    the API auth boundary cannot disagree about what "configured" means.
     """
-    mode = env.get("ODP_AUTH_MODE", "").strip().lower()
-    legacy_flag = env.get("ODP_AUTH_OIDC_ENABLED", "").strip().lower()
 
-    if legacy_flag not in ("", "true", "false"):
-        return "local", (
-            f"ODP_AUTH_OIDC_ENABLED must be 'true' or 'false', got {legacy_flag!r}"
-        )
-    if mode and mode not in AUTH_MODES:
-        return "local", f"ODP_AUTH_MODE must be 'local' or 'oidc', got {mode!r}"
-    if mode:
-        expected_flag = "true" if mode == "oidc" else "false"
-        if legacy_flag and legacy_flag != expected_flag:
-            return mode, (
-                f"ODP_AUTH_MODE={mode} conflicts with "
-                f"ODP_AUTH_OIDC_ENABLED={legacy_flag}"
-            )
-        return mode, None
-    if legacy_flag:
-        return ("oidc" if legacy_flag == "true" else "local"), None
-    if _configured(env.get("ODP_WEB_OIDC_ISSUER", "")):
-        return "oidc", None
-    return "local", None
+    return is_configured_value(value)
 
 
 def _write_report(path: Path | None, payload: dict[str, Any]) -> None:

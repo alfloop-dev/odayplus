@@ -116,14 +116,46 @@ def test_cycle_is_reported(tmp_path: Path) -> None:
     assert any(failure.startswith("dependency cycle:") for failure in failures)
 
 
-def test_task_id_matching_is_case_insensitive(tmp_path: Path) -> None:
+def test_task_id_matching_is_case_sensitive(tmp_path: Path) -> None:
+    # The Supervisor resolves dependencies through `normalize_task_id`, which
+    # only strips whitespace. `ODP-B` and `ODP-b` are therefore two different
+    # tasks at dispatch time, and certifying this graph as sound would leave
+    # `odp-a` waiting forever on an edge nothing can satisfy.
     board_path = write_board(
         tmp_path,
         [{"id": "odp-a", "depends_on": ["ODP-B"]}, {"id": "ODP-b"}],
     )
     archive_dir = write_archive(tmp_path, [])
 
+    failures = check(load_board(board_path), load_archive(archive_dir))
+
+    assert len(failures) == 1, failures
+    assert "differs only by case from ODP-b" in failures[0]
+    assert "case-sensitive" in failures[0]
+
+
+def test_exact_task_id_still_resolves(tmp_path: Path) -> None:
+    board_path = write_board(
+        tmp_path,
+        [{"id": "odp-a", "depends_on": ["ODP-b"]}, {"id": "ODP-b"}],
+    )
+    archive_dir = write_archive(tmp_path, [])
+
     assert check(load_board(board_path), load_archive(archive_dir)) == []
+
+
+def test_scope_selection_tolerates_operator_case(tmp_path: Path) -> None:
+    # `--task` is a report filter, not a dispatch grant: a mistyped case must
+    # narrow the report to the task the operator meant rather than silently
+    # scan nothing and print OK.
+    board_path = write_board(tmp_path, [{"id": "ODP-A", "depends_on": ["GHOST"]}])
+    archive_dir = write_archive(tmp_path, [])
+
+    exit_code = main(
+        ["--status", str(board_path), "--archive-dir", str(archive_dir), "--task", "odp-a"]
+    )
+
+    assert exit_code == 1, "a mistyped --task case must not hide a dangling edge"
 
 
 def test_scope_restricts_report_to_task_closure(tmp_path: Path) -> None:

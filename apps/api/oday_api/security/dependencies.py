@@ -28,16 +28,18 @@ returned dependencies are plain callables that still enforce policy and raise
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from collections.abc import Iterable, Mapping
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from modules.opsboard.auth import AuthenticationBoundary
     from modules.opsboard.auth.errors import AuthFailureReason
 
-from shared.audit.events import InMemoryAuditLog
+from shared.audit.events import AuditEvent, InMemoryAuditLog
 from shared.audit.policy import AuditRecorder
 from shared.auth import (
     AccessRequest,
@@ -97,6 +99,46 @@ def _split(value: str | None) -> frozenset[str]:
 # most once.
 _UNSET: object = object()
 _default_boundary: object = _UNSET
+# Persistence bundle bound by ``create_app`` so the boundary resolves accounts
+# and sessions through the *same* stores the rest of the app writes through,
+# instead of building a second bundle of its own.
+_bound_persistence: Any = None
+# The app's effective audit sink, bound by ``create_app``. Without it the
+# boundary falls back to a private ``InMemoryAuditLog`` and every
+# ``security.authentication`` event is discarded when the process exits, so the
+# running API keeps no durable record of who authenticated or why an attempt
+# was refused (ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+_bound_audit_log: AuditRecorder | None = None
+
+
+def bind_persistence(bundle: Any) -> None:
+    """Bind the app's persistence bundle to the process-wide auth boundary.
+
+    ``create_app`` calls this with the bundle it just built. Without it,
+    :func:`default_boundary` would call ``build_persistence()`` a second time
+    and end up with a *different* set of identity/session stores than the one
+    the API writes sessions into, so revocations would never be observed.
+    """
+
+    global _bound_persistence
+    _bound_persistence = bundle
+    reset_default_boundary()
+
+
+def bind_audit_log(sink: AuditRecorder | None) -> None:
+    """Bind the audit sink the app records through to the auth boundary.
+
+    ``create_app`` resolves one effective sink -- an explicitly injected
+    ``audit_log`` or the persistence bundle's -- and hands every router that
+    same object. The authentication boundary has to write into it too:
+    authentication success and failure are auditable security events under the
+    same contract as the RBAC allow/deny events, and a boundary holding its own
+    ``InMemoryAuditLog`` records them where nothing can ever read them.
+    """
+
+    global _bound_audit_log
+    _bound_audit_log = sink
+    reset_default_boundary()
 
 
 def default_boundary() -> AuthenticationBoundary | None:
@@ -124,9 +166,57 @@ def default_boundary() -> AuthenticationBoundary | None:
         from modules.opsboard.auth import AuthenticationBoundary
         from modules.opsboard.auth.config import config_from_env
 
-        config = config_from_env()
+        # Pull durable identity/session stores from the persistence bundle so
+        # that production PostgreSQL deployments use SqlIdentityStore and the
+        # boundary can resolve persisted accounts and sessions (review defect
+        # #1 fix: ODP-WEB-LOCAL-AUTH-API-TRUST-001).
+        identity_store = None
+        session_service = None
+        # The authentication audit sink follows the same rule: prefer the sink
+        # ``create_app`` bound, then the bundle's, and only fall back to the
+        # boundary's private in-memory log when the process has neither.
+        audit_log: AuditRecorder | None = _bound_audit_log
+        try:
+            bundle = _bound_persistence
+            if bundle is None:
+                from shared.infrastructure.persistence import build_persistence
+
+                bundle = build_persistence()
+            identity_store = getattr(bundle, "identity_store", None)
+            session_service = getattr(bundle, "session_service", None)
+            if audit_log is None:
+                audit_log = getattr(bundle, "audit_log", None)
+        except Exception:
+            # Persistence may not be available (e.g. missing DATABASE_URL in a
+            # lean test environment). Fall back to in-memory doubles so the
+            # boundary still requires sid/account instead of silently skipping.
+            _LOGGER.debug(
+                "default_boundary: persistence bundle unavailable; "
+                "falling back to in-memory identity/session stores"
+            )
+
+        if identity_store is None or session_service is None:
+            from shared.identity import (
+                InMemoryIdentityStore,
+                InMemorySessionRepository,
+                SessionConfig,
+                SessionService,
+            )
+
+            identity_store = identity_store or InMemoryIdentityStore()
+            session_service = session_service or SessionService(
+                repository=InMemorySessionRepository(),
+                config=SessionConfig(),
+            )
+
+        config = config_from_env(
+            identity_store=identity_store,
+            session_service=session_service,
+        )
         _default_boundary = (
-            AuthenticationBoundary(config) if config.has_live_inputs else None
+            AuthenticationBoundary(config, audit_log=audit_log)
+            if config.has_live_inputs
+            else None
         )
     return _default_boundary  # type: ignore[return-value]
 
@@ -138,6 +228,15 @@ def reset_default_boundary() -> None:
     _default_boundary = _UNSET
 
 
+def reset_bound_persistence() -> None:
+    """Forget the bundle bound by :func:`bind_persistence` (test hook)."""
+
+    global _bound_persistence, _bound_audit_log
+    _bound_persistence = None
+    _bound_audit_log = None
+    reset_default_boundary()
+
+
 def principal_from_headers(
     headers: Mapping[str, str], *, boundary: AuthenticationBoundary | None = None
 ) -> Principal:
@@ -147,13 +246,18 @@ def principal_from_headers(
     env-configured default), the request's credentials — an
     ``Authorization: Bearer <jwt>`` token or a service identity — are verified
     by :class:`modules.opsboard.auth.AuthenticationBoundary` (ODP-SD-09 §3,
-    ODP-GAP-AUTH-001). A verified credential yields an authenticated principal;
-    any authentication failure (untrusted/expired token, or — since the
-    configured boundary fails closed — no credentials at all) raises HTTP 401.
+    ODP-GAP-AUTH-001, ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 §4). A verified
+    credential yields an authenticated principal; any authentication failure
+    raises HTTP 401.
 
-    When no boundary is configured, the legacy header-trust stub is used so
-    local dev and the existing integration tests are unaffected.
+    When ODP_PRODUCT_MODE == "production", browser-supplied spoofable headers
+    are NEVER trusted under any circumstances (Contract §4.2, T16).
+
+    When no boundary is configured in non-production mode, the legacy
+    header-trust stub is used so local dev and unit tests are unaffected.
     """
+
+    is_production = os.environ.get("ODP_PRODUCT_MODE") == "production"
 
     boundary = boundary if boundary is not None else default_boundary()
     if boundary is not None:
@@ -163,6 +267,11 @@ def principal_from_headers(
         if outcome.authenticated:
             return outcome.principal
         _raise_unauthenticated(outcome.reason)
+
+    if is_production:
+        from modules.opsboard.auth.errors import AuthFailureReason
+
+        _raise_unauthenticated(AuthFailureReason.NO_CREDENTIALS)
 
     return _principal_from_trusted_headers(headers)
 
@@ -187,6 +296,11 @@ def _principal_from_trusted_headers(headers: Mapping[str, str]) -> Principal:
         except ValueError:
             continue  # unknown role string is ignored, not trusted
 
+    clearance_raw = headers.get("x-clearance", "CONFIDENTIAL").strip().upper()
+    try:
+        clearance = DataClassification[clearance_raw]
+    except KeyError:
+        clearance = DataClassification.CONFIDENTIAL
     scope = Scope(
         tenant_id=headers.get("x-tenant-id"),
         brand_ids=_split(headers.get("x-brand-ids")),
@@ -194,8 +308,22 @@ def _principal_from_trusted_headers(headers: Mapping[str, str]) -> Principal:
         store_ids=_split(headers.get("x-store-ids")),
         assigned_area_ids=_split(headers.get("x-assigned-area-ids")),
         heat_zone_ids=_split(headers.get("x-heat-zone-ids")),
+        clearance=clearance,
     )
-    return Principal(subject_id=subject, roles=frozenset(roles), scope=scope)
+    identity_proof = headers.get("x-identity-proof", "")
+    return Principal(
+        subject_id=subject,
+        roles=frozenset(roles),
+        scope=scope,
+        attributes={
+            # The proof is still verified by ConfidentialAccessAuditor against
+            # the external authority key; this is not a naked boolean grant.
+            "identity_proof_sha256": identity_proof,
+            "verified_identity": bool(identity_proof),
+            "data_room_access": headers.get("x-data-room-access", "").lower()
+            == "true",
+        },
+    )
 
 
 def authorize_request(
@@ -219,6 +347,121 @@ def authorize_request(
     if not decision.allowed:
         _raise_forbidden(decision)
     return decision
+
+
+AUDIT_UNAVAILABLE_DETAIL = "audit_sink_unavailable"
+
+
+class LoggingAuditDeadLetter:
+    """Last-resort recorder for security events the primary sink rejected.
+
+    An allow that cannot be audited is a policy failure, not a formality: the
+    contract requires an auditable event for *both* outcomes, so the grant has
+    to be recoverable from somewhere. Emitting the full canonical event as a
+    single structured ERROR line puts it in the platform's log sink, which on
+    Cloud Run is durable and queryable, so the record survives the sink outage
+    that produced it and can be replayed into the audit store afterwards.
+
+    Deployments with a real dead-letter queue replace this via
+    :func:`set_audit_dead_letter`.
+    """
+
+    marker = "security_audit_dead_letter"
+
+    def record(self, event: AuditEvent) -> AuditEvent:
+        _LOGGER.error(
+            "%s %s",
+            self.marker,
+            json.dumps(event.to_dict(), sort_keys=True, default=str),
+        )
+        return event
+
+
+_audit_dead_letter: AuditRecorder | None = LoggingAuditDeadLetter()
+
+
+def set_audit_dead_letter(recorder: AuditRecorder | None) -> None:
+    """Install the fallback recorder used when the primary audit sink fails."""
+
+    global _audit_dead_letter
+    _audit_dead_letter = recorder
+
+
+def reset_audit_dead_letter() -> None:
+    """Restore the default logging dead-letter recorder (test hook)."""
+
+    set_audit_dead_letter(LoggingAuditDeadLetter())
+
+
+def _raise_audit_unavailable(access: AccessRequest) -> None:
+    """Refuse an otherwise-permitted request that cannot be audited.
+
+    Reached only when the primary sink *and* the dead-letter both fail. At that
+    point the process cannot produce the auditable allow event the contract
+    requires, so it fails closed rather than granting access off the record.
+    503 rather than 403: the caller's permissions are not in question, the
+    service's ability to record the decision is.
+    """
+
+    _LOGGER.error(
+        "allow audit unrecoverable; failing closed (actor=%s resource=%s)",
+        access.principal.subject_id,
+        access.resource.type,
+    )
+    if HTTPException is not None:
+        raise HTTPException(status_code=503, detail=AUDIT_UNAVAILABLE_DETAIL)
+    raise AuthorizationError(
+        Decision.deny(AUDIT_UNAVAILABLE_DETAIL, policy_id="audit.required")
+    )
+
+
+def _record_allow_or_fail_closed(
+    engine: AuthorizationEngine,
+    access: AccessRequest,
+    decision: Decision,
+) -> None:
+    """Record an allow, or refuse the request if it cannot be recorded.
+
+    Denials may be logged best-effort (see :func:`_record_operator_denial`):
+    the access was refused either way, so a lost record never widens what the
+    caller could do. An allow is the opposite case. Swallowing the sink error
+    and returning the principal produced exactly what the audit requirement
+    exists to prevent -- a granted, privileged request with no event behind it
+    -- and left no way to tell afterwards that it had happened.
+
+    So the allow event is recorded through the primary sink, and on failure
+    through the dead-letter recorder. Only when both are unavailable is the
+    request refused.
+    """
+
+    from shared.audit.policy import build_security_event
+
+    event = build_security_event(access, decision)
+    try:
+        engine.audit_log.record(event)
+        return
+    except Exception:
+        _LOGGER.exception(
+            "allow audit failed; falling back to the dead-letter recorder "
+            "(actor=%s resource=%s action=%s)",
+            access.principal.subject_id,
+            access.resource.type,
+            access.action.value,
+        )
+
+    dead_letter = _audit_dead_letter
+    if dead_letter is None:
+        _raise_audit_unavailable(access)
+        return
+    try:
+        dead_letter.record(event)
+    except Exception:
+        _LOGGER.exception(
+            "allow audit dead-letter failed (actor=%s resource=%s)",
+            access.principal.subject_id,
+            access.resource.type,
+        )
+        _raise_audit_unavailable(access)
 
 
 def _raise_forbidden(decision: Decision) -> None:
@@ -253,31 +496,69 @@ def require_permission(
     data_classification: DataClassification = DataClassification.CONFIDENTIAL,
     engine: AuthorizationEngine | None = None,
     boundary: AuthenticationBoundary | None = None,
+    session_service: Any = None,
 ):
     """FastAPI dependency factory enforcing RBAC on a route.
 
     This guards a route at the **type level**: it answers only "does the
     caller's role permit ``action`` on ``resource_type``" (RBAC, ODP-SA-04 §6).
-    A denial returns HTTP 403 and writes a security audit event
-    (ODP-AC-AUTH-005 / "403 paths write security audit events").
-
-    Object-level policy is intentionally *not* evaluated here. Resource-instance
-    attributes (tenant/region/store scope, proposer identity, risk level) are
-    unknown at dependency time, so scope ABAC and the high-risk feature-flag /
-    separation-of-duties hooks (SD-09 §5, which fail closed without object
-    context) are enforced inside the handler and the domain workflow once the
-    target object is loaded — call :func:`authorize_request` there for the full
-    engine evaluation. Running the whole engine at type level would deny every
-    high-risk verb (approve/execute/publish/override/rollback) unconditionally.
+    Both allow and denial decisions write a security audit event (Contract §8.1, T20).
+    High-risk actions immediately verify session validity (Contract §5.4, T21).
     """
 
     active_engine = engine or build_engine()
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
-        from shared.audit.policy import build_security_event
+        from modules.opsboard.auth.errors import AuthFailureReason
+        from shared.audit.policy import is_high_risk
 
         principal = principal_from_headers(request.headers, boundary=boundary)
+
+        # Immediate session validation for high-risk actions (Contract §5.4 / T21)
+        effective_session_svc = session_service
+        if effective_session_svc is None and boundary is not None:
+            effective_session_svc = getattr(boundary, "_session_service", None)
+        if effective_session_svc is None:
+            def_b = default_boundary()
+            if def_b is not None:
+                effective_session_svc = getattr(def_b, "_session_service", None)
+
+        if principal.authenticated and effective_session_svc is not None:
+            sid_val = principal.attributes.get("sid")
+            if sid_val:
+                from uuid import UUID
+
+                try:
+                    sid_uuid = UUID(str(sid_val))
+                    session = effective_session_svc.validate_session(sid_uuid)
+                    if session is None:
+                        _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
+                except (ValueError, TypeError):
+                    _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
+            elif is_high_risk(action):
+                # A high-risk action without a session reference is denied
+                # when a session layer is wired (Contract §5.4 / T21).
+                _raise_unauthenticated(AuthFailureReason.SESSION_NOT_FOUND)
+
+        source_ip = request.client.host if request.client else None
+        correlation_id = _correlation_id_from_request(request)
+
         if rbac_allows(principal, resource_type, action):
+            decision = Decision.allow(f"role permits {action.value} on {resource_type}")
+            access = AccessRequest(
+                principal=principal,
+                action=action,
+                resource=ResourceDescriptor(
+                    type=resource_type,
+                    tenant_id=principal.tenant_id,
+                    data_classification=data_classification,
+                ),
+                environment=Environment(
+                    source_ip=source_ip, attributes={"correlation_id": correlation_id}
+                ),
+            )
+            _record_allow_or_fail_closed(active_engine, access, decision)
+
             request.state.operator_principal = principal
             request.state.operator_subject_id = principal.subject_id
             request.state.operator_system_roles = ",".join(
@@ -285,7 +566,6 @@ def require_permission(
             )
             return principal
 
-        source_ip = request.client.host if request.client else None
         decision = Decision.deny(
             f"role does not permit {action.value} on {resource_type}",
             policy_id="rbac",
@@ -294,11 +574,15 @@ def require_permission(
             principal=principal,
             action=action,
             resource=ResourceDescriptor(
-                type=resource_type, data_classification=data_classification
+                type=resource_type,
+                tenant_id=principal.tenant_id,
+                data_classification=data_classification,
             ),
-            environment=Environment(source_ip=source_ip),
+            environment=Environment(
+                source_ip=source_ip, attributes={"correlation_id": correlation_id}
+            ),
         )
-        active_engine.audit_log.record(build_security_event(access, decision))
+        _record_denial(active_engine, access, decision)
         _raise_forbidden(decision)
 
     return dependency
@@ -311,9 +595,7 @@ def require_feature_flag(key: str, *, flags: FeatureFlagRegistry | None = None):
 
     def dependency() -> None:
         if not registry.is_enabled(key, on=date.today()):
-            decision = Decision.deny(
-                f"feature flag {key!r} is disabled", policy_id="feature_flag"
-            )
+            decision = Decision.deny(f"feature flag {key!r} is disabled", policy_id="feature_flag")
             _raise_forbidden(decision)
 
     return dependency
@@ -408,7 +690,9 @@ def operator_role_ids_for(principal: Principal) -> frozenset[str]:
     return frozenset(roles)
 
 
-def _select_operator_role(request: Request, principal: Principal) -> tuple[str | None, Decision | None]:  # type: ignore[name-defined]
+def _select_operator_role(
+    request: Request, principal: Principal
+) -> tuple[str | None, Decision | None]:  # type: ignore[name-defined]
     allowed = operator_role_ids_for(principal)
     if not allowed:
         return None, Decision.deny(
@@ -418,9 +702,7 @@ def _select_operator_role(request: Request, principal: Principal) -> tuple[str |
     requested = _normalize_operator_role(request.headers.get("x-operator-role"))
     subject_role = None
     if principal.subject_id.startswith("operator-"):
-        subject_role = _normalize_operator_role(
-            principal.subject_id.removeprefix("operator-")
-        )
+        subject_role = _normalize_operator_role(principal.subject_id.removeprefix("operator-"))
 
     for candidate in (requested, subject_role):
         if candidate is None:
@@ -464,7 +746,7 @@ def _operator_access_request(
     )
 
 
-def _record_operator_denial(
+def _record_denial(
     engine: AuthorizationEngine,
     access: AccessRequest,
     decision: Decision,
@@ -482,6 +764,10 @@ def _record_operator_denial(
     The failure stays loud: it is logged with the decision that was being
     recorded, so a silently unaudited denial is still visible in the API logs.
     What it can no longer do is convert a refusal into a server fault.
+
+    Note the asymmetry with :func:`_record_allow_or_fail_closed`: a lost denial
+    record cannot widen what the caller could do, so best-effort is the right
+    trade there. A lost *allow* record can, so that path fails closed instead.
     """
     from shared.audit.policy import build_security_event
 
@@ -489,7 +775,7 @@ def _record_operator_denial(
         engine.audit_log.record(build_security_event(access, decision))
     except Exception:
         _LOGGER.exception(
-            "operator denial audit failed; denial still enforced "
+            "denial audit failed; denial still enforced "
             "(policy_id=%s reason=%s actor=%s resource=%s)",
             decision.policy_id,
             decision.reason,
@@ -498,9 +784,7 @@ def _record_operator_denial(
         )
 
 
-def _operator_scope_decision(
-    principal: Principal, resource: ResourceDescriptor
-) -> Decision:
+def _operator_scope_decision(principal: Principal, resource: ResourceDescriptor) -> Decision:
     if resource.tenant_id and principal.tenant_id != resource.tenant_id:
         return Decision.deny(
             "Operator Console tenant scope mismatch",
@@ -553,6 +837,7 @@ def require_operator_permission(
     data_classification: DataClassification = DataClassification.CONFIDENTIAL,
     engine: AuthorizationEngine | None = None,
     boundary: AuthenticationBoundary | None = None,
+    session_service: Any = None,
 ):
     """FastAPI dependency for Operator Console auth/RBAC/tenant isolation.
 
@@ -562,11 +847,16 @@ def require_operator_permission(
     required role/scope is HTTP 403. The guard also writes the verified
     principal and server-selected Operator role to ``request.state`` so route
     handlers do not rely on spoofable role headers.
+    Both allow and denial decisions write a security audit event (Contract §8.1, T20).
+    High-risk actions immediately verify session validity (Contract §5.4, T21).
     """
 
     active_engine = engine or build_engine()
 
     def dependency(request: Request) -> Principal:  # type: ignore[name-defined]
+        from modules.opsboard.auth.errors import AuthFailureReason
+        from shared.audit.policy import is_high_risk
+
         principal = principal_from_headers(request.headers, boundary=boundary)
         effective_tenant_id = tenant_id or principal.tenant_id
         resource = ResourceDescriptor(
@@ -578,23 +868,58 @@ def require_operator_permission(
         access = _operator_access_request(request, principal, action, resource)
 
         if not principal.authenticated:
-            decision = Decision.deny(
-                "principal not authenticated", policy_id="authenticated"
-            )
-            _record_operator_denial(active_engine, access, decision)
+            decision = Decision.deny("principal not authenticated", policy_id="authenticated")
+            _record_denial(active_engine, access, decision)
             _raise_unauthenticated(None)
+
+        # High risk / session validation check (Contract §5.4 / T21)
+        effective_session_svc = session_service
+        if effective_session_svc is None and boundary is not None:
+            effective_session_svc = getattr(boundary, "_session_service", None)
+        if effective_session_svc is None:
+            def_b = default_boundary()
+            if def_b is not None:
+                effective_session_svc = getattr(def_b, "_session_service", None)
+
+        if principal.attributes.get("sid") and effective_session_svc is not None:
+            from uuid import UUID
+
+            try:
+                sid_uuid = UUID(str(principal.attributes["sid"]))
+                session = effective_session_svc.validate_session(sid_uuid)
+                if session is None:
+                    decision = Decision.deny(
+                        "session has been revoked or expired", policy_id="session.revoked"
+                    )
+                    _record_denial(active_engine, access, decision)
+                    _raise_unauthenticated(AuthFailureReason.SESSION_REVOKED)
+            except (ValueError, TypeError):
+                _raise_unauthenticated(AuthFailureReason.MALFORMED_TOKEN)
+        elif (
+            is_high_risk(action)
+            and effective_session_svc is not None
+            and not principal.attributes.get("sid")
+        ):
+            # High-risk action without a session reference when a session
+            # layer is wired → deny (Contract §5.4 / T21).
+            decision = Decision.deny(
+                "session reference required for high-risk action",
+                policy_id="session.required",
+            )
+            _record_denial(active_engine, access, decision)
+            _raise_unauthenticated(AuthFailureReason.SESSION_NOT_FOUND)
 
         if not effective_tenant_id:
             decision = Decision.deny(
                 "Operator Console tenant scope is required",
                 policy_id="operator.tenant_isolation",
             )
-            _record_operator_denial(active_engine, access, decision)
+            _record_denial(active_engine, access, decision)
             _raise_forbidden(decision)
 
         selected_role, role_decision = _select_operator_role(request, principal)
         if role_decision is not None:
-            _record_operator_denial(active_engine, access, role_decision)
+            _record_denial(active_engine, access, role_decision)
             _raise_forbidden(role_decision)
 
         if not rbac_allows(principal, resource_type, action):
@@ -602,13 +927,17 @@ def require_operator_permission(
                 f"role does not permit {action.value} on {resource_type}",
                 policy_id="rbac",
             )
-            _record_operator_denial(active_engine, access, decision)
+            _record_denial(active_engine, access, decision)
             _raise_forbidden(decision)
 
         scope_decision = _operator_scope_decision(principal, resource)
         if not scope_decision.allowed:
-            _record_operator_denial(active_engine, access, scope_decision)
+            _record_denial(active_engine, access, scope_decision)
             _raise_forbidden(scope_decision)
+
+        # Audit on allow (T20)
+        allow_decision = Decision.allow("Operator Console access accepted")
+        _record_allow_or_fail_closed(active_engine, access, allow_decision)
 
         request.state.operator_principal = principal
         request.state.operator_tenant_id = effective_tenant_id

@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-9803500fa4a81a477bd996b2a4dc6c9a",
+  "serialNumber": "urn:uuid:sha256-3c84a9866e9c5a96cfd6b48cbea66e7d",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-30T09:32:29.740107+00:00",
+    "timestamp": "2026-08-30T16:40:26.545956+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@1c8cb348c6fdb327c2b4b576bf1e135fe274b4cc",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@1c8cb348c6fdb327c2b4b576bf1e135fe274b4cc"
+      "purl": "pkg:generic/alfloop-dev/odayplus@4b40076fe98ff840e755fa45683fa0f1f8c53aab",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@4b40076fe98ff840e755fa45683fa0f1f8c53aab"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "1c8cb348c6fdb327c2b4b576bf1e135fe274b4cc"
+        "value": "4b40076fe98ff840e755fa45683fa0f1f8c53aab"
       },
       {
         "name": "sbom-hash",
-        "value": "9803500fa4a81a477bd996b2a4dc6c9afdb3cdc8e236058730364000defca63d"
+        "value": "3c84a9866e9c5a96cfd6b48cbea66e7dd1ead8743754537ac38d7db3f77a145c"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:510c3f10ee29b7a30fb6da3823a256601ae7c93fea408be3633ff191707655e8"
+        "value": "sha256:35ec7b712c5ec97d3eb09b02afa55e7478b9b923e3ffa4302f0eb523ddd00218"
       },
       {
         "name": "container-base-images",
@@ -314,6 +314,30 @@
       ],
       "supplier": {
         "name": "toyobayashi"
+      }
+    },
+    {
+      "name": "@epic-web/invariant",
+      "version": "1.0.0",
+      "type": "library",
+      "purl": "pkg:npm/@epic-web/invariant@1.0.0",
+      "bom-ref": "pkg:npm/@epic-web/invariant@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "lrTPqgvfFQtR/eY/qkIzp98OGdNJu0m5ji3q/nJI8v3SXkRKEnWiOxMmbvcSoAIzv/cGiuvRy57k4suKQSAdwA=="
+        }
+      ],
+      "supplier": {
+        "name": "Kent C. Dodds <me@kentcdodds.com> (https://kentcdodds.com/)"
       }
     },
     {
@@ -2089,6 +2113,30 @@
       }
     },
     {
+      "name": "@phc/format",
+      "version": "1.0.0",
+      "type": "library",
+      "purl": "pkg:npm/@phc/format@1.0.0",
+      "bom-ref": "pkg:npm/@phc/format@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "m7X9U6BG2+J+R1lSOdCiITLLrxm+cWlNI3HUFA92oLO77ObGNzaKdh8pMLqdZcshtkKuV84olNNXDfMc4FezBQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Simone Primarosa <simonepri@outlook.com> (https://simoneprimarosa.com)"
+      }
+    },
+    {
       "name": "@playwright/test",
       "version": "1.61.1",
       "type": "library",
@@ -2853,7 +2901,7 @@
       "type": "library",
       "purl": "pkg:npm/@types/node@26.1.1",
       "bom-ref": "pkg:npm/@types/node@26.1.1",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -2874,7 +2922,7 @@
       "type": "library",
       "purl": "pkg:npm/@types/node/undici-types@8.3.0",
       "bom-ref": "pkg:npm/@types/node/undici-types@8.3.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -2907,6 +2955,27 @@
         {
           "alg": "SHA-512",
           "content": "ieXiYmgSRXUDeOntE1InxjWyvEelZGP63M+cGuquuRLuIKKT1osnkXjxev9B7d1nXSug5vpunx+gNlbVxMlC9A=="
+        }
+      ]
+    },
+    {
+      "name": "@types/pg",
+      "version": "8.23.1",
+      "type": "library",
+      "purl": "pkg:npm/@types/pg@8.23.1",
+      "bom-ref": "pkg:npm/@types/pg@8.23.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A=="
         }
       ]
     },
@@ -4609,6 +4678,30 @@
       }
     },
     {
+      "name": "argon2",
+      "version": "0.45.1",
+      "type": "library",
+      "purl": "pkg:npm/argon2@0.45.1",
+      "bom-ref": "pkg:npm/argon2@0.45.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "skm+/WCjkGqCQxF7FG1LuZXM5yvbFjgbfiCGsud2oLgaDhh6b6dbH0b1EkghbM+xx4Bj8Ape+KKgixoIlWZicQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Ranieri Althoff <ranisalt+argon2@gmail.com>"
+      }
+    },
+    {
       "name": "argon2-cffi",
       "version": "25.1.0",
       "type": "library",
@@ -5939,12 +6032,36 @@
       }
     },
     {
+      "name": "cross-env",
+      "version": "10.1.0",
+      "type": "library",
+      "purl": "pkg:npm/cross-env@10.1.0",
+      "bom-ref": "pkg:npm/cross-env@10.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "GsYosgnACZTADcmEyJctkJIoqAhHjttw7RsFrVoJNXbsWWqaq6Ym+7kZjq6mS45O0jij6vtiReppKQEtqWy6Dw=="
+        }
+      ],
+      "supplier": {
+        "name": "Kent C. Dodds <me@kentcdodds.com> (https://kentcdodds.com)"
+      }
+    },
+    {
       "name": "cross-spawn",
       "version": "7.0.6",
       "type": "library",
       "purl": "pkg:npm/cross-spawn@7.0.6",
       "bom-ref": "pkg:npm/cross-spawn@7.0.6",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -10749,7 +10866,7 @@
       "type": "library",
       "purl": "pkg:npm/isexe@2.0.0",
       "bom-ref": "pkg:npm/isexe@2.0.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -12729,6 +12846,27 @@
       ]
     },
     {
+      "name": "node-addon-api",
+      "version": "8.9.2",
+      "type": "library",
+      "purl": "pkg:npm/node-addon-api@8.9.2",
+      "bom-ref": "pkg:npm/node-addon-api@8.9.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg=="
+        }
+      ]
+    },
+    {
       "name": "node-exports-info",
       "version": "1.6.2",
       "type": "library",
@@ -12750,6 +12888,30 @@
       ],
       "supplier": {
         "name": "Jordan Harband <ljharb@gmail.com>"
+      }
+    },
+    {
+      "name": "node-gyp-build",
+      "version": "4.8.4",
+      "type": "library",
+      "purl": "pkg:npm/node-gyp-build@4.8.4",
+      "bom-ref": "pkg:npm/node-gyp-build@4.8.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Mathias Buus (@mafintosh)"
       }
     },
     {
@@ -13547,7 +13709,7 @@
       "type": "library",
       "purl": "pkg:npm/path-key@3.1.1",
       "bom-ref": "pkg:npm/path-key@3.1.1",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -13772,6 +13934,189 @@
       ],
       "supplier": {
         "name": "S\u00e9bastien Eustace <sebastien@eustace.io>"
+      }
+    },
+    {
+      "name": "pg",
+      "version": "8.23.0",
+      "type": "library",
+      "purl": "pkg:npm/pg@8.23.0",
+      "bom-ref": "pkg:npm/pg@8.23.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "Ip2EQCngowJLGOfCwkFhPXU7/ljlhn6Rxlmy4XYfL2Y+vyRM59+8uR2xqRWKdYmbXmxCFOAmKxBuSUCdF34qLg=="
+        }
+      ],
+      "supplier": {
+        "name": "Brian Carlson <brian.m.carlson@gmail.com>"
+      }
+    },
+    {
+      "name": "pg-cloudflare",
+      "version": "1.4.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-cloudflare@1.4.0",
+      "bom-ref": "pkg:npm/pg-cloudflare@1.4.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A=="
+        }
+      ]
+    },
+    {
+      "name": "pg-connection-string",
+      "version": "2.14.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-connection-string@2.14.0",
+      "bom-ref": "pkg:npm/pg-connection-string@2.14.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "XwWDGcLRGCXAR8F/AM5bG7Q+A3Wm2s6QeEjlOKZLlH3UYcguiqCWKyWXVag5TLTIjR7oOJUY8kcADaZgWPyLeg=="
+        }
+      ],
+      "supplier": {
+        "name": "Blaine Bublitz <blaine@iceddev.com> (http://iceddev.com/)"
+      }
+    },
+    {
+      "name": "pg-int8",
+      "version": "1.0.1",
+      "type": "library",
+      "purl": "pkg:npm/pg-int8@1.0.1",
+      "bom-ref": "pkg:npm/pg-int8@1.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw=="
+        }
+      ]
+    },
+    {
+      "name": "pg-pool",
+      "version": "3.14.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-pool@3.14.0",
+      "bom-ref": "pkg:npm/pg-pool@3.14.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw=="
+        }
+      ],
+      "supplier": {
+        "name": "Brian M. Carlson"
+      }
+    },
+    {
+      "name": "pg-protocol",
+      "version": "1.16.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-protocol@1.16.0",
+      "bom-ref": "pkg:npm/pg-protocol@1.16.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "sILXutLVjCLjcDuOmvhX5e2Z4cS5qG/6Bu3VkpFwdf/633ElGLpEh9bgmuI5I4sqKqkifQiGyiCcx1HdtrK7tg=="
+        }
+      ]
+    },
+    {
+      "name": "pg-types",
+      "version": "2.2.0",
+      "type": "library",
+      "purl": "pkg:npm/pg-types@2.2.0",
+      "bom-ref": "pkg:npm/pg-types@2.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA=="
+        }
+      ],
+      "supplier": {
+        "name": "Brian M. Carlson"
+      }
+    },
+    {
+      "name": "pgpass",
+      "version": "1.0.5",
+      "type": "library",
+      "purl": "pkg:npm/pgpass@1.0.5",
+      "bom-ref": "pkg:npm/pgpass@1.0.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug=="
+        }
+      ],
+      "supplier": {
+        "name": "Hannes H\u00f6rl <hannes.hoerl+pgpass@snowreporter.com>"
       }
     },
     {
@@ -14101,6 +14446,102 @@
       ],
       "supplier": {
         "name": "Andrey Sitnik <andrey@sitnik.es>"
+      }
+    },
+    {
+      "name": "postgres-array",
+      "version": "2.0.0",
+      "type": "library",
+      "purl": "pkg:npm/postgres-array@2.0.0",
+      "bom-ref": "pkg:npm/postgres-array@2.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA=="
+        }
+      ],
+      "supplier": {
+        "name": "Ben Drucker"
+      }
+    },
+    {
+      "name": "postgres-bytea",
+      "version": "1.0.1",
+      "type": "library",
+      "purl": "pkg:npm/postgres-bytea@1.0.1",
+      "bom-ref": "pkg:npm/postgres-bytea@1.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5+5HqXnsZPE65IJZSMkZtURARZelel2oXUEO8rH83VS/hxH5vv1uHquPg5wZs8yMAfdv971IU+kcPUczi7NVBQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Ben Drucker"
+      }
+    },
+    {
+      "name": "postgres-date",
+      "version": "1.0.7",
+      "type": "library",
+      "purl": "pkg:npm/postgres-date@1.0.7",
+      "bom-ref": "pkg:npm/postgres-date@1.0.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "suDmjLVQg78nMK2UZ454hAG+OAW+HQPZ6n++TNDUX+L0+uUlLywnoxJKDou51Zm+zTCjrCl0Nq6J9C5hP9vK/Q=="
+        }
+      ],
+      "supplier": {
+        "name": "Ben Drucker"
+      }
+    },
+    {
+      "name": "postgres-interval",
+      "version": "1.2.0",
+      "type": "library",
+      "purl": "pkg:npm/postgres-interval@1.2.0",
+      "bom-ref": "pkg:npm/postgres-interval@1.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Ben Drucker"
       }
     },
     {
@@ -16149,7 +16590,7 @@
       "type": "library",
       "purl": "pkg:npm/shebang-command@2.0.0",
       "bom-ref": "pkg:npm/shebang-command@2.0.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -16173,7 +16614,7 @@
       "type": "library",
       "purl": "pkg:npm/shebang-regex@3.0.0",
       "bom-ref": "pkg:npm/shebang-regex@3.0.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -16520,6 +16961,30 @@
           "content": "22848d97852554c8814cd5a0bffc4f4f41930aa7155f2193e99332e8a9cf6f6d"
         }
       ]
+    },
+    {
+      "name": "split2",
+      "version": "4.2.0",
+      "type": "library",
+      "purl": "pkg:npm/split2@4.2.0",
+      "bom-ref": "pkg:npm/split2@4.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg=="
+        }
+      ],
+      "supplier": {
+        "name": "Matteo Collina <hello@matteocollina.com>"
+      }
     },
     {
       "name": "sqlalchemy",
@@ -18506,7 +18971,7 @@
       "type": "library",
       "purl": "pkg:npm/which@2.0.2",
       "bom-ref": "pkg:npm/which@2.0.2",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -18770,6 +19235,30 @@
       }
     },
     {
+      "name": "xtend",
+      "version": "4.0.2",
+      "type": "library",
+      "purl": "pkg:npm/xtend@4.0.2",
+      "bom-ref": "pkg:npm/xtend@4.0.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ=="
+        }
+      ],
+      "supplier": {
+        "name": "Raynos <raynos2@gmail.com>"
+      }
+    },
+    {
       "name": "yarl",
       "version": "1.24.5",
       "type": "library",
@@ -18852,7 +19341,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@1c8cb348c6fdb327c2b4b576bf1e135fe274b4cc",
+      "ref": "pkg:generic/alfloop-dev/odayplus@4b40076fe98ff840e755fa45683fa0f1f8c53aab",
       "dependsOn": [
         "pkg:pypi/argon2-cffi@25.1.0",
         "pkg:pypi/catboost@1.2.10",
@@ -18901,9 +19390,12 @@
         "pkg:npm/@deck.gl/layers@9.3.7",
         "pkg:npm/@deck.gl/react@9.3.7",
         "pkg:npm/@deck.gl/widgets@9.3.7",
+        "pkg:npm/@types/pg@8.23.1",
+        "pkg:npm/argon2@0.45.1",
         "pkg:npm/h3-js@4.5.0",
         "pkg:npm/maplibre-gl@5.24.0",
         "pkg:npm/next@15.5.21",
+        "pkg:npm/pg@8.23.0",
         "pkg:npm/react-dom@18.3.1",
         "pkg:npm/react@18.3.1"
       ]
@@ -19286,6 +19778,14 @@
       ]
     },
     {
+      "ref": "pkg:npm/@types/pg@8.23.1",
+      "dependsOn": [
+        "pkg:npm/node@20.14.10",
+        "pkg:npm/pg-protocol@1.16.0",
+        "pkg:npm/pg-types@2.2.0"
+      ]
+    },
+    {
       "ref": "pkg:npm/@types/react@18.3.12",
       "dependsOn": [
         "pkg:npm/@types/prop-types@15.7.15",
@@ -19507,6 +20007,15 @@
       ]
     },
     {
+      "ref": "pkg:npm/argon2@0.45.1",
+      "dependsOn": [
+        "pkg:npm/@phc/format@1.0.0",
+        "pkg:npm/cross-env@10.1.0",
+        "pkg:npm/node-addon-api@8.9.2",
+        "pkg:npm/node-gyp-build@4.8.4"
+      ]
+    },
+    {
       "ref": "pkg:npm/aria-query@5.3.0",
       "dependsOn": [
         "pkg:npm/dequal@2.0.3"
@@ -19654,6 +20163,13 @@
       "ref": "pkg:npm/color-convert@2.0.1",
       "dependsOn": [
         "pkg:npm/color-name@1.1.4"
+      ]
+    },
+    {
+      "ref": "pkg:npm/cross-env@10.1.0",
+      "dependsOn": [
+        "pkg:npm/@epic-web/invariant@1.0.0",
+        "pkg:npm/cross-spawn@7.0.6"
       ]
     },
     {
@@ -20604,6 +21120,32 @@
       ]
     },
     {
+      "ref": "pkg:npm/pg@8.23.0",
+      "dependsOn": [
+        "pkg:npm/pg-connection-string@2.14.0",
+        "pkg:npm/pg-pool@3.14.0",
+        "pkg:npm/pg-protocol@1.16.0",
+        "pkg:npm/pg-types@2.2.0",
+        "pkg:npm/pgpass@1.0.5"
+      ]
+    },
+    {
+      "ref": "pkg:npm/pg-types@2.2.0",
+      "dependsOn": [
+        "pkg:npm/pg-int8@1.0.1",
+        "pkg:npm/postgres-array@2.0.0",
+        "pkg:npm/postgres-bytea@1.0.1",
+        "pkg:npm/postgres-date@1.0.7",
+        "pkg:npm/postgres-interval@1.2.0"
+      ]
+    },
+    {
+      "ref": "pkg:npm/pgpass@1.0.5",
+      "dependsOn": [
+        "pkg:npm/split2@4.2.0"
+      ]
+    },
+    {
       "ref": "pkg:npm/playwright@1.61.1",
       "dependsOn": [
         "pkg:npm/playwright-core@1.61.1"
@@ -20615,6 +21157,12 @@
         "pkg:npm/nanoid@3.3.18",
         "pkg:npm/picocolors@1.1.1",
         "pkg:npm/source-map-js@1.2.1"
+      ]
+    },
+    {
+      "ref": "pkg:npm/postgres-interval@1.2.0",
+      "dependsOn": [
+        "pkg:npm/xtend@4.0.2"
       ]
     },
     {

@@ -6,12 +6,14 @@ import gzip
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Iterable
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
@@ -490,6 +492,220 @@ def parse_timestamp(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed
+
+
+CONTINUATION_APPROVAL_MAX_REASON_LENGTH = 2000
+CONTINUATION_APPROVAL_MAX_NONCE_LENGTH = 128
+
+
+def _continuation_approval_nonce_is_valid(nonce: Any) -> bool:
+    value = str(nonce or "").strip()
+    return bool(value) and len(value) <= CONTINUATION_APPROVAL_MAX_NONCE_LENGTH and not any(
+        character.isspace() or ord(character) < 32 for character in value
+    )
+
+
+def _continuation_nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def blocked_task_prose_context(task: dict[str, Any]) -> str:
+    """Return blocker prose without task/dependency identifiers.
+
+    Titles and summaries describe the work, not why a blocked task is waiting.
+    Continuation eligibility must therefore inspect only the same blocker-facing
+    fields used by Supervisor, while removing identifiers whose tokens can look
+    like hard-gate markers (for example ``...-DATASET-...``).
+    """
+    identifiers = [str(task.get("id") or "")]
+    identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
+    context = " ".join(
+        str(task.get(key) or "")
+        for key in (
+            "next",
+            "waiting_for",
+            "blocker",
+            "blocked_by",
+            "failure_reason",
+            "last_failure_reason",
+            "push_status",
+        )
+    ).casefold()
+    for identifier in identifiers:
+        token = identifier.strip().casefold()
+        if token:
+            context = context.replace(token, " ")
+    return context
+
+
+def continuation_approval_gate_error(task: dict[str, Any]) -> str | None:
+    """Return why a task is not eligible for Human/Ops continuation.
+
+    Continuation approval is deliberately narrower than a generic human gate:
+    it is the release valve for review-churn escalation only.  Credentials,
+    deployment, production, external-data, and other human gates remain
+    independently fail-closed even when an operator is able to issue an
+    approval for some other task.
+    """
+    if not isinstance(task, dict):
+        return "task record is not an object"
+    if str(task.get("status") or "").strip().lower() != "blocked":
+        return "task is not blocked"
+    waiting_for = str(task.get("waiting_for") or "").strip().casefold()
+    if waiting_for not in {"human/ops", "human", "ops"}:
+        return "task is not waiting for Human/Ops"
+    if task.get("task_class") == "human_gate" or bool(task.get("non_dispatchable")):
+        return "task is a separate human or non-dispatchable gate"
+    if task.get("requires_human_approval") is True or task.get("human_required_roles"):
+        return "task carries an independent human approval gate"
+    for gate_field in (
+        "credentials_gate",
+        "credential_gate",
+        "deployment_gate",
+        "production_gate",
+        "external_data_gate",
+        "human_gate",
+    ):
+        if task.get(gate_field):
+            return f"task carries an independent {gate_field}"
+    gate_status = str(task.get("gate_status") or "").strip().casefold()
+    if gate_status.startswith("pending_human"):
+        return "task carries an independent human gate status"
+
+    blocker_context = blocked_task_prose_context(task)
+    try:
+        churn_reassigned_count = max(0, int(task.get("review_churn_reassigned_at_count", 0) or 0))
+    except (TypeError, ValueError):
+        churn_reassigned_count = 0
+    try:
+        churn_escalated_count = max(
+            0, int(task.get("review_churn_escalated_at_count", 0) or 0)
+        )
+    except (TypeError, ValueError):
+        churn_escalated_count = 0
+    if not (
+        task.get("review_churn_escalated_at")
+        or churn_escalated_count
+        or churn_reassigned_count
+        or "review churn" in blocker_context
+    ):
+        return "task was not escalated by review churn"
+
+    hard_gate_markers = (
+        "credential",
+        "secret",
+        "password",
+        "token",
+        "deploy",
+        "deployment",
+        "production",
+        "prod ",
+        "live-e2e",
+        "live rollout",
+        "dataset",
+        "attestation",
+        "external-data",
+        "external data",
+        "external authorization",
+        "approval required",
+        "approval gate",
+        "authorization",
+        "manual approval",
+        "human gate",
+        "operator intervention",
+        "merge queue",
+        "sign-off",
+        "signoff",
+    )
+    if any(marker in blocker_context for marker in hard_gate_markers):
+        return "task carries an independent credentials/deployment/production or human gate"
+    return None
+
+
+def continuation_approval_is_expired(
+    approval: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not isinstance(approval, dict) or str(approval.get("status") or "").lower() != "issued":
+        return False
+    expires_at = parse_timestamp(approval.get("expires_at"))
+    if expires_at is None:
+        return False
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    return expires_at.astimezone(UTC) <= current.astimezone(UTC)
+
+
+def continuation_approval_validation_error(
+    task: dict[str, Any],
+    approval: dict[str, Any],
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Validate the immutable facts Supervisor needs before consuming approval."""
+    gate_error = continuation_approval_gate_error(task)
+    if gate_error:
+        return gate_error
+    if not isinstance(approval, dict):
+        return "approval record is not an object"
+    if str(approval.get("status") or "").strip().lower() != "issued":
+        return "approval is not in issued state"
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id:
+        return "task has no id"
+    if str(approval.get("task_id") or "").strip() != task_id:
+        return "approval task scope does not match the task"
+    if str(approval.get("task_scope") or "").strip() != task_id:
+        return "approval task_scope does not match the task"
+    scope = approval.get("scope")
+    scoped_task_id = scope.get("task_id") if isinstance(scope, dict) else scope
+    if str(scoped_task_id or "").strip() != task_id:
+        return "approval scope does not match the task"
+    for epoch_field in ("review_reopen_count", "review_churn_escalated_at_count"):
+        if epoch_field not in approval:
+            continue
+        try:
+            approval_epoch = max(0, int(approval.get(epoch_field) or 0))
+            task_epoch = max(0, int(task.get(epoch_field) or 0))
+        except (TypeError, ValueError):
+            return f"approval {epoch_field} is malformed"
+        if approval_epoch != task_epoch:
+            return f"approval {epoch_field} does not match the task"
+    if "review_churn_escalated_at" in approval and approval.get("review_churn_escalated_at") != task.get(
+        "review_churn_escalated_at"
+    ):
+        return "approval review-churn escalation epoch does not match the task"
+    if canonical_agent_name(approval.get("issued_by")) != "Human/Ops":
+        return "approval issuer is not Human/Ops"
+    if not str(approval.get("approval_id") or "").strip():
+        return "approval id is missing"
+    if not _continuation_approval_nonce_is_valid(approval.get("nonce")):
+        return "approval nonce is missing or malformed"
+    reason = str(approval.get("reason") or "").strip()
+    if not reason or len(reason) > CONTINUATION_APPROVAL_MAX_REASON_LENGTH:
+        return "approval reason is missing or too long"
+
+    issued_at = parse_timestamp(approval.get("issued_at"))
+    expires_at = parse_timestamp(approval.get("expires_at"))
+    if issued_at is None or expires_at is None:
+        return "approval issued_at and expires_at must be timezone-aware timestamps"
+    current = now or datetime.now(UTC)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=UTC)
+    current = current.astimezone(UTC)
+    if issued_at.astimezone(UTC) > current:
+        return "approval was issued in the future"
+    if expires_at.astimezone(UTC) <= issued_at.astimezone(UTC):
+        return "approval expires before or at issue time"
+    if expires_at.astimezone(UTC) <= current:
+        return "approval has expired"
+    return None
 
 
 def format_display_timestamp(value: Any) -> str:
@@ -3327,6 +3543,217 @@ def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
     return resolver.dependency_satisfied(dep_id)
 
 
+def _dependency_task_id(task_id: Any) -> str:
+    """Canonical dependency identity, matching what actually resolves at runtime.
+
+    ``task_archive.normalize_task_id`` only strips whitespace, so both the live
+    board index and the archive file lookup are case-sensitive.  The validator
+    has to fold ids the same way or it can certify a graph as clean that
+    ``TaskResolver`` is structurally unable to resolve, leaving the task blocked
+    forever with no reported violation.
+    """
+    return str(task_id or "").strip()
+
+
+def _dependency_task_id_key(task_id: Any) -> str:
+    """Case-insensitive fold, used only to diagnose near-miss ids.
+
+    This must never decide membership: it exists so a dependency that differs
+    from a real task id by case alone is reported as a fixable mismatch instead
+    of falling through to the generic dangling message.
+    """
+    return _dependency_task_id(task_id).casefold()
+
+
+def dependency_graph_errors_for_task(
+    task: dict[str, Any],
+    active_tasks: Iterable[dict[str, Any]] | dict[str, dict[str, Any]],
+) -> list[str]:
+    """Return graph violations reachable from one task candidate.
+
+    Dependency edits are deliberately validated against both sources of task
+    truth.  ``TaskResolver`` is enough to answer whether a dependency is done,
+    but it prefers the live board when an id is duplicated and therefore cannot
+    enforce the Control Pack's exactly-one-source rule.  This validator keeps
+    that distinction explicit and is shared by the canonical CLI and the
+    Supervisor's dispatch gate.
+
+    Identity here is exactly the resolver's identity (whitespace-stripped,
+    case-sensitive).  Reporting on a looser identity than the one that resolves
+    at dispatch time is the worst failure available to this function: the edit
+    is accepted, the graph is certified clean, and the task waits on an edge
+    nothing can ever satisfy.
+    """
+    if isinstance(active_tasks, dict):
+        source_tasks = active_tasks.values()
+    else:
+        source_tasks = active_tasks
+
+    active_by_id: dict[str, dict[str, Any]] = {}
+    for candidate in source_tasks:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = _dependency_task_id(candidate.get("id"))
+        if not candidate_id and isinstance(active_tasks, dict):
+            for source_key, source_task in active_tasks.items():
+                if source_task is candidate:
+                    candidate_id = _dependency_task_id(source_key)
+                    break
+        if candidate_id:
+            active_by_id[candidate_id] = candidate
+
+    task_id = _dependency_task_id(task.get("id"))
+    if not task_id and isinstance(active_tasks, dict):
+        for source_key, source_task in active_tasks.items():
+            if source_task is task or source_task == task:
+                task_id = _dependency_task_id(source_key)
+                task = {**task, "id": task_id}
+                break
+    if task_id:
+        active_by_id[task_id] = task
+
+    # Diagnostic index only. Membership is decided on the exact id above; this
+    # maps a folded id back to the canonical board ids sharing it so a
+    # case-mismatched edge names the id the operator actually meant.
+    board_ids_by_key: dict[str, list[str]] = {}
+    for board_id in active_by_id:
+        board_ids_by_key.setdefault(_dependency_task_id_key(board_id), []).append(board_id)
+
+    errors: list[str] = []
+    seen_errors: set[str] = set()
+
+    def add_error(message: str) -> None:
+        if message not in seen_errors:
+            seen_errors.add(message)
+            errors.append(message)
+
+    def archive_snapshot(dep_id: str) -> dict[str, Any] | None:
+        try:
+            snapshot = load_archived_snapshot(dep_id)
+        except (OSError, ValueError, TypeError):
+            # A broken archive lookup must never turn into a dispatch grant.
+            return None
+        return snapshot if isinstance(snapshot, dict) else None
+
+    visiting: list[str] = []
+    visited: set[str] = set()
+
+    def walk(current_id: str) -> None:
+        if current_id in visiting:
+            start = visiting.index(current_id)
+            cycle = visiting[start:] + [current_id]
+            add_error("dependency cycle: " + " -> ".join(cycle))
+            return
+        if current_id in visited:
+            return
+        current = active_by_id.get(current_id)
+        if not isinstance(current, dict):
+            return
+
+        visiting.append(current_id)
+        raw_dependencies = current.get("depends_on")
+        if raw_dependencies is None:
+            dependencies: list[Any] = []
+        elif isinstance(raw_dependencies, list):
+            dependencies = raw_dependencies
+        else:
+            add_error(f"{current.get('id')}: depends_on must be a list")
+            dependencies = []
+
+        # Deduplicate on the exact id: two entries differing only by case are
+        # not a redundant edge, they are one resolvable edge plus one that never
+        # resolves, and each has to be reported on its own terms.
+        seen_dependencies: set[str] = set()
+        for raw_dependency in dependencies:
+            dep_id = _dependency_task_id(raw_dependency)
+            if not dep_id:
+                add_error(f"{current.get('id')}: dependency id must not be empty")
+                continue
+            if dep_id in seen_dependencies:
+                add_error(f"{current.get('id')}: duplicate dependency {dep_id}")
+                continue
+            seen_dependencies.add(dep_id)
+
+            # A self-edge stays case-insensitive: whichever spelling was used,
+            # the operator pointed the task at itself and that is the useful
+            # thing to say.
+            if _dependency_task_id_key(dep_id) == _dependency_task_id_key(current_id):
+                add_error(f"{current.get('id')}: depends on itself ({dep_id})")
+                continue
+
+            on_board = dep_id in active_by_id
+            snapshot = archive_snapshot(dep_id)
+            if on_board and snapshot is not None:
+                add_error(
+                    f"{current.get('id')}: dependency {dep_id} exists on BOTH the live board "
+                    "and the official archive"
+                )
+                continue
+            if not on_board and snapshot is None:
+                near_misses = [
+                    board_id
+                    for board_id in board_ids_by_key.get(_dependency_task_id_key(dep_id), [])
+                    if board_id != dep_id
+                ]
+                if near_misses:
+                    add_error(
+                        f"{current.get('id')}: dependency {dep_id} differs only by case from "
+                        f"{', '.join(sorted(near_misses))}; task ids are case-sensitive and this "
+                        "edge can never resolve"
+                    )
+                else:
+                    add_error(
+                        f"{current.get('id')}: dependency {dep_id} is dangling in neither "
+                        "the live board nor the official archive"
+                    )
+                continue
+            if not on_board:
+                terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()
+                if terminal_status != "done":
+                    add_error(
+                        f"{current.get('id')}: archived dependency {dep_id} has "
+                        f"terminal_status={terminal_status or 'missing'!r} and is not complete"
+                    )
+                continue
+            walk(dep_id)
+
+        visiting.pop()
+        visited.add(current_id)
+
+    if not task_id:
+        return ["dependency update requires a task id"]
+    walk(task_id)
+    return errors
+
+
+def validate_dependency_update(
+    state: dict[str, Any],
+    task_id: str,
+    dependencies: list[str],
+) -> None:
+    """Fail closed before a CLI dependency mutation touches canonical state."""
+    candidate = get_task(state, task_id)
+    if candidate is None:
+        candidate = {"id": task_id}
+    else:
+        candidate = deepcopy(candidate)
+    candidate["depends_on"] = list(dependencies)
+    errors = dependency_graph_errors_for_task(candidate, state.get("tasks", []))
+    if errors:
+        detail = "\n".join(f"  - {error}" for error in errors)
+        raise SystemExit(
+            f"Dependency update rejected for {task_id}; canonical graph remains unchanged:\n{detail}"
+        )
+
+
+def parse_dependency_argument(raw: str | None) -> list[str]:
+    """Parse the CLI dependency field; ``-``/``none`` explicitly clears it."""
+    value = str(raw or "").strip()
+    if value.casefold() in {"", "-", "none", "null", "[]"}:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 def ensure_review_finalize_handoff(
     state: dict[str, Any],
     task: dict[str, Any],
@@ -5457,7 +5884,13 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    requested_dependencies = parse_csv_env("TASK_DEPENDS_ON")
     task = get_task(state, task_id)
+    if task is not None and "TASK_DEPENDS_ON" in os.environ:
+        raise SystemExit(
+            "既有 task 的 depends_on 不可由 assign 靜默修改；請使用 "
+            "set_dependencies <task-id> <dep1,dep2|-> <message>，以留下 dependency audit event。"
+        )
     # Do this before priority checks, timestamping, or any task/agent mutation.
     # An invalid source document must fail at assignment time rather than leave
     # a board record that the dispatcher can only reject repeatedly later.
@@ -5477,6 +5910,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
 
     timestamp = iso_now()
     if task is None:
+        validate_dependency_update(state, task_id, requested_dependencies)
         if archived_task_snapshot(task_id):
             raise SystemExit(
                 f"Task {task_id} is archived. Create a new follow-up task instead of reusing the archived task id."
@@ -5489,7 +5923,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "owner": owner,
             "reviewer": reviewer,
             "status": "todo",
-            "depends_on": parse_csv_env("TASK_DEPENDS_ON"),
+            "depends_on": requested_dependencies,
             "artifacts": parse_csv_env("TASK_ARTIFACTS"),
             "acceptance": parse_csv_env("TASK_ACCEPTANCE"),
             "next": "Assignment created",
@@ -5520,6 +5954,78 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
             "type": "assign",
             "task_id": task_id,
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
+        }
+    )
+    if requested_dependencies:
+        append_log(
+            {
+                "ts": timestamp,
+                "agent": actor,
+                "type": "dependency_update",
+                "task_id": task_id,
+                "old_dependencies": [],
+                "new_dependencies": requested_dependencies,
+                "message": "Initial dependency declaration during canonical task assignment.",
+                "source": "canonical_cli",
+            }
+        )
+
+
+def command_set_dependencies(state: dict[str, Any], args: list[str]) -> None:
+    """Set one task's dependency edges through the audited canonical CLI.
+
+    Usage: ``set_dependencies <task-id> <dep1,dep2|-> <message>``.  The
+    dependency field is parsed before any task field is changed, and the
+    candidate graph must resolve through the live board/archive without a
+    self-edge or reachable cycle.
+    """
+    if len(args) < 2:
+        raise SystemExit(
+            "Usage: set_dependencies <task-id> <dep1,dep2|-> <message>"
+        )
+    task_id = args[0]
+    if len(args) >= 3:
+        raw_dependencies, message = args[1], args[2]
+    elif "TASK_DEPENDS_ON" in os.environ:
+        # Keep the existing task metadata convention usable for operators who
+        # need a long/quoted dependency list while making the mutation itself
+        # explicit and auditable through this command.
+        raw_dependencies = os.environ.get("TASK_DEPENDS_ON", "")
+        message = args[1]
+    else:
+        raw_dependencies = args[1]
+        message = "Dependency list updated via canonical CLI."
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor not in {owner, reviewer}:
+        raise SystemExit(
+            f"Only the owner ({owner}) or reviewer ({reviewer}) can update dependencies for {task_id}"
+        )
+
+    dependencies = parse_dependency_argument(raw_dependencies)
+    validate_dependency_update(state, task_id, dependencies)
+    previous = [str(item).strip() for item in (task.get("depends_on") or []) if str(item).strip()]
+    if previous == dependencies:
+        raise SystemExit(f"Dependency list for {task_id} is unchanged")
+
+    timestamp = iso_now()
+    task["depends_on"] = dependencies
+    task["last_update"] = timestamp
+    task["next"] = message
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "dependency_update",
+            "task_id": task_id,
+            "old_dependencies": previous,
+            "new_dependencies": dependencies,
+            "message": message,
+            "source": "canonical_cli",
         }
     )
 
@@ -5578,6 +6084,133 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
     append_log({"ts": timestamp, "agent": actor, "type": "progress", "task_id": task_id, "message": message})
+
+
+def _continuation_approval_nonce_in_use(state: dict[str, Any], nonce: str) -> bool:
+    registry = state.get("human_continuation_approval_nonce_registry")
+    if isinstance(registry, dict) and nonce in registry:
+        return True
+    for candidate_task in state.get("tasks", []) or []:
+        if not isinstance(candidate_task, dict):
+            continue
+        records = []
+        current = candidate_task.get("human_continuation_approval")
+        if isinstance(current, dict):
+            records.append(current)
+        history = candidate_task.get("human_continuation_approval_history")
+        if isinstance(history, list):
+            records.extend(item for item in history if isinstance(item, dict))
+        if any(str(item.get("nonce") or "").strip() == nonce for item in records):
+            return True
+    return False
+
+
+def command_approve_continuation(state: dict[str, Any], args: list[str]) -> None:
+    """Issue the only approval that can release a review-churn task.
+
+    Usage: approve_continuation <task-id> <reason> <expires-at> [nonce]
+
+    The caller must be the declared Human/Ops actor.  A nonce is generated when
+    omitted, but it is always persisted and consumed exactly once by the
+    Supervisor; it is never a capability inferred from task prose or status.
+    """
+    if len(args) < 3 or len(args) > 4:
+        raise SystemExit(
+            "Usage: approve_continuation <task-id> <reason> <expires-at> [nonce]"
+        )
+    actor = current_actor_validated()
+    if actor != "Human/Ops":
+        raise SystemExit("Only Human/Ops can issue a continuation approval")
+
+    task_id, reason, expires_value = args[:3]
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    gate_error = continuation_approval_gate_error(task)
+    if gate_error:
+        raise SystemExit(
+            f"Cannot issue continuation approval for {task_id}: {gate_error}. No approval was recorded."
+        )
+
+    reason = str(reason or "").strip()
+    if not reason or len(reason) > CONTINUATION_APPROVAL_MAX_REASON_LENGTH:
+        raise SystemExit(
+            f"Continuation approval reason must be 1-{CONTINUATION_APPROVAL_MAX_REASON_LENGTH} characters"
+        )
+    expires_at = parse_timestamp(expires_value)
+    now = datetime.now(UTC)
+    if expires_at is None or expires_at.astimezone(UTC) <= now:
+        raise SystemExit(
+            "Continuation approval expires-at must be a future timezone-aware timestamp"
+        )
+
+    existing = task.get("human_continuation_approval")
+    if isinstance(existing, dict) and str(existing.get("status") or "").lower() not in {
+        "consumed",
+        "expired",
+        "rejected",
+    }:
+        raise SystemExit(
+            f"Task {task_id} already has an active continuation approval; consume or expire it before issuing another"
+        )
+
+    nonce = str(args[3]).strip() if len(args) == 4 else ""
+    if nonce and not _continuation_approval_nonce_is_valid(nonce):
+        raise SystemExit("Continuation approval nonce is missing or malformed")
+    if not nonce:
+        for _ in range(5):
+            candidate = secrets.token_urlsafe(24)
+            if not _continuation_approval_nonce_in_use(state, candidate):
+                nonce = candidate
+                break
+        if not nonce:
+            raise SystemExit("Unable to allocate a unique continuation approval nonce")
+    elif _continuation_approval_nonce_in_use(state, nonce):
+        raise SystemExit("Continuation approval nonce has already been used; choose a new nonce")
+
+    timestamp = iso_now()
+    approval = {
+        "approval_id": uuid.uuid4().hex,
+        "approval_type": "human_ops_continuation",
+        "status": "issued",
+        "task_id": task_id,
+        "task_scope": task_id,
+        "scope": {"task_id": task_id},
+        "reason": reason,
+        "issued_by": actor,
+        "issued_at": timestamp,
+        "expires_at": expires_at.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "nonce": nonce,
+        "review_reopen_count": _continuation_nonnegative_int(task.get("review_reopen_count")),
+        "review_churn_escalated_at_count": _continuation_nonnegative_int(
+            task.get("review_churn_escalated_at_count")
+        ),
+        "consumed_at": None,
+        "consumed_by": None,
+        "consumption_reason": None,
+    }
+    state.setdefault("human_continuation_approval_nonce_registry", {})[nonce] = {
+        "task_id": task_id,
+        "approval_id": approval["approval_id"],
+        "issued_at": timestamp,
+    }
+    task["human_continuation_approval"] = approval
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "human_continuation_approval_issued",
+            "task_id": task_id,
+            "approval_id": approval["approval_id"],
+            "task_scope": task_id,
+            "reason": reason,
+            "issued_by": actor,
+            "issued_at": timestamp,
+            "expires_at": approval["expires_at"],
+            "nonce": nonce,
+        }
+    )
+    print(json.dumps(approval, ensure_ascii=False))
 
 
 def command_note(state: dict[str, Any], args: list[str]) -> None:
@@ -7166,6 +7799,8 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
                 "re-review",
                 "restore_approved",
                 "restore_approved_head",
+                "approve_continuation",
+                "set_dependencies",
             }
         )
         else None
@@ -7188,6 +7823,7 @@ READ_ONLY_COMMANDS = {
 
 MUTATING_COMMANDS = {
     "assign": command_assign,
+    "set_dependencies": command_set_dependencies,
     "start": command_start,
     "progress": command_progress,
     "note": command_note,
@@ -7205,6 +7841,7 @@ MUTATING_COMMANDS = {
     "retarget_branch": command_retarget_branch,
     "supersede": command_supersede,
     "approve": command_approve,
+    "approve_continuation": command_approve_continuation,
     "archive_migrate": command_archive_migrate,
     "sync": command_sync,
     "wave": command_wave,

@@ -262,6 +262,73 @@ make task-dependency-check \
 3. 為 CLI 新增 `archive_import` 指令，讓回溯 archive 有官方、可稽核的路徑，
    不必再靠停機窗口手動處理。
 
+## 7bis. Dependency edge 的 canonical mutation 與啟動 gate
+
+後續 dependency edge 不得透過直接編輯 `ai-status.json`、臨時腳本或
+`assign` 對既有 task 的環境變數偷渡。新增 task 時，`assign` 會驗證
+`TASK_DEPENDS_ON`；既有 task 必須使用 canonical CLI：
+
+```bash
+AI_NAME=<owner-or-reviewer> "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" \
+  set_dependencies <task-id> <dep1,dep2|-> "中文修改理由"
+```
+
+該命令在同一個 status transaction 內先檢查：self-edge、重複 edge、dangling
+task、同時存在於 live board 與 official archive 的 duplicate lifecycle、未完成
+archive，以及 candidate 可達範圍內的 cycle。檢查失敗時不會改動 task；成功時會
+在 `ai-activity-log.jsonl` 寫入 `type=dependency_update`、舊/新 edge 與修改理由。
+
+驗證會檢查被編輯 task 的可達 dependency closure。若 closure 內已有 dangling、
+self/cycle 或 archive 未完成問題，不以更新另一個 task 的方式放寬 fail-closed
+規則；操作員應先從受損節點開始，用同一個 CLI 清除或修正其 edge（例如
+`set_dependencies <task-id> - "修復既有圖譜"`），再由下游往上重建依賴。這讓修圖
+本身仍可稽核，也不會在修復期間新增另一條不合法邊。
+
+若 dependency 同時出現在 live board 與 official archive，這是 duplicate
+lifecycle，不採用 `TaskResolver` 的 live-precedence 來掩蓋衝突；所有依賴該節點
+的派工會保持 fail closed。操作員必須先依 archive/board 的正式生命週期記錄清理
+重複來源，再重試 `set_dependencies` 或 dispatch；不得用臨時覆寫或第二套 resolver
+繞過檢查。
+
+### 7bis.1 Task id 大小寫必須完全一致
+
+Board index（`task_index_from_status`）與 archive 檔案查找（`archive_task_path`）
+都建立在 `normalize_task_id` 之上，而它**只去除前後空白、不折疊大小寫**。因此
+`odp-foo-001` 與 `ODP-FOO-001` 是兩個不同的 id：前者在 board 與 archive 都查不到。
+
+graph validator 採用與 runtime 完全相同的 identity（去空白、區分大小寫）。只差在
+大小寫的 dependency 會被明確擋下，並在錯誤訊息中指出 board 上真正的 canonical id：
+
+```
+GATE-TARGET-001: dependency odp-foo-001 differs only by case from ODP-FOO-001;
+task ids are case-sensitive and this edge can never resolve
+```
+
+這一致性是刻意的。若 validator 折疊大小寫而 resolver 不折疊，最糟的組合就會成立：
+edit 通過、圖譜被判定乾淨，但該 task 永遠等在一條沒有任何東西能滿足的邊上，而稽核
+工具也不會回報任何違規。前後空白是唯一會被折疊的差異，因為 resolver 也會折疊它。
+
+`scripts/orchestrator/check_task_dependency_resolvability.py` 採用同一套 identity。
+它原本把 board 與 archive 都以 `.upper()` 建索引，因此會把只差大小寫的邊判定為可解析
+並回傳 exit code 0；這與它自己宣告的 fail-closed 契約相反，也正是上述最糟組合。現在它
+改以精確 id 比對，並在只差大小寫時指出 board/archive 上真正的 id。`--task` 是報表過濾
+條件而非派工授權，仍會以大小寫不敏感的方式解析成 board 的正式拼法，避免操作員打錯大小寫
+時掃到 0 個 task 卻印出 OK。
+
+尚未對齊者：`.orchestrator/release_lease.py` 的 `_dependency_state` 仍以 `.upper()`
+查 board（archive 端已是大小寫敏感）。那是 release lease 簽發的閘，不在本次 dependency
+dispatch gate 範圍內，另行處理；在它對齊前，不可把 lease 的判定當成 dependency 可派工
+的證據。
+
+Supervisor 對 owner execution 與 helper 的啟動使用既有 graph gate；依賴未完成、
+圖譜無法解析或含 self/cycle/dangling 時一律 fail closed。finalize 是已合併 PR
+的 immutable closeout，不是可執行 task dispatch，因此不受 dependency edge 影響，
+也不會因 `set_dependencies` 產生第二個 finalize event。已建立的 execution
+`owned_*_dispatch` queue event 只代表當時的候選資格，worker 啟動前會重讀
+canonical board 並重新驗證 dependency；stale blocked recovery 也不得只依
+blocker prose 判定可重派。這是既有 task graph 的 preflight，不另建 pause 或
+scheduler。
+
 ## 8. 回滾
 
 任一步驟出錯：

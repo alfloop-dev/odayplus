@@ -16,7 +16,7 @@ Required environment variables:
 | Variable | Required in | Purpose |
 |---|---|---|
 | `ODAY_ENV` | all | Runtime environment label. |
-| `ODAY_DATABASE_URL` | API, worker, migration | PostgreSQL connection string from secret manager. |
+| `ODAY_DATABASE_URL` | API, Web, worker, migration | PostgreSQL connection string from secret manager. |
 | `ODAY_LOG_FORMAT` | all | Use `json` for shared structured logging. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | deployed envs | Trace export endpoint. |
 

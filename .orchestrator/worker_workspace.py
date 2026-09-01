@@ -9,6 +9,9 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from common import normalize_agent_id, utc_now
+from dispatch_policy import REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY, REASON_REVIEW_READY, worker_logical_dispatch_agent_id
+import verification_evidence
 from runtime_state import ACTIVE_WORKER_STATUSES
 
 # Compatibility aliases remain exports while Supervisor callers migrate to the
@@ -707,6 +710,7 @@ def _refresh_reused_worker_worktree(
     *,
     network_timeout_seconds: float | None = None,
     materialized_paths=None,
+    required_head: str | None = None,
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree against one immutable cycle base.
 
@@ -772,6 +776,36 @@ def _refresh_reused_worker_worktree(
             return False, f"{_SKIPPED_DIRTY_WORKTREE}: {inspection.detail}"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
+    if required_head:
+        required_head = str(required_head).strip()
+        expected_head = _git_commit_oid(repo_root, required_head)
+        if not expected_head or expected_head != required_head:
+            return False, "review_head_unavailable"
+        if not local_head:
+            return False, "unverifiable_refs: missing local HEAD"
+        if local_head != expected_head:
+            review_contains_rc, _ = _git_output(
+                worktree_path, "merge-base", "--is-ancestor", local_head, expected_head
+            )
+            if review_contains_rc != 0:
+                return False, f"review_head_mismatch: local={local_head}, expected={expected_head}"
+            merge_proc = subprocess.run(
+                ["git", "merge", "--ff-only", expected_head],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if merge_proc.returncode != 0:
+                details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
+                return False, f"review_head_fast_forward_failed: {details[0] if details else 'unknown'}"
+            local_head = _git_commit_oid(worktree_path, "HEAD")
+            if local_head != expected_head:
+                return False, "review_head_fast_forward_incomplete"
+        # A reviewer must see the exact submitted commit. Once that commit has
+        # been established, the ordinary base refresh below must not advance
+        # this checkout when dev already contains it.
+        return True, f"review_head_pinned_at_{expected_head[:12]}"
     # Production passes the SHA resolved once at the beginning of this cycle.
     # Symbolic refs remain accepted only for direct diagnostic/test callers.
     base_head = _git_commit_oid(worktree_path, base_sha)
@@ -834,6 +868,34 @@ def _worker_materialized_context_paths(state: dict[str, Any], worker: dict[str, 
             paths.append(str(raw))
     return paths
 
+@_entrypoint
+def _dead_owner_continuation_eligible(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> bool:
+    """Allow recovery only for the dead task owner's execution worker."""
+    request = worker.get("request_snapshot")
+    raw_reason = (
+        request.get("reason")
+        if isinstance(request, dict)
+        else worker.get("reason")
+    )
+    if str(raw_reason or "").strip() not in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+    }:
+        return False
+    if not isinstance(task, dict):
+        return False
+    schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
+    owner = str(task.get(schema.get("assignee_field", "owner")) or "")
+    worker_agent = worker_logical_dispatch_agent_id(config, worker)
+    return bool(
+        owner
+        and worker_agent
+        and normalize_agent_id(owner) == normalize_agent_id(worker_agent)
+    )
 
 @_entrypoint
 def seal_worker_handoff(
@@ -958,7 +1020,10 @@ def sealed_owner_continuation_allowed(
     dirt fingerprint was recorded.  Reviewers and helper claims always remain
     fail-closed.
     """
-    if str(request.reason or "") != "owned_in_progress_dispatch":
+    if str(request.reason or "") not in {
+        REASON_OWNED_READY,
+        REASON_OWNED_IN_PROGRESS,
+    }:
         return False, "not_owner_execution"
     task_id = str(request.task_id or "")
     record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
@@ -1125,7 +1190,35 @@ def _generated_worker_task_brief(config: dict[str, Any], task_id: str | None) ->
         body.extend(["", "## Acceptance"])
         body.extend([f"- {item}" for item in acceptance] or ["- none"])
         body.extend(["", "## Verification"])
-        body.extend([f"- `{item}`" for item in verification] or ["- none"])
+        if verification:
+            audits = verification_evidence.audit_commands(verification)
+            for audit in audits:
+                if audit.ok:
+                    body.append(f"- `{audit.command}`")
+                else:
+                    body.append(
+                        f"- `{audit.command}` — REJECTED ({', '.join(audit.violations)}): "
+                        + "; ".join(audit.details)
+                    )
+            body.extend(
+                [
+                    "",
+                    "### Verification Evidence Policy",
+                    "- Run each command so its own exit code survives: no pipe without `set -o pipefail`,",
+                    "  no `|| true`, no `; echo ...` tail, no `set +e`, no backgrounding.",
+                    "- Record a receipt binding head SHA, exact command, real exit code, duration, and test selection.",
+                    "- A run killed by a signal or timeout is `interrupted`, never a pass, and is repeated with the",
+                    "  same selection rather than escalated to a wider suite.",
+                    "- Re-running an already-measured head SHA and selection needs an explicit retry reason.",
+                ]
+            )
+            rejected = [audit for audit in audits if not audit.ok]
+            if rejected:
+                body.append(
+                    f"- {len(rejected)} declared command(s) above are rejected by the policy and must be fixed before use."
+                )
+        else:
+            body.append("- none")
         body.append("")
         return "\n".join(body)
 
@@ -1169,6 +1262,24 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "",
         ]
     )
+
+_GITIGNORE_MAGIC = re.compile(r"([\[\]*?])")
+
+
+def _local_exclude_pattern(rel_path: str) -> str:
+    """Render one materialized path as a literal, root-anchored exclude line.
+
+    The leading ``/`` pins the pattern to the repository root and the escapes
+    keep glob metacharacters in a filename from widening it, so the entry can
+    only ever hide the exact file the supervisor just wrote and hash-verified.
+    Excluding the enclosing directory instead would also hide anything the
+    worker created there, which is dirt that must still be reported.
+    """
+    normalized = str(rel_path or "").strip().replace("\\", "/").lstrip("/")
+    if not normalized:
+        return ""
+    return "/" + _GITIGNORE_MAGIC.sub(r"\\\1", normalized)
+
 
 @_entrypoint
 def materialize_worker_context_files(
@@ -1446,6 +1557,32 @@ def materialize_worker_context_files(
                 ".orchestrator/task-briefs/",
                 ".orchestrator/reviews/",
             ]
+            # The fixed list above only covers the canonical references that
+            # every worker gets. A task's own `source_docs` land wherever the
+            # board points them -- ai-task-archive/tasks/<id>.json, for one --
+            # and the supervisor writing them is what makes the worktree
+            # untracked-dirty, so task_finalize fails closed on the
+            # orchestrator's own copy and the task can never be submitted.
+            # Only manifest entries whose paths are NOT already covered by
+            # the fixed prefix list are added. Files under .orchestrator/
+            # are covered by the existing prefixes or gitignored state and
+            # must remain visible to workspace regression tests.
+            _COVERED_PREFIXES = (
+                "AI_COLLABORATION_GUIDE.md",
+                "ai-status.json",
+                "current-work.md",
+                "ai-activity-log.jsonl",
+                ".orchestrator/",
+            )
+            for entry in manifest_entries:
+                rel = str(entry.get("relative_path") or "").strip().replace("\\", "/").lstrip("/")
+                if not rel:
+                    continue
+                if any(rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in _COVERED_PREFIXES):
+                    continue
+                pattern = _local_exclude_pattern(rel)
+                if pattern:
+                    lines_to_add.append(pattern)
             new_lines = [line for line in lines_to_add if line not in existing_exclude.splitlines()]
             if new_lines:
                 with open(exclude_path, "a", encoding="utf-8") as ef:
@@ -1579,6 +1716,12 @@ def prepare_worker_workspace(
     reused = False
     base_relation = "created_from_exact_base"
     materialized_paths = _orchestrator_materialized_paths(state, request, workspace_task_id)
+    review_submission = task_record.get("review_submission") if isinstance(task_record, dict) else None
+    required_review_head = (
+        str(review_submission.get("remote_sha") or "").strip()
+        if str(request.reason or "") == REASON_REVIEW_READY and isinstance(review_submission, dict)
+        else None
+    )
 
     # A task branch has exactly one registered lease.  `reuse_existing=false`
     # never had a safe meaning for a single branch (Git cannot check it out in
@@ -1595,6 +1738,7 @@ def prepare_worker_workspace(
             branch,
             network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
             materialized_paths=materialized_paths,
+            required_head=required_review_head,
         )
         if not refresh_ok and _is_skipped_dirty_worktree(refresh_status):
             allowed, continuation_detail = sealed_owner_continuation_allowed(
@@ -1727,7 +1871,16 @@ def prepare_worker_workspace(
         _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
         if not owner_continuation:
             clear_unsealed_worker_handoff(state, str(request.task_id or workspace_task_id))
-        if refresh_status.startswith("ff_to_"):
+        if refresh_status.startswith("review_head_pinned_at_"):
+            base_relation = "review_head_pinned"
+            request.metadata.update(
+                {
+                    "review_head_immutable": True,
+                    "review_head": required_review_head,
+                    "worktree_refresh_status": refresh_status,
+                }
+            )
+        elif refresh_status.startswith("ff_to_"):
             base_relation = "fast_forwarded"
         elif refresh_status.startswith("base_present_at_"):
             base_relation = "contains_base"
@@ -1781,7 +1934,28 @@ def prepare_worker_workspace(
             _git_ref_exists(repo_root, f"refs/heads/{branch}")
             or _git_ref_exists(repo_root, f"refs/remotes/origin/{branch}")
         )
-        created, error = _create_worker_worktree(repo_root, worktree_path, branch, base.sha)
+        creation_sha = base.sha
+        if required_review_head:
+            resolved_review_head = _git_commit_oid(repo_root, required_review_head)
+            if not resolved_review_head or resolved_review_head != required_review_head:
+                refresh_status = "review_head_unavailable"
+                message = (
+                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                    "submitted review head is unavailable locally; refusing to create a "
+                    "review checkout at the cycle base."
+                )
+                _record_worktree_lease_block(
+                    config,
+                    state,
+                    task_id=str(request.task_id or workspace_task_id),
+                    refresh_status=refresh_status,
+                    message=message,
+                    worktree_path=worktree_path,
+                    materialized_paths=materialized_paths,
+                )
+                return False, message
+            creation_sha = resolved_review_head
+        created, error = _create_worker_worktree(repo_root, worktree_path, branch, creation_sha)
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
             write_activity_log(
@@ -1798,7 +1972,7 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        if branch_preexisted:
+        if branch_preexisted or required_review_head:
             # A branch without a currently registered checkout is still an
             # existing task branch, not a new task.  Apply the same exact-SHA
             # relation check before handing it to a worker.
@@ -1809,6 +1983,7 @@ def prepare_worker_workspace(
                 branch,
                 network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                 materialized_paths=materialized_paths,
+                required_head=required_review_head,
             )
             if not refresh_ok:
                 message = (
@@ -1825,7 +2000,16 @@ def prepare_worker_workspace(
                     materialized_paths=materialized_paths,
                 )
                 return False, message
-            if refresh_status.startswith("ff_to_"):
+            if refresh_status.startswith("review_head_pinned_at_"):
+                base_relation = "review_head_pinned"
+                request.metadata.update(
+                    {
+                        "review_head_immutable": True,
+                        "review_head": required_review_head,
+                        "worktree_refresh_status": refresh_status,
+                    }
+                )
+            elif refresh_status.startswith("ff_to_"):
                 base_relation = "fast_forwarded"
             elif refresh_status.startswith("base_present_at_"):
                 base_relation = "contains_base"
@@ -2459,6 +2643,21 @@ def preserve_dead_worker_worktree(
             ),
         },
     )
+    if outcome and _dead_owner_continuation_eligible(config, worker, record):
+        handoff_seal = seal_worker_handoff(config, state, worker, record)
+        if (
+            not handoff_seal.accepted
+            and handoff_seal.reason == "owner_dirty"
+            and handoff_seal.head_sha
+            and handoff_seal.dirt_fingerprint
+        ):
+            record_unsealed_worker_handoff(
+                config,
+                state,
+                worker,
+                record,
+                handoff_seal,
+            )
     return outcome
 
 

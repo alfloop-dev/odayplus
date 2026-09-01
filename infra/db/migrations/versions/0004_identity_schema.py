@@ -37,7 +37,14 @@ def upgrade() -> None:
     with open(sql_file_path, encoding='utf-8') as f:
         sql_content = f.read()
 
-    op.execute(sa.text(sql_content))
+    connection = op.get_bind()
+    raw_conn = getattr(connection, "connection", None)
+    driver_conn = getattr(raw_conn, "driver_connection", raw_conn)
+    if driver_conn is not None and hasattr(driver_conn, "cursor"):
+        with driver_conn.cursor() as cursor:
+            cursor.execute(sql_content)
+    else:
+        op.execute(sa.text(sql_content))
 
 
 def downgrade() -> None:

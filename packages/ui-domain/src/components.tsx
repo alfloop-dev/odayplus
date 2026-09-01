@@ -133,7 +133,6 @@ const decisionAuditSteps: readonly DecisionAuditStep[] = [
   "Human decision submitted",
   "Execution started",
   "Outcome observed",
-  "Feedback written to label registry",
 ];
 
 function cx(...classes: Array<string | false | undefined>): string {

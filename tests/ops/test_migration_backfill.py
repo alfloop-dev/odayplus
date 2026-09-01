@@ -22,11 +22,26 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
     assert plan.database_url_env == "ODAY_DATABASE_URL"
     assert plan.target_revision == "head"
     assert plan.dry_run is True
-    assert [step.revision for step in plan.steps] == ["0001", "0002", "0003", "0004"]
+    assert [step.revision for step in plan.steps] == [
+        "0001",
+        "0002",
+        "0003",
+        "0004",
+        "0005",
+        "0006",
+    ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
     assert all(any(asset.role == "sql" for asset in step.assets) for step in plan.steps)
     assert plan.rollback["command"] == "alembic downgrade -1"
+    deal_outcome_step = next(step for step in plan.steps if step.revision == "0006")
+    assert deal_outcome_step.path.endswith("0006_avm_deal_outcomes.py")
+    assert {
+        asset.path
+        for asset in deal_outcome_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000014_avm_deal_outcomes.sql"}
+    assert len(deal_outcome_step.sha256) == 64
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
@@ -36,6 +51,15 @@ def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
 
     assert "infra/db/migrations/000002_data_domain_canonical_entities.sql" in asset_paths
     assert "infra/db/migrations/000002_durable_e2e_persistence.sql" not in asset_paths
+
+
+def test_identity_session_server_fields_are_part_of_alembic_head() -> None:
+    plan = build_migration_plan(environment="dev")
+    session_step = next(step for step in plan.steps if step.revision == "0005")
+    asset_paths = {asset.path for asset in session_step.assets}
+
+    assert "infra/db/migrations/000012_identity_session_server_secrets.sql" in asset_paths
+    assert session_step.path.endswith("0005_identity_session_server_secrets.py")
 
 
 def test_migration_runner_validates_manifest_without_executing() -> None:
@@ -94,9 +118,7 @@ def test_migration_runner_applies_full_assisted_intake_stack(
         include_assisted_intake=True,
     )
 
-    assert applied_urls == [
-        "postgresql+psycopg://user:pass@db/oday"
-    ]
+    assert applied_urls == ["postgresql+psycopg://user:pass@db/oday"]
     assert run.assisted_intake_schema_status == "verified"
     assert run.assisted_intake_manifest_sha256 == "a" * 64
     assert run.assisted_intake_steps == (

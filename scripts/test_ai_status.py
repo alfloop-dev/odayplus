@@ -11,12 +11,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 _TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-ai-status-tests-")
 _TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
+_TEST_CONFIG = Path(__file__).resolve().parents[1] / ".orchestrator" / "config.example.json"
 
 # Pytest imports every test module before it runs any module-level teardown.
 # test_supervisor may therefore have imported ai_status against its own
@@ -24,9 +26,13 @@ _TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
 # setUpModule below rebinds the shared module for this module's actual lifetime.
 _IMPORT_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
 _IMPORT_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+_IMPORT_CONFIG_PATH = os.environ.get("ORCH_CONFIG_PATH")
+_IMPORT_LEGACY_CONFIG_PATH = os.environ.get("PANTHEON_CONFIG_PATH")
 if "ai_status" not in sys.modules:
     os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
     os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    os.environ["ORCH_CONFIG_PATH"] = str(_TEST_CONFIG)
+    os.environ["PANTHEON_CONFIG_PATH"] = str(_TEST_CONFIG)
 try:
     import ai_status
     import multi_repo_registry
@@ -40,6 +46,14 @@ finally:
         os.environ.pop("ORCH_STATUS_ROOT", None)
     else:
         os.environ["ORCH_STATUS_ROOT"] = _IMPORT_ORCH_STATUS_ROOT
+    if _IMPORT_CONFIG_PATH is None:
+        os.environ.pop("ORCH_CONFIG_PATH", None)
+    else:
+        os.environ["ORCH_CONFIG_PATH"] = _IMPORT_CONFIG_PATH
+    if _IMPORT_LEGACY_CONFIG_PATH is None:
+        os.environ.pop("PANTHEON_CONFIG_PATH", None)
+    else:
+        os.environ["PANTHEON_CONFIG_PATH"] = _IMPORT_LEGACY_CONFIG_PATH
 
 
 _AI_STATUS_ROOT_ATTRIBUTES = (
@@ -63,16 +77,21 @@ _TASK_ARCHIVE_ROOT_ATTRIBUTES = (
 )
 _RUNTIME_STATUS_ROOT: str | None = None
 _RUNTIME_ORCH_STATUS_ROOT: str | None = None
+_RUNTIME_CONFIG_PATH: str | None = None
+_RUNTIME_LEGACY_CONFIG_PATH: str | None = None
 _ORIGINAL_AI_STATUS_PATHS: dict[str, Path] = {}
 _ORIGINAL_TASK_ARCHIVE_PATHS: dict[str, Path] = {}
 
 
 def setUpModule() -> None:
     global _RUNTIME_STATUS_ROOT, _RUNTIME_ORCH_STATUS_ROOT
+    global _RUNTIME_CONFIG_PATH, _RUNTIME_LEGACY_CONFIG_PATH
     global _ORIGINAL_AI_STATUS_PATHS, _ORIGINAL_TASK_ARCHIVE_PATHS
 
     _RUNTIME_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
     _RUNTIME_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+    _RUNTIME_CONFIG_PATH = os.environ.get("ORCH_CONFIG_PATH")
+    _RUNTIME_LEGACY_CONFIG_PATH = os.environ.get("PANTHEON_CONFIG_PATH")
     _ORIGINAL_AI_STATUS_PATHS = {
         name: getattr(ai_status, name) for name in _AI_STATUS_ROOT_ATTRIBUTES
     }
@@ -82,6 +101,12 @@ def setUpModule() -> None:
 
     os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
     os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+    # A worker inherits the Supervisor's explicit runtime config.  Use the
+    # committed example as this module's fixture so ordinary tests never read
+    # a machine-specific roster. Tests of CONFIG_FILE fallback explicitly
+    # clear these values with no_explicit_config_environment().
+    os.environ["ORCH_CONFIG_PATH"] = str(_TEST_CONFIG)
+    os.environ["PANTHEON_CONFIG_PATH"] = str(_TEST_CONFIG)
     ai_status.STATUS_ROOT = _TEST_STATUS_ROOT
     ai_status.STATUS_FILE = _TEST_STATUS_ROOT / "ai-status.json"
     ai_status.LOG_FILE = _TEST_STATUS_ROOT / "ai-activity-log.jsonl"
@@ -113,7 +138,24 @@ def tearDownModule() -> None:
         os.environ.pop("ORCH_STATUS_ROOT", None)
     else:
         os.environ["ORCH_STATUS_ROOT"] = _RUNTIME_ORCH_STATUS_ROOT
+    if _RUNTIME_CONFIG_PATH is None:
+        os.environ.pop("ORCH_CONFIG_PATH", None)
+    else:
+        os.environ["ORCH_CONFIG_PATH"] = _RUNTIME_CONFIG_PATH
+    if _RUNTIME_LEGACY_CONFIG_PATH is None:
+        os.environ.pop("PANTHEON_CONFIG_PATH", None)
+    else:
+        os.environ["PANTHEON_CONFIG_PATH"] = _RUNTIME_LEGACY_CONFIG_PATH
     _TEST_STATUS_ROOT_HANDLE.cleanup()
+
+
+def no_explicit_config_environment():
+    """Exercise CONFIG_FILE/legacy-overlay resolution without worker env."""
+    return mock.patch.dict(
+        os.environ,
+        {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": ""},
+        clear=False,
+    )
 
 
 class StatusRootRoutingTests(unittest.TestCase):
@@ -1307,7 +1349,12 @@ class SidecarTaskTests(unittest.TestCase):
                 {"name": "Copilot", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Helper", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
             ],
-            "tasks": [],
+            "tasks": [
+                # The sidecar below intentionally declares this dependency;
+                # keep the upstream task on the live board so the fixture
+                # satisfies the canonical no-dangling graph rule.
+                {"id": "PER-001", "status": "done", "depends_on": []},
+            ],
             "handoffs": [],
             "blockers": [],
             "workload": {},
@@ -3744,6 +3791,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
         mock_res = mock.Mock(returncode=0, stdout=f"{sha_initial}\trefs/heads/task/{task_id}\n")
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "alfloop-dev/odayplus"}, clear=False), \
+             mock.patch.object(ai_status, "task_repository_slug_safe", return_value="alfloop-dev/odayplus"), \
              mock.patch("subprocess.run", return_value=mock_res) as mock_run:
             ai_status.clear_ai_status_caches()
             # First ordinary call populates cache
@@ -3940,6 +3988,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
         mock_run.returncode = 0
 
         with mock.patch.object(ai_status, "resolve_task_sha", return_value="sha123"), \
+             mock.patch.object(ai_status, "task_repository_slug_safe", return_value="owner/repo"), \
              mock.patch.object(ai_status, "get_repository_slug_safe", return_value="owner/repo"), \
              mock.patch.object(ai_status, "get_gh_executable", return_value="gh"), \
              mock.patch("subprocess.run", return_value=mock_run) as mock_subprocess:
@@ -4435,6 +4484,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
 
             with (
+                no_explicit_config_environment(),
                 mock.patch.object(ai_status, "CONFIG_FILE", config_file),
                 mock.patch.object(
                     ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay
@@ -4463,6 +4513,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
 
             with (
+                no_explicit_config_environment(),
                 mock.patch.object(ai_status, "CONFIG_FILE", config_file),
                 mock.patch.object(
                     ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay
@@ -4488,6 +4539,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             )
 
             with (
+                no_explicit_config_environment(),
                 mock.patch.object(ai_status, "CONFIG_FILE", config_file),
                 mock.patch.object(ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", status_overlay),
             ):
@@ -4501,7 +4553,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
         import common
 
         self.assertEqual(common.DEFAULT_CONFIG_PATH, ai_status.CONFIG_FILE)
-        with mock.patch.object(
+        with no_explicit_config_environment(), mock.patch.object(
             common, "load_config", return_value={"agents": {"nessie": {"display_name": "Nessie9"}}}
         ) as load_config:
             ai_status._MERGED_CONFIG_CACHE.clear()
@@ -4518,7 +4570,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             )
             with mock.patch.dict(
                 ai_status.os.environ,
-                {"PANTHEON_CONFIG_PATH": str(runtime)},
+                {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime)},
                 clear=False,
             ):
                 names = ai_status.configured_agent_names()
@@ -4549,7 +4601,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
             with (
                 mock.patch.dict(
                     ai_status.os.environ,
-                    {"PANTHEON_CONFIG_PATH": str(runtime)},
+                    {"ORCH_CONFIG_PATH": "", "PANTHEON_CONFIG_PATH": str(runtime)},
                     clear=False,
                 ),
                 mock.patch.object(
@@ -4761,6 +4813,7 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "re_review": [TASK_ID, "re-reviewing"],
         "re-review": [TASK_ID, "re-reviewing"],
         "submit_review": [TASK_ID, "123", "submit for review"],
+        "set_dependencies": [TASK_ID, "-", "clear dependencies"],
         "handoff": [TASK_ID, "Codex2", "please review"],
         "blocker": [TASK_ID, "blocked", "Codex2"],
         "retarget_blocker": [TASK_ID, "Codex2", "repair"],
@@ -4771,6 +4824,7 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "done": [TASK_ID, "finished"],
         "supersede": [TASK_ID, "superseded"],
         "approve": [TASK_ID, "approved"],
+        "approve_continuation": [TASK_ID, "operator approved review-churn continuation", "2099-01-01T00:00:00Z", "nonce-test"],
         "archive_migrate": [],
         "wave open": ["open", "W-2026-07-29"],
         "wave close": ["close"],
@@ -4815,6 +4869,125 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         ]
         self.assertEqual([], offenders)
         self.assertFalse(hasattr(ai_status, "current_actor"))
+
+
+class HumanContinuationApprovalTests(unittest.TestCase):
+    def _task(self, **updates: Any) -> dict[str, Any]:
+        task: dict[str, Any] = {
+            "id": "ODP-CONTINUATION-001",
+            "title": "Review churn recovery",
+            "owner": "Codex2",
+            "reviewer": "Claude2",
+            "status": "blocked",
+            "waiting_for": "Human/Ops",
+            "review_reopen_count": 6,
+            "review_churn_escalated_at_count": 6,
+            "review_churn_escalated_at": "2026-08-30T18:00:00Z",
+            "next": "Escalated to Human/Ops after repeated review churn.",
+        }
+        task.update(updates)
+        return task
+
+    def _state(self, task: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "tasks": [task or self._task()],
+            "agents": [],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+    def test_human_ops_issues_scoped_expiring_nonce_bound_approval(self) -> None:
+        state = self._state()
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "append_log") as append_log,
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            ai_status.command_approve_continuation(
+                state,
+                [
+                    "ODP-CONTINUATION-001",
+                    "Reviewed the churn evidence and authorize one implementation continuation.",
+                    "2099-01-01T00:00:00Z",
+                    "nonce-continuation-1",
+                ],
+            )
+
+        approval = state["tasks"][0]["human_continuation_approval"]
+        self.assertEqual(approval["status"], "issued")
+        self.assertEqual(approval["task_id"], "ODP-CONTINUATION-001")
+        self.assertEqual(approval["task_scope"], "ODP-CONTINUATION-001")
+        self.assertEqual(approval["scope"], {"task_id": "ODP-CONTINUATION-001"})
+        self.assertEqual(approval["issued_by"], "Human/Ops")
+        self.assertEqual(approval["nonce"], "nonce-continuation-1")
+        self.assertEqual(
+            state["human_continuation_approval_nonce_registry"]["nonce-continuation-1"]["approval_id"],
+            approval["approval_id"],
+        )
+        self.assertEqual(append_log.call_args.args[0]["type"], "human_continuation_approval_issued")
+
+    def test_non_human_cannot_issue_and_hard_gate_is_not_eligible(self) -> None:
+        state = self._state()
+        before = json.dumps(state, sort_keys=True)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex2"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "Only Human/Ops"):
+                ai_status.command_approve_continuation(
+                    state,
+                    ["ODP-CONTINUATION-001", "reason", "2099-01-01T00:00:00Z"],
+                )
+        self.assertEqual(before, json.dumps(state, sort_keys=True))
+
+        deployment_task = self._task(next="Review churn is also blocked pending production deployment approval.")
+        self.assertIn("independent", ai_status.continuation_approval_gate_error(deployment_task) or "")
+
+    def test_production_deployment_title_does_not_block_review_churn_approval(self) -> None:
+        task = self._task(
+            title="Production deployment continuation",
+            summary="Deployment recovery for the production lane",
+            summary_zh="production deployment 修復",
+            blocker="Review churn only after repeated reviewer reopenings.",
+        )
+        state = self._state(task)
+        self.assertNotIn("production", ai_status.blocked_task_prose_context(task))
+        self.assertNotIn("deployment", ai_status.blocked_task_prose_context(task))
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False),
+            mock.patch.object(ai_status, "append_log"),
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+        ):
+            ai_status.command_approve_continuation(
+                state,
+                [
+                    "ODP-CONTINUATION-001",
+                    "Authorize one continuation for the review-churn epoch.",
+                    "2099-01-01T00:00:00Z",
+                    "nonce-production-topic-only",
+                ],
+            )
+
+        self.assertEqual(state["tasks"][0]["human_continuation_approval"]["status"], "issued")
+
+    def test_expired_and_reused_nonce_are_rejected_before_mutation(self) -> None:
+        state = self._state()
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "future"):
+                ai_status.command_approve_continuation(
+                    state,
+                    ["ODP-CONTINUATION-001", "too late", "2020-01-01T00:00:00Z", "nonce-expired"],
+                )
+            ai_status.command_approve_continuation(
+                state,
+                ["ODP-CONTINUATION-001", "one use", "2099-01-01T00:00:00Z", "nonce-once"],
+            )
+        approval = state["tasks"][0].pop("human_continuation_approval")
+        approval["status"] = "consumed"
+        state["tasks"][0]["human_continuation_approval_history"] = [approval]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Human/Ops"}, clear=False):
+            with self.assertRaisesRegex(SystemExit, "already been used"):
+                ai_status.command_approve_continuation(
+                    state,
+                    ["ODP-CONTINUATION-001", "replay", "2099-01-01T00:00:00Z", "nonce-once"],
+                )
 
 
 class HistoricalClosemergeProvenanceTests(unittest.TestCase):
