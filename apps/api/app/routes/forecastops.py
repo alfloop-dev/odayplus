@@ -781,19 +781,6 @@ else:
         ) -> dict[str, Any]:
             return _handle_create_feedback(body, request)
 
-        @router.post(
-            "/feedback",
-            status_code=status.HTTP_201_CREATED,
-            include_in_schema=False,
-            dependencies=[
-                Depends(require_permission("forecastops", Action.CREATE, engine=authz_engine))
-            ],
-        )
-        def create_feedback_alias(
-            body: ForecastOpsFeedbackCreatePayload, request: Request
-        ) -> dict[str, Any]:
-            return _handle_create_feedback(body, request)
-
         def _handle_list_feedbacks(
             request: Request,
             store_id: str | None = None,
@@ -825,23 +812,6 @@ else:
                 request, store_id=store_id, feedback_type=feedback_type, status=status
             )
 
-        @router.get(
-            "/feedback",
-            include_in_schema=False,
-            dependencies=[
-                Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))
-            ],
-        )
-        def list_feedbacks_alias(
-            request: Request,
-            store_id: str | None = None,
-            feedback_type: str | None = None,
-            status: str | None = None,
-        ) -> dict[str, Any]:
-            return _handle_list_feedbacks(
-                request, store_id=store_id, feedback_type=feedback_type, status=status
-            )
-
         def _handle_get_feedback(feedback_id: str, request: Request) -> dict[str, Any]:
             active_tenant_id = tenant_id(request)
             feedback = service.get_feedback(active_tenant_id, feedback_id)
@@ -856,16 +826,6 @@ else:
             ],
         )
         def get_feedback(feedback_id: str, request: Request) -> dict[str, Any]:
-            return _handle_get_feedback(feedback_id, request)
-
-        @router.get(
-            "/feedback/{feedback_id}",
-            include_in_schema=False,
-            dependencies=[
-                Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))
-            ],
-        )
-        def get_feedback_alias(feedback_id: str, request: Request) -> dict[str, Any]:
             return _handle_get_feedback(feedback_id, request)
 
         def _handle_approve_feedback(
@@ -926,20 +886,6 @@ else:
         ) -> dict[str, Any]:
             return _handle_approve_feedback(feedback_id, body, request)
 
-        @router.post(
-            "/feedback/{feedback_id}/approve",
-            include_in_schema=False,
-            dependencies=[
-                Depends(require_permission("data", Action.APPROVE, engine=authz_engine))
-            ],
-        )
-        def approve_feedback_alias(
-            feedback_id: str,
-            body: ForecastOpsFeedbackApprovePayload,
-            request: Request,
-        ) -> dict[str, Any]:
-            return _handle_approve_feedback(feedback_id, body, request)
-
         def _handle_reject_feedback(
             feedback_id: str,
             body: ForecastOpsFeedbackRejectPayload,
@@ -991,20 +937,6 @@ else:
             ],
         )
         def reject_feedback(
-            feedback_id: str,
-            body: ForecastOpsFeedbackRejectPayload,
-            request: Request,
-        ) -> dict[str, Any]:
-            return _handle_reject_feedback(feedback_id, body, request)
-
-        @router.post(
-            "/feedback/{feedback_id}/reject",
-            include_in_schema=False,
-            dependencies=[
-                Depends(require_permission("data", Action.APPROVE, engine=authz_engine))
-            ],
-        )
-        def reject_feedback_alias(
             feedback_id: str,
             body: ForecastOpsFeedbackRejectPayload,
             request: Request,
