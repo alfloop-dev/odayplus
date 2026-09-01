@@ -1,0 +1,65 @@
+{
+  "task_id": "ODP-WEB-OAUTH-GATE-RETARGET-001",
+  "title": "以帳密預設驗證收據取代 rollout 的舊 OAuth 人工 gate",
+  "phase": "Wave Auth 3 - Gate Retarget",
+  "owner": "Antigravity4",
+  "reviewer": "Claude",
+  "created_at": "2026-09-01T15:26:00Z",
+  "secret_values_redacted": true,
+  "retarget_decision": {
+    "action": "RETARGET_OAUTH_GATE_TO_PASSWORD_FIRST_VERIFICATION",
+    "rationale": "Following the merge and verification of password-first authentication and optional OIDC deployment, the dev/staging/prod rollout dependency on the legacy human OAuth gate is retargeted to verified password-first security receipts. Google OAuth is repositioned as an optional enablement task rather than a deployment prerequisite.",
+    "premature_unblock_prevented": true
+  },
+  "prerequisites": {
+    "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_number": 1096,
+      "approved_head": "69422d71e8d5ac572ade58562c0aeca28d123648",
+      "merge_commit": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+      "target_branch": "dev",
+      "reviewer": "Codex2",
+      "verified_evidence": "Web route suite 53 files / 474 tests passed; Python security E2E, login throttle wiring, conditional OIDC, and Terraform contract checks passed. Secret values redacted."
+    },
+    "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001": {
+      "status": "done",
+      "terminal_outcome": "completed",
+      "pr_number": 1074,
+      "approved_head": "6e810a9f366ea6994062f6c61820cea2f7b51b4f",
+      "merge_commit": "6e810a9f366ea6994062f6c61820cea2f7b51b4f",
+      "target_branch": "dev",
+      "reviewer": "Codex2",
+      "verified_evidence": "Conditional OIDC Terraform & workflow validation passed; local password default requires no Google OAuth client or secret."
+    }
+  },
+  "rollout_retarget_matrix": {
+    "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
+      "previous_blocker": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001 (Human operator creating GCP Secret Manager web OIDC client secrets)",
+      "current_auth_prerequisite": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 (DONE - PR #1096) & ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 (DONE - PR #1074)",
+      "status": "blocked (on valid non-OAuth blockers: ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001 & DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001)",
+      "auth_gate_cleared": true
+    },
+    "HUMAN-GCP-WEB-OAUTH-CLIENTS-001": {
+      "status": "todo",
+      "task_class": "human_gate",
+      "repositioned_as": "Optional Google OIDC Enablement Gate",
+      "is_deployment_prerequisite": false,
+      "deleted": false,
+      "completed": false,
+      "note": "Retained for future operator enablement of Google OIDC provider; not a prerequisite for local password-first deployment."
+    }
+  },
+  "dag_integrity_audit": {
+    "rollout_gates_preserved": [
+      "Candidate-Built / Build Once Gate (Cosign, CycloneDX SBOM, Bandit SAST, Secret scan)",
+      "Dev-Verified / Dev Integration Gate (API/Web authenticated health, Direct VPC, provider-off, default-deny egress)",
+      "Staging-Verified / Ephemeral Staging 9-Stage Rehearsal Gate (isolated DB, tenant, masked snapshot, rollback rehearsal)",
+      "Prod-Admitted / Production Blue-Green Gate (0% candidate smoke, 100% atomic switch, Human GO, backup checkpoint)",
+      "Release-Complete / Watch Window & Archive Gate"
+    ],
+    "no_rollout_gates_bypassed": true,
+    "external_providers_disabled_enforced": true,
+    "default_deny_egress_enforced": true
+  }
+}
