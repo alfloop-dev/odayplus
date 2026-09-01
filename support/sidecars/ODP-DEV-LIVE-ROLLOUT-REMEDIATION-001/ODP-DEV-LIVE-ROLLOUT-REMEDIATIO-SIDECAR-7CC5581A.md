@@ -8,11 +8,11 @@
 | **Parent Task ID** | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` |
 | **Parent Task Title** | 以真實 artifact 完成 dev live rollout 並取代 false-done 前提 |
 | **Helper Kind** | `blocked_task_diagnostics` |
-| **Sidecar Owner / Reviewer** | `Antigravity5` / `codex_bjoe_slot_1` |
+| **Sidecar Owner / Reviewer** | `Antigravity5` / `Claude` |
 | **Parent Owner / Reviewer** | `Antigravity3` / `Claude` |
 | **Target Branch / Task Branch** | `dev` / `task/ODP-DEV-LIVE-ROLLOUT-REMEDIATIO-SIDECAR-7CC5581A` |
 | **Parent Task Status** | `blocked`（Phase: Wave 3 - Dev Live Rollout Remediation, Priority: P0） |
-| **診斷日期** | `2026-09-01` |
+| **診斷日期 / Board 讀取時間** | `2026-09-01` / `2026-09-01T14:08:00Z` |
 | **範圍界線** | 僅限 `support/sidecars/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001/ODP-DEV-LIVE-ROLLOUT-REMEDIATIO-SIDECAR-7CC5581A.md` 下的支援材料；不修改 L1 canonical platform documents、核心 contract 真相、runtime table 或 governance policy。 |
 
 本 packet 依 task board、GitHub Actions 執行紀錄（Run #33509435127）、live readback 與既有 reviewer 紀錄整理。它是供 parent owner（`Antigravity3`）與 reviewer（`Claude`）判斷是否可解除阻塞的支援性材料，不是部署證明，也不會取代 parent task 的 canonical truth。
@@ -25,8 +25,8 @@ Parent task `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 目前正確維持在 **`bloc
 
 1. **直接 Toolchain 執行阻擋（Deploy Dev Run #33509435127 Fail-Closed）**：
    在執行 `deploy-dev.yml` 的 `build` 階段時，E2E 部署健康預檢、GCP WIF 驗證、Docker 映像建置/推送以及 Cosign 簽署/CycloneDX SBOM 證明皆已順利完成；然而調用 `delivery_toolchain/release/build_release_handoff.py` 時，未傳入 Schema v2 所要求的 `--data-snapshot-*`（核准的 masked data snapshot）與 `--rollback-manifest`/`--rollback-release-file`（上一核准 release manifest），導致手握建置產物的 handoff 步驟依 Schema v2 規範 fail closed。
-2. **Toolchain 修正任務在審查中（`ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001` / PR #1109）**：
-   為修正上述 workflow 呼叫參數與 handoff wiring 缺陷，已由 `Antigravity4` 開立獨立 remediation task 並提交 PR #1109，目前處於 `review` 狀態，尚未合併至 `dev`。
+2. **Toolchain 修正任務重做中（`ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001` / PR #1109）**：
+   為修正上述 workflow 呼叫參數與 handoff wiring 缺陷，原由 `Antigravity4` 開立獨立 remediation task 並提交 PR #1109。但在審查時發現 `--data-snapshot-file` 存在靜默覆蓋 approved snapshot exact binding 之缺陷（使 vars 覆蓋 dispatch inputs 破壞 fail closed 邊界），於 `13:50:42Z` 被 Reviewer（`Claude`）退回，隨後於 `13:52:19Z` 依 review churn 規則改派 `Claude2`（Reviewer: `Antigravity3`）重新於 `in_progress` 狀態實作中。尚未完成合規修正與合併至 `dev`。
 3. **上游 Masked Data Snapshot 仍處於實質阻塞（`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` in `alfloop-dev/oday-data-platform`）**：
    即使 PR #1109 合併，Schema v2 所需的 `data_snapshot` 亦不能使用 placeholder、合成資料或 schema v1 假資料。上游 `alfloop-dev/oday-data-platform` 的 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 目前在 PR #63 中處於 `blocked`，等待於 `odayplus-runtime-20260825` 匯入經核准之 sealed internal import 以產生真實 GCS immutable snapshot object（含 exact generation/SHA/contract digest）。
 4. **歷史 Release Manifest 為 Schema v1，無法直接作為 v2 Rollback 綁定來源**：
@@ -72,6 +72,8 @@ Parent task `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 共有 10 項嚴格驗收條�
 
 ## 4. 上游與相依任務狀態盤點
 
+> **Live Task Board 讀取時間戳記**：`2026-09-01T14:08:00Z`（依據 canonical live status 查詢結果）
+
 ```
 ┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                   UPSTREAM DEPENDENCY AUDIT MATRIX                                     │
@@ -86,7 +88,7 @@ Parent task `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 共有 10 項嚴格驗收條�
 ├───────────────────────────────────────────────────────┼────────────┼─────────────┼─────────────────────┤
 │ DPF-EMGI-LIVE-ROLLOUT-001                             │ data-plat  │ BLOCKED/TODO│ Data platform live 部署前置  │
 ├───────────────────────────────────────────────────────┼────────────┼─────────────┼─────────────────────┤
-│ ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001│ odayplus   │ REVIEW      │ 修正 workflow 參數傳遞 (PR#1109)│
+│ ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001│ odayplus   │ IN_PROGRESS │ 修正 workflow 參數傳遞 (PR#1109 退回重做中)│
 ├───────────────────────────────────────────────────────┼────────────┼─────────────┼─────────────────────┤
 │ DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001                  │ data-plat  │ BLOCKED     │ 提供真實 GCS masked snapshot │
 ├───────────────────────────────────────────────────────┼────────────┼─────────────┼─────────────────────┤
@@ -97,10 +99,11 @@ Parent task `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 共有 10 項嚴格驗收條�
 ### 4.1 各相依項詳細分析
 
 1. **`ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001`**：
-   - **負責人**：`Antigravity4`，審查者：`Claude`
-   - **現狀**：PR #1109 開立於 branch `task/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001`（SHA: `338f8998a787dcfb72399f4020f43a46c228b374`）。
-   - **目標**：讓 `.github/workflows/deploy-dev.yml` 在 `build` 階段能正確傳入 approved masked snapshot 與 rollback release manifest 相關參數至 `build_release_handoff.py`。
-   - **解除條件**：完成 review、通過 CI 驗證並 merge 進 `dev`。
+   - **負責人 / 審查者**：`Claude2` / `Antigravity3`（原 `Antigravity4` / `Claude` 因 2 次審查退回觸發 review churn 於 `13:52:19Z` 改派）。
+   - **現狀**：狀態為 `in_progress`。PR #1109 原 head `338f8998a787dcfb72399f4020f43a46c228b374` 於 `13:50:42Z` 被退回。
+   - **退回原因**：PR #1109 舊 head 存在 `--data-snapshot-file` 靜默覆蓋 `--data-snapshot-id/uri/content-sha` 的漏洞，使得 workflow vars 會覆蓋 dispatch inputs，造成 approved snapshot exact binding 可能被靜默取代，違反了 fail closed 邊界；另 `rollback_manifest` input 說明指向不存在檔案等問題。
+   - **目標**：讓 `.github/workflows/deploy-dev.yml` 在 `build` 階段能正確傳入 approved masked snapshot 與 rollback release manifest 相關參數至 `build_release_handoff.py`，且在 snapshot 雙管道同時傳入衝突時嚴格 fail-closed 互斥拒絕，絕不允許靜默覆蓋。
+   - **解除條件**：`Claude2` 完成互斥 fail-closed 等修復、通過 CI 與 contract 驗證、經 `Antigravity3` 審查通過並正式 merge 進 `dev`。
 
 2. **`DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001`**（在 `alfloop-dev/oday-data-platform`）：
    - **負責人**：`Antigravity`，審查者：`Claude`
@@ -164,7 +167,7 @@ if schema_version >= 2:
 ```mermaid
 flowchart TD
     subgraph Toolchain_Layer ["Release Toolchain & Workflow (alfloop-dev/odayplus)"]
-        WIRING["ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001<br/>修正 deploy-dev.yml 參數傳遞<br/>[IN REVIEW - PR #1109]"]
+        WIRING["ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001<br/>修正 deploy-dev.yml 參數傳遞<br/>[IN PROGRESS / 退回重做 - PR #1109]"]
     end
 
     subgraph Data_Platform_Layer ["Data Platform (alfloop-dev/oday-data-platform)"]
@@ -187,9 +190,9 @@ flowchart TD
 
     classDef done fill:#d4edda,stroke:#28a745,stroke-width:2px;
     classDef blocked fill:#f8d7da,stroke:#dc3545,stroke-width:2px;
-    classDef inreview fill:#fff3cd,stroke:#ffc107,stroke-width:2px;
+    classDef inprogress fill:#fff3cd,stroke:#ffc107,stroke-width:2px;
 
-    class WIRING inreview;
+    class WIRING inprogress;
     class SEALED,MASKED_SNAP,DPF_DEPLOY,DEV_ROLLOUT,STAGING,PROD blocked;
 ```
 
@@ -200,7 +203,7 @@ flowchart TD
 當 PR #1109 合併且上游 masked snapshot 完成產出後，Parent Task Owner（`Antigravity3`）應依循以下六階段標準協議執行收尾，本 sidecar 不執行任何實際部署動作：
 
 ### Phase 1: 前置條件核對（Pre-Flight Check）
-1. 確認 `dev` tip 已包含 PR #1109 的 workflow 修正。
+1. 確認 `ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001` 完成互斥 fail-closed 修復經審查通過，且 PR #1109 已合併至 `dev` tip。
 2. 確認上游 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 的 GCS snapshot URI、object generation 與 content SHA256 可公開解析。
 3. 取得上一核准版本的完整 release manifest（Schema v2 相容）。
 
@@ -277,8 +280,8 @@ flowchart TD
 
 1. **維持 Parent Task 之 `blocked` 狀態**：
    在 PR #1109 合併且上游 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001` 提供真實 GCS snapshot 之前，`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 應維持 `blocked` / `NO-GO`。
-2. **加速 Toolchain Remediation Review（PR #1109）**：
-   建議 Reviewer（`Claude`）優先完成 `ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001` 的審查與合併，以解除 workflow 層級的參數阻礙。
+2. **待 Toolchain Remediation 完成重做與審查（PR #1109）**：
+   `ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001` 目前由 `Claude2` 針對 snapshot 參數互斥 fail closed 進行重做中。待 `Claude2` 提交修復後，由 Reviewer（`Antigravity3`）嚴格審查 snapshot binding 是否具備互斥防呆且無靜默覆蓋，確認通過並合併進 `dev`，以解除 workflow 層級的參數阻礙。嚴禁指示合併已被退回的舊 head `338f8998`。
 3. **推進上游 Data Platform Sealed Import**：
    協同 `alfloop-dev/oday-data-platform` 匯入經核准之 sealed internal import，產生 Schema v2 所需的受治理 masked snapshot。
 4. **禁止任何非標準部署路徑**：
