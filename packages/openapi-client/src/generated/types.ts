@@ -563,6 +563,7 @@ export type ForecastOpsAlertAcknowledgePayload = {
 /** ForecastOpsAlertBackfillPayload */
 export type ForecastOpsAlertBackfillPayload = {
   actor?: string | null;
+  as_of?: string | null;
   evaluation_horizon_days?: number;
   min_observations?: number | null;
   store_id?: string | null;

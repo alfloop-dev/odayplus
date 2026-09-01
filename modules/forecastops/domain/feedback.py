@@ -196,6 +196,7 @@ class ForecastFeedback:
                 raise ForecastOpsError("alert_id is required for ALERT_DISPOSITION")
             if not str(disposition or "").strip():
                 raise ForecastOpsError("disposition is required for ALERT_DISPOSITION")
+            disposition = AlertDisposition.from_str(disposition).value
             status = FeedbackStatus.ACCEPTED
 
         return cls(
@@ -454,8 +455,10 @@ def backfill_alert_precision(
 ) -> tuple[list[Alert], dict[str, Any]]:
     """Backfill deterioration_confirmed_at and disposition for alerts per policy thresholds (ODP-FR-FCT-006).
 
-    - deterioration_confirmed_at: The earliest date at or after opened_at where actual
-      performance breached the policy threshold for that alert level within the evaluation horizon.
+    - deterioration_confirmed_at: The earliest date strictly after opened_at where actual
+      performance breached the same policy threshold that produced the alert, within
+      the evaluation horizon.  The opened day is the trigger evidence and is never
+      reused as an outcome confirmation.
     - disposition:
       - TRUE_POSITIVE: deterioration breached threshold within evaluation window.
       - FALSE_POSITIVE: evaluation window elapsed with sufficient observations and no deterioration.
@@ -472,6 +475,7 @@ def backfill_alert_precision(
         raise ForecastOpsError("min_observations must be greater than zero")
 
     eval_now = now or datetime.now(UTC)
+    as_of_d = _utc_datetime(as_of).date() if as_of is not None else None
     min_obs_required = (
         max(1, min_observations)
         if min_observations is not None
@@ -569,10 +573,15 @@ def backfill_alert_precision(
         )
         threshold_value = thresholds.get(lvl, thresholds[AlertLevel.YELLOW])
 
-        # Observations strictly within the evaluation horizon [open_d, horizon_end_d]
+        # The observation on open_d is the signal that triggered the alert.  It is
+        # not an outcome that can confirm the alert, so confirmation must use a
+        # subsequent business day while keeping the same policy threshold.
+        # The horizon endpoint remains inclusive: a 28-day horizon covers the
+        # 28 post-opening dates open_d + 1 through open_d + 28.
         store_obs_in_window = [
             o for o in obs_by_store.get(alert.store_id, [])
-            if open_d <= o.business_date <= horizon_end_d
+            if open_d < o.business_date <= horizon_end_d
+            and (as_of_d is None or o.business_date <= as_of_d)
         ]
 
         # Valid observations in window: must have a positive baseline to evaluate sitescore gap
@@ -612,9 +621,13 @@ def backfill_alert_precision(
                 now=eval_now,
             )
         else:
-            all_store_obs = obs_by_store.get(alert.store_id, [])
+            all_store_obs = [
+                o
+                for o in obs_by_store.get(alert.store_id, [])
+                if as_of_d is None or o.business_date <= as_of_d
+            ]
             max_obs_d = max((o.business_date for o in all_store_obs), default=open_d)
-            curr_eval_d = as_of.date() if as_of else max_obs_d
+            curr_eval_d = as_of_d or max_obs_d
             window_elapsed = max_obs_d >= horizon_end_d or curr_eval_d >= horizon_end_d
             has_sufficient_obs = len(valid_obs_in_window) >= min_obs_required
 

@@ -589,6 +589,8 @@ class ForecastOpsService:
             observations = [obs for s in all_series for obs in s.observations]
             feedbacks = self.repository.list_feedbacks(tenant_id)
 
+        original_alerts = {alert.alert_id: alert for alert in alerts}
+
         updated_alerts, metrics = backfill_alert_precision(
             alerts,
             observations=observations,
@@ -601,13 +603,19 @@ class ForecastOpsService:
             now=now,
         )
 
-        for alert in updated_alerts:
+        changed_alerts = [
+            alert
+            for alert in updated_alerts
+            if original_alerts.get(alert.alert_id) != alert
+        ]
+        for alert in changed_alerts:
             self.repository.save_alert(alert)
 
         return {
             "tenant_id": tenant_id,
             "store_id": store_id,
-            "updated_count": len(updated_alerts),
+            "updated_count": len(changed_alerts),
+            "as_of": _utc_datetime(as_of).isoformat() if as_of is not None else None,
             "metrics": metrics,
             "alerts": [a.to_dict() for a in updated_alerts],
         }

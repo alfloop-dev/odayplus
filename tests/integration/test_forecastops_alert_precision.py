@@ -153,13 +153,30 @@ def test_api_alert_precision_endpoints() -> None:
     # 2. Trigger backfill via POST /forecastops/alerts/backfill-precision
     backfill_resp = client.post(
         "/forecastops/alerts/backfill-precision",
-        json={"store_id": "store-api-prec-1", "evaluation_horizon_days": 28},
+        json={
+            "store_id": "store-api-prec-1",
+            "evaluation_horizon_days": 28,
+            "as_of": "2026-06-30T00:00:00Z",
+        },
     )
     assert backfill_resp.status_code == 200
     b_body = backfill_resp.json()
     assert b_body["updated_count"] == 1
+    assert b_body["as_of"] == "2026-06-30T00:00:00+00:00"
     assert b_body["metrics"]["false_positive_count"] == 1
     assert b_body["metrics"]["precision"] == 0.0
+
+    # The second run processes the same alert but makes no state change.
+    replay_resp = client.post(
+        "/forecastops/alerts/backfill-precision",
+        json={
+            "store_id": "store-api-prec-1",
+            "evaluation_horizon_days": 28,
+            "as_of": "2026-06-30T00:00:00Z",
+        },
+    )
+    assert replay_resp.status_code == 200
+    assert replay_resp.json()["updated_count"] == 0
 
     # 3. Query GET /forecastops/alerts/precision
     prec_resp = client.get("/forecastops/alerts/precision")
@@ -167,3 +184,57 @@ def test_api_alert_precision_endpoints() -> None:
     p_body = prec_resp.json()
     assert p_body["false_positive_count"] == 1
     assert p_body["total_alerts"] == 1
+
+
+def test_api_alert_precision_backfill_maps_policy_and_argument_errors() -> None:
+    repository = InMemoryForecastOpsRepository()
+    valid_policy = _policy_repository()
+    seed_service = ForecastOpsService(
+        repository=repository,
+        policy_repository=valid_policy,
+    )
+    seed_service.forecast(
+        [
+            ForecastInput(
+                tenant_id=TENANT_ID,
+                store_id="store-api-policy-missing",
+                observations=(
+                    StoreDayObservation(
+                        store_id="store-api-policy-missing",
+                        business_date=date(2026, 5, 31),
+                        actual_revenue=60_000.0,
+                        site_score_baseline_p50=100_000.0,
+                    ),
+                ),
+                prediction_origin_time=PREDICTION_TIME,
+            )
+        ],
+        scored_at=PREDICTION_TIME,
+    )
+
+    # The alert exists, but the route's policy registry has no in-force row.
+    app = create_app(
+        forecastops_repository=repository,
+        forecastops_policy_repository=InMemoryDecisionPolicyRepository(),
+    )
+    client = TestClient(app, headers=FORECASTOPS_HEADERS)
+    missing_policy = client.post(
+        "/forecastops/alerts/backfill-precision",
+        json={"store_id": "store-api-policy-missing"},
+    )
+    assert missing_policy.status_code == 422
+    assert missing_policy.json()["detail"]["code"] == "POLICY_RESOLUTION_ERROR"
+
+    zero_horizon = client.post(
+        "/forecastops/alerts/backfill-precision",
+        json={"evaluation_horizon_days": 0},
+    )
+    assert zero_horizon.status_code == 422
+    assert "evaluation_horizon_days" in str(zero_horizon.json()["detail"])
+
+    zero_min_observations = client.post(
+        "/forecastops/alerts/backfill-precision",
+        json={"min_observations": 0},
+    )
+    assert zero_min_observations.status_code == 422
+    assert "min_observations" in str(zero_min_observations.json()["detail"])

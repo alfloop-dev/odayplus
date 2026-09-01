@@ -52,6 +52,7 @@ def test_alert_disposition_enum_parsing() -> None:
     assert AlertDisposition.from_str("true_positive") is AlertDisposition.TRUE_POSITIVE
     assert AlertDisposition.from_str("FALSE_POSITIVE") is AlertDisposition.FALSE_POSITIVE
     assert AlertDisposition.from_str("KNOWN_CONTEXT") is AlertDisposition.KNOWN_CONTEXT
+    assert AlertDisposition.from_str("Known Context") is AlertDisposition.KNOWN_CONTEXT
     assert AlertDisposition.from_str("UNRESOLVED") is AlertDisposition.UNRESOLVED
 
     with pytest.raises(ForecastOpsError, match="Invalid alert disposition"):
@@ -279,6 +280,47 @@ def test_backfill_alert_precision_logic() -> None:
     assert metrics["evaluated_alert_count"] == 2
     assert metrics["precision"] == 0.5
     assert metrics["mean_lead_time_days"] == 7.0
+
+
+def test_backfill_does_not_reuse_opening_signal_as_deterioration() -> None:
+    """The opening-day breach is the trigger, not a post-alert outcome."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(
+        alert_id="a-trigger-only",
+        store_id="store-trigger-only",
+        alert_level=AlertLevel.RED,
+        opened_at=opened,
+    )
+    observations = [
+        StoreDayObservation(
+            store_id="store-trigger-only",
+            business_date=date(2026, 6, 1),
+            actual_revenue=50_000.0,
+            site_score_baseline_p50=100_000.0,
+        ),
+        *(
+            StoreDayObservation(
+                store_id="store-trigger-only",
+                business_date=date(2026, 6, day),
+                actual_revenue=95_000.0,
+                site_score_baseline_p50=100_000.0,
+            )
+            for day in range(2, 30)
+        ),
+    ]
+
+    updated, metrics = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+    )
+
+    assert updated[0].disposition == AlertDisposition.FALSE_POSITIVE.value
+    assert updated[0].deterioration_confirmed_at is None
+    assert metrics["true_positive_count"] == 0
+    assert metrics["false_positive_count"] == 1
 
 
 def test_backfill_alert_precision_horizon_constraint() -> None:

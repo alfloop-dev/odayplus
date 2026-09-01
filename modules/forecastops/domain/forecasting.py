@@ -79,7 +79,11 @@ class AlertDisposition(StrEnum):
     def from_str(cls, value: str | AlertDisposition) -> AlertDisposition:
         if isinstance(value, cls):
             return value
-        normalized = str(value).strip().upper()
+        # Accept the human-facing spelling used by the API/UI while persisting
+        # the enum's canonical wire value (for example, ``Known Context`` ->
+        # ``KNOWN_CONTEXT``).  Keeping one representation is important because
+        # precision backfill uses the disposition as its idempotency boundary.
+        normalized = "_".join(str(value).strip().upper().replace("-", " ").split())
         for member in cls:
             if member.value == normalized or member.name.upper() == normalized:
                 return member
@@ -615,7 +619,7 @@ class Alert:
                 data["disposition"].value
                 if isinstance(data.get("disposition"), AlertDisposition)
                 else (
-                    str(data["disposition"])
+                    cls._normalize_disposition(data["disposition"])
                     if data.get("disposition") is not None
                     else None
                 )
@@ -630,6 +634,17 @@ class Alert:
                 data.get("deterioration_confirmed_at")
             ),
         )
+
+    @staticmethod
+    def _normalize_disposition(value: Any) -> str:
+        """Normalize known dispositions without breaking legacy free-form rows."""
+        try:
+            return AlertDisposition.from_str(value).value
+        except ForecastOpsError:
+            # Older API rows allowed free-form text.  Keep those rows readable
+            # for migration/metrics while all new manual writes are validated
+            # by ``close_with_disposition`` and ``ForecastFeedback.create``.
+            return str(value).strip()
 
     @property
     def lead_time_days(self) -> int | None:
@@ -698,11 +713,7 @@ class Alert:
             raise ForecastOpsError("alert disposition requires a disposition value")
         if not actor or not actor.strip():
             raise ForecastOpsError("alert disposition requires an actor")
-        disp_val = (
-            disposition.value
-            if isinstance(disposition, AlertDisposition)
-            else str(disposition).strip()
-        )
+        disp_val = AlertDisposition.from_str(disposition).value
         return replace(
             self,
             status="closed",
@@ -728,11 +739,14 @@ class Alert:
         close: bool = False,
     ) -> Alert:
         """Return a copy of this alert updated with evaluation disposition and deterioration."""
-        disp_val = (
-            disposition.value
-            if isinstance(disposition, AlertDisposition)
-            else str(disposition).strip()
-        )
+        disp_val = AlertDisposition.from_str(disposition).value
+        if (
+            self.disposition == disp_val
+            and self.deterioration_confirmed_at == deterioration_confirmed_at
+        ):
+            # Backfill is repeatable.  Do not rewrite audit timestamps or count
+            # an unchanged evaluation as an update on every retry.
+            return self
         changes: dict[str, Any] = {
             "disposition": disp_val,
             "deterioration_confirmed_at": deterioration_confirmed_at,
