@@ -131,6 +131,10 @@ RECALC_OUTPUT = "'55555555-5555-5555-5555-666666666666'"
 ALERT = "'66666666-6666-6666-6666-666666666666'"
 PREDICTION_RUN = "'99999999-9999-9999-9999-999999999999'"
 GATE_ID = "'88888888-8888-8888-8888-888888888888'"
+#: The gate's authorising decision and approval rows. A gate may no longer
+#: assert its own authorisation through free-text approved_by.
+GATE_DECISION = "'88888888-8888-8888-8888-88888888dec1'"
+GATE_APPROVAL = "'88888888-8888-8888-8888-88888888a991'"
 
 # Section 3.2 naming rule: policy_version_id = policy_label || ':' || tenant_id.
 POLICY_LABEL = "four-light-policy-v1"
@@ -147,8 +151,13 @@ INSERT INTO learning.prediction_runs (prediction_run_id)
     VALUES ({PREDICTION_RUN}) ON CONFLICT DO NOTHING;
 INSERT INTO operations.alerts (alert_id, store_id, tenant_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id)
     VALUES ({ALERT}, {STORE}, {TENANT}, 'sitescore_gap', '{{}}'::jsonb, {FORECAST}, {POLICY}) ON CONFLICT DO NOTHING;
-INSERT INTO pricing.exploration_gates (gate_id, tenant_id, budget_limit, budget_consumed, effective_from, effective_to, approved_by, rollback_condition, decision_policy_version_id)
-    VALUES ({GATE_ID}, {TENANT}, 1000, 0, now(), now() + interval '30 day', 'ops', 'rollback on limit', {POLICY})
+INSERT INTO workflow.decisions (decision_id, policy_version_id)
+    VALUES ({GATE_DECISION}, {POLICY}) ON CONFLICT DO NOTHING;
+INSERT INTO workflow.approvals (approval_id, decision_id, approver_id, approval_status, approved_at)
+    VALUES ({GATE_APPROVAL}, {GATE_DECISION}, 'approver', 'approved', now())
+ON CONFLICT DO NOTHING;
+INSERT INTO pricing.exploration_gates (gate_id, tenant_id, budget_limit, budget_consumed, effective_from, effective_to, approved_by, approval_id, approval_decision_id, rollback_condition, decision_policy_version_id)
+    VALUES ({GATE_ID}, {TENANT}, 1000, 0, now(), now() + interval '30 day', 'ops', {GATE_APPROVAL}, {GATE_DECISION}, 'rollback on limit', {POLICY})
 ON CONFLICT DO NOTHING;
 """
 
@@ -629,9 +638,13 @@ COMPOSITION_CASES += [
 
 GATE_COLUMNS = (
     "INSERT INTO pricing.exploration_gates (tenant_id, budget_limit, budget_consumed,"
-    " effective_from, effective_to, approved_by, rollback_condition,"
-    " decision_policy_version_id) VALUES "
+    " effective_from, effective_to, approved_by, approval_id, approval_decision_id,"
+    " rollback_condition, decision_policy_version_id) VALUES "
 )
+#: Every GATE_COLUMNS row now needs a real approved approval; the seeded pair
+#: is reused so cases stay focused on the constraint under test.
+GATE_AUTH = f"{GATE_APPROVAL},{GATE_DECISION}"
+
 EXPLORATION_DECISION_COLUMNS = (
     "INSERT INTO pricing.exploration_decisions (decision_id, gate_id, tenant_id, sku_id,"
     " store_id, baseline_price, explored_price, budget_consumed, algorithm) VALUES "
@@ -665,16 +678,16 @@ def exploration_case(
 
 GATE_CASES = [
     Case("gate: valid authorization",
-         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '30 day','a',"
+         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '30 day','a',{GATE_AUTH},"
          f"'revert on breach',{POLICY})", True),
     Case("gate: consumed beyond limit",
-         GATE_COLUMNS + f"({TENANT},1000,2000,now(),now()+interval '30 day','a','revert',"
+         GATE_COLUMNS + f"({TENANT},1000,2000,now(),now()+interval '30 day','a',{GATE_AUTH},'revert',"
          f"{POLICY})", False, ("chk_gate_budget_consumed",)),
     Case("gate: effective_to not after from",
-         GATE_COLUMNS + f"({TENANT},1000,0,now(),now(),'a','revert',{POLICY})",
+         GATE_COLUMNS + f"({TENANT},1000,0,now(),now(),'a',{GATE_AUTH},'revert',{POLICY})",
          False, ("chk_gate_window",)),
     Case("gate: empty rollback_condition",
-         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '1 day','a','',{POLICY})",
+         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '1 day','a',{GATE_AUTH},'',{POLICY})",
          False, ("chk_gate_rollback_condition",)),
     Case("gate: accumulated consumption beyond limit",
          f"UPDATE pricing.exploration_gates SET budget_consumed = 1001 WHERE gate_id = {GATE_ID}",
@@ -690,7 +703,7 @@ GATE_CASES = [
     exploration_case("exploration_decision: negative budget_consumed", budget="-5.00",
                      accepted=False, expects=("chk_exploration_decision_budget",)),
     Case("gate: policy owned by another tenant",
-         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '30 day','a','revert',"
+         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '30 day','a',{GATE_AUTH},'revert',"
          f"{POLICY_T2})", False, ("fk_exploration_gates_decision_policy",)),
 
     # trg_exploration_gates_controlled_update. Without these the append-only
@@ -735,7 +748,7 @@ GATE_CASES = [
 
     # Declared but previously unexercised gate constraints.
     Case("gate: non-positive budget limit",
-         GATE_COLUMNS + f"({TENANT},0,0,now(),now()+interval '30 day','a','revert',{POLICY})",
+         GATE_COLUMNS + f"({TENANT},0,0,now(),now()+interval '30 day','a',{GATE_AUTH},'revert',{POLICY})",
          False, ("chk_gate_budget_limit",)),
     Case("decision: policy_version_id with no registry row",
          "INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES"
@@ -798,9 +811,10 @@ GATE_CASES = [
                f" ({uid('valuation:t2-scoped')},{TENANT_2});"),
     Case("scoped: gate scoped to another tenant's brand",
          "INSERT INTO pricing.exploration_gates (tenant_id, scope_brand_id, budget_limit,"
-         " budget_consumed, effective_from, effective_to, approved_by, rollback_condition,"
-         f" decision_policy_version_id) VALUES ({TENANT},{uid('brand:t2-scoped')},1000,0,"
-         f"now(),now()+interval '30 day','a','revert',{POLICY})",
+         " budget_consumed, effective_from, effective_to, approved_by, approval_id,"
+         " approval_decision_id, rollback_condition, decision_policy_version_id) VALUES"
+         f" ({TENANT},{uid('brand:t2-scoped')},1000,0,"
+         f"now(),now()+interval '30 day','a',{GATE_AUTH},'revert',{POLICY})",
          False, ("fk_exploration_gates_brand_tenant",),
          setup="INSERT INTO core.brands (brand_id, tenant_id) VALUES"
                f" ({uid('brand:t2-scoped')},{TENANT_2});"),
@@ -816,9 +830,10 @@ GATE_CASES = [
                f" ({uid('decision:t2-store')},{POLICY});"),
     Case("gate: revoked before the authorisation began",
          "INSERT INTO pricing.exploration_gates (tenant_id, budget_limit, budget_consumed,"
-         " effective_from, effective_to, approved_by, rollback_condition, revoked_at,"
-         f" decision_policy_version_id) VALUES ({TENANT},1000,0,now(),"
-         f"now()+interval '30 day','a','revert',now()-interval '1 day',{POLICY})",
+         " effective_from, effective_to, approved_by, approval_id, approval_decision_id,"
+         " rollback_condition, revoked_at, decision_policy_version_id) VALUES"
+         f" ({TENANT},1000,0,now(),"
+         f"now()+interval '30 day','a',{GATE_AUTH},'revert',now()-interval '1 day',{POLICY})",
          False, ("chk_gate_revoke_order",)),
 ]
 
@@ -828,10 +843,11 @@ def gate_setup(tag: str, *, limit: str, window: str, revoked: str = "NULL") -> t
     gate = uid("gate:" + tag)
     setup = (
         "INSERT INTO pricing.exploration_gates (gate_id, tenant_id, budget_limit,"
-        " budget_consumed, effective_from, effective_to, approved_by,"
-        " rollback_condition, revoked_at, decision_policy_version_id) VALUES"
-        f" ({gate},{TENANT},{limit},0,{window},'a','revert',{revoked},{POLICY})"
-        " ON CONFLICT DO NOTHING;"
+        " budget_consumed, effective_from, effective_to, approved_by, approval_id,"
+        " approval_decision_id, rollback_condition, revoked_at,"
+        " decision_policy_version_id) VALUES"
+        f" ({gate},{TENANT},{limit},0,{window},'a',{GATE_AUTH},'revert',{revoked},"
+        f"{POLICY}) ON CONFLICT DO NOTHING;"
     )
     return gate, setup
 
@@ -989,6 +1005,63 @@ POLICY_CASES = [
                 policy_label="reason-probe-v1", policy_id="reason-probe",
                 version="1.0.0", kind="heatzone_merge", reason="",
                 accepted=False, expects=("chk_decision_policy_reason",)),
+    # The two store-derived tenant bindings. Added in v0.6.0 with no case of
+    # their own -- the same omission this section had just been corrected for.
+    Case("scoped: forecast output claiming a tenant its store does not have",
+         "INSERT INTO operations.forecast_outputs (forecast_output_id, store_id,"
+         f" tenant_id) VALUES ({uid('output:tenant-mismatch')},{STORE},{TENANT_2})",
+         False, ("fk_forecast_outputs_store_tenant",)),
+    Case("scoped: valuation run claiming a tenant its store does not have",
+         "INSERT INTO asset.valuation_runs (valuation_run_id, store_id, tenant_id)"
+         f" VALUES ({uid('valuation:tenant-mismatch')},{STORE},{TENANT_2})",
+         False, ("fk_valuation_runs_store_tenant",)),
+
+    # trg_decision_policies_controlled_update. Without it, close-and-insert and
+    # "the old version is retained as it stood" are assertions with nothing
+    # holding them: rewriting parameters makes a historical decision re-resolve
+    # to thresholds that were never in force when it was taken.
+    Case("policy: parameters rewritten in place",
+         "UPDATE workflow.decision_policies SET parameters = '{\"t\": 1}'::jsonb"
+         f" WHERE policy_version_id = {POLICY}",
+         False, ("decision_policies_controlled_update",)),
+    Case("policy: change_reason rewritten in place",
+         "UPDATE workflow.decision_policies SET change_reason = 'rewritten'"
+         f" WHERE policy_version_id = {POLICY}",
+         False, ("decision_policies_controlled_update",)),
+    Case("policy: deletion",
+         f"DELETE FROM workflow.decision_policies WHERE policy_version_id = {POLICY}",
+         False, ("decision_policies_controlled_update",)),
+    # The one permitted UPDATE: close-and-insert's closing half. The seeded key
+    # must itself satisfy chk_decision_policy_version_id_format -- a UUID here
+    # fails that check and the case never reaches the trigger it is testing.
+    Case("policy: closing the version is permitted",
+         "UPDATE workflow.decision_policies SET effective_to = now() + interval '1 day'"
+         f" WHERE policy_version_id = 'closable-v1:{TENANT[1:-1]}'",
+         True,
+         setup=POLICY_INSERT.replace(
+             " effective_from, owner_role", " effective_from, effective_to, owner_role"
+         ) + f"('closable-v1:{TENANT[1:-1]}','closable-v1','closable','1.0.0',"
+             f"'netplan_action',{TENANT},now(),NULL,'ops','a',now(),'in','out','x',"
+             "'{}'::jsonb,ARRAY['sitescore_gap_ratio']);"),
+
+    # fk_exploration_gates_workflow_approval: approved_by is a display name, not
+    # an authorisation. The gate must point at a real approval row.
+    Case("gate: authorisation pointing at no approval row",
+         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '30 day','a',"
+         f"{uid('approval:missing')},{uid('decision:missing-approval')},'revert',{POLICY})",
+         False, ("fk_exploration_gates_workflow_approval",),
+         setup="INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES"
+               f" ({uid('decision:missing-approval')},{POLICY});"),
+    Case("gate: authorisation pointing at an unapproved approval",
+         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '30 day','a',"
+         f"{uid('approval:pending')},{uid('decision:pending-approval')},'revert',{POLICY})",
+         False, ("fk_exploration_gates_workflow_approval",),
+         setup="INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES"
+               f" ({uid('decision:pending-approval')},{POLICY});"
+               " INSERT INTO workflow.approvals (approval_id, decision_id, approver_id,"
+               f" approval_status, approved_at) VALUES ({uid('approval:pending')},"
+               f"{uid('decision:pending-approval')},'approver','pending',now());"),
+
     policy_case("policy: parameters that are not a JSON object",
                 version_id=f"params-probe-v1:{TENANT[1:-1]}",
                 policy_label="params-probe-v1", policy_id="params-probe",

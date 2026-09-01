@@ -1,7 +1,7 @@
 ---
 doc_id: ODP-SD-AMD-001
 title: "平台與模組設計修正案 001"
-version: 0.5.0
+version: 0.6.0
 status: draft-for-review
 document_class: system-design-amendment
 project: ODay Plus
@@ -79,6 +79,14 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 1. **Gate 本身可自由改寫**：`pricing.exploration_decisions` 是 append-only，但累計器、授權期間與撤銷旗標都在 `pricing.exploration_gates` 那一列上，該列沒有任何 UPDATE 保護。不必碰任何一筆決策，`UPDATE ... SET budget_consumed = 0` 就能取回全部預算，`effective_to` 可往後推，`revoked_at` 可改回 NULL。v0.6.0 以 `trg_exploration_gates_controlled_update` 守四條規則：授權欄位不可變、`budget_consumed` 只增不減、`effective_to` 只能提前、撤銷不可逆（第 7 節）。
 2. **新增關係的租戶綁定不完整**：六處參照為單欄外鍵，只證明目標列存在，不證明它屬於同一租戶。v0.6.0 為 `operations.forecast_outputs`、`asset.valuation_runs`、`learning.predictions` 補 `tenant_id`，前兩者另以 `store_id` 綁定使租戶不可自述，並補齊五個複合唯一鍵，將六處改為複合外鍵，各附跨租戶 scoped 案例（第 3.4、4.3、6.2、7 節）。`learning.predictions` 的殘餘限制見第 12.0 節。
 3. **第 13.1 節覆蓋宣稱誇大**：102／102 只涵蓋既有案例，十二條已宣告的約束沒有任何案例——被打錯字或刪除都不會被發現。v0.6.0 為每一條補上具名案例，並改寫該節說明數字的界線（第 13.1 節）。
+
+第 8 輪再補正五項。前三項是前次修訂自身留下的不一致，後兩項與第 5 輪的五項同型——**治理宣稱缺乏結構性支撐**：
+
+4. **frontmatter 版本與修訂說明不符**：內文已記 v0.6.0，frontmatter 仍為 0.5.0。已更正。
+5. **第 9 節彙總過時**：第 3.4 節已為 `operations.forecast_outputs`、`asset.valuation_runs`、`learning.predictions` 補 `tenant_id` 並新增兩個 trigger，彙總仍寫「既有表 4 張、trigger 2 個」。已更正為 7 張與 4 個，並補列本輪新增的唯一鍵與外鍵。
+6. **兩個新外鍵自身無案例**：`fk_forecast_outputs_store_tenant` 與 `fk_valuation_runs_store_tenant` 是前次修訂新增的，卻沒有具名案例——正是該次修訂所批評的同一種疏漏。已各補一個「宣稱的租戶與其門市不符」案例。
+7. **政策列可被自由改寫**：`workflow.decision_policies` 沒有任何 UPDATE 保護，close-and-insert、保留舊版與可重現性三項宣稱皆無結構支撐——改掉 `parameters`，歷史決策再解析時就會得到當初未曾生效的門檻；抹回 `effective_to`，就會出現兩個現行版本。v0.6.0 以 `trg_decision_policies_controlled_update` 只放行「把 `effective_to` 由 NULL 設為時點」一種改寫（第 3.2 節）。
+8. **Gate 授權可偽造**：第 7 節稱 Gate 的建立與撤銷經 `workflow.approvals`，但該表只有 free-text `approved_by`，沒有任何指向核准列的外鍵。v0.6.0 新增 `approval_id`／`approval_decision_id` 與生成欄位 `approval_source_status`，以三欄複合外鍵 `fk_exploration_gates_workflow_approval` 綁定狀態確為 `approved` 的那一列，與 `fk_feedback_workflow_approval` 同一模式（第 7 節）。
 
 ---
 
@@ -174,6 +182,61 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_policy_active
 
 CREATE INDEX IF NOT EXISTS idx_decision_policy_kind_window
     ON workflow.decision_policies (policy_kind, tenant_id, effective_from);
+
+-- 政策列的受控轉換。close-and-insert、保留舊版與可重現性都寫在文件裡，但這一列
+-- 若可自由 UPDATE，三者都沒有結構支撐：把 parameters 改掉，歷史決策再解析時就會
+-- 得到與當初不同的門檻；把 effective_to 抹回 NULL，就會有兩個現行版本；改
+-- change_reason 或 approved_by，稽核軌跡即失真。唯一該被允許的改寫是 close-and-insert
+-- 的那一半——把 effective_to 由 NULL 設為接續版本的起點。
+CREATE OR REPLACE FUNCTION workflow.decision_policies_controlled_update()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION
+            'decision_policies_controlled_update: DELETE is not permitted (%)',
+            OLD.policy_version_id USING ERRCODE = '23514';
+    END IF;
+    IF OLD.effective_to IS NOT NULL THEN
+        RAISE EXCEPTION
+            'decision_policies_controlled_update: % is already closed and is immutable',
+            OLD.policy_version_id USING ERRCODE = '23514';
+    END IF;
+    IF NEW.effective_to IS NULL THEN
+        RAISE EXCEPTION
+            'decision_policies_controlled_update: the only permitted UPDATE is closing '
+            'the version by setting effective_to (%)', OLD.policy_version_id
+            USING ERRCODE = '23514';
+    END IF;
+    IF NEW.effective_to <= OLD.effective_from THEN
+        RAISE EXCEPTION
+            'decision_policies_controlled_update: effective_to must be after '
+            'effective_from (%)', OLD.policy_version_id USING ERRCODE = '23514';
+    END IF;
+    IF ROW(NEW.policy_version_id, NEW.policy_label, NEW.policy_id, NEW.policy_version,
+           NEW.policy_kind, NEW.tenant_id, NEW.effective_from, NEW.owner_role,
+           NEW.approved_by, NEW.approved_at, NEW.input_contract, NEW.output_contract,
+           NEW.change_reason, NEW.rollback_policy_version, NEW.parameters,
+           NEW.declared_inputs, NEW.created_at)
+       IS DISTINCT FROM
+       ROW(OLD.policy_version_id, OLD.policy_label, OLD.policy_id, OLD.policy_version,
+           OLD.policy_kind, OLD.tenant_id, OLD.effective_from, OLD.owner_role,
+           OLD.approved_by, OLD.approved_at, OLD.input_contract, OLD.output_contract,
+           OLD.change_reason, OLD.rollback_policy_version, OLD.parameters,
+           OLD.declared_inputs, OLD.created_at)
+    THEN
+        RAISE EXCEPTION
+            'decision_policies_controlled_update: only effective_to may change; '
+            'supersede with a new version instead (%)', OLD.policy_version_id
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_decision_policies_controlled_update
+    ON workflow.decision_policies;
+CREATE TRIGGER trg_decision_policies_controlled_update
+    BEFORE UPDATE OR DELETE ON workflow.decision_policies
+    FOR EACH ROW EXECUTE FUNCTION workflow.decision_policies_controlled_update();
 
 -- 供既有表以 (decision_policy_version_id, tenant_id) 複合外鍵綁定的參照目標（第 3.4 節）。
 -- 主鍵已蘊含其唯一性，此處是為了讓「政策的租戶」成為可被外鍵引用的欄位對。
@@ -1358,12 +1421,23 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_gates (
     effective_from      TIMESTAMP WITH TIME ZONE NOT NULL,
     effective_to        TIMESTAMP WITH TIME ZONE NOT NULL,   -- 必填，不可無限期
     approved_by         VARCHAR(255) NOT NULL,
+    -- approved_by 是顯示用的人名，不構成授權。授權本身必須指向 workflow.approvals
+    -- 中一列狀態確為 'approved' 的紀錄；生成欄位使該狀態不可由寫入端宣稱。
+    approval_decision_id UUID NOT NULL REFERENCES workflow.decisions(decision_id),
+    approval_id         UUID NOT NULL,
+    approval_source_status VARCHAR(50) GENERATED ALWAYS AS ('approved') STORED,
     rollback_condition  TEXT NOT NULL,
     revoked_at          TIMESTAMP WITH TIME ZONE,
     decision_policy_version_id VARCHAR(100) NOT NULL,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT uq_exploration_gates_gate_tenant UNIQUE (gate_id, tenant_id),
+    -- 與 fk_feedback_workflow_approval 同一模式：三欄同時比對，Gate 只能綁定
+    -- 一列真實且確為 approved 的核准，free-text 的 approved_by 無法偽造它。
+    CONSTRAINT fk_exploration_gates_workflow_approval
+        FOREIGN KEY (approval_id, approval_decision_id, approval_source_status)
+        REFERENCES workflow.approvals (approval_id, decision_id, approval_status)
+        MATCH FULL,
     -- 授權範圍內的品牌必須屬於該 Gate 的租戶
     CONSTRAINT fk_exploration_gates_brand_tenant
         FOREIGN KEY (scope_brand_id, tenant_id)
@@ -1480,12 +1554,14 @@ BEGIN
     -- 授權的內容本身不可變。改動範圍、上限或授權者，等同發一張新 Gate。
     IF ROW(NEW.gate_id, NEW.tenant_id, NEW.scope_brand_id, NEW.scope_store_group,
            NEW.scope_sku_group, NEW.budget_limit, NEW.effective_from,
-           NEW.approved_by, NEW.rollback_condition,
+           NEW.approved_by, NEW.approval_id, NEW.approval_decision_id,
+           NEW.rollback_condition,
            NEW.decision_policy_version_id, NEW.created_at)
        IS DISTINCT FROM
        ROW(OLD.gate_id, OLD.tenant_id, OLD.scope_brand_id, OLD.scope_store_group,
            OLD.scope_sku_group, OLD.budget_limit, OLD.effective_from,
-           OLD.approved_by, OLD.rollback_condition,
+           OLD.approved_by, OLD.approval_id, OLD.approval_decision_id,
+           OLD.rollback_condition,
            OLD.decision_policy_version_id, OLD.created_at)
     THEN
         RAISE EXCEPTION
@@ -1634,7 +1710,7 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 | `000017` | `pricing.exploration_gates` | `pricing` schema 既有但無表；PriceOps 無既有表可擴充 | `PRICE-006` |
 | `000017` | `pricing.exploration_decisions` | 每次探索定價決策關聯之 Gate 授權與預算扣抵紀錄 | `PRICE-006` |
 
-既有表新增欄位（4 張）：
+既有表新增欄位（7 張）：
 
 | 既有表 | 新增欄位 | 對應 FR |
 |---|---|---|
@@ -1642,6 +1718,9 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 | `expansion.heatzone_scores` | `tenant_id`、`decision_policy_version_id`、`absorbed_demand`、`remaining_demand`、`absorption_ratio`、`absorption_basis_at`、`absorption_source`、`absorbing_store_count` | `HZ-004` |
 | `expansion.site_score_runs` | `tenant_id`、`decision_policy_version_id` | 第 3.4 節 |
 | `network.network_plans` | `tenant_id`、`decision_policy_version_id` | 第 3.4 節 |
+| `operations.forecast_outputs` | `tenant_id`（租戶由 `store_id` 推導，不可自述） | 第 3.4 節、`FCT-008` |
+| `asset.valuation_runs` | `tenant_id`（同上） | 第 3.4 節、`AVM-005` |
+| `learning.predictions` | `tenant_id`（無可推導來源，為自述；見第 12.0 節） | 第 3.4 節、`FCT-008` |
 
 本案新增於既有表與政策登錄表的約束、唯一索引與外鍵：
 
@@ -1651,6 +1730,11 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 | `workflow.decision_policies` | `uq_decision_policy_version_tenant` | 讓「政策的租戶」成為可被複合外鍵引用的欄位對 |
 | `workflow.approvals` | `uq_approvals_decision_status` | 讓「某決策的某筆核准及其狀態」成為可被複合外鍵引用的欄位對（第 4.3 節） |
 | `core.stores` | `uq_stores_store_tenant` | 讓「門市的租戶」成為可被複合外鍵引用的欄位對 |
+| `core.brands` | `uq_brands_brand_tenant` | 同上（品牌），供 `fk_exploration_gates_brand_tenant` 引用 |
+| `operations.alerts` | `uq_alerts_alert_tenant` | 供 `fk_feedback_alert_tenant` 引用 |
+| `operations.forecast_outputs` | `uq_forecast_outputs_output_tenant`、`fk_forecast_outputs_store_tenant`（`NOT VALID`） | 供回饋複合外鍵引用；租戶必須就是其門市的租戶 |
+| `asset.valuation_runs` | `uq_valuation_runs_run_tenant`、`fk_valuation_runs_store_tenant`（`NOT VALID`） | 同上（估值） |
+| `learning.predictions` | `uq_predictions_prediction_tenant` | 供 `fk_feedback_prediction_tenant` 引用；租戶為自述（第 12.0 節） |
 | `operations.alerts` | `fk_alerts_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 政策綁定必須指向真實政策列，且該政策必須屬於同一租戶 |
 | `operations.alerts` | `fk_alerts_store_tenant`（`NOT VALID`） | 警示自述的租戶必須就是其門市的租戶 |
 | `expansion.heatzone_scores` | `fk_heatzone_scores_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 同上（政策部分） |
@@ -1659,12 +1743,14 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 | `operations.alerts` | 唯一索引 `idx_alerts_forecast_policy` | `(forecast_output_id, decision_policy_version_id)` 的評估識別唯一性 |
 | `expansion.heatzone_scores` | `chk_heatzone_absorption_complete`（強化為六欄）、`chk_heatzone_absorption_non_negative`、`chk_heatzone_absorption_consistent`、`chk_heatzone_absorption_source` | `HZ-004` 吸收結果的可驗收性與可追溯性（第 5.1 節） |
 
-新增 trigger（2 個，皆為本案宣稱之治理規則的執行機制）：
+新增 trigger（4 個，皆為本案宣稱之治理規則的執行機制）：
 
 | 對象 | Trigger | 作用 |
 |---|---|---|
 | `expansion.heatzone_composition` | `trg_heatzone_composition_append_only` | 唯一允許的改寫是把 `reverted_at` 由 NULL 設為時點；`DELETE` 一律拒絕（第 5.2 節） |
 | `pricing.exploration_decisions` | `trg_exploration_decisions_accrue`、`trg_exploration_decisions_append_only` | 逐筆決策與 Gate 累計預算在同一次寫入內綁定，且事後不可回收扣抵（第 7 節） |
+| `pricing.exploration_gates` | `trg_exploration_gates_controlled_update` | 授權欄位不可變、`budget_consumed` 只增不減、`effective_to` 只能提前、撤銷不可逆；缺此則子表的 append-only 保護是空的（第 7 節） |
+| `workflow.decision_policies` | `trg_decision_policies_controlled_update` | 唯一允許的改寫是把 `effective_to` 由 NULL 設為時點；已關閉的版本完全不可變，否則 close-and-insert 與保留舊版皆無結構支撐（第 3.2 節） |
 
 既有 dbt 模型變更（1 個）：`pipelines/dbt/models/model_ready/valuation_view.sql` 新增 `realized_transaction_price`、`realized_transaction_at` 兩個輸出欄位（第 6.3 節）。
 
@@ -1808,9 +1894,9 @@ uv run --no-project --python 3.12 --with pgserver \
 |---|---|
 | A. 9 個 DDL 區塊套用於 baseline 相依樁 | 9／9 通過 |
 | B. 每個區塊重跑一次（第 10 節宣稱的可重跑，含兩個 trigger 區塊） | 9／9 通過 |
-| C. 新增約束、外鍵與 trigger 是否真的擋下它宣稱要擋的資料 | 130／130 符合設計 |
+| C. 新增約束、外鍵與 trigger 是否真的擋下它宣稱要擋的資料 | 138／138 符合設計 |
 
-**這個數字說的是什麼，不說什麼**。130／130 指「130 個案例的行為與其宣告一致」——每個負向案例被拒，且拒絕訊息中出現它指名的那個約束；每個正向案例被接受。它**不**保證每個已宣告的約束都有案例。
+**這個數字說的是什麼，不說什麼**。138／138 指「138 個案例的行為與其宣告一致」——每個負向案例被拒，且拒絕訊息中出現它指名的那個約束；每個正向案例被接受。它**不**保證每個已宣告的約束都有案例。
 
 v0.5.0 的 102／102 就是在這個區別上誇大了：`chk_decision_policy_kind`／`window`／`reason`／`params`、`chk_deal_outcome_kind`／`reason_code`／`price_positive`、`chk_composition_kind`／`revert_order`、`chk_gate_budget_limit`／`revoke_order`、`fk_decisions_policy_version`、`fk_exploration_decisions_tenant` 當時皆無具名案例。那些約束若被打錯字或整條刪去，套件仍會報全綠——通過數只覆蓋存在的案例。v0.6.0 為上列每一條補上具名案例，並補上 `trg_exploration_gates_controlled_update` 的九個案例。
 
