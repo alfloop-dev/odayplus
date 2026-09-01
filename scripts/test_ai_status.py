@@ -543,6 +543,83 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertIn("`Task-ID: ...`", message)
         self.assertIn("`Reviewer: ...`", message)
 
+    def test_collect_done_delivery_metadata_accepts_case_only_task_id_difference(self) -> None:
+        task_id = "ODP-ORCH-CLOSEOUT-TASKID-CANONICALIZATION-001"
+        task = {
+            "id": task_id,
+            "owner": "Codex2",
+            "reviewer": "Antigravity",
+            "status": "review_approved",
+            "approved_head": "abc123",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): f"task/{task_id}",
+                ("rev-parse", "HEAD"): "abc123",
+                ("show", "-s", "--format=%s", "abc123"): f"{task_id}: finalize",
+                ("show", "-s", "--format=%b", "abc123"): (
+                    "LLM-Agent: Codex2\n"
+                    "Task-ID: odp-orch-closeout-taskid-canonicalization-001\n"
+                    "Reviewer: Antigravity\n"
+                ),
+                ("show", "-s", "--format=%an", "abc123"): "Codex2",
+                ("show", "-s", "--format=%ae", "abc123"): "codex2@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): "",
+                ("remote",): "",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "enforce_delivery_merged_gate"),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
+
+        self.assertEqual(
+            delivery["commit_metadata"]["Task-ID"],
+            "odp-orch-closeout-taskid-canonicalization-001",
+        )
+
+    def test_collect_done_delivery_metadata_rejects_different_task_id(self) -> None:
+        task_id = "ODP-ORCH-CLOSEOUT-TASKID-CANONICALIZATION-001"
+        task = {
+            "id": task_id,
+            "owner": "Codex2",
+            "reviewer": "Antigravity",
+            "status": "review_approved",
+            "approved_head": "abc123",
+            "artifacts": [],
+        }
+
+        def fake_run_git_command(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "--abbrev-ref", "HEAD"): f"task/{task_id}",
+                ("rev-parse", "HEAD"): "abc123",
+                ("show", "-s", "--format=%s", "abc123"): f"{task_id}: finalize",
+                ("show", "-s", "--format=%b", "abc123"): (
+                    "LLM-Agent: Codex2\n"
+                    "Task-ID: ODP-ORCH-CLOSEOUT-TASKID-CANONICALIZATION-002\n"
+                    "Reviewer: Antigravity\n"
+                ),
+                ("show", "-s", "--format=%an", "abc123"): "Codex2",
+                ("show", "-s", "--format=%ae", "abc123"): "codex2@example.com",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+        ):
+            with self.assertRaisesRegex(SystemExit, r"`Task-ID` must be `ODP-ORCH-CLOSEOUT-TASKID-CANONICALIZATION-001`"):
+                ai_status.collect_done_delivery_metadata(task, "Codex2")
+
     def test_collect_done_delivery_metadata_uses_execute_plans_artifact_repo(self) -> None:
         responses = iter(
             [
