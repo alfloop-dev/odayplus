@@ -289,10 +289,15 @@ def test_cross_tenant_read_is_denied_and_audited() -> None:
     events = stack.audit.list_events(
         correlation_id="security-e2e-cross-tenant-read"
     )
-    assert len(events) == 1
-    assert events[0].outcome == "deny"
-    assert events[0].actor == str(account.account_id)
-    assert events[0].metadata["policy_id"] == "operator.tenant_isolation"
+    # The same request also emits the successful authentication event. The
+    # authorization event is the evidence for the tenant-isolation decision.
+    authorization_events = [
+        event for event in events if event.event_type == "security.authorization"
+    ]
+    assert len(authorization_events) == 1
+    assert authorization_events[0].outcome == "deny"
+    assert authorization_events[0].actor == str(account.account_id)
+    assert authorization_events[0].metadata["policy_id"] == "operator.tenant_isolation"
 
 
 _SECRET_ASSIGNMENT = re.compile(

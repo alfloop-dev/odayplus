@@ -76,7 +76,7 @@ The final layered suite is run once after implementation is complete:
 npm --prefix apps/web run test
 npm --prefix apps/web run typecheck
 npm --prefix apps/web run lint
-uv run pytest tests/e2e/test_password_first_security_e2e.py tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/identity
+uv run --python 3.12 pytest tests/e2e/test_password_first_security_e2e.py tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/identity
 uv run --python 3.12 ruff check shared tests/identity tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/e2e/test_password_first_security_e2e.py
 python3 infra/terraform/validate_contract.py
 python3 -m unittest discover -s infra/terraform/tests -p 'test_*.py'
@@ -84,3 +84,16 @@ python3 -m unittest discover -s infra/terraform/tests -p 'test_*.py'
 
 No command output may contain secret values. The final receipt records only command
 names, pass/fail counts, commit SHA, and review metadata.
+
+## 6. Task verification result
+
+- [x] Web route suite: 53 files / 474 tests passed; typecheck and lint passed.
+- [x] Python auth/security/identity/ops layers: 151 passed, 22 skipped.
+- [x] Ruff: all checks passed.
+- [x] Terraform production contract: pass; 14 files checked.
+- [x] Terraform unit tests: 32 tests OK.
+- [x] Receipt and this checklist contain no secret payload; `secret_values_redacted: true` is recorded in the receipt.
+
+This result is repository-level acceptance evidence. Live GCP rollout, DNS,
+Cloud SQL migration execution, and external OIDC provider availability remain
+deployment-owner gates and are not claimed by this task.

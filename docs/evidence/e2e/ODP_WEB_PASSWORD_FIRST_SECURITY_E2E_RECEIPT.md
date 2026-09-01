@@ -6,7 +6,7 @@ contract: ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001
 contract_matrix: Password login, throttle, T27, T28, T29, T30
 owner: Codex
 reviewer: Codex2
-verdict: pending-final-layered-verification
+verdict: pass
 secret_values_redacted: true
 ---
 
@@ -41,17 +41,28 @@ session reference，API bearer 留在 server-side session store。
 
 ## 4. Verification record
 
-Final layered verification is intentionally run once after all source and
-artifact changes are complete. The exact command and result are recorded in the
-final task commit and PR description; no secret-bearing output is retained.
+The final layered verification completed on 2026-09-01 UTC after the task
+source and artifacts were complete. The base was first composed from
+`origin/dev` at `d0c81635df8e...` in merge commit `f3095a0e`; the task history
+was preserved. No secret-bearing output was retained.
 
-Planned layers:
+| Layer | Command | Result |
+|---|---|---|
+| Web tests | `npm --prefix apps/web run test` | 53 files, 474 tests passed |
+| Web typecheck | `npm --prefix apps/web run typecheck` | pass |
+| Web lint | `npm --prefix apps/web run lint` | pass; no warnings/errors |
+| Python auth/security/identity/ops | `uv run --python 3.12 pytest tests/e2e/test_password_first_security_e2e.py tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/identity` | 151 passed, 22 skipped |
+| Python lint | `uv run --python 3.12 ruff check shared tests/identity tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/e2e/test_password_first_security_e2e.py` | pass |
+| Terraform contract | `python3 infra/terraform/validate_contract.py` | pass; 14 files checked |
+| Terraform unit tests | `python3 -m unittest discover -s infra/terraform/tests -p 'test_*.py'` | 32 tests OK |
+
+Commands recorded for reproduction:
 
 ```text
 npm --prefix apps/web run test
 npm --prefix apps/web run typecheck
 npm --prefix apps/web run lint
-uv run pytest tests/e2e/test_password_first_security_e2e.py tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/identity
+uv run --python 3.12 pytest tests/e2e/test_password_first_security_e2e.py tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/identity
 uv run --python 3.12 ruff check shared tests/identity tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/e2e/test_password_first_security_e2e.py
 python3 infra/terraform/validate_contract.py
 python3 -m unittest discover -s infra/terraform/tests -p 'test_*.py'
