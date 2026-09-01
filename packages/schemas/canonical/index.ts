@@ -348,6 +348,9 @@ export interface Intervention {
   status: 'proposed' | 'approved' | 'executing' | 'observing' | 'evaluated' | 'stopped' | 'rolled_back';
 }
 
+/** ADR-0004: single authority for evidence strength, per ODP-ML-05 §5. */
+export type EvidenceLevel = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5';
+
 export interface InterventionOutcome {
   outcome_id: string;
   intervention_id: string;
@@ -355,7 +358,12 @@ export interface InterventionOutcome {
   incremental_revenue: number;
   incremental_gross_margin: number;
   method: string;
-  evidence_level: 'low' | 'medium' | 'high' | 'causal_candidate';
+  /**
+   * ADR-0004: the ML-05 ladder. `null` means unrated -- it is not a tier of
+   * the ladder. When evidence cannot be assessed at all, this stays null and
+   * the reason is carried separately (ADR-0004 D3).
+   */
+  evidence_level: EvidenceLevel | null;
   side_effect_json: Record<string, any>;
   label_maturity_time: string;
 }
