@@ -711,7 +711,6 @@ shared/domain/events.py,product_system,product_required,true,,engineering;operat
 shared/domain/models.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/credential_service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
-shared/identity/login_throttle.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/password_policy.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/session_service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/identity/session_store.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -841,7 +840,7 @@ tests/e2e/test_remote_staging_proof_checker.py,verification,verification_only,fa
 tests/e2e/test_seed_product_e2e_data.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/__init__.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/test_credential_and_policy.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
-tests/identity/test_session_and_throttle.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/identity/test_session_lifecycle.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/identity/test_sql_session_store.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/__init__.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/_authz.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -982,6 +981,7 @@ tests/security/test_audit_policy.py,verification,verification_only,false,develop
 tests/security/test_branch_protection_policy.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_feature_flag_ui_and_enforcement.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_feature_flags.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/security/test_login_throttle_wiring.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_operator_security_platform.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_operator_shell_security.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_opsboard_auth_boundary.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
