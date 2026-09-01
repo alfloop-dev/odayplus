@@ -51,14 +51,14 @@ review_trigger: "Review when a sixth evidence tier is proposed, or when automate
 | 層 | 位置 | 值 | 產生者 | 消費者 |
 |---|---|---|---|---|
 | 實作 ① | `modules/adlift/domain/incrementality.py` | `L0_ANECDOTAL`…`L5_POLICY_READY`（`.value` = `"L0"`…`"L5"`） | AdLift 增量分析 | AdLift API（`adlift.py:271`） |
-| 實作 ② | `shared/domain/models.py:419`、`infra/db/migrations/000001_baseline_canonical_schema.sql:490`、`packages/schemas/canonical/index.ts:358` | `low` / `medium` / `high` / `causal_candidate`，預設 `'medium'` | 無 | 無 |
+| 實作 ② | `shared/domain/models.py:419`、`infra/db/migrations/000001_baseline_canonical_schema.sql:490`、`packages/schemas/canonical/index.ts:358` | `low` / `medium` / `high` / `causal_candidate`，預設 `'medium'` | 無 | dbt `intervention_panel_view.sql`（讀取永不出現的值） |
 | 實作 ③ | `apps/web/features/operator/growthViewModel.ts` | `high` / `medium` / `low`（`ConfidenceLevel`） | 前端 fixtures | 營收成長工作區 |
 
 三項連帶事實：
 
 1. **AdLift 算出的等級從未被持久化。** L0–L5 是 Python enum，資料庫欄位為 `VARCHAR(50)` 且語意為三檔粗粒度。型別能塞、語意對不上，且程式碼中無任何轉換。
-2. **`causal_candidate` 是死值。** 僅出現於兩處型別宣告本身，無程式碼產生或判斷。其對應的概念實際由 AdLift 的 `CAUSAL_MIN_EVIDENCE = L3` 承擔。
-3. **`DEFAULT 'medium'` 是 fail-open。** 未評級的干預效果記錄會被存為「中等證據」而非「未評級」。此為 `ODP-LISTING-PROMOTION-FAILOPEN-001` 所修補的同型缺陷：缺資料時填入看似正常的值。
+2. **`causal_candidate` 是孤兒值：有讀取者，沒有產生者。** 初次盤點時判定它為死值，那個判定不正確 —— 實作 task 執行時發現 `pipelines/dbt/models/model_ready/intervention_panel_view.sql` 有一個分支消費它（`when outcomes.evidence_level = 'causal_candidate' then 0.9`）。但仍然沒有任何程式碼寫入該值，所以那個分支永遠不會被選中，dbt 在為一個不會出現的值保留一條路徑。其對應的概念實際由 AdLift 的 `CAUSAL_MIN_EVIDENCE = L3` 承擔。裁決結論不變（移除），但理由是「有讀無寫的孤兒」而非「完全無人引用」。
+3. **`DEFAULT 'medium'` 是 fail-open，而且 dbt 有第二道。** 未評級的干預效果記錄會被存為「中等證據」而非「未評級」。同一個檢查也發現 `intervention_panel_view.sql` 的 confidence 映射以 `else 0.7` 收尾 —— 任何未知或空的等級都取得 0.7 信心，高於 `low` 而僅略低於 `medium`，並照常進入訓練資格判定。兩者皆為 `ODP-LISTING-PROMOTION-FAILOPEN-001` 所修補的同型缺陷：缺資料時填入看似正常的值。
 
 因此本 ADR 需裁決的不是一件事，是三件。
 
@@ -72,7 +72,7 @@ review_trigger: "Review when a sixth evidence tier is proposed, or when automate
 
 1. `evidence_level` 欄位改存 L0–L5，允許為空（表示未評級）。
 2. 移除 `DEFAULT 'medium'`。
-3. 移除死值 `causal_candidate`。
+3. 移除孤兒值 `causal_candidate`，並將 `intervention_panel_view.sql` 的 confidence 映射改用 L0–L5；其 `else 0.7` 改為 `0.0`，未評級記錄同時排除於訓練資格之外（`exclusion_reason = 'evidence_unrated'`）。
 4. 既有記錄回填為「未評級」（NULL），**不追溯定級**。那些記錄是在無評級機制下產生的，追溯定級等同偽造其來源。此原則與 `ODP-SD-AMD-001` 第 9 節對政策版本回填的處理一致。
 
 ### D3 — `INSUFFICIENT_EVIDENCE` 與階梯正交，不是階梯的一級
@@ -91,7 +91,7 @@ review_trigger: "Review when a sixth evidence tier is proposed, or when automate
 
 ## Rationale
 
-**D1 選 ML-05，理由不是「實作已經如此」。** 該論證是本 ADR 初版所用，且是最弱的一種 —— 它把既成事實當作依據。真正的理由是：**三套之中只有一套在運作**。AdLift 的 L0–L5 有產生者、有消費者、有排序語意，並有 `CAUSAL_MIN_EVIDENCE = L3` 這個實際用來阻擋因果宣稱的門檻（`ODP-BR-AD-001` Hard Constraint 的執行點）。SA-07 那套沒有任何實作；持久化那套沒有任何讀寫者。統一到唯一運作中的定義，是把兩個空殼對齊到一個實體，而非在對等選項間擇一。
+**D1 選 ML-05，理由不是「實作已經如此」。** 該論證是本 ADR 初版所用，且是最弱的一種 —— 它把既成事實當作依據。真正的理由是：**三套之中只有一套在運作**。AdLift 的 L0–L5 有產生者、有消費者、有排序語意，並有 `CAUSAL_MIN_EVIDENCE = L3` 這個實際用來阻擋因果宣稱的門檻（`ODP-BR-AD-001` Hard Constraint 的執行點）。SA-07 那套沒有任何實作；持久化那套沒有任何寫入者 —— 它有一個 dbt 讀取分支，但讀的是永遠不會被寫進去的值。統一到唯一運作中的定義，是把兩個空殼對齊到一個實體，而非在對等選項間擇一。
 
 次要理由有二。其一，ML-05 的級名描述**方法**而非處理結果：`Matched Descriptive` 指明「有對照但 pre-trend 未通過」這個具體狀態，而該狀態正是 `ODP-BR-AD-001` 的判定依據；`L2_MATCHED_CONTROL` 只說有對照，未涵蓋此區分。其二，ML-05 有 L5「Replicated／Policy Ready」，是自動化政策規則的啟用前提 —— `ODP-FR-PRICE-006` 的 Bandit 若以證據強度為 Gate 條件，需要這一級；SA-07 止於 L4，無法表達「可用於自動化」。
 
@@ -143,7 +143,7 @@ def is_causal_evidence(level: EvidenceLevel) -> bool:
 
 **D2 乙 — 保留雙層並定義明確轉換。** 未採納：見 Rationale。
 
-**D2 丙 — 維持現狀。** 未採納：該欄位今日無人讀寫，故無立即損害，但 `DEFAULT 'medium'` 仍在，一旦開始寫入，未評級記錄即靜默成為中等證據。
+**D2 丙 — 維持現狀。** 未採納：該欄位今日無人寫入，故無立即損害，但兩道 fail-open 都仍在 —— 欄位的 `DEFAULT 'medium'` 與 dbt 的 `else 0.7`。一旦開始寫入，未評級記錄會同時取得中等證據的儲存值與 0.7 的信心分數，並照常進入訓練資格。
 
 **D3 乙 — 作為階梯最低一級。** 未採納：見 Rationale 的排序語意論證。
 
@@ -152,5 +152,5 @@ def is_causal_evidence(level: EvidenceLevel) -> bool:
 裁決已定，下列問題屬實作細節，不阻擋本 ADR 生效，但需在對應實作 task 中解決：
 
 1. **既有 `evidence_level` 記錄的數量與分佈。** 回填為 NULL 前需實際查詢。本 ADR 撰寫時三個環境均無工作負載運行，未執行任何線上查詢。
-2. **`causal_candidate` 的原始意圖。** 判定為死值而移除。若有紀錄顯示它對應某個未實作的業務概念，應在移除前補記於此。
+2. **`causal_candidate` 的原始意圖。** 判定為孤兒值（dbt 有讀取分支，無任何寫入者）而移除。若有紀錄顯示它對應某個未實作的業務概念，應補記於此 —— 移除已隨 `ODP-EVIDENCE-LEVEL-ALIGNMENT-001` 執行，回復需另開 task。
 3. **四個 insufficiency 原因碼是否足夠。** 其中 `OVERLAPPING_TREATMENT` 與 `ODP-BR-AD-002`（重疊促銷需標記或排除）可能為同一判定的兩個名稱，需 Validation Owner 確認是否合併。
