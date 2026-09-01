@@ -87,12 +87,17 @@ source_decision: ADR-0004
 
 本修正案描述的機制已寫成程式碼，非提案：
 
-| 變更 | Task | 交付 PR |
-|---|---|---|
-| `EvidenceAssessment`、`EvidenceInsufficiencyReason`、`assess_evidence()`、`is_causal_evidence()` 短路 | `ODP-EVIDENCE-ASSESSABILITY-001` | #1095 |
-| 持久化層對齊 L0–L5、移除 `DEFAULT 'medium'` 與孤兒值 `causal_candidate` | `ODP-EVIDENCE-LEVEL-ALIGNMENT-001` | #1094 |
+| 變更 | Task | 交付 PR | 併入狀態（2026-09-01 快照） |
+|---|---|---|---|
+| `EvidenceAssessment`、`EvidenceInsufficiencyReason`、`assess_evidence()`、`is_causal_evidence()` 短路 | `ODP-EVIDENCE-ASSESSABILITY-001` | #1095 | 未併入 |
+| 持久化層對齊 L0–L5、移除 `DEFAULT 'medium'` 與孤兒值 `causal_candidate` | `ODP-EVIDENCE-LEVEL-ALIGNMENT-001` | #1094 | **已併入 `dev`**（merge commit `4a14d52d`） |
+| 本修正案的裁決依據 `ADR-0004` | `ODP-EVIDENCE-LEVEL-ADR-001` | #1090 | 未併入 |
 
-上列 PR 與本修正案的裁決依據 `ADR-0004`（PR #1090）在本文件送審時**皆尚未併入 `dev`**。因此請以各該 task 分支查核，而非以 `dev` 查核：在 `dev` 上 `assess_evidence()` 尚不存在。三者互為前置，本修正案不應早於 `ADR-0004` 併入。
+PR #1094 已在 `dev` 上：`infra/db/migrations/000013_evidence_level_alignment.sql` 移除了 `evidence_level` 的 `DEFAULT 'medium'` 與 `NOT NULL`，`packages/schemas/canonical` 已無 `causal_candidate`。第 3.2 節要求 `evidence_assessable = false` 時 `evidence_level` 為空，其持久化層前提（欄位可為 NULL、且無 fail-open 預設值）因此在 `dev` 上已成立。
+
+PR #1095 與 PR #1090 尚未併入，因此 `dev` 上還沒有 `assess_evidence()`，也還沒有 `ADR-0004` 本身。這兩項請以 `task/ODP-EVIDENCE-ASSESSABILITY-001` 與 `task/ODP-EVIDENCE-LEVEL-ADR-001` 查核，不要以 `dev` 查核。本修正案不應早於 `ADR-0004` 併入。
+
+上表是快照，會隨合併而過期。查核時以 `gh pr view <PR>` 的當下結果為準，不以本文件為準。
 
 文件在此**跟隨**實作而非領先。這是刻意的：本次衝突的成因，正是規格層先行定義而實作各自為政，最終產生三套並存的值。
 

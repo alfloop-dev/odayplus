@@ -83,7 +83,9 @@ source_decision: ADR-0004
 | `is_causal_evidence()` 於不可評估時短路，不進入序數比較 | 同上 | 同上 |
 | `_EVIDENCE_ORDER` 維持純有序，未新增成員 | 同上 | 同上 |
 
-上述變更由 PR #1095 交付，於本修正案送審時**尚未併入 `dev`**；`ADR-0004` 本身（PR #1090）亦同。請以 `task/ODP-EVIDENCE-ASSESSABILITY-001` 查核，不要以 `dev` 查核。
+上述變更由 PR #1095 交付。截至 2026-09-01，PR #1095 與 `ADR-0004` 本身（PR #1090）**皆尚未併入 `dev`**，請以 `task/ODP-EVIDENCE-ASSESSABILITY-001` 與 `task/ODP-EVIDENCE-LEVEL-ADR-001` 查核，不要以 `dev` 查核。此為快照，併入狀態以 `gh pr view <PR>` 的當下結果為準。
+
+第 3 節提到的 `causal_candidate` 已由 PR #1094（`ODP-EVIDENCE-LEVEL-ALIGNMENT-001`）自 canonical schema 移除，該 PR 已併入 `dev`（merge commit `4a14d52d`）。
 
 `CAUSAL_MIN_EVIDENCE = L3` 未變更。本修正案不調整因果宣稱的門檻。
 
