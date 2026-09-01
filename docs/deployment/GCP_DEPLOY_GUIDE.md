@@ -171,7 +171,7 @@ Secrets are never stored as plaintext strings in GitHub repository settings or w
 
 | Variable Name | Secret Manager Secret Name | Secret Purpose |
 |---|---|---|
-| `ODAY_DATABASE_URL_SECRET` | `oday-plus-dev-api-database-url-pg16` | PostgreSQL connection string (`postgresql://...`) |
+| `ODAY_DATABASE_URL_SECRET` | `oday-plus-dev-api-database-url-pg16` | PostgreSQL connection string (`postgresql://...`); bound to API, Web, worker, scheduler, and migration |
 | `ODP_AUTH_PRINCIPAL_MAP_SECRET` | `oday-plus-dev-auth-principal-map` | Subject & SA email to RBAC role mappings JSON |
 | `ODP_WEB_SESSION_SECRET_SECRET` | `oday-plus-dev-web-session-secret` | Web application session signing key |
 | `ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET` | `oday-plus-dev-identity-token-signing-key` | Shared Web/API local access-token signing key; bind the same pinned version to both services |
