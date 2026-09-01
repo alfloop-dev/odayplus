@@ -347,6 +347,15 @@ export type NetPlanScenarioDetail = {
   solverVersion?: string;
   evidenceIds?: string[];
   selected?: boolean;
+  policy_id?: string;
+  policyId?: string;
+  policy_version?: string;
+  policyVersion?: string;
+  binding_constraints?: string[];
+  bindingConstraints?: string[];
+  actions?: any[];
+  selected_actions?: any[];
+  dependencies?: any[];
 };
 
 export type RebalanceStore = {

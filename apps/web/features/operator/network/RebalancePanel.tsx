@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import styles from "../networkFindAreas.module.css";
 import type { RebalanceQueueRow } from "../networkFindAreasViewModel";
+import { PlanGanttChart } from "./PlanGanttChart";
 
 type RebalanceAction = "request-avm" | "complete-avm" | "solve-netplan" | "select-scenario" | "submit-review";
 
@@ -265,6 +266,18 @@ export function RebalancePanel({
                 Owner {selected.selectedScenarioOwner?.actorName ?? "—"} · Evidence{" "}
                 {selected.selectedScenarioEvidenceId ?? "—"}
               </span>
+              <PlanGanttChart
+                scenarioId={selectedScenario?.id ?? selected.selectedScenarioId}
+                scenarioName={selectedScenario?.name ?? `NetPlan: ${selected.storeName}`}
+                policyId={selectedScenario?.policy_id || selectedScenario?.policyId}
+                policyVersion={selectedScenario?.policy_version || selectedScenario?.policyVersion}
+                solverVersion={selectedScenario?.solverVersion}
+                objectiveScore={selectedScenario?.score}
+                actions={selectedScenario?.actions || selectedScenario?.selected_actions}
+                bindingConstraints={selectedScenario?.bindingConstraints || selectedScenario?.binding_constraints || (selectedScenario?.diagnostics?.map((d) => d.violated_constraint) ?? [])}
+                dependencies={selectedScenario?.dependencies}
+                diagnostics={selectedScenario?.diagnostics}
+              />
             </section>
           ) : null}
 
