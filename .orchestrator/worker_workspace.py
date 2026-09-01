@@ -615,6 +615,7 @@ def observe_worker_worktree_activity(
     handoff.  The worker record keeps only opaque state needed to compare the
     next poll: timestamps, a commit SHA, a count, and reason codes.
     """
+    now_dt = (now or datetime.now(UTC)).astimezone(UTC)
     if str(worker.get("workspace_mode") or "") != "isolated_worktree":
         # Legacy/file-inbox workers have no trusted worktree activity source.
         return False
@@ -686,7 +687,13 @@ def observe_worker_worktree_activity(
         for code, rel_path in blocking_entries:
             try:
                 metadata = (worktree_path / rel_path).lstat()
-                dirty_mtimes.append(datetime.fromtimestamp(metadata.st_mtime, tz=UTC))
+                dirty_mtime = datetime.fromtimestamp(metadata.st_mtime, tz=UTC)
+                # A future timestamp cannot prove that the worker wrote during
+                # this poll window.  Ignore it (as with a deleted/unreadable
+                # path) rather than clamping it to ``now``: clamping turns a
+                # single clock-skewed file into fresh activity on every poll.
+                if dirty_mtime <= now_dt:
+                    dirty_mtimes.append(dirty_mtime)
             except FileNotFoundError:
                 # A deleted tracked path is expected to be absent at this
                 # point. Keep the rest of this status sample: another dirty
@@ -704,15 +711,12 @@ def observe_worker_worktree_activity(
         # healthy activity signal or break settlement of the worker itself.
         return _worker_worktree_activity_failure(worker, "probe_failed")
 
-    now_dt = (now or datetime.now(UTC)).astimezone(UTC)
     previous = worker.get("worktree_activity")
     previous = dict(previous) if isinstance(previous, dict) else {}
     previous_head = str(previous.get("head_sha") or "")
     previous_dirty_mtime = _parse_iso_utc(str(previous.get("dirty_mtime_at") or ""))
     previous_activity = _parse_iso_utc(str(previous.get("last_activity_at") or ""))
     dirty_mtime = max(dirty_mtimes) if dirty_mtimes else None
-    if dirty_mtime is not None and dirty_mtime > now_dt:
-        dirty_mtime = now_dt
 
     activity_candidates: list[datetime] = []
     if previous_head and previous_head != head_sha:

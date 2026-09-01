@@ -7286,6 +7286,29 @@ class WorkerWorktreeActivityTests(unittest.TestCase):
         self.assertEqual(activity["dirty_path_count"], 2)
         self.assertGreater(activity["last_activity_at"], old)
 
+    def test_future_dirty_mtime_does_not_keep_a_silent_worker_alive(self) -> None:
+        head_sha = self._git("rev-parse", "HEAD")
+        old = "2026-08-31T00:00:00Z"
+        dirty_path = self.worktree / "tracked.txt"
+        dirty_path.write_text("changed\n", encoding="utf-8")
+        future = datetime.now(UTC) + timedelta(days=1)
+        os.utime(dirty_path, (future.timestamp(), future.timestamp()))
+        state = {
+            "queue": {"events": {"evt-activity-1": {"status": "started"}}},
+            "workers": {
+                "run-activity-1": self._worker(dirty_mtime_at=old, head_sha=head_sha)
+            },
+        }
+        task = {"id": "ACTIVITY-001", "status": "in_progress", "owner": "Codex", "reviewer": "Codex"}
+
+        self.assertTrue(self._poll(self._config(), state, task))
+        worker = state["workers"]["run-activity-1"]
+        self.assertEqual(worker["status"], "stalled")
+        activity = worker["worktree_activity"]
+        self.assertEqual(activity["status"], "verified")
+        self.assertEqual(activity["dirty_path_count"], 1)
+        self.assertEqual(activity["last_activity_at"], old)
+
 
 class SingleSupervisorGuardTests(unittest.TestCase):
     def test_cmdline_match_requires_supervisor_as_executable_or_python_script(self) -> None:

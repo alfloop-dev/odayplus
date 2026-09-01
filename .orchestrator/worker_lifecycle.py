@@ -1264,7 +1264,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "type": "worker_recovered",
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
-                        "message": "Worker produced output or process activity after being marked stalled; status restored to running.",
+                        "message": "Worker produced output, process, or worktree activity after being marked stalled; status restored to running.",
                         "worker_run_id": worker["run_id"],
                     },
                 )
