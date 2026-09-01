@@ -58,8 +58,8 @@
 -- `uq_decision_policy_version_tenant` is created here because it is the
 -- reference target those later composite keys need.
 --
--- Rerunnable: every statement is IF NOT EXISTS, a catalog-guarded DO block, or
--- an ON CONFLICT DO NOTHING insert.
+-- Rerunnable: every statement is IF NOT EXISTS, CREATE OR REPLACE, a
+-- catalog-guarded DO block, or an ON CONFLICT DO NOTHING insert.
 
 CREATE TABLE IF NOT EXISTS workflow.decision_policies (
     policy_version_id       VARCHAR(100) PRIMARY KEY,          -- 'four-light-policy-v1:11111111-1111-1111-1111-111111111111'
@@ -199,61 +199,110 @@ END $$;
 -- The retrofit version is a placeholder for alerts raised before the mechanism
 -- existed. It closes exactly where v1 opens, so the half-open windows leave no
 -- instant uncovered and no instant covered twice.
-INSERT INTO workflow.decision_policies (
-    policy_version_id, policy_label, policy_id, policy_version, policy_kind,
-    tenant_id, effective_from, effective_to,
-    owner_role, approved_by, approved_at,
-    input_contract, output_contract, change_reason,
-    rollback_policy_version, parameters, declared_inputs
-)
-SELECT
-    'four-light-policy-0.0.0-retrofit:' || t.tenant_id::text,
-    'four-light-policy-0.0.0-retrofit',
-    'four-light-policy',
-    '0.0.0-retrofit',
-    'forecast_alert',
-    t.tenant_id,
-    '2020-01-01 00:00:00+00',
-    '2026-09-01 00:00:00+00',
-    'system',
-    'system_bootstrap',
-    '2026-09-01 00:00:00+00',
-    'ForecastOutput',
-    'Alert',
-    '歷史警示回填佔位，記錄機制導入前判定',
-    NULL,
-    '{"thresholds": [{"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35}, {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20}, {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10}]}'::jsonb,
-    ARRAY['sitescore_gap_ratio']
-FROM core.tenants t
-ON CONFLICT (policy_version_id) DO NOTHING;
+--
+-- Seeding is a function rather than two inline statements because it has two
+-- callers. Tenants are not fixed at deploy time: `core.tenants` rows are
+-- written by the data plane at runtime (apps/data_platform/store.py
+-- `_upsert_merchant`), which is strictly after `alembic upgrade head`. A
+-- migration-time backfill alone therefore covers only the tenants that already
+-- exist -- on a freshly provisioned database that is none of them, and every
+-- tenant onboarded afterwards would reach an empty registry. Because the
+-- four-light path is fail-closed by design (ODP-FR-FCT-005: an unresolvable
+-- policy refuses to produce an alert rather than falling back to the old
+-- literals), that gap is not a degraded mode; those tenants would never get an
+-- alert at all. One definition, two callers, so the backfill and the
+-- onboarding path cannot drift into issuing different thresholds.
+CREATE OR REPLACE FUNCTION workflow.seed_forecast_alert_policy(p_tenant_id UUID)
+RETURNS void
+LANGUAGE sql
+AS $seed_forecast_alert_policy$
+    INSERT INTO workflow.decision_policies (
+        policy_version_id, policy_label, policy_id, policy_version, policy_kind,
+        tenant_id, effective_from, effective_to,
+        owner_role, approved_by, approved_at,
+        input_contract, output_contract, change_reason,
+        rollback_policy_version, parameters, declared_inputs
+    )
+    VALUES (
+        'four-light-policy-0.0.0-retrofit:' || p_tenant_id::text,
+        'four-light-policy-0.0.0-retrofit',
+        'four-light-policy',
+        '0.0.0-retrofit',
+        'forecast_alert',
+        p_tenant_id,
+        '2020-01-01 00:00:00+00',
+        '2026-09-01 00:00:00+00',
+        'system',
+        'system_bootstrap',
+        '2026-09-01 00:00:00+00',
+        'ForecastOutput',
+        'Alert',
+        '歷史警示回填佔位，記錄機制導入前判定',
+        NULL,
+        '{"thresholds": [{"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35}, {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20}, {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10}]}'::jsonb,
+        ARRAY['sitescore_gap_ratio']
+    )
+    ON CONFLICT (policy_version_id) DO NOTHING;
 
-INSERT INTO workflow.decision_policies (
-    policy_version_id, policy_label, policy_id, policy_version, policy_kind,
-    tenant_id, effective_from, effective_to,
-    owner_role, approved_by, approved_at,
-    input_contract, output_contract, change_reason,
-    rollback_policy_version, parameters, declared_inputs
-)
-SELECT
-    'four-light-policy-v1:' || t.tenant_id::text,
-    'four-light-policy-v1',
-    'four-light-policy',
-    '1.0.0',
-    'forecast_alert',
-    t.tenant_id,
-    '2026-09-01 00:00:00+00',
-    NULL,
-    'ops',
-    'architecture_owner',
-    '2026-09-01 00:00:00+00',
-    'ForecastOutput',
-    'Alert',
-    '機制導入，門檻沿用常數，納入資料品質守衛',
-    'four-light-policy-0.0.0-retrofit:' || t.tenant_id::text,
-    '{"thresholds": [{"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35}, {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20}, {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10}], "data_quality_guard": {"max_staleness_days": 2, "on_violation": "SUPPRESS_HIGH_CONFIDENCE"}}'::jsonb,
-    -- The runtime evaluator reads sitescore_gap_ratio. The quality guard is
-    -- policy metadata evaluated against the forecast's derived freshness
-    -- context, not a second declared decision input.
-    ARRAY['sitescore_gap_ratio']
-FROM core.tenants t
-ON CONFLICT (policy_version_id) DO NOTHING;
+    INSERT INTO workflow.decision_policies (
+        policy_version_id, policy_label, policy_id, policy_version, policy_kind,
+        tenant_id, effective_from, effective_to,
+        owner_role, approved_by, approved_at,
+        input_contract, output_contract, change_reason,
+        rollback_policy_version, parameters, declared_inputs
+    )
+    VALUES (
+        'four-light-policy-v1:' || p_tenant_id::text,
+        'four-light-policy-v1',
+        'four-light-policy',
+        '1.0.0',
+        'forecast_alert',
+        p_tenant_id,
+        '2026-09-01 00:00:00+00',
+        NULL,
+        'ops',
+        'architecture_owner',
+        '2026-09-01 00:00:00+00',
+        'ForecastOutput',
+        'Alert',
+        '機制導入，門檻沿用常數，納入資料品質守衛',
+        'four-light-policy-0.0.0-retrofit:' || p_tenant_id::text,
+        '{"thresholds": [{"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35}, {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20}, {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10}], "data_quality_guard": {"max_staleness_days": 2, "on_violation": "SUPPRESS_HIGH_CONFIDENCE"}}'::jsonb,
+        -- The runtime evaluator reads sitescore_gap_ratio. The quality guard is
+        -- policy metadata evaluated against the forecast's derived freshness
+        -- context, not a second declared decision input.
+        ARRAY['sitescore_gap_ratio']
+    )
+    ON CONFLICT (policy_version_id) DO NOTHING;
+$seed_forecast_alert_policy$;
+
+-- Backfill: the tenants that exist at migration time.
+SELECT workflow.seed_forecast_alert_policy(t.tenant_id) FROM core.tenants t;
+
+-- Onboarding: every tenant created from here on. A trigger rather than a call
+-- inside `_upsert_merchant` because the registry has to hold for whichever
+-- path writes the tenant, not only the one the data plane happens to use
+-- today.
+CREATE OR REPLACE FUNCTION workflow.seed_forecast_alert_policy_on_tenant()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $seed_forecast_alert_policy_on_tenant$
+BEGIN
+    PERFORM workflow.seed_forecast_alert_policy(NEW.tenant_id);
+    RETURN NULL;
+END;
+$seed_forecast_alert_policy_on_tenant$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'trg_seed_forecast_alert_policy'
+          AND tgrelid = 'core.tenants'::regclass
+    ) THEN
+        CREATE TRIGGER trg_seed_forecast_alert_policy
+            AFTER INSERT ON core.tenants
+            FOR EACH ROW
+            EXECUTE FUNCTION workflow.seed_forecast_alert_policy_on_tenant();
+    END IF;
+END $$;

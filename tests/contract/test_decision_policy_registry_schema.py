@@ -407,3 +407,154 @@ class TestDecisionsAreBoundToRealPolicyVersions:
             with pytest.raises(psycopg.errors.ForeignKeyViolation) as excinfo:
                 self._decide(conn, "four-light-policy-v1")
         assert excinfo.value.diag.constraint_name == "fk_decisions_policy_version"
+
+
+# `policy_db` seeds its tenants *before* applying the migration, which models an
+# existing deployment being upgraded. A freshly provisioned database is the
+# other case, and the one that broke: `alembic upgrade head` runs before any
+# tenant exists, so the migration-time backfill has nothing to copy and every
+# tenant arrives afterwards.
+@pytest.fixture
+def freshly_provisioned_db(intake_blank_db):
+    """Blank PostgreSQL 16, migrated with no tenants present -- the state a new
+    environment is in the moment the migration job finishes."""
+    with intake_blank_db.connect(autocommit=True) as conn:
+        conn.execute(BASELINE_STUB)
+        conn.execute(MIGRATION.read_text(encoding="utf-8"))
+    return intake_blank_db
+
+
+def _database_url(db) -> str:
+    params = db.server.admin_params
+    host = params.get("host")
+    query = f"?host={host}" if host and str(host).startswith("/") else ""
+    netloc = "" if query else str(host or "localhost")
+    port = params.get("port")
+    if netloc and port:
+        netloc = f"{netloc}:{int(port)}"
+    user = params.get("user") or "postgres"
+    return f"postgresql://{user}@{netloc}/{db.dbname}{query}"
+
+
+@live
+class TestFreshlyProvisionedRuntime:
+    def test_the_migration_leaves_no_policy_rows_when_no_tenant_exists_yet(
+        self, freshly_provisioned_db
+    ) -> None:
+        """Not a defect -- the backfill has nothing to copy. Stated explicitly
+        because it is why the trigger has to exist: on this database the seed
+        alone leaves the registry empty."""
+        with freshly_provisioned_db.connect() as conn:
+            count = conn.execute(
+                "SELECT count(*) FROM workflow.decision_policies"
+            ).fetchone()[0]
+        assert count == 0
+
+    def test_a_tenant_onboarded_after_the_migration_gets_the_same_pair(
+        self, freshly_provisioned_db
+    ) -> None:
+        """`core.tenants` is written by the data plane at runtime, so this is
+        the ordinary path on any environment provisioned after this migration,
+        not an edge case."""
+        with freshly_provisioned_db.connect(autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)",
+                (TENANT_A, "onboarded-after-migration"),
+            )
+            rows = conn.execute(
+                "SELECT policy_label, policy_version, rollback_policy_version "
+                "FROM workflow.decision_policies WHERE tenant_id = %s::uuid "
+                "ORDER BY effective_from",
+                (TENANT_A,),
+            ).fetchall()
+
+        assert [(row[0], row[1]) for row in rows] == [
+            ("four-light-policy-0.0.0-retrofit", "0.0.0-retrofit"),
+            ("four-light-policy-v1", "1.0.0"),
+        ]
+        # Ordering is load-bearing: v1's rollback target is a composite foreign
+        # key onto the retrofit row, so seeding them the other way round would
+        # fail at insert time rather than silently.
+        assert rows[0][2] is None
+        assert rows[1][2] == f"four-light-policy-0.0.0-retrofit:{TENANT_A}"
+
+    def test_onboarding_two_tenants_keeps_the_registry_tenant_scoped(
+        self, freshly_provisioned_db
+    ) -> None:
+        with freshly_provisioned_db.connect(autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO core.tenants (tenant_id, tenant_name) "
+                "VALUES (%s, %s), (%s, %s)",
+                (TENANT_A, "tenant-a", TENANT_B, "tenant-b"),
+            )
+            rows = conn.execute(
+                "SELECT tenant_id::text, policy_version_id "
+                "FROM workflow.decision_policies"
+            ).fetchall()
+
+        by_tenant: dict[str, set[str]] = {}
+        for tenant, version_id in rows:
+            by_tenant.setdefault(tenant, set()).add(version_id)
+        assert set(by_tenant) == {TENANT_A, TENANT_B}
+        for tenant, version_ids in by_tenant.items():
+            assert version_ids == {
+                f"four-light-policy-0.0.0-retrofit:{tenant}",
+                f"four-light-policy-v1:{tenant}",
+            }
+
+    def test_the_runtime_repository_resolves_the_seeded_policy(
+        self, freshly_provisioned_db
+    ) -> None:
+        """The end the blocker was about: not that the table exists, but that
+        the class the Postgres bundle actually binds
+        (`SqlDecisionPolicyRepository`) returns a usable policy from a database
+        the migration job provisioned. A fake engine cannot show that -- the
+        previous unit test passed while `alembic upgrade head` was still
+        stopping at 0007 and never creating this table."""
+        from datetime import UTC, datetime
+
+        from shared.infrastructure.persistence.decision_policy import (
+            SqlDecisionPolicyRepository,
+        )
+        from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+        with freshly_provisioned_db.connect(autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)",
+                (TENANT_A, "onboarded-after-migration"),
+            )
+
+        engine = PostgresEngine(
+            _database_url(freshly_provisioned_db),
+            bootstrap=False,
+            validate_schema=False,
+        )
+        try:
+            repository = SqlDecisionPolicyRepository(engine)
+            current = repository.find_effective(
+                policy_kind="forecast_alert",
+                tenant_id=TENANT_A,
+                at=datetime(2026, 9, 2, tzinfo=UTC),
+            )
+            historical = repository.find_effective(
+                policy_kind="forecast_alert",
+                tenant_id=TENANT_A,
+                at=datetime(2025, 6, 1, tzinfo=UTC),
+            )
+        finally:
+            engine.close()
+
+        assert current is not None
+        assert current.policy_id == "four-light-policy"
+        assert current.policy_version == "1.0.0"
+        assert current.declared_inputs == ("sitescore_gap_ratio",)
+        # The thresholds the mechanism must carry over verbatim: shipping the
+        # mechanism and moving the numbers are two separate changes.
+        assert [
+            (t["level"], t["value"]) for t in current.parameters["thresholds"]
+        ] == [("RED", -0.35), ("ORANGE", -0.20), ("YELLOW", -0.10)]
+
+        # Point-in-time, not latest-version: re-resolving a pre-mechanism
+        # instant must land on the retrofit placeholder.
+        assert historical is not None
+        assert historical.policy_version == "0.0.0-retrofit"
