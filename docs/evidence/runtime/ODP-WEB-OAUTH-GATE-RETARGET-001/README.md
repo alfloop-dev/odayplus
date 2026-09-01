@@ -91,6 +91,8 @@
 
 本 task 執行了以下自動化驗證：
 
+本分支已先以正常 merge 流程合入 `origin/dev` 的 `d38506a4ae75d1891824d5f5b006a03d532712b1`；composition merge commit 為 `a7bbd713344f4dcc4bbc5cc42ac48bfe23292176`，未重寫或丟棄既有 task history。
+
 ```bash
 # 1. 執行專屬 retarget 驗證器 (包含前置封存、canonical 狀態、activity log 稽核、收據完整性與無 secret 斷言)
 python3 docs/evidence/runtime/ODP-WEB-OAUTH-GATE-RETARGET-001/verify_oauth_gate_retarget.py

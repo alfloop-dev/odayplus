@@ -6,6 +6,12 @@
   "reviewer": "Claude",
   "created_at": "2026-09-01T15:41:44Z",
   "secret_values_redacted": true,
+  "base_composition": {
+    "base_ref": "origin/dev",
+    "base_sha": "d38506a4ae75d1891824d5f5b006a03d532712b1",
+    "merge_commit": "a7bbd713344f4dcc4bbc5cc42ac48bfe23292176",
+    "history_rewritten": false
+  },
   "retarget_decision": {
     "action": "RETARGET_OAUTH_GATE_TO_PASSWORD_FIRST_VERIFICATION",
     "rationale": "在 password-first security E2E 與 optional OIDC deployment 均完成並具備 PR CI 證據後，將已存在的 rollout 依賴接續至密碼預設驗證收據；較早的 policy reconciliation 已移除 legacy human OAuth 依賴，本次 mutation 不提前解除其他 rollout gate。Google OAuth 保留為可選啟用作業，而非 password-first deployment prerequisite。",
