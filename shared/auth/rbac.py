@@ -83,6 +83,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.DATA_OWNER: frozenset(
         _grant("integration", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("data_quality", Action.VIEW, Action.UPDATE, Action.OVERRIDE)
+        | _grant("data", Action.APPROVE)
         | _grant("audit", Action.VIEW)
     ),
     Role.MODEL_OWNER: frozenset(

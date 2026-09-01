@@ -2,6 +2,7 @@
 
 from modules.forecastops.application import ForecastOpsResult, ForecastOpsService
 from modules.forecastops.domain import (
+    FORBIDDEN_FEEDBACK_OVERRIDE_KEYS,
     FORECASTOPS_FEATURE_SCHEMA_ID,
     FORECASTOPS_FEATURE_VERSION,
     FORECASTOPS_MIN_HISTORY_DAYS,
@@ -10,12 +11,15 @@ from modules.forecastops.domain import (
     FOUR_LIGHT_POLICY_VERSION,
     Alert,
     AlertLevel,
+    FeedbackStatus,
+    FeedbackType,
     ForecastBand,
     ForecastEngine,
     ForecastEngineError,
     ForecastEngineInputError,
     ForecastEngineResult,
     ForecastEngineUnavailableError,
+    ForecastFeedback,
     ForecastInput,
     ForecastOpsError,
     ForecastOpsNotFoundError,
@@ -24,7 +28,10 @@ from modules.forecastops.domain import (
     InterventionHandoff,
     StoreDayObservation,
     build_store_timeseries,
+    calculate_forecast_precision,
+    filter_training_observations,
     forecast_stores,
+    validate_feedback_payload,
 )
 from modules.forecastops.infrastructure import (
     ForecastOpsRepository,
@@ -41,20 +48,24 @@ from modules.forecastops.workers import (
 )
 
 __all__ = [
+    "FORBIDDEN_FEEDBACK_OVERRIDE_KEYS",
     "FORECASTOPS_FEATURE_SCHEMA_ID",
     "FORECASTOPS_FEATURE_VERSION",
     "FORECASTOPS_MIN_HISTORY_DAYS",
-    "FORECASTOPS_MODEL_VERSION",
     "FORECASTOPS_MODEL_FEATURES",
+    "FORECASTOPS_MODEL_VERSION",
     "FOUR_LIGHT_POLICY_VERSION",
     "Alert",
     "AlertLevel",
+    "FeedbackStatus",
+    "FeedbackType",
     "ForecastBand",
     "ForecastEngine",
     "ForecastEngineError",
     "ForecastEngineInputError",
     "ForecastEngineResult",
     "ForecastEngineUnavailableError",
+    "ForecastFeedback",
     "ForecastInput",
     "ForecastOpsBatchResult",
     "ForecastOpsError",
@@ -72,7 +83,10 @@ __all__ = [
     "StatsForecastAdapter",
     "StoreDayObservation",
     "build_store_timeseries",
+    "calculate_forecast_precision",
     "create_forecast_engine",
+    "filter_training_observations",
     "forecast_stores",
     "run_forecastops_batch_forecast",
+    "validate_feedback_payload",
 ]

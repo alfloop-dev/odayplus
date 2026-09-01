@@ -29,6 +29,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0004",
         "0005",
         "0006",
+        "0007",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -42,6 +43,21 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         if asset.role == "sql"
     } == {"infra/db/migrations/000014_avm_deal_outcomes.sql"}
     assert len(deal_outcome_step.sha256) == 64
+
+
+def test_forecastops_feedback_ddl_is_reachable_from_alembic_head() -> None:
+    """The feedback table is a named deliverable of ODP-FR-FCT-008, so its DDL
+    has to be applied by a revision rather than merely sit in the migrations
+    directory where only ``compute_migration_digest``'s glob would see it."""
+    plan = build_migration_plan(environment="dev")
+    feedback_step = next(step for step in plan.steps if step.revision == "0007")
+
+    assert feedback_step.path.endswith("0007_forecastops_feedback.py")
+    assert {
+        asset.path
+        for asset in feedback_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000015_forecastops_feedback.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

@@ -26,7 +26,7 @@ from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, model_validator
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -34,7 +34,11 @@ else:
         ForecastOpsService,
         RegisteredEstimatorForecastEngine,
     )
-    from modules.forecastops.domain import ForecastOpsError, ForecastOpsNotFoundError
+    from modules.forecastops.domain import (
+        FeedbackStatus,
+        ForecastOpsError,
+        ForecastOpsNotFoundError,
+    )
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
     from modules.forecastops.runtime import (
         ForecastOpsRuntimeConfigurationError,
@@ -57,6 +61,41 @@ else:
         inputs: list[dict[str, Any]] = Field(default_factory=list)
         prediction_origin_time: str | None = None
         idempotency_key: str | None = None
+
+    class ForecastOpsFeedbackCreatePayload(BaseModel):
+        store_id: str
+        feedback_type: str
+        reason: str
+        target_date_start: str | None = None
+        target_date_end: str | None = None
+        target_date: str | None = None
+        corrected_revenue: float | None = None
+        alert_id: str | None = None
+        disposition: str | None = None
+        actor: str | None = None
+        metadata: dict[str, Any] = Field(default_factory=dict)
+        model_config = {"extra": "allow"}
+
+        @model_validator(mode="after")
+        def validate_outcome_correction_date_range(self) -> ForecastOpsFeedbackCreatePayload:
+            feedback_type = self.feedback_type.strip().lower()
+            if feedback_type in {"outcome_correction", "outcome-correction"}:
+                start = self.target_date_start or self.target_date
+                end = self.target_date_end or self.target_date or self.target_date_start
+                if start is not None and end is not None and start != end:
+                    raise ValueError(
+                        "OUTCOME_CORRECTION must target exactly one date; "
+                        "a corrected revenue value cannot be applied to a date range"
+                    )
+            return self
+
+    class ForecastOpsFeedbackApprovePayload(BaseModel):
+        actor: str | None = None
+        note: str | None = None
+
+    class ForecastOpsFeedbackRejectPayload(BaseModel):
+        actor: str | None = None
+        reason: str | None = None
 
     class ForecastOpsJobStore:
         def __init__(self) -> None:
@@ -680,10 +719,237 @@ else:
                 "sitescore_gap_ratio": forecast.sitescore_gap_ratio,
             }
 
+        def _handle_create_feedback(
+            body: ForecastOpsFeedbackCreatePayload, request: Request
+        ) -> dict[str, Any]:
+            active_tenant_id = tenant_id(request)
+            caller_actor = body.actor or getattr(
+                getattr(request.state, "operator_principal", None), "subject_id", "operator"
+            )
+            try:
+                feedback = service.submit_feedback(
+                    active_tenant_id,
+                    store_id=body.store_id,
+                    feedback_type=body.feedback_type,
+                    reason=body.reason,
+                    actor=caller_actor,
+                    target_date_start=body.target_date_start,
+                    target_date_end=body.target_date_end,
+                    target_date=body.target_date,
+                    corrected_revenue=body.corrected_revenue,
+                    alert_id=body.alert_id,
+                    disposition=body.disposition,
+                    metadata=body.metadata,
+                    raw_payload=body.model_dump(),
+                )
+            except ForecastOpsNotFoundError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except ForecastOpsError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+
+            audit_event = active_audit_log.record(
+                AuditEvent(
+                    event_type="forecastops.feedback.submitted.v1",
+                    actor=caller_actor,
+                    action="submit_feedback",
+                    resource=f"forecastops/feedback/{feedback.feedback_id}",
+                    outcome="accepted" if feedback.status != FeedbackStatus.PENDING_APPROVAL else "pending_approval",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "feedback_type": feedback.feedback_type.value,
+                        "store_id": feedback.store_id,
+                        "status": feedback.status.value,
+                    },
+                )
+            )
+            payload = feedback.to_dict()
+            payload["audit_event_id"] = audit_event.event_id
+            payload["correlation_id"] = request.state.correlation_id
+            return payload
+
+        @router.post(
+            "/feedbacks",
+            status_code=status.HTTP_201_CREATED,
+            dependencies=[
+                Depends(require_permission("forecastops", Action.CREATE, engine=authz_engine))
+            ],
+        )
+        def create_feedback(
+            body: ForecastOpsFeedbackCreatePayload, request: Request
+        ) -> dict[str, Any]:
+            return _handle_create_feedback(body, request)
+
+        def _handle_list_feedbacks(
+            request: Request,
+            store_id: str | None = None,
+            feedback_type: str | None = None,
+            status: str | None = None,
+        ) -> dict[str, Any]:
+            active_tenant_id = tenant_id(request)
+            feedbacks = service.list_feedbacks(
+                active_tenant_id,
+                store_id=store_id,
+                feedback_type=feedback_type,
+                status=status,
+            )
+            return {"items": [fb.to_dict() for fb in feedbacks], "count": len(feedbacks)}
+
+        @router.get(
+            "/feedbacks",
+            dependencies=[
+                Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))
+            ],
+        )
+        def list_feedbacks(
+            request: Request,
+            store_id: str | None = None,
+            feedback_type: str | None = None,
+            status: str | None = None,
+        ) -> dict[str, Any]:
+            return _handle_list_feedbacks(
+                request, store_id=store_id, feedback_type=feedback_type, status=status
+            )
+
+        def _handle_get_feedback(feedback_id: str, request: Request) -> dict[str, Any]:
+            active_tenant_id = tenant_id(request)
+            feedback = service.get_feedback(active_tenant_id, feedback_id)
+            if feedback is None:
+                raise HTTPException(status_code=404, detail="feedback not found")
+            return feedback.to_dict()
+
+        @router.get(
+            "/feedbacks/{feedback_id}",
+            dependencies=[
+                Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))
+            ],
+        )
+        def get_feedback(feedback_id: str, request: Request) -> dict[str, Any]:
+            return _handle_get_feedback(feedback_id, request)
+
+        def _handle_approve_feedback(
+            feedback_id: str,
+            body: ForecastOpsFeedbackApprovePayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            active_tenant_id = tenant_id(request)
+            caller_actor = body.actor or getattr(
+                getattr(request.state, "operator_principal", None), "subject_id", "data_owner"
+            )
+            try:
+                approved_feedback, recalculated_forecast = service.approve_outcome_correction(
+                    active_tenant_id,
+                    feedback_id,
+                    actor=caller_actor,
+                    note=body.note,
+                )
+            except ForecastOpsNotFoundError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except ForecastOpsError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+
+            audit_event = active_audit_log.record(
+                AuditEvent(
+                    event_type="forecastops.feedback.approved.v1",
+                    actor=caller_actor,
+                    action="approve_feedback",
+                    resource=f"forecastops/feedback/{feedback_id}",
+                    outcome="approved",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "feedback_type": approved_feedback.feedback_type.value,
+                        "store_id": approved_feedback.store_id,
+                        "note": body.note,
+                    },
+                )
+            )
+            return {
+                "feedback": approved_feedback.to_dict(),
+                "forecast": recalculated_forecast.to_dict() if recalculated_forecast else None,
+                "audit_event_id": audit_event.event_id,
+                "correlation_id": request.state.correlation_id,
+            }
+
+        @router.post(
+            "/feedbacks/{feedback_id}/approve",
+            dependencies=[
+                Depends(require_permission("data", Action.APPROVE, engine=authz_engine))
+            ],
+        )
+        def approve_feedback(
+            feedback_id: str,
+            body: ForecastOpsFeedbackApprovePayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            return _handle_approve_feedback(feedback_id, body, request)
+
+        def _handle_reject_feedback(
+            feedback_id: str,
+            body: ForecastOpsFeedbackRejectPayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            active_tenant_id = tenant_id(request)
+            caller_actor = body.actor or getattr(
+                getattr(request.state, "operator_principal", None), "subject_id", "data_owner"
+            )
+            try:
+                rejected_feedback = service.reject_outcome_correction(
+                    active_tenant_id,
+                    feedback_id,
+                    actor=caller_actor,
+                    rejection_reason=body.reason,
+                )
+            except ForecastOpsNotFoundError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except ForecastOpsError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+
+            audit_event = active_audit_log.record(
+                AuditEvent(
+                    event_type="forecastops.feedback.rejected.v1",
+                    actor=caller_actor,
+                    action="reject_feedback",
+                    resource=f"forecastops/feedback/{feedback_id}",
+                    outcome="rejected",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "feedback_type": rejected_feedback.feedback_type.value,
+                        "store_id": rejected_feedback.store_id,
+                        "rejection_reason": body.reason,
+                    },
+                )
+            )
+            return {
+                "feedback": rejected_feedback.to_dict(),
+                "audit_event_id": audit_event.event_id,
+                "correlation_id": request.state.correlation_id,
+            }
+
+        @router.post(
+            "/feedbacks/{feedback_id}/reject",
+            dependencies=[
+                Depends(require_permission("data", Action.APPROVE, engine=authz_engine))
+            ],
+        )
+        def reject_feedback(
+            feedback_id: str,
+            body: ForecastOpsFeedbackRejectPayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            return _handle_reject_feedback(feedback_id, body, request)
+
         return router
 
     __all__ = [
         "ForecastOpsAlertAcknowledgePayload",
+        "ForecastOpsFeedbackApprovePayload",
+        "ForecastOpsFeedbackCreatePayload",
+        "ForecastOpsFeedbackRejectPayload",
         "ForecastOpsForecastJobPayload",
         "ForecastOpsHandoffExecutePayload",
         "ForecastOpsJobStore",

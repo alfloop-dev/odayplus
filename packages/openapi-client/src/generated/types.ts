@@ -560,6 +560,33 @@ export type ForecastOpsAlertAcknowledgePayload = {
   note?: string | null;
 };
 
+/** ForecastOpsFeedbackApprovePayload */
+export type ForecastOpsFeedbackApprovePayload = {
+  actor?: string | null;
+  note?: string | null;
+};
+
+/** ForecastOpsFeedbackCreatePayload */
+export type ForecastOpsFeedbackCreatePayload = {
+  actor?: string | null;
+  alert_id?: string | null;
+  corrected_revenue?: number | null;
+  disposition?: string | null;
+  feedback_type: string;
+  metadata?: Record<string, unknown>;
+  reason: string;
+  store_id: string;
+  target_date?: string | null;
+  target_date_end?: string | null;
+  target_date_start?: string | null;
+};
+
+/** ForecastOpsFeedbackRejectPayload */
+export type ForecastOpsFeedbackRejectPayload = {
+  actor?: string | null;
+  reason?: string | null;
+};
+
 /** ForecastOpsForecastJobPayload */
 export type ForecastOpsForecastJobPayload = {
   idempotency_key?: string | null;
@@ -1649,6 +1676,10 @@ export const API_PATHS = {
   "/api/v1/feature-flags": ["GET"],
   "/api/v1/forecastops/alerts": ["GET"],
   "/api/v1/forecastops/alerts/{alert_id}/acknowledge": ["POST"],
+  "/api/v1/forecastops/feedbacks": ["GET", "POST"],
+  "/api/v1/forecastops/feedbacks/{feedback_id}": ["GET"],
+  "/api/v1/forecastops/feedbacks/{feedback_id}/approve": ["POST"],
+  "/api/v1/forecastops/feedbacks/{feedback_id}/reject": ["POST"],
   "/api/v1/forecastops/forecast-jobs": ["POST"],
   "/api/v1/forecastops/forecast-jobs/{job_id}": ["GET"],
   "/api/v1/forecastops/forecast-outputs/{forecast_output_id}": ["GET"],

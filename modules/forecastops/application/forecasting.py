@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
-from datetime import UTC, datetime, time, timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from models.shared_ml.production_runtime import ProductionModelRuntime
 from modules.forecastops.application.production_model import (
     RegisteredEstimatorForecastEngine,
+)
+from modules.forecastops.domain.feedback import (
+    FeedbackStatus,
+    FeedbackType,
+    ForecastFeedback,
+    calculate_forecast_precision,
+    filter_training_observations,
+    validate_feedback_payload,
 )
 from modules.forecastops.domain.forecasting import (
     Alert,
@@ -134,6 +142,14 @@ class ForecastOpsService:
             )
         origin = next(iter(origins))
 
+        # Feedback annotations are applied at the application boundary so all
+        # normal forecast callers, including the worker path, train on the same
+        # filtered series used by the feedback-aware precision evaluator.
+        normalized_inputs = tuple(
+            self._filter_forecast_input(item, tenant_id=tenant_id)
+            for item in normalized_inputs
+        )
+
         selected_engine = (
             self.engine
             if engine is None
@@ -228,6 +244,22 @@ class ForecastOpsService:
             ),
         )
 
+    def _filter_forecast_input(
+        self,
+        forecast_input: ForecastInput,
+        *,
+        tenant_id: str,
+    ) -> ForecastInput:
+        feedbacks = self.repository.list_feedbacks(
+            tenant_id,
+            store_id=forecast_input.store_id,
+        )
+        filtered_observations = filter_training_observations(
+            forecast_input.observations,
+            feedbacks,
+        )
+        return replace(forecast_input, observations=tuple(filtered_observations))
+
     def _persist_generated_alert(self, tenant_id: str, alert: Alert) -> Alert:
         """Persist a generated alert without rewinding an already-stored one.
 
@@ -287,6 +319,227 @@ class ForecastOpsService:
             actor=actor, intervention_id=intervention_id, now=now or datetime.now(UTC)
         )
         return self.repository.save_handoff(executed)
+
+    def submit_feedback(
+        self,
+        tenant_id: str,
+        *,
+        store_id: str,
+        feedback_type: FeedbackType | str,
+        reason: str,
+        actor: str,
+        target_date_start: date | str | None = None,
+        target_date_end: date | str | None = None,
+        target_date: date | str | None = None,
+        corrected_revenue: float | None = None,
+        alert_id: str | None = None,
+        disposition: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        raw_payload: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> ForecastFeedback:
+        """Submit a feedback record adhering to ODP-FR-FCT-008 and ODP-BR-GOV-001."""
+        if raw_payload is not None:
+            validate_feedback_payload(raw_payload)
+
+        current_time = now or datetime.now(UTC)
+        feedback = ForecastFeedback.create(
+            tenant_id=tenant_id,
+            store_id=store_id,
+            feedback_type=feedback_type,
+            reason=reason,
+            created_by=actor,
+            target_date_start=target_date_start,
+            target_date_end=target_date_end,
+            target_date=target_date,
+            corrected_revenue=corrected_revenue,
+            alert_id=alert_id,
+            disposition=disposition,
+            now=current_time,
+            metadata=metadata,
+        )
+
+        if feedback.feedback_type is FeedbackType.ALERT_DISPOSITION:
+            alert = self.repository.get_alert(tenant_id, feedback.alert_id)
+            if alert is None:
+                raise ForecastOpsNotFoundError(f"alert {feedback.alert_id} not found")
+            closed_alert = alert.close_with_disposition(
+                disposition=str(feedback.disposition),
+                actor=actor,
+                now=current_time,
+                note=reason,
+            )
+            self.repository.save_alert(closed_alert)
+
+        return self.repository.save_feedback(feedback)
+
+    def approve_outcome_correction(
+        self,
+        tenant_id: str,
+        feedback_id: str,
+        *,
+        actor: str,
+        note: str | None = None,
+        now: datetime | None = None,
+    ) -> tuple[ForecastFeedback, ForecastOutput | None]:
+        """Approve an OUTCOME_CORRECTION feedback, update canonical actuals, and trigger re-forecast."""
+        feedback = self.repository.get_feedback(tenant_id, feedback_id)
+        if feedback is None:
+            raise ForecastOpsNotFoundError(f"feedback {feedback_id} not found")
+        if feedback.feedback_type is not FeedbackType.OUTCOME_CORRECTION:
+            raise ForecastOpsError(
+                f"feedback {feedback_id} is of type {feedback.feedback_type.value}; only OUTCOME_CORRECTION can be approved"
+            )
+        if feedback.status is not FeedbackStatus.PENDING_APPROVAL:
+            raise ForecastOpsError(
+                f"feedback {feedback_id} is in status {feedback.status.value} and cannot be approved"
+            )
+
+        current_time = now or datetime.now(UTC)
+        updated_feedback = replace(
+            feedback,
+            status=FeedbackStatus.APPROVED,
+            approved_by=actor,
+            approved_at=current_time,
+        )
+        saved_feedback = self.repository.save_feedback(updated_feedback)
+
+        # Update canonical series observation
+        series = self.repository.get_series(tenant_id, feedback.store_id)
+        if series is not None and feedback.corrected_revenue is not None:
+            new_observations: list[StoreDayObservation] = []
+            matched = False
+            for obs in series.observations:
+                if feedback.target_date_start <= obs.business_date <= feedback.target_date_end:
+                    new_obs = replace(obs, actual_revenue=feedback.corrected_revenue)
+                    new_observations.append(new_obs)
+                    matched = True
+                else:
+                    new_observations.append(obs)
+            if not matched:
+                new_obs = StoreDayObservation(
+                    store_id=feedback.store_id,
+                    business_date=feedback.target_date_start,
+                    actual_revenue=feedback.corrected_revenue,
+                )
+                new_observations.append(new_obs)
+                new_observations.sort(key=lambda o: o.business_date)
+
+            updated_series = replace(series, observations=tuple(new_observations))
+            self.repository.save_series(updated_series)
+
+            # Trigger recalculation / re-forecast through the same filtered
+            # training series used by the normal forecast path.  The raw series
+            # remains canonical; CONTEXT_ANNOTATION only excludes observations
+            # from model input and precision evaluation.
+            training_series = self.get_training_series(tenant_id, feedback.store_id)
+            forecast_input = ForecastInput(
+                tenant_id=tenant_id,
+                store_id=feedback.store_id,
+                observations=(
+                    training_series.observations
+                    if training_series is not None
+                    else updated_series.observations
+                ),
+                prediction_origin_time=current_time,
+            )
+            forecast_result = self.forecast([forecast_input], scored_at=current_time)
+            recalculated_forecast = (
+                forecast_result.forecasts[0] if forecast_result.forecasts else None
+            )
+            return saved_feedback, recalculated_forecast
+
+        return saved_feedback, None
+
+    def reject_outcome_correction(
+        self,
+        tenant_id: str,
+        feedback_id: str,
+        *,
+        actor: str,
+        rejection_reason: str | None = None,
+        now: datetime | None = None,
+    ) -> ForecastFeedback:
+        """Reject an OUTCOME_CORRECTION feedback."""
+        feedback = self.repository.get_feedback(tenant_id, feedback_id)
+        if feedback is None:
+            raise ForecastOpsNotFoundError(f"feedback {feedback_id} not found")
+        if feedback.feedback_type is not FeedbackType.OUTCOME_CORRECTION:
+            raise ForecastOpsError(
+                f"feedback {feedback_id} is of type {feedback.feedback_type.value}; only OUTCOME_CORRECTION can be rejected"
+            )
+        if feedback.status is not FeedbackStatus.PENDING_APPROVAL:
+            raise ForecastOpsError(
+                f"feedback {feedback_id} is in status {feedback.status.value} and cannot be rejected"
+            )
+
+        updated_feedback = replace(
+            feedback,
+            status=FeedbackStatus.REJECTED,
+            rejection_reason=rejection_reason,
+        )
+        return self.repository.save_feedback(updated_feedback)
+
+    def list_feedbacks(
+        self,
+        tenant_id: str,
+        *,
+        store_id: str | None = None,
+        feedback_type: str | None = None,
+        status: str | None = None,
+    ) -> list[ForecastFeedback]:
+        return self.repository.list_feedbacks(
+            tenant_id,
+            store_id=store_id,
+            feedback_type=feedback_type,
+            status=status,
+        )
+
+    def get_feedback(self, tenant_id: str, feedback_id: str) -> ForecastFeedback | None:
+        return self.repository.get_feedback(tenant_id, feedback_id)
+
+    def get_training_series(self, tenant_id: str, store_id: str) -> ForecastSeries | None:
+        """Get series observations with CONTEXT_ANNOTATION periods excluded for training."""
+        series = self.repository.get_series(tenant_id, store_id)
+        if series is None:
+            return None
+        feedbacks = self.repository.list_feedbacks(tenant_id, store_id=store_id)
+        clean_obs = filter_training_observations(series.observations, feedbacks)
+        return replace(series, observations=tuple(clean_obs))
+
+    def evaluate_precision(
+        self,
+        tenant_id: str,
+        store_id: str,
+        forecast_output_id: str,
+    ) -> dict[str, Any]:
+        """Evaluate forecast precision, excluding periods with active CONTEXT_ANNOTATION."""
+        canonical = self.repository.get_canonical_forecast(tenant_id, forecast_output_id)
+        if canonical is None:
+            forecasts = [
+                f
+                for f in self.repository.latest_forecasts(tenant_id)
+                if f.forecast_output_id == forecast_output_id
+            ]
+            if not forecasts:
+                raise ForecastOpsNotFoundError(f"forecast {forecast_output_id} not found")
+            forecast = forecasts[0]
+        else:
+            forecast = next(
+                (
+                    f
+                    for f in self.repository.latest_forecasts(tenant_id)
+                    if f.forecast_output_id == forecast_output_id
+                ),
+                None,
+            )
+            if forecast is None:
+                raise ForecastOpsNotFoundError(f"forecast {forecast_output_id} not found")
+
+        series = self.repository.get_series(tenant_id, store_id)
+        observations = series.observations if series is not None else ()
+        feedbacks = self.repository.list_feedbacks(tenant_id, store_id=store_id)
+        return calculate_forecast_precision(forecast, observations, feedbacks)
 
 
 def _utc_datetime(value: datetime) -> datetime:
