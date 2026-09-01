@@ -265,10 +265,16 @@ else:
 
         @router.get("/reports", dependencies=[Depends(require_permission("adlift", Action.VIEW, engine=authz_engine))])
         def list_reports(evidence_level: str | None = None) -> dict[str, Any]:
+            # An unassessable report carries no ladder level (ADR-0004 D3), so it
+            # matches no level filter -- and must not be dereferenced here.
             reports = [
                 report
                 for report in adlift_repository.latest_reports()
-                if evidence_level is None or report.evidence_level.value == evidence_level
+                if evidence_level is None
+                or (
+                    report.evidence_level is not None
+                    and report.evidence_level.value == evidence_level
+                )
             ]
             return {"items": [report.to_dict() for report in reports], "count": len(reports)}
 
