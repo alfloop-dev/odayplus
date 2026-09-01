@@ -14,21 +14,42 @@ would read as "weaker than anecdotal" rather than "the scale does not apply".
 
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
+
 import pytest
 
 from modules.adlift.domain.incrementality import (
     _EVIDENCE_ORDER,
     CAUSAL_MIN_EVIDENCE,
+    INSUFFICIENT_EVIDENCE_CARD_VALUE,
+    AdCampaign,
     ContaminationFinding,
     EvidenceAssessment,
     EvidenceInsufficiencyReason,
     EvidenceLevel,
     PreTrendStatus,
     Recommendation,
+    StoreDayMetric,
     assess_evidence,
     is_causal_evidence,
     recommend,
+    run_incrementality,
 )
+
+_GENERATED_AT = datetime(2026, 8, 8, 10, 0, tzinfo=UTC)
+_PRE_DAYS = tuple(range(1, 6))
+_CAMPAIGN_DAYS = tuple(range(6, 11))
+
+
+def _metric(store_id: str, day: int, revenue: float) -> StoreDayMetric:
+    return StoreDayMetric(
+        store_id=store_id,
+        business_date=date(2026, 8, day),
+        revenue=revenue,
+        gross_margin=revenue * 0.5,
+        ad_spend=10.0,
+        source_snapshot_ids=(f"snap-{store_id}-{day}",),
+    )
 
 
 class TestUnassessableCampaigns:
@@ -186,3 +207,85 @@ class TestInsufficiencyCodesHaveProducers:
             ).insufficiency_reason
         }
         assert producible == set(EvidenceInsufficiencyReason)
+
+
+class TestUnassessableReportSerialisation:
+    """The whole report path has to survive a level of ``None``.
+
+    `assess_evidence` is the easy half. The half that actually ships is
+    `IncrementalityReport`, whose ``evidence_level`` is now optional -- every
+    projection that used to dereference it unconditionally is a crash waiting
+    for the first campaign with no treatment data. Nothing exercised
+    `run_incrementality` on that input before ADR-0004 D3 made it reachable,
+    which is exactly how such a dereference stays invisible.
+    """
+
+    @staticmethod
+    def _campaign_without_treatment_data() -> AdCampaign:
+        """Treatment stores report in the pre-period and then go silent."""
+        observations: list[StoreDayMetric] = []
+        for day in _PRE_DAYS:
+            observations.append(_metric("t1", day, 1_000.0))
+        for day in (*_PRE_DAYS, *_CAMPAIGN_DAYS):
+            observations.append(_metric("c1", day, 1_000.0))
+        return AdCampaign(
+            campaign_id="camp-dark",
+            name="Campaign With No Treatment Readings",
+            treatment_store_ids=("t1",),
+            candidate_control_store_ids=("c1",),
+            pre_period_start=date(2026, 8, 1),
+            pre_period_end=date(2026, 8, 5),
+            campaign_period_start=date(2026, 8, 6),
+            campaign_period_end=date(2026, 8, 10),
+            ad_spend=100.0,
+            observations=tuple(observations),
+            channel="paid_search",
+            campaign_intervention_id="ad-main",
+        )
+
+    def test_report_is_unassessable_rather_than_l0(self) -> None:
+        report = run_incrementality(
+            self._campaign_without_treatment_data(), generated_at=_GENERATED_AT
+        )
+
+        assert report.evidence_assessable is False
+        assert report.evidence_level is None
+        assert (
+            report.insufficiency_reason is EvidenceInsufficiencyReason.NO_TREATMENT_DATA
+        )
+        assert report.causal_claim_allowed is False
+        assert report.recommendation is Recommendation.INCONCLUSIVE
+
+    def test_to_dict_states_the_absence_instead_of_a_rank(self) -> None:
+        report = run_incrementality(
+            self._campaign_without_treatment_data(), generated_at=_GENERATED_AT
+        )
+        payload = report.to_dict()
+
+        assert payload["evidence_level"] is None
+        assert payload["evidence_assessable"] is False
+        assert payload["insufficiency_reason_code"] == "NO_TREATMENT_DATA"
+
+    def test_report_card_names_the_state_and_does_not_raise(self) -> None:
+        """The card has one string slot, so the state is named, not blanked."""
+        report = run_incrementality(
+            self._campaign_without_treatment_data(), generated_at=_GENERATED_AT
+        )
+        card = report.to_report_card()
+
+        assert card["evidenceLevel"] == INSUFFICIENT_EVIDENCE_CARD_VALUE
+        assert card["continueStopRecommendation"] == Recommendation.INCONCLUSIVE.value
+        # The card token must never be comparable against the ladder.
+        assert INSUFFICIENT_EVIDENCE_CARD_VALUE not in {
+            level.value for level in EvidenceLevel
+        }
+
+    def test_writeback_and_label_registry_carry_a_null_level(self) -> None:
+        """Downstream stores get an explicit null, never a fabricated L0."""
+        report = run_incrementality(
+            self._campaign_without_treatment_data(), generated_at=_GENERATED_AT
+        )
+
+        assert report.intervention_writeback["evidence_level"] is None
+        assert report.intervention_writeback["causal_claim_allowed"] is False
+        assert report.label_registry_entry["evidence_level"] is None

@@ -81,6 +81,15 @@ class EvidenceInsufficiencyReason(StrEnum):
     NO_TREATMENT_DATA = "NO_TREATMENT_DATA"
 
 
+INSUFFICIENT_EVIDENCE_CARD_VALUE = "INSUFFICIENT_EVIDENCE"
+"""What the single-slot report card shows when the ladder does not apply.
+
+Deliberately not an ``EvidenceLevel`` member: it must never be comparable
+against the ladder. It is the ODP-BR-AD-004 wording, so the card names the
+state instead of implying a rank.
+"""
+
+
 @dataclass(frozen=True)
 class EvidenceAssessment:
     """Assessability and strength, kept separate (ADR-0004 D3).
@@ -366,7 +375,13 @@ class IncrementalityReport:
         )
 
     def to_report_card(self) -> dict[str, Any]:
-        """Project onto the ``AdLiftReportCard`` contract (component contracts §5.9)."""
+        """Project onto the ``AdLiftReportCard`` contract (component contracts §5.9).
+
+        The card has one string slot for evidence, so an unassessable report is
+        named rather than blanked: ``null`` in a display field reads as "not
+        loaded yet", which is the ambiguity ODP-BR-AD-004 exists to remove.
+        The machine-readable split stays in :meth:`to_dict`.
+        """
         return {
             "campaign": self.campaign_name,
             "treatmentStores": list(self.treatment_store_ids),
@@ -375,7 +390,11 @@ class IncrementalityReport:
             "incrementalRevenue": self.incremental_revenue,
             "incrementalGrossMargin": self.incremental_gross_margin,
             "iromi": self.iromi,
-            "evidenceLevel": self.evidence_level.value,
+            "evidenceLevel": (
+                self.evidence_level.value
+                if self.evidence_level is not None
+                else INSUFFICIENT_EVIDENCE_CARD_VALUE
+            ),
             "continueStopRecommendation": self.recommendation.value,
         }
 
