@@ -29,7 +29,7 @@ review_trigger: "Review when a sixth evidence tier is proposed, or when automate
 
 ## Context
 
-兩份已核准的正式交付文件對同一個 Evidence Level 階梯給出不相容的定義：
+兩份正式交付文件對同一個 Evidence Level 階梯給出不相容的定義：
 
 | `ODP-SA-07` 第 6 節（第 2 批） | `ODP-ML-05` 第 5 節（第 6 批） |
 |---|---|
@@ -45,6 +45,8 @@ review_trigger: "Review when a sixth evidence tier is proposed, or when automate
 後果不只是命名不一致。`INSUFFICIENT_EVIDENCE` 在 ML-05 的階梯中不存在，而 `ODP-BR-AD-004` 明文要求「Evidence 不足需輸出 `INSUFFICIENT_EVIDENCE`」，`ODP-AC-BR-005` 亦以它為驗收條件。目前這兩項**無法達成**。
 
 依 `ODP-00-04`，兩份文件同為 `formal_deliverable` 且狀態均為 `draft-for-review`，衝突無法以批次先後或文件位階自動解決，故需 ADR 裁定。
+
+本 ADR 的狀態為 `proposed`；下述 Decision 是待核准的裁決建議，不是已生效的規範。最終裁決權屬 Architecture Owner 與 Validation Owner，本任務不代替任一方核准，也不在核准前改寫來源文件或實作。
 
 ## Decision
 
