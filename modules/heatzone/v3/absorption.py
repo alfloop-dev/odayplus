@@ -80,7 +80,6 @@ class AbsorbingStoreObservation:
     actual_revenue: float
     opened_on: date
     source_snapshot_id: str
-    data_quality_score: float = 1.0
 
     def observation_days(self, as_of: date) -> int:
         """Days the store has been trading as of the evaluation date."""
