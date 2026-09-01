@@ -20,6 +20,7 @@ from solver.netplan.model import (
     GOVERNED_DISABLED,
     GOVERNED_ENABLED,
     ActionOption,
+    ConstraintClass,
     InfeasibilityDiagnosis,
     ManagementApprovalExpectation,
     ManagementApprovalReceiptVerifier,
@@ -96,6 +97,16 @@ class NetworkPlanSolveResult:
     diagnostics: tuple[InfeasibilityDiagnosis, ...] = ()
     solver_version: str = SOLVER_VERSION
 
+    # Which of ODP-FR-NET-002's eight hard-constraint classes this solve
+    # actually bound. A plan is only feasible with respect to these; the
+    # complement is what the answer says nothing about. Without this pair a
+    # plan constrained by capital alone and a plan constrained by all eight
+    # come back looking the same, which is how a schedule the construction
+    # crew cannot deliver gets reported as feasible with its binding
+    # constraints neatly listed.
+    modelled_constraint_classes: tuple[ConstraintClass, ...] = ()
+    unmodelled_constraint_classes: tuple[ConstraintClass, ...] = ()
+
     @property
     def alternative_plan_available(self) -> bool:
         return bool(self.alternatives)
@@ -116,7 +127,33 @@ class NetworkPlanSolveResult:
             "infeasible": self.infeasible,
             "diagnostics": [diagnosis.to_dict() for diagnosis in self.diagnostics],
             "solver_version": self.solver_version,
+            "modelled_constraint_classes": [c.value for c in self.modelled_constraint_classes],
+            "unmodelled_constraint_classes": [c.value for c in self.unmodelled_constraint_classes],
         }
+
+
+def _require_declared_resource(
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+    attribute: str,
+    cap_label: str,
+) -> None:
+    """Refuse a cap whose per-option cost some option does not declare.
+
+    ``None`` means "not supplied"; ``0.0`` means "measured, consumes none".
+    Reading the first as the second would let an option with an uncounted cost
+    into a plan that then reports itself as within the cap.
+    """
+    missing = sorted(
+        f"{entity_id}:{option.action.value}"
+        for entity_id, options in options_by_entity.items()
+        for option in options
+        if getattr(option, attribute) is None
+    )
+    if missing:
+        raise ValueError(
+            f"{cap_label} is set but {len(missing)} option(s) declare no {attribute}: "
+            f"{', '.join(missing[:5])}{' ...' if len(missing) > 5 else ''}"
+        )
 
 
 def _candidate_from_selected(
@@ -163,6 +200,8 @@ def _solve_network_plan_impl(
     # Handle empty/missing inputs
     if not options_by_entity or any(not options for options in options_by_entity.values()):
         return NetworkPlanSolveResult(
+            modelled_constraint_classes=constraints.modelled_classes(),
+            unmodelled_constraint_classes=constraints.unmodelled_classes(),
             solver_status=STATUS_INFEASIBLE,
             objective_value=0.0,
             selected_actions=(),
@@ -187,6 +226,8 @@ def _solve_network_plan_impl(
         )
         if not candidates:
             return NetworkPlanSolveResult(
+            modelled_constraint_classes=constraints.modelled_classes(),
+            unmodelled_constraint_classes=constraints.unmodelled_classes(),
                 solver_status=STATUS_INFEASIBLE,
                 objective_value=0.0,
                 selected_actions=(),
@@ -207,6 +248,8 @@ def _solve_network_plan_impl(
             if candidate.action_signature != best.action_signature
         )[:alternative_limit]
         return NetworkPlanSolveResult(
+            modelled_constraint_classes=constraints.modelled_classes(),
+            unmodelled_constraint_classes=constraints.unmodelled_classes(),
             solver_status=STATUS_OPTIMAL,
             objective_value=best.objective_value,
             selected_actions=best.actions,
@@ -276,7 +319,74 @@ def _solve_network_plan_impl(
             <= constraints.max_average_risk * N
         )
 
-    # 6. Action count constraints
+    # 6. Shared delivery resources (ODP-FR-NET-002)
+    #
+    # Same shape as the budget: each option consumes some of a fixed pool. A cap
+    # is only meaningful if every option says what it consumes, so a missing
+    # figure is refused rather than read as zero -- treating an undeclared cost
+    # as no cost is how a plan comes back feasible while consuming a resource
+    # nobody counted.
+    for attribute, cap, label in (
+        ("construction_days", constraints.max_construction_days, "max_construction_days"),
+        ("equipment_units", constraints.max_equipment_units, "max_equipment_units"),
+        ("labour_headcount", constraints.max_labour_headcount, "max_labour_headcount"),
+    ):
+        if cap is None:
+            continue
+        _require_declared_resource(options_by_entity, attribute, label)
+        solver.Add(
+            sum(
+                x[entity_id][j] * float(getattr(option, attribute))
+                for entity_id, options in options_by_entity.items()
+                for j, option in enumerate(options)
+            )
+            <= cap
+        )
+
+    # 7. Coverage floor: the plan as a whole may not thin the network past this.
+    if constraints.min_coverage_delta is not None:
+        _require_declared_resource(options_by_entity, "coverage_delta", "min_coverage_delta")
+        solver.Add(
+            sum(
+                x[entity_id][j] * float(option.coverage_delta)
+                for entity_id, options in options_by_entity.items()
+                for j, option in enumerate(options)
+            )
+            >= constraints.min_coverage_delta
+        )
+
+    # 8. Dilution: cap openings per catchment.
+    #
+    # Cannibalisation is pairwise between sites and this model is linear, so the
+    # full effect cannot be expressed here. A per-catchment count carries the
+    # part that can be: it stops the plan opening several stores into the same
+    # demand. `ConstraintClass.DILUTION` records that this approximation, not
+    # the full effect, is what was applied.
+    if constraints.max_open_per_dilution_zone is not None:
+        zones = {
+            option.dilution_zone_id
+            for options in options_by_entity.values()
+            for option in options
+            if option.action is NetworkAction.OPEN and option.dilution_zone_id
+        }
+        if not zones:
+            raise ValueError(
+                "max_open_per_dilution_zone is set but no OPEN option declares a "
+                "dilution_zone_id; the cap would silently constrain nothing"
+            )
+        for zone in sorted(zones):
+            solver.Add(
+                sum(
+                    x[entity_id][j]
+                    for entity_id, options in options_by_entity.items()
+                    for j, option in enumerate(options)
+                    if option.action is NetworkAction.OPEN
+                    and option.dilution_zone_id == zone
+                )
+                <= constraints.max_open_per_dilution_zone
+            )
+
+    # 9. Action count constraints
     for action, minimum in constraints.min_action_counts.items():
         solver.Add(
             sum(
@@ -311,6 +421,8 @@ def _solve_network_plan_impl(
     status = solver.Solve()
     if status not in (_pywraplp().Solver.OPTIMAL, _pywraplp().Solver.FEASIBLE):
         return NetworkPlanSolveResult(
+            modelled_constraint_classes=constraints.modelled_classes(),
+            unmodelled_constraint_classes=constraints.unmodelled_classes(),
             solver_status=STATUS_INFEASIBLE,
             objective_value=0.0,
             selected_actions=(),
@@ -337,6 +449,8 @@ def _solve_network_plan_impl(
     )
     if not ranked_candidates:
         return NetworkPlanSolveResult(
+            modelled_constraint_classes=constraints.modelled_classes(),
+            unmodelled_constraint_classes=constraints.unmodelled_classes(),
             solver_status=STATUS_INFEASIBLE,
             objective_value=0.0,
             selected_actions=(),
@@ -357,6 +471,8 @@ def _solve_network_plan_impl(
     ][:alternative_limit]
 
     return NetworkPlanSolveResult(
+            modelled_constraint_classes=constraints.modelled_classes(),
+            unmodelled_constraint_classes=constraints.unmodelled_classes(),
         solver_status=STATUS_OPTIMAL,
         objective_value=best_candidate.objective_value,
         selected_actions=best_candidate.actions,
@@ -583,6 +699,40 @@ def _is_feasible(candidate: NetworkPlanCandidate, constraints: NetPlanConstraint
             return False
     for action, maximum in constraints.max_action_counts.items():
         if candidate.action_counts.get(action, 0) > maximum:
+            return False
+    # Enumerated alternatives are offered to a human as plans they could adopt,
+    # so they must clear the same resource caps as the optimum. An alternative
+    # that breaches construction capacity is not an alternative.
+    for attribute, cap in (
+        ("construction_days", constraints.max_construction_days),
+        ("equipment_units", constraints.max_equipment_units),
+        ("labour_headcount", constraints.max_labour_headcount),
+    ):
+        if cap is None:
+            continue
+        total = 0.0
+        for action_option in candidate.actions:
+            value = getattr(action_option, attribute)
+            if value is None:
+                return False
+            total += float(value)
+        if total > cap:
+            return False
+    if constraints.min_coverage_delta is not None:
+        total_coverage = 0.0
+        for action_option in candidate.actions:
+            if action_option.coverage_delta is None:
+                return False
+            total_coverage += float(action_option.coverage_delta)
+        if total_coverage < constraints.min_coverage_delta:
+            return False
+    if constraints.max_open_per_dilution_zone is not None:
+        per_zone: Counter[str] = Counter(
+            action_option.dilution_zone_id
+            for action_option in candidate.actions
+            if action_option.action is NetworkAction.OPEN and action_option.dilution_zone_id
+        )
+        if any(count > constraints.max_open_per_dilution_zone for count in per_zone.values()):
             return False
     return True
 
