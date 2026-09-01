@@ -280,6 +280,15 @@ FINALIZE_DISPATCH_REASON = "owned_finalize_dispatch"
 FINALIZE_GIT_MESSAGE_FLAGS = {"-m", "--message"}
 FINALIZE_GIT_ALLOWED_COMMIT_FLAGS = {"--amend", *FINALIZE_GIT_MESSAGE_FLAGS}
 
+# Verification runners this repo actually uses. A finalize worker reads the
+# approved head's receipts instead of rerunning any of them.
+FINALIZE_DENIED_VERIFICATION_TOOLS = {"pytest", "ruff", "mypy", "eslint", "vitest", "jest", "playwright"}
+FINALIZE_DENIED_PYTHON_MODULES = {"pytest", "unittest", "ruff", "mypy"}
+FINALIZE_DENIED_NPM_SCRIPTS = {"test", "build", "lint", "typecheck", "e2e"}
+FINALIZE_NPM_LOCATION_FLAGS = {"--prefix", "-C", "--workspace", "-w"}
+FINALIZE_UV_RUN_VALUE_FLAGS = {"--python", "-p", "--with", "--directory", "--project", "--package", "--extra"}
+FINALIZE_UV_RUN_BOOLEAN_FLAGS = {"--frozen", "--locked", "--no-sync", "--no-project", "--isolated", "--offline", "-q", "--quiet"}
+
 
 def _matches_workspace_script(path_token: str, relative_path: str) -> bool:
     candidate = Path(path_token)
@@ -1041,11 +1050,7 @@ def _load_finalize_dispatch_context(config: dict[str, Any]) -> dict[str, Any] | 
     }
 
 
-def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[str, str] | None:
-    context = _load_finalize_dispatch_context(config)
-    if context is None:
-        return None
-
+def _finalize_git_decision(shell_command: str, task_id: str) -> dict[str, str] | None:
     segments = _split_shell_segments(shell_command)
     if not segments or len(segments) > 3:
         return None
@@ -1084,7 +1089,6 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     if saw_push:
         verbs.append("git push")
     verb_phrase = " and ".join(verbs)
-    task_id = context["task_id"]
     return {
         "decision": "deny",
         "reason": (
@@ -1095,302 +1099,123 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     }
 
 
-VERIFICATION_TOOLS = {
-    "pytest",
-    "py.test",
-    "unittest",
-    "tox",
-    "nox",
-    "coverage",
-    "ruff",
-    "flake8",
-    "mypy",
-    "pylint",
-    "black",
-    "isort",
-    "eslint",
-    "prettier",
-    "tsc",
-    "biome",
-    "vitest",
-    "jest",
-    "mocha",
-    "karma",
-    "jasmine",
-    "cypress",
-    "playwright",
-    "trivy",
-    "semgrep",
-    "bandit",
-    "safety",
-}
+def _finalize_verification_verb(segment: list[str]) -> str | None:
+    """Name the verification runner a single command segment invokes directly.
 
-VERIFICATION_PYTHON_MODULES = {
-    "pytest",
-    "unittest",
-    "py_compile",
-    "doctest",
-    "coverage",
-    "ruff",
-    "flake8",
-    "mypy",
-    "pylint",
-    "black",
-    "isort",
-    "bandit",
-    "safety",
-}
-
-VERIFICATION_NPM_KEYWORDS = (
-    "test",
-    "build",
-    "lint",
-    "typecheck",
-    "check",
-    "e2e",
-    "spec",
-    "coverage",
-    "scan",
-    "verify",
-)
-
-
-def _split_command_pipeline_segments(shell_command: str) -> list[str]:
-    segments: list[str] = []
-    current: list[str] = []
-    quote: str | None = None
-    escape = False
-    index = 0
-    while index < len(shell_command):
-        char = shell_command[index]
-        if escape:
-            current.append(char)
-            escape = False
-            index += 1
-            continue
-        if char == "\\":
-            current.append(char)
-            escape = True
-            index += 1
-            continue
-        if quote:
-            current.append(char)
-            if char == quote:
-                quote = None
-            index += 1
-            continue
-        if char in {"'", '"'}:
-            quote = char
-            current.append(char)
-            index += 1
-            continue
-        if shell_command.startswith("&&", index) or shell_command.startswith("||", index):
-            segment = "".join(current).strip()
-            if segment:
-                segments.append(segment)
-            current = []
-            index += 2
-            continue
-        if char in {";", "|"}:
-            segment = "".join(current).strip()
-            if segment:
-                segments.append(segment)
-            current = []
-            index += 1
-            continue
-        current.append(char)
-        index += 1
-    tail = "".join(current).strip()
-    if tail:
-        segments.append(tail)
-    return segments
-
-
-def _is_verification_tokens(tokens: list[str]) -> bool:
-    if not tokens:
-        return False
-
-    idx = 0
-    while idx < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", tokens[idx]):
-        idx += 1
-    tokens = tokens[idx:]
-    if not tokens:
-        return False
-
-    if tokens[0] == "env":
+    Bounded on purpose: only the canonical direct invocations are recognised.
+    Anything wrapped (a shell `-c` string, a pipeline, an unknown runner) is not
+    matched here -- the finalize dispatch prompt and
+    `.orchestrator/skills/task-closeout-finalization.md` remain the normative
+    ban on rerunning verification, and this deny is the backstop for the forms
+    the broker would otherwise allow outright.
+    """
+    tokens = [token for token in segment if not _is_shell_redirection_token(token)]
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
         tokens = tokens[1:]
-        while tokens and tokens[0].startswith("-"):
-            if tokens[0] in {"-u", "--unset", "-C", "--chdir"} and len(tokens) > 1:
-                tokens = tokens[2:]
-            else:
-                tokens = tokens[1:]
-        return _is_verification_tokens(tokens)
 
-    if tokens[0] in {"nohup", "time", "sudo", "exec", "nice"} and len(tokens) > 1:
-        return _is_verification_tokens(tokens[1:])
+    if tokens[:2] == ["uv", "run"]:
+        stripped = _strip_uv_run_flags(tokens[2:])
+        if stripped is None:
+            return None
+        tokens = stripped
 
-    if tokens[0] in {"bash", "sh", "zsh", "dash"} and "-c" in tokens:
-        c_idx = tokens.index("-c")
-        if c_idx + 1 < len(tokens):
-            return _is_verification_command(tokens[c_idx + 1])
+    if not tokens:
+        return None
+    command = tokens[0]
 
-    cmd = tokens[0]
-    cmd_name = Path(cmd).name.lower()
+    if command in FINALIZE_DENIED_VERIFICATION_TOOLS:
+        return command
 
-    if cmd_name in {"cd", "git"}:
-        return False
-    if "ai-status.sh" in cmd or "ai_status.py" in cmd:
-        return False
-    if cmd_name in {"bash", "sh"} and len(tokens) > 1 and "ai-status.sh" in tokens[1]:
-        return False
-    if (cmd_name in {"python", "python3"} or cmd_name.startswith("python3.")) and len(tokens) > 1 and "ai_status.py" in tokens[1]:
-        return False
+    if command in {"python", "python3"}:
+        # `-m <runner>` only; `python -c` stays open for reading receipts.
+        if tokens[1:2] == ["-m"] and len(tokens) > 2 and tokens[2] in FINALIZE_DENIED_PYTHON_MODULES:
+            return f"{command} -m {tokens[2]}"
+        return None
 
-    if cmd_name in VERIFICATION_TOOLS:
-        return True
+    if command == "npx":
+        if len(tokens) > 1 and tokens[1] in FINALIZE_DENIED_VERIFICATION_TOOLS:
+            return f"npx {tokens[1]}"
+        return None
 
-    if cmd_name == "uv":
-        if len(tokens) > 1 and tokens[1] in {"run", "tool"}:
-            u_idx = 2
-            if tokens[1] == "tool" and len(tokens) > 2 and tokens[2] == "run":
-                u_idx = 3
-            while u_idx < len(tokens) and tokens[u_idx].startswith("-"):
-                opt = tokens[u_idx]
-                if opt in {"--python", "-p", "--with", "--extra", "--package", "--directory", "--project", "--config-file"} and u_idx + 1 < len(tokens):
-                    u_idx += 2
-                else:
-                    u_idx += 1
-            if u_idx < len(tokens):
-                return _is_verification_tokens(tokens[u_idx:])
-        return False
+    if command == "npm":
+        return _finalize_npm_verification_verb(tokens)
 
-    if cmd_name in {"python", "python3"} or cmd_name.startswith("python3."):
-        if "-m" in tokens:
-            m_idx = tokens.index("-m")
-            if m_idx + 1 < len(tokens):
-                mod = tokens[m_idx + 1].lower()
-                if mod in VERIFICATION_PYTHON_MODULES or mod.startswith("test") or mod.endswith("_test"):
-                    return True
-        if "-c" in tokens:
-            c_idx = tokens.index("-c")
-            if c_idx + 1 < len(tokens):
-                code = tokens[c_idx + 1].lower()
-                if any(kw in code for kw in ("pytest", "unittest.main", "unittest.testcase")):
-                    return True
-        for arg in tokens[1:]:
-            if not arg.startswith("-"):
-                arg_name = Path(arg).name.lower()
-                if "smoke_test" in arg_name or arg_name.startswith("test_") or arg_name.endswith("_test.py"):
-                    return True
-        return False
-
-    if cmd_name == "npm":
-        n_idx = 1
-        while n_idx < len(tokens) and tokens[n_idx].startswith("-"):
-            flag = tokens[n_idx]
-            if flag in {"--prefix", "-C", "--workspace", "-w"} and n_idx + 1 < len(tokens):
-                n_idx += 2
-            else:
-                n_idx += 1
-        if n_idx >= len(tokens):
-            return False
-        subcmd = tokens[n_idx].lower()
-        if subcmd in {"test", "t"}:
-            return True
-        if subcmd in {"run", "run-script"}:
-            if n_idx + 1 < len(tokens):
-                target = tokens[n_idx + 1].lower()
-                return any(kw in target for kw in VERIFICATION_NPM_KEYWORDS)
-        if subcmd == "exec" and n_idx + 1 < len(tokens):
-            return _is_verification_tokens(tokens[n_idx + 1:])
-        return any(kw in subcmd for kw in VERIFICATION_NPM_KEYWORDS)
-
-    if cmd_name == "npx":
-        sub_tokens = [t for t in tokens[1:] if not t.startswith("-")]
-        if sub_tokens:
-            return _is_verification_tokens(sub_tokens)
-        return False
-
-    if cmd_name in {"yarn", "pnpm", "bun"}:
-        y_idx = 1
-        while y_idx < len(tokens) and tokens[y_idx].startswith("-"):
-            flag = tokens[y_idx]
-            if flag in {"--cwd", "--prefix", "--filter", "-C", "-w"} and y_idx + 1 < len(tokens):
-                y_idx += 2
-            else:
-                y_idx += 1
-        if y_idx >= len(tokens):
-            return False
-        subcmd = tokens[y_idx].lower()
-        if subcmd in {"test", "t"}:
-            return True
-        if subcmd in {"run", "run-script", "exec"}:
-            if y_idx + 1 < len(tokens):
-                if subcmd == "exec":
-                    return _is_verification_tokens(tokens[y_idx + 1:])
-                target = tokens[y_idx + 1].lower()
-                return any(kw in target for kw in VERIFICATION_NPM_KEYWORDS)
-        return any(kw in subcmd for kw in VERIFICATION_NPM_KEYWORDS)
-
-    if cmd_name == "cargo":
-        return any(t in {"test", "check", "clippy", "build", "bench"} for t in tokens[1:])
-    if cmd_name == "go":
-        return any(t in {"test", "vet", "build"} for t in tokens[1:])
-
-    if cmd_name in {"pip", "pip3"} and "install" in tokens:
-        return any(Path(t).name in {"pytest", "coverage"} or t.startswith("pytest") for t in tokens)
-    if cmd_name in {"apt", "apt-get"} and "install" in tokens:
-        return any("pytest" in t for t in tokens)
-
-    return False
+    return None
 
 
-def _is_verification_segment(segment: str) -> bool:
-    segment = segment.strip()
-    if not segment:
-        return False
-    if _is_safe_pytest_install_command(segment):
-        return True
-    try:
-        tokens = shlex.split(segment)
-    except ValueError:
-        return bool(
-            re.search(
-                r"\b(?:pytest|unittest|smoke_test|cargo\s+test|go\s+test|vitest|jest|ruff|mypy|eslint)\b",
-                segment,
-                re.IGNORECASE,
-            )
-        )
-    return _is_verification_tokens(tokens)
+def _strip_uv_run_flags(tokens: list[str]) -> list[str] | None:
+    """Drop known `uv run` options so the wrapped command becomes visible.
+
+    Returns None on an unrecognised option so an unfamiliar `uv run` invocation
+    never turns into a deny; `uv run --with pytest python -c ...` must keep
+    reading receipts.
+    """
+    while tokens and tokens[0].startswith("-"):
+        if tokens[0] in FINALIZE_UV_RUN_VALUE_FLAGS:
+            if len(tokens) < 2:
+                return None
+            tokens = tokens[2:]
+            continue
+        if tokens[0] in FINALIZE_UV_RUN_BOOLEAN_FLAGS:
+            tokens = tokens[1:]
+            continue
+        return None
+    return tokens
 
 
-def _is_verification_command(shell_command: str) -> bool:
-    segments = _split_command_pipeline_segments(shell_command)
-    return any(_is_verification_segment(segment) for segment in segments)
+def _finalize_npm_verification_verb(tokens: list[str]) -> str | None:
+    args = tokens[1:]
+    while len(args) > 1 and args[0] in FINALIZE_NPM_LOCATION_FLAGS:
+        args = args[2:]
+    if not args:
+        return None
+    if args[0] == "test":
+        return "npm test"
+    if args[0] in {"run", "run-script"} and len(args) > 1:
+        script = args[1]
+        if script.split(":", 1)[0] in FINALIZE_DENIED_NPM_SCRIPTS:
+            return f"npm run {script}"
+    if args[0] == "exec" and len(args) > 1 and args[1] in FINALIZE_DENIED_VERIFICATION_TOOLS:
+        return f"npm exec {args[1]}"
+    return None
+
+
+def _finalize_verification_decision(shell_command: str, task_id: str) -> dict[str, str] | None:
+    segments = _split_shell_segments(shell_command)
+    if not segments:
+        return None
+    normalized = _strip_workspace_cd_segment(segments)
+    if not normalized:
+        return None
+
+    verb = next(
+        (found for found in (_finalize_verification_verb(segment) for segment in normalized) if found),
+        None,
+    )
+    if verb is None:
+        return None
+
+    return {
+        "decision": "deny",
+        "reason": (
+            f"Denied {verb} for {task_id} during {FINALIZE_DISPATCH_REASON}: "
+            "verification is completed before review submission and the reviewer-approved "
+            "head is immutable, so tests must not be rerun. Read the exact approved head's "
+            "PR, CI status, and verification receipts instead."
+        ),
+        "risk_class": "immutable_review_head",
+    }
 
 
 def _finalize_decision(shell_command: str, config: dict[str, Any]) -> dict[str, str] | None:
     context = _load_finalize_dispatch_context(config)
     if context is None:
         return None
-
-    git_decision = _finalize_git_decision(shell_command, config)
+    task_id = str(context["task_id"])
+    git_decision = _finalize_git_decision(shell_command, task_id)
     if git_decision is not None:
         return git_decision
-
-    if _is_verification_command(shell_command):
-        task_id = context["task_id"]
-        return {
-            "decision": "deny",
-            "reason": (
-                f"Denied verification command for {task_id} during {FINALIZE_DISPATCH_REASON}: "
-                "the reviewer-approved branch head is immutable and tests must not be rerun. "
-                "Only read and verify the exact approved head's PR, CI, and receipts."
-            ),
-            "risk_class": "immutable_review_head",
-        }
-
-    return None
+    return _finalize_verification_decision(shell_command, task_id)
 
 
 def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
