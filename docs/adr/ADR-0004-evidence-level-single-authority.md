@@ -85,7 +85,7 @@ review_trigger: "Review when a sixth evidence tier is proposed, or when automate
 | `evidence_level` | `L0`–`L5`；`evidence_assessable = false` 時為 null | 證據強度 |
 | `insufficiency_reason_code` | `evidence_assessable = false` 時必填 | 見下方 |
 
-原因碼初版為 `SAMPLE_TOO_SMALL`、`NO_CONTROL`、`OVERLAPPING_TREATMENT`、`DATA_QUALITY_FAIL`。
+原因碼清單見 Open Questions 第 3 點：實作階段確認為 `NO_TREATMENT_DATA` 一項，本節初擬的另外三項均不成立或尚無判定路徑。
 
 對外呈現時，`evidence_assessable = false` 一律顯示為 `INSUFFICIENT_EVIDENCE`，滿足 `ODP-BR-AD-004` 的字面要求。
 
@@ -153,4 +153,11 @@ def is_causal_evidence(level: EvidenceLevel) -> bool:
 
 1. **既有 `evidence_level` 記錄的數量與分佈。** 回填為 NULL 前需實際查詢。本 ADR 撰寫時三個環境均無工作負載運行，未執行任何線上查詢。
 2. **`causal_candidate` 的原始意圖。** 判定為孤兒值（dbt 有讀取分支，無任何寫入者）而移除。若有紀錄顯示它對應某個未實作的業務概念，應補記於此 —— 移除已隨 `ODP-EVIDENCE-LEVEL-ALIGNMENT-001` 執行，回復需另開 task。
-3. **四個 insufficiency 原因碼是否足夠。** 其中 `OVERLAPPING_TREATMENT` 與 `ODP-BR-AD-002`（重疊促銷需標記或排除）可能為同一判定的兩個名稱，需 Validation Owner 確認是否合併。
+3. ~~**四個 insufficiency 原因碼是否足夠。**~~ 已由 `ODP-EVIDENCE-ASSESSABILITY-001` 回答，答案是四個之中有兩個不該存在：
+
+   - `NO_CONTROL` 即 `L1_BEFORE_AFTER`。前後比較是一個真實的（雖然弱的）讀數，不是讀不出來。
+   - `OVERLAPPING_TREATMENT` 即 `L2_MATCHED_DESCRIPTIVE`，正是現行 `contamination` 判定產生的等級。活動仍可量測，失敗的是因果宣稱。
+
+   兩者都描述較弱的設計而非不可評估的設計，且都已各有其等級。另兩個 —— `SAMPLE_TOO_SMALL` 與 `DATA_QUALITY_FAIL` —— 在該模組沒有判定路徑（沒有最小樣本門檻，也沒有資料品質訊號進入 `assess_evidence()`），故不予宣告，待其門檻與訊號存在時再加。宣告一個沒有產生者的列舉值，正是 `causal_candidate` 得以存活數月的形狀。
+
+   因此 `EvidenceInsufficiencyReason` 初版只有 `NO_TREATMENT_DATA` 一個成員，並有測試確保每個宣告的成員都有產生路徑。
