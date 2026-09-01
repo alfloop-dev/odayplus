@@ -33,9 +33,9 @@ import pgserver
 REPO = pathlib.Path(__file__).resolve().parents[2]
 AMENDMENT = REPO / "docs/design/ODP-SD-AMD-001.md"
 
-# Index of the one fenced block that is a dbt select-list fragment rather than
-# a standalone statement (section 6.3).
-DBT_FRAGMENT_INDEX = 8
+# A fenced block counts as executable only if it opens with a DDL/DML verb.
+# Section 6.3 embeds a dbt select-list fragment, which is not a statement.
+EXECUTABLE_PREFIXES = ("CREATE", "ALTER", "DROP", "DO", "INSERT", "UPDATE", "COMMENT")
 
 STUB = """
 CREATE SCHEMA IF NOT EXISTS core;      CREATE SCHEMA IF NOT EXISTS workflow;
@@ -229,10 +229,25 @@ CASES: list[tuple[str, str, bool]] = [
 
 
 def sql_blocks() -> list[str]:
-    """Return the amendment's executable SQL blocks, in document order."""
+    """Return the amendment's executable SQL blocks, in document order.
+
+    Selection is by leading keyword rather than by position, so inserting a
+    new SQL block into the amendment does not silently shift what gets skipped.
+    """
     doc = AMENDMENT.read_text(encoding="utf-8")
     blocks = re.findall(r"```sql\n(.*?)```", doc, re.S)
-    return [b for i, b in enumerate(blocks) if i != DBT_FRAGMENT_INDEX]
+    executable = []
+    for block in blocks:
+        first = next(
+            (ln for ln in block.strip().splitlines() if ln.strip()
+             and not ln.lstrip().startswith("--")),
+            "",
+        )
+        if first.lstrip().upper().startswith(EXECUTABLE_PREFIXES):
+            executable.append(block)
+        else:
+            print(f"  (skipping non-statement block: {first.strip()[:60]!r})")
+    return executable
 
 
 class Runner:
