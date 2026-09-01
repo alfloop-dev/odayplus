@@ -339,27 +339,46 @@ def test_alert_disposition_auto_accepted_and_closes_alert() -> None:
         store_id="store-alert-001",
         feedback_type=FeedbackType.ALERT_DISPOSITION,
         alert_id=alert.alert_id,
-        disposition="false_alarm_sensor_glitch",
+        disposition="Known Context",
         reason="IoT sensor offline gave zero machine cycle readings erroneously",
         actor="ops-manager-dan",
     )
 
     # Verification 1: Feedback auto-accepted
     assert feedback.status is FeedbackStatus.ACCEPTED
-    assert feedback.disposition == "false_alarm_sensor_glitch"
+    assert feedback.disposition == "KNOWN_CONTEXT"
 
     # Verification 2: Alert is closed with disposition
     updated_alert = repository.get_alert(TENANT_ID, alert.alert_id)
     assert updated_alert is not None
     assert updated_alert.status == "closed"
     assert updated_alert.closed_at is not None
-    assert updated_alert.disposition == "false_alarm_sensor_glitch"
+    assert updated_alert.disposition == "KNOWN_CONTEXT"
     assert updated_alert.disposition_set_by == "ops-manager-dan"
+
+    # A later precision run must recognize the canonical manual outcome and
+    # leave it out of automated re-evaluation.
+    backfill = service.backfill_alert_precision(TENANT_ID, store_id="store-alert-001")
+    assert backfill["updated_count"] == 0
+    assert backfill["alerts"][0]["disposition"] == "KNOWN_CONTEXT"
 
     # Verification 3: Closed alert cannot be acknowledged
     with pytest.raises(ForecastOpsError, match="closed and cannot be acknowledged"):
         service.acknowledge_alert(
             TENANT_ID, alert.alert_id, actor="ops-manager-dan", note="late ack"
+        )
+
+
+def test_alert_disposition_rejects_noncanonical_values() -> None:
+    with pytest.raises(ForecastOpsError, match="Invalid alert disposition"):
+        ForecastFeedback.create(
+            tenant_id=TENANT_ID,
+            store_id="store-alert-001",
+            feedback_type=FeedbackType.ALERT_DISPOSITION,
+            alert_id="alert-001",
+            disposition="false_alarm_sensor_glitch",
+            reason="Disposition must be one of the precision outcomes",
+            created_by="ops-manager-dan",
         )
 
 

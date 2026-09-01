@@ -26,7 +26,12 @@ import pytest
 from shared.infrastructure.persistence import assisted_listing_intake as intake
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VALIDATOR_SQL = REPO_ROOT / "scripts" / "validate_assisted_listing_intake_schema.sql"
+VALIDATOR_SQL = (
+    REPO_ROOT
+    / "delivery_toolchain"
+    / "governance"
+    / "validate_assisted_listing_intake_schema.sql"
+)
 
 live = pytest.mark.requires_live_env
 

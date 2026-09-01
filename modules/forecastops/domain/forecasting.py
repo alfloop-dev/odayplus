@@ -67,6 +67,30 @@ class AlertLevel(StrEnum):
     RED = "red"
 
 
+class AlertDisposition(StrEnum):
+    """The canonical alert evaluation dispositions (ODP-FR-FCT-006)."""
+
+    TRUE_POSITIVE = "TRUE_POSITIVE"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    KNOWN_CONTEXT = "KNOWN_CONTEXT"
+    UNRESOLVED = "UNRESOLVED"
+
+    @classmethod
+    def from_str(cls, value: str | AlertDisposition) -> AlertDisposition:
+        if isinstance(value, cls):
+            return value
+        # Accept the human-facing spelling used by the API/UI while persisting
+        # the enum's canonical wire value (for example, ``Known Context`` ->
+        # ``KNOWN_CONTEXT``).  Keeping one representation is important because
+        # precision backfill uses the disposition as its idempotency boundary.
+        normalized = "_".join(str(value).strip().upper().replace("-", " ").split())
+        for member in cls:
+            if member.value == normalized or member.name.upper() == normalized:
+                return member
+        valid = ", ".join(m.name for m in cls)
+        raise ForecastOpsError(f"Invalid alert disposition '{value}'. Must be one of: {valid}")
+
+
 class ForecastAlertPolicyError(ForecastOpsError):
     """A forecast alert policy is missing or cannot be evaluated safely."""
 
@@ -540,6 +564,119 @@ class Alert:
     disposition: str | None = None
     disposition_set_by: str | None = None
     disposition_set_at: datetime | None = None
+    deterioration_confirmed_at: datetime | None = None
+
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any]) -> Alert:
+        """Build an alert from its serialized API/document representation.
+
+        ``to_dict`` includes the derived ``lead_time_days`` field, so passing
+        that payload directly to the dataclass constructor is not a valid
+        round-trip.  Keep deserialization here so batch jobs can accept both
+        domain alerts and durable/API mappings without silently dropping the
+        alert evaluation fields.
+        """
+
+        def optional_datetime(value: Any) -> datetime | None:
+            if value is None or value == "":
+                return None
+            return _parse_datetime(value)
+
+        raw_level = data["alert_level"]
+        alert_level = (
+            raw_level
+            if isinstance(raw_level, AlertLevel)
+            else AlertLevel(str(raw_level).strip().lower())
+        )
+        raw_policy_version_id = data.get("policy_version_id")
+        return cls(
+            alert_id=str(data["alert_id"]),
+            tenant_id=str(data["tenant_id"]),
+            store_id=str(data["store_id"]),
+            alert_level=alert_level,
+            alert_reason_code=str(data.get("alert_reason_code") or ""),
+            evidence_json=dict(data.get("evidence_json") or {}),
+            opened_at=_parse_datetime(data["opened_at"]),
+            policy_id=str(data.get("policy_id") or ""),
+            policy_version=str(data.get("policy_version") or ""),
+            policy_version_id=(
+                str(raw_policy_version_id) if raw_policy_version_id is not None else None
+            ),
+            status=str(data.get("status") or "open"),
+            closed_at=optional_datetime(data.get("closed_at")),
+            acknowledged_by=(
+                str(data["acknowledged_by"])
+                if data.get("acknowledged_by") is not None
+                else None
+            ),
+            acknowledged_at=optional_datetime(data.get("acknowledged_at")),
+            acknowledgement_note=(
+                str(data["acknowledgement_note"])
+                if data.get("acknowledgement_note") is not None
+                else None
+            ),
+            disposition=(
+                data["disposition"].value
+                if isinstance(data.get("disposition"), AlertDisposition)
+                else (
+                    cls._normalize_disposition(data["disposition"])
+                    if data.get("disposition") is not None
+                    else None
+                )
+            ),
+            disposition_set_by=(
+                str(data["disposition_set_by"])
+                if data.get("disposition_set_by") is not None
+                else None
+            ),
+            disposition_set_at=optional_datetime(data.get("disposition_set_at")),
+            deterioration_confirmed_at=optional_datetime(
+                data.get("deterioration_confirmed_at")
+            ),
+        )
+
+    @staticmethod
+    def _normalize_disposition(value: Any) -> str:
+        """Normalize known dispositions without breaking legacy free-form rows."""
+        try:
+            return AlertDisposition.from_str(value).value
+        except ForecastOpsError:
+            # Older API rows allowed free-form text.  Keep those rows readable
+            # for migration/metrics while all new manual writes are validated
+            # by ``close_with_disposition`` and ``ForecastFeedback.create``.
+            return str(value).strip()
+
+    @property
+    def lead_time_days(self) -> int | None:
+        """Advance warning lead time in days.
+
+        Defined as deterioration_confirmed_at - opened_at, and only valid
+        when disposition is TRUE_POSITIVE (ODP-FR-FCT-006).
+        """
+        if self.disposition is None or self.deterioration_confirmed_at is None:
+            return None
+        try:
+            disp = (
+                self.disposition
+                if isinstance(self.disposition, AlertDisposition)
+                else AlertDisposition.from_str(self.disposition)
+            )
+        except Exception:
+            return None
+        if disp is not AlertDisposition.TRUE_POSITIVE:
+            return None
+        det_date = (
+            self.deterioration_confirmed_at.date()
+            if isinstance(self.deterioration_confirmed_at, datetime)
+            else self.deterioration_confirmed_at
+        )
+        open_date = (
+            self.opened_at.date()
+            if isinstance(self.opened_at, datetime)
+            else self.opened_at
+        )
+        lead_time = (det_date - open_date).days
+        return lead_time if lead_time >= 0 else None
 
     def acknowledge(self, *, actor: str, note: str | None = None, now: datetime) -> Alert:
         """Return an acknowledged copy of this alert.
@@ -563,22 +700,66 @@ class Alert:
         )
 
     def close_with_disposition(
-        self, *, disposition: str, actor: str, now: datetime, note: str | None = None
+        self,
+        *,
+        disposition: str | AlertDisposition,
+        actor: str,
+        now: datetime,
+        note: str | None = None,
+        deterioration_confirmed_at: datetime | None = None,
     ) -> Alert:
         """Return a closed copy of this alert with recorded disposition."""
-        if not disposition or not disposition.strip():
+        if not disposition or not str(disposition).strip():
             raise ForecastOpsError("alert disposition requires a disposition value")
         if not actor or not actor.strip():
             raise ForecastOpsError("alert disposition requires an actor")
+        disp_val = AlertDisposition.from_str(disposition).value
         return replace(
             self,
             status="closed",
             closed_at=now,
-            disposition=disposition.strip(),
+            disposition=disp_val,
             disposition_set_by=actor.strip(),
             disposition_set_at=now,
             acknowledgement_note=note or self.acknowledgement_note,
+            deterioration_confirmed_at=(
+                deterioration_confirmed_at
+                if deterioration_confirmed_at is not None
+                else self.deterioration_confirmed_at
+            ),
         )
+
+    def with_evaluation(
+        self,
+        *,
+        disposition: str | AlertDisposition,
+        deterioration_confirmed_at: datetime | None = None,
+        actor: str | None = None,
+        now: datetime | None = None,
+        close: bool = False,
+    ) -> Alert:
+        """Return a copy of this alert updated with evaluation disposition and deterioration."""
+        disp_val = AlertDisposition.from_str(disposition).value
+        if (
+            self.disposition == disp_val
+            and self.deterioration_confirmed_at == deterioration_confirmed_at
+        ):
+            # Backfill is repeatable.  Do not rewrite audit timestamps or count
+            # an unchanged evaluation as an update on every retry.
+            return self
+        changes: dict[str, Any] = {
+            "disposition": disp_val,
+            "deterioration_confirmed_at": deterioration_confirmed_at,
+        }
+        if actor is not None:
+            changes["disposition_set_by"] = actor.strip()
+        if now is not None:
+            changes["disposition_set_at"] = now
+        if close:
+            changes["status"] = "closed"
+            if now is not None and self.closed_at is None:
+                changes["closed_at"] = now
+        return replace(self, **changes)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -597,11 +778,21 @@ class Alert:
             "acknowledged_by": self.acknowledged_by,
             "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None,
             "acknowledgement_note": self.acknowledgement_note,
-            "disposition": self.disposition,
+            "disposition": (
+                self.disposition.value
+                if isinstance(self.disposition, AlertDisposition)
+                else self.disposition
+            ),
             "disposition_set_by": self.disposition_set_by,
             "disposition_set_at": (
                 self.disposition_set_at.isoformat() if self.disposition_set_at else None
             ),
+            "deterioration_confirmed_at": (
+                self.deterioration_confirmed_at.isoformat()
+                if self.deterioration_confirmed_at
+                else None
+            ),
+            "lead_time_days": self.lead_time_days,
         }
 
 

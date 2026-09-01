@@ -388,6 +388,8 @@ class Alert:
     opened_at: datetime = field(default_factory=datetime.now)
     closed_at: datetime | None = None
     status: str = "open"  # open/acknowledged/in_progress/resolved/dismissed
+    disposition: str | None = None
+    deterioration_confirmed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
