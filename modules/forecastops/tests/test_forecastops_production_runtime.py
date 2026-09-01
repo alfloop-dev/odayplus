@@ -13,7 +13,9 @@ from modules.forecastops import (
     ForecastOpsService,
     InMemoryForecastOpsRepository,
     StoreDayObservation,
+    default_forecast_alert_policy,
 )
+from shared.governance import InMemoryDecisionPolicyRepository
 from shared.infrastructure.persistence import (
     DurableForecastOpsRepository,
     SqliteDocumentStore,
@@ -76,6 +78,10 @@ def _repository(path: Path) -> tuple[SqliteEngine, DurableForecastOpsRepository]
     return engine, DurableForecastOpsRepository(SqliteDocumentStore(engine))
 
 
+def _policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+
+
 def test_production_invokes_registered_estimator_and_persists_across_restart(
     tmp_path: Path,
 ) -> None:
@@ -87,6 +93,7 @@ def test_production_invokes_registered_estimator_and_persists_across_restart(
             repository=repository,
             engine=adapter,
             runtime_mode="production",
+            policy_repository=_policy_repository(),
         ).forecast([_input()], prediction_origin_time=NOW, scored_at=NOW)
         output_id = result.forecasts[0].forecast_output_id
         assert len(adapter.calls) == 1

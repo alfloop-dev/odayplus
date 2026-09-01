@@ -27,6 +27,7 @@ from modules.forecastops import (
     ForecastInput,
     ForecastOpsService,
     StoreDayObservation,
+    default_forecast_alert_policy,
 )
 from modules.learninghub.infrastructure import (
     EvidentlyDriftMonitor,
@@ -35,6 +36,7 @@ from modules.learninghub.infrastructure import (
 )
 from pipelines.orchestration import DagsterTrainingOrchestrator
 from pipelines.quality import GreatExpectationsGate, QualityCheck
+from shared.governance import InMemoryDecisionPolicyRepository
 from solver.evolutionary import (
     EvolutionaryPortfolioOption,
     solve_portfolio_frontier,
@@ -223,6 +225,12 @@ def _forecast_input() -> ForecastInput:
     )
 
 
+def _forecast_policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository(
+        [default_forecast_alert_policy(_forecast_input().tenant_id)]
+    )
+
+
 def _liquidity_records() -> list[LiquidityTrainingRecord]:
     records: list[LiquidityTrainingRecord] = []
     for index in range(90):
@@ -252,6 +260,7 @@ def test_forecast_survival_search_and_optimization_flow_uses_real_oss() -> None:
     forecast = ForecastOpsService(
         engine="statsforecast",
         model_name="seasonal_naive",
+        policy_repository=_forecast_policy_repository(),
     ).forecast([_forecast_input()]).forecasts[0]
     assert forecast.engine_name == "statsforecast"
     assert forecast.model_metadata["library"] == "statsforecast"
@@ -386,7 +395,7 @@ def test_forecast_api_uses_deployment_selected_statsforecast(
     }
 
     response = TestClient(
-        create_app(),
+        create_app(forecastops_policy_repository=_forecast_policy_repository()),
         headers=FORECASTOPS_HEADERS,
     ).post(
         "/api/v1/forecastops/forecast-jobs",

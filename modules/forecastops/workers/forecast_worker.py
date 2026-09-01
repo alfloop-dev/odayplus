@@ -12,6 +12,7 @@ from modules.forecastops.application.forecasting import ForecastOpsService
 from modules.forecastops.domain.forecasting import ForecastEngine, ForecastInput
 from modules.forecastops.infrastructure.repositories import ForecastOpsRepository
 from modules.forecastops.runtime import forecastops_production_required
+from shared.governance import DecisionPolicyRepository
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class ForecastOpsForecastWorker:
         engine_options: Mapping[str, Any] | None = None,
         model_runtime: ProductionModelRuntime | None = None,
         runtime_mode: str | None = None,
+        policy_repository: DecisionPolicyRepository | None = None,
     ) -> None:
         production_required = forecastops_production_required(runtime_mode)
         selected_engine = engine
@@ -54,6 +56,7 @@ class ForecastOpsForecastWorker:
             engine_options=engine_options,
             model_runtime=model_runtime,
             runtime_mode=runtime_mode,
+            policy_repository=policy_repository,
         )
 
     def run(
@@ -66,6 +69,7 @@ class ForecastOpsForecastWorker:
         engine: str | ForecastEngine | None = None,
         model_name: str | None = None,
         engine_options: Mapping[str, Any] | None = None,
+        policy_repository: DecisionPolicyRepository | None = None,
     ) -> ForecastOpsBatchResult:
         completed_at = (
             _parse_datetime(scored_at)
@@ -84,6 +88,7 @@ class ForecastOpsForecastWorker:
             engine=engine,
             model_name=model_name,
             engine_options=engine_options,
+            policy_repository=policy_repository,
         )
         return ForecastOpsBatchResult(
             job_id=job_id or f"forecastops-forecast-{uuid4()}",
@@ -105,6 +110,7 @@ def run_forecastops_batch_forecast(
     engine_options: Mapping[str, Any] | None = None,
     model_runtime: ProductionModelRuntime | None = None,
     runtime_mode: str | None = None,
+    policy_repository: DecisionPolicyRepository | None = None,
 ) -> ForecastOpsBatchResult:
     return ForecastOpsForecastWorker(
         repository=repository,
@@ -113,6 +119,7 @@ def run_forecastops_batch_forecast(
         engine_options=engine_options,
         model_runtime=model_runtime,
         runtime_mode=runtime_mode,
+        policy_repository=policy_repository,
     ).run(
         inputs=inputs,
         job_id=job_id,

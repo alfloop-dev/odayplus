@@ -25,10 +25,12 @@ from modules.forecastops import (
     ForecastInput,
     ForecastOpsService,
     StoreDayObservation,
+    default_forecast_alert_policy,
 )
 from modules.listing.domain.models import ListingDedupKey
 from shared.audit.events import AuditEvent
 from shared.domain import AddressLocation, Listing
+from shared.governance import InMemoryDecisionPolicyRepository
 from shared.infrastructure.persistence import (
     DurableForecastOpsRepository,
     PersistenceBundle,
@@ -60,6 +62,10 @@ def _observation(day: int, revenue: float) -> StoreDayObservation:
     )
 
 
+def _policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+
+
 # -- factory / backend selection ----------------------------------------------
 
 
@@ -68,6 +74,7 @@ def test_factory_defaults_to_in_memory(monkeypatch) -> None:
     bundle = build_persistence()
     assert bundle.mode == "memory"
     assert not bundle.is_durable
+    assert isinstance(bundle.forecastops_policy_repository, InMemoryDecisionPolicyRepository)
 
 
 def test_factory_selects_durable_from_env(monkeypatch, db_path) -> None:
@@ -78,6 +85,7 @@ def test_factory_selects_durable_from_env(monkeypatch, db_path) -> None:
         assert bundle.mode == "durable"
         assert bundle.is_durable
         assert isinstance(bundle, PersistenceBundle)
+        assert isinstance(bundle.forecastops_policy_repository, InMemoryDecisionPolicyRepository)
     finally:
         bundle.engine.close()
 
@@ -145,7 +153,10 @@ def test_forecast_service_writes_survive_restart(db_path) -> None:
     and its writes are readable after a simulated restart."""
     bundle = _durable_bundle(db_path)
     try:
-        service = ForecastOpsService(repository=bundle.forecastops_repository)
+        service = ForecastOpsService(
+            repository=bundle.forecastops_repository,
+            policy_repository=_policy_repository(),
+        )
         observations = tuple(_observation(day, 80_000 - day * 2_000) for day in range(20, 27))
         result = service.forecast(
             [
@@ -181,7 +192,13 @@ def test_durable_forecastops_acknowledge_and_handoff_api_survive_restart(db_path
     bundle = _durable_bundle(db_path)
     correlation_id = "corr-durable-forecastops-ack-exec"
     try:
-        client = TestClient(create_app(persistence=bundle), headers=FORECASTOPS_HEADERS)
+        client = TestClient(
+            create_app(
+                persistence=bundle,
+                forecastops_policy_repository=_policy_repository(),
+            ),
+            headers=FORECASTOPS_HEADERS,
+        )
         created = client.post(
             "/forecastops/forecast-jobs",
             json={
