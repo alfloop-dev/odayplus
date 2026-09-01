@@ -11359,6 +11359,21 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
                 stack.enter_context(c)
             self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
 
+    def test_settled_detached_worktree_not_yet_in_base_is_still_refused(self) -> None:
+        """Settlement cannot waive the ancestry proof for a branchless HEAD."""
+        config, state, ctx = self._detached_case(ancestor=False)
+        with (
+            contextlib.ExitStack() as stack,
+            mock.patch.object(supervisor, "_task_board_settlement_index", return_value={"TASK-X": "settled"}),
+        ):
+            for c in ctx:
+                stack.enter_context(c)
+            self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
+        self.assertEqual(
+            state["worker_worktree_housekeeping"]["last_scan"]["skipped"],
+            {"detached_head_not_merged": 1},
+        )
+
     def test_keeps_dirty_detached_worktree_even_when_merged(self) -> None:
         """Ancestry does not override the dirty-tree guard."""
         config, state, ctx = self._detached_case(ancestor=True, clean=False)
@@ -11792,6 +11807,190 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
         self.assertEqual(scan["removed"], 1)
         self.assertEqual(scan["skipped"], {})
 
+    # --- reclaim decisions that the accounting above made visible ---
+
+    def _unmerged_clean_case(self, state: dict, settlement: dict, *, reclaims: bool):
+        """A clean worktree whose branch never merged, owned by a task the board reads as `settlement`.
+
+        When `reclaims` is False the status and remove commands are withheld,
+        so the refusal is asserted by the stub raising if either one runs.
+        """
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        runs = {("git", "branch", "--merged"): self._completed("")}
+        if reclaims:
+            runs[("git", "-C", record_path, "status", "--porcelain")] = self._completed("")
+            runs[("git", "-C", "/repo", "worktree", "remove", record_path)] = self._completed()
+        with (
+            mock.patch.object(supervisor, "_task_board_settlement_index", return_value=settlement),
+            # A reclaim that happens writes the success log, and this config
+            # carries no activity_log path.
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            return self._scan(state, [{"worktree": record_path, "branch": "refs/heads/task/X"}], runs)
+
+    def test_a_settled_tasks_clean_worktree_is_reclaimed_though_it_never_merged(self) -> None:
+        """A finished task's branch will not become mergeable later.
+
+        `branch_not_merged` refused 17 of 68 worktrees on the live host and
+        would have refused them for as long as the disk lasted: each task was
+        done, each branch had been abandoned or squashed away, and no later
+        event could change either fact. What the merge check protects is the
+        commits, and those live in the repository -- the ref is not touched
+        here, so the checkout is the only thing removal takes.
+        """
+        state: dict = {}
+        self.assertTrue(self._unmerged_clean_case(state, {"TASK-X": "settled"}, reclaims=True))
+        scan = self._last_scan(state)
+        self.assertEqual(scan["removed"], 1)
+        self.assertEqual(scan["settled_unmerged_reclaimed"], 1)
+        self.assertEqual(scan["skipped"], {})
+
+    def test_an_unfinished_tasks_unmerged_worktree_is_still_refused(self) -> None:
+        """Work that can still resume keeps its checkout, merged or not."""
+        state: dict = {}
+        self.assertFalse(self._unmerged_clean_case(state, {"TASK-X": "active"}, reclaims=False))
+        self.assertEqual(self._last_scan(state)["skipped"], {"branch_not_merged": 1})
+
+    def test_a_worktree_no_task_explains_keeps_the_merge_requirement(self) -> None:
+        """`unknown` is not a synonym for settled.
+
+        A directory naming no task the board or the archive carries is one this
+        function cannot explain, and an absence of evidence is not evidence of
+        settlement. Such a worktree is reclaimed only on the original terms.
+        """
+        state: dict = {}
+        self.assertFalse(self._unmerged_clean_case(state, {}, reclaims=False))
+        self.assertEqual(self._last_scan(state)["skipped"], {"branch_not_merged": 1})
+
+    def test_archive_settlement_requires_matching_terminal_statuses(self) -> None:
+        """Malformed or nonterminal archive evidence must fail closed."""
+        cases = [
+            ({"task": {"id": "TASK-X", "status": "done"}}, "unknown"),
+            (
+                {"terminal_status": "done", "task": {"id": "TASK-X", "status": "in_progress"}},
+                "unknown",
+            ),
+            (
+                {"terminal_status": "in_progress", "task": {"id": "TASK-X", "status": "done"}},
+                "unknown",
+            ),
+            (
+                {"terminal_status": "done", "task": {"id": "TASK-X", "status": "review_approved"}},
+                "unknown",
+            ),
+            (
+                {"terminal_status": "done", "task": {"id": "TASK-X", "status": "done"}},
+                "settled",
+            ),
+        ]
+        for snapshot, expected in cases:
+            with self.subTest(snapshot=snapshot):
+                with tempfile.TemporaryDirectory(prefix="pantheon-settlement-test-") as tmpdir:
+                    status_root = Path(tmpdir)
+                    archive_dir = status_root / "ai-task-archive" / "tasks"
+                    archive_dir.mkdir(parents=True)
+                    (archive_dir / "TASK-X.json").write_text(json.dumps(snapshot), encoding="utf-8")
+                    config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+                    self.assertEqual(supervisor._task_settlement(config, "TASK-X", {}), expected)
+
+    def test_settlement_does_not_excuse_a_dirty_worktree(self) -> None:
+        """Relaxing the merge rule must not relax the one guarding owner work."""
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        state: dict = {}
+        with mock.patch.object(
+            supervisor, "_task_board_settlement_index", return_value={"TASK-X": "settled"}
+        ):
+            result = self._scan(
+                state,
+                [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+                {
+                    ("git", "branch", "--merged"): self._completed(""),
+                    ("git", "-C", record_path, "status", "--porcelain"): self._completed(" M foo.py\n"),
+                },
+            )
+        self.assertFalse(result)
+        self.assertEqual(self._last_scan(state)["skipped"], {"dirty": 1})
+
+    def _orphan_reap_case(self, state: dict, settlement: dict, kills):
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        with (
+            mock.patch.object(supervisor, "_task_board_settlement_index", return_value=settlement),
+            mock.patch("os.kill", kills),
+        ):
+            return self._scan(
+                state,
+                [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+                {("git", "branch", "--merged"): self._completed("task/X\n")},
+                live_paths={Path(record_path)},
+                classify_result=([4242], 0),
+            )
+
+    def test_a_settled_tasks_orphan_holders_are_signalled_then_escalated(self) -> None:
+        """Two ticks, because SIGTERM is not reliably fatal to what pins these.
+
+        A pgserver reads SIGTERM as a smart shutdown and waits for clients that
+        -- the worker being gone -- will never disconnect. Blocking the
+        supervisor loop on that wait is the alternative this avoids: signal
+        now, escalate on the next tick if the holder is still there, and let
+        the ordinary path reclaim once it stops appearing as live.
+        """
+        import signal
+
+        state: dict = {}
+        first = mock.Mock()
+        self.assertFalse(self._orphan_reap_case(state, {"TASK-X": "settled"}, first))
+        self.assertEqual(self._last_scan(state)["orphan_reaps"], {"signalled": 1})
+        self.assertEqual(first.call_args_list, [mock.call(4242, signal.SIGTERM)])
+
+        second = mock.Mock()
+        self.assertFalse(self._orphan_reap_case(state, {"TASK-X": "settled"}, second))
+        self.assertEqual(self._last_scan(state)["orphan_reaps"], {"escalated": 1})
+        self.assertEqual(second.call_args_list, [mock.call(4242, signal.SIGKILL)])
+
+    def test_an_unfinished_tasks_orphans_are_reported_but_never_signalled(self) -> None:
+        """A detached-looking process still belongs to work that can resume."""
+        state: dict = {}
+        kills = mock.Mock()
+        self.assertFalse(self._orphan_reap_case(state, {"TASK-X": "active"}, kills))
+        scan = self._last_scan(state)
+        self.assertEqual(scan["skipped"], {"live_process_orphaned": 1})
+        self.assertEqual(scan["orphan_reaps"], {})
+        kills.assert_not_called()
+
+    def test_reaping_can_be_turned_off_without_disabling_reclaim(self) -> None:
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        state: dict = {}
+        kills = mock.Mock()
+        with (
+            mock.patch.object(
+                supervisor, "_task_board_settlement_index", return_value={"TASK-X": "settled"}
+            ),
+            mock.patch("os.kill", kills),
+        ):
+            self._scan(
+                state,
+                [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+                {("git", "branch", "--merged"): self._completed("task/X\n")},
+                live_paths={Path(record_path)},
+                classify_result=([4242], 0),
+                housekeeping={"reap_orphan_holders": False},
+            )
+        kills.assert_not_called()
+        self.assertEqual(self._last_scan(state)["orphan_reaps"], {})
+
+    def test_a_lease_renewed_directory_still_names_one_task(self) -> None:
+        """`odp-x-001.lease_A.lease_B` is one task, not three.
+
+        Renewal appends a marker and appends again on the next renewal, so
+        reading identity past the first one asks the board about a task id that
+        never existed -- which returns `unknown` and refuses the reclaim.
+        """
+        self.assertEqual(
+            supervisor._worktree_task_id(Path("/tmp/wt/odp-x-001.lease_20260819T0358Z_abc.lease_20260820T0101Z_def")),
+            "ODP-X-001",
+        )
+        self.assertEqual(supervisor._worktree_task_id(Path("/tmp/wt/odp-x-001")), "ODP-X-001")
+
 
 class RuntimeSettingsAreReachableFromConfigTests(unittest.TestCase):
     """A knob the schema rejects is a knob that does not exist.
@@ -12215,9 +12414,127 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
 
+        # Unmerged PR with green CI: must NOT dispatch finalizer.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Unknown PR status: must NOT dispatch finalizer.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("UNKNOWN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Merged PR with non-green CI: must NOT dispatch finalizer.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "pending")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "failure")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
              unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Merged PR with ci="none": MUST dispatch finalizer (priority 1).
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "none")):
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map),
+                1,
+            )
+
+    def test_evaluate_finalize_gate_matrix(self) -> None:
+        """Verify evaluate_finalize_gate behaves identically across all PR/CI/head states."""
+        approved = "1111111122222222333333334444444455555555"
+        task = {
+            "id": "GATE-TEST-001",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": approved,
+        }
+
+        # 1. Missing approved_head
+        res = supervisor.evaluate_finalize_gate({"id": "GATE-NO-HEAD"})
+        self.assertEqual(res.status, supervisor.MISSING_APPROVED_HEAD)
+
+        # 2. Head unresolved (None)
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=None):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.HEAD_UNRESOLVED)
+
+        # 3. Head unresolved (Exception)
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", side_effect=RuntimeError("git down")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.HEAD_UNRESOLVED)
+
+        # 4. Head mismatch
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value="2222222222222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=False):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.HEAD_MISMATCH)
+
+        # 5. CI query exception -> CI_UNRESOLVED
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.CI_UNRESOLVED)
+
+        # 6. CI pending -> CI_PENDING
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.CI_PENDING)
+
+        # 7. CI failure -> CI_FAILURE
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "failure")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.CI_FAILURE)
+
+        # 8. CI unknown -> CI_UNRESOLVED
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.CI_UNRESOLVED)
+
+        # 9. PR not merged (OPEN + success) -> PR_NOT_MERGED
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.PR_NOT_MERGED)
+
+        # 10. PR not merged (UNKNOWN + success) -> PR_NOT_MERGED
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("UNKNOWN", "success")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.PR_NOT_MERGED)
+
+        # 11. PR merged + success -> READY
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.READY)
+
+        # 12. PR merged + none -> READY
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "none")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.READY)
 
     def test_approve_fails_closed_when_approved_head_cannot_be_resolved(self) -> None:
         """B20: approving without freezing a head silently disables the freeze.

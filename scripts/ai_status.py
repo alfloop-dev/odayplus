@@ -3341,6 +3341,8 @@ def collect_done_delivery_metadata(
                 continue
             expected_value = expected_fields.get(field_name)
             if expected_value and actual_value != expected_value:
+                if field_name == "Task-ID" and actual_value.casefold() == expected_value.casefold():
+                    continue
                 if field_name == "Reviewer" and actual_value and canonical_agent_name(actual_value):
                     continue
                 if field_name == "LLM-Agent" and actual_value and canonical_agent_name(actual_value):
