@@ -16,6 +16,9 @@ amends:
   - ODP-SD-08_WORKFLOW_JOB_AND_STATE_MACHINE_DESIGN.md
   - ODP-UX-03_SCREEN_AND_INTERACTION_SPECIFICATION.md
 change_class: C2
+scope: planning-only
+enforcement_delivered: false
+scope_ruling: "Human/Ops 2026-09-01: narrow claims to planning-only; SQL herein is reference design, not migrations (see §1.0). Implementation ownership in §12.1."
 source_gap: ODP-GAP-FR-20260901
 source_amendment: ODP-SA-06-AMD-001
 baseline_commit: origin/dev@29a10711
@@ -25,6 +28,24 @@ baseline_commit: origin/dev@29a10711
 
 ## 1. 修正目的與範圍
 
+### 1.0 本案的效力範圍：規劃，不是交付
+
+**本案是設計規劃。它不交付 schema，也不宣稱任何強制機制已經生效。**
+
+這一節是第 8 輪審查往返後由 Human/Ops 裁定的範圍收窄（2026-09-01）。前六個版本的內容逐步從設計描述長成 1,041 行可執行 DDL，於是每一輪都被以實作標準審查——而文中的 SQL 從不會被執行：真正會跑的 migration 屬於各實作 task。文件與實作各自演進、各自被改，兩份 schema 定義遲早分歧。本案已經發生過一次：`ODP-DECISION-POLICY-CORE-001` 最初帶著 `governance.decision_policies`，與本文的 `workflow.decision_policies` 主鍵與 schema 皆不同。
+
+因此，本文中的每一段 SQL 都是**設計參考實作**，用途有二：讓設計的意圖精確到不必猜測，以及讓第 13 節能機器驗證設計本身自洽。它們不是待套用的 migration，讀者不得將其視為已存在於任何環境的結構。
+
+| 本案宣稱 | 本案不宣稱 |
+|---|---|
+| 這些表、欄位、約束與 trigger 是解決該落差所需的結構 | 它們已被建立 |
+| 這組設計彼此自洽，且約束確實會擋下它宣稱要擋的資料（第 13 節在真實 PostgreSQL 上驗證） | 任何環境已套用它們 |
+| 每項落差的實作歸屬明確（第 12.1 節） | 實作已完成或已驗收 |
+
+第 13 節的驗證因此是**設計自洽性驗證**：它證明這組 DDL 能套用在 baseline 樁上、可重跑、且 138 個約束案例的行為與宣告一致。它不證明生產環境有這些結構。實作是否正確交付，由各實作 task 自己的 migration 與測試證明。
+
+### 1.1 設計原則
+
 本修正案為 `ODP-GAP-FR-20260901` 所列 9 項落差提供設計。設計原則有三：
 
 1. **接在既有結構上**。本案不新增平行機制。每項設計均指名其擴充的既有 schema、資料表或服務，且不建立第二套做同一件事的路徑。
@@ -33,13 +54,13 @@ baseline_commit: origin/dev@29a10711
 
 第 3 節為平台級機制，其餘模組設計依賴之，應優先實作。
 
-### 1.1 v0.2.0 修訂說明
+### 1.2 v0.2.0 修訂說明
 
 初版（v0.1.0）以 `governance`、`forecastops`、`heatzone`、`avm`、`priceops` 五個 schema 命名新資料表，並以 `forecast_alerts`、`heatzone_scores`、`sitescore_recommendations`、`price_plans`、`netplan_scenarios` 指稱既有資料表。**這些名稱在版本庫中都不存在**，因此初版一方面宣稱不建立平行結構，一方面實際上把每一張表都放在既有 canonical schema 之外——兩者互相矛盾。
 
 v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上。名稱的更動不是措辭問題：綁錯 schema 的設計一旦實作，產生的就是本案原則第 1 條明文禁止的平行結構。
 
-### 1.2 v0.3.0 修訂說明
+### 1.3 v0.3.0 修訂說明
 
 針對審查反饋（Codex2 第 2 輪）補正四項設計落差：
 
@@ -48,7 +69,7 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 3. **PRICE-006 Bandit 候選介面與逐決策 Gate 稽核**：原設計僅定義 Gate 授權與 GET 端點。v0.3.0 補齊領域層 `BanditCandidate` 資料結構、`BanditPriceExplorer` 協定、`POST /api/v1/priceops/exploration-candidates` 候選產生端點，並在 `000017` 增加 `pricing.exploration_decisions` 記錄逐筆定價決策所關聯之 `gate_id` 與預算扣抵。
 4. **000013 Migration 可執行 Seed 與 Retrofit 列**：第 11 節所述之 `four-light-policy-0.0.0-retrofit` 回填佔位列與 `four-light-policy-v1` 首版政策列，直接以可執行且具冪等性（`ON CONFLICT DO NOTHING`）的 `INSERT` 語句納入第 3.2 節 migration SQL。
 
-### 1.3 v0.4.0 修訂說明
+### 1.4 v0.4.0 修訂說明
 
 針對審查反饋（Codex2 第 4 輪）補正七項落差。其中前三項是 v0.3.0 引入的**內部不一致**，後四項是被宣稱但未被強制的**空頭約束**：
 
@@ -60,7 +81,7 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 6. **第 13.1 節案例數與腳本不符**：文中寫 39／39，腳本實際為 48 例。v0.4.0 改以腳本實際輸出為準（見第 13.1 節）。
 7. **負向案例可能因錯誤原因被拒**：原腳本多個負向案例共用同一 `valuation_run_id`／`decision_id`／`geo_cell_id`，可能被主鍵或唯一索引先擋下，而非被它宣稱測試的 CHECK 擋下。v0.4.0 讓每個案例自帶隔離用相依列，並**逐案斷言拒絕訊息中出現預期的約束名稱**，使「被拒」與「被正確的約束拒」不再被混為一談。
 
-### 1.4 v0.5.0 修訂說明
+### 1.5 v0.5.0 修訂說明
 
 針對審查反饋（Codex2 第 5 輪）補正五項落差。五項的共同型態是**治理宣稱缺乏結構性支撐**：文件寫明的閘門，在資料庫層由寫入端自律，因此任何能寫該表的角色都能繞過。
 
@@ -72,7 +93,7 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 
 ---
 
-### 1.5 v0.6.0 修訂說明
+### 1.6 v0.6.0 修訂說明
 
 針對審查反饋（Codex2 第 7 輪）補正三項落差。
 
@@ -1875,11 +1896,32 @@ ALTER TABLE operations.alerts ALTER COLUMN decision_policy_version_id SET NOT NU
 | 9 | `POST /api/v1/priceops/exploration-candidates` | 7 | 依 Gate 授權與硬限制產生探索價格候選 |
 
 
+### 12.1 實作歸屬
+
+本案不實作任何一項。下表是每項落差的實作去處；環境中的實際結構以各 task 的 migration 為準，與本文不一致時以 migration 為準。
+
+| 落差 | 實作 task | 狀態 |
+|---|---|---|
+| 平台級 Decision Policy 機制 | `ODP-DECISION-POLICY-CORE-001` | 已併入 `dev`（migration `000014`） |
+| `FCT-005` 四燈改由政策產生 | `ODP-FORECAST-ALERT-POLICY-001` | 進行中 |
+| `FCT-006` 預警提前天數與 Precision | `ODP-FORECAST-ALERT-PRECISION-001` | 待前置完成 |
+| `FCT-008` Feedback 機制 | `ODP-FORECAST-FEEDBACK-001` | 已併入 `dev` |
+| `FCT-008` 相關的不實 UI 文案移除 | `ODP-UI-FALSE-FEEDBACK-COPY-001` | 已併入 `dev` |
+| `AVM-005`／`008` 成交結果回收 | `ODP-AVM-DEAL-OUTCOME-001` | 已併入 `dev` |
+| `NET-007` 季度甘特圖 | `ODP-NETPLAN-GANTT-001` | 已併入 `dev` |
+| `HZ-004` 需求吸收閉環 | 未建立 | —— |
+| `HZ-006` 熱區合併與拆分 | 未建立 | —— |
+| `PRICE-006` Bandit 與其 Gate | 未建立 | —— |
+
+最後三項刻意尚未建立 task：`HZ-004` 的「用實績不用預測」與 `HZ-006` 的鄰接語意都需要判斷而非照做，`PRICE-006` 依 `ODP-SA-08` 第 12 節屬 Tier 4，且必須與其 Gate 綁為同一交付單元（見第 7 節）。
+
 ## 13. 設計驗證
 
 初版未經任何執行驗證，第 3.2 節的 dataclass 因而帶有一個定義即失敗的欄位順序錯誤。本版對兩類可機械驗證的宣稱實際執行檢查，結果如下。
 
 ### 13.1 SQL：套用、可重跑與約束行為
+
+**這一節驗證的是設計，不是交付**（第 1.0 節）。它證明本文的 DDL 彼此自洽、可套用、可重跑，且每條約束確實擋下它宣稱要擋的資料。它不證明任何環境已存在這些結構——那由各實作 task 自己的 migration 與測試證明（第 12.1 節）。
 
 驗證腳本：`docs/evidence/ODP-SD-AMD-001_ddl_check.py`。它從本文件抽出所有 ```` ```sql ```` 區塊（第 6.3 節的 dbt select 片段除外，該片段非獨立語句），對真實 PostgreSQL 執行：
 
