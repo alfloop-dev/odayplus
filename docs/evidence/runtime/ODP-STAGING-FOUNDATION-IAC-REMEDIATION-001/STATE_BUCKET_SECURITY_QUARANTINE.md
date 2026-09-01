@@ -3,9 +3,13 @@
 ## 事件狀態
 
 - **事件 ID**：`ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001-STATE-PLAN-QUARANTINE-001`
-- **狀態**：`OPEN`
+- **狀態**：`CONTAINED_CLEANUP_DEFERRED`
 - **發現時間**：`2026-08-27T09:27:25Z`
-- **結案條件**：retention 到期後由指定 owner 依核准程序清理並產生獨立 receipt；在此之前不得宣稱 foundation 完成。
+- **live metadata recheck**：`2026-09-01T09:14:13Z`；exact generation、size、CMEK 與 retention expiration 均一致。
+- **後續 task**：`ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001`
+- **cleanup not-before**：`2026-09-26T09:24:24Z`
+- **foundation delivery gate**：`false`；隔離控制已驗證，cleanup lifecycle 不再阻擋 foundation。
+- **事件結案條件**：retention 到期後由指定 owner 依核准程序精確清理並產生獨立 receipt。
 
 ## 被隔離物件
 
@@ -18,11 +22,13 @@
 - **CMEK**：`projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-tfstate-staging-state/cryptoKeys/oday-tfstate-staging-state`
 - **retention expiration**：`2026-09-26T09:24:24Z`
 - **no early deletion**：`true`
-- **expiry-cleanup owner**：`Staging Foundation Owner`
+- **expiry-cleanup owner**：`Human/Ops`
+- **cleanup executor**：`Antigravity2`
 
 在 retention expiration 前不得刪除物件、解除 CMEK、關閉 versioning/PAP/UBLA、
-或降低 retention 以繞過隔離。到期後只能由指定 owner 依核准程序精確清理，並記錄
-object generation、刪除結果與新的安全 receipt。
+或降低 retention 以繞過隔離。到期後只能由 cleanup task 指定 executor 對 exact
+object generation 精確清理，並記錄刪除結果與新的安全 receipt；禁止 wildcard 或
+prefix cleanup。
 
 ## 後續控制
 
@@ -33,5 +39,8 @@ digest、generation、action summary 等 metadata。
 同一份 live readback 原先記錄的 state bucket IAM 人類權限 blocker 已於
 `2026-08-30T15:52:48Z` 解除：bucket-scoped `roles/storage.admin` admin 完成
 metadata/IAM readback，`roles/storage.objectUser` WIF deployer 再由 GitHub Actions
-run `33320822376` 成功讀取兩個 remote-state object metadata。IAM 已收斂不會關閉
-本事件；binary plan quarantine 仍維持 `OPEN` 至 retention 到期並完成精確清理。
+run `33320822376` 成功讀取兩個 remote-state object metadata。IAM 已收斂；binary
+plan 的隔離控制已驗證為 `CONTAINED_CLEANUP_DEFERRED`。事件 lifecycle 由獨立
+`ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001` 追蹤至精確清理，但不再扣留
+foundation completion claim。Foundation 仍須另行通過 API/Web Direct VPC
+`ALL_TRAFFIC` authoritative live readback。

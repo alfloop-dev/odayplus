@@ -2,10 +2,11 @@
   "receipt_type": "terraform_apply_plan_metadata",
   "task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
   "generated_at": "2026-08-27T09:27:25Z",
+  "governance_adjusted_at": "2026-09-01T09:14:13Z",
   "candidate_sha": "1fdec6cbed15660bdf89531cb1bb69d4c36aa00b",
   "target_project_id": "odayplus-runtime-20260825",
   "target_environment": "staging",
-  "receipt_status": "BLOCKED_SECURITY_QUARANTINE",
+  "receipt_status": "PENDING_DIRECT_VPC_LIVE_READBACK",
   "iam_blocker_resolution": {
     "status": "RESOLVED",
     "verified_at": "2026-08-30T15:52:48Z",
@@ -20,8 +21,9 @@
   },
   "security_quarantine_incident": {
     "incident_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001-STATE-PLAN-QUARANTINE-001",
-    "status": "OPEN",
+    "status": "CONTAINED_CLEANUP_DEFERRED",
     "detected_at": "2026-08-27T09:27:25Z",
+    "object_metadata_reverified_at": "2026-09-01T09:14:13Z",
     "object_role": "UNAUTHORIZED_NON_STATE_BINARY_PLAN",
     "object_name": "oday-plus/staging/plans/tfplan-staging-foundation-1fdec6cbed15660bdf89531cb1bb69d4c36aa00b-e46221085ffe1fe7243b7857d38191189443f9ea31bd970719687cc07e3404a6.binary",
     "object_uri": "gs://oday-tfstate-staging-odayplus-runtime-20260825/oday-plus/staging/plans/tfplan-staging-foundation-1fdec6cbed15660bdf89531cb1bb69d4c36aa00b-e46221085ffe1fe7243b7857d38191189443f9ea31bd970719687cc07e3404a6.binary",
@@ -36,13 +38,18 @@
     "retention_expires_at": "2026-09-26T09:24:24Z",
     "no_early_deletion": true,
     "deletion_before_retention_expiration": "PROHIBITED",
-    "expiry_cleanup_owner": "Staging Foundation Owner",
-    "remediation_status": "QUARANTINED_UNTIL_RETENTION_EXPIRY",
-    "completion_claims": "WITHHELD",
+    "expiry_cleanup_owner": "Human/Ops",
+    "cleanup_executor": "Antigravity2",
+    "follow_up_task_id": "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+    "cleanup_not_before": "2026-09-26T09:24:24Z",
+    "remediation_status": "CONTAINED_CLEANUP_DEFERRED",
+    "containment_verified": true,
+    "foundation_delivery_gate": false,
+    "completion_claims": "FOUNDATION_NON_BLOCKING",
     "required_follow_up": [
       "禁止再將 binary plan 或一般 artifact 上傳至 Terraform state bucket。",
       "保留 CMEK、versioning、retention 與 public-access-prevention；不得為提前刪除而放寬任何設定。",
-      "由 expiry_cleanup_owner 於 retention_expiration 後依核准程序清理，並另行產生清理 receipt。"
+      "由 cleanup executor 於 retention_expiration 後依 follow_up_task_id 核准程序清理 exact generation，並另行產生清理 receipt。"
     ]
   },
   "module_tree": [
@@ -216,7 +223,11 @@
     "rfc1918_cidr_enforcement": "PASS",
     "unit_test_count": 43,
     "unit_tests_status": "ALL_PASSED",
-    "live_acceptance_status": "BLOCKED_SECURITY_QUARANTINE",
-    "completion_claims_withheld": true
+    "live_acceptance_status": "PENDING_DIRECT_VPC_LIVE_READBACK",
+    "completion_claims_withheld": true,
+    "completion_claims_withheld_by": [
+      "DIRECT_VPC_ALL_TRAFFIC_LIVE_READBACK"
+    ],
+    "security_quarantine_foundation_gate": false
   }
 }

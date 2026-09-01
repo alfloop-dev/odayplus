@@ -104,7 +104,7 @@ cp /secure/path/live/staging_foundation.backend.hcl /secure/path/staging_foundat
    `force_destroy = false`；任何 destroy plan 必須停止並由 owner/reviewer 明確
    處理。Ephemeral release 的 cleanup 只能使用 release label/prefix 精確清理。
 
-### 5.1 State Bucket 安全隔離事件（目前不得結案）
+### 5.1 State Bucket 安全隔離事件（已 containment、cleanup deferred）
 
 本次 readback 發現一個 binary plan 曾被誤置於 state bucket 的
 `oday-plus/staging/plans/` 路徑（object generation
@@ -115,8 +115,13 @@ plan 保存物件；事件詳見 `STATE_BUCKET_SECURITY_QUARANTINE.md` 與
 - CMEK：`projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-tfstate-staging-state/cryptoKeys/oday-tfstate-staging-state`
 - retention expiration：`2026-09-26T09:24:24Z`
 - no early deletion：`true`；在 expiration 前不得刪除或放寬 retention。
-- expiry-cleanup owner：`Staging Foundation Owner`
-- receipt/runbook completion claim：`WITHHELD`；state bucket plan upload policy：`PROHIBITED`。
+- deferred cleanup task：`ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001`，task class
+  為不可自動派送的 `human_gate`，`not-before=2026-09-26T09:24:24Z`。
+- expiry-cleanup owner：`Human/Ops`；到期後 executor：`Antigravity2`。
+- foundation delivery gate：`false`；隔離物件的 deletion receipt 不扣留 foundation
+  completion claim。Foundation 仍由 API/Web Direct VPC `ALL_TRAFFIC` live readback
+  獨立 fail closed。
+- state bucket plan upload policy：`PROHIBITED`。
 
 完整雜湊、object generation、state serial、IAM verification 與 live readback 見同目錄
 的兩份 JSON receipt。

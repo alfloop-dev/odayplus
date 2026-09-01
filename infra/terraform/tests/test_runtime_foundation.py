@@ -77,6 +77,7 @@ class RuntimeFoundationModuleContractTests(unittest.TestCase):
         )
         incident = apply_receipt["security_quarantine_incident"]
         state_backend = readback["foundation_resources"]["state_backend"]
+        quarantine = readback["security_quarantine"]
         iam = state_backend["least_privilege_iam"]
 
         self.assertNotIn("saved_plan_artifact", apply_receipt)
@@ -86,19 +87,39 @@ class RuntimeFoundationModuleContractTests(unittest.TestCase):
         self.assertNotEqual(state_backend["status"], "LIVE_APPLIED_AND_VERIFIED")
         self.assertIn("binary plan、一般 release artifact", runbook)
         self.assertIn("一律禁止", runbook)
-        self.assertEqual(incident["status"], "OPEN")
+        self.assertEqual(incident["status"], "CONTAINED_CLEANUP_DEFERRED")
         self.assertEqual(incident["cmek_key_id"], state_backend["cmek_key_id"])
         self.assertEqual(incident["retention_expiration"], "2026-09-26T09:24:24Z")
         self.assertEqual(incident["retention_expires_at"], "2026-09-26T09:24:24Z")
         self.assertTrue(incident["no_early_deletion"])
-        self.assertEqual(incident["expiry_cleanup_owner"], "Staging Foundation Owner")
+        self.assertEqual(incident["expiry_cleanup_owner"], "Human/Ops")
+        self.assertEqual(incident["cleanup_executor"], "Antigravity2")
+        self.assertEqual(
+            incident["follow_up_task_id"],
+            "ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001",
+        )
+        self.assertEqual(incident["cleanup_not_before"], "2026-09-26T09:24:24Z")
+        self.assertTrue(incident["containment_verified"])
+        self.assertFalse(incident["foundation_delivery_gate"])
         self.assertEqual(incident["deletion_before_retention_expiration"], "PROHIBITED")
         self.assertEqual(state_backend["retention_period_days"], 30)
         self.assertTrue(state_backend["prevent_destroy"])
         self.assertTrue(apply_receipt["validation_results"]["completion_claims_withheld"])
+        self.assertEqual(
+            apply_receipt["validation_results"]["completion_claims_withheld_by"],
+            ["DIRECT_VPC_ALL_TRAFFIC_LIVE_READBACK"],
+        )
+        self.assertFalse(
+            apply_receipt["validation_results"]["security_quarantine_foundation_gate"]
+        )
 
-        self.assertEqual(readback["receipt_status"], "BLOCKED_SECURITY_QUARANTINE")
-        self.assertEqual(apply_receipt["receipt_status"], "BLOCKED_SECURITY_QUARANTINE")
+        self.assertEqual(readback["receipt_status"], "PENDING_DIRECT_VPC_LIVE_READBACK")
+        self.assertEqual(apply_receipt["receipt_status"], "PENDING_DIRECT_VPC_LIVE_READBACK")
+        self.assertFalse(state_backend["completion_claims_withheld"])
+        self.assertEqual(quarantine["status"], "CONTAINED_CLEANUP_DEFERRED")
+        self.assertEqual(quarantine["follow_up_task_id"], incident["follow_up_task_id"])
+        self.assertFalse(quarantine["foundation_delivery_gate"])
+        self.assertFalse(quarantine["completion_claims_withheld"])
         self.assertEqual(apply_receipt["iam_blocker_resolution"]["status"], "RESOLVED")
         self.assertEqual(iam["status"], "LIVE_VERIFIED")
         self.assertTrue(iam["verified"])

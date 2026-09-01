@@ -24,8 +24,11 @@ PAP 與 UBLA 已讀回。2026-08-30 由具 authority 的
 `BLOCKED_HUMAN_PERMISSION` 已解除，未授予 deployer project-wide storage admin。
 另有一個誤置於 state bucket 的 binary plan object 已依 CMEK 與 retention 規則
 開立安全隔離事件；在 `2026-09-26T09:24:24Z` 前不得刪除或放寬保留政策，
-expiry-cleanup owner 為 `Staging Foundation Owner`。不得將 state bucket 當作一般
-artifact 儲存區。當前 live 的 `oday-staging-mlflow` 仍是舊的
+並由獨立、不可自動派送的 human-gate
+`ODP-STAGING-STATE-PLAN-QUARANTINE-CLEANUP-001` 追蹤到期後的 exact-generation
+清理與 receipt。隔離控制已驗證，這張 deferred cleanup task 不再阻擋 foundation
+交付；不得將 state bucket 當作一般 artifact 儲存區。當前 live 的
+`oday-staging-mlflow` 仍是舊的
 Serverless VPC connector `PRIVATE_RANGES_ONLY` 並連接 legacy SQL；API/Web
 尚未由 ephemeral release 部署，因此 receipts 只把 API/Web 的
 Direct VPC `ALL_TRAFFIC` 記為 Terraform contract，維持 live readback pending。
