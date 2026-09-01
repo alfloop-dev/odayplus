@@ -13,6 +13,7 @@ from modules.forecastops.domain.forecasting import (
     Alert,
     AlertDisposition,
     AlertLevel,
+    ForecastAlertPolicyError,
     ForecastOpsError,
     ForecastOutput,
     StoreDayObservation,
@@ -438,6 +439,7 @@ def backfill_alert_precision(
     feedbacks: Iterable[ForecastFeedback | Mapping[str, Any]] = (),
     policy_repository: DecisionPolicyRepository | None = None,
     evaluation_horizon_days: int = 28,
+    min_observations: int | None = None,
     as_of: datetime | None = None,
     actor: str = "precision_backfill_job",
     now: datetime | None = None,
@@ -445,14 +447,24 @@ def backfill_alert_precision(
     """Backfill deterioration_confirmed_at and disposition for alerts per policy thresholds (ODP-FR-FCT-006).
 
     - deterioration_confirmed_at: The earliest date at or after opened_at where actual
-      performance breached the policy threshold for that alert level.
+      performance breached the policy threshold for that alert level within the evaluation horizon.
     - disposition:
       - TRUE_POSITIVE: deterioration breached threshold within evaluation window.
       - FALSE_POSITIVE: evaluation window elapsed with sufficient observations and no deterioration.
       - KNOWN_CONTEXT: alert period overlaps with active CONTEXT_ANNOTATION (e.g. remodeling).
       - UNRESOLVED: observation window not yet complete or insufficient observations.
     """
+    if policy_repository is None:
+        raise ForecastAlertPolicyError(
+            "forecast alert policy_repository is required; refusing to evaluate alert precision"
+        )
+
     eval_now = now or datetime.now(UTC)
+    min_obs_required = (
+        max(1, min_observations)
+        if min_observations is not None
+        else (min(evaluation_horizon_days, 14) if evaluation_horizon_days > 0 else 1)
+    )
 
     # 1. Parse and group context annotations by store
     context_annotations: list[tuple[str, date, date]] = []
@@ -506,21 +518,14 @@ def backfill_alert_precision(
             updated_alerts.append(updated)
             continue
 
-        # Resolve policy threshold
-        if policy_repository is not None:
-            policy = resolve_policy(
-                policy_repository,
-                policy_kind=FORECAST_ALERT_POLICY_KIND,
-                tenant_id=alert.tenant_id,
-                at=open_dt,
-            )
-            thresholds = _policy_thresholds(policy)
-        else:
-            thresholds = {
-                AlertLevel.RED: -0.35,
-                AlertLevel.ORANGE: -0.20,
-                AlertLevel.YELLOW: -0.10,
-            }
+        # Resolve policy threshold (fail-closed per ODP-SD-AMD-001 §3.3)
+        policy = resolve_policy(
+            policy_repository,
+            policy_kind=FORECAST_ALERT_POLICY_KIND,
+            tenant_id=alert.tenant_id,
+            at=open_dt,
+        )
+        thresholds = _policy_thresholds(policy)
 
         lvl = (
             alert.alert_level
@@ -529,17 +534,23 @@ def backfill_alert_precision(
         )
         threshold_value = thresholds.get(lvl, thresholds[AlertLevel.YELLOW])
 
-        store_obs = [
+        # Observations strictly within the evaluation horizon [open_d, horizon_end_d]
+        store_obs_in_window = [
             o for o in obs_by_store.get(alert.store_id, [])
-            if o.business_date >= open_d
+            if open_d <= o.business_date <= horizon_end_d
+        ]
+
+        # Valid observations in window: must have a positive baseline to evaluate sitescore gap
+        valid_obs_in_window = [
+            o for o in store_obs_in_window
+            if o.site_score_baseline_p50 is not None and o.site_score_baseline_p50 > 0
         ]
 
         deterioration_found = False
         deterioration_date: date | None = None
 
-        for o in store_obs:
-            baseline = o.site_score_baseline_p50
-            gap = _sitescore_gap_ratio(actual=o.actual_revenue, baseline=baseline)
+        for o in valid_obs_in_window:
+            gap = _sitescore_gap_ratio(actual=o.actual_revenue, baseline=o.site_score_baseline_p50)
             if gap <= threshold_value:
                 deterioration_found = True
                 deterioration_date = o.business_date
@@ -562,12 +573,13 @@ def backfill_alert_precision(
                 now=eval_now,
             )
         else:
-            max_obs_d = max((o.business_date for o in store_obs), default=open_d)
+            all_store_obs = obs_by_store.get(alert.store_id, [])
+            max_obs_d = max((o.business_date for o in all_store_obs), default=open_d)
             curr_eval_d = as_of.date() if as_of else max_obs_d
-            if (
-                max_obs_d >= horizon_end_d
-                or curr_eval_d >= horizon_end_d
-            ):
+            window_elapsed = max_obs_d >= horizon_end_d or curr_eval_d >= horizon_end_d
+            has_sufficient_obs = len(valid_obs_in_window) >= min_obs_required
+
+            if window_elapsed and has_sufficient_obs:
                 updated = alert.with_evaluation(
                     disposition=AlertDisposition.FALSE_POSITIVE,
                     deterioration_confirmed_at=None,

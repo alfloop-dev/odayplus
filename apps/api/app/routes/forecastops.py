@@ -102,6 +102,7 @@ else:
     class ForecastOpsAlertBackfillPayload(BaseModel):
         store_id: str | None = None
         evaluation_horizon_days: int = 28
+        min_observations: int | None = None
         actor: str | None = None
 
     class ForecastOpsJobStore:
@@ -610,6 +611,7 @@ else:
                 tenant_id(request),
                 store_id=body.store_id,
                 evaluation_horizon_days=body.evaluation_horizon_days,
+                min_observations=body.min_observations,
                 actor=caller_actor,
             )
             audit_event = active_audit_log.record(

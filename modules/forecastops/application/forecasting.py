@@ -573,6 +573,7 @@ class ForecastOpsService:
         store_id: str | None = None,
         as_of: datetime | None = None,
         evaluation_horizon_days: int = 28,
+        min_observations: int | None = None,
         actor: str = "precision_backfill_job",
         now: datetime | None = None,
     ) -> dict[str, Any]:
@@ -594,6 +595,7 @@ class ForecastOpsService:
             feedbacks=feedbacks,
             policy_repository=self.policy_repository,
             evaluation_horizon_days=evaluation_horizon_days,
+            min_observations=min_observations,
             as_of=as_of,
             actor=actor,
             now=now,

@@ -2677,6 +2677,17 @@
             "title": "Evaluation Horizon Days",
             "type": "integer"
           },
+          "min_observations": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Observations"
+          },
           "store_id": {
             "anyOf": [
               {

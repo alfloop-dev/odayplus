@@ -10,6 +10,7 @@ from modules.forecastops import (
     AlertLevel,
     FeedbackType,
     ForecastFeedback,
+    ForecastAlertPolicyError,
     ForecastOpsError,
     StoreDayObservation,
     backfill_alert_precision,
@@ -278,3 +279,159 @@ def test_backfill_alert_precision_logic() -> None:
     assert metrics["evaluated_alert_count"] == 2
     assert metrics["precision"] == 0.5
     assert metrics["mean_lead_time_days"] == 7.0
+
+
+def test_backfill_alert_precision_horizon_constraint() -> None:
+    """Review defect 1: Deterioration occurring after evaluation_horizon_days (e.g. day 500)
+    must NOT count as TRUE_POSITIVE or inflate lead_time. Within the 28-day window it was healthy.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(alert_id="a-horizon-test", store_id="store-horizon", alert_level=AlertLevel.RED, opened_at=opened)
+
+    # 28 days of healthy observations in window [June 1 .. June 29]
+    observations = [
+        StoreDayObservation(
+            store_id="store-horizon",
+            business_date=date(2026, 6, d),
+            actual_revenue=95_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+        for d in range(1, 30)
+    ]
+    # Deterioration occurs 500 days later (far outside 28-day horizon)
+    observations.append(
+        StoreDayObservation(
+            store_id="store-horizon",
+            business_date=date(2026, 6, 1) + timedelta(days=500),
+            actual_revenue=40_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    )
+
+    updated_alerts, metrics = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+    )
+    res = updated_alerts[0]
+    assert res.disposition == "FALSE_POSITIVE"
+    assert res.deterioration_confirmed_at is None
+    assert res.lead_time_days is None
+    assert metrics["true_positive_count"] == 0
+    assert metrics["false_positive_count"] == 1
+    assert metrics["precision"] == 0.0
+
+
+def test_backfill_alert_precision_policy_repository_fail_closed() -> None:
+    """Review defect 2: policy_repository is required; policy_repository is None must raise
+    ForecastAlertPolicyError fail-closed per ODP-SD-AMD-001 §3.3.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    alert = _make_alert(alert_id="a-fail-closed", store_id="store-fc", alert_level=AlertLevel.RED, opened_at=opened)
+    observations = [
+        StoreDayObservation(
+            store_id="store-fc",
+            business_date=date(2026, 6, 1),
+            actual_revenue=50_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    ]
+
+    with pytest.raises(ForecastAlertPolicyError, match="policy_repository is required"):
+        backfill_alert_precision(
+            [alert],
+            observations=observations,
+            policy_repository=None,
+        )
+
+
+def test_backfill_alert_precision_missing_baseline_unresolved() -> None:
+    """Review defect 3: Missing baseline data (baseline=None) must NOT be treated as gap=0.0 / healthy,
+    which would incorrectly mark collapsed stores as FALSE_POSITIVE. It must remain UNRESOLVED.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(alert_id="a-missing-base", store_id="store-mb", alert_level=AlertLevel.RED, opened_at=opened)
+
+    # 30 days of observations where revenue collapsed to 1.0, but baseline is None (data gap)
+    observations = [
+        StoreDayObservation(
+            store_id="store-mb",
+            business_date=date(2026, 6, d),
+            actual_revenue=1.0,
+            site_score_baseline_p50=None,
+        )
+        for d in range(1, 31)
+    ]
+
+    updated_alerts, metrics = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+    )
+    res = updated_alerts[0]
+    # Cannot evaluate without baseline data -> UNRESOLVED (not FALSE_POSITIVE)
+    assert res.disposition == "UNRESOLVED"
+    assert res.deterioration_confirmed_at is None
+    assert metrics["unresolved_count"] == 1
+    assert metrics["false_positive_count"] == 0
+    assert metrics["evaluated_alert_count"] == 0
+    assert metrics["precision"] is None
+
+
+def test_backfill_alert_precision_minimum_observations_check() -> None:
+    """Review defect 4: Window elapsed but insufficient observations (< min_observations)
+    must remain UNRESOLVED instead of falsely declaring FALSE_POSITIVE on a single observation.
+    """
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(alert_id="a-min-obs", store_id="store-mo", alert_level=AlertLevel.RED, opened_at=opened)
+
+    # Only 1 observation on day 28 (window has elapsed, but observation count = 1 < 14)
+    observations = [
+        StoreDayObservation(
+            store_id="store-mo",
+            business_date=date(2026, 6, 29),
+            actual_revenue=95_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    ]
+
+    updated_alerts, metrics = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+        min_observations=14,
+    )
+    res = updated_alerts[0]
+    assert res.disposition == "UNRESOLVED"
+    assert metrics["unresolved_count"] == 1
+    assert metrics["false_positive_count"] == 0
+
+    # When 15 observations are present, sufficient observations threshold is met -> FALSE_POSITIVE
+    observations_sufficient = [
+        StoreDayObservation(
+            store_id="store-mo",
+            business_date=date(2026, 6, d),
+            actual_revenue=95_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+        for d in range(1, 16)
+    ]
+    # Set as_of to horizon end
+    updated_alerts_suff, metrics_suff = backfill_alert_precision(
+        [alert],
+        observations=observations_sufficient,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+        min_observations=14,
+        as_of=datetime(2026, 6, 30, 0, 0, tzinfo=UTC),
+    )
+    res_suff = updated_alerts_suff[0]
+    assert res_suff.disposition == "FALSE_POSITIVE"
+    assert metrics_suff["false_positive_count"] == 1
+
