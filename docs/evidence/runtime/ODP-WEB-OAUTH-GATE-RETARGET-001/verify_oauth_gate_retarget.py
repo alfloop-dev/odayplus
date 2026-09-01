@@ -25,6 +25,25 @@ ARCHIVE_DIR = STATUS_ROOT / "ai-task-archive" / "tasks"
 if not ARCHIVE_DIR.exists():
     ARCHIVE_DIR = ROOT / "ai-task-archive" / "tasks"
 EVIDENCE_DIR = Path(__file__).resolve().parent
+EXPECTED_ROLLOUT_DEPENDENCIES = [
+    "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+    "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+    "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+    "DPF-EMGI-LIVE-ROLLOUT-001",
+    "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+    "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+    "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+]
+EXPECTED_CI_CHECKS = {
+    "change-scope",
+    "boundary",
+    "classify",
+    "orchestrator",
+    "product",
+    "performance-gate",
+    "product-e2e-gate",
+    "task-review-gate",
+}
 
 
 def check_archive_task(task_id: str, expected_pr: int) -> dict:
@@ -42,9 +61,13 @@ def check_archive_task(task_id: str, expected_pr: int) -> dict:
     assert task.get("pr_number") == expected_pr or task.get("review_submission", {}).get("pr_number") == expected_pr, (
         f"{task_id} PR number does not match expected {expected_pr}"
     )
-    delivery = data.get("delivery", {})
+    delivery = task.get("delivery", {})
     approved_head = delivery.get("approved_head") or task.get("approved_head")
     assert approved_head, f"{task_id} has no approved_head recorded"
+    assert delivery.get("ci_status") == "success", f"{task_id} does not have successful CI evidence"
+    ci_checks = {check.get("name"): check.get("conclusion") for check in delivery.get("ci_checks", [])}
+    assert EXPECTED_CI_CHECKS <= ci_checks.keys(), f"{task_id} is missing required CI checks"
+    assert all(ci_checks[name] == "SUCCESS" for name in EXPECTED_CI_CHECKS), f"{task_id} has a failed CI check"
     print(f"✓ Task {task_id} archived as done: PR #{expected_pr}, approved head {approved_head[:8]}")
     return data
 
@@ -71,6 +94,10 @@ def check_canonical_status() -> None:
     dev_rollout = tasks.get("ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001")
     assert dev_rollout is not None, "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 missing from ai-status.json"
     depends_on = dev_rollout.get("depends_on", [])
+    assert depends_on == EXPECTED_ROLLOUT_DEPENDENCIES, (
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 must retain all six existing dependencies "
+        "and add exactly ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+    )
     assert "HUMAN-GCP-WEB-OAUTH-CLIENTS-001" not in depends_on, (
         "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 must not depend on HUMAN-GCP-WEB-OAUTH-CLIENTS-001"
     )
@@ -114,6 +141,16 @@ def check_receipt_and_graph() -> None:
     assert "rollout_retarget_matrix" in receipt
     assert "dag_integrity_audit" in receipt
     assert "canonical_dependency_mutation" in receipt
+    for task_id in (
+        "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+        "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+    ):
+        prerequisite = receipt["prerequisites"][task_id]
+        assert prerequisite.get("ci_status") == "success", f"{task_id} receipt CI status is not success"
+        checks = {check.get("name"): check.get("conclusion") for check in prerequisite.get("ci_checks", [])}
+        assert EXPECTED_CI_CHECKS <= checks.keys(), f"{task_id} receipt is missing required CI checks"
+        assert all(checks[name] == "SUCCESS" for name in EXPECTED_CI_CHECKS), f"{task_id} receipt has a failed CI check"
+    assert receipt["canonical_dependency_mutation"]["new_dependencies"] == EXPECTED_ROLLOUT_DEPENDENCIES
     print("✓ retarget-receipt.json structure validated")
 
     graph_file = EVIDENCE_DIR / "updated-rollout-dependency-graph.md"
@@ -123,6 +160,10 @@ def check_receipt_and_graph() -> None:
     assert "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002" in content
     assert "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001" in content
     assert "HUMAN-GCP-WEB-OAUTH-CLIENTS-001" in content
+    for dependency in EXPECTED_ROLLOUT_DEPENDENCIES:
+        assert dependency in content, f"{dependency} missing from dependency graph"
+    assert "DPF-EMGI-LIVE-ROLLOUT-001<br/>(Done" in content
+    assert "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001<br/>(Done" in content
     print("✓ updated-rollout-dependency-graph.md validated")
 
 
@@ -147,4 +188,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

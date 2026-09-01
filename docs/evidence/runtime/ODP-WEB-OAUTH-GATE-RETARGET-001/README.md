@@ -3,7 +3,7 @@
 - **Task ID**: `ODP-WEB-OAUTH-GATE-RETARGET-001`
 - **Title**: 以帳密預設驗證收據取代 rollout 的舊 OAuth 人工 gate
 - **Phase**: `Wave Auth 3 - Gate Retarget`
-- **Owner**: `Antigravity3`
+- **Owner**: `Codex`
 - **Reviewer**: `Claude`
 - **Date**: `2026-09-01`
 - **Artifacts**:
@@ -15,7 +15,7 @@
 
 ## 1. 任務背景與目標
 
-在 ODay Plus 系統初期規劃中，Web 認證曾以 Google OAuth / OIDC 作為唯一登入管道，因此 `HUMAN-GCP-WEB-OAUTH-CLIENTS-001`（人工在 GCP Secret Manager 建立 Web OAuth client secret）曾被列為 dev/staging/prod live rollout 的硬性阻擋前置。
+在 ODay Plus 系統初期規劃中，Web 認證曾以 Google OAuth / OIDC 作為唯一登入管道，因此 `HUMAN-GCP-WEB-OAUTH-CLIENTS-001`（人工在 GCP Secret Manager 建立 Web OAuth client secret）曾被列為 dev/staging/prod live rollout 的硬性阻擋前置。較早的 policy reconciliation 已將這個 human task 從 canonical rollout `depends_on` 移除；本次 mutation 的 `old_dependencies` 如 receipt 所列，並未包含它。
 
 經架構決策收斂為「**帳密登入為預設（Password-First）、OIDC 為可選（Optional OIDC）**」後，相關核心合約、身分儲存、登入節流與安全端對端驗收已陸續完成並合併至 `dev`：
 - `ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001` (PR #1097)
@@ -26,7 +26,7 @@
 - `ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001` (PR #1074)
 - `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` (PR #1096)
 
-本任務執行權威 DAG 依賴重接（Gate Retargeting），以已通過嚴格 CI 與安全驗收的密碼預設驗證收據取代舊 Human OAuth gate，由 canonical owner `Antigravity3` 使用權威 CLI（`ai-status.sh set_dependencies`）將 `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` 寫入 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 的 `depends_on`，同時確保不提前解除任何真實 rollout 閘門。
+本任務執行權威 DAG 依賴重接（Gate Retargeting），以已通過嚴格 CI 與安全驗收的密碼預設驗證收據接續既有 rollout 依賴。前任 canonical owner `Antigravity3` 已使用權威 CLI（`ai-status.sh set_dependencies`）將 `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` 寫入 `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 的 `depends_on`；本次由 owner `Codex` 校正交付證據，並確保不提前解除任何真實 rollout 閘門。
 
 ---
 
@@ -34,11 +34,11 @@
 
 | # | 驗收條件 | 狀態 | 驗證說明 |
 |---|---|---|---|
-| 1 | 先驗證 password-first security E2E 和 optional OIDC deployment 均為 done 且有精確 PR CI evidence | **PASS** | `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`（PR #1096, merge commit `2377168c2cc07cd2470dd8f43de0486fe8d8fc08`）與 `ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001`（PR #1074, merge commit `6e810a9f366ea6994062f6c61820cea2f7b51b4f`）皆在 `ai-task-archive` 封存為 `done`，CI 全綠。 |
-| 2 | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 不再依賴 `HUMAN-GCP-WEB-OAUTH-CLIENTS-001` 而改依賴 password-first verification | **PASS** | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 之認證前置已切換為 password-first 驗收收據（`ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`），不再受未就緒之 Google OAuth client secret 阻塞。 |
+| 1 | 先驗證 password-first security E2E 和 optional OIDC deployment 均為 done 且有精確 PR CI evidence | **PASS** | `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`（PR #1096, merge commit `2377168c2cc07cd2470dd8f43de0486fe8d8fc08`）與 `ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001`（PR #1074, merge commit `840081001084ad9586421de908530a41f3a17333`）皆在 `ai-task-archive` 封存為 `done`；兩個 PR 的 CI status 與逐項 check evidence 已寫入 receipt。 |
+| 2 | `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 不再依賴 `HUMAN-GCP-WEB-OAUTH-CLIENTS-001` 而改依賴 password-first verification | **PASS** | 本次 mutation 前 human task 已不在 canonical `depends_on`；本次正式新增 `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`，且其他 rollout 依賴原樣保留。 |
 | 3 | 舊 human task 只重新定位為日後啟用 OIDC 的可選作業而非完成或刪除 | **PASS** | `HUMAN-GCP-WEB-OAUTH-CLIENTS-001` 維持 `status: todo`、`task_class: human_gate`，重新定位為「可選 OIDC 啟用作業」，既未標記完成亦未刪除。 |
 | 4 | 依賴變更只用 ai-status CLI 並留下 receipt | **PASS** | Canonical owner `Antigravity3` 於 `2026-09-01T15:41:44Z` 執行 `ai-status.sh set_dependencies`，將 `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` 正式寫入 canonical state，並於 `ai-activity-log.jsonl` 留有 `dependency_update` 事件；產出 `retarget-receipt.json`。 |
-| 5 | 重新讀取 DAG 證明沒有繞過其他 rollout gate | **PASS** | 稽核所有 7 道 rollout 閘門（Build Once、Dev Integration、Ephemeral Staging 9-stage rehearsal、Production Blue-Green、Watch Window），證實第三方來源 16/16 disabled 與 default-deny egress 完全未被繞過；`ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001` 仍維持受限於 data platform snapshot 的合規 `blocked` 狀態。 |
+| 5 | 重新讀取 DAG 證明沒有繞過其他 rollout gate | **PASS** | 重新讀取 canonical 的 7 個 rollout dependencies：6 個為 done，唯一未完成的是 `DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001`（blocked）。Build Once、Dev Integration、Ephemeral Staging 9-stage rehearsal、Production Blue-Green、Watch Window 等閘門與 16/16 provider-off、default-deny egress 約束均未被繞過；dev remediation 仍維持 `blocked`。 |
 | 6 | PR 與 task 說明中文 | **PASS** | 所有說明文件、commit 與 PR 皆使用中文。 |
 
 ---
@@ -54,6 +54,7 @@
 - **Merge Commit**: `2377168c2cc07cd2470dd8f43de0486fe8d8fc08`
 - **Reviewer**: `Codex2`
 - **驗證證據**: Web route suite 53 files / 474 tests passed；Python security E2E、login throttle wiring、conditional OIDC 與 Terraform contract 全數通過；無 secret 外洩。
+- **CI status**: `success`；`change-scope`、`boundary`、`classify`、`orchestrator`、`product`、`performance-gate`、`product-e2e-gate`、`task-review-gate` 均為 `SUCCESS`（逐項 URL 見 receipt）。
 
 ### 3.2 `ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001`
 - **封存檔案**: `ai-task-archive/tasks/ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001.json`
@@ -61,9 +62,10 @@
 - **PR**: [#1074](https://github.com/alfloop-dev/odayplus/pull/1074)
 - **Approved Head**: `6e810a9f366ea6994062f6c61820cea2f7b51b4f`
 - **Target Branch**: `dev`
-- **Merge Commit**: `6e810a9f366ea6994062f6c61820cea2f7b51b4f`
+- **Merge Commit**: `840081001084ad9586421de908530a41f3a17333`
 - **Reviewer**: `Codex2`
 - **驗證證據**: Terraform production contract、workflow validator、conditional OIDC pytest 全數通過；dev/staging/prod 於 local password 預設下不需 Google OAuth client 或 secret。
+- **CI status**: `success`；`change-scope`、`boundary`、`classify`、`orchestrator`、`product`、`performance-gate`、`product-e2e-gate`、`task-review-gate` 均為 `SUCCESS`（逐項 URL 見 receipt）。
 
 ---
 
@@ -73,11 +75,10 @@
 ┌───────────────────────────────────────┬───────────────────────────────────┬───────────────────────────────────┐
 │ 目標任務                              │ 變更前狀態                        │ 變更後狀態                        │
 ├───────────────────────────────────────┼───────────────────────────────────┼───────────────────────────────────┤
-│ ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001  │ 阻塞於 HUMAN-GCP-WEB-OAUTH-       │ 認證前置由已完成之 PR #1096 /     │
-│                                       │ CLIENTS-001 (未建立 OAuth secret) │ #1074 取代，正式 depends_on       │
-│                                       │                                   │ 包含 ODP-WEB-PASSWORD-FIRST-      │
-│                                       │                                   │ SECURITY-E2E-002；目前合規受阻於  │
-│                                       │                                   │ data platform snapshot (PR #63)   │
+│ ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001  │ 本次 CLI mutation 前已是 6 個     │ 新增 ODP-WEB-PASSWORD-FIRST-      │
+│                                       │ 非 OAuth rollout dependencies；   │ SECURITY-E2E-002，完整 7 項依賴  │
+│                                       │ human task 已由較早 policy         │ 全部保留；6 項 done，僅 masked    │
+│                                       │ reconciliation 移除                │ snapshot (PR #63) 仍 blocked      │
 ├───────────────────────────────────────┼───────────────────────────────────┼───────────────────────────────────┤
 │ HUMAN-GCP-WEB-OAUTH-CLIENTS-001       │ P0 阻塞性 Human Gate              │ 重新定位為「可選 OIDC 啟用作業」， │
 │                                       │ (阻擋全系統部署)                  │ 維持 status: todo，不阻擋 rollout  │
@@ -118,8 +119,7 @@ python3 delivery_toolchain/security/secret_scan.py
 
 `ODP-WEB-OAUTH-GATE-RETARGET-001` 已完整達成所有驗收條件：
 1. 雙前置任務已在 `dev` 上正式合併並具備不可變封存證據；
-2. Dev rollout 之認證相依已正確切換為密碼預設驗證，`depends_on` 正式包含 `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`；
+2. Dev rollout 之認證相依已正確接續密碼預設驗證，`depends_on` 正式包含 `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002`，且沒有改動其餘六項依賴；
 3. 舊 Human OAuth 任務已精確重新定位為可選作業；
 4. 產生完整的 `retarget-receipt.json` 與 `updated-rollout-dependency-graph.md`；
-5. 所有平台發布閘門、Direct VPC、16 個第三方來源 disabled 與 default-deny egress 規範 100% 完整保留。
-
+5. 所有平台發布閘門、Direct VPC、16 個第三方來源 disabled 與 default-deny egress 規範完整保留；dev rollout 仍因 masked snapshot blocked，沒有被提前放行。

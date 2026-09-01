@@ -2,13 +2,13 @@
   "task_id": "ODP-WEB-OAUTH-GATE-RETARGET-001",
   "title": "以帳密預設驗證收據取代 rollout 的舊 OAuth 人工 gate",
   "phase": "Wave Auth 3 - Gate Retarget",
-  "owner": "Antigravity3",
+  "owner": "Codex",
   "reviewer": "Claude",
   "created_at": "2026-09-01T15:41:44Z",
   "secret_values_redacted": true,
   "retarget_decision": {
     "action": "RETARGET_OAUTH_GATE_TO_PASSWORD_FIRST_VERIFICATION",
-    "rationale": "Following the merge and verification of password-first authentication and optional OIDC deployment, the dev/staging/prod rollout dependency on the legacy human OAuth gate is retargeted to verified password-first security receipts. Google OAuth is repositioned as an optional enablement task rather than a deployment prerequisite.",
+    "rationale": "在 password-first security E2E 與 optional OIDC deployment 均完成並具備 PR CI 證據後，將已存在的 rollout 依賴接續至密碼預設驗證收據；較早的 policy reconciliation 已移除 legacy human OAuth 依賴，本次 mutation 不提前解除其他 rollout gate。Google OAuth 保留為可選啟用作業，而非 password-first deployment prerequisite。",
     "premature_unblock_prevented": true
   },
   "canonical_dependency_mutation": {
@@ -45,6 +45,17 @@
       "merge_commit": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
       "target_branch": "dev",
       "reviewer": "Codex2",
+      "ci_status": "success",
+      "ci_checks": [
+        {"name": "change-scope", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99790996139"},
+        {"name": "boundary", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33487531249/job/99790997728"},
+        {"name": "classify", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33487530982/job/99790997003"},
+        {"name": "orchestrator", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99790995820"},
+        {"name": "product", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041539"},
+        {"name": "performance-gate", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041369"},
+        {"name": "product-e2e-gate", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33487530897/job/99791041575"},
+        {"name": "task-review-gate", "conclusion": "SUCCESS", "details_url": null}
+      ],
       "verified_evidence": "Web route suite 53 files / 474 tests passed; Python security E2E, login throttle wiring, conditional OIDC, and Terraform contract checks passed. Secret values redacted."
     },
     "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001": {
@@ -52,17 +63,28 @@
       "terminal_outcome": "completed",
       "pr_number": 1074,
       "approved_head": "6e810a9f366ea6994062f6c61820cea2f7b51b4f",
-      "merge_commit": "6e810a9f366ea6994062f6c61820cea2f7b51b4f",
+      "merge_commit": "840081001084ad9586421de908530a41f3a17333",
       "target_branch": "dev",
       "reviewer": "Codex2",
+      "ci_status": "success",
+      "ci_checks": [
+        {"name": "change-scope", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33308178102/job/99248326072"},
+        {"name": "boundary", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33308178099/job/99248325901"},
+        {"name": "classify", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33308178098/job/99248325898"},
+        {"name": "orchestrator", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33308178102/job/99248325967"},
+        {"name": "product", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33308178102/job/99248351442"},
+        {"name": "performance-gate", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33308178102/job/99248351411"},
+        {"name": "product-e2e-gate", "conclusion": "SUCCESS", "details_url": "https://github.com/alfloop-dev/odayplus/actions/runs/33308178102/job/99248351445"},
+        {"name": "task-review-gate", "conclusion": "SUCCESS", "details_url": null}
+      ],
       "verified_evidence": "Conditional OIDC Terraform & workflow validation passed; local password default requires no Google OAuth client or secret."
     }
   },
   "rollout_retarget_matrix": {
     "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001": {
-      "previous_blocker": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001 (Human operator creating GCP Secret Manager web OIDC client secrets)",
-      "current_auth_prerequisite": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 (DONE - PR #1096) & ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 (DONE - PR #1074)",
-      "status": "blocked (on valid non-OAuth blockers: ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001 & DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001)",
+      "previous_blocker": "Historical rollout planning named HUMAN-GCP-WEB-OAUTH-CLIENTS-001; an earlier policy reconciliation removed it before this mutation, so it is not present in old_dependencies.",
+      "current_auth_prerequisite": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 (direct canonical dependency, DONE - PR #1096); ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 (DONE - PR #1074) is a prerequisite of the security E2E, not a direct dev rollout dependency.",
+      "status": "blocked (only on DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001; all other canonical dependencies are done)",
       "auth_gate_cleared": true
     },
     "HUMAN-GCP-WEB-OAUTH-CLIENTS-001": {
@@ -76,6 +98,15 @@
     }
   },
   "dag_integrity_audit": {
+    "canonical_rollout_dependencies": [
+      {"id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001", "status": "done", "pr_number": 1030},
+      {"id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001", "status": "done", "pr_number": 1010},
+      {"id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001", "status": "done", "pr_number": 1011},
+      {"id": "DPF-EMGI-LIVE-ROLLOUT-001", "status": "done", "pr_number": 62, "repository": "alfloop-dev/oday-data-platform"},
+      {"id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001", "status": "done", "pr_number": 1109},
+      {"id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001", "status": "blocked", "pr_number": 63, "repository": "alfloop-dev/oday-data-platform"},
+      {"id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002", "status": "done", "pr_number": 1096}
+    ],
     "rollout_gates_preserved": [
       "Candidate-Built / Build Once Gate (Cosign, CycloneDX SBOM, Bandit SAST, Secret scan)",
       "Dev-Verified / Dev Integration Gate (API/Web authenticated health, Direct VPC, provider-off, default-deny egress)",
