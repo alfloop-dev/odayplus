@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
+from shared.governance import InMemoryDecisionPolicyRepository
 
 DEFAULT_DB_PATH = ".odp_data/durable.sqlite3"
 _DURABLE_MODES = {"durable", "sqlite"}
@@ -133,6 +134,21 @@ class PersistenceBundle:
         return None
 
 
+def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
+    from modules.forecastops.domain.forecasting import default_forecast_alert_policy
+
+    seeded_tenants = (
+        "tenant-test",
+        "11111111-1111-1111-1111-111111111111",
+        "22222222-2222-2222-2222-222222222222",
+        "00000000-0000-0000-0000-000000000001",
+        "tenant-gate",
+    )
+    return InMemoryDecisionPolicyRepository(
+        [default_forecast_alert_policy(t) for t in seeded_tenants]
+    )
+
+
 def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from models.shared_ml.artifact_store import InMemoryArtifactStore
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
@@ -156,7 +172,6 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
-    from shared.governance import InMemoryDecisionPolicyRepository
     from shared.identity import (
         InMemoryIdentityStore,
         InMemorySessionRepository,
@@ -189,7 +204,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         job_queue=InMemoryJobQueue(),
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
-        forecastops_policy_repository=InMemoryDecisionPolicyRepository(),
+        forecastops_policy_repository=_default_decision_policy_repository(),
         netplan_repository=InMemoryNetPlanRepository(),
         learninghub_repository=InMemoryLearningHubRepository(),
         artifact_store=InMemoryArtifactStore(),
@@ -227,7 +242,6 @@ def _durable_bundle(
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
-    from shared.governance import InMemoryDecisionPolicyRepository
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
@@ -290,7 +304,7 @@ def _durable_bundle(
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
-        forecastops_policy_repository=InMemoryDecisionPolicyRepository(),
+        forecastops_policy_repository=_default_decision_policy_repository(),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
         artifact_store=DurableArtifactStore(store),

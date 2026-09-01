@@ -1,9 +1,15 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
+from modules.forecastops import (
+    AlertLevel,
+    ForecastInput,
+    StoreDayObservation,
+    forecast_stores,
+)
 from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
 
 
@@ -35,9 +41,9 @@ def test_sql_decision_policy_repository_resolves_registry_row() -> None:
             "parameters": json.dumps(
                 {
                     "thresholds": [
-                        {"level": "RED", "value": -0.35},
-                        {"level": "ORANGE", "value": -0.20},
-                        {"level": "YELLOW", "value": -0.10},
+                        {"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35},
+                        {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20},
+                        {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10},
                     ]
                 }
             ),
@@ -47,7 +53,8 @@ def test_sql_decision_policy_repository_resolves_registry_row() -> None:
         }
     )
 
-    policy = SqlDecisionPolicyRepository(engine).find_effective(
+    repo = SqlDecisionPolicyRepository(engine)
+    policy = repo.find_effective(
         policy_kind="forecast_alert",
         tenant_id=tenant_id,
         at=at,
@@ -58,4 +65,30 @@ def test_sql_decision_policy_repository_resolves_registry_row() -> None:
     assert policy.parameters["thresholds"][0]["value"] == -0.35
     assert policy.declared_inputs == ("sitescore_gap_ratio",)
     assert engine.calls[0][1] == ("forecast_alert", tenant_id, at, at)
+
+    # Verify that the resolved policy successfully evaluates a forecast in the domain evaluator
+    forecast_input = ForecastInput(
+        tenant_id=tenant_id,
+        store_id="store-sql-001",
+        observations=(
+            StoreDayObservation(
+                store_id="store-sql-001",
+                business_date=date(2026, 8, 31),
+                actual_revenue=60_000.0,
+                site_score_baseline_p50=100_000.0,
+            ),
+        ),
+        prediction_origin_time=at,
+    )
+    forecasts, alerts, _ = forecast_stores(
+        [forecast_input],
+        scored_at=at,
+        policy_repository=repo,
+    )
+    assert len(forecasts) == 1
+    assert len(alerts) == 1
+    assert alerts[0].alert_level is AlertLevel.RED
+    assert alerts[0].policy_version == "four-light-policy-v1"
+    assert alerts[0].policy_version_id == f"four-light-policy-v1:{tenant_id}"
+
 

@@ -411,3 +411,81 @@ def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:
     event_types = {event["event_type"] for event in events}
     assert "forecastops.alert.acknowledged.v1" in event_types
     assert "forecastops.handoff.executed.v1" in event_types
+
+
+def test_forecast_job_fails_closed_with_named_422_when_policy_cannot_be_resolved() -> None:
+    """When no governing policy is in force for the tenant, the forecast-jobs route fails closed with 422."""
+    empty_policy_repo = InMemoryDecisionPolicyRepository([])
+    app = create_app(forecastops_policy_repository=empty_policy_repo)
+    client = TestClient(app)
+
+    response = client.post(
+        "/forecastops/forecast-jobs",
+        json={
+            "inputs": [
+                {
+                    "store_id": "store-001",
+                    "observations": [
+                        {
+                            "business_date": "2026-06-25",
+                            "actual_revenue": 50_000.0,
+                            "site_score_baseline_p50": 100_000.0,
+                            "source_snapshot_ids": ["pos-20260625"],
+                        }
+                    ],
+                }
+            ],
+            "prediction_origin_time": PREDICTION_TIME.isoformat(),
+        },
+        headers={**FORECASTOPS_HEADERS, "x-correlation-id": "corr-fo-policy-missing"},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["detail"]["code"] == "POLICY_RESOLUTION_ERROR"
+    assert "refusing to decide" in body["detail"]["message"]
+
+
+def test_forecast_job_fails_closed_with_named_422_when_policy_is_invalid() -> None:
+    """When the policy configuration is malformed or invalid, the forecast-jobs route fails closed with 422."""
+    from shared.governance import DecisionPolicy
+
+    invalid_policy = DecisionPolicy(
+        policy_version_id=f"four-light-policy-v1:{TENANT_ID}",
+        policy_label="four-light-policy-v1",
+        policy_id="four-light-policy",
+        policy_version="1.0.0",
+        policy_kind="forecast_alert",
+        tenant_id=TENANT_ID,
+        effective_from=datetime(1970, 1, 1, tzinfo=UTC),
+        parameters={"thresholds": [{"level": "GREEN", "value": -0.35}]},
+        declared_inputs=("sitescore_gap_ratio",),
+    )
+    invalid_policy_repo = InMemoryDecisionPolicyRepository([invalid_policy])
+    app = create_app(forecastops_policy_repository=invalid_policy_repo)
+    client = TestClient(app)
+
+    response = client.post(
+        "/forecastops/forecast-jobs",
+        json={
+            "inputs": [
+                {
+                    "store_id": "store-001",
+                    "observations": [
+                        {
+                            "business_date": "2026-06-25",
+                            "actual_revenue": 50_000.0,
+                            "site_score_baseline_p50": 100_000.0,
+                            "source_snapshot_ids": ["pos-20260625"],
+                        }
+                    ],
+                }
+            ],
+            "prediction_origin_time": PREDICTION_TIME.isoformat(),
+        },
+        headers={**FORECASTOPS_HEADERS, "x-correlation-id": "corr-fo-policy-invalid"},
+    )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["detail"]["code"] == "FORECAST_ALERT_POLICY_ERROR"
+    assert "cannot define GREEN" in body["detail"]["message"]
+

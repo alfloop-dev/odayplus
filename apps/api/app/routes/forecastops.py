@@ -36,6 +36,7 @@ else:
     )
     from modules.forecastops.domain import (
         FeedbackStatus,
+        ForecastAlertPolicyError,
         ForecastOpsError,
         ForecastOpsNotFoundError,
     )
@@ -45,6 +46,7 @@ else:
         forecastops_production_required,
     )
     from modules.forecastops.workers import ForecastOpsBatchResult, run_forecastops_batch_forecast
+    from shared.governance import PolicyResolutionError
 
     class ForecastOpsTimeseriesPayload(BaseModel):
         observations: list[dict[str, Any]] = Field(default_factory=list)
@@ -422,6 +424,16 @@ else:
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail={"code": exc.code, "message": str(exc)},
                     ) from exc
+                except PolicyResolutionError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={"code": "POLICY_RESOLUTION_ERROR", "message": str(exc)},
+                    ) from exc
+                except ForecastAlertPolicyError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={"code": "FORECAST_ALERT_POLICY_ERROR", "message": str(exc)},
+                    ) from exc
                 return build_receipt(
                     result,
                     job_id=result.job_id,
@@ -472,6 +484,16 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+            except PolicyResolutionError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "POLICY_RESOLUTION_ERROR", "message": str(exc)},
+                ) from exc
+            except ForecastAlertPolicyError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "FORECAST_ALERT_POLICY_ERROR", "message": str(exc)},
                 ) from exc
             payload = dict(outcome.value)
             payload["created"] = not outcome.replayed

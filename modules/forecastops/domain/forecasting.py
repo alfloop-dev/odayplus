@@ -451,8 +451,8 @@ def _policy_thresholds(policy: DecisionPolicy) -> dict[AlertLevel, float]:
         operator = "<="
         value = raw_entry
         if isinstance(raw_entry, Mapping):
-            input_name = str(raw_entry.get("input") or "").strip()
-            operator = str(raw_entry.get("op") or "").strip()
+            input_name = str(raw_entry.get("input") or "sitescore_gap_ratio").strip()
+            operator = str(raw_entry.get("op") or "<=").strip()
             value = raw_entry.get("value")
         if input_name != "sitescore_gap_ratio" or not policy.reads(input_name):
             raise ForecastAlertPolicyError(
@@ -738,7 +738,7 @@ def _forecast_one(
 ) -> ForecastOutput:
     observations = forecast_input.observations
     data_staleness_days: int | None = None
-    data_quality_score = 0.0
+    data_quality_score = 1.0
     if not observations:
         actual = 0.0
         baseline = None

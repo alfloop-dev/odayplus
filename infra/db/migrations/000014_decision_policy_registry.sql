@@ -222,7 +222,7 @@ SELECT
     'Alert',
     '歷史警示回填佔位，記錄機制導入前判定',
     NULL,
-    '{"thresholds": [{"level": "RED", "value": -0.35}, {"level": "ORANGE", "value": -0.20}, {"level": "YELLOW", "value": -0.10}]}'::jsonb,
+    '{"thresholds": [{"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35}, {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20}, {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10}]}'::jsonb,
     ARRAY['sitescore_gap_ratio']
 FROM core.tenants t
 ON CONFLICT (policy_version_id) DO NOTHING;
