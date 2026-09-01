@@ -89,15 +89,17 @@ VALUATION = "'44444444-4444-4444-4444-444444444444'"
 FORECAST = "'55555555-5555-5555-5555-555555555555'"
 ALERT = "'66666666-6666-6666-6666-666666666666'"
 POLICY = "'four-light-policy-v1'"
+DECISION = "'77777777-7777-7777-7777-777777777777'"
+GATE_ID = "'88888888-8888-8888-8888-888888888888'"
 
 SEED = f"""
-INSERT INTO core.tenants (tenant_id, tenant_name) VALUES ({TENANT}, 't1');
-INSERT INTO core.stores (store_id) VALUES ({STORE});
-INSERT INTO geo.h3_cells (geo_cell_id) VALUES ({CELL});
-INSERT INTO asset.valuation_runs (valuation_run_id) VALUES ({VALUATION});
-INSERT INTO operations.forecast_outputs (forecast_output_id) VALUES ({FORECAST});
-INSERT INTO operations.alerts (alert_id, store_id, alert_reason_code, evidence_json)
-    VALUES ({ALERT}, {STORE}, 'sitescore_gap', '{{}}'::jsonb);
+INSERT INTO core.tenants (tenant_id, tenant_name) VALUES ({TENANT}, 't1') ON CONFLICT DO NOTHING;
+INSERT INTO core.stores (store_id) VALUES ({STORE}) ON CONFLICT DO NOTHING;
+INSERT INTO geo.h3_cells (geo_cell_id) VALUES ({CELL}) ON CONFLICT DO NOTHING;
+INSERT INTO asset.valuation_runs (valuation_run_id) VALUES ({VALUATION}) ON CONFLICT DO NOTHING;
+INSERT INTO operations.forecast_outputs (forecast_output_id) VALUES ({FORECAST}) ON CONFLICT DO NOTHING;
+INSERT INTO operations.alerts (alert_id, store_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id)
+    VALUES ({ALERT}, {STORE}, 'sitescore_gap', '{{}}'::jsonb, {FORECAST}, {POLICY}) ON CONFLICT DO NOTHING;
 INSERT INTO workflow.decision_policies (
     policy_version_id, policy_id, policy_version, policy_kind, tenant_id,
     effective_from, owner_role, approved_by, approved_at,
@@ -105,7 +107,12 @@ INSERT INTO workflow.decision_policies (
 VALUES ({POLICY}, 'four-light-policy', '1.0.0', 'forecast_alert', {TENANT}, now(),
     'ops', 'approver', now(), 'in', 'out',
     'mechanism introduction, thresholds unchanged', '{{"thresholds":[]}}'::jsonb,
-    ARRAY['sitescore_gap_ratio', 'data_quality.staleness_days']);
+    ARRAY['sitescore_gap_ratio', 'data_quality.staleness_days'])
+ON CONFLICT (policy_version_id) DO NOTHING;
+INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES ({DECISION}, {POLICY}) ON CONFLICT DO NOTHING;
+INSERT INTO pricing.exploration_gates (gate_id, tenant_id, budget_limit, budget_consumed, effective_from, effective_to, approved_by, rollback_condition, decision_policy_version_id)
+    VALUES ({GATE_ID}, {TENANT}, 1000, 0, now(), now() + interval '30 day', 'ops', 'rollback on limit', {POLICY})
+ON CONFLICT DO NOTHING;
 """
 
 DEAL = (
@@ -118,7 +125,7 @@ FEEDBACK = (
     "INSERT INTO operations.forecast_feedback (tenant_id, store_id, feedback_kind,"
     " target_alert_id, target_forecast_output_id, corrected_metric, observed_value,"
     " corrected_value, correction_unit, effective_from, effective_to, reason_code,"
-    " submitted_by, submitted_at, approval_status, correlation_id) VALUES "
+    " submitted_by, submitted_at, approval_status, applied_status, correlation_id) VALUES "
 )
 COMPOSITION = (
     "INSERT INTO expansion.heatzone_composition (zone_id, tenant_id, member_cell_id,"
@@ -129,6 +136,10 @@ GATE = (
     "INSERT INTO pricing.exploration_gates (tenant_id, budget_limit, budget_consumed,"
     " effective_from, effective_to, approved_by, rollback_condition,"
     " decision_policy_version_id) VALUES "
+)
+EXPLORATION_DECISION = (
+    "INSERT INTO pricing.exploration_decisions (decision_id, gate_id, tenant_id, sku_id,"
+    " store_id, baseline_price, explored_price, budget_consumed, algorithm) VALUES "
 )
 POLICY_INSERT = (
     "INSERT INTO workflow.decision_policies (policy_version_id, policy_id,"
@@ -159,28 +170,55 @@ CASES: list[tuple[str, str, bool]] = [
      "'moi','c7')", False),
     ("feedback: ALERT_DISPOSITION on alert",
      FEEDBACK + f"({TENANT},{STORE},'ALERT_DISPOSITION',{ALERT},NULL,NULL,NULL,NULL,NULL,"
-     "'2026-01-01','2026-01-31','r','u',now(),'AUTO_ACCEPTED','f1')", True),
+     "'2026-01-01','2026-01-31','r','u',now(),'AUTO_ACCEPTED','APPLIED_DISPOSITION','f1')", True),
     ("feedback: no target at all",
      FEEDBACK + f"({TENANT},{STORE},'CONTEXT_ANNOTATION',NULL,NULL,NULL,NULL,NULL,NULL,"
-     "'2026-01-01','2026-01-31','r','u',now(),'AUTO_ACCEPTED','f2')", False),
+     "'2026-01-01','2026-01-31','r','u',now(),'AUTO_ACCEPTED','APPLIED_TRAINING_EXCLUSION','f2')", False),
     ("feedback: OUTCOME_CORRECTION on prediction",
      FEEDBACK + f"({TENANT},{STORE},'OUTCOME_CORRECTION',NULL,{FORECAST},'revenue',10,20,"
-     "'TWD','2026-01-01','2026-01-31','r','u',now(),'PENDING','f3')", True),
+     "'TWD','2026-01-01','2026-01-31','r','u',now(),'PENDING','PENDING_APPLICATION','f3')", True),
     ("feedback: OUTCOME_CORRECTION auto-accepted",
      FEEDBACK + f"({TENANT},{STORE},'OUTCOME_CORRECTION',NULL,{FORECAST},'revenue',10,20,"
-     "'TWD','2026-01-01','2026-01-31','r','u',now(),'AUTO_ACCEPTED','f4')", False),
+     "'TWD','2026-01-01','2026-01-31','r','u',now(),'AUTO_ACCEPTED','PENDING_APPLICATION','f4')", False),
     ("feedback: OUTCOME_CORRECTION without values",
      FEEDBACK + f"({TENANT},{STORE},'OUTCOME_CORRECTION',NULL,{FORECAST},NULL,NULL,NULL,NULL,"
-     "'2026-01-01','2026-01-31','r','u',now(),'PENDING','f5')", False),
+     "'2026-01-01','2026-01-31','r','u',now(),'PENDING','PENDING_APPLICATION','f5')", False),
     ("feedback: annotation carrying correction",
      FEEDBACK + f"({TENANT},{STORE},'CONTEXT_ANNOTATION',{ALERT},NULL,'revenue',10,20,'TWD',"
-     "'2026-01-01','2026-01-31','r','u',now(),'AUTO_ACCEPTED','f6')", False),
+     "'2026-01-01','2026-01-31','r','u',now(),'AUTO_ACCEPTED','APPLIED_TRAINING_EXCLUSION','f6')", False),
     ("feedback: APPROVED without approver",
      FEEDBACK + f"({TENANT},{STORE},'OUTCOME_CORRECTION',NULL,{FORECAST},'revenue',10,20,"
-     "'TWD','2026-01-01','2026-01-31','r','u',now(),'APPROVED','f7')", False),
+     "'TWD','2026-01-01','2026-01-31','r','u',now(),'APPROVED','PENDING_APPLICATION','f7')", False),
     ("feedback: effective_to before from",
      FEEDBACK + f"({TENANT},{STORE},'ALERT_DISPOSITION',{ALERT},NULL,NULL,NULL,NULL,NULL,"
-     "'2026-02-01','2026-01-01','r','u',now(),'AUTO_ACCEPTED','f8')", False),
+     "'2026-02-01','2026-01-01','r','u',now(),'AUTO_ACCEPTED','APPLIED_DISPOSITION','f8')", False),
+    ("feedback: NOT_APPLIED without reason",
+     "INSERT INTO operations.forecast_feedback (tenant_id, store_id, feedback_kind, target_alert_id,"
+     " effective_from, effective_to, reason_code, submitted_by, submitted_at, approval_status,"
+     f" applied_status, not_applied_reason_code, approved_by, approved_at, correlation_id) VALUES ({TENANT},{STORE},"
+     f"'ALERT_DISPOSITION',{ALERT},'2026-01-01','2026-01-31','r','u',now(),'REJECTED','NOT_APPLIED',NULL,'approver',now(),'f_na1')",
+     False),
+    ("feedback: NOT_APPLIED with reason",
+     "INSERT INTO operations.forecast_feedback (tenant_id, store_id, feedback_kind, target_alert_id,"
+     " effective_from, effective_to, reason_code, submitted_by, submitted_at, approval_status,"
+     f" applied_status, not_applied_reason_code, approved_by, approved_at, correlation_id) VALUES ({TENANT},{STORE},"
+     f"'ALERT_DISPOSITION',{ALERT},'2026-01-01','2026-01-31','r','u',now(),'REJECTED','NOT_APPLIED','REJECTED_BY_APPROVER','approver',now(),'f_na2')",
+     True),
+    ("feedback: APPLIED_RECALCULATION without output",
+     "INSERT INTO operations.forecast_feedback (tenant_id, store_id, feedback_kind, target_forecast_output_id,"
+     " corrected_metric, observed_value, corrected_value, correction_unit, effective_from, effective_to, reason_code,"
+     " submitted_by, submitted_at, approval_status, applied_status, approved_by, approved_at, correlation_id) VALUES "
+     f"({TENANT},{STORE},'OUTCOME_CORRECTION',{FORECAST},'revenue',10,20,'TWD','2026-01-01','2026-01-31','r','u',"
+     "now(),'APPROVED','APPLIED_RECALCULATION','approver',now(),'f_rc1')",
+     False),
+    ("feedback: APPLIED_RECALCULATION with output",
+     "INSERT INTO operations.forecast_feedback (tenant_id, store_id, feedback_kind, target_forecast_output_id,"
+     " corrected_metric, observed_value, corrected_value, correction_unit, effective_from, effective_to, reason_code,"
+     " submitted_by, submitted_at, approval_status, applied_status, recalculation_forecast_output_id, approved_by, approved_at, correlation_id) VALUES "
+     f"({TENANT},{STORE},'OUTCOME_CORRECTION',{FORECAST},'revenue',10,20,'TWD','2026-01-01','2026-01-31','r','u',"
+     f"now(),'APPROVED','APPLIED_RECALCULATION',{FORECAST},'approver',now(),'f_rc2')",
+     True),
+
     ("composition: MERGED decided by system",
      COMPOSITION + f"('MZ-0123456789abcdef',{TENANT},{CELL},'MERGED',NULL,'system',now(),"
      f"{POLICY},NULL)", True),
@@ -205,6 +243,15 @@ CASES: list[tuple[str, str, bool]] = [
      GATE + f"({TENANT},1000,0,now(),now(),'a','revert',{POLICY})", False),
     ("gate: empty rollback_condition",
      GATE + f"({TENANT},1000,0,now(),now()+interval '1 day','a','',{POLICY})", False),
+    ("exploration_decision: valid record",
+     EXPLORATION_DECISION + f"({DECISION},{GATE_ID},{TENANT},'SKU-001',{STORE},100.00,105.00,5.00,'THOMPSON_SAMPLING')",
+     True),
+    ("exploration_decision: negative explored price",
+     EXPLORATION_DECISION + f"({DECISION},{GATE_ID},{TENANT},'SKU-001',{STORE},100.00,-105.00,5.00,'THOMPSON_SAMPLING')",
+     False),
+    ("exploration_decision: negative budget_consumed",
+     EXPLORATION_DECISION + f"({DECISION},{GATE_ID},{TENANT},'SKU-001',{STORE},100.00,105.00,-5.00,'THOMPSON_SAMPLING')",
+     False),
     ("policy: second active version, same policy_id",
      POLICY_INSERT + f"('four-light-policy-v2','four-light-policy','2.0.0','forecast_alert',"
      f"{TENANT},now(),'ops','a',now(),'in','out','x','{{}}'::jsonb,"
@@ -212,6 +259,9 @@ CASES: list[tuple[str, str, bool]] = [
     ("policy: empty declared_inputs",
      POLICY_INSERT + f"('other-v1','other','1.0.0','heatzone_merge',{TENANT},now(),'ops','a',"
      "now(),'in','out','x','{}'::jsonb, ARRAY[]::text[])", False),
+    ("alert: evaluation identity duplicate for same forecast+policy",
+     "INSERT INTO operations.alerts (store_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id) VALUES "
+     f"({STORE}, 'sitescore_gap', '{{}}'::jsonb, {FORECAST}, {POLICY})", False),
     ("alert: deterioration before opened_at",
      "UPDATE operations.alerts SET deterioration_confirmed_at = opened_at - interval '1 day'"
      f" WHERE alert_id = {ALERT}", False),
@@ -226,6 +276,7 @@ CASES: list[tuple[str, str, bool]] = [
     ("heatzone_scores: absorbed without basis_at",
      "INSERT INTO expansion.heatzone_scores (absorbed_demand) VALUES (10)", False),
 ]
+
 
 
 def sql_blocks() -> list[str]:

@@ -1,7 +1,7 @@
 ---
 doc_id: ODP-SA-06-AMD-001
 title: "功能需求規格書修正案 001"
-version: 0.2.0
+version: 0.3.0
 status: draft-for-review
 document_class: system-analysis-amendment
 project: ODay Plus
@@ -45,23 +45,24 @@ source_gap: ODP-GAP-FR-20260901
 
 | FR ID | Requirement | Primary Module | Trigger/Input | Output/Acceptance | Priority | Trace |
 |---|---|---|---|---|---|---|
-| `ODP-FR-FCT-008` | 系統必須讓具權限的營運人員對已產生的預測或警示提交結構化回饋，回饋須註記類型、理由、影響期間與提交者，並在後續預測中依已核准的處理規則生效或明確標示未生效。 | ForecastOps | 操作者於警示或預測結果上提交回饋 | 回饋持久化且可稽核；後續預測輸出須可查詢其是否受回饋影響；回饋未生效時須有原因碼 | MUST | `ODP-HLR-FCT-*` |
+| `ODP-FR-FCT-008` | 系統必須讓具權限的營運人員對已產生的預測或警示提交結構化回饋，回饋須註記類型、理由、影響期間與提交者，並在後續預測中依已核准的處理規則生效或明確標示未生效。 | ForecastOps | 操作者於警示或預測結果上提交回饋 | 回饋持久化且具結構化狀態（`applied_status`）與可稽核性；後續預測輸出須具可查詢之重算血統關聯（`recalculation_forecast_output_id`）；回饋未生效時須有結構化原因碼（`not_applied_reason_code`） | MUST | `ODP-HLR-FCT-*` |
 
 **新增條文說明**：
 
 回饋類型至少須涵蓋三類，其處理路徑不同，不得混為一談：
 
-| 類型 | 語意 | 對模型的作用 |
-|---|---|---|
-| `CONTEXT_ANNOTATION` | 標註已知外部因素（裝修、周邊施工、鄰店歇業） | 不修改預測值；作為排除區間，使該期間不進入訓練集與 Precision 計算 |
-| `OUTCOME_CORRECTION` | 修正系統取得的實績有誤 | 需 Data Owner 核准；核准後修正 canonical 資料並觸發重算 |
-| `ALERT_DISPOSITION` | 判定警示為誤報或已處理 | 不修改預測值；作為 Precision 計算的標記，並關閉警示 |
+| 類型 | 語意 | 對模型的作用 | 結構化生效狀態 |
+|---|---|---|---|
+| `CONTEXT_ANNOTATION` | 標註已知外部因素（裝修、周邊施工、鄰店歇業） | 不修改預測值；作為排除區間，使該期間不進入訓練集與 Precision 計算 | `APPLIED_TRAINING_EXCLUSION` |
+| `OUTCOME_CORRECTION` | 修正系統取得的實績有誤 | 需 Data Owner 核准；核准後修正 canonical 資料並觸發重算，產出新預測 | `APPLIED_RECALCULATION`（關聯重算輸出） |
+| `ALERT_DISPOSITION` | 判定警示為誤報或已處理 | 不修改預測值；作為 Precision 計算的標記，並關閉警示 | `APPLIED_DISPOSITION` |
 
 **約束**：
 
 1. 回饋**不得**直接寫入預測值或決策欄位（依 `ODP-BR-GOV-001`）。回饋是獨立記錄，其對模型的作用透過訓練集篩選或重算達成，不是覆寫。
 2. `OUTCOME_CORRECTION` 屬 Learning Policy 層級，須依 `ODP-SA-07` 第 2 節由 Data／Model Owner 核准後生效。
-3. 在本需求實作完成前，UI **不得**呈現任何宣稱回饋已被處理的文案。
+3. 後續預測輸出與回饋之間**必須建立可雙向查詢的結構化關聯**，不得僅以非結構化自由文字記錄。
+4. 在本需求實作完成前，UI **不得**呈現任何宣稱回饋已被處理的文案。
 
 ---
 
@@ -97,14 +98,15 @@ source_gap: ODP-GAP-FR-20260901
 
 | FR ID | Requirement | Primary Module | Trigger/Input | Output/Acceptance | Priority | Trace |
 |---|---|---|---|---|---|---|
-| `ODP-FR-PRICE-006` | 系統必須將線上探索（Bandit）實作為受 Gate 控制的可選能力：未通過 Gate 時不得產生任何探索性價格；通過 Gate 後，探索範圍須受硬限制、探索預算與時間窗約束，且每次探索決策須記錄其所依據的 Gate 授權。 | PriceOps | Gate 授權存在且未過期時，由價格最佳化流程觸發 | 未授權時系統輸出確定性方案且明確標示未啟用探索；已授權時每個探索性價格可追溯至授權紀錄、探索預算餘額與適用硬限制 | MUST | `ODP-HLR-PRICE-*` |
+| `ODP-FR-PRICE-006` | 系統必須將線上探索（Bandit）實作為受 Gate 控制的可選能力：未通過 Gate 時不得產生任何探索性價格；通過 Gate 後，探索候選產生須受硬限制、探索預算與時間窗約束，且每次探索決策須永久記錄其所依據的 Gate 授權識別碼（`gate_id`）與預算消耗。 | PriceOps | Gate 授權存在且未過期時，由價格最佳化流程觸發 | 未授權時系統輸出確定性方案且明確標示未啟用探索；已授權時每個探索性價格候選與決策可追溯至授權紀錄、探索預算餘額與適用硬限制 | MUST | `ODP-HLR-PRICE-*` |
 
 **新增條文說明**：
 
 1. **交付綁定**：Bandit 機制與其 Gate **必須作為同一交付單元**，不得分階段上線。若先實作探索能力而後補 Gate，`ODP-BR-PRICE-004`（Hard Constraint）在期間內即為破口。
 2. **Gate 授權內容**：至少須包含適用範圍（租戶、品牌、品項、門市群）、探索預算上限、有效期限、核准者與回滾條件。
-3. **硬限制不可放寬**：探索**不得**成為繞過 `ODP-BR-PRICE-001`（毛利底線）的路徑。探索空間是硬限制內的子集，不是其例外。
-4. **Tier 歸屬**：依 `ODP-SA-08` 第 12 節，Bandit 屬 Tier 4，Feature Flag 關閉時不得影響核心定價流程。
+3. **Bandit 候選介面與決策稽核**：系統須提供標準 Bandit 探索候選產生介面（`BanditPriceExplorer`），每次採用探索價格所產生的決策均須持久化紀錄 `gate_id`，確保每筆定價決策可向後追溯至 Gate 授權與預算扣抵。
+4. **硬限制不可放寬**：探索**不得**成為繞過 `ODP-BR-PRICE-001`（毛利底線）的路徑。探索空間是硬限制內的子集，不是其例外。
+5. **Tier 歸屬**：依 `ODP-SA-08` 第 12 節，Bandit 屬 Tier 4，Feature Flag 關閉時不得影響核心定價流程。
 
 ---
 
@@ -118,7 +120,7 @@ source_gap: ODP-GAP-FR-20260901
 
 | FR ID | Requirement | Primary Module | Trigger/Input | Output/Acceptance | Priority | Trace |
 |---|---|---|---|---|---|---|
-| `ODP-FR-FCT-005` | 系統必須由具版本的 Decision Policy 物件產生四燈：燈號門檻與輸入權重須為政策資料而非程式常數，政策變更須升版並保留舊版，且每個已產生的警示必須永久保存其判定時所使用的 `policy_id` 與 `policy_version`。 | ForecastOps | 預測結果產出後，以生效中的政策版本評估 | 警示記錄含政策識別與版本；同一預測結果以不同政策版本評估可得不同燈號且兩者皆可重現；政策門檻調整不需變更程式碼 | MUST | `ODP-HLR-FCT-*`、`ODP-BR-FCT-001` |
+| `ODP-FR-FCT-005` | 系統必須由具版本的 Decision Policy 物件產生四燈：燈號門檻與輸入權重須為政策資料而非程式常數，政策變更須升版並保留舊版，每個已產生的警示必須永久保存其判定時所使用的 `policy_id` 與 `policy_version`，且評估識別須支援同一預測的多版本判定共存。 | ForecastOps | 預測結果產出後，以生效中的政策版本評估 | 警示記錄含政策識別與版本；同一預測結果以不同政策版本評估可得不同燈號且兩者皆可重現與持久化共存；政策門檻調整不需變更程式碼 | MUST | `ODP-HLR-FCT-*`、`ODP-BR-FCT-001` |
 
 **新增條文說明**：
 
@@ -129,7 +131,8 @@ source_gap: ODP-GAP-FR-20260901
 2. **與資料品質的關係**：依 `ODP-BR-FCT-003`，資料 Stale 時不得產生高信心警示。政策評估**必須**將資料品質作為輸入，而非在政策之外另行判斷。
 
    此項為**第一版政策即須滿足**的條件，不得延後至後續升版：若首版政策不宣告資料品質為輸入，則該政策自上線之日起即違反 `ODP-BR-FCT-003`，機制上線反而使違規取得了政策外觀。因此第一版政策的 `declared_inputs` 至少為 SiteScore Gap 與資料品質兩項，其餘八項標記為未納入。`ODP-SD-AMD-001` 第 4.1 節據此定義政策評估內容，第 11 節定義首版政策列的實際欄位值。
-3. **回溯性**：政策升版**不得**改寫既有警示的燈號。歷史警示保留其原判定與原政策版本。
+3. **評估識別與多版本共存**：警示評估必須定義評估識別（Evaluation Identity），由 `(forecast_output_id, decision_policy_version_id)` 共同決定。這保證了當同一預測輸出套用不同版本政策進行試算或回溯時，各版本的評估警示紀錄具有獨立且可重現的唯一性，不會覆蓋或衝突。
+4. **回溯性**：政策升版**不得**改寫既有警示的燈號。歷史警示保留其原判定與原政策版本。
 
 ---
 
@@ -160,11 +163,12 @@ source_gap: ODP-GAP-FR-20260901
 
 | 驗收 ID | 內容 | 對應 FR |
 |---|---|---|
-| `ODP-AC-FR-008` | 對同一預測結果套用兩個不同版本的四燈政策，可產生不同燈號，且兩次判定各自保存其 `policy_id` 與 `policy_version`。 | `FCT-005` |
-| `ODP-AC-FR-009` | 提交一筆 `CONTEXT_ANNOTATION` 回饋後，該期間不再進入後續訓練集與 Precision 計算，且回饋本身可稽核。 | `FCT-008` |
+| `ODP-AC-FR-008` | 對同一預測結果套用兩個不同版本的四燈政策，可產生不同燈號，兩次判定各自保存其 `policy_id` 與 `policy_version`，且以評估識別共存持久化而不衝突。 | `FCT-005` |
+| `ODP-AC-FR-009` | 提交一筆 `CONTEXT_ANNOTATION` 回饋後，該期間不再進入後續訓練集與 Precision 計算；提交 `OUTCOME_CORRECTION` 經核准重算後，後續預測輸出可查詢對應回饋來源，回饋紀錄結構化記錄 `applied_status` 與重算關聯。 | `FCT-008` |
 | `ODP-AC-FR-010` | 熱區內新店累積實績後重新評分，該熱區的剩餘需求下降且排名隨之下降，計算所用實績可追溯。 | `HZ-004` |
 | `ODP-AC-FR-011` | 兩個需求連續的相鄰單元合併後，其組成單元清單可查，且合併可被人工推翻並留下理由與責任人。 | `HZ-006` |
-| `ODP-AC-FR-012` | Gate 未授權時，價格最佳化不產生任何探索性價格，且輸出明確標示探索未啟用。 | `PRICE-006` |
+| `ODP-AC-FR-012` | Gate 未授權時，價格最佳化不產生任何探索性價格且標示未啟用；Gate 授權啟用時，探索候選經 Bandit 介面生成，且每次決策持久化關聯授權 `gate_id`。 | `PRICE-006` |
+
 
 ## 5. 對既有文件的影響
 

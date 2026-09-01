@@ -1,7 +1,7 @@
 ---
 doc_id: ODP-SD-AMD-001
 title: "平台與模組設計修正案 001"
-version: 0.2.0
+version: 0.3.0
 status: draft-for-review
 document_class: system-design-amendment
 project: ODay Plus
@@ -38,6 +38,15 @@ baseline_commit: origin/dev@29a10711
 初版（v0.1.0）以 `governance`、`forecastops`、`heatzone`、`avm`、`priceops` 五個 schema 命名新資料表，並以 `forecast_alerts`、`heatzone_scores`、`sitescore_recommendations`、`price_plans`、`netplan_scenarios` 指稱既有資料表。**這些名稱在版本庫中都不存在**，因此初版一方面宣稱不建立平行結構，一方面實際上把每一張表都放在既有 canonical schema 之外——兩者互相矛盾。
 
 v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上。名稱的更動不是措辭問題：綁錯 schema 的設計一旦實作，產生的就是本案原則第 1 條明文禁止的平行結構。
+
+### 1.2 v0.3.0 修訂說明
+
+針對審查反饋（Codex2 第 2 輪）補正四項設計落差：
+
+1. **FCT-005 評估識別（Evaluation Identity）**：原設計 `alert_id` 僅由 `forecast_output_id` 衍生，導致同一預測輸出套用多個政策版本時 `operations.alerts` 主鍵碰撞。v0.3.0 明確定義 Evaluation Identity 為 `(forecast_output_id, decision_policy_version_id)`，`alert_id` 衍生納入政策版本，並在 `operations.alerts` 補上外鍵與唯一索引，使多版本判定得以共存持久化並可被獨立稽核。
+2. **FCT-008 回饋結構化狀態與重算血統**：原 `applied_effect` 為 nullable free text，後續預測無法以 SQL 結構化查詢其回饋來源。v0.3.0 將其改為結構化 `applied_status`、`not_applied_reason_code`、`recalculation_forecast_output_id`、`recalculation_run_id` 與 `applied_at`，並建立索引，落實可雙向追溯的重算血統。
+3. **PRICE-006 Bandit 候選介面與逐決策 Gate 稽核**：原設計僅定義 Gate 授權與 GET 端點。v0.3.0 補齊領域層 `BanditCandidate` 資料結構、`BanditPriceExplorer` 協定、`POST /api/v1/priceops/exploration-candidates` 候選產生端點，並在 `000017` 增加 `pricing.exploration_decisions` 記錄逐筆定價決策所關聯之 `gate_id` 與預算扣抵。
+4. **000013 Migration 可執行 Seed 與 Retrofit 列**：第 11 節所述之 `four-light-policy-0.0.0-retrofit` 回填佔位列與 `four-light-policy-v1` 首版政策列，直接以可執行且具冪等性（`ON CONFLICT DO NOTHING`）的 `INSERT` 語句納入第 3.2 節 migration SQL。
 
 ---
 
@@ -124,6 +133,61 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_policy_active
 
 CREATE INDEX IF NOT EXISTS idx_decision_policy_kind_window
     ON workflow.decision_policies (policy_kind, tenant_id, effective_from);
+
+-- 初始政策列與回填佔位列（逐租戶建立，支援冪等重跑）
+INSERT INTO workflow.decision_policies (
+    policy_version_id, policy_id, policy_version, policy_kind,
+    tenant_id, effective_from, effective_to,
+    owner_role, approved_by, approved_at,
+    input_contract, output_contract, change_reason,
+    rollback_policy_version, parameters, declared_inputs
+)
+SELECT
+    'four-light-policy-0.0.0-retrofit',
+    'four-light-policy',
+    '0.0.0-retrofit',
+    'forecast_alert',
+    t.tenant_id,
+    '2020-01-01 00:00:00+00',
+    '2026-09-01 00:00:00+00',
+    'system',
+    'system_bootstrap',
+    '2026-09-01 00:00:00+00',
+    'ForecastOutput',
+    'Alert',
+    '歷史警示回填佔位，記錄機制導入前判定',
+    NULL,
+    '{"thresholds": [{"level": "RED", "value": -0.35}, {"level": "ORANGE", "value": -0.20}, {"level": "YELLOW", "value": -0.10}]}'::jsonb,
+    ARRAY['sitescore_gap_ratio']
+FROM core.tenants t
+ON CONFLICT (policy_version_id) DO NOTHING;
+
+INSERT INTO workflow.decision_policies (
+    policy_version_id, policy_id, policy_version, policy_kind,
+    tenant_id, effective_from, effective_to,
+    owner_role, approved_by, approved_at,
+    input_contract, output_contract, change_reason,
+    rollback_policy_version, parameters, declared_inputs
+)
+SELECT
+    'four-light-policy-v1',
+    'four-light-policy',
+    '1.0.0',
+    'forecast_alert',
+    t.tenant_id,
+    '2026-09-01 00:00:00+00',
+    NULL,
+    'ops',
+    'architecture_owner',
+    '2026-09-01 00:00:00+00',
+    'ForecastOutput',
+    'Alert',
+    '機制導入，門檻沿用常數，納入資料品質守衛',
+    'four-light-policy-0.0.0-retrofit',
+    '{"thresholds": [{"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35}, {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20}, {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10}], "data_quality_guard": {"max_staleness_days": 2, "on_violation": "SUPPRESS_HIGH_CONFIDENCE"}}'::jsonb,
+    ARRAY['sitescore_gap_ratio', 'data_quality.staleness_days']
+FROM core.tenants t
+ON CONFLICT (policy_version_id) DO NOTHING;
 ```
 
 `change_reason` 與 `rollback_policy_version` 為 `ODP-SA-07` 第 8 節必填欄位，目前產品根目錄無實作，本表為其唯一承載處。`rollback_policy_version` 自我外鍵，確保可回退目標必須是真實存在的版本。
@@ -155,10 +219,11 @@ BEGIN
 END $$;
 ```
 
-其餘產生決策的既有資料表新增 `decision_policy_version_id`：
+其餘產生決策的既有資料表新增 `decision_policy_version_id`，且 `operations.alerts` 新增 `forecast_output_id` 以支援同一預測輸出在多版本政策評估時之評估識別（Evaluation Identity）：
 
 ```sql
 ALTER TABLE operations.alerts
+    ADD COLUMN IF NOT EXISTS forecast_output_id UUID REFERENCES operations.forecast_outputs(forecast_output_id),
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
 ALTER TABLE expansion.heatzone_scores
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
@@ -166,6 +231,11 @@ ALTER TABLE expansion.site_score_runs
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
 ALTER TABLE network.network_plans
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
+
+-- 同一預測輸出在同一政策版本下至多一筆評估警示（評估識別）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_forecast_policy
+    ON operations.alerts (forecast_output_id, decision_policy_version_id)
+    WHERE forecast_output_id IS NOT NULL;
 ```
 
 **欄位命名的理由**：不用 `policy_version_id`，因為 `operations.forecast_outputs` 與 `Alert.evidence_json` 已存在語意不同的 `policy_version`（見第 4.1 節）。同名不同義的欄位會使日後的查詢與稽核無從分辨。`decision_policy_version_id` 明確指向本節的登錄表。
@@ -216,8 +286,29 @@ def _alert_for(
     policy: DecisionPolicy,          # 新增，必填
 ) -> Alert:
     level, reason_code, evidence = evaluate_alert_policy(output, policy)
-    ...
+    # 評估識別（Evaluation Identity）：同一預測輸出在不同政策版本下具獨立 alert_id
+    evaluation_alert_id = _stable_id(
+        "forecast-alert",
+        output.forecast_output_id,
+        policy.policy_version_id,
+    )
+    return Alert(
+        alert_id=evaluation_alert_id,
+        tenant_id=output.tenant_id,
+        store_id=output.store_id,
+        forecast_output_id=output.forecast_output_id,
+        alert_level=level,
+        alert_reason_code=reason_code,
+        evidence_json={
+            **evidence,
+            "policy_version_id": policy.policy_version_id,
+        },
+        opened_at=opened_at,
+        decision_policy_version_id=policy.policy_version_id,
+    )
 ```
+
+**評估識別（Evaluation Identity）的必要性**。在基線版本中，`alert_id` 僅由 `_stable_id("forecast-alert", output.forecast_output_id)` 生成。這導致當同一筆預測輸出套用兩個不同版本政策進行試算或回溯時，產生的 `alert_id` 完全相同，在 `operations.alerts` 寫入時會引發主鍵衝突或覆寫歷史，無法滿足 `ODP-AC-FR-008`（同一預測結果以不同政策版本評估可得不同燈號且兩者皆可重現與持久化共存）。修訂後，評估識別由 `(forecast_output_id, decision_policy_version_id)` 複合決定，`alert_id` 衍生納入政策版本，並在資料庫層建立唯一索引 `idx_alerts_forecast_policy`，確保多版本判定可獨立持久化與查詢。
 
 **既有 `policy_version` 的處置**。`ForecastOutput.policy_version` 目前填入常數 `FOUR_LIGHT_POLICY_VERSION = "four-light-policy-v1"`，並被複製進 `evidence_json["policy_version"]`。該欄位**不移除也不改寫語意**，但其值改為由 `policy.policy_version_id` 供給，使那個字串第一次真正對應到一筆可查的政策列。首版登錄列的 `policy_version_id` 即取 `'four-light-policy-v1'`，與現行常數逐字相同，故既有資料與既有斷言不會因此失效。
 
@@ -261,6 +352,7 @@ class Alert:
     evidence_json: dict[str, Any]
     opened_at: datetime
     decision_policy_version_id: str                       # 新增，必填，須在預設值欄位之前
+    forecast_output_id: str | None = None                 # 新增：關聯預測輸出，支援評估識別
     status: str = "open"
     closed_at: datetime | None = None
     acknowledged_by: str | None = None
@@ -284,7 +376,7 @@ class AlertDisposition(StrEnum):
 - `tests/contract/test_canonical_schema.py:267`
 - `tests/integration/test_operator_live_repository.py:38`
 
-對應的資料表欄位（第 3.4 節已加 `decision_policy_version_id`）：
+對應的資料表欄位（第 3.4 節已加 `decision_policy_version_id` 與 `forecast_output_id`）：
 
 ```sql
 ALTER TABLE operations.alerts
@@ -354,7 +446,14 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
     approval_status         VARCHAR(50) NOT NULL,
     approved_by             VARCHAR(255),
     approved_at             TIMESTAMP WITH TIME ZONE,
-    applied_effect          VARCHAR(100),          -- 實際生效方式；未生效時記原因碼
+
+    -- 結構化生效狀態與重算血統（取代自由文字 applied_effect）
+    applied_status          VARCHAR(50) NOT NULL DEFAULT 'PENDING_APPLICATION',
+    not_applied_reason_code VARCHAR(100),
+    recalculation_forecast_output_id UUID REFERENCES operations.forecast_outputs(forecast_output_id),
+    recalculation_run_id    UUID REFERENCES learning.prediction_runs(prediction_run_id),
+    applied_at              TIMESTAMP WITH TIME ZONE,
+
     correlation_id          VARCHAR(255) NOT NULL,
     created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -363,6 +462,20 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
     ),
     CONSTRAINT chk_feedback_approval_status CHECK (
         approval_status IN ('AUTO_ACCEPTED', 'PENDING', 'APPROVED', 'REJECTED')
+    ),
+    CONSTRAINT chk_feedback_applied_status CHECK (
+        applied_status IN (
+            'PENDING_APPLICATION', 'APPLIED_TRAINING_EXCLUSION',
+            'APPLIED_RECALCULATION', 'APPLIED_DISPOSITION', 'NOT_APPLIED'
+        )
+    ),
+    CONSTRAINT chk_feedback_not_applied_reason CHECK (
+        (applied_status =  'NOT_APPLIED' AND not_applied_reason_code IS NOT NULL AND not_applied_reason_code <> '')
+     OR (applied_status <> 'NOT_APPLIED' AND not_applied_reason_code IS NULL)
+    ),
+    CONSTRAINT chk_feedback_recalculation_provenance CHECK (
+        applied_status <> 'APPLIED_RECALCULATION'
+        OR (recalculation_forecast_output_id IS NOT NULL OR recalculation_run_id IS NOT NULL)
     ),
     -- 任何回饋都必須指向至少一個目標，否則無從稽核其作用對象
     CONSTRAINT chk_feedback_has_target CHECK (
@@ -411,19 +524,29 @@ CREATE INDEX IF NOT EXISTS idx_forecast_feedback_alert
 CREATE INDEX IF NOT EXISTS idx_forecast_feedback_pending
     ON operations.forecast_feedback (tenant_id, submitted_at)
     WHERE approval_status = 'PENDING';
+CREATE INDEX IF NOT EXISTS idx_forecast_feedback_recalc
+    ON operations.forecast_feedback (recalculation_forecast_output_id)
+    WHERE recalculation_forecast_output_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_forecast_feedback_applied_status
+    ON operations.forecast_feedback (tenant_id, applied_status);
 ```
 
 **目標欄位為何是三個而非一個**。`ODP-SA-06-AMD-001` 第 3.1 節的修訂條文為「對已產生的**預測或警示**提交結構化回饋」。初版只有 `target_alert_id`，因此對預測的回饋無處可放，該 FR 在設計層就不可能被滿足，也無從稽核。三個目標欄位分別對應警示（`operations.alerts`）、預測輸出（`operations.forecast_outputs`）與模型預測（`learning.predictions`），由 `chk_feedback_has_target` 保證至少填一個。
 
 **修正內容為何要三欄**。`OUTCOME_CORRECTION` 的語意是「系統取得的實績有誤」。只記「有誤」而不記原值、正確值與指標名，核准者無從判斷是否該核准，事後也無從稽核核准是否正確。`observed_value` 保留系統原值，使修正可被還原比對。
 
+**結構化重算血統（Provenance）**。為滿足「後續預測輸出須可查詢其是否受回饋影響」，設計引入 `recalculation_forecast_output_id` 與 `recalculation_run_id` 兩項明確外鍵，取代模糊的文字描述：
+1. 當 `OUTCOME_CORRECTION` 經 Data Owner 核准並觸發批次重算後，管線將新產生的 `forecast_output_id` 回填至本表的 `recalculation_forecast_output_id`，並將 `applied_status` 更新為 `APPLIED_RECALCULATION`。
+2. 查詢任一預測輸出是否受回饋影響，只需執行 `SELECT * FROM operations.forecast_feedback WHERE recalculation_forecast_output_id = :id`，即可完整重現該預測所吸收之營運回饋清單與修正前／後實績差異。
+3. 若回饋因故未生效（如核准駁回或超出時間窗），`applied_status` 設為 `NOT_APPLIED`，並由 `chk_feedback_not_applied_reason` 強制填寫 `not_applied_reason_code`。
+
 **三類回饋的處理路徑**：
 
-| 類型 | 目標 | 核准 | 生效方式 |
-|---|---|---|---|
-| `CONTEXT_ANNOTATION` | 任一 | 自動接受 | 該期間標記為排除區間，不進入訓練集與 Precision 分母 |
-| `OUTCOME_CORRECTION` | 預測輸出或預測 | 需 Data Owner（`workflow.approvals`） | 核准後修正 canonical 實績並觸發重算；未核准時不生效 |
-| `ALERT_DISPOSITION` | 警示 | 自動接受 | 寫入對應 Alert 的 `disposition`，關閉警示 |
+| 類型 | 目標 | 核准 | 生效方式 | 結構化狀態碼 |
+|---|---|---|---|---|
+| `CONTEXT_ANNOTATION` | 任一 | 自動接受 | 該期間標記為排除區間，不進入訓練集與 Precision 分母 | `APPLIED_TRAINING_EXCLUSION` |
+| `OUTCOME_CORRECTION` | 預測輸出或預測 | 需 Data Owner（`workflow.approvals`） | 核准後修正 canonical 實績並觸發重算；未核准時不生效 | `APPLIED_RECALCULATION` |
+| `ALERT_DISPOSITION` | 警示 | 自動接受 | 寫入對應 Alert 的 `disposition`，關閉警示 | `APPLIED_DISPOSITION` |
 
 **不覆寫原則**：三者皆不修改預測值。`OUTCOME_CORRECTION` 修改的是實績（canonical 資料），修改後由重算產生新預測，符合 `ODP-BR-GOV-001`。`chk_feedback_correction_needs_approval` 使「未經核准即生效」在資料庫層即不可能。
 
@@ -748,9 +871,31 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_gates (
 CREATE INDEX IF NOT EXISTS idx_exploration_gate_active
     ON pricing.exploration_gates (tenant_id, effective_from, effective_to)
     WHERE revoked_at IS NULL;
+
+-- 每次探索定價決策所關聯之 Gate 紀錄與預算扣抵（逐決策稽核）
+CREATE TABLE IF NOT EXISTS pricing.exploration_decisions (
+    decision_id         UUID PRIMARY KEY REFERENCES workflow.decisions(decision_id),
+    gate_id             UUID NOT NULL REFERENCES pricing.exploration_gates(gate_id),
+    tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id),
+    sku_id              VARCHAR(100) NOT NULL,
+    store_id            UUID REFERENCES core.stores(store_id),
+    baseline_price      NUMERIC(18, 2) NOT NULL,
+    explored_price      NUMERIC(18, 2) NOT NULL,
+    budget_consumed     NUMERIC(18, 2) NOT NULL,
+    algorithm           VARCHAR(50) NOT NULL,
+    created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT chk_exploration_decision_prices CHECK (
+        baseline_price > 0 AND explored_price > 0
+    ),
+    CONSTRAINT chk_exploration_decision_budget CHECK (budget_consumed >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_exploration_decisions_gate
+    ON pricing.exploration_decisions (gate_id, created_at);
 ```
 
-**Gate 判定**（新增 `modules/priceops/application/exploration.py`）：
+**Gate 判定與 Bandit 介面**（新增 `modules/priceops/application/exploration.py` 與 `solver/pricing/bandit.py`）：
 
 ```python
 class ExplorationNotAuthorizedError(RuntimeError):
@@ -762,21 +907,51 @@ def authorize_exploration(scope: PriceScope, *, at: datetime) -> ExplorationGran
 
     fail closed：任何無法確認授權的情況都視為未授權。
     """
+
+
+@dataclass(frozen=True)
+class BanditCandidate:
+    candidate_id: str
+    gate_id: str                          # 綁定授權 Gate
+    sku_id: str
+    store_id: str
+    baseline_price: Decimal
+    explored_price: Decimal
+    delta_ratio: float
+    algorithm: str                        # 例：'THOMPSON_SAMPLING', 'EPSILON_GREEDY', 'UCB1'
+    expected_reward: float
+    uncertainty: float
+    estimated_exploration_cost: Decimal
+    hard_constraints_satisfied: bool
+
+
+class BanditPriceExplorer(Protocol):
+    def generate_candidates(
+        self,
+        scope: PriceScope,
+        grant: ExplorationGrant,
+        hard_constraints: Sequence[PriceConstraint],
+    ) -> Sequence[BanditCandidate]:
+        """依 Gate 授權額度與硬限制產生探索性價格候選。"""
+        ...
 ```
 
 接在既有 `PriceOpsService`（`modules/priceops/application/pricing.py:110`）上，沿用其 `ApprovalBlockedError` 與 `MissingRollbackPlanError` 的既有模式。
+
+**逐決策 Gate 記錄與稽核**：當價格最佳化流程啟用 Bandit 探索並採納候選價格時，系統必須將產生的決策寫入 `workflow.decisions`，並在 `pricing.exploration_decisions` 記錄該決策所依據的 `gate_id`、探索前後價格與實際扣抵之探索預算，確保所有探索決策具備完整審查軌跡與可回溯性。
 
 **硬限制不可放寬**：探索空間是 `solver/pricing/constraints.py` 既有硬限制的**子集**。實作上探索候選價格必須先通過同一組約束檢查才能被提出——探索不是繞過 `ODP-BR-PRICE-001`（毛利底線）的路徑。
 
 **未授權時的行為**：輸出確定性方案，並在回應中明確標示 `exploration_enabled: false`，而非靜默省略。此為 `ODP-AC-FR-012` 的驗收依據。
 
-**API**（1 個端點）：
+**API**（2 個端點）：
 
 ```
-GET    /api/v1/priceops/exploration-gates?scope=   查有效授權、有效期與預算餘額
+GET    /api/v1/priceops/exploration-gates?scope=      查有效授權、有效期與預算餘額
+POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探索價格候選
 ```
 
-此端點是 `ODP-AC-FR-012` 可驗收的前提：驗收要求「Gate 未授權時輸出明確標示探索未啟用」，驗收者必須能獨立查得當時的授權狀態，否則只能相信定價回應的自述。Gate 的建立與撤銷不走 HTTP，而是經 `workflow.approvals` 的既有核准路徑，因為它需要的是核准而非 API 寫入。
+`GET` 端點供驗收者獨立查得當時的授權狀態（`ODP-AC-FR-012`）；`POST` 端點供價格最佳化流程在通過 Gate 授權後產生受約束的探索候選方案。Gate 的建立與撤銷不走 HTTP，而是經 `workflow.approvals` 的既有核准路徑，因為它需要的是核准而非 API 寫入。
 
 **Tier 歸屬**：依 `ODP-SA-08` 第 12 節屬 Tier 4，Feature Flag 關閉時不得影響核心定價流程。
 
@@ -806,7 +981,7 @@ GET    /api/v1/priceops/exploration-gates?scope=   查有效授權、有效期�
 
 ## 9. 資料表變更彙總
 
-新增資料表（5 張）：
+新增資料表（6 張）：
 
 | Migration | 表 | Schema 歸屬理由 | 對應 FR |
 |---|---|---|---|
@@ -815,17 +990,20 @@ GET    /api/v1/priceops/exploration-gates?scope=   查有效授權、有效期�
 | `000015` | `expansion.heatzone_composition` | `expansion.heatzone_scores` 在此 | `HZ-006` |
 | `000016` | `asset.deal_outcomes` | `asset.valuation_runs` 在此 | `AVM-005`／`008` |
 | `000017` | `pricing.exploration_gates` | `pricing` schema 既有但無表；PriceOps 無既有表可擴充 | `PRICE-006` |
+| `000017` | `pricing.exploration_decisions` | 每次探索定價決策關聯之 Gate 授權與預算扣抵紀錄 | `PRICE-006` |
 
 既有表新增欄位（4 張）：
 
 | 既有表 | 新增欄位 | 對應 FR |
 |---|---|---|
-| `operations.alerts` | `decision_policy_version_id`、`deterioration_confirmed_at`、`disposition` | `FCT-005`、`FCT-006` |
+| `operations.alerts` | `forecast_output_id`、`decision_policy_version_id`、`deterioration_confirmed_at`、`disposition` | `FCT-005`、`FCT-006` |
 | `expansion.heatzone_scores` | `decision_policy_version_id`、`absorbed_demand`、`remaining_demand`、`absorption_ratio`、`absorption_basis_at` | `HZ-004` |
 | `expansion.site_score_runs` | `decision_policy_version_id` | 第 3.4 節 |
 | `network.network_plans` | `decision_policy_version_id` | 第 3.4 節 |
 
-既有表新增約束（1 張）：`workflow.decisions` 補 `fk_decisions_policy_version`（`NOT VALID`，回填後 `VALIDATE`）。
+既有表新增約束與唯一索引（2 項）：
+- `workflow.decisions` 補 `fk_decisions_policy_version`（`NOT VALID`，回填後 `VALIDATE`）。
+- `operations.alerts` 補唯一索引 `idx_alerts_forecast_policy` 於 `(forecast_output_id, decision_policy_version_id)` 保證評估識別唯一性。
 
 既有 dbt 模型變更（1 個）：`pipelines/dbt/models/model_ready/valuation_view.sql` 新增 `realized_transaction_price`、`realized_transaction_at` 兩個輸出欄位（第 6.3 節）。
 
@@ -853,10 +1031,10 @@ GET    /api/v1/priceops/exploration-gates?scope=   查有效授權、有效期�
 | 情境 | 回滾動作 | 資料處置 |
 |---|---|---|
 | 政策機制（`000013`） | 停用 `resolve_policy()` 呼叫點，回到既有常數門檻 | 保留登錄表與已寫入的 `decision_policy_version_id` |
-| 回饋（`000014`） | 關閉三個 feedback 端點 | 保留已提交回饋；未生效者 `applied_effect` 記原因碼 |
+| 回饋（`000014`） | 關閉三個 feedback 端點 | 保留已提交回饋；未生效者 `applied_status` 記原因碼 |
 | 熱區組成（`000015`） | 停用合併批次；讀取端退回單網格評分 | 保留組成列，不設 `reverted_at`（撤銷是業務動作，不是回滾） |
 | 成交回收（`000016`） | 關閉登錄端點；`valuation_view` 移除兩個輸出欄位 | 保留已回收成交結果 |
-| 探索 Gate（`000017`） | Tier 4 Feature Flag 關閉 | 保留 Gate 列；`revoked_at` 由業務決定，非回滾動作 |
+| 探索 Gate（`000017`） | Tier 4 Feature Flag 關閉 | 保留 Gate 與決策列；`revoked_at` 由業務決定，非回滾動作 |
 
 **兩項刻意的區分**。其一，`reverted_at` 與 `revoked_at` 是業務撤銷，不是 migration 回滾；把兩者混為一談會使「回滾一次部署」意外撤銷營運決策。其二，`downgrade()` 為 no-op 的代價是 schema 無法真正倒退，這是既有原則的已知取捨，本案承接而非重新論證。
 
@@ -864,7 +1042,7 @@ GET    /api/v1/priceops/exploration-gates?scope=   查有效授權、有效期�
 
 **政策欄位的 NOT NULL 導入**分兩階段，避免既有資料阻擋 migration：
 
-1. 第一階段（`000013`）：`decision_policy_version_id` 新增為 nullable，`fk_decisions_policy_version` 建為 `NOT VALID`；同時建立各 `policy_kind` 的初版政策列。
+1. 第一階段（`000013`）：`decision_policy_version_id` 新增為 nullable，`fk_decisions_policy_version` 建為 `NOT VALID`；同時以 `000013` migration SQL 直接寫入初版政策列與回填佔位列（見第 3.2 節）。
 2. 第二階段（後續 migration，不在本案編號內）：回填既有記錄，然後 `ALTER TABLE ... VALIDATE CONSTRAINT` 並轉為 `NOT NULL`。
 
 **回填語意須誠實**：既有警示是在無政策機制下產生的，回填時不得指向首版政策列，否則等於偽稱那些警示由該政策判定。回填一律指向專設的 retrofit 列：`policy_version_id = 'four-light-policy-0.0.0-retrofit'`，`policy_version = '0.0.0-retrofit'`，`change_reason` 記明其為回填佔位。歷史決策的政策歸屬不可偽造。
@@ -879,7 +1057,7 @@ GET    /api/v1/priceops/exploration-gates?scope=   查有效授權、有效期�
 | `parameters.thresholds` | `-0.35`／`-0.20`／`-0.10` | 逐字對應現行程式常數 |
 | `declared_inputs` | `{sitescore_gap_ratio, data_quality.staleness_days}` | 見第 4.1 節 |
 | `change_reason` | 機制導入，門檻不變 | |
-| `rollback_policy_version` | `NULL` | 首版無可回退目標 |
+| `rollback_policy_version` | `'four-light-policy-0.0.0-retrofit'` | 首版回退至佔位列 |
 
 **驗證的分工**：門檻遷移以「同一批預測輸入產生同一組燈號」驗收；`data_quality_guard` 為新增行為，以 `ODP-BR-FCT-003` 的獨立情境驗收。機制上線、資料品質守衛、門檻調整是三次獨立變更，不得合併驗證。
 
@@ -887,28 +1065,28 @@ GET    /api/v1/priceops/exploration-gates?scope=   查有效授權、有效期�
 
 | 文件 | 影響 |
 |---|---|
-| `ODP-SD-05` | 新增 5 張表、4 張表擴充欄位；未新增任何 schema（全部落在 `000001` 既有的 `workflow`／`operations`／`expansion`／`asset`／`pricing` 內） |
-| `ODP-SD-06` | 新增 8 個端點：ForecastOps feedback 3（第 4.3 節）、HeatZone 2（第 5.2 節）、AVM 2（第 6.3 節）、PriceOps 1（第 7 節） |
-| `ODP-SD-08` | Alert 生命週期新增 `disposition` 狀態；熱區合併／拆分為新狀態機 |
+| `ODP-SD-05` | 新增 6 張表、4 張表擴充欄位；未新增任何 schema（全部落在 `000001` 既有的 `workflow`／`operations`／`expansion`／`asset`／`pricing` 內） |
+| `ODP-SD-06` | 新增 9 個端點：ForecastOps feedback 3（第 4.3 節）、HeatZone 2（第 5.2 節）、AVM 2（第 6.3 節）、PriceOps 2（第 7 節） |
+| `ODP-SD-08` | Alert 生命週期新增 `disposition` 狀態與評估識別；熱區合併／拆分為新狀態機 |
 | `ODP-SD-11` | Precision 與提前天數為新增可觀測指標 |
 | `ODP-UX-03` | 新增甘特圖畫面；移除 Feedback 既有不實文案 |
 | `ODP-QA-03` | 需為 `ODP-AC-FR-008` 至 `012` 補 E2E 情境 |
 | `ODP-ML-*` | AVM 標籤契約首次可解析（第 6.3 節）；`min_p80_coverage=0.70` 首次可評估 |
 
-端點總數為 8，逐一列舉如下，供與上表核對：
+端點總數為 9，逐一列舉如下，供與上表核對：
 
-| # | 端點 | 節次 |
-|---|---|---|
-| 1 | `POST /api/v1/forecastops/feedback` | 4.3 |
-| 2 | `GET /api/v1/forecastops/feedback` | 4.3 |
-| 3 | `POST /api/v1/forecastops/feedback/{id}/approve` | 4.3 |
-| 4 | `GET /api/v1/heatzone/zones/{zone_id}/composition` | 5.2 |
-| 5 | `POST /api/v1/heatzone/zones/{zone_id}/override` | 5.2 |
-| 6 | `POST /api/v1/avm/deal-outcomes` | 6.3 |
-| 7 | `GET /api/v1/avm/valuations/{id}/calibration` | 6.3 |
-| 8 | `GET /api/v1/priceops/exploration-gates` | 7 |
+| # | 端點 | 節次 | 說明 |
+|---|---|---|---|
+| 1 | `POST /api/v1/forecastops/feedback` | 4.3 | 建立回饋 |
+| 2 | `GET /api/v1/forecastops/feedback` | 4.3 | 查詢回饋 |
+| 3 | `POST /api/v1/forecastops/feedback/{id}/approve` | 4.3 | `OUTCOME_CORRECTION` 專用核准 |
+| 4 | `GET /api/v1/heatzone/zones/{zone_id}/composition` | 5.2 | 查熱區組成單元清單 |
+| 5 | `POST /api/v1/heatzone/zones/{zone_id}/override` | 5.2 | 人工推翻自動合併／拆分 |
+| 6 | `POST /api/v1/avm/deal-outcomes` | 6.3 | 登錄成交／未成交結果 |
+| 7 | `GET /api/v1/avm/valuations/{id}/calibration` | 6.3 | 查該估值的偏差與校準資訊 |
+| 8 | `GET /api/v1/priceops/exploration-gates` | 7 | 查有效 Gate 授權與預算餘額 |
+| 9 | `POST /api/v1/priceops/exploration-candidates` | 7 | 依 Gate 授權與硬限制產生探索價格候選 |
 
-初版第 10 節聲稱 8 個端點，但內文只定義 7 個且無任何 PriceOps 端點。本版新增第 8 項並補上其存在理由（`ODP-AC-FR-012` 的可驗收前提），使數目與內文一致。
 
 ## 13. 設計驗證
 
@@ -928,9 +1106,9 @@ uv run --no-project python docs/evidence/ODP-SD-AMD-001_ddl_check.py
 |---|---|
 | A. 9 個 DDL 區塊套用於 baseline 相依樁 | 9／9 通過 |
 | B. 每個區塊重跑一次（第 10 節宣稱的可重跑） | 9／9 通過 |
-| C. 新增約束是否真的擋下它宣稱要擋的資料 | 31／31 符合設計 |
+| C. 新增約束是否真的擋下它宣稱要擋的資料 | 39／39 符合設計 |
 
-C 項逐條涵蓋本案每一條新增 CHECK，包含：`CLOSED` 缺成交價或成交時點被拒、非 `CLOSED` 挾帶成交價被拒、`OTHER` 未附說明被拒、`OUTCOME_CORRECTION` 標為 `AUTO_ACCEPTED` 被拒、回饋無任何目標被拒、合併熱區重用 `geo_cell_id` 作 `zone_id` 被拒、系統決定挾帶 `override_reason` 被拒、探索預算已消耗超出上限被拒、同一 `policy_id` 出現第二個現行版本被拒、警示惡化時點早於 `opened_at` 被拒。
+C 項逐條涵蓋本案每一條新增 CHECK 與唯一索引，包含：`CLOSED` 缺成交價或成交時點被拒、非 `CLOSED` 挾帶成交價被拒、`OTHER` 未附說明被拒、`OUTCOME_CORRECTION` 標為 `AUTO_ACCEPTED` 被拒、回饋無任何目標被拒、`NOT_APPLIED` 缺原因碼被拒、`APPLIED_RECALCULATION` 缺重算血統被拒、合併熱區重用 `geo_cell_id` 作 `zone_id` 被拒、系統決定挾帶 `override_reason` 被拒、探索決策價格或預算為負被拒、探索預算已消耗超出上限被拒、同一預測輸出與政策版本重複評估（評估識別）被拒、同一 `policy_id` 出現第二個現行版本被拒、警示惡化時點早於 `opened_at` 被拒。
 
 **此驗證的範圍限制，據實說明**：pgserver 內建的 PostgreSQL 未附 `uuid-ossp` 與 `postgis` 兩個擴充，因此 `000001_baseline_canonical_schema.sql` 無法在該環境逐字套用——這也正是版本庫既有資料庫測試標記 `requires_live_env` 的原因。腳本改以一份與 `000001` 在主鍵與型別上相容的相依樁（涵蓋本案引用到的 14 張表），並將 `uuid_generate_v4()` 接到內建的 `gen_random_uuid()`。**因此上述結果證明的是本修正案 DDL 自身的正確性，不是它與完整 baseline 的整合。** 後者需要具備 PostGIS 的 PostgreSQL 16 環境，屬部署前驗證，未在此完成。
 
