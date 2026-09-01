@@ -26,7 +26,7 @@ from shared.jobs.queue import InMemoryJobQueue
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, Field, model_validator
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -75,6 +75,19 @@ else:
         actor: str | None = None
         metadata: dict[str, Any] = Field(default_factory=dict)
         model_config = {"extra": "allow"}
+
+        @model_validator(mode="after")
+        def validate_outcome_correction_date_range(self) -> ForecastOpsFeedbackCreatePayload:
+            feedback_type = self.feedback_type.strip().lower()
+            if feedback_type in {"outcome_correction", "outcome-correction"}:
+                start = self.target_date_start or self.target_date
+                end = self.target_date_end or self.target_date or self.target_date_start
+                if start is not None and end is not None and start != end:
+                    raise ValueError(
+                        "OUTCOME_CORRECTION must target exactly one date; "
+                        "a corrected revenue value cannot be applied to a date range"
+                    )
+            return self
 
     class ForecastOpsFeedbackApprovePayload(BaseModel):
         actor: str | None = None
@@ -903,7 +916,7 @@ else:
         @router.post(
             "/feedbacks/{feedback_id}/approve",
             dependencies=[
-                Depends(require_permission("data_quality", Action.APPROVE, engine=authz_engine))
+                Depends(require_permission("data", Action.APPROVE, engine=authz_engine))
             ],
         )
         def approve_feedback(
@@ -917,7 +930,7 @@ else:
             "/feedback/{feedback_id}/approve",
             include_in_schema=False,
             dependencies=[
-                Depends(require_permission("data_quality", Action.APPROVE, engine=authz_engine))
+                Depends(require_permission("data", Action.APPROVE, engine=authz_engine))
             ],
         )
         def approve_feedback_alias(
@@ -974,7 +987,7 @@ else:
         @router.post(
             "/feedbacks/{feedback_id}/reject",
             dependencies=[
-                Depends(require_permission("data_quality", Action.APPROVE, engine=authz_engine))
+                Depends(require_permission("data", Action.APPROVE, engine=authz_engine))
             ],
         )
         def reject_feedback(
@@ -988,7 +1001,7 @@ else:
             "/feedback/{feedback_id}/reject",
             include_in_schema=False,
             dependencies=[
-                Depends(require_permission("data_quality", Action.APPROVE, engine=authz_engine))
+                Depends(require_permission("data", Action.APPROVE, engine=authz_engine))
             ],
         )
         def reject_feedback_alias(

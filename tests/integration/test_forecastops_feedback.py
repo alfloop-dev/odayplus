@@ -15,6 +15,7 @@ from modules.forecastops import (
     ForecastOpsService,
     InMemoryForecastOpsRepository,
     StoreDayObservation,
+    calculate_forecast_precision,
 )
 from shared.auth import Role
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
@@ -98,7 +99,24 @@ def test_context_annotation_feedback_auto_accepted_and_filters_training_and_prec
     stored_forecast = repository.latest_forecasts(TENANT_ID)[0]
     assert stored_forecast.p50 == initial_p50
 
-    # Verification 3: Training series excludes the 4 annotated days (June 5, 6, 7, 8)
+    # Verification 3: The normal forecast path excludes the annotated days
+    # before model execution, rather than relying on a test-only helper.
+    filtered_result = service.forecast(
+        [
+            ForecastInput(
+                tenant_id=TENANT_ID,
+                store_id="store-001",
+                observations=observations,
+                prediction_origin_time=PREDICTION_TIME,
+            )
+        ],
+        prediction_run_id="pred-run-context-filtered",
+        scored_at=PREDICTION_TIME,
+    )
+    filtered_forecast = filtered_result.forecasts[0]
+    assert filtered_forecast.p50 == 109_428.57
+
+    # Verification 4: Training series excludes the 4 annotated days (June 5 to 8)
     training_series = service.get_training_series(TENANT_ID, "store-001")
     assert training_series is not None
     assert len(training_series.observations) == 10  # 14 - 4 = 10
@@ -108,13 +126,36 @@ def test_context_annotation_feedback_auto_accepted_and_filters_training_and_prec
     assert date(2026, 6, 7) not in excluded_dates
     assert date(2026, 6, 8) not in excluded_dates
 
-    # Verification 4: Precision evaluation excludes the annotated days
+    # Verification 5: Precision evaluation excludes the annotated days
     precision_eval = service.evaluate_precision(
-        TENANT_ID, "store-001", initial_forecast.forecast_output_id
+        TENANT_ID, "store-001", filtered_forecast.forecast_output_id
     )
     assert precision_eval["observation_count"] == 10
     assert precision_eval["excluded_observation_count"] == 4
     assert precision_eval["is_within_p10_p90"] is True
+
+    # Regression: precision accepts a one-shot iterable and consumes it once.
+    generator_precision = calculate_forecast_precision(
+        filtered_forecast,
+        (observation for observation in observations),
+        (item for item in (feedback,)),
+    )
+    assert generator_precision["observation_count"] == 10
+    assert generator_precision["excluded_observation_count"] == 4
+
+
+def test_outcome_correction_rejects_multi_day_ranges_at_construction() -> None:
+    with pytest.raises(ForecastOpsError, match="must target exactly one date"):
+        ForecastFeedback.create(
+            tenant_id=TENANT_ID,
+            store_id="store-001",
+            feedback_type=FeedbackType.OUTCOME_CORRECTION,
+            target_date_start="2026-06-05",
+            target_date_end="2026-06-08",
+            corrected_revenue=150_000.0,
+            reason="A range must not broadcast one corrected daily value",
+            created_by="data-owner-claire",
+        )
 
 
 def test_outcome_correction_requires_data_owner_approval_and_recalculates_forecast() -> None:
@@ -351,6 +392,17 @@ def test_api_feedback_endpoints_and_rbac() -> None:
     cor_body = cor_response.json()
     assert cor_body["status"] == "pending_approval"
     cor_id = cor_body["feedback_id"]
+
+    range_response = client.post(
+        "/forecastops/feedbacks",
+        json={
+            **cor_payload,
+            "target_date": None,
+            "target_date_start": "2026-06-10",
+            "target_date_end": "2026-06-12",
+        },
+    )
+    assert range_response.status_code == 422
 
     # 4. Non-Data-Owner cannot approve (OPERATIONS_MANAGER lacks data:approve)
     deny_approve = client.post(
