@@ -19,6 +19,8 @@ Refusal Rules Enforced:
 5. Policy-Governed Method and Confidence: Admissibility of `DECLARED` operational start and `LOW`
    or `UNKNOWN` confidence are governed by the DecisionPolicy with no code defaults.
 6. Traceable Snapshot ID: `source_snapshot_id` comes from `raw_contract_fingerprint` of the source row.
+7. Explicit Observation Window: absorption is measured only over a caller-supplied complete
+   business-date window; missing days or paged subsets are refused rather than summed partially.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from modules.heatzone.v3.absorption import (
     UNDER_REALIZED_RATIO_KEY,
     AbsorbingStoreObservation,
     AbsorptionInputError,
+    AbsorptionNotMeasurableError,
     AbsorptionResult,
     compute_absorbed_demand,
 )
@@ -54,6 +57,7 @@ __all__ = [
     "UNDER_REALIZED_RATIO_KEY",
     "AbsorbingStoreObservation",
     "AbsorptionInputError",
+    "AbsorptionNotMeasurableError",
     "AbsorptionResult",
     "assemble_absorbing_store_observations",
     "assemble_zone_absorption",
@@ -73,15 +77,9 @@ ALLOW_UNKNOWN_CONFIDENCE_START_KEY = "allow_unknown_confidence_start"
 def _required_bool(
     policy: DecisionPolicy,
     primary_key: str,
-    fallback_keys: tuple[str, ...],
     what: str,
 ) -> bool:
     raw = policy.parameters.get(primary_key)
-    if raw is None:
-        for fb in fallback_keys:
-            raw = policy.parameters.get(fb)
-            if raw is not None:
-                break
     if raw is None:
         raise AbsorptionInputError(
             f"policy {policy.policy_version_id} declares no {primary_key}; "
@@ -123,6 +121,8 @@ def assemble_absorbing_store_observations(
     *,
     policy: DecisionPolicy,
     target_store_ids: Sequence[str] | set[str] | None = None,
+    observation_window_start: date | str | None = None,
+    observation_window_end: date | str | None = None,
 ) -> list[AbsorbingStoreObservation]:
     """Assemble eligible AbsorbingStoreObservation DTOs according to strict refusal rules.
 
@@ -131,26 +131,27 @@ def assemble_absorbing_store_observations(
         operational_starts: Operational start observations by store_id or list.
         policy: The governing DecisionPolicy.
         target_store_ids: Optional set of store IDs to filter.
+        observation_window_start: Inclusive evaluation-period start date.
+        observation_window_end: Inclusive evaluation-period end date.
 
     Returns:
         List of eligible AbsorbingStoreObservation DTOs.
     """
+    window = _parse_observation_window(observation_window_start, observation_window_end)
+
     allow_declared = _required_bool(
         policy,
         ALLOW_DECLARED_START_KEY,
-        ("allow_declared_operational_start", "allow_declared"),
         "admissibility of declared operational start",
     )
     allow_low_conf = _required_bool(
         policy,
         ALLOW_LOW_CONFIDENCE_START_KEY,
-        ("allow_low_confidence_operational_start", "allow_low_confidence"),
         "admissibility of low-confidence operational start",
     )
     allow_unknown_conf = _required_bool(
         policy,
         ALLOW_UNKNOWN_CONFIDENCE_START_KEY,
-        ("allow_unknown_confidence_operational_start", "allow_unknown_confidence"),
         "admissibility of unknown-confidence operational start",
     )
 
@@ -183,14 +184,23 @@ def assemble_absorbing_store_observations(
         if target_set is not None and store_id not in target_set:
             continue
 
+        b_date = _parse_date(perf.business_date)
+        if b_date is None:
+            continue
+        if window is not None and not window[0] <= b_date <= window[1]:
+            continue
+
         # Refusal Rule 1: Coverage completeness check
         cov_state = (
             perf.coverage_state.value
             if hasattr(perf.coverage_state, "value")
             else str(perf.coverage_state).lower()
         )
-        if cov_state != CoverageState.complete.value or not perf.is_complete:
+        if cov_state not in (CoverageState.complete.value, CoverageState.empty.value) or not perf.is_complete:
             # Skip incomplete/partial/truncated day. Do not down-weight.
+            continue
+        if cov_state == CoverageState.empty.value and not perf.is_valid_zero:
+            # EMPTY is affirmative zero evidence only when the producer says so.
             continue
 
         # Refusal Rule 2: Paid amount check
@@ -246,10 +256,6 @@ def assemble_absorbing_store_observations(
         if not source_snapshot_id or not str(source_snapshot_id).strip():
             continue
 
-        b_date = _parse_date(perf.business_date)
-        if b_date is None:
-            continue
-
         observations.append(
             AbsorbingStoreObservation(
                 store_id=store_id,
@@ -261,6 +267,65 @@ def assemble_absorbing_store_observations(
         )
 
     return observations
+
+
+def _parse_observation_window(
+    observation_window_start: date | str | None,
+    observation_window_end: date | str | None,
+) -> tuple[date, date] | None:
+    """Parse the caller's explicit demand/revenue evaluation period."""
+    if observation_window_start is None and observation_window_end is None:
+        return None
+    start = _parse_date(observation_window_start)
+    end = _parse_date(observation_window_end)
+    if start is None or end is None:
+        raise AbsorptionInputError(
+            "observation window requires valid start and end business dates"
+        )
+    if start > end:
+        raise AbsorptionInputError(
+            "observation window start must not be after its end"
+        )
+    return start, end
+
+
+def _retain_complete_store_windows(
+    observations: Sequence[AbsorbingStoreObservation],
+    window: tuple[date, date],
+) -> list[AbsorbingStoreObservation]:
+    """Keep only stores with one admitted observation for every active day.
+
+    A caller may page through StoreDailyPerformance. Treating a partial page as
+    a complete period would make absorption depend on page size, so a store is
+    measured only when its requested period is fully represented by daily rows.
+    """
+    by_store: dict[str, list[AbsorbingStoreObservation]] = {}
+    for observation in observations:
+        by_store.setdefault(observation.store_id, []).append(observation)
+
+    window_start, window_end = window
+    complete: list[AbsorbingStoreObservation] = []
+    for store_observations in by_store.values():
+        dates = {observation.business_date for observation in store_observations}
+        if len(dates) != len(store_observations):
+            # Duplicate store-days must not be summed twice.
+            continue
+        opened_on = min(observation.opened_on for observation in store_observations)
+        active_start = max(window_start, opened_on)
+        if active_start > window_end:
+            continue
+        expected_dates = {
+            date.fromordinal(day)
+            for day in range(active_start.toordinal(), window_end.toordinal() + 1)
+        }
+        if not expected_dates.issubset(dates):
+            continue
+        complete.extend(
+            observation
+            for observation in store_observations
+            if active_start <= observation.business_date <= window_end
+        )
+    return complete
 
 
 def assemble_zone_absorption(
@@ -275,6 +340,8 @@ def assemble_zone_absorption(
     policy: DecisionPolicy,
     as_of: date,
     evaluated_at: datetime | None = None,
+    observation_window_start: date | str | None = None,
+    observation_window_end: date | str | None = None,
 ) -> AbsorptionResult | None:
     """Assemble observations and compute absorption for a single zone/cell.
 
@@ -289,6 +356,12 @@ def assemble_zone_absorption(
     if original_demand < 0:
         raise AbsorptionInputError("original_demand must not be negative")
 
+    window = _parse_observation_window(observation_window_start, observation_window_end)
+    if window is None:
+        # Demand has no period without an explicit evaluation window; refusing
+        # is safer than making absorption depend on the caller's page size.
+        return None
+
     eval_time = evaluated_at or datetime.now(UTC)
 
     target_store_ids = set(store_ids)
@@ -300,8 +373,14 @@ def assemble_zone_absorption(
         operational_starts,
         policy=policy,
         target_store_ids=target_store_ids,
+        observation_window_start=window[0],
+        observation_window_end=window[1],
     )
 
+    if not observations:
+        return None
+
+    observations = _retain_complete_store_windows(observations, window)
     if not observations:
         return None
 
@@ -313,8 +392,5 @@ def assemble_zone_absorption(
             as_of=as_of,
             evaluated_at=eval_time,
         )
-    except AbsorptionInputError as exc:
-        msg = str(exc)
-        if "every observed store is inside" in msg or "no store observations" in msg or "cannot be measured" in msg:
-            return None
-        raise
+    except AbsorptionNotMeasurableError:
+        return None

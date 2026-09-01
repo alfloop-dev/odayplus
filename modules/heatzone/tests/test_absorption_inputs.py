@@ -1,7 +1,7 @@
 """Tests for HeatZone absorption inputs assembly and refusal rules (ODP-FR-HZ-004).
 
 Enforces the 6 core refusal rules:
-1. Complete Coverage Only: skip store-day if coverage_state is not complete or is_complete is false.
+1. Complete Coverage Only: accept complete or affirmative-empty store-days; skip other states or incomplete rows.
 2. Valid Zero vs Missing: skip store-day if paid_amount is None and is_valid_zero is false.
 3. Definite Start Date: refuse store entirely if observed_start_business_date is None.
 4. Left-Censored Start: keep store and record it (lower bound observation days).
@@ -11,7 +11,7 @@ Enforces the 6 core refusal rules:
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -26,6 +26,7 @@ from modules.heatzone.v3.absorption import (
     MIN_OBSERVATION_DAYS_KEY,
     UNDER_REALIZED_RATIO_KEY,
     AbsorptionInputError,
+    AbsorptionNotMeasurableError,
     AbsorptionResult,
 )
 from modules.heatzone.v3.adapter import (
@@ -33,7 +34,7 @@ from modules.heatzone.v3.adapter import (
     from_legacy_feature_input,
     from_market_cell_profile,
 )
-from modules.heatzone.v3.contract import HeatZoneV3Input
+from modules.heatzone.v3.contract import HeatZoneV3Input, HeatZoneV3State
 from modules.heatzone.v3.scoring import score_heatzone_v3_feature
 from modules.heatzone.v3.shadow import HeatZoneV3ShadowRunner
 from packages.oday_data_contracts_client.models.operational_start_observation import (
@@ -50,6 +51,8 @@ from shared.governance import DecisionPolicy
 
 AS_OF = date(2026, 9, 1)
 EVALUATED_AT = datetime(2026, 9, 1, 3, 0, tzinfo=UTC)
+WINDOW_START = date(2026, 8, 31)
+WINDOW_END = date(2026, 8, 31)
 TENANT = "11111111-1111-1111-1111-111111111111"
 
 
@@ -160,6 +163,88 @@ class TestRefusalRule1CoverageCompleteness:
         op = _op_start()
         obs = assemble_absorbing_store_observations([p], [op], policy=_policy())
         assert len(obs) == 0
+
+    def test_empty_coverage_with_affirmative_zero_is_admitted(self) -> None:
+        p = _perf(
+            coverage_state=CoverageState.empty,
+            paid_amount=None,
+            is_valid_zero=True,
+        )
+        op = _op_start()
+        obs = assemble_absorbing_store_observations([p], [op], policy=_policy())
+        assert len(obs) == 1
+        assert obs[0].actual_revenue == 0.0
+
+    def test_empty_coverage_without_affirmative_zero_is_skipped(self) -> None:
+        p = _perf(
+            coverage_state=CoverageState.empty,
+            paid_amount=0.0,
+            is_valid_zero=False,
+        )
+        op = _op_start()
+        obs = assemble_absorbing_store_observations([p], [op], policy=_policy())
+        assert len(obs) == 0
+
+    def test_empty_zero_store_is_under_realized(self) -> None:
+        p = _perf(
+            coverage_state=CoverageState.empty,
+            paid_amount=None,
+            is_valid_zero=True,
+        )
+        op = _op_start()
+        absorption = assemble_zone_absorption(
+            store_ids=["store-1"],
+            performances=[p],
+            operational_starts=[op],
+            original_demand=1_000_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert absorption is not None
+        assert absorption.absorbed_demand == 0.0
+        assert absorption.under_realized is True
+
+        score = score_heatzone_v3_feature(
+            HeatZoneV3Input(
+                h3_index="8928308280fffff",
+                population=5000.0,
+                poi_count=10,
+                own_store_count=1,
+                absorption=absorption,
+            ),
+            evaluated_at=EVALUATED_AT,
+        )
+        assert score.state is HeatZoneV3State.UNDER_REALIZED
+
+    @pytest.mark.parametrize(
+        "alias,primary",
+        [
+            ("allow_declared_operational_start", ALLOW_DECLARED_START_KEY),
+            ("allow_declared", ALLOW_DECLARED_START_KEY),
+            ("allow_low_confidence_operational_start", ALLOW_LOW_CONFIDENCE_START_KEY),
+            ("allow_low_confidence", ALLOW_LOW_CONFIDENCE_START_KEY),
+            ("allow_unknown_confidence_operational_start", ALLOW_UNKNOWN_CONFIDENCE_START_KEY),
+            ("allow_unknown_confidence", ALLOW_UNKNOWN_CONFIDENCE_START_KEY),
+        ],
+    )
+    def test_undocumented_policy_aliases_do_not_satisfy_required_key(
+        self, alias: str, primary: str
+    ) -> None:
+        parameters = {
+            MIN_OBSERVATION_DAYS_KEY: 90,
+            UNDER_REALIZED_RATIO_KEY: 0.10,
+            ALLOW_DECLARED_START_KEY: True,
+            ALLOW_LOW_CONFIDENCE_START_KEY: True,
+            ALLOW_UNKNOWN_CONFIDENCE_START_KEY: True,
+        }
+        parameters.pop(primary)
+        parameters[alias] = True
+        with pytest.raises(AbsorptionInputError, match=f"declares no {primary}"):
+            assemble_absorbing_store_observations(
+                [_perf()], [_op_start()], policy=_policy_with(parameters)
+            )
 
 
 class TestRefusalRule2PaidAmountAndValidZero:
@@ -304,6 +389,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             policy=_policy(),
             as_of=AS_OF,
             evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
         )
         assert absorption is None
 
@@ -334,6 +421,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             policy=_policy(min_days=90),
             as_of=AS_OF,
             evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
         )
         assert absorption is None
 
@@ -361,6 +450,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             policy=_policy(),
             as_of=AS_OF,
             evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
         )
         assert isinstance(absorption, AbsorptionResult)
         assert absorption.absorbed_demand == 700_000.0
@@ -393,11 +484,63 @@ class TestZoneAbsorptionAssemblyAndScoring:
             policy=_policy(),
             as_of=AS_OF,
             evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
         )
         assert isinstance(absorption, AbsorptionResult)
         assert absorption.absorbed_demand == 400_000.0
         assert absorption.absorbing_store_count == 1
         assert absorption.basis_source_ids == (p2_good.raw_contract_fingerprint,)
+
+    @pytest.mark.parametrize("page_size", [1, 5, 30])
+    def test_absorption_is_scoped_to_explicit_window_not_page_size(
+        self, page_size: int
+    ) -> None:
+        performances = [
+            _perf(
+                business_date=(WINDOW_END - timedelta(days=offset)).isoformat(),
+                fingerprint=f"fp-{offset}",
+            )
+            for offset in range(page_size)
+        ]
+        absorption = assemble_zone_absorption(
+            store_ids=["store-1"],
+            performances=performances,
+            operational_starts=[_op_start()],
+            original_demand=500_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert absorption is not None
+        assert absorption.absorbed_demand == 50_000.0
+        assert absorption.absorption_ratio == 0.1
+
+    def test_partial_explicit_window_is_refused(self) -> None:
+        absorption = assemble_zone_absorption(
+            store_ids=["store-1"],
+            performances=[_perf()],
+            operational_starts=[_op_start()],
+            original_demand=500_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            observation_window_start=date(2026, 8, 1),
+            observation_window_end=WINDOW_END,
+        )
+        assert absorption is None
+
+    def test_ramp_refusal_uses_distinct_exception_type(self) -> None:
+        from modules.heatzone.v3.absorption import compute_absorbed_demand
+
+        with pytest.raises(AbsorptionNotMeasurableError):
+            compute_absorbed_demand(
+                [],
+                original_demand=500_000.0,
+                policy=_policy(),
+                as_of=AS_OF,
+                evaluated_at=EVALUATED_AT,
+            )
 
 
 def _sample_cell_dict(cell_id: str = "8928308280fffff") -> dict:
@@ -493,11 +636,25 @@ class TestAdapterAndShadowIntegration:
             decision_policy=_policy(),
             as_of=AS_OF,
             original_demand=1_000_000.0,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
         )
 
         assert v3_input.absorption is not None
         assert v3_input.absorption.absorbed_demand == 300_000.0
         assert v3_input.own_store_count == 1
+
+        without_demand = from_market_cell_profile(
+            cell,
+            store_coverage_records=[cov],
+            store_performances=[p],
+            operational_starts=[op],
+            decision_policy=_policy(),
+            as_of=AS_OF,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert without_demand.absorption is None
 
         score_res = score_heatzone_v3_feature(v3_input, evaluated_at=EVALUATED_AT)
         assert score_res.absorption_measured is True
@@ -552,12 +709,28 @@ class TestAdapterAndShadowIntegration:
             decision_policy=_policy(),
             as_of=AS_OF,
             original_demand=1_000_000.0,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
             tenant_id=TENANT,
         )
 
         assert len(result.scores) == 1
         assert result.scores[0].absorption_measured is True
         assert "absorption_unmeasured" not in result.scores[0].warnings
+
+        without_demand = runner.evaluate_market_cells(
+            doc_dict,
+            store_coverage_records=[cov],
+            store_performances=[p],
+            operational_starts=[op],
+            decision_policy=_policy(),
+            as_of=AS_OF,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+            tenant_id=TENANT,
+        )
+        assert without_demand.scores[0].absorption_measured is False
+        assert "absorption_unmeasured" in without_demand.scores[0].warnings
 
     def test_from_catchment_profile_with_absorption_inputs(self) -> None:
         from packages.oday_data_product_contracts_client.models.catchment_profile import (
@@ -655,14 +828,28 @@ class TestAdapterAndShadowIntegration:
             decision_policy=_policy(),
             as_of=AS_OF,
             original_demand=1_000_000.0,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
         )
 
         assert v3_input.absorption is not None
         assert v3_input.absorption.absorbed_demand == 250_000.0
 
+        without_demand = from_catchment_profile(
+            prof,
+            store_coverage_records=[cov],
+            store_performances=[p],
+            operational_starts=[op],
+            decision_policy=_policy(),
+            as_of=AS_OF,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert without_demand.absorption is None
+
     def test_from_legacy_feature_input_with_absorption_inputs(self) -> None:
-        p = _perf(store_id="8928308280fffff", paid_amount=200_000.0)
-        op = _op_start(store_id="8928308280fffff")
+        p = _perf(store_id="store-legacy-101", paid_amount=200_000.0)
+        op = _op_start(store_id="store-legacy-101")
         legacy = {
             "h3_index": "8928308280fffff",
             "existing_store_count": 1,
@@ -676,7 +863,34 @@ class TestAdapterAndShadowIntegration:
             decision_policy=_policy(),
             as_of=AS_OF,
             original_demand=1_000_000.0,
+            store_ids=["store-legacy-101"],
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
         )
 
         assert v3_input.absorption is not None
         assert v3_input.absorption.absorbed_demand == 200_000.0
+
+        without_identity = from_legacy_feature_input(
+            legacy,
+            store_performances=[p],
+            operational_starts=[op],
+            decision_policy=_policy(),
+            as_of=AS_OF,
+            original_demand=1_000_000.0,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert without_identity.absorption is None
+
+        without_demand = from_legacy_feature_input(
+            legacy,
+            store_ids=["store-legacy-101"],
+            store_performances=[p],
+            operational_starts=[op],
+            decision_policy=_policy(),
+            as_of=AS_OF,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert without_demand.absorption is None

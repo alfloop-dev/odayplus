@@ -176,6 +176,8 @@ def from_market_cell_profile(
     decision_policy: DecisionPolicy | None = None,
     as_of: date | None = None,
     original_demand: float | None = None,
+    observation_window_start: date | str | None = None,
+    observation_window_end: date | str | None = None,
 ) -> HeatZoneV3Input:
     """Adapt a canonical emgi.market-cell-profile.v1 cell into a HeatZone v3 input."""
     if isinstance(cell, Mapping):
@@ -290,6 +292,9 @@ def from_market_cell_profile(
         and store_performances is not None
         and operational_starts is not None
         and decision_policy is not None
+        and original_demand is not None
+        and observation_window_start is not None
+        and observation_window_end is not None
     ):
         from modules.heatzone.application.absorption_inputs import assemble_zone_absorption
 
@@ -313,18 +318,15 @@ def from_market_cell_profile(
             else:
                 effective_as_of = datetime.now(UTC).date()
 
-        effective_demand = (
-            original_demand
-            if original_demand is not None
-            else max(1.0, pop_val * 200.0 + poi_count * 10000.0)
-        )
         effective_absorption = assemble_zone_absorption(
             store_ids=distinct_store_ids,
             performances=store_performances,
             operational_starts=operational_starts,
-            original_demand=effective_demand,
+            original_demand=original_demand,
             policy=decision_policy,
             as_of=effective_as_of,
+            observation_window_start=observation_window_start,
+            observation_window_end=observation_window_end,
         )
 
     return HeatZoneV3Input(
@@ -392,6 +394,8 @@ def from_catchment_profile(
     decision_policy: DecisionPolicy | None = None,
     as_of: date | None = None,
     original_demand: float | None = None,
+    observation_window_start: date | str | None = None,
+    observation_window_end: date | str | None = None,
 ) -> HeatZoneV3Input:
     """Adapt a canonical emgi.catchment-profile.v1 profile into a HeatZone v3 input."""
     if isinstance(profile, Mapping):
@@ -529,6 +533,9 @@ def from_catchment_profile(
         and store_performances is not None
         and operational_starts is not None
         and decision_policy is not None
+        and original_demand is not None
+        and observation_window_start is not None
+        and observation_window_end is not None
     ):
         from modules.heatzone.application.absorption_inputs import assemble_zone_absorption
 
@@ -538,18 +545,15 @@ def from_catchment_profile(
             getattr(s, "store_id", "") for s in matched_store_covs if getattr(s, "store_id", "")
         }
 
-        effective_demand = (
-            original_demand
-            if original_demand is not None
-            else max(1.0, pop_val * 200.0 + poi_count * 10000.0)
-        )
         effective_absorption = assemble_zone_absorption(
             store_ids=distinct_store_ids,
             performances=store_performances,
             operational_starts=operational_starts,
-            original_demand=effective_demand,
+            original_demand=original_demand,
             policy=decision_policy,
             as_of=as_of or datetime.now(UTC).date(),
+            observation_window_start=observation_window_start,
+            observation_window_end=observation_window_end,
         )
 
     return HeatZoneV3Input(
@@ -608,6 +612,7 @@ def from_legacy_feature_input(
     coverage_ratio: float = 1.0,
     tenant_id: str = "default",
     absorption: AbsorptionResult | None = None,
+    store_ids: Sequence[str] | set[str] | None = None,
     store_performances: Sequence[StoreDailyPerformance | Mapping[str, Any]] | None = None,
     operational_starts: (
         Mapping[str, OperationalStartObservation | Mapping[str, Any]]
@@ -617,6 +622,8 @@ def from_legacy_feature_input(
     decision_policy: DecisionPolicy | None = None,
     as_of: date | None = None,
     original_demand: float | None = None,
+    observation_window_start: date | str | None = None,
+    observation_window_end: date | str | None = None,
 ) -> HeatZoneV3Input:
     """Bridge legacy v1 HeatZoneFeatureInput into HeatZoneV3Input."""
     if isinstance(legacy, Mapping):
@@ -659,22 +666,22 @@ def from_legacy_feature_input(
         and store_performances is not None
         and operational_starts is not None
         and decision_policy is not None
+        and original_demand is not None
+        and store_ids
+        and observation_window_start is not None
+        and observation_window_end is not None
     ):
         from modules.heatzone.application.absorption_inputs import assemble_zone_absorption
 
-        store_ids = {h3_index} if existing_store_count > 0 else set()
-        effective_demand = (
-            original_demand
-            if original_demand is not None
-            else max(1.0, pop * 200.0 + poi_count * 10000.0)
-        )
         effective_absorption = assemble_zone_absorption(
-            store_ids=store_ids,
+            store_ids=set(store_ids),
             performances=store_performances,
             operational_starts=operational_starts,
-            original_demand=effective_demand,
+            original_demand=original_demand,
             policy=decision_policy,
             as_of=as_of or datetime.now(UTC).date(),
+            observation_window_start=observation_window_start,
+            observation_window_end=observation_window_end,
         )
 
     return HeatZoneV3Input(

@@ -5,6 +5,7 @@ from modules.heatzone.v3.absorption import (
     UNDER_REALIZED_RATIO_KEY,
     AbsorbingStoreObservation,
     AbsorptionInputError,
+    AbsorptionNotMeasurableError,
     AbsorptionResult,
     compute_absorbed_demand,
 )
@@ -41,6 +42,7 @@ __all__ = [
     "AbstainReasonCode",
     "AbsorbingStoreObservation",
     "AbsorptionInputError",
+    "AbsorptionNotMeasurableError",
     "AbsorptionResult",
     "CONTRACT_ID",
     "CONTRACT_VERSION",

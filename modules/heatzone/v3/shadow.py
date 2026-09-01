@@ -65,6 +65,8 @@ class HeatZoneV3ShadowRunner:
         decision_policy: Any | None = None,
         as_of: Any | None = None,
         original_demand: float | None = None,
+        observation_window_start: Any | None = None,
+        observation_window_end: Any | None = None,
         tenant_id: str = "default",
         manifest_document: ManifestDocument | None = None,
     ) -> HeatZoneV3BatchResult:
@@ -84,6 +86,8 @@ class HeatZoneV3ShadowRunner:
                 decision_policy=decision_policy,
                 as_of=as_of,
                 original_demand=original_demand,
+                observation_window_start=observation_window_start,
+                observation_window_end=observation_window_end,
                 tenant_id=tenant_id,
             )
             for cell in doc.cells
@@ -110,6 +114,8 @@ class HeatZoneV3ShadowRunner:
         decision_policy: Any | None = None,
         as_of: Any | None = None,
         original_demand: float | None = None,
+        observation_window_start: Any | None = None,
+        observation_window_end: Any | None = None,
         tenant_id: str = "default",
         manifest_document: ManifestDocument | None = None,
     ) -> HeatZoneV3BatchResult:
@@ -129,6 +135,8 @@ class HeatZoneV3ShadowRunner:
                 decision_policy=decision_policy,
                 as_of=as_of,
                 original_demand=original_demand,
+                observation_window_start=observation_window_start,
+                observation_window_end=observation_window_end,
                 tenant_id=tenant_id,
             )
             for prof in doc.profiles
