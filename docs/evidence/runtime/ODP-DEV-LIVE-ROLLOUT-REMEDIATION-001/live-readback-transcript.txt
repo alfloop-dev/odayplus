@@ -1,0 +1,128 @@
+=== ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 Live Readback Transcript ===
+Captured at: 2026-09-01T12:55:00Z
+Auditor: Antigravity3
+GCP Project: odayplus-runtime-20260825
+Region: asia-east1
+
+[Command 1] git status --short --branch
+Output:
+## task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001
+Exit code: 0
+
+[Command 2] gcloud auth list
+Output:
+                         Credentialed Accounts
+ACTIVE  ACCOUNT
+        accountdepartment@dev.cctech-support.com
+        admin.dep@dev.cctech-support.com
+        admin@dev.cctech-support.com
+        chloe.ong@dev.cctech-support.com
+*       deborah.lu@dev.cctech-support.com
+        elainechen@dev.cctech-support.com
+        evan.chen@dev.cctech-support.com
+        joe.tsai@dev.cctech-support.com
+        oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com
+        sean.liao@dev.cctech-support.com
+Exit code: 0
+
+[Command 3] gh auth status
+Output:
+github.com
+  ✓ Logged in to github.com account ajoe734 (/home/lupin/.config/gh/hosts.yml)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: gho_************************************
+  - Token scopes: 'gist', 'read:org', 'repo', 'workflow'
+Exit code: 0
+
+[Command 4] git rev-parse origin/dev
+Output:
+ae03490480e5a1313d3fdb992172c9b5793053e2
+Exit code: 0
+
+[Command 5] git diff --stat ebc4fca5c2dd5871275aee39a18406dd67464f04..origin/dev -- apps/
+Output:
+43 files changed, 9337 insertions(+), 164 deletions(-)
+Exit code: 0
+
+[Command 6] gh workflow run deploy-dev.yml -R alfloop-dev/odayplus --ref dev -f phase=build -f environment=dev -f release_sha=ae03490480e5a1313d3fdb992172c9b5793053e2 -f task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001
+Output:
+✓ Created workflow_dispatch event for deploy-dev.yml at dev
+https://github.com/alfloop-dev/odayplus/actions/runs/33509435127
+Exit code: 0
+
+[Command 7] gh run view 33509435127 -R alfloop-dev/odayplus
+Output:
+✓ Validate release phase inputs in 10s (ID 99861256041)
+X Build once and publish the immutable artifact handoff in 8m14s (ID 99861320837)
+  ✓ Set up job
+  ✓ Run actions/checkout@v4
+  ✓ Assert exact release SHA is checked out
+  ✓ 確認 build 階段已綁定 environment 且變數齊備
+  ✓ Publish build environment binding receipt
+  ✓ Install uv
+  ✓ Set up Python
+  ✓ Run Secret Scan
+  ✓ Run Python SAST Scan
+  ✓ Generate SBOM
+  ✓ Install locked project dependencies
+  ✓ Run E2E deployment health, backup, restore, and rollback proof
+  ✓ Authenticate to Google Cloud (WIF)
+  ✓ Set up Cloud SDK
+  ✓ Install Cosign
+  ✓ Build, publish, sign, and attest immutable container images
+  X Write the build-once artifact handoff
+Exit code: 0
+
+[Command 8] gcloud run services list --project odayplus-runtime-20260825 --region asia-east1
+Output:
+   SERVICE              REGION      URL                                                          LAST DEPLOYED BY                   LAST DEPLOYED AT
+✔  oday-mlflow          asia-east1  https://oday-mlflow-767864276141.asia-east1.run.app          deborah.lu@dev.cctech-support.com  2026-08-25T10:32:00.792708Z
+✔  oday-staging-mlflow  asia-east1  https://oday-staging-mlflow-767864276141.asia-east1.run.app  deborah.lu@dev.cctech-support.com  2026-08-26T02:34:09.433302Z
+Exit code: 0
+
+[Command 9] gcloud run jobs list --project odayplus-runtime-20260825 --region asia-east1
+Output:
+Listed 0 items.
+Exit code: 0
+
+[Command 10] gcloud scheduler jobs list --project odayplus-runtime-20260825 --location asia-east1
+Output:
+Listed 0 items.
+Exit code: 0
+
+[Command 11] gcloud container clusters list --project odayplus-runtime-20260825
+Output:
+NAME           LOCATION      MASTER_VERSION      MASTER_IP       MACHINE_TYPE   NODE_VERSION        NUM_NODES  STATUS   STACK_TYPE
+oday-emgi-gke  asia-east1-a  1.35.7-gke.1027000  35.201.194.132  e2-standard-2  1.35.7-gke.1027000  1          RUNNING  IPV4
+Exit code: 0
+
+[Command 12] kubectl get deployments -n oday-emgi
+Output:
+NAME                  READY   UP-TO-DATE   AVAILABLE   AGE
+oday-emgi-daemon      1/1     1            1           6d23h
+oday-emgi-webserver   1/1     1            1           6d22h
+Exit code: 0
+
+[Command 13] gcloud sql instances list --project odayplus-runtime-20260825
+Output:
+NAME              DATABASE_VERSION  LOCATION     TIER         PRIMARY_ADDRESS  PRIVATE_ADDRESS  STATUS
+oday-dev-sql      POSTGRES_16       asia-east1   db-custom-2  35.229.130.12    -                RUNNABLE
+oday-staging-sql  POSTGRES_16       asia-east1   db-custom-2  35.229.140.22    -                RUNNABLE
+Exit code: 0
+
+[Command 14] gcloud secrets list --project odayplus-runtime-20260825
+Output:
+NAME                                 CREATED              REPLICATION_POLICY  LOCATIONS
+oday-dev-web-oidc-client-secret      2026-08-27T00:58:03  automatic           -
+oday-plus-dev-api-database-url-pg16  2026-08-25T00:44:08  automatic           -
+oday-plus-dev-auth-principal-map     2026-08-25T00:37:27  automatic           -
+oday-plus-dev-mlflow-backend-uri     2026-08-25T00:44:10  automatic           -
+oday-plus-dev-web-session-secret     2026-08-25T00:37:29  automatic           -
+Exit code: 0
+
+[Command 15] gcloud artifacts docker images list asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api
+Output:
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api  sha256:0d23643eb58ad161b2a9ebcdf1f30aa329f70603a4db30f92f39a682abe33730  2026-09-01T12:49:50
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api  sha256:ac085f14e958ae85befa8edf9476a6a6c55c74dadcf308f610e5c4078b17b4c6  2026-08-26T19:18:22
+Exit code: 0
