@@ -90,6 +90,16 @@ jobs:
       - name: Enforce product and development code boundaries
         run: uv run python delivery_toolchain/governance/check_code_boundaries.py
 
+      # A bounded quality or confidence score that defaults to its maximum makes
+      # "nobody measured this" indistinguishable from "measured, and perfect".
+      # HeatZoneV3Input.confidence and .coverage_ratio are the sharpest case:
+      # check_support_and_abstention abstains below their thresholds, so the
+      # defaults put a zone with no coverage data permanently out of that gate's
+      # reach. Existing instances are listed with an owner in
+      # measurement_default_exemptions.json; new ones fail here.
+      - name: Refuse bounded scores that default to perfect
+        run: uv run python delivery_toolchain/governance/check_measurement_defaults.py
+
       - name: Lint orchestrator code
         run: uv run ruff check .orchestrator delivery_toolchain scripts
 
