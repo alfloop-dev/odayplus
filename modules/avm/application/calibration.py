@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from modules.avm.domain.deal_outcome import DealOutcome, NoDealReasonCode, REDACTED_CONFIDENTIAL_VALUE
+from modules.avm.domain.deal_outcome import (
+    REDACTED_CONFIDENTIAL_VALUE,
+    DealOutcome,
+    NoDealReasonCode,
+)
 from modules.avm.domain.valuation import ValuationReport
 from shared.auth.identity import DataClassification, Principal, Role
-from shared.auth.rbac import Action, rbac_allows
+from shared.auth.rbac import Action
 
 IDEAL_P10_P90_COVERAGE = 0.80
 MINIMUM_ACCEPTABLE_COVERAGE = 0.75
@@ -337,7 +340,6 @@ def record_deal_outcome_export_audit(
     from modules.dealroom.domain.confidential_access import (
         ConfidentialAccessAttempt,
         ConfidentialAccessAuditor,
-        ConfidentialAccessDecision,
         ConfidentialLevel,
         assert_no_confidential_leak,
         create_identity_proof,

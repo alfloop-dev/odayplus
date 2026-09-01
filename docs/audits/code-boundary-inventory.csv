@@ -290,6 +290,7 @@ infra/db/migrations/versions/0002_data_domain_canonical_entities.py,product_oper
 infra/db/migrations/versions/0003_official_real_estate_outcomes.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/db/migrations/versions/0004_identity_schema.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/db/migrations/versions/0005_identity_session_server_secrets.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
+infra/db/migrations/versions/0006_avm_deal_outcomes.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/k8s/data-platform/render.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/k8s/data-platform/runtime/deployment_runtime.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/mlflow/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -339,10 +340,12 @@ modules/adlift/workers/__init__.py,product_system,product_required,true,,enginee
 modules/adlift/workers/incrementality_worker.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/avm/application/calibration.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/application/outcome_calibration.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/application/production.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/application/valuation.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/avm/domain/deal_outcome.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/domain/liquidity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/domain/outcome.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/domain/valuation.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -350,6 +353,7 @@ modules/avm/infrastructure/__init__.py,product_system,product_required,true,,eng
 modules/avm/infrastructure/lifelines_survival.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/tests/test_avm_production_execution.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+modules/avm/tests/test_deal_outcome_and_calibration.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/avm/tests/test_lifelines_liquidity_survival.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/avm/workers/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/workers/valuation_worker.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -858,6 +862,7 @@ tests/integration/test_assisted_listing_snapshots.py,verification,verification_o
 tests/integration/test_audit_evidence_export.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_audit_evidence_persistence.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_auth_boundary_authz.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_avm_deal_outcome.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_avm_official_outcome_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_avm_outcome_calibration.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_avm_valuation.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

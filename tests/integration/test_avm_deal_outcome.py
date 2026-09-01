@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
-import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.avm import create_avm_router
 from modules.avm.application.valuation import AVMService
-from modules.avm.domain.deal_outcome import DealOutcome, NoDealReasonCode
 from modules.avm.domain.valuation import ValuationInput
 from modules.avm.infrastructure.repositories import InMemoryAVMRepository
 from shared.audit import InMemoryAuditLog
@@ -106,7 +103,7 @@ def test_avm_router_deal_outcomes_and_calibration_endpoints() -> None:
     created = resp.json()
     assert created["sold"] is True
     assert created["settlement_price"] == report.fair_price.p50
-    outcome_id = created["outcome_id"]
+    assert "outcome_id" in created
 
     # 2. GET /avm/deal-outcomes as FINANCE_LEGAL (unmasked settlement_price)
     resp_get = client.get("/avm/deal-outcomes", headers=fin_headers)

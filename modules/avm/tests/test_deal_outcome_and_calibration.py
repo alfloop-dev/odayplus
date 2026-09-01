@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
-from uuid import uuid4
 
 import pytest
 
 from modules.avm.application.calibration import (
-    DealOutcomeCalibrationReport,
-    OutcomeCalibrationItem,
     assert_finance_view_authorized,
     calculate_valuation_deviation,
     compute_deal_outcome_calibration,
@@ -28,14 +25,12 @@ from modules.avm.domain.valuation import (
     LensValuation,
     NormalizedMargin,
     PriceBand,
-    ValuationCase,
     ValuationInput,
     ValuationReport,
 )
 from modules.avm.infrastructure.repositories import InMemoryAVMRepository
 from shared.audit import InMemoryAuditLog
-from shared.auth.identity import DataClassification, Principal, Role, Scope
-from shared.auth.rbac import Action
+from shared.auth.identity import Principal, Role
 
 
 def _make_dummy_valuation_report(
