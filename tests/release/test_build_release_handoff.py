@@ -536,3 +536,171 @@ def test_rollback_manifest_same_candidate_sha_fails_closed(tmp_path: Path) -> No
     assert code != 0
     assert not images_path.exists()
     assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_option(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap_file = tmp_path / "approved_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["data_snapshot"]["id"] == snap["id"]
+    assert manifest["data_snapshot"]["uri"] == snap["uri"]
+    assert manifest["data_snapshot"]["content_sha256"] == snap["content_sha256"]
+    assert manifest["data_snapshot"]["masked"] is True
+    assert validate_release_admission(manifest) == []
+
+
+def test_data_snapshot_content_sha_alias_and_hex_normalization(tmp_path: Path) -> None:
+    raw_hex = "e" * 64
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-hex-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-hex-001.tar.gz",
+        "--data-snapshot-content-sha",
+        raw_hex,
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["data_snapshot"]["content_sha256"] == f"sha256:{raw_hex}"
+
+
+def test_unmasked_data_snapshot_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-unmasked-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/unmasked/snap-unmasked-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--data-snapshot-unmasked",
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_contract_digest_mismatch_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-mismatch-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-mismatch-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--data-snapshot-contract-digest",
+        "sha256:" + "0" * 64,
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_rollback_manifest_inline_json_string(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_json = json.dumps(prev_manifest)
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-inline-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-inline-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        prev_manifest_json,
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["rollback_release"]["candidate_sha"] == "0" * 40
+    assert manifest["rollback_release"]["manifest_digest"] == prev_manifest["manifest_digest"]
+    assert validate_release_admission(manifest) == []
+
+
+def test_rollback_manifest_missing_component_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest["components"].pop("web", None)
+    prev_manifest["manifest_digest"] = compute_manifest_digest(prev_manifest)
+    broken_path = tmp_path / "NO_WEB_MANIFEST.json"
+    broken_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-broken-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-broken-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        str(broken_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+

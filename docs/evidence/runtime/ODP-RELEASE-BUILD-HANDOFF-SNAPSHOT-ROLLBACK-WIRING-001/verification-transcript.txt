@@ -1,0 +1,67 @@
+================================================================================
+ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001 VERIFICATION TRANSCRIPT
+================================================================================
+Timestamp: 2026-09-01T13:21:30Z
+Agent: Antigravity4
+Worktree: /tmp/pantheon-worker-worktrees/pantheon/odp-release-build-handoff-snapshot-rollback-wiring-001
+Branch: task/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001
+
+--- Command 1: Pytest focused unit & contract tests ---
+$ uv run --python 3.12 pytest tests/ops/test_deploy_workflow_contract.py tests/release/
+============================= test session starts ==============================
+collected 268 items
+
+tests/ops/test_deploy_workflow_contract.py ............................. [ 10%]
+................................                                         [ 22%]
+tests/release/test_build_release_handoff.py ............................ [ 33%]
+......                                                                   [ 35%]
+tests/release/test_check_release_environment.py ........................ [ 44%]
+........................................................................ [ 71%]
+................................                                         [ 83%]
+tests/release/test_dispatch_workflow_run.py ....                         [ 84%]
+tests/release/test_generate_lease.py .....                               [ 86%]
+tests/release/test_release_gate_receipt.py .......                       [ 89%]
+tests/release/test_release_gate_registry.py ...............              [ 94%]
+tests/release/test_release_manifest.py ...........                       [ 98%]
+tests/release/test_release_manifest_cli.py .....                         [100%]
+
+============================= 268 passed in 12.35s =============================
+EXIT=0
+
+--- Command 2: Full release and ops test suites ---
+$ uv run --python 3.12 pytest tests/release/ tests/ops/
+============================= test session starts ==============================
+collected 1002 items
+
+980 passed, 22 skipped, 1 warning, 16 subtests passed in 177.94s
+EXIT=0
+
+--- Command 3: Standalone Reproducible Verification Script ---
+$ uv run --python 3.12 python3 docs/evidence/runtime/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001/verify_build_handoff_wiring.py
+[1/5] Testing positive flow with snapshot file & rollback manifest...
+build-once artifact handoff 已產生：release_id=odp-aaaaaaaaaaaa candidate_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa manifest_digest=sha256:2c0cf82620a86c4d278ec23af1440afccff3415daf0468dc4ad0a187a734b93f
+  -> PASSED: Schema v2 manifest produced with exact snapshot and rollback bindings.
+[2/5] Testing fail-closed when data snapshot is missing...
+build-once artifact handoff 無法產生：
+- 缺少 masked data snapshot 參照；build 階段必須綁定本次核准的 masked snapshot。
+- 缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
+  -> PASSED: Missing snapshot rejected.
+[3/5] Testing fail-closed when data snapshot is unmasked...
+build-once artifact handoff 無法產生：
+- 缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
+  -> PASSED: Unmasked snapshot rejected.
+[4/5] Testing fail-closed when rollback manifest digest is tampered...
+build-once artifact handoff 無法產生：
+- 無法載入 rollback manifest：manifest missing required field: rollback_release
+- 無法載入 rollback manifest：manifest.manifest_digest does not match its canonical immutable payload
+- rollback manifest 無效：manifest missing required field: rollback_release
+- rollback manifest 無效：manifest.manifest_digest does not match its canonical immutable payload
+- rollback manifest 無效：release admission requires manifest.rollback_release with verified candidate sha and components
+- 缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
+  -> PASSED: Tampered rollback manifest rejected.
+[5/5] Testing deploy-dev.yml workflow contracts...
+  -> PASSED: Workflow contract verified.
+
+ALL VERIFICATIONS PASSED SUCCESSFULLY (EXIT=0).
+EXIT=0
+================================================================================

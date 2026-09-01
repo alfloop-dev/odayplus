@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -172,7 +173,16 @@ def build_handoff(
     if rollback_source is not None:
         previous_manifest: dict[str, Any] | None = None
         if isinstance(rollback_source, (str, Path)):
-            previous_manifest, previous_errors = load_manifest(Path(rollback_source))
+            raw_str = str(rollback_source).strip()
+            if raw_str.startswith("{") and raw_str.endswith("}"):
+                try:
+                    previous_manifest = json.loads(raw_str)
+                    previous_errors = validate_manifest(previous_manifest)
+                except Exception as exc:
+                    previous_manifest = None
+                    previous_errors = [f"無法解析 rollback manifest JSON 字串：{exc}"]
+            else:
+                previous_manifest, previous_errors = load_manifest(Path(rollback_source))
             if previous_errors or previous_manifest is None:
                 errors.extend([f"無法載入 rollback manifest：{e}" for e in previous_errors])
         elif isinstance(rollback_source, dict):
@@ -271,10 +281,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-snapshot-uri", default=None)
     parser.add_argument("--data-snapshot-sha256", default=None)
     parser.add_argument("--data-snapshot-content-sha256", default=None)
+    parser.add_argument(
+        "--data-snapshot-content-sha",
+        dest="data_snapshot_content_sha_alias",
+        default=None,
+        help="Alias for --data-snapshot-content-sha256",
+    )
     parser.add_argument("--data-snapshot-contract-digest", default=None)
     parser.add_argument("--data-snapshot-file", type=Path, default=None)
     parser.add_argument("--data-snapshot-unmasked", action="store_true", default=False)
-    parser.add_argument("--rollback-manifest", type=Path, default=None)
+    parser.add_argument(
+        "--rollback-manifest",
+        default=None,
+        help="Path or JSON string of the previous approved release manifest",
+    )
     parser.add_argument("--rollback-release-file", type=Path, default=None)
     parser.add_argument("--images-output", type=Path, required=True)
     parser.add_argument("--manifest-output", type=Path, required=True)
@@ -292,6 +312,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.data_snapshot_file:
         try:
             data_snapshot = json.loads(args.data_snapshot_file.read_text(encoding="utf-8"))
+            if isinstance(data_snapshot, dict):
+                if "content_sha256" not in data_snapshot:
+                    if "content_sha" in data_snapshot:
+                        data_snapshot["content_sha256"] = data_snapshot["content_sha"]
+                    elif "sha256" in data_snapshot:
+                        data_snapshot["content_sha256"] = data_snapshot["sha256"]
+                if "content_sha256" in data_snapshot and isinstance(
+                    data_snapshot["content_sha256"], str
+                ):
+                    c_sha = data_snapshot["content_sha256"].strip()
+                    if len(c_sha) == 64 and re.fullmatch(r"[0-9a-f]{64}", c_sha):
+                        data_snapshot["content_sha256"] = f"sha256:{c_sha}"
+                if "data_contract_digest" not in data_snapshot:
+                    data_snapshot["data_contract_digest"] = (
+                        args.data_snapshot_contract_digest
+                        or compute_data_contract_digest(root=ROOT)
+                    )
+                if "masked" not in data_snapshot:
+                    data_snapshot["masked"] = not args.data_snapshot_unmasked
         except (OSError, json.JSONDecodeError) as exc:
             print(f"無法讀取 data snapshot 檔案 {args.data_snapshot_file}：{exc}", file=sys.stderr)
             return 1
@@ -300,17 +339,24 @@ def main(argv: list[str] | None = None) -> int:
         or args.data_snapshot_uri
         or args.data_snapshot_sha256
         or args.data_snapshot_content_sha256
+        or getattr(args, "data_snapshot_content_sha_alias", None)
     ):
         contract_digest = (
             args.data_snapshot_contract_digest
             or compute_data_contract_digest(root=ROOT)
         )
+        raw_content_sha = (
+            args.data_snapshot_content_sha256
+            or getattr(args, "data_snapshot_content_sha_alias", None)
+            or args.data_snapshot_sha256
+            or ""
+        ).strip()
+        if len(raw_content_sha) == 64 and re.fullmatch(r"[0-9a-f]{64}", raw_content_sha):
+            raw_content_sha = f"sha256:{raw_content_sha}"
         data_snapshot = {
             "id": (args.data_snapshot_id or "").strip(),
             "uri": (args.data_snapshot_uri or "").strip(),
-            "content_sha256": (
-                args.data_snapshot_content_sha256 or args.data_snapshot_sha256 or ""
-            ).strip(),
+            "content_sha256": raw_content_sha,
             "data_contract_digest": contract_digest,
             "masked": not args.data_snapshot_unmasked,
         }

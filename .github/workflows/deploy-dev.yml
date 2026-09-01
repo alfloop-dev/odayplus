@@ -92,6 +92,31 @@ on:
         required: false
         default: ""
         type: string
+      data_snapshot_id:
+        description: "Approved masked data snapshot ID (build phase; e.g. snap-...)"
+        required: false
+        default: ""
+        type: string
+      data_snapshot_uri:
+        description: "Approved masked data snapshot GCS URI (build phase; gs://...)"
+        required: false
+        default: ""
+        type: string
+      data_snapshot_content_sha:
+        description: "Approved masked data snapshot content SHA-256 (build phase; sha256:...)"
+        required: false
+        default: ""
+        type: string
+      data_snapshot_file:
+        description: "Path to approved masked data snapshot JSON file (build phase; optional alternative to id/uri/sha)"
+        required: false
+        default: ""
+        type: string
+      rollback_manifest:
+        description: "Path to previous approved release manifest JSON (build phase; e.g. docs/evidence/gates/PREV_RELEASE_MANIFEST.json)"
+        required: false
+        default: ""
+        type: string
 
 # Deploys of one environment stay mutually exclusive. The phase is part of the
 # key so a long build does not hold the deploy lane for an already-built
@@ -447,6 +472,11 @@ jobs:
           SCHEDULER_IMAGE: ${{ steps.publish-images.outputs.scheduler_image }}
           SBOM_REFS: ${{ steps.publish-images.outputs.sbom_refs }}
           SIGNATURE_REFS: ${{ steps.publish-images.outputs.signature_refs }}
+          DATA_SNAPSHOT_FILE: ${{ inputs.data_snapshot_file || vars.ODP_APPROVED_DATA_SNAPSHOT_FILE }}
+          DATA_SNAPSHOT_ID: ${{ inputs.data_snapshot_id || vars.ODP_APPROVED_DATA_SNAPSHOT_ID }}
+          DATA_SNAPSHOT_URI: ${{ inputs.data_snapshot_uri || vars.ODP_APPROVED_DATA_SNAPSHOT_URI }}
+          DATA_SNAPSHOT_CONTENT_SHA: ${{ inputs.data_snapshot_content_sha || vars.ODP_APPROVED_DATA_SNAPSHOT_CONTENT_SHA256 }}
+          ROLLBACK_MANIFEST: ${{ inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
         run: |
           set -euo pipefail
           mkdir -p "${HANDOFF_DIR}"
@@ -457,6 +487,23 @@ jobs:
           for ref in ${SIGNATURE_REFS}; do
             refs+=(--signature-ref "${ref}")
           done
+          snapshot_args=()
+          if [ -n "${DATA_SNAPSHOT_FILE:-}" ]; then
+            snapshot_args+=(--data-snapshot-file "${DATA_SNAPSHOT_FILE}")
+          fi
+          if [ -n "${DATA_SNAPSHOT_ID:-}" ]; then
+            snapshot_args+=(--data-snapshot-id "${DATA_SNAPSHOT_ID}")
+          fi
+          if [ -n "${DATA_SNAPSHOT_URI:-}" ]; then
+            snapshot_args+=(--data-snapshot-uri "${DATA_SNAPSHOT_URI}")
+          fi
+          if [ -n "${DATA_SNAPSHOT_CONTENT_SHA:-}" ]; then
+            snapshot_args+=(--data-snapshot-content-sha256 "${DATA_SNAPSHOT_CONTENT_SHA}")
+          fi
+          rollback_args=()
+          if [ -n "${ROLLBACK_MANIFEST:-}" ]; then
+            rollback_args+=(--rollback-manifest "${ROLLBACK_MANIFEST}")
+          fi
           python3 delivery_toolchain/release/build_release_handoff.py \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --repository "${GITHUB_REPOSITORY}" \
@@ -465,6 +512,8 @@ jobs:
             --component "worker=${WORKER_IMAGE}" \
             --component "scheduler=${SCHEDULER_IMAGE}" \
             "${refs[@]}" \
+            "${snapshot_args[@]}" \
+            "${rollback_args[@]}" \
             --images-output "${HANDOFF_DIR}/runtime-release-images.json" \
             --manifest-output "${HANDOFF_DIR}/RELEASE_MANIFEST.json" \
             --github-output "${GITHUB_OUTPUT}"
