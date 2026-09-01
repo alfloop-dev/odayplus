@@ -142,6 +142,14 @@ class ForecastOpsService:
             )
         origin = next(iter(origins))
 
+        # Feedback annotations are applied at the application boundary so all
+        # normal forecast callers, including the worker path, train on the same
+        # filtered series used by the feedback-aware precision evaluator.
+        normalized_inputs = tuple(
+            self._filter_forecast_input(item, tenant_id=tenant_id)
+            for item in normalized_inputs
+        )
+
         selected_engine = (
             self.engine
             if engine is None
@@ -235,6 +243,22 @@ class ForecastOpsService:
                 self._persist_generated_handoff(tenant_id, handoff) for handoff in handoffs
             ),
         )
+
+    def _filter_forecast_input(
+        self,
+        forecast_input: ForecastInput,
+        *,
+        tenant_id: str,
+    ) -> ForecastInput:
+        feedbacks = self.repository.list_feedbacks(
+            tenant_id,
+            store_id=forecast_input.store_id,
+        )
+        filtered_observations = filter_training_observations(
+            forecast_input.observations,
+            feedbacks,
+        )
+        return replace(forecast_input, observations=tuple(filtered_observations))
 
     def _persist_generated_alert(self, tenant_id: str, alert: Alert) -> Alert:
         """Persist a generated alert without rewinding an already-stored one.
@@ -404,11 +428,19 @@ class ForecastOpsService:
             updated_series = replace(series, observations=tuple(new_observations))
             self.repository.save_series(updated_series)
 
-            # Trigger recalculation / re-forecast
+            # Trigger recalculation / re-forecast through the same filtered
+            # training series used by the normal forecast path.  The raw series
+            # remains canonical; CONTEXT_ANNOTATION only excludes observations
+            # from model input and precision evaluation.
+            training_series = self.get_training_series(tenant_id, feedback.store_id)
             forecast_input = ForecastInput(
                 tenant_id=tenant_id,
                 store_id=feedback.store_id,
-                observations=updated_series.observations,
+                observations=(
+                    training_series.observations
+                    if training_series is not None
+                    else updated_series.observations
+                ),
                 prediction_origin_time=current_time,
             )
             forecast_result = self.forecast([forecast_input], scored_at=current_time)

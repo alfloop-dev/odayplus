@@ -107,6 +107,17 @@ class ForecastFeedback:
     rejection_reason: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Enforce the per-day correction invariant for every construction path."""
+        if (
+            self.feedback_type is FeedbackType.OUTCOME_CORRECTION
+            and self.target_date_start != self.target_date_end
+        ):
+            raise ForecastOpsError(
+                "OUTCOME_CORRECTION must target exactly one date; "
+                "a corrected revenue value cannot be applied to a date range"
+            )
+
     @classmethod
     def create(
         cls,
@@ -140,6 +151,12 @@ class ForecastFeedback:
         if parsed_start > parsed_end:
             raise ForecastOpsError(
                 f"target_date_start ({parsed_start}) cannot be after target_date_end ({parsed_end})"
+            )
+
+        if f_type is FeedbackType.OUTCOME_CORRECTION and parsed_start != parsed_end:
+            raise ForecastOpsError(
+                "OUTCOME_CORRECTION must target exactly one date; "
+                "a corrected revenue value cannot be applied to a date range"
             )
 
         if not str(tenant_id or "").strip():
@@ -281,8 +298,11 @@ def calculate_forecast_precision(
     feedbacks: Iterable[ForecastFeedback | Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Calculate forecast precision metrics, excluding periods marked by CONTEXT_ANNOTATION."""
-    clean_observations = filter_training_observations(actual_observations, feedbacks)
-    all_obs_count = len(list(actual_observations))
+    # Materialize one-shot inputs once.  Filtering then operates on the stable
+    # list, and the same list supplies the unfiltered count.
+    materialized_observations = list(actual_observations)
+    clean_observations = filter_training_observations(materialized_observations, feedbacks)
+    all_obs_count = len(materialized_observations)
 
     if not clean_observations:
         return {
