@@ -1073,6 +1073,44 @@ def test_the_lease_input_is_optional_so_the_build_phase_can_run_without_one() ->
     assert set(phase["options"]) == {"build", "deploy"}
 
 
+def test_workflow_dispatch_declares_masked_snapshot_and_rollback_inputs() -> None:
+    """The build phase accepts approved masked snapshot and rollback manifest inputs."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    expected_inputs = {
+        "data_snapshot_id",
+        "data_snapshot_uri",
+        "data_snapshot_content_sha",
+        "data_snapshot_file",
+        "rollback_manifest",
+    }
+    for name in expected_inputs:
+        assert name in inputs, f"deploy-dev.yml missing {name} input"
+        assert inputs[name]["required"] is False
+        assert inputs[name]["default"] == ""
+
+
+def test_dispatch_input_descriptions_do_not_name_files_that_do_not_exist() -> None:
+    """An example path is an instruction, and a wrong one sends operators nowhere.
+
+    `rollback_manifest` once pointed at `docs/evidence/gates/PREV_RELEASE_MANIFEST.json`,
+    which has never existed in this repository.
+    """
+
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+    repo_path = re.compile(r"\b[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.(?:json|ya?ml|py|md|sh)\b")
+
+    missing = [
+        (name, candidate)
+        for name, spec in inputs.items()
+        for candidate in repo_path.findall(spec.get("description") or "")
+        if not (ROOT / candidate).exists()
+    ]
+    assert not missing, f"deploy-dev.yml inputs cite files that do not exist: {missing}"
+
+
 def test_admission_binds_the_handoff_images_to_the_manifest() -> None:
     """A lease admits this release's artifacts, not any digest presented."""
 
@@ -1095,6 +1133,7 @@ def test_the_build_phase_publishes_the_artifact_handoff_it_hands_forward() -> No
 
     handoff = _named_step(jobs["build"], "Write the build-once artifact handoff")
     run = handoff["run"]
+    env = handoff.get("env", {})
     assert "delivery_toolchain/release/build_release_handoff.py" in run
     for component in ("api", "web", "worker", "scheduler"):
         assert f'--component "{component}=' in run
@@ -1102,6 +1141,17 @@ def test_the_build_phase_publishes_the_artifact_handoff_it_hands_forward() -> No
     assert "--signature-ref" in run
     assert "--manifest-output" in run
     assert "--images-output" in run
+
+    assert "DATA_SNAPSHOT_FILE" in env
+    assert "DATA_SNAPSHOT_ID" in env
+    assert "DATA_SNAPSHOT_URI" in env
+    assert "DATA_SNAPSHOT_CONTENT_SHA" in env
+    assert "ROLLBACK_MANIFEST" in env
+    assert "--data-snapshot-file" in run
+    assert "--data-snapshot-id" in run
+    assert "--data-snapshot-uri" in run
+    assert "--data-snapshot-content-sha256" in run
+    assert "--rollback-manifest" in run
 
     # Both halves of the handoff leave the run, or a later deploy phase has
     # nothing to be dispatched with.

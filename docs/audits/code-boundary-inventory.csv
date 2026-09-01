@@ -283,6 +283,7 @@ docs/evidence/runtime/ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001/reproduce_
 docs/evidence/runtime/ODP-P10-LIVE-FLEET-STATE-REPAIR-001/verify_brief_materialization.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-P10-LIVE-FLEET-STATE-REPAIR-001/verify_fleet_state.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/verify_static_retirement.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
+docs/evidence/runtime/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001/verify_build_handoff_wiring.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001/verify_live_artifact_binding.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 infra/db/migrations/env.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/db/migrations/versions/0001_baseline.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
