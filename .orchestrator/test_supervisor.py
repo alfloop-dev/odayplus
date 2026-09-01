@@ -12215,9 +12215,127 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
 
+        # Unmerged PR with green CI: must NOT dispatch finalizer.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Unknown PR status: must NOT dispatch finalizer.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("UNKNOWN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Merged PR with non-green CI: must NOT dispatch finalizer.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "pending")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "failure")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
              unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Merged PR with ci="none": MUST dispatch finalizer (priority 1).
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "none")):
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map),
+                1,
+            )
+
+    def test_evaluate_finalize_gate_matrix(self) -> None:
+        """Verify evaluate_finalize_gate behaves identically across all PR/CI/head states."""
+        approved = "1111111122222222333333334444444455555555"
+        task = {
+            "id": "GATE-TEST-001",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": approved,
+        }
+
+        # 1. Missing approved_head
+        res = supervisor.evaluate_finalize_gate({"id": "GATE-NO-HEAD"})
+        self.assertEqual(res.status, supervisor.MISSING_APPROVED_HEAD)
+
+        # 2. Head unresolved (None)
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=None):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.HEAD_UNRESOLVED)
+
+        # 3. Head unresolved (Exception)
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", side_effect=RuntimeError("git down")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.HEAD_UNRESOLVED)
+
+        # 4. Head mismatch
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value="2222222222222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=False):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.HEAD_MISMATCH)
+
+        # 5. CI query exception -> CI_UNRESOLVED
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.CI_UNRESOLVED)
+
+        # 6. CI pending -> CI_PENDING
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.CI_PENDING)
+
+        # 7. CI failure -> CI_FAILURE
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "failure")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.CI_FAILURE)
+
+        # 8. CI unknown -> CI_UNRESOLVED
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.CI_UNRESOLVED)
+
+        # 9. PR not merged (OPEN + success) -> PR_NOT_MERGED
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.PR_NOT_MERGED)
+
+        # 10. PR not merged (UNKNOWN + success) -> PR_NOT_MERGED
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("UNKNOWN", "success")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.PR_NOT_MERGED)
+
+        # 11. PR merged + success -> READY
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.READY)
+
+        # 12. PR merged + none -> READY
+        with unittest.mock.patch("ai_status.resolve_task_checkout_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "none")):
+            res = supervisor.evaluate_finalize_gate(task)
+            self.assertEqual(res.status, supervisor.READY)
 
     def test_approve_fails_closed_when_approved_head_cannot_be_resolved(self) -> None:
         """B20: approving without freezing a head silently disables the freeze.
