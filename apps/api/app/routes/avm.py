@@ -60,6 +60,24 @@ else:
         reason: str = ""
 
 
+    class DealOutcomePayload(BaseModel):
+        valuation_id: str = Field(min_length=1)
+        store_id: str = Field(min_length=1)
+        sold: bool
+        settlement_price: float | None = None
+        settlement_date: str | None = None
+        duration_days: float = 0.0
+        no_deal_reason_code: str | None = None
+        deal_terms: dict[str, Any] = Field(default_factory=dict)
+        source_authority: str = "official_dealroom"
+
+
+    class DealOutcomeExportPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        role: str = "finance_legal"
+        reason: str = ""
+
+
     def create_avm_router(
         *,
         repository: InMemoryAVMRepository | None = None,
@@ -419,6 +437,76 @@ else:
                 )
             return latest.to_dict()
 
+        @router.post("/deal-outcomes", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("avm", Action.CREATE, engine=authz_engine))])
+        def record_deal_outcome(body: DealOutcomePayload, request: Request) -> dict[str, Any]:
+            outcome = _run(lambda: service.record_deal_outcome(body.model_dump()))
+            payload = outcome.to_dict()
+            payload["audit_event_id"] = _audit(
+                event_type="avm.deal_outcome_recorded.v1",
+                actor="system",
+                action="record_deal_outcome",
+                resource=f"avm/deal_outcomes/{outcome.outcome_id}",
+                outcome="recorded",
+                request=request,
+                metadata={
+                    "outcome_id": outcome.outcome_id,
+                    "valuation_id": outcome.valuation_id,
+                    "sold": outcome.sold,
+                },
+            )
+            return payload
+
+        @router.get("/deal-outcomes", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
+        def list_deal_outcomes(request: Request) -> dict[str, Any]:
+            from modules.avm.application.calibration import is_finance_view_authorized
+            principal = getattr(request.state, "operator_principal", None)
+            finance_authorized = is_finance_view_authorized(principal)
+            items = service.list_deal_outcomes()
+            return {
+                "items": [
+                    item.to_dict(redact_settlement_price=not finance_authorized)
+                    for item in items
+                ],
+                "count": len(items),
+                "finance_authorized": finance_authorized,
+            }
+
+        @router.get("/deal-outcomes/{outcome_id}", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
+        def get_deal_outcome(outcome_id: str, request: Request) -> dict[str, Any]:
+            from modules.avm.application.calibration import is_finance_view_authorized
+            outcome = service.get_deal_outcome(outcome_id)
+            if outcome is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="deal outcome not found")
+            principal = getattr(request.state, "operator_principal", None)
+            finance_authorized = is_finance_view_authorized(principal)
+            return outcome.to_dict(redact_settlement_price=not finance_authorized)
+
+        @router.post("/deal-outcomes/export", dependencies=[Depends(require_permission("avm", Action.EXPORT, engine=authz_engine))])
+        def export_deal_outcomes(body: DealOutcomeExportPayload, request: Request) -> dict[str, Any]:
+            from modules.avm.application.calibration import record_deal_outcome_export_audit
+            items = service.list_deal_outcomes()
+            export_result = record_deal_outcome_export_audit(
+                actor_id=body.actor,
+                role=body.role,
+                deal_outcomes=items,
+                audit_log=active_audit_log,
+                tenant_id=tenant_id(request),
+                correlation_id=request.state.correlation_id,
+            )
+            return {
+                "export_metadata": export_result,
+                "items": [item.to_dict(redact_settlement_price=False) for item in items],
+                "count": len(items),
+            }
+
+        @router.post("/calibration", dependencies=[Depends(require_permission("avm", Action.VIEW, engine=authz_engine))])
+        def calibrate_outcomes(request: Request) -> dict[str, Any]:
+            from modules.avm.application.calibration import is_finance_view_authorized
+            principal = getattr(request.state, "operator_principal", None)
+            finance_authorized = is_finance_view_authorized(principal)
+            report = _run(lambda: service.calibrate_deal_outcomes())
+            return report.to_dict(redact_settlement_price=not finance_authorized)
+
         return router
 
 
@@ -429,6 +517,8 @@ else:
         "AVMCasePayload",
         "ActorPayload",
         "DataRoomExportPayload",
+        "DealOutcomeExportPayload",
+        "DealOutcomePayload",
         "FinanceApprovalPayload",
         "create_avm_router",
     ]

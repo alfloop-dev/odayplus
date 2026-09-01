@@ -10,15 +10,12 @@
 -- 建立 identity schema（冪等）
 CREATE SCHEMA IF NOT EXISTS identity;
 
--- 啟用 uuid-ossp 擴充（若尚未啟用）
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 -- ============================================================================
 -- 1. identity.accounts — 帳號主表
 -- Contract §2.2: status ∈ {invited, active, disabled, locked}
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS identity.accounts (
-    account_id      UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    account_id      UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID            NOT NULL,
     username        VARCHAR(255)    NOT NULL,
     email           VARCHAR(320)    NOT NULL,
@@ -96,7 +93,7 @@ CREATE TABLE IF NOT EXISTS identity.account_scopes (
 -- Contract §2.2, §5: provider ∈ {local_password, oidc}
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS identity.sessions (
-    session_id          UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id          UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     account_id          UUID            NOT NULL
                         REFERENCES identity.accounts(account_id) ON DELETE CASCADE,
     provider            VARCHAR(20)     NOT NULL
@@ -123,7 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_active
 -- Contract §2.2, §7: 單次使用，TTL ≤ 72 小時
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS identity.invitations (
-    invitation_id   UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    invitation_id   UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id       UUID            NOT NULL,
     email           VARCHAR(320)    NOT NULL,
     token_hash      TEXT            NOT NULL,
