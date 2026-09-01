@@ -683,10 +683,17 @@ def observe_worker_worktree_activity(
             materialized_paths=materialized_paths,
         )
         dirty_mtimes: list[datetime] = []
-        for _code, rel_path in blocking_entries:
+        for code, rel_path in blocking_entries:
             try:
                 metadata = (worktree_path / rel_path).lstat()
                 dirty_mtimes.append(datetime.fromtimestamp(metadata.st_mtime, tz=UTC))
+            except FileNotFoundError:
+                # A deleted tracked path is expected to be absent at this
+                # point. Keep the rest of this status sample: another dirty
+                # path may still provide valid activity evidence.
+                if "D" in code:
+                    continue
+                return _worker_worktree_activity_failure(worker, "dirty_mtime_unreadable")
             except (OSError, OverflowError, ValueError):
                 # A dirty path whose timestamp cannot be read is not evidence
                 # of activity. Do not let a partial status sample keep a worker

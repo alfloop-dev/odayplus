@@ -7145,7 +7145,8 @@ class WorkerWorktreeActivityTests(unittest.TestCase):
         self._git("config", "user.email", "tests@example.invalid")
         self._git("config", "user.name", "Supervisor tests")
         (self.repo / "tracked.txt").write_text("base\n", encoding="utf-8")
-        self._git("add", "tracked.txt")
+        (self.repo / "deleted.txt").write_text("base\n", encoding="utf-8")
+        self._git("add", "tracked.txt", "deleted.txt")
         self._git("commit", "-m", "base")
         self._git("worktree", "add", "-b", "task/ACTIVITY-001", str(self.worktree), "dev")
 
@@ -7261,6 +7262,29 @@ class WorkerWorktreeActivityTests(unittest.TestCase):
 
         self.assertTrue(self._poll(self._config(), state, task))
         self.assertEqual(state["workers"]["run-activity-1"]["status"], "stalled")
+
+    def test_mixed_modified_and_deleted_worktree_keeps_modified_activity(self) -> None:
+        head_sha = self._git("rev-parse", "HEAD")
+        old = "2026-08-31T00:00:00Z"
+        (self.worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        (self.worktree / "deleted.txt").unlink()
+        now = datetime.now(UTC)
+        os.utime(self.worktree / "tracked.txt", (now.timestamp(), now.timestamp()))
+        state = {
+            "queue": {"events": {"evt-activity-1": {"status": "started"}}},
+            "workers": {
+                "run-activity-1": self._worker(dirty_mtime_at=old, head_sha=head_sha)
+            },
+        }
+        task = {"id": "ACTIVITY-001", "status": "in_progress", "owner": "Codex", "reviewer": "Codex"}
+
+        self.assertTrue(self._poll(self._config(), state, task))
+        worker = state["workers"]["run-activity-1"]
+        self.assertEqual(worker["status"], "running")
+        activity = worker["worktree_activity"]
+        self.assertEqual(activity["status"], "verified")
+        self.assertEqual(activity["dirty_path_count"], 2)
+        self.assertGreater(activity["last_activity_at"], old)
 
 
 class SingleSupervisorGuardTests(unittest.TestCase):
