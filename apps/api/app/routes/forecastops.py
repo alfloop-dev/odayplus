@@ -36,13 +36,8 @@ else:
     )
     from modules.forecastops.domain import (
         FeedbackStatus,
-        FeedbackType,
-        ForecastFeedback,
         ForecastOpsError,
         ForecastOpsNotFoundError,
-        calculate_forecast_precision,
-        filter_training_observations,
-        validate_feedback_payload,
     )
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
     from modules.forecastops.runtime import (

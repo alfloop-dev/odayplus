@@ -9,7 +9,6 @@ from uuid import uuid4
 
 from modules.forecastops.domain.forecasting import (
     ForecastOpsError,
-    ForecastOpsNotFoundError,
     ForecastOutput,
     StoreDayObservation,
     _parse_date,

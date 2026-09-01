@@ -1,33 +1,25 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.forecastops import (
-    Alert,
-    AlertLevel,
     FeedbackStatus,
     FeedbackType,
     ForecastFeedback,
     ForecastInput,
     ForecastOpsError,
-    ForecastOpsNotFoundError,
     ForecastOpsService,
-    ForecastOutput,
     InMemoryForecastOpsRepository,
     StoreDayObservation,
-    calculate_forecast_precision,
-    filter_training_observations,
-    validate_feedback_payload,
 )
 from shared.auth import Role
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.repositories import DurableForecastOpsRepository
 from tests.integration._authz import (
-    EXTERNAL_DATA_HEADERS,
     FORECASTOPS_HEADERS,
     auth_headers,
 )
