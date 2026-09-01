@@ -312,25 +312,6 @@ def main(argv: list[str] | None = None) -> int:
     if args.data_snapshot_file:
         try:
             data_snapshot = json.loads(args.data_snapshot_file.read_text(encoding="utf-8"))
-            if isinstance(data_snapshot, dict):
-                if "content_sha256" not in data_snapshot:
-                    if "content_sha" in data_snapshot:
-                        data_snapshot["content_sha256"] = data_snapshot["content_sha"]
-                    elif "sha256" in data_snapshot:
-                        data_snapshot["content_sha256"] = data_snapshot["sha256"]
-                if "content_sha256" in data_snapshot and isinstance(
-                    data_snapshot["content_sha256"], str
-                ):
-                    c_sha = data_snapshot["content_sha256"].strip()
-                    if len(c_sha) == 64 and re.fullmatch(r"[0-9a-f]{64}", c_sha):
-                        data_snapshot["content_sha256"] = f"sha256:{c_sha}"
-                if "data_contract_digest" not in data_snapshot:
-                    data_snapshot["data_contract_digest"] = (
-                        args.data_snapshot_contract_digest
-                        or compute_data_contract_digest(root=ROOT)
-                    )
-                if "masked" not in data_snapshot:
-                    data_snapshot["masked"] = not args.data_snapshot_unmasked
         except (OSError, json.JSONDecodeError) as exc:
             print(f"無法讀取 data snapshot 檔案 {args.data_snapshot_file}：{exc}", file=sys.stderr)
             return 1

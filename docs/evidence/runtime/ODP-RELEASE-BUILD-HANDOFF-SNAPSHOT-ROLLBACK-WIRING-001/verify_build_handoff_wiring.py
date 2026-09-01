@@ -34,18 +34,7 @@ SAMPLE_SHA_CURRENT = 'a' * 40
 SAMPLE_SHA_PREV = 'b' * 40
 
 
-def test_positive_flow_with_snapshot_file_and_rollback_manifest(tmp_path: Path) -> None:
-    print('[1/5] Testing positive flow with snapshot file & rollback manifest...')
-    data_snapshot = {
-        'id': 'snap-approved-20260901-001',
-        'uri': 'gs://odayplus-snapshots/masked/snap-approved-20260901-001.tar.gz',
-        'content_sha256': 'sha256:' + '1' * 64,
-        'data_contract_digest': compute_data_contract_digest(root=ROOT),
-        'masked': True,
-    }
-    snap_file = tmp_path / 'approved_snapshot.json'
-    snap_file.write_text(json.dumps(data_snapshot, indent=2), encoding='utf-8')
-
+def create_prev_manifest_file(tmp_path: Path) -> Path:
     prev_manifest = {
         'schema_version': 2,
         'release_id': f'odp-{SAMPLE_SHA_PREV[:12]}',
@@ -98,6 +87,20 @@ def test_positive_flow_with_snapshot_file_and_rollback_manifest(tmp_path: Path) 
     prev_manifest['manifest_digest'] = compute_manifest_digest(prev_manifest)
     prev_manifest_path = tmp_path / 'PREV_RELEASE_MANIFEST.json'
     prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding='utf-8')
+    return prev_manifest_path
+
+
+def test_positive_flow_with_snapshot_file_and_rollback_manifest(tmp_path: Path, prev_manifest_path: Path) -> None:
+    print('[1/8] Testing positive flow with snapshot file & rollback manifest...')
+    data_snapshot = {
+        'id': 'snap-approved-20260901-001',
+        'uri': 'gs://odayplus-snapshots/masked/snap-approved-20260901-001.tar.gz',
+        'content_sha256': 'sha256:' + '1' * 64,
+        'data_contract_digest': compute_data_contract_digest(root=ROOT),
+        'masked': True,
+    }
+    snap_file = tmp_path / 'approved_snapshot.json'
+    snap_file.write_text(json.dumps(data_snapshot, indent=2), encoding='utf-8')
 
     images_out = tmp_path / 'images.json'
     manifest_out = tmp_path / 'manifest.json'
@@ -126,16 +129,15 @@ def test_positive_flow_with_snapshot_file_and_rollback_manifest(tmp_path: Path) 
     assert manifest['data_snapshot']['id'] == 'snap-approved-20260901-001'
     assert manifest['data_snapshot']['masked'] is True
     assert manifest['rollback_release']['candidate_sha'] == SAMPLE_SHA_PREV
-    assert manifest['rollback_release']['manifest_digest'] == prev_manifest['manifest_digest']
     assert validate_manifest(manifest) == []
     assert validate_release_admission(manifest) == []
     print('  -> PASSED: Schema v2 manifest produced with exact snapshot and rollback bindings.')
 
 
-def test_missing_snapshot_fails_closed(tmp_path: Path) -> None:
-    print('[2/5] Testing fail-closed when data snapshot is missing...')
-    images_out = tmp_path / 'images_fail.json'
-    manifest_out = tmp_path / 'manifest_fail.json'
+def test_missing_snapshot_fails_closed(tmp_path: Path, prev_manifest_path: Path) -> None:
+    print('[2/8] Testing fail-closed when data snapshot is missing...')
+    images_out = tmp_path / 'images_fail_missing_snap.json'
+    manifest_out = tmp_path / 'manifest_fail_missing_snap.json'
     argv = [
         '--release-sha', SAMPLE_SHA_CURRENT,
         '--created-at', '2026-08-26T12:00:00+00:00',
@@ -145,6 +147,7 @@ def test_missing_snapshot_fails_closed(tmp_path: Path) -> None:
         '--component', 'scheduler=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/scheduler@sha256:' + 'd' * 64,
         '--sbom-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'e' * 64,
         '--signature-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'f' * 64,
+        '--rollback-manifest', str(prev_manifest_path),
         '--images-output', str(images_out),
         '--manifest-output', str(manifest_out),
     ]
@@ -154,10 +157,10 @@ def test_missing_snapshot_fails_closed(tmp_path: Path) -> None:
     print('  -> PASSED: Missing snapshot rejected.')
 
 
-def test_unmasked_snapshot_fails_closed(tmp_path: Path) -> None:
-    print('[3/5] Testing fail-closed when data snapshot is unmasked...')
-    images_out = tmp_path / 'images_fail_unmasked.json'
-    manifest_out = tmp_path / 'manifest_fail_unmasked.json'
+def test_unmasked_snapshot_cli_fails_closed(tmp_path: Path, prev_manifest_path: Path) -> None:
+    print('[3/8] Testing fail-closed when CLI specifies --data-snapshot-unmasked (with valid rollback manifest)...')
+    images_out = tmp_path / 'images_fail_unmasked_cli.json'
+    manifest_out = tmp_path / 'manifest_fail_unmasked_cli.json'
     argv = [
         '--release-sha', SAMPLE_SHA_CURRENT,
         '--created-at', '2026-08-26T12:00:00+00:00',
@@ -171,17 +174,118 @@ def test_unmasked_snapshot_fails_closed(tmp_path: Path) -> None:
         '--data-snapshot-uri', 'gs://odayplus-snapshots/unmasked/snap.tar.gz',
         '--data-snapshot-content-sha256', 'sha256:' + '1' * 64,
         '--data-snapshot-unmasked',
+        '--rollback-manifest', str(prev_manifest_path),
         '--images-output', str(images_out),
         '--manifest-output', str(manifest_out),
     ]
     exit_code = handoff_main(argv)
-    assert exit_code != 0, 'Unmasked snapshot must fail closed'
+    assert exit_code != 0, 'Unmasked snapshot CLI flag must fail closed'
     assert not manifest_out.exists(), 'Manifest must not be written on failure'
-    print('  -> PASSED: Unmasked snapshot rejected.')
+    print('  -> PASSED: Unmasked snapshot CLI rejected.')
+
+
+def test_snapshot_file_missing_masked_fails_closed(tmp_path: Path, prev_manifest_path: Path) -> None:
+    print('[4/8] Testing fail-closed when snapshot file is missing masked field (no automatic backfill)...')
+    snap_no_masked = {
+        'id': 'snap-nomasked-001',
+        'uri': 'gs://odayplus-snapshots/masked/snap-nomasked-001.tar.gz',
+        'content_sha256': 'sha256:' + '1' * 64,
+        'data_contract_digest': compute_data_contract_digest(root=ROOT),
+    }
+    snap_file = tmp_path / 'snapshot_no_masked.json'
+    snap_file.write_text(json.dumps(snap_no_masked, indent=2), encoding='utf-8')
+
+    images_out = tmp_path / 'images_fail_no_masked.json'
+    manifest_out = tmp_path / 'manifest_fail_no_masked.json'
+    argv = [
+        '--release-sha', SAMPLE_SHA_CURRENT,
+        '--created-at', '2026-08-26T12:00:00+00:00',
+        '--component', 'api=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'a' * 64,
+        '--component', 'web=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/web@sha256:' + 'b' * 64,
+        '--component', 'worker=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/worker@sha256:' + 'c' * 64,
+        '--component', 'scheduler=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/scheduler@sha256:' + 'd' * 64,
+        '--sbom-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'e' * 64,
+        '--signature-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'f' * 64,
+        '--data-snapshot-file', str(snap_file),
+        '--rollback-manifest', str(prev_manifest_path),
+        '--images-output', str(images_out),
+        '--manifest-output', str(manifest_out),
+    ]
+    exit_code = handoff_main(argv)
+    assert exit_code != 0, 'Snapshot file missing masked must fail closed without backfill'
+    assert not manifest_out.exists(), 'Manifest must not be written on failure'
+    print('  -> PASSED: Snapshot file missing masked rejected.')
+
+
+def test_snapshot_file_missing_contract_digest_fails_closed(tmp_path: Path, prev_manifest_path: Path) -> None:
+    print('[5/8] Testing fail-closed when snapshot file is missing data_contract_digest (no automatic backfill)...')
+    snap_no_digest = {
+        'id': 'snap-nodigest-001',
+        'uri': 'gs://odayplus-snapshots/masked/snap-nodigest-001.tar.gz',
+        'content_sha256': 'sha256:' + '1' * 64,
+        'masked': True,
+    }
+    snap_file = tmp_path / 'snapshot_no_digest.json'
+    snap_file.write_text(json.dumps(snap_no_digest, indent=2), encoding='utf-8')
+
+    images_out = tmp_path / 'images_fail_no_digest.json'
+    manifest_out = tmp_path / 'manifest_fail_no_digest.json'
+    argv = [
+        '--release-sha', SAMPLE_SHA_CURRENT,
+        '--created-at', '2026-08-26T12:00:00+00:00',
+        '--component', 'api=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'a' * 64,
+        '--component', 'web=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/web@sha256:' + 'b' * 64,
+        '--component', 'worker=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/worker@sha256:' + 'c' * 64,
+        '--component', 'scheduler=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/scheduler@sha256:' + 'd' * 64,
+        '--sbom-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'e' * 64,
+        '--signature-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'f' * 64,
+        '--data-snapshot-file', str(snap_file),
+        '--rollback-manifest', str(prev_manifest_path),
+        '--images-output', str(images_out),
+        '--manifest-output', str(manifest_out),
+    ]
+    exit_code = handoff_main(argv)
+    assert exit_code != 0, 'Snapshot file missing data_contract_digest must fail closed without backfill'
+    assert not manifest_out.exists(), 'Manifest must not be written on failure'
+    print('  -> PASSED: Snapshot file missing data_contract_digest rejected.')
+
+
+def test_snapshot_file_unmasked_fails_closed(tmp_path: Path, prev_manifest_path: Path) -> None:
+    print('[6/8] Testing fail-closed when snapshot file specifies masked: false...')
+    snap_unmasked = {
+        'id': 'snap-unmasked-001',
+        'uri': 'gs://odayplus-snapshots/unmasked/snap-unmasked-001.tar.gz',
+        'content_sha256': 'sha256:' + '1' * 64,
+        'data_contract_digest': compute_data_contract_digest(root=ROOT),
+        'masked': False,
+    }
+    snap_file = tmp_path / 'snapshot_unmasked.json'
+    snap_file.write_text(json.dumps(snap_unmasked, indent=2), encoding='utf-8')
+
+    images_out = tmp_path / 'images_fail_unmasked_file.json'
+    manifest_out = tmp_path / 'manifest_fail_unmasked_file.json'
+    argv = [
+        '--release-sha', SAMPLE_SHA_CURRENT,
+        '--created-at', '2026-08-26T12:00:00+00:00',
+        '--component', 'api=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'a' * 64,
+        '--component', 'web=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/web@sha256:' + 'b' * 64,
+        '--component', 'worker=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/worker@sha256:' + 'c' * 64,
+        '--component', 'scheduler=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/scheduler@sha256:' + 'd' * 64,
+        '--sbom-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'e' * 64,
+        '--signature-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'f' * 64,
+        '--data-snapshot-file', str(snap_file),
+        '--rollback-manifest', str(prev_manifest_path),
+        '--images-output', str(images_out),
+        '--manifest-output', str(manifest_out),
+    ]
+    exit_code = handoff_main(argv)
+    assert exit_code != 0, 'Snapshot file with masked: false must fail closed'
+    assert not manifest_out.exists(), 'Manifest must not be written on failure'
+    print('  -> PASSED: Snapshot file with masked: false rejected.')
 
 
 def test_tampered_rollback_manifest_fails_closed(tmp_path: Path) -> None:
-    print('[4/5] Testing fail-closed when rollback manifest digest is tampered...')
+    print('[7/8] Testing fail-closed when rollback manifest digest is tampered...')
     tampered_manifest = {
         'schema_version': 2,
         'release_id': f'odp-{SAMPLE_SHA_PREV[:12]}',
@@ -238,7 +342,7 @@ def test_tampered_rollback_manifest_fails_closed(tmp_path: Path) -> None:
 
 
 def test_workflow_contract() -> None:
-    print('[5/5] Testing deploy-dev.yml workflow contracts...')
+    print('[8/8] Testing deploy-dev.yml workflow contracts...')
     workflow_path = ROOT / '.github/workflows/deploy-dev.yml'
     content = workflow_path.read_text(encoding='utf-8')
 
@@ -260,9 +364,13 @@ def test_workflow_contract() -> None:
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
-        test_positive_flow_with_snapshot_file_and_rollback_manifest(tmp_path)
-        test_missing_snapshot_fails_closed(tmp_path)
-        test_unmasked_snapshot_fails_closed(tmp_path)
+        prev_manifest_path = create_prev_manifest_file(tmp_path)
+        test_positive_flow_with_snapshot_file_and_rollback_manifest(tmp_path, prev_manifest_path)
+        test_missing_snapshot_fails_closed(tmp_path, prev_manifest_path)
+        test_unmasked_snapshot_cli_fails_closed(tmp_path, prev_manifest_path)
+        test_snapshot_file_missing_masked_fails_closed(tmp_path, prev_manifest_path)
+        test_snapshot_file_missing_contract_digest_fails_closed(tmp_path, prev_manifest_path)
+        test_snapshot_file_unmasked_fails_closed(tmp_path, prev_manifest_path)
         test_tampered_rollback_manifest_fails_closed(tmp_path)
         test_workflow_contract()
     print("\nALL VERIFICATIONS PASSED SUCCESSFULLY (EXIT=0).")

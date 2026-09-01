@@ -568,6 +568,188 @@ def test_data_snapshot_file_option(tmp_path: Path) -> None:
     assert validate_release_admission(manifest) == []
 
 
+def test_data_snapshot_file_missing_masked_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap.pop("masked")
+    snap_file = tmp_path / "missing_masked_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_unmasked_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap["masked"] = False
+    snap_file = tmp_path / "unmasked_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_missing_data_contract_digest_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap.pop("data_contract_digest")
+    snap_file = tmp_path / "missing_digest_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_mismatched_data_contract_digest_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap["data_contract_digest"] = "sha256:" + "0" * 64
+    snap_file = tmp_path / "mismatched_digest_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_non_dict_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "list_snapshot.json"
+    snap_file.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_invalid_json_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "invalid_json_snapshot.json"
+    snap_file.write_text("{not valid json", encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_nonexistent_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "nonexistent_snapshot.json"
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
 def test_data_snapshot_content_sha_alias_and_hex_normalization(tmp_path: Path) -> None:
     raw_hex = "e" * 64
     _, prev_manifest = handoff(release_sha="0" * 40)
