@@ -175,6 +175,8 @@ class HeatZoneV3ScoreResult:
     absorption_measured: bool = False
     absorption_ratio: float | None = None
     absorption_basis_source_ids: tuple[str, ...] = ()
+    absorption_excluded_store_ids: tuple[str, ...] = ()
+    absorption_excluded_reasons: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -210,6 +212,8 @@ class HeatZoneV3ScoreResult:
             "absorption_measured": self.absorption_measured,
             "absorption_ratio": self.absorption_ratio,
             "absorption_basis_source_ids": list(self.absorption_basis_source_ids),
+            "absorption_excluded_store_ids": list(self.absorption_excluded_store_ids),
+            "absorption_excluded_reasons": dict(self.absorption_excluded_reasons),
         }
 
     def to_map_feature(self) -> dict[str, Any]:
@@ -239,6 +243,7 @@ class HeatZoneV3ScoreResult:
                 "reasons": list(self.reasons),
                 "absorption_measured": self.absorption_measured,
                 "absorption_ratio": self.absorption_ratio,
+                "absorption_excluded_store_ids": list(self.absorption_excluded_store_ids),
             },
         }
 
@@ -290,6 +295,12 @@ class HeatZoneV3ScoreResult:
             ),
             absorption_basis_source_ids=tuple(
                 str(s) for s in data.get("absorption_basis_source_ids", ())
+            ),
+            absorption_excluded_store_ids=tuple(
+                str(s) for s in data.get("absorption_excluded_store_ids", ())
+            ),
+            absorption_excluded_reasons=dict(
+                data.get("absorption_excluded_reasons", {})
             ),
         )
 

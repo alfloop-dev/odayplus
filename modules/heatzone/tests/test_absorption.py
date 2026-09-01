@@ -128,6 +128,8 @@ class TestRampStoresAreExcluded:
         )
         assert result.absorbed_demand == 300_000.0
         assert result.excluded_store_ids == ("s-fresh",)
+        assert "s-fresh" in result.excluded_reasons
+        assert "ramp_window" in result.excluded_reasons["s-fresh"]
         assert result.absorbing_store_count == 1
 
     def test_all_stores_in_ramp_refuses_rather_than_reporting_zero(self) -> None:
