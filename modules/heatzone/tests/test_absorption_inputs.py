@@ -558,3 +558,125 @@ class TestAdapterAndShadowIntegration:
         assert len(result.scores) == 1
         assert result.scores[0].absorption_measured is True
         assert "absorption_unmeasured" not in result.scores[0].warnings
+
+    def test_from_catchment_profile_with_absorption_inputs(self) -> None:
+        from packages.oday_data_product_contracts_client.models.catchment_profile import (
+            CatchmentProfile,
+        )
+
+        p = _perf(store_id="store-101", paid_amount=250_000.0)
+        op = _op_start(store_id="store-101")
+        cov = StoreDayCoverage(
+            store_id="store-101",
+            business_date="2026-08-31",
+            window_start="2026-08-31T00:00:00+08:00",
+            window_end="2026-08-31T23:59:59+08:00",
+            raw_contract_fingerprint="f" * 64,
+            coverage={
+                "coverage_id": "cov-101",
+                "dataset_id": "ds-1",
+                "scope_principal_id": "sp-1",
+                "state": "complete",
+                "is_complete": True,
+                "query_geometry": {"h3_index": "8928308280fffff"},
+            },
+        )
+
+        prof = CatchmentProfile.from_dict(
+            {
+                "contract_id": "emgi.catchment-profile.v1",
+                "contract_version": "1.0.0",
+                "profile_id": "cp-001",
+                "period_grain": "MONTHLY",
+                "period_key": "2026-08",
+                "origin": {
+                    "origin_id": "site-101",
+                    "origin_h3": "8928308280fffff",
+                    "latitude": 25.033,
+                    "longitude": 121.565,
+                    "origin_geom": {"type": "Point", "coordinates": [121.565, 25.033]},
+                },
+                "boundary": {
+                    "catchment_id": "catchment-xinyi-10m",
+                    "travel_mode": "pedestrian",
+                    "cutoff_seconds": 600,
+                    "routing_engine": "valhalla",
+                    "graph_version": "v1.0",
+                    "area_sq_meters": 50000.0,
+                    "estimation_status": "exact",
+                    "h3_cells": ["8928308280fffff"],
+                    "h3_resolution": 9,
+                    "total_cells_count": 1,
+                    "geom": {
+                        "type": "Polygon",
+                        "coordinates": [
+                            [
+                                [121.5, 25.0],
+                                [121.6, 25.0],
+                                [121.6, 25.1],
+                                [121.5, 25.1],
+                                [121.5, 25.0],
+                            ]
+                        ],
+                    },
+                },
+                "demographics": {"status": "available", "total_population": 5000.0},
+                "competitors": {
+                    "status": "available",
+                    "total_competitors": 2,
+                    "active_competitors": 2,
+                    "stores_by_category": {"convenience": 2},
+                },
+                "rent": {"status": "available", "mean_rent_per_ping": 2500.0},
+                "mobility": {"status": "available"},
+                "traffic": {"status": "available"},
+                "coverage": {
+                    "status": "available",
+                    "overall_readiness": "ready",
+                    "domain_coverage": {"MOBILITY": "complete"},
+                    "has_gaps": False,
+                    "readiness_reasons": [],
+                },
+                "source_support": {
+                    "source_dataset_ids": ["ds-cat"],
+                    "observation_count": 80,
+                    "sample_count": 80,
+                    "first_observed_at": "2026-01-01T00:00:00Z",
+                    "last_observed_at": "2026-08-31T00:00:00Z",
+                },
+            }
+        )
+
+        v3_input = from_catchment_profile(
+            prof,
+            store_coverage_records=[cov],
+            store_performances=[p],
+            operational_starts=[op],
+            decision_policy=_policy(),
+            as_of=AS_OF,
+            original_demand=1_000_000.0,
+        )
+
+        assert v3_input.absorption is not None
+        assert v3_input.absorption.absorbed_demand == 250_000.0
+
+    def test_from_legacy_feature_input_with_absorption_inputs(self) -> None:
+        p = _perf(store_id="8928308280fffff", paid_amount=200_000.0)
+        op = _op_start(store_id="8928308280fffff")
+        legacy = {
+            "h3_index": "8928308280fffff",
+            "existing_store_count": 1,
+            "poi_count": 10,
+        }
+
+        v3_input = from_legacy_feature_input(
+            legacy,
+            store_performances=[p],
+            operational_starts=[op],
+            decision_policy=_policy(),
+            as_of=AS_OF,
+            original_demand=1_000_000.0,
+        )
+
+        assert v3_input.absorption is not None
+        assert v3_input.absorption.absorbed_demand == 200_000.0
