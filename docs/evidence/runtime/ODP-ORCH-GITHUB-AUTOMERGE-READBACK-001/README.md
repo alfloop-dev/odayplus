@@ -1,7 +1,7 @@
 # GitHubBus auto-merge readback evidence
 
-Task: `ODP-ORCH-GITHUB-AUTOMERGE-READBACK-001`  
-Owner: `Codex`  
+Task: `ODP-ORCH-GITHUB-AUTOMERGE-READBACK-001`
+Owner: `Codex`
 Reviewer: `Antigravity6`
 
 ## Contract repaired
