@@ -469,8 +469,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
         assert score_res.absorption_ratio == 0.70
         assert "absorption_unmeasured" not in score_res.warnings
 
-    def test_multi_store_partial_refusal_uses_surviving_stores(self) -> None:
-        """When 1 of 2 stores fails refusal rules, the surviving store is used."""
+    def test_multi_store_partial_coverage_refuses_zone_fail_closed(self) -> None:
+        """When 1 of 2 stores in a zone has partial coverage, the zone fails closed."""
         p1_bad = _perf(store_id="s-bad", coverage_state=CoverageState.partial)
         op1 = _op_start(store_id="s-bad")
         p2_good = _perf(store_id="s-good", paid_amount=400_000.0)
@@ -487,10 +487,247 @@ class TestZoneAbsorptionAssemblyAndScoring:
             observation_window_start=WINDOW_START,
             observation_window_end=WINDOW_END,
         )
+        assert absorption is None, "Partial coverage on any required store must fail closed"
+
+        zone = HeatZoneV3Input(
+            h3_index="8928308280fffff",
+            population=5000.0,
+            poi_count=10,
+            own_store_count=2,
+            absorption=absorption,
+        )
+        score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
+        assert score_res.absorption_measured is False
+        assert score_res.absorption_ratio is None
+        assert score_res.state is not HeatZoneV3State.UNDER_REALIZED
+        assert "absorption_unmeasured" in score_res.warnings
+
+    def test_multi_store_with_active_window_gap_refuses_zone(self) -> None:
+        """Missing days (gaps) in active observation window fail closed."""
+        window_start = date(2026, 8, 1)
+        window_end = date(2026, 8, 5)
+        # Store 1 has all 5 days
+        p1_list = [
+            _perf(
+                store_id="s-1",
+                business_date=(window_start + timedelta(days=i)).isoformat(),
+                fingerprint=f"fp-1-{i}",
+            )
+            for i in range(5)
+        ]
+        # Store 2 is missing day 2 (index 2)
+        p2_list = [
+            _perf(
+                store_id="s-2",
+                business_date=(window_start + timedelta(days=i)).isoformat(),
+                fingerprint=f"fp-2-{i}",
+            )
+            for i in [0, 1, 3, 4]
+        ]
+        op1 = _op_start(store_id="s-1", start_date="2026-01-01")
+        op2 = _op_start(store_id="s-2", start_date="2026-01-01")
+
+        absorption = assemble_zone_absorption(
+            store_ids=["s-1", "s-2"],
+            performances=p1_list + p2_list,
+            operational_starts=[op1, op2],
+            original_demand=1_000_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            evaluated_at=EVALUATED_AT,
+            observation_window_start=window_start,
+            observation_window_end=window_end,
+        )
+        assert absorption is None, "Window gaps must refuse zone absorption"
+
+    def test_multi_store_with_duplicate_store_day_refuses_zone(self) -> None:
+        """Duplicate store-days in active observation window fail closed."""
+        window_start = date(2026, 8, 1)
+        window_end = date(2026, 8, 2)
+        p1_list = [
+            _perf(store_id="s-1", business_date="2026-08-01", fingerprint="fp-1-1"),
+            _perf(store_id="s-1", business_date="2026-08-02", fingerprint="fp-1-2"),
+        ]
+        # Store 2 has duplicate on 2026-08-01
+        p2_list = [
+            _perf(store_id="s-2", business_date="2026-08-01", fingerprint="fp-2-1a"),
+            _perf(store_id="s-2", business_date="2026-08-01", fingerprint="fp-2-1b"),
+            _perf(store_id="s-2", business_date="2026-08-02", fingerprint="fp-2-2"),
+        ]
+        op1 = _op_start(store_id="s-1", start_date="2026-01-01")
+        op2 = _op_start(store_id="s-2", start_date="2026-01-01")
+
+        absorption = assemble_zone_absorption(
+            store_ids=["s-1", "s-2"],
+            performances=p1_list + p2_list,
+            operational_starts=[op1, op2],
+            original_demand=1_000_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            evaluated_at=EVALUATED_AT,
+            observation_window_start=window_start,
+            observation_window_end=window_end,
+        )
+        assert absorption is None, "Duplicate store-days must refuse zone absorption"
+
+    def test_multi_store_missing_operational_start_refuses_zone(self) -> None:
+        """Missing operational start for any required store fails closed."""
+        p1 = _perf(store_id="s-1", paid_amount=500_000.0)
+        p2 = _perf(store_id="s-2", paid_amount=300_000.0)
+        op1 = _op_start(store_id="s-1")
+        # Store 2 missing from operational_starts
+
+        absorption = assemble_zone_absorption(
+            store_ids=["s-1", "s-2"],
+            performances=[p1, p2],
+            operational_starts=[op1],
+            original_demand=1_000_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert absorption is None
+
+    def test_multi_store_disallowed_operational_start_refuses_zone(self) -> None:
+        """Disallowed operational start method/confidence fails closed."""
+        p1 = _perf(store_id="s-1", paid_amount=500_000.0)
+        p2 = _perf(store_id="s-2", paid_amount=300_000.0)
+        op1 = _op_start(store_id="s-1")
+        op2 = _op_start(store_id="s-2", method=OperationalStartMethod.DECLARED)
+
+        absorption = assemble_zone_absorption(
+            store_ids=["s-1", "s-2"],
+            performances=[p1, p2],
+            operational_starts=[op1, op2],
+            original_demand=1_000_000.0,
+            policy=_policy(allow_declared=False),
+            as_of=AS_OF,
+            evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert absorption is None
+
+    def test_multi_store_mature_and_ramp_stores_measures_mature_and_records_excluded(
+        self,
+    ) -> None:
+        """Complete coverage with mature and ramp stores measures mature and tracks excluded stores."""
+        p_mature = _perf(store_id="s-mature", paid_amount=600_000.0, fingerprint="fp-mature")
+        op_mature = _op_start(store_id="s-mature", start_date="2026-01-01")
+        p_ramp = _perf(store_id="s-ramp", paid_amount=150_000.0, fingerprint="fp-ramp")
+        op_ramp = _op_start(store_id="s-ramp", start_date="2026-08-01")
+
+        absorption = assemble_zone_absorption(
+            store_ids=["s-mature", "s-ramp"],
+            performances=[p_mature, p_ramp],
+            operational_starts=[op_mature, op_ramp],
+            original_demand=1_000_000.0,
+            policy=_policy(min_days=90),
+            as_of=AS_OF,
+            evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
         assert isinstance(absorption, AbsorptionResult)
-        assert absorption.absorbed_demand == 400_000.0
+        assert absorption.absorbed_demand == 600_000.0
         assert absorption.absorbing_store_count == 1
-        assert absorption.basis_source_ids == (p2_good.raw_contract_fingerprint,)
+        assert absorption.basis_source_ids == ("fp-mature",)
+        assert absorption.excluded_store_ids == ("s-ramp",)
+        assert "s-ramp" in absorption.excluded_reasons
+        assert "ramp_window" in absorption.excluded_reasons["s-ramp"]
+
+        zone = HeatZoneV3Input(
+            h3_index="8928308280fffff",
+            population=5000.0,
+            poi_count=10,
+            own_store_count=2,
+            absorption=absorption,
+        )
+        score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
+        assert score_res.absorption_measured is True
+        assert score_res.absorption_excluded_store_ids == ("s-ramp",)
+        assert "s-ramp" in score_res.absorption_excluded_reasons
+
+    def test_multi_store_with_store_opened_after_observation_window(self) -> None:
+        """Store opening after the observation window is excluded with clear reason."""
+        p_mature = _perf(store_id="s-mature", paid_amount=500_000.0, fingerprint="fp-mature")
+        op_mature = _op_start(store_id="s-mature", start_date="2026-01-01")
+        op_future = _op_start(store_id="s-future", start_date="2026-09-15")
+
+        absorption = assemble_zone_absorption(
+            store_ids=["s-mature", "s-future"],
+            performances=[p_mature],
+            operational_starts=[op_mature, op_future],
+            original_demand=1_000_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert isinstance(absorption, AbsorptionResult)
+        assert absorption.absorbed_demand == 500_000.0
+        assert absorption.excluded_store_ids == ("s-future",)
+        assert absorption.excluded_reasons == {"s-future": "opened_after_observation_window"}
+
+    def test_multi_store_all_complete_coverage_accumulates_revenue(self) -> None:
+        """All mature stores with complete coverage contribute to absorbed demand."""
+        p1 = _perf(store_id="s-1", paid_amount=300_000.0, fingerprint="fp-1")
+        op1 = _op_start(store_id="s-1", start_date="2026-01-01")
+        p2 = _perf(store_id="s-2", paid_amount=400_000.0, fingerprint="fp-2")
+        op2 = _op_start(store_id="s-2", start_date="2026-01-01")
+
+        absorption = assemble_zone_absorption(
+            store_ids=["s-1", "s-2"],
+            performances=[p1, p2],
+            operational_starts=[op1, op2],
+            original_demand=1_000_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert isinstance(absorption, AbsorptionResult)
+        assert absorption.absorbed_demand == 700_000.0
+        assert absorption.absorbing_store_count == 2
+        assert absorption.basis_source_ids == ("fp-1", "fp-2")
+        assert absorption.excluded_store_ids == ()
+
+    def test_multi_store_all_valid_zero_produces_under_realized(self) -> None:
+        """Multiple stores with affirmative zero produce zero absorbed demand and UNDER_REALIZED."""
+        p1 = _perf(store_id="s-1", coverage_state=CoverageState.empty, paid_amount=None, is_valid_zero=True, fingerprint="fp-1")
+        op1 = _op_start(store_id="s-1", start_date="2026-01-01")
+        p2 = _perf(store_id="s-2", coverage_state=CoverageState.empty, paid_amount=None, is_valid_zero=True, fingerprint="fp-2")
+        op2 = _op_start(store_id="s-2", start_date="2026-01-01")
+
+        absorption = assemble_zone_absorption(
+            store_ids=["s-1", "s-2"],
+            performances=[p1, p2],
+            operational_starts=[op1, op2],
+            original_demand=1_000_000.0,
+            policy=_policy(),
+            as_of=AS_OF,
+            evaluated_at=EVALUATED_AT,
+            observation_window_start=WINDOW_START,
+            observation_window_end=WINDOW_END,
+        )
+        assert isinstance(absorption, AbsorptionResult)
+        assert absorption.absorbed_demand == 0.0
+        assert absorption.under_realized is True
+
+        zone = HeatZoneV3Input(
+            h3_index="8928308280fffff",
+            population=5000.0,
+            poi_count=10,
+            own_store_count=2,
+            absorption=absorption,
+        )
+        score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
+        assert score_res.absorption_measured is True
+        assert score_res.state is HeatZoneV3State.UNDER_REALIZED
 
     @pytest.mark.parametrize("page_size", [1, 5, 30])
     def test_absorption_is_scoped_to_explicit_window_not_page_size(

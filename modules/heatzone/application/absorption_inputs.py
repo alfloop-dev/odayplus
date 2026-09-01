@@ -345,10 +345,19 @@ def assemble_zone_absorption(
 ) -> AbsorptionResult | None:
     """Assemble observations and compute absorption for a single zone/cell.
 
+    Refusal Rules Enforced for Zone Completeness:
+    - Every required store in store_ids must have an admissible operational start observation.
+    - Every active store (opened on or before window end) must have exactly one complete,
+      unambiguous StoreDailyPerformance record for every business date in its active
+      observation window [max(window_start, opened_on), window_end].
+    - If any required store has partial coverage, missing active dates (gaps), duplicate
+      store-days, or fails refusal rules, the zone fails closed (returns None) to prevent
+      partial observations from producing misleading UNDER_REALIZED or SATURATED signals.
+
     Returns:
-        AbsorptionResult if valid eligible observations exist and compute_absorbed_demand succeeds,
-        or None if no stores are present, no observations survive refusal rules, or all stores are
-        inside the ramp window.
+        AbsorptionResult if all required stores have complete coverage and compute_absorbed_demand
+        succeeds, or None if no stores are present, any required store has incomplete coverage,
+        or all stores are inside the ramp window.
 
     Raises:
         AbsorptionInputError: If policy parameters are missing or invalid, or original_demand is invalid.
@@ -362,27 +371,173 @@ def assemble_zone_absorption(
         # is safer than making absorption depend on the caller's page size.
         return None
 
-    eval_time = evaluated_at or datetime.now(UTC)
-
     target_store_ids = set(store_ids)
     if not target_store_ids:
         return None
 
-    observations = assemble_absorbing_store_observations(
-        performances,
-        operational_starts,
-        policy=policy,
-        target_store_ids=target_store_ids,
-        observation_window_start=window[0],
-        observation_window_end=window[1],
+    window_start, window_end = window
+
+    allow_declared = _required_bool(
+        policy,
+        ALLOW_DECLARED_START_KEY,
+        "admissibility of declared operational start",
+    )
+    allow_low_conf = _required_bool(
+        policy,
+        ALLOW_LOW_CONFIDENCE_START_KEY,
+        "admissibility of low-confidence operational start",
+    )
+    allow_unknown_conf = _required_bool(
+        policy,
+        ALLOW_UNKNOWN_CONFIDENCE_START_KEY,
+        "admissibility of unknown-confidence operational start",
     )
 
-    if not observations:
+    # Build operational start lookup
+    starts_map: dict[str, OperationalStartObservation] = {}
+    if isinstance(operational_starts, Mapping):
+        for s_id, op in operational_starts.items():
+            if isinstance(op, Mapping):
+                starts_map[str(s_id)] = OperationalStartObservation.from_dict(op)
+            elif isinstance(op, OperationalStartObservation):
+                starts_map[str(s_id)] = op
+    else:
+        for op in operational_starts:
+            if isinstance(op, Mapping):
+                op_obj = OperationalStartObservation.from_dict(op)
+                starts_map[op_obj.store_id] = op_obj
+            elif isinstance(op, OperationalStartObservation):
+                starts_map[op.store_id] = op
+
+    # Verify operational start and determine active observation window for all target stores
+    active_stores: dict[str, tuple[date, date, date]] = {}
+    excluded_stores: dict[str, str] = {}
+
+    for store_id in sorted(target_store_ids):
+        op_start = starts_map.get(store_id)
+        if op_start is None:
+            # Missing start observation -> active window cannot be verified -> fail closed
+            return None
+        opened_on = _parse_date(op_start.observed_start_business_date)
+        if opened_on is None:
+            # Missing observed start business date -> fail closed
+            return None
+
+        # Method & Confidence policy check
+        method_str = (
+            op_start.method.value
+            if hasattr(op_start.method, "value")
+            else str(op_start.method)
+        ).upper()
+        if method_str == OperationalStartMethod.DECLARED.value and not allow_declared:
+            return None
+
+        conf_str = (
+            op_start.confidence.value
+            if hasattr(op_start.confidence, "value")
+            else str(op_start.confidence)
+        ).upper()
+        if conf_str == OperationalStartConfidence.LOW.value and not allow_low_conf:
+            return None
+        if conf_str == OperationalStartConfidence.UNKNOWN.value and not allow_unknown_conf:
+            return None
+
+        active_start = max(window_start, opened_on)
+        if active_start > window_end:
+            # Store opened after observation window ended
+            excluded_stores[store_id] = "opened_after_observation_window"
+        else:
+            active_stores[store_id] = (active_start, window_end, opened_on)
+
+    if not active_stores:
         return None
 
-    observations = _retain_complete_store_windows(observations, window)
-    if not observations:
-        return None
+    # Index performance records by store_id and business_date
+    store_perf_by_date: dict[str, dict[date, list[StoreDailyPerformance]]] = {}
+    for item in performances:
+        if isinstance(item, Mapping):
+            perf = StoreDailyPerformance.from_dict(item)
+        else:
+            perf = item
+
+        s_id = perf.store_id
+        if s_id not in active_stores:
+            continue
+
+        b_date = _parse_date(perf.business_date)
+        if b_date is None:
+            continue
+
+        act_start, act_end, _ = active_stores[s_id]
+        if not (act_start <= b_date <= act_end):
+            continue
+
+        store_perf_by_date.setdefault(s_id, {}).setdefault(b_date, []).append(perf)
+
+    # Verify coverage completeness for every required active store
+    observations: list[AbsorbingStoreObservation] = []
+
+    for s_id, (act_start, act_end, opened_on) in active_stores.items():
+        expected_dates = [
+            date.fromordinal(day)
+            for day in range(act_start.toordinal(), act_end.toordinal() + 1)
+        ]
+        perf_map = store_perf_by_date.get(s_id, {})
+
+        for exp_date in expected_dates:
+            records = perf_map.get(exp_date)
+            if not records or len(records) != 1:
+                # Missing active day (gap) or duplicate store-day -> fail closed
+                return None
+
+            p = records[0]
+
+            # Refusal Rule 1: Coverage completeness check
+            cov_state = (
+                p.coverage_state.value
+                if hasattr(p.coverage_state, "value")
+                else str(p.coverage_state).lower()
+            )
+            if cov_state not in (CoverageState.complete.value, CoverageState.empty.value) or not p.is_complete:
+                # Incomplete coverage on active day -> fail closed
+                return None
+            if cov_state == CoverageState.empty.value and not p.is_valid_zero:
+                # Empty without affirmative zero -> fail closed
+                return None
+
+            # Refusal Rule 2: Paid amount check
+            if p.paid_amount is None:
+                if not p.is_valid_zero:
+                    return None
+                actual_revenue = 0.0
+            else:
+                try:
+                    actual_revenue = float(p.paid_amount)
+                except (TypeError, ValueError) as exc:
+                    raise AbsorptionInputError(
+                        f"store {s_id} on {p.business_date}: paid_amount={p.paid_amount!r} is not a valid number"
+                    ) from exc
+                if actual_revenue < 0:
+                    raise AbsorptionInputError(
+                        f"store {s_id} on {p.business_date}: negative actual revenue {actual_revenue}"
+                    )
+
+            # Refusal Rule 6: Source snapshot ID from raw_contract_fingerprint
+            source_snapshot_id = p.raw_contract_fingerprint
+            if not source_snapshot_id or not str(source_snapshot_id).strip():
+                return None
+
+            observations.append(
+                AbsorbingStoreObservation(
+                    store_id=s_id,
+                    business_date=exp_date,
+                    actual_revenue=actual_revenue,
+                    opened_on=opened_on,
+                    source_snapshot_id=str(source_snapshot_id),
+                )
+            )
+
+    eval_time = evaluated_at or datetime.now(UTC)
 
     try:
         return compute_absorbed_demand(
@@ -391,6 +546,7 @@ def assemble_zone_absorption(
             policy=policy,
             as_of=as_of,
             evaluated_at=eval_time,
+            excluded_stores=excluded_stores,
         )
     except AbsorptionNotMeasurableError:
         return None

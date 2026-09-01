@@ -32,7 +32,7 @@ not working, which is a different decision from either.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -119,6 +119,7 @@ class AbsorptionResult:
     basis_source_ids: tuple[str, ...]
     excluded_store_ids: tuple[str, ...] = field(default_factory=tuple)
     under_realized: bool = False
+    excluded_reasons: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -131,6 +132,7 @@ class AbsorptionResult:
             "basis_at": self.basis_at.isoformat(),
             "basis_source_ids": list(self.basis_source_ids),
             "excluded_store_ids": list(self.excluded_store_ids),
+            "excluded_reasons": dict(self.excluded_reasons),
         }
 
 
@@ -188,6 +190,7 @@ def compute_absorbed_demand(
     policy: DecisionPolicy,
     as_of: date,
     evaluated_at: datetime,
+    excluded_stores: Mapping[str, str] | None = None,
 ) -> AbsorptionResult:
     """Absorbed and remaining demand for one zone, from realised revenue only.
 
@@ -214,6 +217,8 @@ def compute_absorbed_demand(
 
     eligible: list[AbsorbingStoreObservation] = []
     excluded: set[str] = set()
+    excluded_reasons: dict[str, str] = dict(excluded_stores or {})
+    excluded.update(excluded_reasons.keys())
     min_days = _min_observation_days(policy)
     under_realized_ratio = _under_realized_ratio(policy)
 
@@ -229,6 +234,7 @@ def compute_absorbed_demand(
             )
         if obs.observation_days(as_of) < min_days:
             excluded.add(obs.store_id)
+            excluded_reasons[obs.store_id] = f"ramp_window (<{min_days}d)"
             continue
         eligible.append(obs)
 
@@ -253,4 +259,5 @@ def compute_absorbed_demand(
         basis_source_ids=tuple(sorted({obs.source_snapshot_id for obs in eligible})),
         excluded_store_ids=tuple(sorted(excluded)),
         under_realized=ratio < under_realized_ratio,
+        excluded_reasons=dict(sorted(excluded_reasons.items())),
     )
