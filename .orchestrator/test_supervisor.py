@@ -11792,6 +11792,159 @@ class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
         self.assertEqual(scan["removed"], 1)
         self.assertEqual(scan["skipped"], {})
 
+    # --- reclaim decisions that the accounting above made visible ---
+
+    def _unmerged_clean_case(self, state: dict, settlement: dict, *, reclaims: bool):
+        """A clean worktree whose branch never merged, owned by a task the board reads as `settlement`.
+
+        When `reclaims` is False the status and remove commands are withheld,
+        so the refusal is asserted by the stub raising if either one runs.
+        """
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        runs = {("git", "branch", "--merged"): self._completed("")}
+        if reclaims:
+            runs[("git", "-C", record_path, "status", "--porcelain")] = self._completed("")
+            runs[("git", "-C", "/repo", "worktree", "remove", record_path)] = self._completed()
+        with (
+            mock.patch.object(supervisor, "_task_board_settlement_index", return_value=settlement),
+            # A reclaim that happens writes the success log, and this config
+            # carries no activity_log path.
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            return self._scan(state, [{"worktree": record_path, "branch": "refs/heads/task/X"}], runs)
+
+    def test_a_settled_tasks_clean_worktree_is_reclaimed_though_it_never_merged(self) -> None:
+        """A finished task's branch will not become mergeable later.
+
+        `branch_not_merged` refused 17 of 68 worktrees on the live host and
+        would have refused them for as long as the disk lasted: each task was
+        done, each branch had been abandoned or squashed away, and no later
+        event could change either fact. What the merge check protects is the
+        commits, and those live in the repository -- the ref is not touched
+        here, so the checkout is the only thing removal takes.
+        """
+        state: dict = {}
+        self.assertTrue(self._unmerged_clean_case(state, {"TASK-X": "settled"}, reclaims=True))
+        scan = self._last_scan(state)
+        self.assertEqual(scan["removed"], 1)
+        self.assertEqual(scan["settled_unmerged_reclaimed"], 1)
+        self.assertEqual(scan["skipped"], {})
+
+    def test_an_unfinished_tasks_unmerged_worktree_is_still_refused(self) -> None:
+        """Work that can still resume keeps its checkout, merged or not."""
+        state: dict = {}
+        self.assertFalse(self._unmerged_clean_case(state, {"TASK-X": "active"}, reclaims=False))
+        self.assertEqual(self._last_scan(state)["skipped"], {"branch_not_merged": 1})
+
+    def test_a_worktree_no_task_explains_keeps_the_merge_requirement(self) -> None:
+        """`unknown` is not a synonym for settled.
+
+        A directory naming no task the board or the archive carries is one this
+        function cannot explain, and an absence of evidence is not evidence of
+        settlement. Such a worktree is reclaimed only on the original terms.
+        """
+        state: dict = {}
+        self.assertFalse(self._unmerged_clean_case(state, {}, reclaims=False))
+        self.assertEqual(self._last_scan(state)["skipped"], {"branch_not_merged": 1})
+
+    def test_settlement_does_not_excuse_a_dirty_worktree(self) -> None:
+        """Relaxing the merge rule must not relax the one guarding owner work."""
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        state: dict = {}
+        with mock.patch.object(
+            supervisor, "_task_board_settlement_index", return_value={"TASK-X": "settled"}
+        ):
+            result = self._scan(
+                state,
+                [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+                {
+                    ("git", "branch", "--merged"): self._completed(""),
+                    ("git", "-C", record_path, "status", "--porcelain"): self._completed(" M foo.py\n"),
+                },
+            )
+        self.assertFalse(result)
+        self.assertEqual(self._last_scan(state)["skipped"], {"dirty": 1})
+
+    def _orphan_reap_case(self, state: dict, settlement: dict, kills):
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        with (
+            mock.patch.object(supervisor, "_task_board_settlement_index", return_value=settlement),
+            mock.patch("os.kill", kills),
+        ):
+            return self._scan(
+                state,
+                [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+                {("git", "branch", "--merged"): self._completed("task/X\n")},
+                live_paths={Path(record_path)},
+                classify_result=([4242], 0),
+            )
+
+    def test_a_settled_tasks_orphan_holders_are_signalled_then_escalated(self) -> None:
+        """Two ticks, because SIGTERM is not reliably fatal to what pins these.
+
+        A pgserver reads SIGTERM as a smart shutdown and waits for clients that
+        -- the worker being gone -- will never disconnect. Blocking the
+        supervisor loop on that wait is the alternative this avoids: signal
+        now, escalate on the next tick if the holder is still there, and let
+        the ordinary path reclaim once it stops appearing as live.
+        """
+        import signal
+
+        state: dict = {}
+        first = mock.Mock()
+        self.assertFalse(self._orphan_reap_case(state, {"TASK-X": "settled"}, first))
+        self.assertEqual(self._last_scan(state)["orphan_reaps"], {"signalled": 1})
+        self.assertEqual(first.call_args_list, [mock.call(4242, signal.SIGTERM)])
+
+        second = mock.Mock()
+        self.assertFalse(self._orphan_reap_case(state, {"TASK-X": "settled"}, second))
+        self.assertEqual(self._last_scan(state)["orphan_reaps"], {"escalated": 1})
+        self.assertEqual(second.call_args_list, [mock.call(4242, signal.SIGKILL)])
+
+    def test_an_unfinished_tasks_orphans_are_reported_but_never_signalled(self) -> None:
+        """A detached-looking process still belongs to work that can resume."""
+        state: dict = {}
+        kills = mock.Mock()
+        self.assertFalse(self._orphan_reap_case(state, {"TASK-X": "active"}, kills))
+        scan = self._last_scan(state)
+        self.assertEqual(scan["skipped"], {"live_process_orphaned": 1})
+        self.assertEqual(scan["orphan_reaps"], {})
+        kills.assert_not_called()
+
+    def test_reaping_can_be_turned_off_without_disabling_reclaim(self) -> None:
+        record_path = str(self.MANAGED_ROOT / "task-x")
+        state: dict = {}
+        kills = mock.Mock()
+        with (
+            mock.patch.object(
+                supervisor, "_task_board_settlement_index", return_value={"TASK-X": "settled"}
+            ),
+            mock.patch("os.kill", kills),
+        ):
+            self._scan(
+                state,
+                [{"worktree": record_path, "branch": "refs/heads/task/X"}],
+                {("git", "branch", "--merged"): self._completed("task/X\n")},
+                live_paths={Path(record_path)},
+                classify_result=([4242], 0),
+                housekeeping={"reap_orphan_holders": False},
+            )
+        kills.assert_not_called()
+        self.assertEqual(self._last_scan(state)["orphan_reaps"], {})
+
+    def test_a_lease_renewed_directory_still_names_one_task(self) -> None:
+        """`odp-x-001.lease_A.lease_B` is one task, not three.
+
+        Renewal appends a marker and appends again on the next renewal, so
+        reading identity past the first one asks the board about a task id that
+        never existed -- which returns `unknown` and refuses the reclaim.
+        """
+        self.assertEqual(
+            supervisor._worktree_task_id(Path("/tmp/wt/odp-x-001.lease_20260819T0358Z_abc.lease_20260820T0101Z_def")),
+            "ODP-X-001",
+        )
+        self.assertEqual(supervisor._worktree_task_id(Path("/tmp/wt/odp-x-001")), "ODP-X-001")
+
 
 class RuntimeSettingsAreReachableFromConfigTests(unittest.TestCase):
     """A knob the schema rejects is a knob that does not exist.
