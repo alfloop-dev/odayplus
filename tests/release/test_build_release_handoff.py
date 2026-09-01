@@ -255,6 +255,18 @@ def _snapshot_and_rollback_args(tmp_path: Path) -> list[str]:
     ]
 
 
+def _snapshot_args_only() -> list[str]:
+    snap = valid_snapshot()
+    return [
+        "--data-snapshot-id",
+        snap["id"],
+        "--data-snapshot-uri",
+        snap["uri"],
+        "--data-snapshot-sha256",
+        snap["content_sha256"],
+    ]
+
+
 def _cli(tmp_path: Path, *extra: str) -> tuple[int, Path, Path]:
     images_path = tmp_path / "runtime-release-images.json"
     manifest_path = tmp_path / "RELEASE_MANIFEST.json"
@@ -536,3 +548,579 @@ def test_rollback_manifest_same_candidate_sha_fails_closed(tmp_path: Path) -> No
     assert code != 0
     assert not images_path.exists()
     assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_option(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap_file = tmp_path / "approved_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["data_snapshot"]["id"] == snap["id"]
+    assert manifest["data_snapshot"]["uri"] == snap["uri"]
+    assert manifest["data_snapshot"]["content_sha256"] == snap["content_sha256"]
+    assert manifest["data_snapshot"]["masked"] is True
+    assert validate_release_admission(manifest) == []
+
+
+def test_data_snapshot_file_missing_masked_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap.pop("masked")
+    snap_file = tmp_path / "missing_masked_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_unmasked_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap["masked"] = False
+    snap_file = tmp_path / "unmasked_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_missing_data_contract_digest_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap.pop("data_contract_digest")
+    snap_file = tmp_path / "missing_digest_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_mismatched_data_contract_digest_fails_closed(tmp_path: Path) -> None:
+    snap = valid_snapshot()
+    snap["data_contract_digest"] = "sha256:" + "0" * 64
+    snap_file = tmp_path / "mismatched_digest_snapshot.json"
+    snap_file.write_text(json.dumps(snap, indent=2), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_non_dict_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "list_snapshot.json"
+    snap_file.write_text(json.dumps(["not", "a", "dict"]), encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_invalid_json_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "invalid_json_snapshot.json"
+    snap_file.write_text("{not valid json", encoding="utf-8")
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_file_nonexistent_fails_closed(tmp_path: Path) -> None:
+    snap_file = tmp_path / "nonexistent_snapshot.json"
+
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(snap_file),
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_bare_hex_content_sha_is_normalised_not_rejected(tmp_path: Path) -> None:
+    """A bare 64-hex digest is the same value as its ``sha256:`` form.
+
+    Normalising the prefix is a spelling fix, not a backfill: nothing is
+    invented, and a digest that does not match still fails the same way.
+    """
+
+    raw_hex = "e" * 64
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-hex-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-hex-001.tar.gz",
+        "--data-snapshot-content-sha256",
+        raw_hex,
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["data_snapshot"]["content_sha256"] == f"sha256:{raw_hex}"
+
+
+def test_unmasked_data_snapshot_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-unmasked-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/unmasked/snap-unmasked-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--data-snapshot-unmasked",
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_data_snapshot_contract_digest_mismatch_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_path = tmp_path / "PREV_RELEASE_MANIFEST.json"
+    prev_manifest_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-mismatch-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-mismatch-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--data-snapshot-contract-digest",
+        "sha256:" + "0" * 64,
+        "--rollback-manifest",
+        str(prev_manifest_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+def test_rollback_manifest_inline_json_string(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest_json = json.dumps(prev_manifest)
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-inline-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-inline-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        prev_manifest_json,
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["rollback_release"]["candidate_sha"] == "0" * 40
+    assert manifest["rollback_release"]["manifest_digest"] == prev_manifest["manifest_digest"]
+    assert validate_release_admission(manifest) == []
+
+
+def test_rollback_manifest_missing_component_fails_closed(tmp_path: Path) -> None:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    prev_manifest["components"].pop("web", None)
+    prev_manifest["manifest_digest"] = compute_manifest_digest(prev_manifest)
+    broken_path = tmp_path / "NO_WEB_MANIFEST.json"
+    broken_path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        "snap-broken-001",
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-broken-001.tar.gz",
+        "--data-snapshot-sha256",
+        "sha256:" + "f" * 64,
+        "--rollback-manifest",
+        str(broken_path),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    assert code != 0
+    assert not images_path.exists()
+    assert not manifest_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Two sources for one approved binding
+#
+# The workflow reads each snapshot channel from a different place -- dispatch
+# inputs for the fields, repository `vars` for the file -- so "whichever one is
+# set wins" is not a tie-break, it is a substitution. A stale `vars` entry would
+# replace the snapshot an operator just approved and the manifest would record
+# the substitute as the approval. The same holds for the two rollback flags.
+# ---------------------------------------------------------------------------
+
+
+def _approved_snapshot_file(tmp_path: Path) -> Path:
+    path = tmp_path / "vars_channel_snapshot.json"
+    path.write_text(json.dumps(valid_snapshot(), indent=2), encoding="utf-8")
+    return path
+
+
+def _prev_manifest_file(tmp_path: Path, name: str = "PREV_RELEASE_MANIFEST.json") -> Path:
+    _, prev_manifest = handoff(release_sha="0" * 40)
+    path = tmp_path / name
+    path.write_text(json.dumps(prev_manifest, indent=2), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--data-snapshot-id", "snap-dispatch-approved"),
+        ("--data-snapshot-uri", "gs://odayplus-snapshots/masked/snap-dispatch.tar.gz"),
+        ("--data-snapshot-sha256", "sha256:" + "d" * 64),
+        ("--data-snapshot-content-sha256", "sha256:" + "d" * 64),
+        ("--data-snapshot-contract-digest", "sha256:" + "e" * 64),
+    ],
+)
+def test_snapshot_file_alongside_an_inline_field_fails_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str, value: str
+) -> None:
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(_approved_snapshot_file(tmp_path)),
+        flag,
+        value,
+        "--rollback-manifest",
+        str(_prev_manifest_file(tmp_path)),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists()
+    assert not images_path.exists()
+    stderr = capsys.readouterr().err
+    assert "--data-snapshot-file" in stderr
+    assert flag in stderr
+
+
+def test_snapshot_file_alongside_unmasked_flag_fails_closed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--data-snapshot-unmasked` would otherwise be dropped without a word."""
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-file",
+        str(_approved_snapshot_file(tmp_path)),
+        "--data-snapshot-unmasked",
+        "--rollback-manifest",
+        str(_prev_manifest_file(tmp_path)),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists()
+    assert "--data-snapshot-unmasked" in capsys.readouterr().err
+
+
+def test_the_snapshot_file_never_silently_replaces_the_dispatched_snapshot(
+    tmp_path: Path,
+) -> None:
+    """The regression itself: a file channel binding over approved fields."""
+
+    snapshot_file = _approved_snapshot_file(tmp_path)
+    dispatched_id = "snap-dispatch-approved-001"
+    assert json.loads(snapshot_file.read_text(encoding="utf-8"))["id"] != dispatched_id
+
+    code, _images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        "--data-snapshot-id",
+        dispatched_id,
+        "--data-snapshot-uri",
+        "gs://odayplus-snapshots/masked/snap-dispatch-approved-001.tar.gz",
+        "--data-snapshot-content-sha256",
+        "sha256:" + "d" * 64,
+        "--data-snapshot-file",
+        str(snapshot_file),
+        "--rollback-manifest",
+        str(_prev_manifest_file(tmp_path)),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists(), (
+        "a manifest bound to the file snapshot would record a substitution "
+        "as the approval"
+    )
+
+
+def test_either_snapshot_channel_alone_still_succeeds(tmp_path: Path) -> None:
+    """Exclusivity refuses ambiguity, not the channels themselves."""
+
+    prev = _prev_manifest_file(tmp_path)
+    snap = valid_snapshot()
+
+    file_code, _, file_manifest = _cli(
+        tmp_path / "file-only",
+        *_component_args(),
+        "--data-snapshot-file",
+        str(_approved_snapshot_file(tmp_path)),
+        "--rollback-manifest",
+        str(prev),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+    inline_code, _, inline_manifest = _cli(
+        tmp_path / "inline-only",
+        *_component_args(),
+        "--data-snapshot-id",
+        snap["id"],
+        "--data-snapshot-uri",
+        snap["uri"],
+        "--data-snapshot-content-sha256",
+        snap["content_sha256"],
+        "--rollback-manifest",
+        str(prev),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert (file_code, inline_code) == (0, 0)
+    # Same approved snapshot either way, so the same admissible manifest.
+    assert json.loads(file_manifest.read_text(encoding="utf-8")) == json.loads(
+        inline_manifest.read_text(encoding="utf-8")
+    )
+
+
+def test_both_rollback_flags_fail_closed_instead_of_one_winning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`--rollback-manifest or --rollback-release-file` discarded the loser."""
+
+    first = _prev_manifest_file(tmp_path, "ROLLBACK_A.json")
+    second = _prev_manifest_file(tmp_path, "ROLLBACK_B.json")
+
+    code, images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        *_snapshot_args_only(),
+        "--rollback-manifest",
+        str(first),
+        "--rollback-release-file",
+        str(second),
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists()
+    assert not images_path.exists()
+    assert "--rollback-release-file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "remote_uri",
+    [
+        "gs://odayplus-releases/manifests/PREV_RELEASE_MANIFEST.json",
+        "https://example.invalid/PREV_RELEASE_MANIFEST.json",
+        "github://alfloop-dev/odayplus/docs/PREV_RELEASE_MANIFEST.json",
+    ],
+)
+def test_a_remote_rollback_uri_is_rejected_by_its_own_name(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], remote_uri: str
+) -> None:
+    """`Path("gs://b/k")` is `gs:/b/k`, so the old error named a path nobody passed."""
+
+    code, _images_path, manifest_path = _cli(
+        tmp_path,
+        *_component_args(),
+        *_snapshot_args_only(),
+        "--rollback-manifest",
+        remote_uri,
+        "--sbom-ref",
+        ref("api", "5"),
+        "--signature-ref",
+        ref("api", "6"),
+    )
+
+    assert code == 1
+    assert not manifest_path.exists()
+    stderr = capsys.readouterr().err
+    assert remote_uri in stderr, "the rejection has to quote what was passed, unmangled"
+    assert "gs:/o" not in stderr
