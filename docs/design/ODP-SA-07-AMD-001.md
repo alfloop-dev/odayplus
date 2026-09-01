@@ -8,7 +8,7 @@ project: ODay Plus
 language: zh-TW
 updated_at: 2026-09-01
 owner: "Product Lead"
-approvers: "Domain Business Owners / Validation Owner / QA Lead"
+approvers: "Domain Business Owners / Architecture Owner / Data-Service Owner"
 content_format: markdown
 amends: ODP-SA-07_BUSINESS_RULES_AND_DECISION_POLICIES.md
 change_class: C3
@@ -21,7 +21,7 @@ source_decision: ADR-0004
 
 `ADR-0004`（`docs/adr/ADR-0004-evidence-level-single-authority.md`，status: accepted，2026-09-01）裁定 Evidence Level 以 `ODP-ML-05` 第 5 節為單一權威。本修正案執行該裁決在 `ODP-SA-07` 這一側的後果：移除本文件自行定義的階梯，並修訂 `ODP-BR-AD-004` 的表述使其可被實作滿足。
 
-變更類別依 `ODP-00-04` 判定為 **C3（Breaking）**：本案移除一份正式交付文件既有的列舉定義，並改變一條 Hard-Constraint 級業務規則的判定介面。依 C3 規則需業務 owner、架構 owner 與資料／服務 owner 三方核准。
+變更類別依 `ODP-00-04` 判定為 **C3（Breaking）**：本案移除一份正式交付文件既有的列舉定義，並改變一條 Policy 級業務規則（`ODP-BR-AD-004`）的判定介面。依 C3 規則需業務 owner、架構 owner 與資料／服務 owner 三方核准。
 
 ## 2. 背景：為何本文件的定義要讓位
 

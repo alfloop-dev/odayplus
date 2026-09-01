@@ -8,7 +8,7 @@ project: ODay Plus
 language: zh-TW
 updated_at: 2026-09-01
 owner: "Validation Owner"
-approvers: "Validation Owner / Architecture Owner / Product Lead"
+approvers: "Product Lead / Architecture Owner / QA Lead"
 content_format: markdown
 amends: ODP-ML-05_CAUSAL_INFERENCE_AND_EXPERIMENT_DESIGN.md
 change_class: C2
