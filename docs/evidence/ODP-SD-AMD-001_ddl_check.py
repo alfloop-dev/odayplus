@@ -73,7 +73,11 @@ INSERT INTO core.tenants (tenant_id, tenant_name) VALUES
     ('11111111-1111-1111-1111-111111111111', 't1'),
     ('11111111-1111-1111-1111-222222222222', 't2')
 ON CONFLICT DO NOTHING;
-CREATE TABLE core.brands  (brand_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
+CREATE TABLE core.brands  (
+    brand_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    -- nullable in 000002 as well; the amendment needs it as a composite-key
+    -- component, not as a required field.
+    tenant_id UUID REFERENCES core.tenants(tenant_id));
 CREATE TABLE core.stores  (
     store_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id));
@@ -101,14 +105,19 @@ CREATE TABLE operations.alerts (
     closed_at TIMESTAMP WITH TIME ZONE,
     status VARCHAR(50) NOT NULL DEFAULT 'open');
 CREATE TABLE operations.forecast_outputs (
-    forecast_output_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
+    forecast_output_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    -- store_id is NOT NULL in 000002; nullable here so existing cases that
+    -- insert only the id keep working. What the amendment needs from it is a
+    -- column to derive the tenant from, not its nullability.
+    store_id UUID REFERENCES core.stores(store_id));
 CREATE TABLE expansion.listings (listing_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
 CREATE TABLE expansion.heatzone_scores (
     heatzone_score_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
 CREATE TABLE expansion.site_score_runs (
     sitescore_run_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
 CREATE TABLE asset.valuation_runs (
-    valuation_run_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
+    valuation_run_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    store_id UUID REFERENCES core.stores(store_id));
 CREATE TABLE network.network_plans (
     network_plan_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
 """
@@ -132,8 +141,8 @@ SEED = f"""
 INSERT INTO core.stores (store_id, tenant_id) VALUES ({STORE}, {TENANT})
     ON CONFLICT DO NOTHING;
 INSERT INTO geo.h3_cells (geo_cell_id) VALUES ({CELL}) ON CONFLICT DO NOTHING;
-INSERT INTO operations.forecast_outputs (forecast_output_id)
-    VALUES ({FORECAST}), ({RECALC_OUTPUT}) ON CONFLICT DO NOTHING;
+INSERT INTO operations.forecast_outputs (forecast_output_id, tenant_id)
+    VALUES ({FORECAST},{TENANT}), ({RECALC_OUTPUT},{TENANT}) ON CONFLICT DO NOTHING;
 INSERT INTO learning.prediction_runs (prediction_run_id)
     VALUES ({PREDICTION_RUN}) ON CONFLICT DO NOTHING;
 INSERT INTO operations.alerts (alert_id, store_id, tenant_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id)
@@ -209,7 +218,8 @@ def deal_case(
         valuation = uid("valuation:" + label)
         seed_valuation = True
     if seed_valuation:
-        setup = f"INSERT INTO asset.valuation_runs (valuation_run_id) VALUES ({valuation});"
+        setup = (f"INSERT INTO asset.valuation_runs (valuation_run_id, tenant_id)"
+                 f" VALUES ({valuation},{TENANT});")
     statement = (
         DEAL_COLUMNS + f"({TENANT},{valuation},'{kind}',{price},{at},{reason},{note},"
         f"{duration},{terms},'u',now(),'moi','{corr(label)}')"
@@ -637,6 +647,7 @@ def exploration_case(
     explored: str = "105.00",
     budget: str = "5.00",
     gate: str = GATE_ID,
+    store: str = STORE,
     expects: tuple[str, ...] = (),
 ) -> Case:
     decision = uid("decision:" + label)
@@ -646,7 +657,7 @@ def exploration_case(
     )
     statement = (
         EXPLORATION_DECISION_COLUMNS
-        + f"({decision},{gate},{tenant},'SKU-001',{STORE},{baseline},{explored},"
+        + f"({decision},{gate},{tenant},'SKU-001',{store},{baseline},{explored},"
         f"{budget},'THOMPSON_SAMPLING')"
     )
     return Case(label, statement, accepted, expects, setup)
@@ -669,8 +680,11 @@ GATE_CASES = [
          f"UPDATE pricing.exploration_gates SET budget_consumed = 1001 WHERE gate_id = {GATE_ID}",
          False, ("chk_gate_budget_consumed",)),
     exploration_case("exploration_decision: valid record", accepted=True),
+    # store 設為 NULL：本案要測的是 gate 的租戶不符，留著屬於 t1 的門市會讓
+    # fk_exploration_decisions_store_tenant 先攔，案例就測不到它宣稱的約束。
     exploration_case("exploration_decision: gate tenant mismatch", tenant=TENANT_2,
-                     accepted=False, expects=("fk_exploration_decisions_gate_tenant",)),
+                     store="NULL", accepted=False,
+                     expects=("fk_exploration_decisions_gate_tenant",)),
     exploration_case("exploration_decision: negative explored price", explored="-105.00",
                      accepted=False, expects=("chk_exploration_decision_prices",)),
     exploration_case("exploration_decision: negative budget_consumed", budget="-5.00",
@@ -735,6 +749,71 @@ GATE_CASES = [
          False, ("fk_exploration_decisions_tenant", "fk_exploration_decisions_gate_tenant"),
          setup="INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES"
                f" ({uid('decision:orphan-tenant')},{POLICY});"),
+    # Cross-tenant scoped cases. Each names the composite FK that must reject
+    # it: a single-column reference proves the target row exists, not that it
+    # belongs to the same tenant, so without these the coupling could be
+    # dropped and the suite would stay green.
+    # forecast_feedback's three targets. Each is nullable, so MATCH SIMPLE
+    # applies: a NULL target is not checked, a present one must share the
+    # feedback's tenant.
+    Case("scoped: feedback targeting another tenant's alert",
+         FEEDBACK_COLUMNS + f"({TENANT},{STORE},'ALERT_DISPOSITION',"
+         f"{uid('alert:t2-scoped')},NULL,NULL,"
+         "NULL,NULL,NULL,NULL,'2026-01-01','2026-01-31','known_context','u',now(),"
+         "'AUTO_ACCEPTED',NULL,NULL,NULL,NULL,'APPLIED_DISPOSITION',NULL,NULL,NULL,"
+         "now(),'corr-scoped-alert')",
+         False, ("fk_feedback_alert_tenant",),
+         setup="INSERT INTO core.stores (store_id, tenant_id) VALUES"
+               f" ({uid('store:t2-alert')},{TENANT_2});"
+               " INSERT INTO operations.alerts (alert_id, store_id, tenant_id,"
+               " alert_reason_code, evidence_json, decision_policy_version_id) VALUES"
+               f" ({uid('alert:t2-scoped')},{uid('store:t2-alert')},{TENANT_2},"
+               f"'sitescore_gap','{{}}'::jsonb,{POLICY_T2});"),
+    Case("scoped: feedback targeting another tenant's forecast output",
+         FEEDBACK_COLUMNS + f"({TENANT},{STORE},'OUTCOME_CORRECTION',NULL,"
+         f"{uid('output:t2-scoped')},NULL,"
+         "'revenue',100,120,'TWD','2026-01-01','2026-01-31','source_error','u',now(),"
+         "'PENDING',NULL,NULL,NULL,NULL,'PENDING_APPLICATION',NULL,NULL,NULL,"
+         "NULL,'corr-scoped-output')",
+         False, ("fk_feedback_forecast_output_tenant",),
+         setup="INSERT INTO core.stores (store_id, tenant_id) VALUES"
+               f" ({uid('store:t2-output')},{TENANT_2});"
+               " INSERT INTO operations.forecast_outputs (forecast_output_id, store_id,"
+               f" tenant_id) VALUES ({uid('output:t2-scoped')},{uid('store:t2-output')},"
+               f"{TENANT_2});"),
+    Case("scoped: feedback targeting another tenant's prediction",
+         FEEDBACK_COLUMNS + f"({TENANT},{STORE},'OUTCOME_CORRECTION',NULL,NULL,"
+         f"{uid('prediction:t2-scoped')},"
+         "'revenue',100,120,'TWD','2026-01-01','2026-01-31','source_error','u',now(),"
+         "'PENDING',NULL,NULL,NULL,NULL,'PENDING_APPLICATION',NULL,NULL,NULL,"
+         "NULL,'corr-scoped-prediction')",
+         False, ("fk_feedback_prediction_tenant",),
+         setup="INSERT INTO learning.predictions (prediction_id, tenant_id) VALUES"
+               f" ({uid('prediction:t2-scoped')},{TENANT_2});"),
+    Case("scoped: deal outcome pointing at another tenant's valuation",
+         DEAL_COLUMNS + f"({TENANT},{uid('valuation:t2-scoped')},'WITHDRAWN',NULL,NULL,"
+         "'PRICE_GAP',NULL,30,NULL,'u',now(),'moi','corr-scoped-deal')",
+         False, ("fk_deal_outcomes_valuation_tenant",),
+         setup="INSERT INTO asset.valuation_runs (valuation_run_id, tenant_id) VALUES"
+               f" ({uid('valuation:t2-scoped')},{TENANT_2});"),
+    Case("scoped: gate scoped to another tenant's brand",
+         "INSERT INTO pricing.exploration_gates (tenant_id, scope_brand_id, budget_limit,"
+         " budget_consumed, effective_from, effective_to, approved_by, rollback_condition,"
+         f" decision_policy_version_id) VALUES ({TENANT},{uid('brand:t2-scoped')},1000,0,"
+         f"now(),now()+interval '30 day','a','revert',{POLICY})",
+         False, ("fk_exploration_gates_brand_tenant",),
+         setup="INSERT INTO core.brands (brand_id, tenant_id) VALUES"
+               f" ({uid('brand:t2-scoped')},{TENANT_2});"),
+    Case("scoped: exploration decision on another tenant's store",
+         "INSERT INTO pricing.exploration_decisions (decision_id, gate_id, tenant_id,"
+         " sku_id, store_id, baseline_price, explored_price, budget_consumed, algorithm)"
+         f" VALUES ({uid('decision:t2-store')},{GATE_ID},{TENANT},'SKU-001',"
+         f"{uid('store:t2-scoped')},100,105,1,'thompson')",
+         False, ("fk_exploration_decisions_store_tenant",),
+         setup="INSERT INTO core.stores (store_id, tenant_id) VALUES"
+               f" ({uid('store:t2-scoped')},{TENANT_2});"
+               " INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES"
+               f" ({uid('decision:t2-store')},{POLICY});"),
     Case("gate: revoked before the authorisation began",
          "INSERT INTO pricing.exploration_gates (tenant_id, budget_limit, budget_consumed,"
          " effective_from, effective_to, approved_by, rollback_condition, revoked_at,"
@@ -949,8 +1028,8 @@ def alert_case(
     setup = ""
     if forecast is None:
         forecast = uid("forecast:" + label)
-        setup = ("INSERT INTO operations.forecast_outputs (forecast_output_id)"
-                 f" VALUES ({forecast});")
+        setup = ("INSERT INTO operations.forecast_outputs (forecast_output_id,"
+                 f" tenant_id) VALUES ({forecast},{tenant});")
     statement = (
         ALERT_COLUMNS
         + f"({store},{tenant},'sitescore_gap','{{}}'::jsonb,{forecast},{policy})"

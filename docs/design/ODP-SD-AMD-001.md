@@ -72,6 +72,16 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 
 ---
 
+### 1.5 v0.6.0 修訂說明
+
+針對審查反饋（Codex2 第 7 輪）補正三項落差。
+
+1. **Gate 本身可自由改寫**：`pricing.exploration_decisions` 是 append-only，但累計器、授權期間與撤銷旗標都在 `pricing.exploration_gates` 那一列上，該列沒有任何 UPDATE 保護。不必碰任何一筆決策，`UPDATE ... SET budget_consumed = 0` 就能取回全部預算，`effective_to` 可往後推，`revoked_at` 可改回 NULL。v0.6.0 以 `trg_exploration_gates_controlled_update` 守四條規則：授權欄位不可變、`budget_consumed` 只增不減、`effective_to` 只能提前、撤銷不可逆（第 7 節）。
+2. **新增關係的租戶綁定不完整**：六處參照為單欄外鍵，只證明目標列存在，不證明它屬於同一租戶。v0.6.0 為 `operations.forecast_outputs`、`asset.valuation_runs`、`learning.predictions` 補 `tenant_id`，前兩者另以 `store_id` 綁定使租戶不可自述，並補齊五個複合唯一鍵，將六處改為複合外鍵，各附跨租戶 scoped 案例（第 3.4、4.3、6.2、7 節）。`learning.predictions` 的殘餘限制見第 12.0 節。
+3. **第 13.1 節覆蓋宣稱誇大**：102／102 只涵蓋既有案例，十二條已宣告的約束沒有任何案例——被打錯字或刪除都不會被發現。v0.6.0 為每一條補上具名案例，並改寫該節說明數字的界線（第 13.1 節）。
+
+---
+
 ## 2. Baseline 儲存現況（設計前提）
 
 本節列出設計所依賴的既有結構，供審查者逐項核對。來源為 `infra/db/migrations/000001_baseline_canonical_schema.sql` 至 `000012`。
@@ -367,6 +377,91 @@ BEGIN
             REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
             MATCH FULL NOT VALID;
     END IF;
+
+    -- 本案新增表所參照的既有目標，同樣需要租戶耦合。單欄外鍵只證明被參照的列
+    -- 存在，不證明它屬於同一租戶；A 租戶的回饋因此可以指向 B 租戶的警示或預測。
+    -- 以下先為各目標補上租戶（可推導者由其門市推導，不可自述），再備妥複合唯一
+    -- 鍵，第 4.3、6.2、7 節的複合外鍵才有參照對象。
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'operations' AND table_name = 'forecast_outputs'
+          AND column_name = 'tenant_id'
+    ) THEN
+        ALTER TABLE operations.forecast_outputs ADD COLUMN tenant_id UUID;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'asset' AND table_name = 'valuation_runs'
+          AND column_name = 'tenant_id'
+    ) THEN
+        ALTER TABLE asset.valuation_runs ADD COLUMN tenant_id UUID;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'learning' AND table_name = 'predictions'
+          AND column_name = 'tenant_id'
+    ) THEN
+        ALTER TABLE learning.predictions ADD COLUMN tenant_id UUID;
+    END IF;
+
+    -- forecast_outputs 與 valuation_runs 都有 store_id NOT NULL，故其租戶可由
+    -- 門市推導，與 fk_alerts_store_tenant 同一模式：租戶不是自述的。
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_forecast_outputs_store_tenant'
+    ) THEN
+        ALTER TABLE operations.forecast_outputs
+            ADD CONSTRAINT fk_forecast_outputs_store_tenant
+            FOREIGN KEY (store_id, tenant_id)
+            REFERENCES core.stores(store_id, tenant_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_valuation_runs_store_tenant'
+    ) THEN
+        ALTER TABLE asset.valuation_runs
+            ADD CONSTRAINT fk_valuation_runs_store_tenant
+            FOREIGN KEY (store_id, tenant_id)
+            REFERENCES core.stores(store_id, tenant_id) NOT VALID;
+    END IF;
+
+    -- learning.predictions 既無 tenant_id 也無 store_id，租戶無從推導，因此這裡
+    -- 的 tenant_id 是自述的。複合外鍵仍有價值——它使回饋與其預測必須同租戶——
+    -- 但「預測本身屬於哪個租戶」在 baseline 沒有可驗證來源。要讓它同樣不可
+    -- 自述，需要一條 predictions 到 store 或到 model_version 的既有路徑，那是
+    -- 獨立於本案的 baseline 變更（見第 12 節已知限制）。
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_alerts_alert_tenant'
+    ) THEN
+        ALTER TABLE operations.alerts
+            ADD CONSTRAINT uq_alerts_alert_tenant UNIQUE (alert_id, tenant_id);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_forecast_outputs_output_tenant'
+    ) THEN
+        ALTER TABLE operations.forecast_outputs
+            ADD CONSTRAINT uq_forecast_outputs_output_tenant
+            UNIQUE (forecast_output_id, tenant_id);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_predictions_prediction_tenant'
+    ) THEN
+        ALTER TABLE learning.predictions
+            ADD CONSTRAINT uq_predictions_prediction_tenant
+            UNIQUE (prediction_id, tenant_id);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_valuation_runs_run_tenant'
+    ) THEN
+        ALTER TABLE asset.valuation_runs
+            ADD CONSTRAINT uq_valuation_runs_run_tenant
+            UNIQUE (valuation_run_id, tenant_id);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_brands_brand_tenant'
+    ) THEN
+        ALTER TABLE core.brands
+            ADD CONSTRAINT uq_brands_brand_tenant UNIQUE (brand_id, tenant_id);
+    END IF;
 END $$;
 ```
 
@@ -604,9 +699,9 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
     feedback_kind           VARCHAR(50) NOT NULL,
 
     -- 回饋目標：三選一以上，依 kind 決定何者必填
-    target_alert_id             UUID REFERENCES operations.alerts(alert_id),
-    target_forecast_output_id   UUID REFERENCES operations.forecast_outputs(forecast_output_id),
-    target_prediction_id        UUID REFERENCES learning.predictions(prediction_id),
+    target_alert_id             UUID,
+    target_forecast_output_id   UUID,
+    target_prediction_id        UUID,
 
     -- 修正內容：OUTCOME_CORRECTION 專用
     corrected_metric        VARCHAR(100),          -- 被修正的實績指標名
@@ -646,6 +741,19 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
     CONSTRAINT fk_feedback_store_tenant FOREIGN KEY (store_id, tenant_id)
         REFERENCES core.stores(store_id, tenant_id),
     -- 一筆核准決策至多支撐一筆回饋，核准不可被重複借用
+    -- 回饋的目標必須與回饋同租戶。單欄外鍵只證明目標列存在，A 租戶的回饋
+    -- 因此可以指向 B 租戶的警示或預測。三個目標欄皆可為 NULL（由
+    -- chk_feedback_target_required 決定何者必填），故用 MATCH SIMPLE：
+    -- 目標為 NULL 時不檢查，非 NULL 時租戶必須相符。
+    CONSTRAINT fk_feedback_alert_tenant
+        FOREIGN KEY (target_alert_id, tenant_id)
+        REFERENCES operations.alerts(alert_id, tenant_id),
+    CONSTRAINT fk_feedback_forecast_output_tenant
+        FOREIGN KEY (target_forecast_output_id, tenant_id)
+        REFERENCES operations.forecast_outputs(forecast_output_id, tenant_id),
+    CONSTRAINT fk_feedback_prediction_tenant
+        FOREIGN KEY (target_prediction_id, tenant_id)
+        REFERENCES learning.predictions(prediction_id, tenant_id),
     CONSTRAINT uq_feedback_approval_decision UNIQUE (approval_decision_id),
     -- 核准狀態必須對應 workflow.approvals 中該決策的真實核准列：
     -- 三欄同時比對，'APPROVED' 只能對到狀態確為 'approved' 的那一列
@@ -1106,7 +1214,7 @@ relation="model_ready.valuation_view",
 CREATE TABLE IF NOT EXISTS asset.deal_outcomes (
     deal_outcome_id     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id),
-    valuation_run_id    UUID NOT NULL REFERENCES asset.valuation_runs(valuation_run_id),
+    valuation_run_id    UUID NOT NULL,
     listing_id          UUID REFERENCES expansion.listings(listing_id),
     outcome_kind        VARCHAR(50) NOT NULL,
 
@@ -1127,6 +1235,10 @@ CREATE TABLE IF NOT EXISTS asset.deal_outcomes (
     correlation_id      VARCHAR(255) NOT NULL,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
+    -- 成交結果必須與其估值同租戶：單欄外鍵只證明估值存在（第 3.4 節同一規則）
+    CONSTRAINT fk_deal_outcomes_valuation_tenant
+        FOREIGN KEY (valuation_run_id, tenant_id)
+        REFERENCES asset.valuation_runs(valuation_run_id, tenant_id) MATCH FULL,
     CONSTRAINT chk_deal_outcome_kind CHECK (
         outcome_kind IN ('CLOSED', 'WITHDRAWN', 'EXPIRED')
     ),
@@ -1238,7 +1350,7 @@ GET    /api/v1/avm/valuations/{id}/calibration     查該估值的偏差
 CREATE TABLE IF NOT EXISTS pricing.exploration_gates (
     gate_id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id),
-    scope_brand_id      UUID REFERENCES core.brands(brand_id),
+    scope_brand_id      UUID,
     scope_store_group   VARCHAR(100),
     scope_sku_group     VARCHAR(100),
     budget_limit        NUMERIC(18, 2) NOT NULL,
@@ -1252,6 +1364,10 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_gates (
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT uq_exploration_gates_gate_tenant UNIQUE (gate_id, tenant_id),
+    -- 授權範圍內的品牌必須屬於該 Gate 的租戶
+    CONSTRAINT fk_exploration_gates_brand_tenant
+        FOREIGN KEY (scope_brand_id, tenant_id)
+        REFERENCES core.brands(brand_id, tenant_id),
     -- 授權的政策必須屬於該 Gate 的租戶（第 3.4 節同一規則）
     CONSTRAINT fk_exploration_gates_decision_policy
         FOREIGN KEY (decision_policy_version_id, tenant_id)
@@ -1278,13 +1394,17 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_decisions (
     gate_id             UUID NOT NULL,
     tenant_id           UUID NOT NULL,
     sku_id              VARCHAR(100) NOT NULL,
-    store_id            UUID REFERENCES core.stores(store_id),
+    store_id            UUID,
     baseline_price      NUMERIC(18, 2) NOT NULL,
     explored_price      NUMERIC(18, 2) NOT NULL,
     budget_consumed     NUMERIC(18, 2) NOT NULL,
     algorithm           VARCHAR(50) NOT NULL,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
+    -- 探索所針對的門市必須屬於該決策的租戶
+    CONSTRAINT fk_exploration_decisions_store_tenant
+        FOREIGN KEY (store_id, tenant_id)
+        REFERENCES core.stores(store_id, tenant_id),
     CONSTRAINT fk_exploration_decisions_gate_tenant
         FOREIGN KEY (gate_id, tenant_id)
         REFERENCES pricing.exploration_gates(gate_id, tenant_id),
@@ -1636,6 +1756,14 @@ ALTER TABLE operations.alerts ALTER COLUMN decision_policy_version_id SET NOT NU
 
 ## 12. 對既有文件的影響
 
+### 12.0 已知限制：`learning.predictions` 的租戶只能自述
+
+本案為六處單欄參照補上同租戶複合外鍵。其中五處的租戶是**可驗證的**：`core.brands`、`core.stores` 本身帶 `tenant_id`；`operations.forecast_outputs` 與 `asset.valuation_runs` 有 `store_id NOT NULL`，故其租戶由門市推導（`fk_forecast_outputs_store_tenant`、`fk_valuation_runs_store_tenant`，與 `fk_alerts_store_tenant` 同一模式）——寫入端無法宣稱一個與其門市不符的租戶。
+
+`learning.predictions` 不同：它既無 `tenant_id` 也無 `store_id`，baseline 沒有任何可推導租戶的路徑。本案為它加了 `tenant_id` 並建立 `uq_predictions_prediction_tenant`，使 `fk_feedback_prediction_tenant` 成立——**回饋與其預測必須同租戶**這一點因此可被資料庫強制。但「這筆預測屬於哪個租戶」本身是寫入端自述的，沒有第二個來源可以反駁它。
+
+要讓它同樣不可自述，需要一條 `predictions` 到 `store` 或到某個帶租戶的既有實體的路徑。那是 baseline 的變更，範圍與觸及面都超出本修正案，故在此明列為已知限制而非佯稱已解決。
+
 | 文件 | 影響 |
 |---|---|
 | `ODP-SD-05` | 新增 6 張表、4 張表擴充欄位；未新增任何 schema（全部落在 `000001` 既有的 `workflow`／`operations`／`expansion`／`asset`／`pricing` 內） |
@@ -1680,11 +1808,13 @@ uv run --no-project --python 3.12 --with pgserver \
 |---|---|
 | A. 9 個 DDL 區塊套用於 baseline 相依樁 | 9／9 通過 |
 | B. 每個區塊重跑一次（第 10 節宣稱的可重跑，含兩個 trigger 區塊） | 9／9 通過 |
-| C. 新增約束、外鍵與 trigger 是否真的擋下它宣稱要擋的資料 | 124／124 符合設計 |
+| C. 新增約束、外鍵與 trigger 是否真的擋下它宣稱要擋的資料 | 130／130 符合設計 |
 
-**這個數字說的是什麼，不說什麼**。124／124 指「124 個案例的行為與其宣告一致」——每個負向案例被拒，且拒絕訊息中出現它指名的那個約束；每個正向案例被接受。它**不**保證每個已宣告的約束都有案例。
+**這個數字說的是什麼，不說什麼**。130／130 指「130 個案例的行為與其宣告一致」——每個負向案例被拒，且拒絕訊息中出現它指名的那個約束；每個正向案例被接受。它**不**保證每個已宣告的約束都有案例。
 
 v0.5.0 的 102／102 就是在這個區別上誇大了：`chk_decision_policy_kind`／`window`／`reason`／`params`、`chk_deal_outcome_kind`／`reason_code`／`price_positive`、`chk_composition_kind`／`revert_order`、`chk_gate_budget_limit`／`revoke_order`、`fk_decisions_policy_version`、`fk_exploration_decisions_tenant` 當時皆無具名案例。那些約束若被打錯字或整條刪去，套件仍會報全綠——通過數只覆蓋存在的案例。v0.6.0 為上列每一條補上具名案例，並補上 `trg_exploration_gates_controlled_update` 的九個案例。
+
+**驗證環境本身也曾比真實 schema 貧乏**。v0.6.0 加入複合外鍵時，`fk_forecast_outputs_store_tenant` 在套用階段就失敗——腳本的 baseline 樁只為每張既有表建了主鍵，`operations.forecast_outputs` 與 `asset.valuation_runs` 沒有 `store_id`、`core.brands` 沒有 `tenant_id`，儘管 `000002` 三者皆有。這表示先前所有版本驗證的環境，都缺少任何「依賴既有欄位」的約束所需的前提；那類約束不是通過了，而是根本無從被測。三處已補入樁中。
 
 補案例的過程本身也印證了逐案斷言約束名的必要：新增的三個案例第一次執行時是 `WRONGCAUSE` 而非 `OK`——`workflow.decisions` 沒有 `tenant_id` 欄、`pricing.exploration_decisions` 的欄位是 `algorithm` 而非 `decided_at`、而 `SETTLED` 案例未帶 `no_deal_reason_code` 因此被 `chk_deal_outcome_closed_fields` 先攔下。若只斷言「被拒」，這三個案例都會以假象通過，並宣稱測到了它們其實沒碰到的約束。
 
