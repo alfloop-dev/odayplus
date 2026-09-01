@@ -95,4 +95,5 @@ pythonpath = ["."]
 markers = [
     "requires_live_env: test needs a live multi-repo / CLI / local-path environment and is excluded from CI (run with -m 'not requires_live_env')",
     "performance: wall-clock SLO measurement that must own its runner; excluded from the shared product suite and enforced by the dedicated CI performance-gate job (run with -m performance)",
+    "requires_postgis: test needs PostGIS, which the bundled pgserver build does not ship and which cannot be stubbed faithfully (geometry types and spatial predicates have no core equivalent); excluded from the database job until a PostGIS-enabled service container exists",
 ]
