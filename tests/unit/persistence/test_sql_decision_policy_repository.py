@@ -58,3 +58,4 @@ def test_sql_decision_policy_repository_resolves_registry_row() -> None:
     assert policy.parameters["thresholds"][0]["value"] == -0.35
     assert policy.declared_inputs == ("sitescore_gap_ratio",)
     assert engine.calls[0][1] == ("forecast_alert", tenant_id, at, at)
+
