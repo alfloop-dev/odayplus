@@ -22,11 +22,26 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
     assert plan.database_url_env == "ODAY_DATABASE_URL"
     assert plan.target_revision == "head"
     assert plan.dry_run is True
-    assert [step.revision for step in plan.steps] == ["0001", "0002", "0003", "0004", "0005"]
+    assert [step.revision for step in plan.steps] == [
+        "0001",
+        "0002",
+        "0003",
+        "0004",
+        "0005",
+        "0006",
+    ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
     assert all(any(asset.role == "sql" for asset in step.assets) for step in plan.steps)
     assert plan.rollback["command"] == "alembic downgrade -1"
+    deal_outcome_step = next(step for step in plan.steps if step.revision == "0006")
+    assert deal_outcome_step.path.endswith("0006_avm_deal_outcomes.py")
+    assert {
+        asset.path
+        for asset in deal_outcome_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000014_avm_deal_outcomes.sql"}
+    assert len(deal_outcome_step.sha256) == 64
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

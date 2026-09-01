@@ -1,3 +1,9 @@
+from modules.avm.domain.deal_outcome import (
+    REDACTED_CONFIDENTIAL_VALUE,
+    VALID_NO_DEAL_REASONS,
+    DealOutcome,
+    NoDealReasonCode,
+)
 from modules.avm.domain.liquidity import (
     LiquidityPrediction,
     LiquidityTrainingRecord,
@@ -31,12 +37,16 @@ __all__ = [
     "ApprovalDecision",
     "DataRoom",
     "DataRoomDocument",
+    "DealOutcome",
     "LensValuation",
     "LiquidityPrediction",
     "LiquidityTrainingRecord",
+    "NoDealReasonCode",
     "NormalizedMargin",
     "PriceBand",
+    "REDACTED_CONFIDENTIAL_VALUE",
     "SurvivalModelCapability",
+    "VALID_NO_DEAL_REASONS",
     "ValuationCase",
     "ValuationCaseStatus",
     "ValuationInput",

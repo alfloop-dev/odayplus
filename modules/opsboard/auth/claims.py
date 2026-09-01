@@ -95,14 +95,26 @@ def principal_from_claims(
         modules=_as_str_set(value("modules")),
         clearance=_parse_clearance(value("clearance")),
     )
+    attributes = {
+        "iss": claims.get("iss"),
+        "email": claims.get("email"),
+        "token_type": "oidc",
+    }
+    # These values are accepted only from the deployment-owned principal
+    # mapping, never from token claims.  A confidential export still requires
+    # the proof to verify against the external AVM authority key.
+    for key in (
+        "identity_proof_sha256",
+        "verified_identity",
+        "data_room_access",
+        "event_id",
+    ):
+        if key in mapping:
+            attributes[key] = mapping[key]
     return Principal(
         subject_id=subject,
         roles=_parse_roles(value("roles")),
         scope=scope,
-        attributes={
-            "iss": claims.get("iss"),
-            "email": claims.get("email"),
-            "token_type": "oidc",
-        },
+        attributes=attributes,
         authenticated=True,
     )

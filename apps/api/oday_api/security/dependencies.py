@@ -296,6 +296,11 @@ def _principal_from_trusted_headers(headers: Mapping[str, str]) -> Principal:
         except ValueError:
             continue  # unknown role string is ignored, not trusted
 
+    clearance_raw = headers.get("x-clearance", "CONFIDENTIAL").strip().upper()
+    try:
+        clearance = DataClassification[clearance_raw]
+    except KeyError:
+        clearance = DataClassification.CONFIDENTIAL
     scope = Scope(
         tenant_id=headers.get("x-tenant-id"),
         brand_ids=_split(headers.get("x-brand-ids")),
@@ -303,8 +308,22 @@ def _principal_from_trusted_headers(headers: Mapping[str, str]) -> Principal:
         store_ids=_split(headers.get("x-store-ids")),
         assigned_area_ids=_split(headers.get("x-assigned-area-ids")),
         heat_zone_ids=_split(headers.get("x-heat-zone-ids")),
+        clearance=clearance,
     )
-    return Principal(subject_id=subject, roles=frozenset(roles), scope=scope)
+    identity_proof = headers.get("x-identity-proof", "")
+    return Principal(
+        subject_id=subject,
+        roles=frozenset(roles),
+        scope=scope,
+        attributes={
+            # The proof is still verified by ConfidentialAccessAuditor against
+            # the external authority key; this is not a naked boolean grant.
+            "identity_proof_sha256": identity_proof,
+            "verified_identity": bool(identity_proof),
+            "data_room_access": headers.get("x-data-room-access", "").lower()
+            == "true",
+        },
+    )
 
 
 def authorize_request(
