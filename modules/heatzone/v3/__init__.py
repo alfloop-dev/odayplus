@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from modules.heatzone.v3.absorption import (
+    MIN_OBSERVATION_DAYS_KEY,
+    UNDER_REALIZED_RATIO_KEY,
+    AbsorbingStoreObservation,
+    AbsorptionInputError,
+    AbsorptionResult,
+    compute_absorbed_demand,
+)
 from modules.heatzone.v3.adapter import (
     from_catchment_profile,
     from_legacy_feature_input,
@@ -31,6 +39,9 @@ from modules.heatzone.v3.shadow import (
 
 __all__ = [
     "AbstainReasonCode",
+    "AbsorbingStoreObservation",
+    "AbsorptionInputError",
+    "AbsorptionResult",
     "CONTRACT_ID",
     "CONTRACT_VERSION",
     "DEFAULT_V3_WEIGHTS",
@@ -42,8 +53,11 @@ __all__ = [
     "HeatZoneV3ShadowComparison",
     "HeatZoneV3ShadowRunner",
     "HeatZoneV3State",
+    "MIN_OBSERVATION_DAYS_KEY",
     "MODEL_VERSION",
+    "UNDER_REALIZED_RATIO_KEY",
     "check_support_and_abstention",
+    "compute_absorbed_demand",
     "compute_shadow_comparisons_and_metrics",
     "from_catchment_profile",
     "from_legacy_feature_input",

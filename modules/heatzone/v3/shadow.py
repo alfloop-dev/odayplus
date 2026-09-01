@@ -60,6 +60,11 @@ class HeatZoneV3ShadowRunner:
         baseline_features: Sequence[HeatZoneFeatureInput | Mapping[str, Any]] | None = None,
         own_store_capacities: Sequence[MachineCapacityRecord] | None = None,
         store_coverage_records: Sequence[StoreDayCoverage] | None = None,
+        store_performances: Sequence[Any] | None = None,
+        operational_starts: Mapping[str, Any] | Sequence[Any] | None = None,
+        decision_policy: Any | None = None,
+        as_of: Any | None = None,
+        original_demand: float | None = None,
         tenant_id: str = "default",
         manifest_document: ManifestDocument | None = None,
     ) -> HeatZoneV3BatchResult:
@@ -74,6 +79,11 @@ class HeatZoneV3ShadowRunner:
                 cell,
                 own_store_capacities=own_store_capacities,
                 store_coverage_records=store_coverage_records,
+                store_performances=store_performances,
+                operational_starts=operational_starts,
+                decision_policy=decision_policy,
+                as_of=as_of,
+                original_demand=original_demand,
                 tenant_id=tenant_id,
             )
             for cell in doc.cells
@@ -95,6 +105,11 @@ class HeatZoneV3ShadowRunner:
         baseline_features: Sequence[HeatZoneFeatureInput | Mapping[str, Any]] | None = None,
         own_store_capacities: Sequence[MachineCapacityRecord] | None = None,
         store_coverage_records: Sequence[StoreDayCoverage] | None = None,
+        store_performances: Sequence[Any] | None = None,
+        operational_starts: Mapping[str, Any] | Sequence[Any] | None = None,
+        decision_policy: Any | None = None,
+        as_of: Any | None = None,
+        original_demand: float | None = None,
         tenant_id: str = "default",
         manifest_document: ManifestDocument | None = None,
     ) -> HeatZoneV3BatchResult:
@@ -109,6 +124,11 @@ class HeatZoneV3ShadowRunner:
                 prof,
                 own_store_capacities=own_store_capacities,
                 store_coverage_records=store_coverage_records,
+                store_performances=store_performances,
+                operational_starts=operational_starts,
+                decision_policy=decision_policy,
+                as_of=as_of,
+                original_demand=original_demand,
                 tenant_id=tenant_id,
             )
             for prof in doc.profiles
