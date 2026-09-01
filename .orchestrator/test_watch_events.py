@@ -46,6 +46,8 @@ class WatcherBookkeepingTests(unittest.TestCase):
         self.assertIn("immutable finalize dispatch", finalize_message)
         self.assertIn("不可 merge、rebase", finalize_message)
         self.assertIn("PR 尚未 merge 就保持 review_approved", finalize_message)
+        self.assertIn("明確禁止執行 pytest、npm test、build、lint、security scan 與 E2E 等驗證命令", finalize_message)
+        self.assertIn("僅讀取 exact approved head 的 PR、CI 與 receipt 證據，不得重跑測試", finalize_message)
         self.assertNotIn("delivery_toolchain/git/task_finalize.sh 推送", finalize_message)
 
     def test_run_scan_is_noop_when_runtime_enqueue_disabled(self) -> None:

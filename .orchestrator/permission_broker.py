@@ -1095,6 +1095,259 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     }
 
 
+VERIFICATION_CMD_NAMES = {
+    "pytest",
+    "py.test",
+    "tox",
+    "nox",
+    "ruff",
+    "flake8",
+    "mypy",
+    "pylint",
+    "black",
+    "isort",
+    "eslint",
+    "prettier",
+    "trivy",
+    "semgrep",
+    "bandit",
+    "safety",
+    "cypress",
+    "playwright",
+    "vitest",
+    "jest",
+    "mocha",
+    "karma",
+    "jasmine",
+    "coverage",
+}
+
+VERIFICATION_PYTHON_MODULES = {
+    "pytest",
+    "unittest",
+    "py_compile",
+    "doctest",
+    "coverage",
+    "ruff",
+    "flake8",
+    "mypy",
+    "pylint",
+    "black",
+    "isort",
+    "bandit",
+    "safety",
+}
+
+VERIFICATION_NPM_KEYWORDS = (
+    "test",
+    "build",
+    "lint",
+    "typecheck",
+    "check",
+    "e2e",
+    "spec",
+    "coverage",
+    "scan",
+    "verify",
+)
+
+
+def _split_command_pipeline_segments(shell_command: str) -> list[str]:
+    segments: list[str] = []
+    current: list[str] = []
+    quote: str | None = None
+    escape = False
+    index = 0
+    while index < len(shell_command):
+        char = shell_command[index]
+        if escape:
+            current.append(char)
+            escape = False
+            index += 1
+            continue
+        if char == "\\":
+            current.append(char)
+            escape = True
+            index += 1
+            continue
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            current.append(char)
+            index += 1
+            continue
+        if shell_command.startswith("&&", index) or shell_command.startswith("||", index):
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 2
+            continue
+        if char in {";", "|"}:
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 1
+            continue
+        current.append(char)
+        index += 1
+    tail = "".join(current).strip()
+    if tail:
+        segments.append(tail)
+    return segments
+
+
+def _is_verification_segment(segment: str) -> bool:
+    segment = segment.strip()
+    if not segment:
+        return False
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        return bool(
+            re.search(
+                r"\b(?:pytest|unittest|smoke_test|npm(?:\s+--prefix\s+\S+)?\s+(?:run\s+)?(?:test|build|lint|e2e)|cargo\s+test|go\s+test|uv\s+run\s+pytest)\b",
+                segment,
+            )
+        )
+    if not tokens:
+        return False
+
+    index = 0
+    while index < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=.*$", tokens[index]):
+        index += 1
+    if index >= len(tokens):
+        return False
+
+    tokens = tokens[index:]
+    cmd = tokens[0]
+    while cmd in {"nohup", "time", "sudo", "exec"} and len(tokens) > 1:
+        tokens = tokens[1:]
+        cmd = tokens[0]
+
+    if cmd == "cd":
+        return False
+
+    if cmd == "bash" and len(tokens) > 1 and "ai-status.sh" in tokens[1]:
+        return False
+    if "ai-status.sh" in cmd:
+        return False
+    if cmd in {"python", "python3"} and len(tokens) > 1 and "ai_status.py" in tokens[1]:
+        return False
+
+    if cmd == "git":
+        return False
+
+    cmd_name = Path(cmd).name
+    if cmd_name in VERIFICATION_CMD_NAMES:
+        return True
+
+    if cmd_name == "uv":
+        if len(tokens) > 1 and tokens[1] in {"run", "tool"}:
+            return True
+
+    if cmd_name in {"python", "python3"} or cmd_name.startswith("python3."):
+        if "-m" in tokens:
+            m_idx = tokens.index("-m")
+            if m_idx + 1 < len(tokens):
+                mod = tokens[m_idx + 1]
+                if mod in VERIFICATION_PYTHON_MODULES or mod.startswith("test") or mod.endswith("_test"):
+                    return True
+        for arg in tokens[1:]:
+            arg_lower = arg.lower()
+            if "smoke_test" in arg_lower or arg_lower.startswith("test_") or arg_lower.endswith("_test.py"):
+                return True
+
+    if cmd_name == "npm":
+        for i, token in enumerate(tokens[1:], start=1):
+            if token in {"test", "t"}:
+                return True
+            if token in {"run", "run-script"}:
+                if i + 1 < len(tokens):
+                    target = tokens[i + 1].lower()
+                    if any(kw in target for kw in VERIFICATION_NPM_KEYWORDS):
+                        return True
+            if any(kw in token.lower() for kw in ("test", "build", "lint", "e2e", "typecheck")):
+                if not token.startswith("-"):
+                    if i > 1 and tokens[i - 1] in {"--prefix", "-C", "--workspace", "-w"}:
+                        continue
+                    if token.lower() in VERIFICATION_NPM_KEYWORDS or any(
+                        token.lower().startswith(f"{kw}:") for kw in VERIFICATION_NPM_KEYWORDS
+                    ):
+                        return True
+
+    if cmd_name == "npx":
+        for token in tokens[1:]:
+            if not token.startswith("-") and Path(token).name in VERIFICATION_CMD_NAMES:
+                return True
+
+    if cmd_name in {"yarn", "pnpm", "bun"}:
+        for i, token in enumerate(tokens[1:], start=1):
+            tok_lower = token.lower()
+            if any(kw in tok_lower for kw in VERIFICATION_NPM_KEYWORDS) and not token.startswith("-"):
+                if i > 1 and tokens[i - 1] in {"--cwd", "--prefix", "--filter"}:
+                    continue
+                return True
+
+    if cmd_name == "cargo":
+        for token in tokens[1:]:
+            if token in {"test", "check", "build", "clippy", "bench"}:
+                return True
+
+    if cmd_name == "go":
+        for token in tokens[1:]:
+            if token in {"test", "build", "vet"}:
+                return True
+
+    if cmd_name in {"apt", "apt-get"}:
+        if "install" in tokens and any("pytest" in tok for tok in tokens):
+            return True
+
+    if cmd_name in {"pip", "pip3"}:
+        if "install" in tokens and any("pytest" in tok for tok in tokens):
+            return True
+
+    if _is_safe_pytest_install_command(segment):
+        return True
+
+    return False
+
+
+def _is_verification_command(shell_command: str) -> bool:
+    segments = _split_command_pipeline_segments(shell_command)
+    return any(_is_verification_segment(segment) for segment in segments)
+
+
+def _finalize_decision(shell_command: str, config: dict[str, Any]) -> dict[str, str] | None:
+    context = _load_finalize_dispatch_context(config)
+    if context is None:
+        return None
+
+    git_decision = _finalize_git_decision(shell_command, config)
+    if git_decision is not None:
+        return git_decision
+
+    if _is_verification_command(shell_command):
+        task_id = context["task_id"]
+        return {
+            "decision": "deny",
+            "reason": (
+                f"Denied verification command for {task_id} during {FINALIZE_DISPATCH_REASON}: "
+                "the reviewer-approved branch head is immutable and tests must not be rerun. "
+                "Only read and verify the exact approved head's PR, CI, and receipts."
+            ),
+            "risk_class": "immutable_review_head",
+        }
+
+    return None
+
+
 def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, config: dict[str, Any]) -> dict[str, Any]:
     tool_input = tool_input or {}
     decision = "defer"
@@ -1123,7 +1376,7 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
             risk_class = "out_of_workspace"
     elif tool_name == "Bash":
         shell_command = tool_input.get("command") or tool_input.get("cmd") or tool_input.get("raw_command") or ""
-        finalize_decision = _finalize_git_decision(str(shell_command), config)
+        finalize_decision = _finalize_decision(str(shell_command), config)
         if finalize_decision is not None:
             decision = finalize_decision["decision"]
             risk_class = finalize_decision["risk_class"]

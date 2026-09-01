@@ -1139,6 +1139,122 @@ EOF
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_bash")
 
+    def test_finalize_verification_commands_are_denied_for_immutable_approved_head(self) -> None:
+        verification_commands = [
+            "uv run pytest",
+            "uv run pytest services/test_app.py 2>&1 | tail -50",
+            "npm --prefix apps/web run test",
+            "npm test -- --runInBand",
+            "npm run test",
+            "npm run build",
+            "npm run lint",
+            "npm run e2e",
+            "cargo test --lib",
+            "go test ./...",
+            "python3 -m unittest services.test_foo 2>&1",
+            "python3 -m unittest discover",
+            "python3 -m pytest services/test_foo.py -v",
+            "pytest",
+            "python3 smoke_test.py 2>&1",
+            "python3 services/smoke_test_loader.py",
+            "python3 -m py_compile services/app.py",
+            "pip install pytest --quiet && python3 -m pytest test.py",
+            "apt-get install -y python3-pytest",
+            "ruff check .",
+            "mypy services/",
+            "eslint src/",
+            "npx jest",
+            "yarn test",
+            "pnpm test",
+            "bun test",
+        ]
+        config = {"agents": {"claude": {"display_name": "Claude"}}}
+        runtime_state = {
+            "workers": {
+                "run-123": {
+                    "task_id": "BG-006",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            }
+        }
+        status_state = {
+            "tasks": [
+                {
+                    "id": "BG-006",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "review_approved",
+                }
+            ]
+        }
+
+        for command in verification_commands:
+            with self.subTest(command=command):
+                with (
+                    mock.patch.dict(
+                        permission_broker.os.environ,
+                        {"ORCH_RUN_ID": "run-123", "ORCH_TASK_ID": "BG-006", "ORCH_AGENT_ID": "claude"},
+                        clear=False,
+                    ),
+                    mock.patch.object(permission_broker, "load_runtime_state", return_value=runtime_state),
+                    mock.patch.object(permission_broker, "load_status", return_value=status_state),
+                ):
+                    evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
+
+                self.assertEqual(evaluation["decision"], "deny")
+                self.assertEqual(evaluation["risk_class"], "immutable_review_head")
+                self.assertIn("BG-006", evaluation["reason"])
+                self.assertIn("immutable", evaluation["reason"])
+
+    def test_finalize_safe_read_and_status_commands_are_allowed_during_finalize(self) -> None:
+        safe_commands = [
+            "git status",
+            "git diff HEAD~1",
+            "git log -n 5",
+            "git show HEAD",
+            "git branch",
+            "cat docs/evidence/receipt.json",
+            "head -n 20 ci.log",
+            "tail -n 30 test-summary.txt",
+            'AI_NAME=Claude python3 scripts/ai_status.py done BG-006 "Closed after PR merge."',
+            'AI_NAME=Claude bash scripts/ai-status.sh done BG-006 "Closed after PR merge."',
+        ]
+        config = {"agents": {"claude": {"display_name": "Claude"}}}
+        runtime_state = {
+            "workers": {
+                "run-123": {
+                    "task_id": "BG-006",
+                    "request_snapshot": {"reason": "owned_finalize_dispatch"},
+                }
+            }
+        }
+        status_state = {
+            "tasks": [
+                {
+                    "id": "BG-006",
+                    "owner": "Claude",
+                    "reviewer": "Codex",
+                    "status": "review_approved",
+                }
+            ]
+        }
+
+        for command in safe_commands:
+            with self.subTest(command=command):
+                with (
+                    mock.patch.dict(
+                        permission_broker.os.environ,
+                        {"ORCH_RUN_ID": "run-123", "ORCH_TASK_ID": "BG-006", "ORCH_AGENT_ID": "claude"},
+                        clear=False,
+                    ),
+                    mock.patch.object(permission_broker, "load_runtime_state", return_value=runtime_state),
+                    mock.patch.object(permission_broker, "load_status", return_value=status_state),
+                ):
+                    evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
+
+                self.assertEqual(evaluation["decision"], "allow")
+                self.assertEqual(evaluation["risk_class"], "safe_bash")
+
 
 class AgentPRCreationIsDeniedTests(unittest.TestCase):
     """`gh pr create` belongs to ReviewBus, not to agents.
