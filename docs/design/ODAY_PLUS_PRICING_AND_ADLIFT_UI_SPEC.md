@@ -152,25 +152,47 @@ AdLift 是 difference-in-differences（DiD）matched-pair 增量分析（`module
 | 預趨勢 | `PreTrendResult` / `PreTrendStatus` | `status`(`PASS`/`FAIL`/`INCONCLUSIVE`/`NOT_TESTED`)、`treatment_slope`、`control_slope`、`slope_divergence`、`threshold`(預設 0.01) |
 | 污染 | `ContaminationFinding` | `store_id`、`role`(treatment/control)、`intervention_ids`（campaign 窗內其他干預，上限 evidence 至 L2） |
 | 增量估計 | `IncrementalityEstimate` / `EffectInterval` | `surface_revenue`、`incremental_revenue`、`incremental_gross_margin`、`effect_interval`(metric/low/point/high) |
-| 報告 | `IncrementalityReport` | 見 §B6；含 `iromi`、`evidence_level`、`causal_claim_allowed`、`recommendation`、`measurement_method`(`DID`)、版本與 `report_card` |
-| 證據等級 | `EvidenceLevel` | `L0`–`L5`（v1 只產 `L0`–`L3`）；causal 需 ≥ `L3` |
+| 報告 | `IncrementalityReport` | 見 §B6；含 `iromi`、`evidence_assessable`、`evidence_level`、`insufficiency_reason_code`、`causal_claim_allowed`、`recommendation`、`measurement_method`(`DID`)、版本與 `report_card` |
+| 可評估性 | `EvidenceAssessment` | `evidence_assessable`(bool)、`evidence_level`(可為 `null`)、`insufficiency_reason_code`(`EvidenceInsufficiencyReason`，可為 `null`)；由 `assess_evidence` 一次產出 |
+| 證據等級 | `EvidenceLevel` | `L0`–`L5` 定義保留（v1 實際只產 `L1`–`L3`）；causal 需 ≥ `L3`。階梯只在 `evidence_assessable=true` 時適用 |
 | 建議 | `Recommendation` | `CONTINUE`、`SCALE`、`STOP`、`CHANGE_CHANNEL`、`INCONCLUSIVE` |
 | 版本 | constants | `model_version`(`adlift-did-v1`)、`feature_version`(`matched-control-view-v1`)、`policy_version`(`causal-evidence-level-v1`) |
 
 iROMI 門檻：`SCALE_IROMI=1.5`、`CONTINUE_IROMI=1.0`（`iromi = incremental_gross_margin / ad_spend`，ad_spend≤0 時為 0.0）。
 
-## B4. Evidence Ladder & Recommendation (UI gates)
+## B4. Evidence Assessability & Ladder (UI gates)
 
-證據等級由 `assign_evidence_level` 決定，UI 永不得高估確定性：
+`assess_evidence` 依序回答兩個獨立問題：**能不能評估**，以及能評估時**有多強**（ADR-0004 D3）。兩者刻意分離，UI 永不得高估確定性。
+
+### B4.1 第一步：可評估性
+
+無 treatment 期間資料時，campaign 在任何方向都無從判讀——不能說有效，也不能說無效。此時回 `evidence_assessable=false`、`evidence_level=null`、`insufficiency_reason_code=NO_TREATMENT_DATA`。
+
+這**不是 `L0`**：`L0` 表示「觀察到了，只是最弱」，而此處根本沒有觀察。UI 不得把不可評估的 campaign 呈現為階梯上的任何一階。
+
+| insufficiency_reason_code | 條件 | evidence_level | causal_claim_allowed |
+|---|---|---|---|
+| `NO_TREATMENT_DATA` | 無 treatment 期間資料 | `null` | 否 |
+
+目前只有這一個原因碼，其餘刻意不宣告（ADR Open Question 3）：`NO_CONTROL` 與 `OVERLAPPING_TREATMENT` 是階梯內的降級（分別落在 `L1`、`L2`），campaign 仍可判讀，失效的是因果宣稱而非可評估性；`SAMPLE_TOO_SMALL` 與 `DATA_QUALITY_FAIL` 在本模組沒有判定路徑（無最小樣本門檻、無資料品質訊號），故不列入。
+
+### B4.2 第二步：強度階梯
+
+僅在 `evidence_assessable=true` 時適用：
 
 | Evidence | 條件 | causal_claim_allowed |
 |---|---|---|
-| `L0` | 無 treatment 期間資料 | 否 |
 | `L1` | 有 treatment、無 control（before/after） | 否 |
 | `L2` | 有 matched control，但 pre-trend 非 `PASS` 或有 contamination | 否 |
 | `L3` | matched control + pre-trend `PASS` + 無 contamination（DiD validated） | 是 |
 
-`recommend` 規則：`evidence < L3` → `INCONCLUSIVE`（不做 continue/stop 判斷）；`iromi ≥ 1.5` → `SCALE`；`iromi ≥ 1.0` → `CONTINUE`；否則 `STOP`。UI 必須據此呈現，且 `causal_claim_allowed=false` 時明確標「僅描述、不可宣稱因果」。
+`recommend` 規則：`evidence_assessable=false` → `INCONCLUSIVE`（早一步就停）；`evidence < L3` → `INCONCLUSIVE`（不做 continue/stop 判斷）；`iromi ≥ 1.5` → `SCALE`；`iromi ≥ 1.0` → `CONTINUE`；否則 `STOP`。UI 必須據此呈現，且 `causal_claim_allowed=false` 時明確標「僅描述、不可宣稱因果」。
+
+### B4.3 INSUFFICIENT_EVIDENCE card state
+
+`AdLiftReportCard` 的 `evidenceLevel` 只有一個字串欄位，因此 `evidence_assessable=false` 時填入字面值 `INSUFFICIENT_EVIDENCE`（ODP-BR-AD-004 用語），**不得填 `null`，也不得填 `L0`**：display 欄位的 `null` 會被讀成「尚未載入」，正是這個狀態要消除的歧義。機器可讀的三欄拆分（`evidence_assessable` / `evidence_level` / `insufficiency_reason_code`）留在報告 payload（`to_dict()`）。
+
+`INSUFFICIENT_EVIDENCE` 不是 `EvidenceLevel` 成員，UI 不得把它排進 L0–L5 的排序或比較。`GET /adlift/reports?evidence_level=<L>` 依此永遠不會回傳不可評估的報告；要列出這些 campaign 必須改看 `evidence_assessable`。
 
 ## B5. Routes & Page Jobs
 
@@ -188,7 +210,7 @@ iROMI 門檻：`SCALE_IROMI=1.5`、`CONTINUE_IROMI=1.0`（`iromi = incremental_g
 | Ad spend | `ad_spend` |
 | Control match | treatment/control 店數；未配對 treatment 須標示 |
 | Pre-trend | `PreTrendStatus`（PASS/FAIL/INCONCLUSIVE/NOT_TESTED）+ icon |
-| Evidence | `EvidenceLevel`（L0–L3）+ `causal_claim_allowed` |
+| Evidence | `evidence_assessable=false` → `INSUFFICIENT_EVIDENCE` + `insufficiency_reason_code`；否則 `EvidenceLevel`（L1–L3）+ `causal_claim_allowed` |
 | iROMI / Rec | `iromi` + `recommendation` |
 | Action | open、執行增量分析、送審（→ InterventionOps）、核准 |
 
@@ -196,7 +218,7 @@ iROMI 門檻：`SCALE_IROMI=1.5`、`CONTINUE_IROMI=1.0`（`iromi = incremental_g
 
 固定區段順序（不得重排）：
 
-1. **Summary**：campaign、channel、period、ad_spend、treatment 店數、目前 evidence level 與 recommendation。
+1. **Summary**：campaign、channel、period、ad_spend、treatment 店數、目前 evidence level 與 recommendation。`evidence_assessable=false` 時以 `INSUFFICIENT_EVIDENCE` 與 `insufficiency_reason_code` 取代 evidence level，不得留白。
 2. **Matched Controls**：列出每組 `MatchedControl`（treatment↔control、`match_distance`、`treatment_pre_avg`、`control_pre_avg`）；未配對 treatment 店明確標示。配對距離越大代表越不可比，需以 icon/文字提示。
 3. **Pre-trend Check**：`PreTrendResult` —— `status`、`treatment_slope`、`control_slope`、`slope_divergence`、`threshold`。**`FAIL` 或 `NOT_TESTED`/`INCONCLUSIVE` 時明確標「Evidence Level ≤ L2，不可宣稱因果」**，並阻擋升級因果宣稱。
 4. **Contamination**：列出 `ContaminationFinding`（store、role、intervention_ids）；有污染即上限 L2，需顯眼提示。
@@ -206,7 +228,7 @@ iROMI 門檻：`SCALE_IROMI=1.5`、`CONTINUE_IROMI=1.0`（`iromi = incremental_g
 
 ## B7. Incrementality Report Presentation
 
-報告以 `AdLiftReportCard` contract（component contracts §5.9）呈現，欄位對應 `IncrementalityReport.to_report_card()`：`campaign`、`treatmentStores`、`controlStores`、`preTrendStatus`、`incrementalRevenue`、`incrementalGrossMargin`、`iromi`、`evidenceLevel`、`continueStopRecommendation`。
+報告以 `AdLiftReportCard` contract（component contracts §5.9）呈現，欄位對應 `IncrementalityReport.to_report_card()`：`campaign`、`treatmentStores`、`controlStores`、`preTrendStatus`、`incrementalRevenue`、`incrementalGrossMargin`、`iromi`、`evidenceLevel`、`continueStopRecommendation`。其中 `evidenceLevel` 在不可評估時為 `INSUFFICIENT_EVIDENCE`（見 §B4.3）。
 
 Report 必須：
 
@@ -214,7 +236,7 @@ Report 必須：
 - 顯示 `measurement_method=DID`（無 control 時退為 before/after，evidence 僅 `L1`）。
 - 顯示 `effect_interval`（per-store-day 效果的 low/point/high 離散度）作為不確定性，附資料表替代與僅可見資料 export。
 - 顯示 `iromi` 與 `recommendation`，並標示判讀：`evidence < L3` → `INCONCLUSIVE`；`iROMI ≥ 1.5` → `SCALE`；`iROMI ≥ 1.0` → `CONTINUE`；否則 `STOP`。
-- 以 `EvidencePanel` 置頂呈現 `pre_trend`、`contamination` 與 `evidence_level`；`causal_claim_allowed=false` 時 incremental 數值需標「描述性、非因果估計」，不得呈現為已驗證因果。
+- 以 `EvidencePanel` 置頂呈現 `pre_trend`、`contamination` 與 `evidence_level`；`causal_claim_allowed=false` 時 incremental 數值需標「描述性、非因果估計」，不得呈現為已驗證因果。`evidence_assessable=false` 時 panel 需以 `INSUFFICIENT_EVIDENCE` 與 `insufficiency_reason_code` 說明「無從判讀」，且不得同時呈現任何階梯等級。
 - `PreTrendStatus`、`EvidenceLevel`、`recommendation` 一律 文字 + icon/pattern + tooltip，不可只靠顏色。
 
 ---
