@@ -1,7 +1,7 @@
 ---
 doc_id: ODP-SD-AMD-001
 title: "平台與模組設計修正案 001"
-version: 0.3.0
+version: 0.4.0
 status: draft-for-review
 document_class: system-design-amendment
 project: ODay Plus
@@ -47,6 +47,18 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 2. **FCT-008 回饋結構化狀態與重算血統**：原 `applied_effect` 為 nullable free text，後續預測無法以 SQL 結構化查詢其回饋來源。v0.3.0 將其改為結構化 `applied_status`、`not_applied_reason_code`、`recalculation_forecast_output_id`、`recalculation_run_id` 與 `applied_at`，並建立索引，落實可雙向追溯的重算血統。
 3. **PRICE-006 Bandit 候選介面與逐決策 Gate 稽核**：原設計僅定義 Gate 授權與 GET 端點。v0.3.0 補齊領域層 `BanditCandidate` 資料結構、`BanditPriceExplorer` 協定、`POST /api/v1/priceops/exploration-candidates` 候選產生端點，並在 `000017` 增加 `pricing.exploration_decisions` 記錄逐筆定價決策所關聯之 `gate_id` 與預算扣抵。
 4. **000013 Migration 可執行 Seed 與 Retrofit 列**：第 11 節所述之 `four-light-policy-0.0.0-retrofit` 回填佔位列與 `four-light-policy-v1` 首版政策列，直接以可執行且具冪等性（`ON CONFLICT DO NOTHING`）的 `INSERT` 語句納入第 3.2 節 migration SQL。
+
+### 1.3 v0.4.0 修訂說明
+
+針對審查反饋（Codex2 第 4 輪）補正七項落差。其中前三項是 v0.3.0 引入的**內部不一致**，後四項是被宣稱但未被強制的**空頭約束**：
+
+1. **政策識別碼命名規則未貫穿全文**：v0.3.0 的 seed SQL 改為逐租戶的 `four-light-policy-v1:{tenant_id}`，但第 4.1 與第 11 節仍寫無租戶後綴的 `four-light-policy-v1`／`four-light-policy-0.0.0-retrofit`。v0.4.0 在第 3.2 節新增 `policy_label` 欄位與 `chk_decision_policy_version_id_format`，把「`policy_version_id` = `policy_label` + `:` + `tenant_id`」由慣例升為資料庫強制的規則，並逐節校正 seed、回滾、解析與相容性文字（見第 3.2、3.3、3.5、4.1、11 節）。
+2. **`operations.alerts.decision_policy_version_id` 無外鍵**：`FCT-005` 要求每筆警示保有真實政策綁定，但該欄位僅為 nullable `VARCHAR` 且無外鍵，可寫入任意字串。v0.4.0 為四張擴充表補上 `NOT VALID` 外鍵（第 3.4 節），並在第 11 節寫明 `NOT NULL` 前的回填語句與轉換條件。
+3. **`chk_feedback_recalculation_provenance` 過寬**：原約束容許 `APPLIED_RECALCULATION` 只填 `recalculation_run_id`，與第 4.3 節「以 `recalculation_forecast_output_id` 查詢」的宣稱矛盾。v0.4.0 改為必填該欄位，並新增 `chk_feedback_kind_applied_status`（回饋類型與生效路徑必須相容）與 `chk_feedback_applied_at`（已生效必有生效時點）。
+4. **`asset.deal_outcomes.deal_terms` 無完整性規則**：`FR-AVM-005` 要求回收交易條件，但該欄位可為 NULL 且無鍵位要求。v0.4.0 以 `chk_deal_outcome_terms_completeness` 強制 `CLOSED` 必須帶 `payment_method`／`handover_date`／`contingencies` 三鍵，未成交則不得挾帶（第 6.2 節）。
+5. **熱區吸收欄位無約束**：`absorbed_demand`／`remaining_demand` 可為負、可只填一半、可與 `absorption_ratio` 互相矛盾，`HZ-004` 因而不可強制。v0.4.0 補 `chk_heatzone_absorption_non_negative`、強化 `chk_heatzone_absorption_complete` 為全有全無，並新增 `chk_heatzone_absorption_consistent`（第 5.1 節）。
+6. **第 13.1 節案例數與腳本不符**：文中寫 39／39，腳本實際為 48 例。v0.4.0 改以腳本實際輸出為準（見第 13.1 節）。
+7. **負向案例可能因錯誤原因被拒**：原腳本多個負向案例共用同一 `valuation_run_id`／`decision_id`／`geo_cell_id`，可能被主鍵或唯一索引先擋下，而非被它宣稱測試的 CHECK 擋下。v0.4.0 讓每個案例自帶隔離用相依列，並**逐案斷言拒絕訊息中出現預期的約束名稱**，使「被拒」與「被正確的約束拒」不再被混為一談。
 
 ---
 
@@ -96,6 +108,7 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 ```sql
 CREATE TABLE IF NOT EXISTS workflow.decision_policies (
     policy_version_id       VARCHAR(100) PRIMARY KEY,          -- 例：'four-light-policy-v1:11111111-1111-1111-1111-111111111111'
+    policy_label            VARCHAR(100) NOT NULL,             -- 跨租戶共用的版本標籤，例：'four-light-policy-v1'
     policy_id               VARCHAR(100) NOT NULL,             -- 例：'four-light-policy'
     policy_version          VARCHAR(50)  NOT NULL,             -- semver 或 retrofit 標記
     policy_kind             VARCHAR(100) NOT NULL,
@@ -114,6 +127,14 @@ CREATE TABLE IF NOT EXISTS workflow.decision_policies (
     created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT uq_decision_policy_tenant_id_version UNIQUE (tenant_id, policy_id, policy_version),
+    -- 命名規則由資料庫強制，而非靠慣例：policy_version_id = policy_label || ':' || tenant_id
+    CONSTRAINT chk_decision_policy_version_id_format CHECK (
+        policy_version_id = policy_label || ':' || tenant_id::text
+    ),
+    -- 標籤本身不得含分隔符，否則上式的拆解不唯一
+    CONSTRAINT chk_decision_policy_label CHECK (
+        policy_label <> '' AND position(':' in policy_label) = 0
+    ),
     CONSTRAINT chk_decision_policy_kind CHECK (
         policy_kind IN ('forecast_alert', 'heatzone_merge', 'heatzone_absorption',
                         'sitescore_recommendation', 'price_exploration', 'netplan_action')
@@ -136,7 +157,7 @@ CREATE INDEX IF NOT EXISTS idx_decision_policy_kind_window
 
 -- 初始政策列與回填佔位列（逐租戶建立，支援冪等重跑）
 INSERT INTO workflow.decision_policies (
-    policy_version_id, policy_id, policy_version, policy_kind,
+    policy_version_id, policy_label, policy_id, policy_version, policy_kind,
     tenant_id, effective_from, effective_to,
     owner_role, approved_by, approved_at,
     input_contract, output_contract, change_reason,
@@ -144,6 +165,7 @@ INSERT INTO workflow.decision_policies (
 )
 SELECT
     'four-light-policy-0.0.0-retrofit:' || t.tenant_id::text,
+    'four-light-policy-0.0.0-retrofit',
     'four-light-policy',
     '0.0.0-retrofit',
     'forecast_alert',
@@ -163,7 +185,7 @@ FROM core.tenants t
 ON CONFLICT (policy_version_id) DO NOTHING;
 
 INSERT INTO workflow.decision_policies (
-    policy_version_id, policy_id, policy_version, policy_kind,
+    policy_version_id, policy_label, policy_id, policy_version, policy_kind,
     tenant_id, effective_from, effective_to,
     owner_role, approved_by, approved_at,
     input_contract, output_contract, change_reason,
@@ -171,6 +193,7 @@ INSERT INTO workflow.decision_policies (
 )
 SELECT
     'four-light-policy-v1:' || t.tenant_id::text,
+    'four-light-policy-v1',
     'four-light-policy',
     '1.0.0',
     'forecast_alert',
@@ -192,11 +215,24 @@ ON CONFLICT (policy_version_id) DO NOTHING;
 
 `change_reason` 與 `rollback_policy_version` 為 `ODP-SA-07` 第 8 節必填欄位，目前產品根目錄無實作，本表為其唯一承載處。`rollback_policy_version` 自我外鍵，確保可回退目標必須是真實存在的版本。
 
-`tenant_id` 設為 `NOT NULL` 有一項直接後果：平台級政策也必須逐租戶建列，不能以單一 NULL 列涵蓋所有租戶。這是刻意的——`idx_decision_policy_active` 若允許 NULL，Postgres 的 NULL 相異語意會讓同一政策存在多個「現行版本」而不被擋下。以每租戶一列（`policy_version_id` 格式為 `{policy_version_id}:{tenant_id}` 並搭配 `uq_decision_policy_tenant_id_version`）換取多租戶獨立性與唯一性由資料庫保證，確保後續新增租戶或跨租戶政策解析均能正確執行。
+`tenant_id` 設為 `NOT NULL` 有一項直接後果：平台級政策也必須逐租戶建列，不能以單一 NULL 列涵蓋所有租戶。這是刻意的——`idx_decision_policy_active` 若允許 NULL，Postgres 的 NULL 相異語意會讓同一政策存在多個「現行版本」而不被擋下。以每租戶一列換取多租戶獨立性與唯一性由資料庫保證，確保後續新增租戶或跨租戶政策解析均能正確執行。
+
+**政策識別碼命名規則（全文適用）**。逐租戶建列使識別碼分成兩層，兩者不可混用：
+
+| 名稱 | 欄位 | 範圍 | 例 |
+|---|---|---|---|
+| 政策標籤 | `policy_label` | 跨租戶共用，人可讀，用於文件、程式常數與 UI 文案 | `four-light-policy-v1`、`four-light-policy-0.0.0-retrofit` |
+| 政策版本識別碼 | `policy_version_id` | 逐租戶唯一，為本表主鍵與所有外鍵的參照目標 | `four-light-policy-v1:11111111-1111-1111-1111-111111111111` |
+
+規則為 `policy_version_id = policy_label || ':' || tenant_id`，由 `chk_decision_policy_version_id_format` 在資料庫層強制，不是靠寫入端自律；`chk_decision_policy_label` 另禁止標籤內含 `:`，使該式的拆解唯一。兩者成立後，`(tenant_id, policy_label)` 的唯一性由主鍵直接蘊含，故不另設 UNIQUE 約束。
+
+**這條規則存在的理由**：v0.3.0 只在 seed SQL 裡採用後綴格式，文件其餘各節仍寫無後綴的字串，導致同一份設計對「政策識別碼是什麼」給出兩種答案。把規則寫成約束後，任何一節若再寫出無後綴的識別碼，第 13.1 節的驗證會直接失敗，不必依賴人工比對。
 
 ### 3.3 版本解析
 
 政策解析為**時點解析**而非取現行版本：以決策發生時刻查 `effective_from <= t AND (effective_to IS NULL OR t < effective_to)`。這使歷史決策可重現——重跑一筆三個月前的警示，會取到當時生效的版本，而非今日版本。
+
+解析的輸入為 `(policy_kind, tenant_id, at)`，輸出為該租戶的那一列，其 `policy_version_id` 必然帶租戶後綴（第 3.2 節命名規則）。**解析端不得自行以 `policy_label` 拼出識別碼**：租戶下若無對應列，正確行為是 `PolicyResolutionError`（第 3.5 節）而非拼出一個查無此列的字串。第 3.4 節新增的外鍵使這種拼接在資料庫層也會被擋下。
 
 政策升版採 close-and-insert：將舊版 `effective_to` 設為新版 `effective_from`，不修改舊版其餘欄位。舊版永久保留（`ODP-AC-BR-003`）。
 
@@ -236,13 +272,61 @@ ALTER TABLE network.network_plans
 CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_forecast_policy
     ON operations.alerts (forecast_output_id, decision_policy_version_id)
     WHERE forecast_output_id IS NOT NULL;
+
+-- 四張擴充表的政策綁定一律外鍵至登錄表：欄位可暫時為 NULL（見第 11 節兩階段），
+-- 但不得填入查無此列的字串。NOT VALID 使既有列不阻擋 migration。
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_alerts_decision_policy'
+    ) THEN
+        ALTER TABLE operations.alerts
+            ADD CONSTRAINT fk_alerts_decision_policy
+            FOREIGN KEY (decision_policy_version_id)
+            REFERENCES workflow.decision_policies(policy_version_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_heatzone_scores_decision_policy'
+    ) THEN
+        ALTER TABLE expansion.heatzone_scores
+            ADD CONSTRAINT fk_heatzone_scores_decision_policy
+            FOREIGN KEY (decision_policy_version_id)
+            REFERENCES workflow.decision_policies(policy_version_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_site_score_runs_decision_policy'
+    ) THEN
+        ALTER TABLE expansion.site_score_runs
+            ADD CONSTRAINT fk_site_score_runs_decision_policy
+            FOREIGN KEY (decision_policy_version_id)
+            REFERENCES workflow.decision_policies(policy_version_id) NOT VALID;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_network_plans_decision_policy'
+    ) THEN
+        ALTER TABLE network.network_plans
+            ADD CONSTRAINT fk_network_plans_decision_policy
+            FOREIGN KEY (decision_policy_version_id)
+            REFERENCES workflow.decision_policies(policy_version_id) NOT VALID;
+    END IF;
+END $$;
 ```
+
+**為何四張表都要外鍵，而不是只在程式層檢查**。`decision_policy_version_id` 是 `VARCHAR(100)`；沒有外鍵時，任何字串都寫得進去——包含第 3.3 節明文禁止的「以 `policy_label` 拼出來的識別碼」。`ODP-FR-FCT-005` 要求每筆警示保有可查證的政策綁定，一個查無此列的字串滿足不了該要求，而且要到稽核當下才會被發現。`NOT VALID` 只豁免既有列，對此後的所有寫入即刻生效，故這是本階段就能取得的最強保證。
 
 **欄位命名的理由**：不用 `policy_version_id`，因為 `operations.forecast_outputs` 與 `Alert.evidence_json` 已存在語意不同的 `policy_version`（見第 4.1 節）。同名不同義的欄位會使日後的查詢與稽核無從分辨。`decision_policy_version_id` 明確指向本節的登錄表。
 
 **PriceOps 例外**：PriceOps 無既有資料表可加欄位（第 2 節事實 1），其政策綁定改由第 7 節的 `pricing.exploration_gates.decision_policy_version_id` 承載，並經 `workflow.decisions` 記錄決策本身。
 
-**硬性要求**：**無法解析政策時應拒絕產生決策，而非以預設值產生**。欄位在第 11 節第二階段轉為 `NOT NULL` 後由資料庫保證；在此之前由第 3.5 節的 `resolve_policy()` fail-closed 保證。
+**硬性要求**：**無法解析政策時應拒絕產生決策，而非以預設值產生**。三層保證分工如下，缺一則該要求僅存在於文件：
+
+| 層 | 機制 | 現在就生效？ | 擋得住什麼 |
+|---|---|---|---|
+| 應用層 | `resolve_policy()` fail-closed（第 3.5 節） | 是 | 解析失敗時繼續以預設門檻產生決策 |
+| 資料庫參照完整性 | `fk_*_decision_policy`（`NOT VALID`） | 是 | 填入查無此列的政策識別碼 |
+| 資料庫必填性 | `NOT NULL` | 否，見第 11 節第二階段 | 完全不填政策識別碼 |
+
+第三層須待既有列回填完成才能開啟；在此之前欄位維持 nullable，回填語句與轉換條件列於第 11 節，不留待實作時自行決定。
 
 ### 3.5 領域介面
 
@@ -251,7 +335,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_forecast_policy
 
 @dataclass(frozen=True)
 class DecisionPolicy:
-    policy_version_id: str
+    policy_version_id: str               # 帶租戶後綴，外鍵參照用
+    policy_label: str                    # 跨租戶標籤，文件與 evidence 用
     policy_id: str
     policy_version: str
     policy_kind: str
@@ -310,7 +395,18 @@ def _alert_for(
 
 **評估識別（Evaluation Identity）的必要性**。在基線版本中，`alert_id` 僅由 `_stable_id("forecast-alert", output.forecast_output_id)` 生成。這導致當同一筆預測輸出套用兩個不同版本政策進行試算或回溯時，產生的 `alert_id` 完全相同，在 `operations.alerts` 寫入時會引發主鍵衝突或覆寫歷史，無法滿足 `ODP-AC-FR-008`（同一預測結果以不同政策版本評估可得不同燈號且兩者皆可重現與持久化共存）。修訂後，評估識別由 `(forecast_output_id, decision_policy_version_id)` 複合決定，`alert_id` 衍生納入政策版本，並在資料庫層建立唯一索引 `idx_alerts_forecast_policy`，確保多版本判定可獨立持久化與查詢。
 
-**既有 `policy_version` 的處置**。`ForecastOutput.policy_version` 目前填入常數 `FOUR_LIGHT_POLICY_VERSION = "four-light-policy-v1"`，並被複製進 `evidence_json["policy_version"]`。該欄位**不移除也不改寫語意**，但其值改為由 `policy.policy_version_id` 供給，使那個字串第一次真正對應到一筆可查的政策列。首版登錄列的 `policy_version_id` 即取 `'four-light-policy-v1'`，與現行常數逐字相同，故既有資料與既有斷言不會因此失效。
+**既有 `policy_version` 的處置**。`ForecastOutput.policy_version` 目前填入常數 `FOUR_LIGHT_POLICY_VERSION = "four-light-policy-v1"`（`modules/forecastops/domain/forecasting.py:38`、`:537`），並被複製進 `evidence_json["policy_version"]`。依第 3.2 節的命名規則，該常數的值正是**政策標籤**（`policy_label`），不是主鍵：
+
+| 欄位 | 值 | 變動 |
+|---|---|---|
+| `ForecastOutput.policy_version` | `policy.policy_label` = `four-light-policy-v1` | 值不變，語意由「一個沒有對應列的字串」變為「登錄表中真實存在的標籤」 |
+| `evidence_json["policy_version"]` | 同上 | 值不變 |
+| `evidence_json["policy_version_id"]` | `policy.policy_version_id` = `four-light-policy-v1:{tenant_id}` | 新增鍵，逐租戶 |
+| `operations.alerts.decision_policy_version_id` | 同上 | 新增欄位，外鍵至登錄表 |
+
+因此 `tests/integration/test_forecastops_alerts.py:85` 的既有斷言（`evidence_json["policy_version"] == "four-light-policy-v1"`）仍然成立，`docs/design/ODAY_PLUS_OPERATIONS_ALERT_UI_SPEC.md` 對該字串的三處引用亦不需改寫——它們引用的本來就是標籤。
+
+**不採取的做法，與理由**：把常數改為逐租戶的 `policy_version_id`，會使一個租戶無關的模組常數承載租戶資訊，並讓上述既有斷言與 UI 文案全部失效。標籤與主鍵分層後，跨租戶引用一律用標籤，資料庫參照一律用主鍵，兩者不再互相冒充。
 
 `evaluate_alert_policy()` 依 `policy.parameters` 的門檻表與 `policy.declared_inputs` 求值。政策參數結構：
 
@@ -473,9 +569,28 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
         (applied_status =  'NOT_APPLIED' AND not_applied_reason_code IS NOT NULL AND not_applied_reason_code <> '')
      OR (applied_status <> 'NOT_APPLIED' AND not_applied_reason_code IS NULL)
     ),
+    -- 重算血統：APPLIED_RECALCULATION 必須指名重算後的預測輸出（該欄位是第 4.3 節
+    -- 宣稱可查詢的那一欄）；非重算狀態則不得挾帶任何重算欄位。
     CONSTRAINT chk_feedback_recalculation_provenance CHECK (
-        applied_status <> 'APPLIED_RECALCULATION'
-        OR (recalculation_forecast_output_id IS NOT NULL OR recalculation_run_id IS NOT NULL)
+        (applied_status =  'APPLIED_RECALCULATION'
+            AND recalculation_forecast_output_id IS NOT NULL)
+     OR (applied_status <> 'APPLIED_RECALCULATION'
+            AND recalculation_forecast_output_id IS NULL
+            AND recalculation_run_id IS NULL)
+    ),
+    -- 回饋類型與生效路徑必須相容：每類回饋只能走第 4.3 節表列的那一條路徑
+    CONSTRAINT chk_feedback_kind_applied_status CHECK (
+        applied_status IN ('PENDING_APPLICATION', 'NOT_APPLIED')
+     OR (feedback_kind = 'CONTEXT_ANNOTATION' AND applied_status = 'APPLIED_TRAINING_EXCLUSION')
+     OR (feedback_kind = 'OUTCOME_CORRECTION' AND applied_status = 'APPLIED_RECALCULATION')
+     OR (feedback_kind = 'ALERT_DISPOSITION'  AND applied_status = 'APPLIED_DISPOSITION')
+    ),
+    -- 已生效者必有生效時點；未生效者不得有
+    CONSTRAINT chk_feedback_applied_at CHECK (
+        (applied_status IN ('APPLIED_TRAINING_EXCLUSION', 'APPLIED_RECALCULATION',
+                            'APPLIED_DISPOSITION')
+            AND applied_at IS NOT NULL)
+     OR (applied_status IN ('PENDING_APPLICATION', 'NOT_APPLIED') AND applied_at IS NULL)
     ),
     -- 任何回饋都必須指向至少一個目標，否則無從稽核其作用對象
     CONSTRAINT chk_feedback_has_target CHECK (
@@ -554,9 +669,13 @@ CREATE INDEX IF NOT EXISTS idx_forecast_feedback_applied_status
 **修正內容為何要三欄**。`OUTCOME_CORRECTION` 的語意是「系統取得的實績有誤」。只記「有誤」而不記原值、正確值與指標名，核准者無從判斷是否該核准，事後也無從稽核核准是否正確。`observed_value` 保留系統原值，使修正可被還原比對。
 
 **結構化重算血統（Provenance）**。為滿足「後續預測輸出須可查詢其是否受回饋影響」，設計引入 `recalculation_forecast_output_id` 與 `recalculation_run_id` 兩項明確外鍵，取代模糊的文字描述：
-1. 當 `OUTCOME_CORRECTION` 經 Data Owner 核准並觸發批次重算後，管線將新產生的 `forecast_output_id` 回填至本表的 `recalculation_forecast_output_id`，並將 `applied_status` 更新為 `APPLIED_RECALCULATION`。
+1. 當 `OUTCOME_CORRECTION` 經 Data Owner 核准並觸發批次重算後，管線將新產生的 `forecast_output_id` 回填至本表的 `recalculation_forecast_output_id`，並將 `applied_status` 更新為 `APPLIED_RECALCULATION`、`applied_at` 填入生效時點。
 2. 查詢任一預測輸出是否受回饋影響，只需執行 `SELECT * FROM operations.forecast_feedback WHERE recalculation_forecast_output_id = :id`，即可完整重現該預測所吸收之營運回饋清單與修正前／後實績差異。
 3. 若回饋因故未生效（如核准駁回或超出時間窗），`applied_status` 設為 `NOT_APPLIED`，並由 `chk_feedback_not_applied_reason` 強制填寫 `not_applied_reason_code`。
+
+**上一版的錯誤，與這次的修法**。v0.3.0 的 `chk_feedback_recalculation_provenance` 寫成 `recalculation_forecast_output_id IS NOT NULL OR recalculation_run_id IS NOT NULL`，也就是只填 `recalculation_run_id` 也算合格。但第 2 點宣稱的查詢是以 `recalculation_forecast_output_id` 為條件——一筆只有 run id 的列，在那個查詢裡查不到，卻仍被標記為已重算。**該約束因此容許了它自己宣稱要杜絕的狀態**。v0.4.0 改為必填 `recalculation_forecast_output_id`；`recalculation_run_id` 維持選填，作為重算批次的附加線索，但不能單獨充當血統。反向也一併封死：非 `APPLIED_RECALCULATION` 的列不得挾帶任何重算欄位，避免出現「有重算輸出但狀態說沒生效」的矛盾列。
+
+**類型與路徑的相容性**。第 4.3 節表列的三條生效路徑是一對一的：標註走排除、修正走重算、處置走 Alert `disposition`。在 v0.3.0，`feedback_kind` 與 `applied_status` 是兩個彼此無關的欄位，因此可以寫出 `CONTEXT_ANNOTATION` + `APPLIED_RECALCULATION` 這種在設計上不存在的組合。`chk_feedback_kind_applied_status` 把該表變成資料庫規則；`PENDING_APPLICATION` 與 `NOT_APPLIED` 兩個尚未落到任一路徑的狀態，三類回饋皆可使用。`chk_feedback_applied_at` 則使「已生效」必然帶有生效時點——沒有時點的生效在稽核上無法定位到任何一次重算或訓練批次。
 
 **三類回饋的處理路徑**：
 
@@ -624,14 +743,55 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'chk_heatzone_absorption_complete'
     ) THEN
-        -- 有吸收量就必須有基準時點，否則該數字不可稽核
+        -- 吸收四欄全有或全無：只有一半的吸收結果無法稽核，也無法計算剩餘需求
         ALTER TABLE expansion.heatzone_scores
             ADD CONSTRAINT chk_heatzone_absorption_complete CHECK (
-                absorbed_demand IS NULL OR absorption_basis_at IS NOT NULL
+                (absorbed_demand     IS NULL
+                 AND remaining_demand    IS NULL
+                 AND absorption_ratio    IS NULL
+                 AND absorption_basis_at IS NULL)
+             OR (absorbed_demand     IS NOT NULL
+                 AND remaining_demand    IS NOT NULL
+                 AND absorption_ratio    IS NOT NULL
+                 AND absorption_basis_at IS NOT NULL)
+            );
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_heatzone_absorption_non_negative'
+    ) THEN
+        -- 需求量不可為負：負的吸收量或負的剩餘需求沒有業務語意
+        ALTER TABLE expansion.heatzone_scores
+            ADD CONSTRAINT chk_heatzone_absorption_non_negative CHECK (
+                (absorbed_demand  IS NULL OR absorbed_demand  >= 0)
+            AND (remaining_demand IS NULL OR remaining_demand >= 0)
+            );
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_heatzone_absorption_consistent'
+    ) THEN
+        -- 三個數字必須互相吻合：ratio = absorbed / (absorbed + remaining)
+        ALTER TABLE expansion.heatzone_scores
+            ADD CONSTRAINT chk_heatzone_absorption_consistent CHECK (
+                absorbed_demand IS NULL
+             OR (absorbed_demand + remaining_demand = 0 AND absorption_ratio = 0)
+             OR (absorbed_demand + remaining_demand > 0
+                 AND abs(absorption_ratio
+                         - round(absorbed_demand / (absorbed_demand + remaining_demand), 4))
+                     <= 0.0001)
             );
     END IF;
 END $$;
 ```
+
+**這三條約束為何是 `HZ-004` 的驗收前提**。`ODP-AC-FR-009` 要求熱區排名在需求被吸收後下降，其可驗證性完全建立在「吸收量、剩餘需求、吸收比例三者是同一次計算的三個面向」之上。v0.3.0 只約束了 `absorption_ratio` 的值域與「有吸收量就要有基準時點」，於是下列三種列都能入庫，而每一種都使該驗收無從執行：
+
+| 可入庫的矛盾列 | 為何使 `HZ-004` 不可驗收 | v0.4.0 擋下它的約束 |
+|---|---|---|
+| `absorbed_demand = 10`、`remaining_demand = NULL` | 沒有剩餘需求就無法判斷排名是否應該下降 | `chk_heatzone_absorption_complete` |
+| `absorbed_demand = -5` | 負吸收量會使排名不降反升 | `chk_heatzone_absorption_non_negative` |
+| `absorbed = 10`、`remaining = 90`、`ratio = 0.9` | 比例與量互相矛盾，兩個下游讀哪一個就得到相反結論 | `chk_heatzone_absorption_consistent` |
+
+一致性檢查以 `round(..., 4)` 對齊 `absorption_ratio` 的 `NUMERIC(5, 4)` 精度，並留 `0.0001` 的容差吸收寫入端的捨入差異；`absorbed + remaining = 0`（該單元完全無需求）另列為合法情形，此時比例定義為 `0` 而非除以零。第 5.1 節的 `compute_absorbed_demand()` 是這三個數字的唯一產生處，因此一致性在應用層與資料庫層都只有一個來源。
 
 **吸收計算**（新增 `modules/heatzone/v3/absorption.py`）：
 
@@ -765,7 +925,7 @@ CREATE TABLE IF NOT EXISTS asset.deal_outcomes (
     no_deal_note        TEXT,
 
     duration_days       INTEGER NOT NULL,        -- 上架至結案天數，各 outcome_kind 皆適用
-    deal_terms          JSONB,                   -- 付款方式、交屋期、附帶條件
+    deal_terms          JSONB,                   -- 交易條件；CLOSED 必填且須含三個鍵（見下）
 
     recorded_by         VARCHAR(255) NOT NULL,
     recorded_at         TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -802,8 +962,18 @@ CREATE TABLE IF NOT EXISTS asset.deal_outcomes (
         realized_transaction_price IS NULL OR realized_transaction_price > 0
     ),
     CONSTRAINT chk_deal_outcome_duration CHECK (duration_days >= 0),
-    CONSTRAINT chk_deal_outcome_terms CHECK (
-        deal_terms IS NULL OR jsonb_typeof(deal_terms) = 'object'
+    -- 成交必須回收完整交易條件（ODP-FR-AVM-005）；未成交不得挾帶交易條件
+    CONSTRAINT chk_deal_outcome_terms_completeness CHECK (
+        (outcome_kind =  'CLOSED'
+            AND deal_terms IS NOT NULL
+            AND jsonb_typeof(deal_terms) = 'object'
+            AND deal_terms ? 'payment_method'
+            AND deal_terms ? 'handover_date'
+            AND deal_terms ? 'contingencies'
+            AND coalesce(deal_terms->>'payment_method', '') <> ''
+            AND coalesce(deal_terms->>'handover_date', '')  <> ''
+            AND jsonb_typeof(deal_terms->'contingencies') = 'array')
+     OR (outcome_kind <> 'CLOSED' AND deal_terms IS NULL)
     )
 );
 
@@ -816,6 +986,16 @@ CREATE INDEX IF NOT EXISTS idx_deal_outcome_realized
 ```
 
 `chk_deal_outcome_closed_fields` 是本表的核心約束：初版僅以 SQL 註解寫明「CLOSED 時必填」，註解不會阻擋任何寫入，一筆沒有成交價的 CLOSED 記錄仍可入庫，而校準計算會在讀取時才發現資料不完整。此處改為資料庫層強制。
+
+**`deal_terms` 為何也要納入同一條規則**。`ODP-FR-AVM-005` 要求回收的不只是成交價，還包括交易條件；v0.3.0 把 `deal_terms` 留為可空且無任何鍵位要求，等於讓該 FR 的一半停在註解階段——這正是上一段批評 `chk_deal_outcome_closed_fields` 缺席時的同一個問題，只是換了一欄。`chk_deal_outcome_terms_completeness` 因此要求 `CLOSED` 必須帶三個鍵：
+
+| 鍵 | 型別 | 為何是必要的 |
+|---|---|---|
+| `payment_method` | 非空字串 | 分期、貸款成數與一次付清的成交價不可直接比較，缺此欄則估值偏差計算會把不同條件的成交價混為一談 |
+| `handover_date` | 非空字串（ISO 日期） | 交屋期是價格的一部分；`realized_transaction_at` 記的是成交時點，兩者不同 |
+| `contingencies` | JSON 陣列（可為空陣列） | 附帶條件會實質改變成交價。允許空陣列而不允許缺鍵，是為了讓「確認沒有附帶條件」與「沒有人去問」在資料上可區分 |
+
+未成交（`WITHDRAWN`／`EXPIRED`）則不得挾帶 `deal_terms`，與 `chk_deal_outcome_closed_fields` 對成交欄位的處理一致：沒有成交就沒有成交條件，若有議約過程要保留，其歸屬是 `no_deal_note` 而不是本欄。此處刻意不驗證三個鍵的內容值域（例如付款方式的列舉），因為條件用語隨市場而異，過早收斂會使真實成交無法登錄；本約束保證的是「該問的三件事都問了」。
 
 ### 6.3 與估值及標籤管線的綁定
 
@@ -1040,9 +1220,17 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 | `expansion.site_score_runs` | `decision_policy_version_id` | 第 3.4 節 |
 | `network.network_plans` | `decision_policy_version_id` | 第 3.4 節 |
 
-既有表新增約束與唯一索引（2 項）：
-- `workflow.decisions` 補 `fk_decisions_policy_version`（`NOT VALID`，回填後 `VALIDATE`）。
-- `operations.alerts` 補唯一索引 `idx_alerts_forecast_policy` 於 `(forecast_output_id, decision_policy_version_id)` 保證評估識別唯一性。
+既有表新增約束與唯一索引：
+
+| 對象 | 新增 | 作用 |
+|---|---|---|
+| `workflow.decisions` | `fk_decisions_policy_version`（`NOT VALID`） | 補上既有欄位所隱含、但從未建立的外鍵 |
+| `operations.alerts` | `fk_alerts_decision_policy`（`NOT VALID`） | 政策綁定必須指向真實政策列 |
+| `expansion.heatzone_scores` | `fk_heatzone_scores_decision_policy`（`NOT VALID`） | 同上 |
+| `expansion.site_score_runs` | `fk_site_score_runs_decision_policy`（`NOT VALID`） | 同上 |
+| `network.network_plans` | `fk_network_plans_decision_policy`（`NOT VALID`） | 同上 |
+| `operations.alerts` | 唯一索引 `idx_alerts_forecast_policy` | `(forecast_output_id, decision_policy_version_id)` 的評估識別唯一性 |
+| `expansion.heatzone_scores` | `chk_heatzone_absorption_complete`（強化）、`chk_heatzone_absorption_non_negative`、`chk_heatzone_absorption_consistent` | `HZ-004` 吸收三欄的可驗收性（第 5.1 節） |
 
 既有 dbt 模型變更（1 個）：`pipelines/dbt/models/model_ready/valuation_view.sql` 新增 `realized_transaction_price`、`realized_transaction_at` 兩個輸出欄位（第 6.3 節）。
 
@@ -1081,22 +1269,49 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 
 **政策欄位的 NOT NULL 導入**分兩階段，避免既有資料阻擋 migration：
 
-1. 第一階段（`000013`）：`decision_policy_version_id` 新增為 nullable，`fk_decisions_policy_version` 建為 `NOT VALID`；同時以 `000013` migration SQL 直接寫入初版政策列與回填佔位列（見第 3.2 節）。
-2. 第二階段（後續 migration，不在本案編號內）：回填既有記錄，然後 `ALTER TABLE ... VALIDATE CONSTRAINT` 並轉為 `NOT NULL`。
+1. 第一階段（`000013`，本案）：`decision_policy_version_id` 新增為 nullable；`fk_decisions_policy_version` 與第 3.4 節的四個 `fk_*_decision_policy` 均建為 `NOT VALID`；同時以 `000013` migration SQL 直接寫入初版政策列與回填佔位列（見第 3.2 節）。此階段結束後，欄位可為 NULL，但**不可為查無此列的字串**。
+2. 第二階段（後續 migration，不在本案編號內）：回填既有記錄，`VALIDATE CONSTRAINT`，再轉為 `NOT NULL`。
 
-**回填語意須誠實**：既有警示是在無政策機制下產生的，回填時不得指向首版政策列，否則等於偽稱那些警示由該政策判定。回填一律指向專設的 retrofit 列：`policy_version_id = 'four-light-policy-0.0.0-retrofit'`，`policy_version = '0.0.0-retrofit'`，`change_reason` 記明其為回填佔位。歷史決策的政策歸屬不可偽造。
+**第二階段的預定語句**。下列語句是第一階段的驗收出口，寫在此處以免留待實作時各自發明。它們屬後續 migration，不在本案 DDL 內，故未納入第 13.1 節的執行驗證（見第 13.3 節）：
 
-**首版政策列**（`policy_kind = 'forecast_alert'`）：
+```text
+-- (a) 回填：歷史列一律指向該租戶的 retrofit 佔位列
+UPDATE operations.alerts a
+   SET decision_policy_version_id =
+       'four-light-policy-0.0.0-retrofit:' || s.tenant_id::text
+  FROM core.stores s
+ WHERE a.store_id = s.store_id
+   AND a.decision_policy_version_id IS NULL;
+-- expansion.heatzone_scores / expansion.site_score_runs / network.network_plans
+-- 依各自的租戶歸屬路徑（第 2 節事實 2）比照辦理。
+
+-- (b) 驗證既有列，再轉為必填
+ALTER TABLE operations.alerts VALIDATE CONSTRAINT fk_alerts_decision_policy;
+ALTER TABLE operations.alerts ALTER COLUMN decision_policy_version_id SET NOT NULL;
+```
+
+**進入第二階段的條件**（三者皆成立才可執行，否則 `SET NOT NULL` 會在生產環境失敗）：
+
+1. 四張表的 `decision_policy_version_id IS NULL` 計數為 0；
+2. 產生決策的所有寫入路徑都已改走第 3.5 節的 `resolve_policy()`，不再有不帶政策的新列；
+3. `VALIDATE CONSTRAINT` 在四張表上皆通過。
+
+**回填語意須誠實**：既有警示是在無政策機制下產生的，回填時不得指向首版政策列，否則等於偽稱那些警示由該政策判定。回填一律指向該租戶專設的 retrofit 列（`policy_label = 'four-light-policy-0.0.0-retrofit'`，`policy_version_id = 'four-light-policy-0.0.0-retrofit:{tenant_id}'`，`policy_version = '0.0.0-retrofit'`），`change_reason` 記明其為回填佔位。歷史決策的政策歸屬不可偽造。
+
+**首版政策列**（`policy_kind = 'forecast_alert'`，逐租戶各一列）：
 
 | 欄位 | 值 | 說明 |
 |---|---|---|
-| `policy_version_id` | `four-light-policy-v1` | 逐字沿用既有常數 `FOUR_LIGHT_POLICY_VERSION` |
+| `policy_version_id` | `four-light-policy-v1:{tenant_id}` | 依第 3.2 節命名規則，由 `chk_decision_policy_version_id_format` 強制 |
+| `policy_label` | `four-light-policy-v1` | 逐字沿用既有常數 `FOUR_LIGHT_POLICY_VERSION`（第 4.1 節） |
 | `policy_id` | `four-light-policy` | |
 | `policy_version` | `1.0.0` | |
 | `parameters.thresholds` | `-0.35`／`-0.20`／`-0.10` | 逐字對應現行程式常數 |
 | `declared_inputs` | `{sitescore_gap_ratio, data_quality.staleness_days}` | 見第 4.1 節 |
-| `change_reason` | 機制導入，門檻不變 | |
-| `rollback_policy_version` | `'four-light-policy-0.0.0-retrofit'` | 首版回退至佔位列 |
+| `change_reason` | 機制導入，門檻沿用常數，納入資料品質守衛 | 與第 3.2 節 seed 逐字相同 |
+| `rollback_policy_version` | `four-light-policy-0.0.0-retrofit:{tenant_id}` | 首版回退至同租戶的佔位列 |
+
+`{tenant_id}` 於 `000013` 由 `SELECT ... FROM core.tenants` 展開，故新增租戶時只需重跑該 migration（`ON CONFLICT DO NOTHING` 使既有租戶不受影響）。
 
 **驗證的分工**：門檻遷移以「同一批預測輸入產生同一組燈號」驗收；`data_quality_guard` 為新增行為，以 `ODP-BR-FCT-003` 的獨立情境驗收。機制上線、資料品質守衛、門檻調整是三次獨立變更，不得合併驗證。
 
@@ -1136,18 +1351,26 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 驗證腳本：`docs/evidence/ODP-SD-AMD-001_ddl_check.py`。它從本文件抽出所有 ```` ```sql ```` 區塊（第 6.3 節的 dbt select 片段除外，該片段非獨立語句），對真實 PostgreSQL 執行：
 
 ```
-uv run --no-project python docs/evidence/ODP-SD-AMD-001_ddl_check.py
+uv run --no-project --python 3.12 --with pgserver \
+    python docs/evidence/ODP-SD-AMD-001_ddl_check.py
 ```
 
-執行結果：
+（釘 3.12 是因為 `pgserver` 目前無 cp314 wheel。）執行結果：
 
 | 檢查 | 結果 |
 |---|---|
 | A. 9 個 DDL 區塊套用於 baseline 相依樁 | 9／9 通過 |
 | B. 每個區塊重跑一次（第 10 節宣稱的可重跑） | 9／9 通過 |
-| C. 新增約束是否真的擋下它宣稱要擋的資料 | 39／39 符合設計 |
+| C. 新增約束是否真的擋下它宣稱要擋的資料 | 73／73 符合設計 |
 
-C 項逐條涵蓋本案每一條新增 CHECK 與唯一索引，包含：`CLOSED` 缺成交價或成交時點被拒、非 `CLOSED` 挾帶成交價被拒、`OTHER` 未附說明被拒、`OUTCOME_CORRECTION` 標為 `AUTO_ACCEPTED` 被拒、回饋無任何目標被拒、`NOT_APPLIED` 缺原因碼被拒、`APPLIED_RECALCULATION` 缺重算血統被拒、合併熱區重用 `geo_cell_id` 作 `zone_id` 被拒、系統決定挾帶 `override_reason` 被拒、探索決策價格或預算為負被拒、探索預算已消耗超出上限被拒、同一預測輸出與政策版本重複評估（評估識別）被拒、同一 `policy_id` 出現第二個現行版本被拒、警示惡化時點早於 `opened_at` 被拒。
+C 項逐條涵蓋本案每一條新增 CHECK、外鍵與唯一索引。其中與本版新增或修正的規則直接對應者包括：`CLOSED` 缺成交價、成交時點或 `deal_terms` 三鍵被拒；未成交挾帶成交價或成交條件被拒；同一 `valuation_run_id` 登錄第二筆結果被拒；`APPLIED_RECALCULATION` 只填 `recalculation_run_id` 被拒；回饋類型與生效路徑不相容被拒；已生效卻無 `applied_at` 被拒；吸收四欄只填一半、為負或與比例矛盾被拒；`policy_version_id` 未帶租戶後綴被拒；以政策標籤（而非識別碼）綁定警示或熱區組成被外鍵拒。
+
+**C 項的兩項方法要求**（v0.4.0 補上，之前兩項皆不成立）：
+
+1. **案例隔離**。每個負向案例自帶其相依列（`asset.valuation_runs`、`geo.h3_cells`、`workflow.decisions`），不與其他案例共用。共用時，一列可能是被前一個案例留下的主鍵或唯一索引擋下，而非被該案例宣稱測試的約束擋下——案例照樣「通過」，卻什麼也沒證明。唯二刻意共用的是專門測試唯一索引的兩對案例。
+2. **拒絕原因具名**。每個負向案例宣告它預期的約束或索引名稱，只有當 PostgreSQL 的錯誤訊息確實出現該名稱時才計為符合設計。少數列必然同時違反兩條耦合的吸收約束（比例大於 1 必然也與其輸入不一致），這類案例宣告兩個名稱並接受其一；這仍排除了「因不相關的理由被拒」。腳本另在載入時檢查每個負向案例都有宣告名稱，否則直接中止。
+
+腳本以非零結束碼表示任一項不符，故其結果可被外部重跑核對，不需信任本節的敘述。
 
 **此驗證的範圍限制，據實說明**：pgserver 內建的 PostgreSQL 未附 `uuid-ossp` 與 `postgis` 兩個擴充，因此 `000001_baseline_canonical_schema.sql` 無法在該環境逐字套用——這也正是版本庫既有資料庫測試標記 `requires_live_env` 的原因。腳本改以一份與 `000001` 在主鍵與型別上相容的相依樁（涵蓋本案引用到的 14 張表），並將 `uuid_generate_v4()` 接到內建的 `gen_random_uuid()`。**因此上述結果證明的是本修正案 DDL 自身的正確性，不是它與完整 baseline 的整合。** 後者需要具備 PostGIS 的 PostgreSQL 16 環境，屬部署前驗證，未在此完成。
 
@@ -1164,6 +1387,8 @@ TypeError: non-default argument 'policy_id' follows default argument
 ### 13.3 未驗證的部分
 
 第 4.1、5.1、6.3、7 節的 Python 介面與 dbt 變更均為設計敘述，尚無實作可執行，故未驗證。第 6.3 節提出的驗收方式（對 `model_ready.valuation_view` 取欄位清單確認 `realized_transaction_price` 存在）在該 view 變更落地後即可執行，本案未變更該 view，故此刻仍為未通過狀態——這是預期的，本案是設計而非實作。
+
+第 11 節「第二階段的預定語句」（回填、`VALIDATE CONSTRAINT`、`SET NOT NULL`）屬後續 migration，不在本案 DDL 內，故以 ```` ```text ```` 標記而不被驗證腳本抽取，亦未執行。在空表上執行它們會全數通過，但那不構成任何證據——該階段的風險完全在既有資料的回填涵蓋率，而本環境沒有既有資料。它的驗證條件列於第 11 節，屬部署前驗證。
 
 ## 14. 未涵蓋事項
 
