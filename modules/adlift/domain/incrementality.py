@@ -37,7 +37,7 @@ class AdLiftProductionExecutionError(RuntimeError):
 class EvidenceLevel(StrEnum):
     """Causal evidence ladder (ODP-ML-05 §5). v1 produces L0–L3 only."""
 
-    L0_ANECDOTAL = "L0"  # only anecdotal / no usable treatment data
+    L0_ANECDOTAL = "L0"  # anecdotal: treatment observed, nothing to compare against
     L1_BEFORE_AFTER = "L1"  # before/after, no control group
     L2_MATCHED_DESCRIPTIVE = "L2"  # matched control but pre-trend/balance not clean
     L3_DID_VALIDATED = "L3"  # control + pre-trend + balance checks pass
@@ -57,8 +57,63 @@ _EVIDENCE_ORDER: tuple[EvidenceLevel, ...] = (
 CAUSAL_MIN_EVIDENCE = EvidenceLevel.L3_DID_VALIDATED
 
 
-def is_causal_evidence(level: EvidenceLevel) -> bool:
-    return _EVIDENCE_ORDER.index(level) >= _EVIDENCE_ORDER.index(CAUSAL_MIN_EVIDENCE)
+class EvidenceInsufficiencyReason(StrEnum):
+    """Why the ladder does not apply at all (ADR-0004 D3).
+
+    Only reasons with an actual decision path live here. ADR-0004 sketched four
+    codes; two of them do not belong, because they describe a *weaker* design
+    rather than an unassessable one:
+
+      NO_CONTROL           -> that is L1_BEFORE_AFTER. A before/after read is a
+                              real, if weak, reading of the evidence.
+      OVERLAPPING_TREATMENT -> that is L2_MATCHED_DESCRIPTIVE, which is what
+                              `contamination` already produces. The campaign is
+                              still measurable; the causal claim is what fails.
+
+    The other two ADR codes, SAMPLE_TOO_SMALL and DATA_QUALITY_FAIL, have no
+    decision path in this module today -- there is no minimum-sample threshold
+    and no data-quality signal reaching assess_evidence(). They are deliberately
+    absent rather than declared and never produced: an enum member nothing can
+    emit is the shape that made `causal_candidate` survive for months
+    (ODP-EVIDENCE-LEVEL-ALIGNMENT-001). Add them with their thresholds.
+    """
+
+    NO_TREATMENT_DATA = "NO_TREATMENT_DATA"
+
+
+@dataclass(frozen=True)
+class EvidenceAssessment:
+    """Assessability and strength, kept separate (ADR-0004 D3).
+
+    `_EVIDENCE_ORDER` is an ordered tuple compared by index. Putting an
+    "unrateable" member inside it would give that member a rank -- below L0
+    reads as "weaker than anecdotal", when the real meaning is that the scale
+    does not apply. So the ladder stays pure and assessability rides alongside.
+    """
+
+    assessable: bool
+    level: EvidenceLevel | None
+    insufficiency_reason: EvidenceInsufficiencyReason | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_assessable": self.assessable,
+            "evidence_level": self.level.value if self.level is not None else None,
+            "insufficiency_reason_code": (
+                self.insufficiency_reason.value
+                if self.insufficiency_reason is not None
+                else None
+            ),
+        }
+
+
+def is_causal_evidence(assessment: EvidenceAssessment) -> bool:
+    """Causal claims need L3+, and need the ladder to apply in the first place."""
+    if not assessment.assessable or assessment.level is None:
+        return False
+    return _EVIDENCE_ORDER.index(assessment.level) >= _EVIDENCE_ORDER.index(
+        CAUSAL_MIN_EVIDENCE
+    )
 
 
 class PreTrendStatus(StrEnum):
@@ -289,7 +344,9 @@ class IncrementalityReport:
     effect_interval: EffectInterval
     iromi: float
     ad_spend: float
-    evidence_level: EvidenceLevel
+    evidence_level: EvidenceLevel | None
+    evidence_assessable: bool
+    insufficiency_reason: EvidenceInsufficiencyReason | None
     causal_claim_allowed: bool
     recommendation: Recommendation
     contamination: tuple[ContaminationFinding, ...]
@@ -342,7 +399,15 @@ class IncrementalityReport:
             "estimator_metadata": self.estimator_metadata,
             "iromi": self.iromi,
             "ad_spend": self.ad_spend,
-            "evidence_level": self.evidence_level.value,
+            "evidence_level": (
+                self.evidence_level.value if self.evidence_level is not None else None
+            ),
+            "evidence_assessable": self.evidence_assessable,
+            "insufficiency_reason_code": (
+                self.insufficiency_reason.value
+                if self.insufficiency_reason is not None
+                else None
+            ),
             "causal_claim_allowed": self.causal_claim_allowed,
             "recommendation": self.recommendation.value,
             "contamination": [finding.to_dict() for finding in self.contamination],
@@ -476,30 +541,50 @@ def detect_contamination(
     return findings
 
 
-def assign_evidence_level(
+def assess_evidence(
     *,
     has_treatment_data: bool,
     control_store_ids: Sequence[str],
     pre_trend_status: PreTrendStatus,
     contamination: Sequence[ContaminationFinding],
-) -> EvidenceLevel:
-    """Map the design quality onto the L0–L5 ladder (ODP-ML-05 §5, §8.3, AC-07-02)."""
+) -> EvidenceAssessment:
+    """Assess whether the ladder applies, and if so where the design lands.
+
+    ODP-ML-05 §5, §8.3, AC-07-02 for the ladder; ADR-0004 D3 for the split
+    between assessability and strength.
+
+    No treatment data means there is nothing to read, in either direction --
+    the campaign cannot be called effective *or* ineffective. This used to
+    return L0_ANECDOTAL, which claims an observation was made and rated at the
+    bottom of the scale. ODP-BR-AD-004 wants that case reported as
+    INSUFFICIENT_EVIDENCE, and it is not the same statement as L0.
+    """
     if not has_treatment_data:
-        return EvidenceLevel.L0_ANECDOTAL
+        return EvidenceAssessment(
+            assessable=False,
+            level=None,
+            insufficiency_reason=EvidenceInsufficiencyReason.NO_TREATMENT_DATA,
+        )
     if not control_store_ids:
-        return EvidenceLevel.L1_BEFORE_AFTER
+        return EvidenceAssessment(assessable=True, level=EvidenceLevel.L1_BEFORE_AFTER)
     # Matched control present. Pre-trend not cleanly passing OR a balance failure
     # (intervention overlap) caps the evidence at L2 (cannot claim causality).
+    # Both are weaker designs, not unassessable ones -- the reading stands, the
+    # causal claim does not.
     if pre_trend_status is not PreTrendStatus.PASS:
-        return EvidenceLevel.L2_MATCHED_DESCRIPTIVE
+        return EvidenceAssessment(
+            assessable=True, level=EvidenceLevel.L2_MATCHED_DESCRIPTIVE
+        )
     if contamination:
-        return EvidenceLevel.L2_MATCHED_DESCRIPTIVE
-    return EvidenceLevel.L3_DID_VALIDATED
+        return EvidenceAssessment(
+            assessable=True, level=EvidenceLevel.L2_MATCHED_DESCRIPTIVE
+        )
+    return EvidenceAssessment(assessable=True, level=EvidenceLevel.L3_DID_VALIDATED)
 
 
 def recommend(
     *,
-    evidence_level: EvidenceLevel,
+    assessment: EvidenceAssessment,
     iromi: float,
     scale_iromi: float = SCALE_IROMI,
     continue_iromi: float = CONTINUE_IROMI,
@@ -507,9 +592,10 @@ def recommend(
     """Continue/Stop/Scale call (ODP-ML-05 §15.2/§15.3).
 
     Below L3 the effect is not a causal estimate, so no continue/stop call is
-    made — the report is INCONCLUSIVE until the design is strengthened.
+    made — the report is INCONCLUSIVE until the design is strengthened. An
+    unassessable campaign is INCONCLUSIVE for the same reason, one step earlier.
     """
-    if not is_causal_evidence(evidence_level):
+    if not is_causal_evidence(assessment):
         return Recommendation.INCONCLUSIVE
     if iromi >= scale_iromi:
         return Recommendation.SCALE
@@ -592,15 +678,16 @@ def run_incrementality(
         _in_period(by_store.get(store_id, []), campaign, period="campaign")
         for store_id in treatment_store_ids
     )
-    evidence_level = assign_evidence_level(
+    assessment = assess_evidence(
         has_treatment_data=has_treatment_data,
         control_store_ids=control_store_ids,
         pre_trend_status=pre_trend.status,
         contamination=contamination,
     )
-    causal_claim_allowed = is_causal_evidence(evidence_level)
+    evidence_level = assessment.level
+    causal_claim_allowed = is_causal_evidence(assessment)
     recommendation = recommend(
-        evidence_level=evidence_level,
+        assessment=assessment,
         iromi=iromi,
         scale_iromi=scale_iromi,
         continue_iromi=continue_iromi,
@@ -647,6 +734,8 @@ def run_incrementality(
         iromi=iromi,
         ad_spend=campaign.ad_spend,
         evidence_level=evidence_level,
+        evidence_assessable=assessment.assessable,
+        insufficiency_reason=assessment.insufficiency_reason,
         causal_claim_allowed=causal_claim_allowed,
         recommendation=recommendation,
         contamination=tuple(contamination),
@@ -835,7 +924,7 @@ def _fit_statsmodels_matched_did(
 def _build_intervention_writeback(
     campaign: AdCampaign,
     *,
-    evidence_level: EvidenceLevel,
+    evidence_level: EvidenceLevel | None,
     estimate: IncrementalityEstimate,
     iromi: float,
     recommendation: Recommendation,
@@ -849,7 +938,7 @@ def _build_intervention_writeback(
         "treatment_store_ids": list(campaign.treatment_store_ids),
         "incremental_gross_margin": estimate.incremental_gross_margin,
         "iromi": iromi,
-        "evidence_level": evidence_level.value,
+        "evidence_level": evidence_level.value if evidence_level is not None else None,
         "causal_claim_allowed": causal_claim_allowed,
         "recommendation": recommendation.value,
     }
@@ -858,7 +947,7 @@ def _build_intervention_writeback(
 def _build_label_registry_entry(
     campaign: AdCampaign,
     *,
-    evidence_level: EvidenceLevel,
+    evidence_level: EvidenceLevel | None,
     estimate: IncrementalityEstimate,
     iromi: float,
     generated_at: datetime,
@@ -872,7 +961,7 @@ def _build_label_registry_entry(
         "incremental_revenue": estimate.incremental_revenue,
         "incremental_gross_margin": estimate.incremental_gross_margin,
         "iromi": iromi,
-        "evidence_level": evidence_level.value,
+        "evidence_level": evidence_level.value if evidence_level is not None else None,
         "causal_claim_allowed": causal_claim_allowed,
         "label_maturity_time": campaign.campaign_period_end.isoformat(),
         "labeled_at": generated_at.isoformat(),
