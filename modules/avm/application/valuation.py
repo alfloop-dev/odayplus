@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -9,10 +9,15 @@ from models.shared_ml.production_runtime import (
     ProductionExecutionConfigurationError,
     production_execution_required,
 )
+from modules.avm.application.calibration import (
+    DealOutcomeCalibrationReport,
+    evaluate_calibration_coverage,
+)
 from modules.avm.application.production import AVMProductionExecutor
 from modules.avm.domain import (
     ApprovalDecision,
     DataRoom,
+    DealOutcome,
     NormalizedMargin,
     ValuationCase,
     ValuationCaseStatus,
@@ -238,6 +243,54 @@ class AVMService:
 
     def dataroom(self, case_id: str) -> DataRoom | None:
         return self.repository.get_dataroom(case_id)
+
+    def record_deal_outcome(self, outcome: DealOutcome | Mapping[str, Any]) -> DealOutcome:
+        item = outcome if isinstance(outcome, DealOutcome) else DealOutcome.from_mapping(outcome)
+        return self.repository.save_deal_outcome(item)
+
+    def get_deal_outcome(self, outcome_id: str) -> DealOutcome | None:
+        return self.repository.get_deal_outcome(outcome_id)
+
+    def list_deal_outcomes(self) -> list[DealOutcome]:
+        return self.repository.list_deal_outcomes()
+
+    def get_deal_outcomes_for_valuation(self, valuation_id: str) -> list[DealOutcome]:
+        return self.repository.get_deal_outcomes_for_valuation(valuation_id)
+
+    def calibrate_deal_outcomes(
+        self,
+        outcomes: Sequence[DealOutcome] | None = None,
+    ) -> DealOutcomeCalibrationReport:
+        items = list(outcomes) if outcomes is not None else self.list_deal_outcomes()
+        if not items:
+            return DealOutcomeCalibrationReport(
+                total_outcomes=0,
+                sold_count=0,
+                unsold_count=0,
+                aligned_count=0,
+                p10_p90_coverage_rate=0.0,
+                p10_p50_coverage_rate=0.0,
+                p50_p90_coverage_rate=0.0,
+                mae=0.0,
+                mape=0.0,
+                mean_deviation=0.0,
+                median_calibration_ratio=0.0,
+                is_coverage_target_met=False,
+                no_deal_reason_distribution={},
+                items=(),
+            )
+        # Collect reports from repository for all case_ids
+        reports_map: dict[str, ValuationReport] = {}
+        for case in self.repository.list_cases():
+            rep = self.repository.latest_report(case.case_id)
+            if rep is not None:
+                reports_map[rep.report_id] = rep
+                reports_map[rep.case_id] = rep
+            for r in self.repository.report_history(case.case_id):
+                reports_map[r.report_id] = r
+                reports_map[r.case_id] = r
+
+        return evaluate_calibration_coverage(items, reports_map)
 
     def _case(self, case_id: str) -> ValuationCase:
         case = self.repository.get_case(case_id)

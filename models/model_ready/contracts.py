@@ -121,6 +121,22 @@ class ModelSpec:
         )
         optional_event = (self.event_column,) if self.event_column else ()
         optional_maturity = (self.label_maturity_column,) if self.label_maturity_column else ()
+        # Survival rows must carry the canonical deal-outcome identity and
+        # fields.  Duration/sold are projected from this relation; callers may
+        # not manufacture a second liquidity-label source in the trainer.
+        outcome_columns = (
+            (
+                "outcome_id",
+                "valuation_id",
+                "settlement_price",
+                "settlement_date",
+                "no_deal_reason_code",
+                "deal_terms",
+                "source_authority",
+            )
+            if self.kind is ModelKind.SURVIVAL
+            else ()
+        )
         return tuple(
             dict.fromkeys(
                 (
@@ -130,6 +146,7 @@ class ModelSpec:
                     self.label_column,
                     *optional_event,
                     *optional_maturity,
+                    *outcome_columns,
                     *self.scope_columns,
                     *(
                         name

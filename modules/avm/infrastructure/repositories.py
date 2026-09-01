@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from modules.avm.domain import DataRoom, NormalizedMargin, ValuationCase, ValuationReport
+from modules.avm.domain import (
+    DataRoom,
+    DealOutcome,
+    NormalizedMargin,
+    ValuationCase,
+    ValuationReport,
+)
 
 
 @dataclass
@@ -12,6 +18,7 @@ class InMemoryAVMRepository:
     _margins: dict[str, NormalizedMargin] = field(default_factory=dict)
     _reports: dict[str, list[ValuationReport]] = field(default_factory=dict)
     _datarooms: dict[str, DataRoom] = field(default_factory=dict)
+    _deal_outcomes: dict[str, DealOutcome] = field(default_factory=dict)
 
     def save_case(self, case: ValuationCase) -> ValuationCase:
         self._cases[case.case_id] = case
@@ -60,3 +67,16 @@ class InMemoryAVMRepository:
 
     def get_dataroom(self, case_id: str) -> DataRoom | None:
         return self._datarooms.get(case_id)
+
+    def save_deal_outcome(self, outcome: DealOutcome) -> DealOutcome:
+        self._deal_outcomes[outcome.outcome_id] = outcome
+        return outcome
+
+    def get_deal_outcome(self, outcome_id: str) -> DealOutcome | None:
+        return self._deal_outcomes.get(outcome_id)
+
+    def get_deal_outcomes_for_valuation(self, valuation_id: str) -> list[DealOutcome]:
+        return [o for o in self._deal_outcomes.values() if o.valuation_id == valuation_id]
+
+    def list_deal_outcomes(self) -> list[DealOutcome]:
+        return list(self._deal_outcomes.values())

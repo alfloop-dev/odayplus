@@ -344,6 +344,26 @@ export type DatasetSnapshotPayload = {
   rows: Record<string, unknown>[];
 };
 
+/** DealOutcomeExportPayload */
+export type DealOutcomeExportPayload = {
+  actor: string;
+  reason?: string;
+  role?: string | null;
+};
+
+/** DealOutcomePayload */
+export type DealOutcomePayload = {
+  deal_terms?: Record<string, unknown>;
+  duration_days?: number;
+  no_deal_reason_code?: string | null;
+  settlement_date?: string | null;
+  settlement_price?: number | null;
+  sold: boolean;
+  source_authority?: string;
+  store_id: string;
+  valuation_id: string;
+};
+
 /** DecisionReceipt */
 export type DecisionReceipt = {
   audit_event_id: string;
@@ -1636,6 +1656,7 @@ export const API_PATHS = {
   "/api/v1/audit/evidence/exports/{export_id}/legal-hold": ["POST"],
   "/api/v1/audit/evidence/retention/expired": ["GET"],
   "/api/v1/audit/evidence/retention/purge": ["POST"],
+  "/api/v1/avm/calibration": ["POST"],
   "/api/v1/avm/cases": ["GET", "POST"],
   "/api/v1/avm/cases/{case_id}": ["GET"],
   "/api/v1/avm/cases/{case_id}/dataroom": ["GET", "POST"],
@@ -1645,6 +1666,9 @@ export const API_PATHS = {
   "/api/v1/avm/cases/{case_id}/report": ["GET"],
   "/api/v1/avm/cases/{case_id}/reports": ["GET"],
   "/api/v1/avm/cases/{case_id}/value": ["POST"],
+  "/api/v1/avm/deal-outcomes": ["GET", "POST"],
+  "/api/v1/avm/deal-outcomes/export": ["POST"],
+  "/api/v1/avm/deal-outcomes/{outcome_id}": ["GET"],
   "/api/v1/external-data/freshness": ["GET"],
   "/api/v1/external-data/ingestion-runs": ["GET", "POST"],
   "/api/v1/external-data/ingestion-runs/{run_id}": ["GET"],
