@@ -424,18 +424,6 @@ def freshly_provisioned_db(intake_blank_db):
     return intake_blank_db
 
 
-def _database_url(db) -> str:
-    params = db.server.admin_params
-    host = params.get("host")
-    query = f"?host={host}" if host and str(host).startswith("/") else ""
-    netloc = "" if query else str(host or "localhost")
-    port = params.get("port")
-    if netloc and port:
-        netloc = f"{netloc}:{int(port)}"
-    user = params.get("user") or "postgres"
-    return f"postgresql://{user}@{netloc}/{db.dbname}{query}"
-
-
 @live
 class TestFreshlyProvisionedRuntime:
     def test_the_migration_leaves_no_policy_rows_when_no_tenant_exists_yet(
@@ -525,7 +513,7 @@ class TestFreshlyProvisionedRuntime:
             )
 
         engine = PostgresEngine(
-            _database_url(freshly_provisioned_db),
+            freshly_provisioned_db.url(),
             bootstrap=False,
             validate_schema=False,
         )

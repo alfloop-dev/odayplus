@@ -202,6 +202,35 @@ class IntakeDatabase:
     def connect(self, *, autocommit: bool = True, **overrides):
         return self.server.connect(self.dbname, autocommit=autocommit, **overrides)
 
+    def url(self, *, driver: str = "") -> str:
+        """Return this database's URL, for callers that need a URL not a socket.
+
+        The fixtures hand out connection parameters, but anything driven through
+        a URL -- ``PostgresEngine``, Alembic's ``sqlalchemy.url`` -- needs the
+        assembled form, and the two differ only by the driver in the scheme.
+        """
+
+        from urllib.parse import quote
+
+        params = self.server.admin_params
+        scheme = f"postgresql+{driver}" if driver else "postgresql"
+        user = quote(str(params.get("user") or "postgres"), safe="")
+        password = params.get("password")
+        credentials = (
+            user if password is None else f"{user}:{quote(str(password), safe='')}"
+        )
+        host = str(params.get("host") or "localhost")
+        if host.startswith("/"):
+            # A Unix socket directory is a path, so it cannot sit in the netloc.
+            # libpq takes it as a `host` query parameter instead, and the
+            # pgserver fallback always hands out one of these.
+            return (
+                f"{scheme}://{credentials}@/{self.dbname}?host={quote(host, safe='')}"
+            )
+        port = params.get("port")
+        netloc = host if port is None else f"{host}:{int(port)}"
+        return f"{scheme}://{credentials}@{netloc}/{self.dbname}"
+
     def apply_migration(self) -> None:
         with self.connect(autocommit=True) as conn:
             for _name, sql in intake_migration.upgrade_statements():
