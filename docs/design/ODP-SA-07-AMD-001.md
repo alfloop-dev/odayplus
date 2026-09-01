@@ -27,7 +27,7 @@ source_decision: ADR-0004
 
 `ODP-SA-07` 第 6 節與 `ODP-ML-05` 第 5 節對同一個階梯給出不相容的定義，兩份同為 `formal_deliverable`，位階無法自動判定。裁決依據不是批次先後，而是**實作實況**：
 
-盤點 `origin/dev` 的 130 個 `evidence_level` 使用點後，三套值並存且彼此無轉換。其中只有 ML-05 那套有產生者與消費者（`modules/adlift/domain/incrementality.py` 計算、AdLift API 輸出），並有 `CAUSAL_MIN_EVIDENCE = L3` 這個實際用來阻擋因果宣稱的門檻 —— 也就是 `ODP-BR-AD-001`（Hard Constraint）的執行點。本文件第 6 節那套沒有任何實作。
+盤點 `origin/dev@595e7501` 的 130 個 `evidence_level` 使用點後，三套值並存且彼此無轉換。其中只有 ML-05 那套有產生者與消費者（`modules/adlift/domain/incrementality.py` 計算、AdLift API 輸出），並有 `CAUSAL_MIN_EVIDENCE = L3` 這個實際用來阻擋因果宣稱的門檻 —— 也就是 `ODP-BR-AD-001`（Hard Constraint）的執行點。本文件第 6 節那套沒有任何實作。
 
 完整分析見 `ADR-0004` Context 一節。
 
@@ -89,13 +89,13 @@ source_decision: ADR-0004
 
 | 變更 | Task | 交付 PR | 併入狀態（2026-09-01 快照） |
 |---|---|---|---|
-| `EvidenceAssessment`、`EvidenceInsufficiencyReason`、`assess_evidence()`、`is_causal_evidence()` 短路 | `ODP-EVIDENCE-ASSESSABILITY-001` | #1095 | 未併入 |
+| `EvidenceAssessment`、`EvidenceInsufficiencyReason`、`assess_evidence()`、`is_causal_evidence()` 短路 | `ODP-EVIDENCE-ASSESSABILITY-001` | #1095 | **已併入 `dev`**（merge commit `35a28741`） |
 | 持久化層對齊 L0–L5、移除 `DEFAULT 'medium'` 與孤兒值 `causal_candidate` | `ODP-EVIDENCE-LEVEL-ALIGNMENT-001` | #1094 | **已併入 `dev`**（merge commit `4a14d52d`） |
 | 本修正案的裁決依據 `ADR-0004` | `ODP-EVIDENCE-LEVEL-ADR-001` | #1090 | 未併入 |
 
-PR #1094 已在 `dev` 上：`infra/db/migrations/000013_evidence_level_alignment.sql` 移除了 `evidence_level` 的 `DEFAULT 'medium'` 與 `NOT NULL`，`packages/schemas/canonical` 已無 `causal_candidate`。第 3.2 節要求 `evidence_assessable = false` 時 `evidence_level` 為空，其持久化層前提（欄位可為 NULL、且無 fail-open 預設值）因此在 `dev` 上已成立。
+PR #1094 與 PR #1095 已在 `dev` 上：`infra/db/migrations/000013_evidence_level_alignment.sql` 移除了 `evidence_level` 的 `DEFAULT 'medium'` 與 `NOT NULL`，`packages/schemas/canonical` 已無 `causal_candidate`；`assess_evidence()`、`EvidenceAssessment`、`EvidenceInsufficiencyReason` 等評估機制也已在 `modules/adlift/domain/incrementality.py` 落地。第 3.2 節要求 `evidence_assessable = false` 時 `evidence_level` 為空，其持久化層與領域模型前提因此在 `dev` 上皆已成立。
 
-PR #1095 與 PR #1090 尚未併入，因此 `dev` 上還沒有 `assess_evidence()`，也還沒有 `ADR-0004` 本身。這兩項請以 `task/ODP-EVIDENCE-ASSESSABILITY-001` 與 `task/ODP-EVIDENCE-LEVEL-ADR-001` 查核，不要以 `dev` 查核。本修正案不應早於 `ADR-0004` 併入。
+PR #1090 尚未併入，因此 `dev` 上還沒有 `ADR-0004` 本身。該項請以 `task/ODP-EVIDENCE-LEVEL-ADR-001` 查核，不要以 `dev` 查核。本修正案不應早於 `ADR-0004` 併入。
 
 上表是快照，會隨合併而過期。查核時以 `gh pr view <PR>` 的當下結果為準，不以本文件為準。
 
