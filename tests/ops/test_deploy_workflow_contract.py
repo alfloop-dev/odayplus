@@ -1091,6 +1091,26 @@ def test_workflow_dispatch_declares_masked_snapshot_and_rollback_inputs() -> Non
         assert inputs[name]["default"] == ""
 
 
+def test_dispatch_input_descriptions_do_not_name_files_that_do_not_exist() -> None:
+    """An example path is an instruction, and a wrong one sends operators nowhere.
+
+    `rollback_manifest` once pointed at `docs/evidence/gates/PREV_RELEASE_MANIFEST.json`,
+    which has never existed in this repository.
+    """
+
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+    repo_path = re.compile(r"\b[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.(?:json|ya?ml|py|md|sh)\b")
+
+    missing = [
+        (name, candidate)
+        for name, spec in inputs.items()
+        for candidate in repo_path.findall(spec.get("description") or "")
+        if not (ROOT / candidate).exists()
+    ]
+    assert not missing, f"deploy-dev.yml inputs cite files that do not exist: {missing}"
+
+
 def test_admission_binds_the_handoff_images_to_the_manifest() -> None:
     """A lease admits this release's artifacts, not any digest presented."""
 

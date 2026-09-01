@@ -108,12 +108,12 @@ on:
         default: ""
         type: string
       data_snapshot_file:
-        description: "Path to approved masked data snapshot JSON file (build phase; optional alternative to id/uri/sha)"
+        description: "Approved masked data snapshot JSON, as a path in the build workspace (build phase; mutually exclusive with data_snapshot_id/uri/content_sha -- supplying both fails closed)"
         required: false
         default: ""
         type: string
       rollback_manifest:
-        description: "Path to previous approved release manifest JSON (build phase; e.g. docs/evidence/gates/PREV_RELEASE_MANIFEST.json)"
+        description: "Previous approved release manifest, as a path in the build workspace or inline JSON (build phase; remote URIs are rejected -- fetch it into the workspace first)"
         required: false
         default: ""
         type: string

@@ -65,6 +65,13 @@ SHARED_COMPONENTS = {"migration": "worker"}
 
 DEFAULT_WORKFLOW_PATH = ".github/workflows/deploy-dev.yml"
 
+# ``gs://bucket/key`` survives ``str`` but not ``Path``: pathlib collapses the
+# double slash into ``gs:/bucket/key`` and the resulting "file does not exist"
+# names a path nobody passed. A remote pointer is not a fetch instruction this
+# script can honour -- the build phase reads the previous approved manifest out
+# of its own workspace -- so it is rejected by name instead.
+REMOTE_URI_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
+
 
 class HandoffError(Exception):
     """handoff 無法被寫出的原因集合。"""
@@ -112,7 +119,7 @@ def build_handoff(
     signature_refs: list[str],
     data_snapshot: dict[str, Any] | None = None,
     rollback_manifest: dict[str, Any] | str | Path | None = None,
-    rollback_release: dict[str, Any] | None = None,
+    rollback_release: dict[str, Any] | str | Path | None = None,
     release_id: str | None = None,
     created_at: str | None = None,
     created_by_workflow: str | None = None,
@@ -164,8 +171,9 @@ def build_handoff(
     effective_release_id = release_id or f"odp-{release_sha[:12]}"
     if rollback_manifest is not None and rollback_release is not None:
         errors.append(
-            "rollback_manifest 與 rollback_release 不可同時指定；"
-            "兩者都必須指向同一份完整 previous release manifest"
+            "rollback_manifest 與 rollback_release（CLI: --rollback-manifest 與 "
+            "--rollback-release-file）不可同時指定；兩者都必須指向同一份完整 "
+            "previous release manifest，這裡不會替你選一條"
         )
 
     rollback_source = rollback_manifest if rollback_manifest is not None else rollback_release
@@ -181,6 +189,13 @@ def build_handoff(
                 except Exception as exc:
                     previous_manifest = None
                     previous_errors = [f"無法解析 rollback manifest JSON 字串：{exc}"]
+            elif REMOTE_URI_PATTERN.match(raw_str):
+                previous_manifest = None
+                previous_errors = [
+                    f"{raw_str} 是遠端 URI，不是本機路徑；rollback manifest 只接受 build "
+                    "workspace 內的檔案路徑或 inline JSON。請先把上一核准 release manifest "
+                    "取回工作區再傳入。"
+                ]
             else:
                 previous_manifest, previous_errors = load_manifest(Path(rollback_source))
             if previous_errors or previous_manifest is None:
@@ -281,19 +296,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--data-snapshot-uri", default=None)
     parser.add_argument("--data-snapshot-sha256", default=None)
     parser.add_argument("--data-snapshot-content-sha256", default=None)
-    parser.add_argument(
-        "--data-snapshot-content-sha",
-        dest="data_snapshot_content_sha_alias",
-        default=None,
-        help="Alias for --data-snapshot-content-sha256",
-    )
     parser.add_argument("--data-snapshot-contract-digest", default=None)
     parser.add_argument("--data-snapshot-file", type=Path, default=None)
     parser.add_argument("--data-snapshot-unmasked", action="store_true", default=False)
     parser.add_argument(
         "--rollback-manifest",
         default=None,
-        help="Path or JSON string of the previous approved release manifest",
+        help=(
+            "Previous approved release manifest, as a path inside the build "
+            "workspace or as an inline JSON object"
+        ),
     )
     parser.add_argument("--rollback-release-file", type=Path, default=None)
     parser.add_argument("--images-output", type=Path, required=True)
@@ -308,27 +320,63 @@ def main(argv: list[str] | None = None) -> int:
 
     components = dict(_parse_assignment(raw) for raw in args.component)
 
+    # The approved snapshot arrives either as a whole file or as its separate
+    # fields, and the workflow reads each channel from a different place
+    # (dispatch inputs vs repository vars). Letting one channel win silently
+    # means a stale `vars` entry can replace the snapshot an operator just
+    # approved, and the manifest would record the substitution as if it were
+    # the approval. Mixing the channels is refused, exactly as
+    # ``rollback_manifest``/``rollback_release`` already are.
+    inline_snapshot_fields = {
+        "--data-snapshot-id": args.data_snapshot_id,
+        "--data-snapshot-uri": args.data_snapshot_uri,
+        "--data-snapshot-sha256": args.data_snapshot_sha256,
+        "--data-snapshot-content-sha256": args.data_snapshot_content_sha256,
+    }
+    # These two never build a snapshot on their own, but they do modify the
+    # inline one, so passing them alongside a file is the same ambiguity.
+    inline_snapshot_modifiers = {
+        "--data-snapshot-contract-digest": args.data_snapshot_contract_digest,
+        "--data-snapshot-unmasked": args.data_snapshot_unmasked or None,
+    }
+    supplied_inline = sorted(
+        name
+        for name, value in {**inline_snapshot_fields, **inline_snapshot_modifiers}.items()
+        if value
+    )
+
     data_snapshot = None
+    if args.data_snapshot_file and supplied_inline:
+        print(
+            "approved masked data snapshot 有兩條互斥的來源，這裡不會替你選一條：",
+            file=sys.stderr,
+        )
+        print(
+            f"- --data-snapshot-file {args.data_snapshot_file} 與 "
+            + "、".join(supplied_inline)
+            + " 同時指定。",
+            file=sys.stderr,
+        )
+        print(
+            "- 只留下實際核准的那一條；workflow 端請清掉未使用的 dispatch input "
+            "或 repository vars fallback。",
+            file=sys.stderr,
+        )
+        return 1
+
     if args.data_snapshot_file:
         try:
             data_snapshot = json.loads(args.data_snapshot_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             print(f"無法讀取 data snapshot 檔案 {args.data_snapshot_file}：{exc}", file=sys.stderr)
             return 1
-    elif (
-        args.data_snapshot_id
-        or args.data_snapshot_uri
-        or args.data_snapshot_sha256
-        or args.data_snapshot_content_sha256
-        or getattr(args, "data_snapshot_content_sha_alias", None)
-    ):
+    elif any(inline_snapshot_fields.values()):
         contract_digest = (
             args.data_snapshot_contract_digest
             or compute_data_contract_digest(root=ROOT)
         )
         raw_content_sha = (
             args.data_snapshot_content_sha256
-            or getattr(args, "data_snapshot_content_sha_alias", None)
             or args.data_snapshot_sha256
             or ""
         ).strip()
@@ -342,8 +390,6 @@ def main(argv: list[str] | None = None) -> int:
             "masked": not args.data_snapshot_unmasked,
         }
 
-    rollback_file = args.rollback_manifest or args.rollback_release_file
-
     try:
         images, manifest = build_handoff(
             release_sha=args.release_sha,
@@ -351,7 +397,10 @@ def main(argv: list[str] | None = None) -> int:
             sbom_refs=[ref for ref in args.sbom_ref if str(ref).strip()],
             signature_refs=[ref for ref in args.signature_ref if str(ref).strip()],
             data_snapshot=data_snapshot,
-            rollback_manifest=rollback_file,
+            # Both, not `a or b`: collapsing them here would hide the same
+            # substitution that build_handoff refuses for the snapshot.
+            rollback_manifest=args.rollback_manifest,
+            rollback_release=args.rollback_release_file,
             release_id=args.release_id,
             created_at=args.created_at,
             created_by_workflow=args.created_by_workflow,
