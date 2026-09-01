@@ -74,7 +74,9 @@ INSERT INTO core.tenants (tenant_id, tenant_name) VALUES
     ('11111111-1111-1111-1111-222222222222', 't2')
 ON CONFLICT DO NOTHING;
 CREATE TABLE core.brands  (brand_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
-CREATE TABLE core.stores  (store_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
+CREATE TABLE core.stores  (
+    store_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL REFERENCES core.tenants(tenant_id));
 CREATE TABLE geo.h3_cells (geo_cell_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
 CREATE TABLE learning.prediction_runs (
     prediction_run_id UUID PRIMARY KEY DEFAULT uuid_generate_v4());
@@ -83,6 +85,12 @@ CREATE TABLE learning.predictions (
 CREATE TABLE workflow.decisions (
     decision_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     policy_version_id VARCHAR(100) NOT NULL);
+CREATE TABLE workflow.approvals (
+    approval_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    decision_id UUID NOT NULL REFERENCES workflow.decisions(decision_id),
+    approver_id VARCHAR(255) NOT NULL,
+    approval_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    approved_at TIMESTAMP WITH TIME ZONE);
 CREATE TABLE operations.alerts (
     alert_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     store_id UUID NOT NULL REFERENCES core.stores(store_id),
@@ -118,16 +126,18 @@ GATE_ID = "'88888888-8888-8888-8888-888888888888'"
 # Section 3.2 naming rule: policy_version_id = policy_label || ':' || tenant_id.
 POLICY_LABEL = "four-light-policy-v1"
 POLICY = f"'{POLICY_LABEL}:{TENANT[1:-1]}'"
+POLICY_T2 = f"'{POLICY_LABEL}:{TENANT_2[1:-1]}'"
 
 SEED = f"""
-INSERT INTO core.stores (store_id) VALUES ({STORE}) ON CONFLICT DO NOTHING;
+INSERT INTO core.stores (store_id, tenant_id) VALUES ({STORE}, {TENANT})
+    ON CONFLICT DO NOTHING;
 INSERT INTO geo.h3_cells (geo_cell_id) VALUES ({CELL}) ON CONFLICT DO NOTHING;
 INSERT INTO operations.forecast_outputs (forecast_output_id)
     VALUES ({FORECAST}), ({RECALC_OUTPUT}) ON CONFLICT DO NOTHING;
 INSERT INTO learning.prediction_runs (prediction_run_id)
     VALUES ({PREDICTION_RUN}) ON CONFLICT DO NOTHING;
-INSERT INTO operations.alerts (alert_id, store_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id)
-    VALUES ({ALERT}, {STORE}, 'sitescore_gap', '{{}}'::jsonb, {FORECAST}, {POLICY}) ON CONFLICT DO NOTHING;
+INSERT INTO operations.alerts (alert_id, store_id, tenant_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id)
+    VALUES ({ALERT}, {STORE}, {TENANT}, 'sitescore_gap', '{{}}'::jsonb, {FORECAST}, {POLICY}) ON CONFLICT DO NOTHING;
 INSERT INTO pricing.exploration_gates (gate_id, tenant_id, budget_limit, budget_consumed, effective_from, effective_to, approved_by, rollback_condition, decision_policy_version_id)
     VALUES ({GATE_ID}, {TENANT}, 1000, 0, now(), now() + interval '30 day', 'ops', 'rollback on limit', {POLICY})
 ON CONFLICT DO NOTHING;
@@ -260,10 +270,31 @@ FEEDBACK_COLUMNS = (
     " target_alert_id, target_forecast_output_id, target_prediction_id,"
     " corrected_metric, observed_value, corrected_value, correction_unit,"
     " effective_from, effective_to, reason_code, submitted_by, submitted_at,"
-    " approval_status, approved_by, approved_at, applied_status,"
-    " not_applied_reason_code, recalculation_forecast_output_id,"
+    " approval_status, approved_by, approved_at, approval_id, approval_decision_id,"
+    " applied_status, not_applied_reason_code, recalculation_forecast_output_id,"
     " recalculation_run_id, applied_at, correlation_id) VALUES "
 )
+
+#: workflow.approvals status the feedback's own approval_status must map onto.
+WORKFLOW_STATUS = {"APPROVED": "approved", "REJECTED": "rejected"}
+
+
+def approval_fixture(label: str, *, status: str) -> tuple[str, str, str]:
+    """One decision plus one approval row, private to a single case.
+
+    Returned as (setup SQL, approval_id, decision_id) so a case can bind to a
+    real `workflow.approvals` row instead of merely asserting it was approved.
+    """
+    decision = uid("fb-decision:" + label)
+    approval = uid("fb-approval:" + label)
+    setup = (
+        "INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES "
+        f"({decision},{POLICY});\n"
+        "INSERT INTO workflow.approvals (approval_id, decision_id, approver_id,"
+        f" approval_status, approved_at) VALUES ({approval},{decision},'approver',"
+        f"'{status}',now());"
+    )
+    return setup, approval, decision
 
 
 def feedback_case(
@@ -288,16 +319,32 @@ def feedback_case(
     recalc_output: str = "NULL",
     recalc_run: str = "NULL",
     applied_at: str = "NULL",
+    tenant: str = TENANT,
+    store: str = STORE,
+    #: "auto"    bind to a real approval row matching approval_status
+    #: "unlinked" claim the status with no workflow.approvals row at all
+    #: "pending"  point at an approval row that was never approved
+    #: "stray"    carry a real approval while claiming it was not needed
+    link: str = "auto",
     expects: tuple[str, ...] = (),
 ) -> Case:
+    setup = ""
+    approval_id = approval_decision = "NULL"
+    if link == "auto" and approval in WORKFLOW_STATUS:
+        setup, approval_id, approval_decision = approval_fixture(
+            label, status=WORKFLOW_STATUS[approval])
+    elif link in ("pending", "stray"):
+        status = "pending" if link == "pending" else "approved"
+        setup, approval_id, approval_decision = approval_fixture(label, status=status)
     statement = (
         FEEDBACK_COLUMNS
-        + f"({TENANT},{STORE},'{kind}',{alert},{forecast},{prediction},"
+        + f"({tenant},{store},'{kind}',{alert},{forecast},{prediction},"
         f"{metric},{observed},{corrected},{unit},{eff_from},{eff_to},'r','u',now(),"
-        f"'{approval}',{approved_by},{approved_at},{applied},{not_applied_reason},"
+        f"'{approval}',{approved_by},{approved_at},{approval_id},{approval_decision},"
+        f"{applied},{not_applied_reason},"
         f"{recalc_output},{recalc_run},{applied_at},'{corr(label)}')"
     )
-    return Case(label, statement, accepted, expects)
+    return Case(label, statement, accepted, expects, setup)
 
 
 CORRECTION = dict(metric="'revenue'", observed="10", corrected="20", unit="'TWD'")
@@ -400,6 +447,55 @@ FEEDBACK_CASES = [
                   kind="ALERT_DISPOSITION", alert=ALERT, approval="PENDING",
                   applied="'PENDING_APPLICATION'", applied_at="now()", accepted=False,
                   expects=("chk_feedback_applied_at",)),
+    # --- the approval must exist in workflow.approvals, not just be asserted ---
+    feedback_case("feedback: APPROVED with no workflow approval row",
+                  kind="OUTCOME_CORRECTION", forecast=FORECAST, approval="APPROVED",
+                  approved_by="'approver'", approved_at="now()", **CORRECTION,
+                  link="unlinked", accepted=False,
+                  expects=("chk_feedback_approval_link",)),
+    feedback_case("feedback: APPROVED bound to an unapproved approval",
+                  kind="OUTCOME_CORRECTION", forecast=FORECAST, approval="APPROVED",
+                  approved_by="'approver'", approved_at="now()", **CORRECTION,
+                  link="pending", accepted=False,
+                  expects=("fk_feedback_workflow_approval",)),
+    feedback_case("feedback: AUTO_ACCEPTED carrying an approval link",
+                  kind="ALERT_DISPOSITION", alert=ALERT, approval="AUTO_ACCEPTED",
+                  applied="'APPLIED_DISPOSITION'", applied_at="now()", link="stray",
+                  accepted=False, expects=("chk_feedback_approval_link",)),
+    feedback_case("feedback: tenant not owning the store",
+                  kind="ALERT_DISPOSITION", alert=ALERT, approval="AUTO_ACCEPTED",
+                  applied="'APPLIED_DISPOSITION'", applied_at="now()",
+                  tenant=TENANT_2, accepted=False,
+                  expects=("fk_feedback_store_tenant",)),
+]
+
+# One approval must not be able to authorise two corrections: both rows below
+# claim the same approval decision, so the second one has to be refused.
+_SHARED_SETUP, _SHARED_APPROVAL, _SHARED_DECISION = approval_fixture(
+    "shared approval reuse", status="approved")
+
+
+def _shared_approval_row(tag: str) -> str:
+    return (
+        FEEDBACK_COLUMNS
+        + f"({TENANT},{STORE},'OUTCOME_CORRECTION',NULL,{FORECAST},NULL,"
+        f"'revenue',10,20,'TWD','2026-01-01','2026-01-31','r','u',now(),"
+        f"'APPROVED','approver',now(),{_SHARED_APPROVAL},{_SHARED_DECISION},"
+        f"'PENDING_APPLICATION',NULL,NULL,NULL,NULL,'{corr(tag)}')"
+    )
+
+
+#: the approval consumed by the accepted APPLIED_RECALCULATION row above
+_CONSUMED_APPROVAL = uid("fb-approval:feedback: APPLIED_RECALCULATION with output id")
+
+FEEDBACK_CASES += [
+    Case("feedback: one approval reused by a second correction",
+         _shared_approval_row("reuse-1") + ";\n" + _shared_approval_row("reuse-2"),
+         False, ("uq_feedback_approval_decision",), _SHARED_SETUP),
+    Case("feedback: retracting an approval already relied upon",
+         "UPDATE workflow.approvals SET approval_status = 'returned'"
+         f" WHERE approval_id = {_CONSUMED_APPROVAL}",
+         False, ("fk_feedback_workflow_approval",)),
 ]
 
 
@@ -456,7 +552,11 @@ COMPOSITION_CASES = [
     composition_case("composition: policy binding without tenant suffix",
                      zone="'MZ-00000000000000dd'", kind="MERGED",
                      policy=f"'{POLICY_LABEL}'", accepted=False,
-                     expects=("heatzone_composition_decision_policy_version_id_fkey",)),
+                     expects=("fk_heatzone_composition_decision_policy",)),
+    composition_case("composition: policy owned by another tenant",
+                     zone="'MZ-00000000000000de'", kind="MERGED", policy=POLICY_T2,
+                     accepted=False,
+                     expects=("fk_heatzone_composition_decision_policy",)),
     composition_case("composition: second active record on same cell",
                      zone="'MZ-0123456789abcde1'", kind="MERGED", cell=CELL,
                      accepted=False,
@@ -467,6 +567,28 @@ COMPOSITION_CASES = [
                      prefix=("UPDATE expansion.heatzone_composition SET reverted_at = now()"
                              f" WHERE tenant_id = {TENANT} AND member_cell_id = {CELL};\n"),
                      accepted=True),
+]
+
+#: The audit trail is only append-only if the database says so; these four cases
+#: exercise the trigger, since every one of them is a legal statement without it.
+COMPOSITION_CASES += [
+    Case("composition: same record reverted twice",
+         "UPDATE expansion.heatzone_composition SET reverted_at = now()"
+         " WHERE zone_id = 'MZ-0123456789abcdef'",
+         False, ("heatzone_composition_append_only",)),
+    Case("composition: other columns rewritten while reverting",
+         "UPDATE expansion.heatzone_composition SET reverted_at = now(),"
+         " decided_by = 'mallory', override_reason = 'rewritten'"
+         " WHERE zone_id = 'MZ-0123456789abcde2'",
+         False, ("heatzone_composition_append_only",)),
+    Case("composition: decision rewritten in place",
+         "UPDATE expansion.heatzone_composition SET override_reason = 'rewritten'"
+         " WHERE zone_id = 'MZ-0123456789abcde2'",
+         False, ("heatzone_composition_append_only",)),
+    Case("composition: audit row deleted",
+         "DELETE FROM expansion.heatzone_composition"
+         " WHERE zone_id = 'MZ-0123456789abcde2'",
+         False, ("heatzone_composition_append_only",)),
 ]
 
 
@@ -530,6 +652,86 @@ GATE_CASES = [
                      accepted=False, expects=("chk_exploration_decision_prices",)),
     exploration_case("exploration_decision: negative budget_consumed", budget="-5.00",
                      accepted=False, expects=("chk_exploration_decision_budget",)),
+    Case("gate: policy owned by another tenant",
+         GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '30 day','a','revert',"
+         f"{POLICY_T2})", False, ("fk_exploration_gates_decision_policy",)),
+]
+
+
+def gate_setup(tag: str, *, limit: str, window: str, revoked: str = "NULL") -> tuple[str, str]:
+    """A gate private to one case, so accrual cannot be confused with fixture state."""
+    gate = uid("gate:" + tag)
+    setup = (
+        "INSERT INTO pricing.exploration_gates (gate_id, tenant_id, budget_limit,"
+        " budget_consumed, effective_from, effective_to, approved_by,"
+        " rollback_condition, revoked_at, decision_policy_version_id) VALUES"
+        f" ({gate},{TENANT},{limit},0,{window},'a','revert',{revoked},{POLICY})"
+        " ON CONFLICT DO NOTHING;"
+    )
+    return gate, setup
+
+
+ACCRUAL_GATE, ACCRUAL_GATE_SETUP = gate_setup(
+    "aggregate-accrual", limit="10", window="now(),now()+interval '30 day'")
+REVOKED_GATE, REVOKED_GATE_SETUP = gate_setup(
+    "revoked", limit="1000", window="now()-interval '1 day',now()+interval '30 day'",
+    revoked="now()")
+EXPIRED_GATE, EXPIRED_GATE_SETUP = gate_setup(
+    "expired", limit="1000", window="now()-interval '2 day',now()-interval '1 day'")
+FIRST_CHARGE = "exploration_decision: first charge against a fresh gate"
+
+
+def accrual_case(
+    label: str,
+    *,
+    gate: str,
+    budget: str,
+    accepted: bool,
+    gate_fixture: str = "",
+    expects: tuple[str, ...] = (),
+) -> Case:
+    decision = uid("decision:" + label)
+    setup = gate_fixture + (
+        "INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES "
+        f"({decision},{POLICY});"
+    )
+    statement = (
+        EXPLORATION_DECISION_COLUMNS
+        + f"({decision},{gate},{TENANT},'SKU-002',{STORE},100.00,105.00,{budget},'UCB1')"
+    )
+    return Case(label, statement, accepted, expects, setup)
+
+
+#: Section 7 claims the per-decision record and the gate accumulator are two faces
+#: of one write. Without the trigger every rejecting case below is a legal INSERT.
+GATE_CASES += [
+    accrual_case(FIRST_CHARGE, gate=ACCRUAL_GATE, budget="8.00",
+                 gate_fixture=ACCRUAL_GATE_SETUP, accepted=True),
+    Case("gate: accumulator moved by the decision that consumed it",
+         "DO $$ BEGIN IF (SELECT budget_consumed FROM pricing.exploration_gates WHERE"
+         f" gate_id = {ACCRUAL_GATE}) <> 8.00 THEN RAISE EXCEPTION"
+         " 'gate budget was not accrued by the decision insert'; END IF; END $$;", True),
+    Case("gate: seeded gate accrued the earlier valid decision",
+         "DO $$ BEGIN IF (SELECT budget_consumed FROM pricing.exploration_gates WHERE"
+         f" gate_id = {GATE_ID}) <> 5.00 THEN RAISE EXCEPTION"
+         " 'seeded gate budget was not accrued'; END IF; END $$;", True),
+    accrual_case("exploration_decision: aggregate budget exceeded",
+                 gate=ACCRUAL_GATE, budget="8.00", accepted=False,
+                 expects=("chk_gate_budget_consumed",)),
+    accrual_case("exploration_decision: gate already revoked",
+                 gate=REVOKED_GATE, budget="1.00", gate_fixture=REVOKED_GATE_SETUP,
+                 accepted=False, expects=("exploration_decisions_accrue_budget",)),
+    accrual_case("exploration_decision: gate outside its window",
+                 gate=EXPIRED_GATE, budget="1.00", gate_fixture=EXPIRED_GATE_SETUP,
+                 accepted=False, expects=("exploration_decisions_accrue_budget",)),
+    Case("exploration_decision: charged decision rewritten",
+         "UPDATE pricing.exploration_decisions SET budget_consumed = 0"
+         f" WHERE decision_id = {uid('decision:' + FIRST_CHARGE)}",
+         False, ("exploration_decisions_append_only",)),
+    Case("exploration_decision: charged decision deleted",
+         "DELETE FROM pricing.exploration_decisions"
+         f" WHERE decision_id = {uid('decision:' + FIRST_CHARGE)}",
+         False, ("exploration_decisions_append_only",)),
 ]
 
 
@@ -595,26 +797,64 @@ POLICY_CASES = [
                 version_id=f"other-policy-v1:{TENANT_2[1:-1]}",
                 policy_label="other-policy-v1", policy_id="other-policy",
                 version="1.0.0", tenant=TENANT_2, accepted=True),
+    Case("policy: rollback target owned by another tenant",
+         "INSERT INTO workflow.decision_policies (policy_version_id, policy_label,"
+         " policy_id, policy_version, policy_kind, tenant_id, effective_from,"
+         " owner_role, approved_by, approved_at, input_contract, output_contract,"
+         " change_reason, rollback_policy_version, parameters, declared_inputs) VALUES"
+         f" ('rollback-probe-v1:{TENANT[1:-1]}','rollback-probe-v1','rollback-probe',"
+         f"'1.0.0','netplan_action',{TENANT},now(),'ops','a',now(),'in','out','x',"
+         f"{POLICY_T2},'{{}}'::jsonb,ARRAY['sitescore_gap_ratio'])",
+         False, ("fk_decision_policy_rollback_tenant",)),
 ]
 
 
 # --- section 3.4 / 4.2: operations.alerts --------------------------------
 
-UNSEEN_FORECAST = uid("forecast:unknown-policy-case")
+ALERT_COLUMNS = (
+    "INSERT INTO operations.alerts (store_id, tenant_id, alert_reason_code,"
+    " evidence_json, forecast_output_id, decision_policy_version_id) VALUES "
+)
+
+
+def alert_case(
+    label: str,
+    *,
+    accepted: bool,
+    policy: str,
+    tenant: str = TENANT,
+    store: str = STORE,
+    forecast: str | None = None,
+    expects: tuple[str, ...] = (),
+) -> Case:
+    setup = ""
+    if forecast is None:
+        forecast = uid("forecast:" + label)
+        setup = ("INSERT INTO operations.forecast_outputs (forecast_output_id)"
+                 f" VALUES ({forecast});")
+    statement = (
+        ALERT_COLUMNS
+        + f"({store},{tenant},'sitescore_gap','{{}}'::jsonb,{forecast},{policy})"
+    )
+    return Case(label, statement, accepted, expects, setup)
+
 
 ALERT_CASES = [
-    Case("alert: evaluation identity duplicate for same forecast and policy",
-         "INSERT INTO operations.alerts (store_id, alert_reason_code, evidence_json,"
-         f" forecast_output_id, decision_policy_version_id) VALUES ({STORE},"
-         f"'sitescore_gap','{{}}'::jsonb,{FORECAST},{POLICY})",
-         False, ("idx_alerts_forecast_policy",)),
-    Case("alert: policy binding without tenant suffix",
-         "INSERT INTO operations.alerts (store_id, alert_reason_code, evidence_json,"
-         f" forecast_output_id, decision_policy_version_id) VALUES ({STORE},"
-         f"'sitescore_gap','{{}}'::jsonb,{UNSEEN_FORECAST},'{POLICY_LABEL}')",
-         False, ("fk_alerts_decision_policy",),
-         "INSERT INTO operations.forecast_outputs (forecast_output_id) VALUES"
-         f" ({UNSEEN_FORECAST});"),
+    alert_case("alert: evaluation identity duplicate for same forecast and policy",
+               policy=POLICY, forecast=FORECAST, accepted=False,
+               expects=("idx_alerts_forecast_policy",)),
+    alert_case("alert: policy binding without tenant suffix",
+               policy=f"'{POLICY_LABEL}'", accepted=False,
+               expects=("fk_alerts_decision_policy",)),
+    alert_case("alert: policy declared without a tenant",
+               policy=POLICY, tenant="NULL", accepted=False,
+               expects=("fk_alerts_decision_policy",)),
+    alert_case("alert: policy owned by another tenant",
+               policy=POLICY_T2, accepted=False,
+               expects=("fk_alerts_decision_policy",)),
+    alert_case("alert: tenant not owning the store",
+               policy=POLICY_T2, tenant=TENANT_2, accepted=False,
+               expects=("fk_alerts_store_tenant",)),
     Case("alert: deterioration before opened_at",
          "UPDATE operations.alerts SET deterioration_confirmed_at = opened_at -"
          f" interval '1 day' WHERE alert_id = {ALERT}",
@@ -638,12 +878,15 @@ def heatzone_case(
     ratio: str,
     basis: str,
     accepted: bool,
+    source: str = "'revenue_daily@2026-08-31'",
+    stores: str = "3",
     expects: tuple[str, ...] = (),
 ) -> Case:
     statement = (
         "INSERT INTO expansion.heatzone_scores (absorbed_demand, remaining_demand,"
-        f" absorption_ratio, absorption_basis_at) VALUES ({absorbed},{remaining},"
-        f"{ratio},{basis})"
+        " absorption_ratio, absorption_basis_at, absorption_source,"
+        f" absorbing_store_count) VALUES ({absorbed},{remaining},"
+        f"{ratio},{basis},{source},{stores})"
     )
     return Case(label, statement, accepted, expects)
 
@@ -687,6 +930,25 @@ HEATZONE_CASES = [
     heatzone_case("heatzone: ratio inconsistent with demands",
                   absorbed="10", remaining="90", ratio="0.9", basis="now()",
                   accepted=False, expects=("chk_heatzone_absorption_consistent",)),
+    heatzone_case("heatzone: absorption without a source identifier",
+                  absorbed="10", remaining="90", ratio="0.1", basis="now()",
+                  source="NULL", accepted=False,
+                  expects=("chk_heatzone_absorption_complete",)),
+    heatzone_case("heatzone: absorption without a store count",
+                  absorbed="10", remaining="90", ratio="0.1", basis="now()",
+                  stores="NULL", accepted=False,
+                  expects=("chk_heatzone_absorption_complete",)),
+    heatzone_case("heatzone: empty source identifier",
+                  absorbed="10", remaining="90", ratio="0.1", basis="now()",
+                  source="\'\'", accepted=False,
+                  expects=("chk_heatzone_absorption_source",)),
+    heatzone_case("heatzone: negative absorbing store count",
+                  absorbed="10", remaining="90", ratio="0.1", basis="now()",
+                  stores="-1", accepted=False,
+                  expects=("chk_heatzone_absorption_source",)),
+    heatzone_case("heatzone: unabsorbed zone carrying no absorption columns",
+                  absorbed="NULL", remaining="NULL", ratio="NULL", basis="NULL",
+                  source="NULL", stores="NULL", accepted=True),
 ]
 
 

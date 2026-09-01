@@ -1,7 +1,7 @@
 ---
 doc_id: ODP-SD-AMD-001
 title: "平台與模組設計修正案 001"
-version: 0.4.0
+version: 0.5.0
 status: draft-for-review
 document_class: system-design-amendment
 project: ODay Plus
@@ -60,6 +60,16 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 6. **第 13.1 節案例數與腳本不符**：文中寫 39／39，腳本實際為 48 例。v0.4.0 改以腳本實際輸出為準（見第 13.1 節）。
 7. **負向案例可能因錯誤原因被拒**：原腳本多個負向案例共用同一 `valuation_run_id`／`decision_id`／`geo_cell_id`，可能被主鍵或唯一索引先擋下，而非被它宣稱測試的 CHECK 擋下。v0.4.0 讓每個案例自帶隔離用相依列，並**逐案斷言拒絕訊息中出現預期的約束名稱**，使「被拒」與「被正確的約束拒」不再被混為一談。
 
+### 1.4 v0.5.0 修訂說明
+
+針對審查反饋（Codex2 第 5 輪）補正五項落差。五項的共同型態是**治理宣稱缺乏結構性支撐**：文件寫明的閘門，在資料庫層由寫入端自律，因此任何能寫該表的角色都能繞過。
+
+1. **回饋核准與 `workflow.approvals` 無實際連結**：`chk_feedback_applied_requires_approval` 只讀本表自述的 `approval_status`，寫入端可自填 `APPROVED` 後推進到 `APPLIED_RECALCULATION`，與第 4.3 節「需 Data Owner 核准」的宣稱矛盾。v0.5.0 新增 `approval_id`／`approval_decision_id` 與生成欄位 `approval_source_status`，以三欄複合外鍵 `fk_feedback_workflow_approval` 綁定 `workflow.approvals` 中該決策的真實核准列（第 4.3 節）。
+2. **熱區組成稽核不是 Append-Only**：文件宣告不作原地覆寫，DDL 卻對 UPDATE／DELETE 毫無限制，撤銷用的 UPDATE 可順手改寫決策人與理由。v0.5.0 以 `trg_heatzone_composition_append_only` 只放行「將 `reverted_at` 由 NULL 設為時點」一種改寫（第 5.2 節）。
+3. **探索預算未與 Gate 累計器原子綁定**：`exploration_decisions.budget_consumed` 僅有 `>= 0`，Gate 的累加寫在文件的協定段落而非資料庫，直接 INSERT 即可繞過總預算。v0.5.0 以 `trg_exploration_decisions_accrue` 在同一次寫入內累加並驗證 Gate 有效性，另以 append-only trigger 禁止事後回收扣抵（第 7 節）。
+4. **政策與既有表之間的租戶歸屬未解**：政策逐租戶建列，但既有四張表沒有 `tenant_id`，單欄外鍵只證明政策存在、不證明它屬於同一租戶。v0.5.0 為四張表補 `tenant_id`，政策綁定改為 `(decision_policy_version_id, tenant_id)` 複合外鍵，`operations.alerts` 另以 `fk_alerts_store_tenant` 使租戶不可自述；`expansion.heatzone_composition` 與 `pricing.exploration_gates` 一併改為複合外鍵（第 3.4、5.2、7 節）。
+5. **HZ 吸收來源未持久化**：`HeatZoneV3Input` 有 `absorption_source` 與 `absorbing_store_count`，持久化卻只寫三個數字與一個時點，事後無從分辨排名下降是需求被吸收還是換了實績來源。v0.5.0 將兩欄一併持久化並納入全有全無的完整性約束（第 5.1 節）。
+
 ---
 
 ## 2. Baseline 儲存現況（設計前提）
@@ -87,7 +97,7 @@ v0.2.0 先建立第 2 節的 baseline 對照表，再讓所有設計綁定其上
 **兩項需要明講的 baseline 事實**：
 
 1. **`pricing` schema 存在但沒有任何資料表**。初版所稱的 `price_plans` 不存在，PriceOps 目前完全無持久化。因此第 7 節的 `pricing.exploration_gates` 會是該 schema 的第一張表——這仍屬「接在既有結構上」（schema 已由 `000001` 宣告），但必須據實說明，不能讓讀者以為它擴充了某張既有表。
-2. **`000001` 建立的模組資料表大多沒有 `tenant_id`**。整份 `000001` 只有 `core.tenants`、`core.brands`、`core.stores` 三處出現該欄位，`operations.alerts` 與 `expansion.heatzone_scores` 都是經由 `store_id` / `geo_cell_id` 間接歸屬租戶。較晚的 `000009` 至 `000012` 則普遍直接帶 `tenant_id`。本案新表採後者（直接帶 `tenant_id` 並外鍵至 `core.tenants`），因為新表需要在無 store 關聯時（如平台級政策）仍可租戶隔離；但這使兩代資料表的租戶模型不一致。**該不一致為既存問題，本案不修復也不假裝不存在**，記於第 14 節。
+2. **`000001` 建立的模組資料表大多沒有 `tenant_id`**。整份 `000001` 只有 `core.tenants`、`core.brands`、`core.stores` 三處出現該欄位，`operations.alerts` 與 `expansion.heatzone_scores` 都是經由 `store_id` / `geo_cell_id` 間接歸屬租戶。較晚的 `000009` 至 `000012` 則普遍直接帶 `tenant_id`。本案新表採後者（直接帶 `tenant_id` 並外鍵至 `core.tenants`），因為新表需要在無 store 關聯時（如平台級政策）仍可租戶隔離。v0.5.0 另為本案綁定政策的四張既有表（`operations.alerts`、`expansion.heatzone_scores`、`expansion.site_score_runs`、`network.network_plans`）補上 nullable `tenant_id`，理由見第 3.4 節：政策逐租戶建列後，沒有租戶欄位的表無法證明它綁的是自己租戶的政策。**這只解到「政策綁定所需」為止**——`000001` 其餘模組表的租戶模型仍不一致，該部分為既存問題，本案不修復也不假裝不存在，記於第 14 節。
 
 ---
 
@@ -121,7 +131,7 @@ CREATE TABLE IF NOT EXISTS workflow.decision_policies (
     input_contract          VARCHAR(100) NOT NULL,
     output_contract         VARCHAR(100) NOT NULL,
     change_reason           TEXT         NOT NULL,
-    rollback_policy_version VARCHAR(100) REFERENCES workflow.decision_policies(policy_version_id),
+    rollback_policy_version VARCHAR(100),   -- 回退目標，見下方 fk_decision_policy_rollback_tenant
     parameters              JSONB        NOT NULL,
     declared_inputs         TEXT[]       NOT NULL,
     created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -154,6 +164,28 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_policy_active
 
 CREATE INDEX IF NOT EXISTS idx_decision_policy_kind_window
     ON workflow.decision_policies (policy_kind, tenant_id, effective_from);
+
+-- 供既有表以 (decision_policy_version_id, tenant_id) 複合外鍵綁定的參照目標（第 3.4 節）。
+-- 主鍵已蘊含其唯一性，此處是為了讓「政策的租戶」成為可被外鍵引用的欄位對。
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_decision_policy_version_tenant'
+    ) THEN
+        ALTER TABLE workflow.decision_policies
+            ADD CONSTRAINT uq_decision_policy_version_tenant
+            UNIQUE (policy_version_id, tenant_id);
+    END IF;
+    -- 回退目標必須是同一租戶的真實版本：跨租戶回退等於把另一租戶的門檻套到自己身上
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_decision_policy_rollback_tenant'
+    ) THEN
+        ALTER TABLE workflow.decision_policies
+            ADD CONSTRAINT fk_decision_policy_rollback_tenant
+            FOREIGN KEY (rollback_policy_version, tenant_id)
+            REFERENCES workflow.decision_policies(policy_version_id, tenant_id);
+    END IF;
+END $$;
 
 -- 初始政策列與回填佔位列（逐租戶建立，支援冪等重跑）
 INSERT INTO workflow.decision_policies (
@@ -213,7 +245,7 @@ FROM core.tenants t
 ON CONFLICT (policy_version_id) DO NOTHING;
 ```
 
-`change_reason` 與 `rollback_policy_version` 為 `ODP-SA-07` 第 8 節必填欄位，目前產品根目錄無實作，本表為其唯一承載處。`rollback_policy_version` 自我外鍵，確保可回退目標必須是真實存在的版本。
+`change_reason` 與 `rollback_policy_version` 為 `ODP-SA-07` 第 8 節必填欄位，目前產品根目錄無實作，本表為其唯一承載處。`rollback_policy_version` 以 `(rollback_policy_version, tenant_id)` 自我複合外鍵，確保可回退目標不只是真實存在的版本，而且是**同一租戶**的版本——跨租戶回退等於把別的租戶的門檻套到自己身上。該欄位可為 NULL（首版無回退目標），故此處採 `MATCH SIMPLE`：未指定回退目標時不檢查。
 
 `tenant_id` 設為 `NOT NULL` 有一項直接後果：平台級政策也必須逐租戶建列，不能以單一 NULL 列涵蓋所有租戶。這是刻意的——`idx_decision_policy_active` 若允許 NULL，Postgres 的 NULL 相異語意會讓同一政策存在多個「現行版本」而不被擋下。以每租戶一列換取多租戶獨立性與唯一性由資料庫保證，確保後續新增租戶或跨租戶政策解析均能正確執行。
 
@@ -260,12 +292,16 @@ END $$;
 ```sql
 ALTER TABLE operations.alerts
     ADD COLUMN IF NOT EXISTS forecast_output_id UUID REFERENCES operations.forecast_outputs(forecast_output_id),
+    ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES core.tenants(tenant_id),
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
 ALTER TABLE expansion.heatzone_scores
+    ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES core.tenants(tenant_id),
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
 ALTER TABLE expansion.site_score_runs
+    ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES core.tenants(tenant_id),
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
 ALTER TABLE network.network_plans
+    ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES core.tenants(tenant_id),
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
 
 -- 同一預測輸出在同一政策版本下至多一筆評估警示（評估識別）
@@ -273,48 +309,80 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_alerts_forecast_policy
     ON operations.alerts (forecast_output_id, decision_policy_version_id)
     WHERE forecast_output_id IS NOT NULL;
 
--- 四張擴充表的政策綁定一律外鍵至登錄表：欄位可暫時為 NULL（見第 11 節兩階段），
--- 但不得填入查無此列的字串。NOT VALID 使既有列不阻擋 migration。
+-- 四張擴充表的政策綁定一律外鍵至登錄表，且**連同租戶一起綁**：欄位可暫時為 NULL
+-- （見第 11 節兩階段），但不得填入查無此列的字串，也不得綁到別的租戶的政策。
+-- MATCH FULL 使「填了政策卻不宣告租戶」同樣被擋下；NOT VALID 使既有列不阻擋 migration。
 DO $$
 BEGIN
+    -- 門市的 (store_id, tenant_id)：既有表的租戶歸屬要能被外鍵引用，必須先有此參照目標
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_stores_store_tenant'
+    ) THEN
+        ALTER TABLE core.stores
+            ADD CONSTRAINT uq_stores_store_tenant UNIQUE (store_id, tenant_id);
+    END IF;
+    -- 警示自述的租戶必須就是其門市的租戶（此處為 MATCH SIMPLE：store_id 恆非 NULL，
+    -- 而 tenant_id 在第一階段可為 NULL，MATCH FULL 會使既有列與過渡期寫入全數失敗）
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_alerts_store_tenant'
+    ) THEN
+        ALTER TABLE operations.alerts
+            ADD CONSTRAINT fk_alerts_store_tenant
+            FOREIGN KEY (store_id, tenant_id)
+            REFERENCES core.stores(store_id, tenant_id) NOT VALID;
+    END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'fk_alerts_decision_policy'
     ) THEN
         ALTER TABLE operations.alerts
             ADD CONSTRAINT fk_alerts_decision_policy
-            FOREIGN KEY (decision_policy_version_id)
-            REFERENCES workflow.decision_policies(policy_version_id) NOT VALID;
+            FOREIGN KEY (decision_policy_version_id, tenant_id)
+            REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
+            MATCH FULL NOT VALID;
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'fk_heatzone_scores_decision_policy'
     ) THEN
         ALTER TABLE expansion.heatzone_scores
             ADD CONSTRAINT fk_heatzone_scores_decision_policy
-            FOREIGN KEY (decision_policy_version_id)
-            REFERENCES workflow.decision_policies(policy_version_id) NOT VALID;
+            FOREIGN KEY (decision_policy_version_id, tenant_id)
+            REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
+            MATCH FULL NOT VALID;
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'fk_site_score_runs_decision_policy'
     ) THEN
         ALTER TABLE expansion.site_score_runs
             ADD CONSTRAINT fk_site_score_runs_decision_policy
-            FOREIGN KEY (decision_policy_version_id)
-            REFERENCES workflow.decision_policies(policy_version_id) NOT VALID;
+            FOREIGN KEY (decision_policy_version_id, tenant_id)
+            REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
+            MATCH FULL NOT VALID;
     END IF;
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'fk_network_plans_decision_policy'
     ) THEN
         ALTER TABLE network.network_plans
             ADD CONSTRAINT fk_network_plans_decision_policy
-            FOREIGN KEY (decision_policy_version_id)
-            REFERENCES workflow.decision_policies(policy_version_id) NOT VALID;
+            FOREIGN KEY (decision_policy_version_id, tenant_id)
+            REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
+            MATCH FULL NOT VALID;
     END IF;
 END $$;
 ```
 
+**租戶歸屬：政策綁定為何必須是複合外鍵**。第 3.2 節讓 `policy_version_id` 逐租戶唯一，但既有的四張表（`000001` 建立，第 2 節事實 2）本身沒有 `tenant_id`，因此「這筆警示綁的政策是不是它自己租戶的政策」在資料庫層無從判斷——單欄外鍵只證明該政策列存在，不證明它屬於誰。租戶 A 的警示可以合法地綁上租戶 B 的政策列，而多租戶隔離正是第 3.2 節逐租戶建列的唯一理由。
+
+領域層其實早已有這個概念：`Alert`（`modules/forecastops/domain/forecasting.py:277`）第二個欄位就是必填的 `tenant_id`，只有資料表沒有——租戶歸屬在寫入時被丟棄，因此本節補的不是新概念，而是把既有領域欄位落回儲存層。
+
+本版因此把租戶歸屬補在同一層：四張表各新增 nullable `tenant_id`（外鍵至 `core.tenants`），政策綁定改為 `(decision_policy_version_id, tenant_id)` 複合外鍵，參照 `workflow.decision_policies (policy_version_id, tenant_id)`。`MATCH FULL` 使「綁了政策卻不宣告租戶」與「宣告的租戶與政策不符」都被擋下，而兩欄皆為 NULL 的既有列不受影響。`operations.alerts` 另以 `fk_alerts_store_tenant` 綁回 `core.stores (store_id, tenant_id)`，使租戶不能自述——它必須等於該警示所屬門市的租戶。三者合起來，租戶歸屬形成一條可驗證的鏈：門市 → 警示 → 政策。
+
+`expansion.heatzone_scores`、`expansion.site_score_runs` 與 `network.network_plans` 沒有 `store_id` 這類單一租戶錨點（分別經 `geo_cell_id`、`candidate_site_id` 與整體規劃範圍間接歸屬），故本案只補到「租戶必須與政策一致」為止，其錨點回填屬第 11 節第二階段的資料工作。這是本案刻意的邊界，不是遺漏。
+
 **為何四張表都要外鍵，而不是只在程式層檢查**。`decision_policy_version_id` 是 `VARCHAR(100)`；沒有外鍵時，任何字串都寫得進去——包含第 3.3 節明文禁止的「以 `policy_label` 拼出來的識別碼」。`ODP-FR-FCT-005` 要求每筆警示保有可查證的政策綁定，一個查無此列的字串滿足不了該要求，而且要到稽核當下才會被發現。`NOT VALID` 只豁免既有列，對此後的所有寫入即刻生效，故這是本階段就能取得的最強保證。
 
 **欄位命名的理由**：不用 `policy_version_id`，因為 `operations.forecast_outputs` 與 `Alert.evidence_json` 已存在語意不同的 `policy_version`（見第 4.1 節）。同名不同義的欄位會使日後的查詢與稽核無從分辨。`decision_policy_version_id` 明確指向本節的登錄表。
+
+**`workflow.decisions` 為何仍是單欄外鍵**：該表本身沒有 `tenant_id`，其租戶歸屬須經 `entity_type`／`entity_id` 指向的實體推導，不是本案可在四張表之外一併解決的範圍。因此 `fk_decisions_policy_version` 維持單欄，它證明政策存在但不證明租戶一致；該缺口與 `000001` 其餘模組表的租戶模型一併記於第 14 節，不在此偽稱已解。
 
 **PriceOps 例外**：PriceOps 無既有資料表可加欄位（第 2 節事實 1），其政策綁定改由第 7 節的 `pricing.exploration_gates.decision_policy_version_id` 承載，並經 `workflow.decisions` 記錄決策本身。
 
@@ -516,10 +584,23 @@ END $$;
 新增 migration `000014_forecast_feedback.sql`：
 
 ```sql
+-- 核准的參照目標：使回饋能以複合外鍵綁定「某決策的某一筆核准列」，
+-- 而不是只在自己表內複製一份核准狀態欄位（見本節「核准為何要外鍵」）。
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'uq_approvals_decision_status'
+    ) THEN
+        ALTER TABLE workflow.approvals
+            ADD CONSTRAINT uq_approvals_decision_status
+            UNIQUE (approval_id, decision_id, approval_status);
+    END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
     feedback_id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     tenant_id               UUID NOT NULL REFERENCES core.tenants(tenant_id),
-    store_id                UUID NOT NULL REFERENCES core.stores(store_id),
+    store_id                UUID NOT NULL,
     feedback_kind           VARCHAR(50) NOT NULL,
 
     -- 回饋目標：三選一以上，依 kind 決定何者必填
@@ -543,6 +624,14 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
     approved_by             VARCHAR(255),
     approved_at             TIMESTAMP WITH TIME ZONE,
 
+    -- 核准的持久綁定：指向 workflow 的實際核准列，而非本表自述的狀態
+    approval_decision_id    UUID REFERENCES workflow.decisions(decision_id),
+    approval_id             UUID,
+    approval_source_status  VARCHAR(50) GENERATED ALWAYS AS (
+        CASE approval_status WHEN 'APPROVED' THEN 'approved'
+                             WHEN 'REJECTED' THEN 'rejected' END
+    ) STORED,
+
     -- 結構化生效狀態與重算血統（取代自由文字 applied_effect）
     applied_status          VARCHAR(50) NOT NULL DEFAULT 'PENDING_APPLICATION',
     not_applied_reason_code VARCHAR(100),
@@ -553,6 +642,24 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
     correlation_id          VARCHAR(255) NOT NULL,
     created_at              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
+    -- 回饋的租戶不可自述：必須就是其門市所屬租戶
+    CONSTRAINT fk_feedback_store_tenant FOREIGN KEY (store_id, tenant_id)
+        REFERENCES core.stores(store_id, tenant_id),
+    -- 一筆核准決策至多支撐一筆回饋，核准不可被重複借用
+    CONSTRAINT uq_feedback_approval_decision UNIQUE (approval_decision_id),
+    -- 核准狀態必須對應 workflow.approvals 中該決策的真實核准列：
+    -- 三欄同時比對，'APPROVED' 只能對到狀態確為 'approved' 的那一列
+    CONSTRAINT fk_feedback_workflow_approval
+        FOREIGN KEY (approval_id, approval_decision_id, approval_source_status)
+        REFERENCES workflow.approvals (approval_id, decision_id, approval_status)
+        MATCH FULL,
+    -- 已核准或已駁回必須指名該核准列；尚未進入核准流程者不得挾帶
+    CONSTRAINT chk_feedback_approval_link CHECK (
+        (approval_status IN ('APPROVED', 'REJECTED')
+            AND approval_id IS NOT NULL AND approval_decision_id IS NOT NULL)
+     OR (approval_status IN ('PENDING', 'AUTO_ACCEPTED')
+            AND approval_id IS NULL AND approval_decision_id IS NULL)
+    ),
     CONSTRAINT chk_feedback_kind CHECK (
         feedback_kind IN ('CONTEXT_ANNOTATION', 'OUTCOME_CORRECTION', 'ALERT_DISPOSITION')
     ),
@@ -628,7 +735,9 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
         approval_status NOT IN ('APPROVED', 'REJECTED')
         OR (approved_by IS NOT NULL AND approved_at IS NOT NULL)
     ),
-    -- 嚴格治理：回饋進入套用狀態前必須具備相符核准（OUTCOME_CORRECTION 必須為 APPROVED 且有審核人；其餘可為 APPROVED 或 AUTO_ACCEPTED）
+    -- 嚴格治理：回饋進入套用狀態前必須具備相符核准（OUTCOME_CORRECTION 必須為 APPROVED
+    -- 且有審核人，其真實性由上方 fk_feedback_workflow_approval 保證；
+    -- 其餘可為 APPROVED 或 AUTO_ACCEPTED）
     CONSTRAINT chk_feedback_applied_requires_approval CHECK (
         applied_status NOT IN ('APPLIED_RECALCULATION', 'APPLIED_TRAINING_EXCLUSION', 'APPLIED_DISPOSITION')
         OR (
@@ -662,7 +771,24 @@ CREATE INDEX IF NOT EXISTS idx_forecast_feedback_recalc
     WHERE recalculation_forecast_output_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_forecast_feedback_applied_status
     ON operations.forecast_feedback (tenant_id, applied_status);
+CREATE INDEX IF NOT EXISTS idx_forecast_feedback_approval
+    ON operations.forecast_feedback (approval_id)
+    WHERE approval_id IS NOT NULL;
 ```
+
+**核准為何要外鍵，而不是三個自述欄位**。v0.4.0 的 `chk_feedback_applied_requires_approval` 只讀本表自己的 `approval_status`／`approved_by`／`approved_at`。這三欄由提交回饋的同一條寫入路徑填寫，因此「Data Owner 已核准」在資料庫層只是**寫入端的自我宣告**：任何能寫本表的角色都可以填上 `APPROVED` 與一個姓名字串，接著合法地把 `applied_status` 推進到 `APPLIED_RECALCULATION`，而 `workflow.approvals` 裡從來沒有這筆核准。本表的治理宣稱（第 4.3 節表列「需 Data Owner（`workflow.approvals`）」）因而不可稽核。
+
+v0.5.0 把核准變成參照完整性問題：
+
+1. `approval_decision_id` 指向承載此回饋核准的 `workflow.decisions` 列——該表的 `policy_version_id` 本身已外鍵至政策登錄表（第 3.4 節），故核准也落在同一套治理下。
+2. `approval_source_status` 是**由 `approval_status` 生成**的欄位（`GENERATED ALWAYS ... STORED`），把本表的大寫狀態映射為 `workflow.approvals` 的小寫值，寫入端無法單獨指定它。
+3. `fk_feedback_workflow_approval` 以 `(approval_id, approval_decision_id, approval_source_status)` 三欄複合外鍵，參照 `workflow.approvals (approval_id, decision_id, approval_status)`。於是 `APPROVED` 只能對上一筆**確實存在、確實屬於該決策、且狀態確實是 `approved`** 的核准列；`MATCH FULL` 使三欄必須同時為 NULL 或同時具值。
+4. `chk_feedback_approval_link` 規定 `APPROVED`／`REJECTED` 必須指名核准列，`PENDING`／`AUTO_ACCEPTED` 則不得挾帶。
+5. `uq_feedback_approval_decision` 使一筆核准決策至多支撐一筆回饋，避免一次核准被多筆修正共用。
+
+一個附帶但重要的後果：核准一旦被回饋引用，`workflow.approvals` 該列的狀態就**不能再被改回** `returned` 或 `pending`——外鍵會擋下該 UPDATE。核准的撤銷因此必須走新決策，而不是原地改寫既有核准，這與本案第 3 節「不覆寫」原則一致。
+
+**這道閘擋得住什麼、擋不住什麼，據實說明**：它擋下「回饋表自己宣稱被核准」，因為核准的存在與狀態不再由本表決定；它擋不住同時具備 `workflow` 寫入權限者自建決策與核准列。後者是權限問題，不是結構問題——但差別在於，核准現在只存在於 `workflow.approvals` 一處，權限控制與稽核因此有單一施力點，而不是每張表各自複製一份可自行填寫的狀態欄位。第 14 節第 3 點所記的「稽核表缺資料庫層寫入限制」即為該施力點尚未收斂的部分。
 
 **目標欄位為何是三個而非一個**。`ODP-SA-06-AMD-001` 第 3.1 節的修訂條文為「對已產生的**預測或警示**提交結構化回饋」。初版只有 `target_alert_id`，因此對預測的回饋無處可放，該 FR 在設計層就不可能被滿足，也無從稽核。三個目標欄位分別對應警示（`operations.alerts`）、預測輸出（`operations.forecast_outputs`）與模型預測（`learning.predictions`），由 `chk_feedback_has_target` 保證至少填一個。
 
@@ -695,7 +821,7 @@ GET    /api/v1/forecastops/feedback?store_id=        查詢
 POST   /api/v1/forecastops/feedback/{id}/approve     OUTCOME_CORRECTION 專用
 ```
 
-需 `forecastops:write` 權限；`OUTCOME_CORRECTION` 的核准另需 `data:approve`。
+需 `forecastops:write` 權限；`OUTCOME_CORRECTION` 的核准另需 `data:approve`。核准端點的職責不是把本表的 `approval_status` 改成 `APPROVED`，而是在同一交易內建立 `workflow.decisions` 與 `workflow.approvals` 兩列，再把回饋綁上該核准（`approval_decision_id`／`approval_id`）；狀態欄位只是那筆綁定的投影。若核准列未建立，上述外鍵會使該次更新失敗——這是刻意的，核准不能只存在於本表。
 
 **UI 前置處理**：在本機制上線前，`packages/domain-types/src/frontend-contracts.ts:292` 與 `packages/ui-domain/src/components.tsx:136` 的字串 `"Feedback written to label registry"` 必須移除或改為未啟用狀態。該文案目前對操作者作出不實陳述。
 
@@ -727,7 +853,9 @@ ALTER TABLE expansion.heatzone_scores
     ADD COLUMN IF NOT EXISTS absorbed_demand      NUMERIC(12, 2),
     ADD COLUMN IF NOT EXISTS remaining_demand     NUMERIC(12, 2),
     ADD COLUMN IF NOT EXISTS absorption_ratio     NUMERIC(5, 4),
-    ADD COLUMN IF NOT EXISTS absorption_basis_at  TIMESTAMP WITH TIME ZONE;
+    ADD COLUMN IF NOT EXISTS absorption_basis_at  TIMESTAMP WITH TIME ZONE,
+    ADD COLUMN IF NOT EXISTS absorption_source    VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS absorbing_store_count INTEGER;
 
 DO $$
 BEGIN
@@ -743,17 +871,22 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'chk_heatzone_absorption_complete'
     ) THEN
-        -- 吸收四欄全有或全無：只有一半的吸收結果無法稽核，也無法計算剩餘需求
+        -- 吸收六欄全有或全無：只有一半的吸收結果無法稽核，也無法計算剩餘需求；
+        -- 缺來源識別與門市數則無從回推該次計算吃了哪些實績
         ALTER TABLE expansion.heatzone_scores
             ADD CONSTRAINT chk_heatzone_absorption_complete CHECK (
                 (absorbed_demand     IS NULL
-                 AND remaining_demand    IS NULL
-                 AND absorption_ratio    IS NULL
-                 AND absorption_basis_at IS NULL)
+                 AND remaining_demand      IS NULL
+                 AND absorption_ratio      IS NULL
+                 AND absorption_basis_at   IS NULL
+                 AND absorption_source     IS NULL
+                 AND absorbing_store_count IS NULL)
              OR (absorbed_demand     IS NOT NULL
-                 AND remaining_demand    IS NOT NULL
-                 AND absorption_ratio    IS NOT NULL
-                 AND absorption_basis_at IS NOT NULL)
+                 AND remaining_demand      IS NOT NULL
+                 AND absorption_ratio      IS NOT NULL
+                 AND absorption_basis_at   IS NOT NULL
+                 AND absorption_source     IS NOT NULL
+                 AND absorbing_store_count IS NOT NULL)
             );
     END IF;
     IF NOT EXISTS (
@@ -764,6 +897,16 @@ BEGIN
             ADD CONSTRAINT chk_heatzone_absorption_non_negative CHECK (
                 (absorbed_demand  IS NULL OR absorbed_demand  >= 0)
             AND (remaining_demand IS NULL OR remaining_demand >= 0)
+            );
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'chk_heatzone_absorption_source'
+    ) THEN
+        -- 來源識別必須是可追溯的字串，且吸收門市數不可為負
+        ALTER TABLE expansion.heatzone_scores
+            ADD CONSTRAINT chk_heatzone_absorption_source CHECK (
+                (absorption_source IS NULL OR absorption_source <> '')
+            AND (absorbing_store_count IS NULL OR absorbing_store_count >= 0)
             );
     END IF;
     IF NOT EXISTS (
@@ -783,13 +926,16 @@ BEGIN
 END $$;
 ```
 
-**這三條約束為何是 `HZ-004` 的驗收前提**。`ODP-AC-FR-009` 要求熱區排名在需求被吸收後下降，其可驗證性完全建立在「吸收量、剩餘需求、吸收比例三者是同一次計算的三個面向」之上。v0.3.0 只約束了 `absorption_ratio` 的值域與「有吸收量就要有基準時點」，於是下列三種列都能入庫，而每一種都使該驗收無從執行：
+**這四條約束為何是 `HZ-004` 的驗收前提**。`ODP-AC-FR-009` 要求熱區排名在需求被吸收後下降，其可驗證性完全建立在「吸收量、剩餘需求、吸收比例是同一次計算的三個面向，且該次計算的實績基礎可被指名」之上。v0.3.0 只約束了 `absorption_ratio` 的值域與「有吸收量就要有基準時點」，於是下列四種列都能入庫，而每一種都使該驗收無從執行：
 
-| 可入庫的矛盾列 | 為何使 `HZ-004` 不可驗收 | v0.4.0 擋下它的約束 |
+| 可入庫的矛盾列 | 為何使 `HZ-004` 不可驗收 | 擋下它的約束 |
 |---|---|---|
 | `absorbed_demand = 10`、`remaining_demand = NULL` | 沒有剩餘需求就無法判斷排名是否應該下降 | `chk_heatzone_absorption_complete` |
 | `absorbed_demand = -5` | 負吸收量會使排名不降反升 | `chk_heatzone_absorption_non_negative` |
 | `absorbed = 10`、`remaining = 90`、`ratio = 0.9` | 比例與量互相矛盾，兩個下游讀哪一個就得到相反結論 | `chk_heatzone_absorption_consistent` |
+| 有吸收量但 `absorption_source` 為 NULL | 無從回推該數字吃了哪批實績，重算與爭議時無法對帳 | `chk_heatzone_absorption_complete` |
+
+**來源識別為何必須落到資料表**。`HeatZoneV3Input` 自 v0.2.0 起就有 `absorption_source`（實績來源識別）與 `absorbing_store_count` 兩個輸入欄位，但持久化只寫了三個數字與一個時點——輸入端宣稱可追溯，儲存端卻把追溯線索丟掉。`ODP-AC-FR-009` 的驗收要判斷「排名下降是因為需求真的被吸收」，而不是因為換了一批實績來源或觀察期門市集合改變；沒有這兩欄，兩者在事後無法分辨。v0.5.0 因此將兩欄一併持久化，並納入全有全無的完整性約束：吸收結果要嘛完整（含來源），要嘛不存在。`absorption_source` 記錄該次計算所依據的實績批次識別（例如 `revenue_daily@2026-08-31`），與 `absorption_basis_at` 一起構成可重算的基準。
 
 一致性檢查以 `round(..., 4)` 對齊 `absorption_ratio` 的 `NUMERIC(5, 4)` 精度，並留 `0.0001` 的容差吸收寫入端的捨入差異；`absorbed + remaining = 0`（該單元完全無需求）另列為合法情形，此時比例定義為 `0` 而非除以零。第 5.1 節的 `compute_absorbed_demand()` 是這三個數字的唯一產生處，因此一致性在應用層與資料庫層都只有一個來源。
 
@@ -834,8 +980,7 @@ CREATE TABLE IF NOT EXISTS expansion.heatzone_composition (
     parent_zone_id      VARCHAR(100),            -- SPLIT_CHILD 時指向原熱區
     decided_by          VARCHAR(255) NOT NULL,   -- 'system' 或操作者
     decided_at          TIMESTAMP WITH TIME ZONE NOT NULL,
-    decision_policy_version_id VARCHAR(100) NOT NULL
-        REFERENCES workflow.decision_policies(policy_version_id),
+    decision_policy_version_id VARCHAR(100) NOT NULL,
     override_reason     TEXT,                    -- 人工推翻時必填
     reverted_at         TIMESTAMP WITH TIME ZONE,-- 撤銷時點；NULL = 生效中
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -857,7 +1002,11 @@ CREATE TABLE IF NOT EXISTS expansion.heatzone_composition (
         reverted_at IS NULL OR reverted_at >= decided_at
     ),
     -- 合併熱區識別碼不得重用組成單元識別碼
-    CONSTRAINT chk_composition_zone_id_format CHECK (zone_id ~ '^MZ-[0-9a-f]{16}$')
+    CONSTRAINT chk_composition_zone_id_format CHECK (zone_id ~ '^MZ-[0-9a-f]{16}$'),
+    -- 政策綁定連同租戶一起參照：不得綁到別的租戶的政策（第 3.4 節同一規則）
+    CONSTRAINT fk_heatzone_composition_decision_policy
+        FOREIGN KEY (decision_policy_version_id, tenant_id)
+        REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
 );
 
 -- 一個網格在同一時點只能屬於一個生效中的熱區
@@ -868,6 +1017,47 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_heatzone_composition_active_member
 -- 支援依熱區追溯完整可逆變更與人工推翻歷程之稽核索引
 CREATE INDEX IF NOT EXISTS idx_heatzone_composition_audit
     ON expansion.heatzone_composition (tenant_id, zone_id, decided_at);
+
+-- Append-Only 由資料庫強制：唯一允許的 UPDATE 是把生效中的列標為已撤銷，
+-- 其餘欄位一律不可改寫，DELETE 一律不可。
+CREATE OR REPLACE FUNCTION expansion.heatzone_composition_append_only()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION
+            'heatzone_composition_append_only: DELETE is not permitted (composition_id=%)',
+            OLD.composition_id USING ERRCODE = '23514';
+    END IF;
+    IF OLD.reverted_at IS NOT NULL THEN
+        RAISE EXCEPTION
+            'heatzone_composition_append_only: composition_id=% is already reverted',
+            OLD.composition_id USING ERRCODE = '23514';
+    END IF;
+    IF NEW.reverted_at IS NULL THEN
+        RAISE EXCEPTION
+            'heatzone_composition_append_only: the only permitted UPDATE is setting reverted_at'
+            USING ERRCODE = '23514';
+    END IF;
+    IF ROW(NEW.composition_id, NEW.zone_id, NEW.tenant_id, NEW.member_cell_id,
+           NEW.composition_kind, NEW.parent_zone_id, NEW.decided_by, NEW.decided_at,
+           NEW.decision_policy_version_id, NEW.override_reason, NEW.created_at)
+       IS DISTINCT FROM
+       ROW(OLD.composition_id, OLD.zone_id, OLD.tenant_id, OLD.member_cell_id,
+           OLD.composition_kind, OLD.parent_zone_id, OLD.decided_by, OLD.decided_at,
+           OLD.decision_policy_version_id, OLD.override_reason, OLD.created_at)
+    THEN
+        RAISE EXCEPTION
+            'heatzone_composition_append_only: only reverted_at may change (composition_id=%)',
+            OLD.composition_id USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_heatzone_composition_append_only
+    ON expansion.heatzone_composition;
+CREATE TRIGGER trg_heatzone_composition_append_only
+    BEFORE UPDATE OR DELETE ON expansion.heatzone_composition
+    FOR EACH ROW EXECUTE FUNCTION expansion.heatzone_composition_append_only();
 ```
 
 **識別碼規則**：合併熱區的 `zone_id` **不得**重用任一組成單元的 `geo_cell_id`，避免下游將合併體誤認為原單元。`chk_composition_zone_id_format` 強制 `MZ-` 前綴，而 `geo_cell_id` 為 UUID，兩者格式互斥，故重用在資料庫層即不可能。
@@ -875,6 +1065,10 @@ CREATE INDEX IF NOT EXISTS idx_heatzone_composition_audit
 **鄰接判定**：以 H3 k-ring（k=1）為預設。跨行政區界是否可合併由 `policy.parameters["allow_cross_admin_boundary"]` 控制，不硬編。`geo.h3_cells` 已有 `admin_city` 與 `admin_district` 兩欄可供判定。
 
 **治理與可逆稽核**：屬 Ranking Policy 層級（`ODP-SA-07` 第 2 節）。為滿足 `ODP-AC-FR-011` 的可逆稽核軌跡要求，本表採 **Append-Only 版本紀錄模型**（以 `composition_id` 為獨立主鍵），任何自動合併、拆分、人工推翻或撤銷均寫入新列，原生效中記錄則標註 `reverted_at`，不作 destructive 原地覆寫。自動合併可由展店 Owner 推翻，推翻須填 `override_reason` 與 `decided_by`，由 `chk_composition_override_reason` 保證。所有歷史版本均可依 `(tenant_id, zone_id, decided_at)` 完整重現與還原。
+
+**Append-Only 為何需要 trigger 才成立**。v0.4.0 只在此段文字宣告「不作 destructive 原地覆寫」，而 DDL 完全沒有 UPDATE／DELETE 的限制——本節與第 13 節示範的撤銷流程本身就是一次 `UPDATE ... SET reverted_at`，同一條 UPDATE 也可以順手改掉 `decided_by`、`override_reason` 或 `decision_policy_version_id`，甚至直接 `DELETE` 掉整段人工推翻歷程，資料庫不會有任何反應。稽核軌跡若可被無痕改寫，它就不是稽核軌跡。
+
+`trg_heatzone_composition_append_only` 把宣告變成規則，只放行一種改寫：把 `reverted_at` 由 NULL 設為時點，其餘十一個欄位逐一比對必須不變；已撤銷的列不可再改（撤銷本身也只發生一次）；`DELETE` 一律拒絕。因此「撤銷」與「竄改」在資料庫層分得開，而 `ODP-AC-FR-011` 要求的可逆軌跡不再依賴寫入端自律。至於本表的 `reverted_at` 與第 10 節的 migration 回滾仍是兩件事，見該節說明。
 
 **API**（2 個端點）：
 
@@ -1054,11 +1248,14 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_gates (
     approved_by         VARCHAR(255) NOT NULL,
     rollback_condition  TEXT NOT NULL,
     revoked_at          TIMESTAMP WITH TIME ZONE,
-    decision_policy_version_id VARCHAR(100) NOT NULL
-        REFERENCES workflow.decision_policies(policy_version_id),
+    decision_policy_version_id VARCHAR(100) NOT NULL,
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT uq_exploration_gates_gate_tenant UNIQUE (gate_id, tenant_id),
+    -- 授權的政策必須屬於該 Gate 的租戶（第 3.4 節同一規則）
+    CONSTRAINT fk_exploration_gates_decision_policy
+        FOREIGN KEY (decision_policy_version_id, tenant_id)
+        REFERENCES workflow.decision_policies(policy_version_id, tenant_id),
     CONSTRAINT chk_gate_window CHECK (effective_to > effective_from),
     CONSTRAINT chk_gate_budget_limit CHECK (budget_limit > 0),
     -- 已消耗不得為負，也不得超出上限：預算用罄在資料庫層即成立
@@ -1102,17 +1299,58 @@ CREATE TABLE IF NOT EXISTS pricing.exploration_decisions (
 
 CREATE INDEX IF NOT EXISTS idx_exploration_decisions_gate
     ON pricing.exploration_decisions (gate_id, created_at);
+
+-- 預算扣抵由資料庫執行，而非由呼叫端記得執行：每寫入一筆探索決策，
+-- 同一交易內即累加至該 Gate；Gate 必須在該時點有效且未撤銷。
+CREATE OR REPLACE FUNCTION pricing.exploration_decisions_accrue_budget()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+    accrued pricing.exploration_gates%ROWTYPE;
+BEGIN
+    UPDATE pricing.exploration_gates
+       SET budget_consumed = budget_consumed + NEW.budget_consumed
+     WHERE gate_id   = NEW.gate_id
+       AND tenant_id = NEW.tenant_id
+       AND revoked_at IS NULL
+       AND NEW.created_at >= effective_from
+       AND NEW.created_at <  effective_to
+    RETURNING * INTO accrued;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION
+            'exploration_decisions_accrue_budget: gate % is not active for tenant % at %',
+            NEW.gate_id, NEW.tenant_id, NEW.created_at USING ERRCODE = '23514';
+    END IF;
+    RETURN NULL;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_exploration_decisions_accrue
+    ON pricing.exploration_decisions;
+CREATE TRIGGER trg_exploration_decisions_accrue
+    AFTER INSERT ON pricing.exploration_decisions
+    FOR EACH ROW EXECUTE FUNCTION pricing.exploration_decisions_accrue_budget();
+
+-- 已扣抵的決策不可回頭改寫或刪除，否則累計器與逐筆紀錄會失去對應
+CREATE OR REPLACE FUNCTION pricing.exploration_decisions_append_only()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+    RAISE EXCEPTION
+        'exploration_decisions_append_only: % is not permitted on pricing.exploration_decisions',
+        TG_OP USING ERRCODE = '23514';
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_exploration_decisions_append_only
+    ON pricing.exploration_decisions;
+CREATE TRIGGER trg_exploration_decisions_append_only
+    BEFORE UPDATE OR DELETE ON pricing.exploration_decisions
+    FOR EACH ROW EXECUTE FUNCTION pricing.exploration_decisions_append_only();
 ```
 
-**多租戶隔離與 Gate 累計預算扣抵協定**：
+**多租戶隔離與 Gate 累計預算扣抵**：
 1. **租戶強綁定**：`pricing.exploration_decisions` 透過 `(gate_id, tenant_id)` 複合外鍵直接參照 `pricing.exploration_gates(gate_id, tenant_id)`，由資料庫核心層確保決策租戶與授權 Gate 租戶嚴格一致，防止跨租戶借用 Gate 探索。
-2. **總預算累計扣抵與防超支**：單筆決策之 `budget_consumed` 僅記錄該次探索消耗，而 Gate 之總預算由 `pricing.exploration_gates.budget_consumed` 追蹤。每次執行探索決策時，交易中必須原子執行：
-   ```text
-   UPDATE pricing.exploration_gates
-   SET budget_consumed = budget_consumed + :decision_budget
-   WHERE gate_id = :gate_id AND tenant_id = :tenant_id;
-   ```
-   由於 `pricing.exploration_gates` 設有約束 `chk_gate_budget_consumed (budget_consumed <= budget_limit)`，當多筆決策累計消耗超過 Gate 預算上限時，資料庫將直接拋出 check constraint 違規並回滾該次決策交易，保證多決策並行時不會超出 Gate 授權預算。
+2. **總預算累計扣抵與防超支**：單筆決策之 `budget_consumed` 僅記錄該次探索消耗，Gate 之累計消耗則由 `pricing.exploration_gates.budget_consumed` 追蹤。兩者由 `trg_exploration_decisions_accrue` 在**同一次 INSERT 內**綁定：寫入一筆探索決策必然累加至其 Gate，且該 Gate 必須在決策時點有效（未撤銷、落在授權期間內），否則整筆寫入被拒。累加後 `chk_gate_budget_consumed (budget_consumed <= budget_limit)` 立即生效，因此第 N 筆使累計超出上限的決策會被資料庫回滾，多筆並行寫入亦由該列的行鎖序列化，不會出現兩筆同時通過的競態。
+3. **扣抵不可回收**：`trg_exploration_decisions_append_only` 禁止對已寫入的探索決策做 UPDATE 或 DELETE。否則刪掉一筆決策就能讓累計器與逐筆紀錄不再對應——預算看似歸還，實際已花掉的探索卻已發生。
+
+**v0.4.0 的漏洞，與這次的修法**。前一版的第 2 點是一段**寫給呼叫端看的協定**：文中要求「交易中必須原子執行 `UPDATE ... budget_consumed + :decision_budget`」，但資料庫沒有任何機制要求它真的被執行。`pricing.exploration_decisions` 的唯一預算約束是 `budget_consumed >= 0`，因此直接 `INSERT` 一批決策而不動 Gate，總預算就完全繞過——`ODP-BR-PRICE-004` 的 Hard Constraint 只存在於文件。把累加移進 trigger 之後，「逐筆決策」與「累計預算」不再是兩份需要同步的資料，而是同一次寫入的兩個面向；呼叫端也不再需要（也不得）自行執行那段 UPDATE，重複扣抵的風險一併消失。
 
 **Gate 判定與 Bandit 介面**（新增 `modules/priceops/application/exploration.py` 與 `solver/pricing/bandit.py`）：
 
@@ -1157,7 +1395,7 @@ class BanditPriceExplorer(Protocol):
 
 接在既有 `PriceOpsService`（`modules/priceops/application/pricing.py:110`）上，沿用其 `ApprovalBlockedError` 與 `MissingRollbackPlanError` 的既有模式。
 
-**逐決策 Gate 記錄與稽核**：當價格最佳化流程啟用 Bandit 探索並採納候選價格時，系統必須將產生的決策寫入 `workflow.decisions`，並在 `pricing.exploration_decisions` 記錄該決策所依據的 `gate_id`、探索前後價格與實際扣抵之探索預算，確保所有探索決策具備完整審查軌跡與可回溯性。
+**逐決策 Gate 記錄與稽核**：當價格最佳化流程啟用 Bandit 探索並採納候選價格時，系統必須將產生的決策寫入 `workflow.decisions`，並在 `pricing.exploration_decisions` 記錄該決策所依據的 `gate_id`、探索前後價格與實際扣抵之探索預算，確保所有探索決策具備完整審查軌跡與可回溯性。應用層不再自行更新 Gate 的 `budget_consumed`，該欄位由上述 trigger 獨佔維護。
 
 **硬限制不可放寬**：探索空間是 `solver/pricing/constraints.py` 既有硬限制的**子集**。實作上探索候選價格必須先通過同一組約束檢查才能被提出——探索不是繞過 `ODP-BR-PRICE-001`（毛利底線）的路徑。
 
@@ -1215,22 +1453,33 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 
 | 既有表 | 新增欄位 | 對應 FR |
 |---|---|---|
-| `operations.alerts` | `forecast_output_id`、`decision_policy_version_id`、`deterioration_confirmed_at`、`disposition` | `FCT-005`、`FCT-006` |
-| `expansion.heatzone_scores` | `decision_policy_version_id`、`absorbed_demand`、`remaining_demand`、`absorption_ratio`、`absorption_basis_at` | `HZ-004` |
-| `expansion.site_score_runs` | `decision_policy_version_id` | 第 3.4 節 |
-| `network.network_plans` | `decision_policy_version_id` | 第 3.4 節 |
+| `operations.alerts` | `forecast_output_id`、`tenant_id`、`decision_policy_version_id`、`deterioration_confirmed_at`、`disposition` | `FCT-005`、`FCT-006` |
+| `expansion.heatzone_scores` | `tenant_id`、`decision_policy_version_id`、`absorbed_demand`、`remaining_demand`、`absorption_ratio`、`absorption_basis_at`、`absorption_source`、`absorbing_store_count` | `HZ-004` |
+| `expansion.site_score_runs` | `tenant_id`、`decision_policy_version_id` | 第 3.4 節 |
+| `network.network_plans` | `tenant_id`、`decision_policy_version_id` | 第 3.4 節 |
 
-既有表新增約束與唯一索引：
+本案新增於既有表與政策登錄表的約束、唯一索引與外鍵：
 
 | 對象 | 新增 | 作用 |
 |---|---|---|
 | `workflow.decisions` | `fk_decisions_policy_version`（`NOT VALID`） | 補上既有欄位所隱含、但從未建立的外鍵 |
-| `operations.alerts` | `fk_alerts_decision_policy`（`NOT VALID`） | 政策綁定必須指向真實政策列 |
-| `expansion.heatzone_scores` | `fk_heatzone_scores_decision_policy`（`NOT VALID`） | 同上 |
-| `expansion.site_score_runs` | `fk_site_score_runs_decision_policy`（`NOT VALID`） | 同上 |
-| `network.network_plans` | `fk_network_plans_decision_policy`（`NOT VALID`） | 同上 |
+| `workflow.decision_policies` | `uq_decision_policy_version_tenant` | 讓「政策的租戶」成為可被複合外鍵引用的欄位對 |
+| `workflow.approvals` | `uq_approvals_decision_status` | 讓「某決策的某筆核准及其狀態」成為可被複合外鍵引用的欄位對（第 4.3 節） |
+| `core.stores` | `uq_stores_store_tenant` | 讓「門市的租戶」成為可被複合外鍵引用的欄位對 |
+| `operations.alerts` | `fk_alerts_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 政策綁定必須指向真實政策列，且該政策必須屬於同一租戶 |
+| `operations.alerts` | `fk_alerts_store_tenant`（`NOT VALID`） | 警示自述的租戶必須就是其門市的租戶 |
+| `expansion.heatzone_scores` | `fk_heatzone_scores_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 同上（政策部分） |
+| `expansion.site_score_runs` | `fk_site_score_runs_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 同上 |
+| `network.network_plans` | `fk_network_plans_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 同上 |
 | `operations.alerts` | 唯一索引 `idx_alerts_forecast_policy` | `(forecast_output_id, decision_policy_version_id)` 的評估識別唯一性 |
-| `expansion.heatzone_scores` | `chk_heatzone_absorption_complete`（強化）、`chk_heatzone_absorption_non_negative`、`chk_heatzone_absorption_consistent` | `HZ-004` 吸收三欄的可驗收性（第 5.1 節） |
+| `expansion.heatzone_scores` | `chk_heatzone_absorption_complete`（強化為六欄）、`chk_heatzone_absorption_non_negative`、`chk_heatzone_absorption_consistent`、`chk_heatzone_absorption_source` | `HZ-004` 吸收結果的可驗收性與可追溯性（第 5.1 節） |
+
+新增 trigger（2 個，皆為本案宣稱之治理規則的執行機制）：
+
+| 對象 | Trigger | 作用 |
+|---|---|---|
+| `expansion.heatzone_composition` | `trg_heatzone_composition_append_only` | 唯一允許的改寫是把 `reverted_at` 由 NULL 設為時點；`DELETE` 一律拒絕（第 5.2 節） |
+| `pricing.exploration_decisions` | `trg_exploration_decisions_accrue`、`trg_exploration_decisions_append_only` | 逐筆決策與 Gate 累計預算在同一次寫入內綁定，且事後不可回收扣抵（第 7 節） |
 
 既有 dbt 模型變更（1 個）：`pipelines/dbt/models/model_ready/valuation_view.sql` 新增 `realized_transaction_price`、`realized_transaction_at` 兩個輸出欄位（第 6.3 節）。
 
@@ -1248,8 +1497,9 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 | 加欄位 | `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` | `000012` |
 | 建索引 | `CREATE INDEX IF NOT EXISTS` | `000012` |
 | 加約束 | `DO $$ ... IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = ...) ...` | 本案新增；PostgreSQL 不支援 `ADD CONSTRAINT IF NOT EXISTS` |
+| 建 trigger | `CREATE OR REPLACE FUNCTION` + `DROP TRIGGER IF EXISTS` + `CREATE TRIGGER` | 本案新增；PostgreSQL 不支援 `CREATE TRIGGER IF NOT EXISTS`，改以先 DROP 再建達成重跑一致 |
 
-最後一列是本案唯一需要新寫法的部分。`ALTER TABLE ... ADD CONSTRAINT` 沒有 `IF NOT EXISTS` 形式，重跑會以 `duplicate_object` 失敗，因此必須以 `pg_constraint` 查詢包裹。第 3.4、4.2、5.1 節的約束均已依此撰寫。
+最後兩列是本案唯一需要新寫法的部分。`ALTER TABLE ... ADD CONSTRAINT` 沒有 `IF NOT EXISTS` 形式，重跑會以 `duplicate_object` 失敗，因此必須以 `pg_constraint` 查詢包裹。第 3.4、4.2、5.1 節的約束均已依此撰寫；第 5.2 與第 7 節的 trigger 依倒數第一列撰寫，兩者的可重跑性均由第 13.1 節的 B 項實際重跑驗證。
 
 **回滾（rollback）**。版本庫的既有回滾原則為 **expand-only**：`infra/db/migrations/versions/0005_identity_session_server_secrets.py` 的 `downgrade()` 是 `op.execute(sa.text("SELECT 1"))`，並在註解中說明「rollback 藉停用程式路徑達成，不 drop 欄位或資料」。`assisted_listing_intake/downgrade.sql` 亦明言結構性 drop 僅適用於 greenfield／staging，生產回滾改為關閉旗標並將資料轉為唯讀。
 
@@ -1275,26 +1525,30 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 **第二階段的預定語句**。下列語句是第一階段的驗收出口，寫在此處以免留待實作時各自發明。它們屬後續 migration，不在本案 DDL 內，故未納入第 13.1 節的執行驗證（見第 13.3 節）：
 
 ```text
--- (a) 回填：歷史列一律指向該租戶的 retrofit 佔位列
+-- (a) 回填：租戶歸屬與政策綁定同一句補齊，歷史列一律指向該租戶的 retrofit 佔位列
 UPDATE operations.alerts a
-   SET decision_policy_version_id =
+   SET tenant_id = s.tenant_id,
+       decision_policy_version_id =
        'four-light-policy-0.0.0-retrofit:' || s.tenant_id::text
   FROM core.stores s
  WHERE a.store_id = s.store_id
    AND a.decision_policy_version_id IS NULL;
 -- expansion.heatzone_scores / expansion.site_score_runs / network.network_plans
--- 依各自的租戶歸屬路徑（第 2 節事實 2）比照辦理。
+-- 依各自的租戶歸屬路徑（第 2 節事實 2）比照辦理：三者沒有 store_id 這類單一錨點，
+-- 其 tenant_id 需分別經 geo_cell_id、candidate_site_id 與規劃範圍推導，屬資料工作。
 
--- (b) 驗證既有列，再轉為必填
+-- (b) 驗證既有列，再轉為必填（兩個欄位、三條約束一起收斂）
+ALTER TABLE operations.alerts VALIDATE CONSTRAINT fk_alerts_store_tenant;
 ALTER TABLE operations.alerts VALIDATE CONSTRAINT fk_alerts_decision_policy;
+ALTER TABLE operations.alerts ALTER COLUMN tenant_id SET NOT NULL;
 ALTER TABLE operations.alerts ALTER COLUMN decision_policy_version_id SET NOT NULL;
 ```
 
 **進入第二階段的條件**（三者皆成立才可執行，否則 `SET NOT NULL` 會在生產環境失敗）：
 
-1. 四張表的 `decision_policy_version_id IS NULL` 計數為 0；
+1. 四張表的 `decision_policy_version_id IS NULL` 與 `tenant_id IS NULL` 計數皆為 0；
 2. 產生決策的所有寫入路徑都已改走第 3.5 節的 `resolve_policy()`，不再有不帶政策的新列；
-3. `VALIDATE CONSTRAINT` 在四張表上皆通過。
+3. `VALIDATE CONSTRAINT` 在四張表的政策外鍵、以及 `operations.alerts` 的門市租戶外鍵上皆通過。
 
 **回填語意須誠實**：既有警示是在無政策機制下產生的，回填時不得指向首版政策列，否則等於偽稱那些警示由該政策判定。回填一律指向該租戶專設的 retrofit 列（`policy_label = 'four-light-policy-0.0.0-retrofit'`，`policy_version_id = 'four-light-policy-0.0.0-retrofit:{tenant_id}'`，`policy_version = '0.0.0-retrofit'`），`change_reason` 記明其為回填佔位。歷史決策的政策歸屬不可偽造。
 
@@ -1360,19 +1614,21 @@ uv run --no-project --python 3.12 --with pgserver \
 | 檢查 | 結果 |
 |---|---|
 | A. 9 個 DDL 區塊套用於 baseline 相依樁 | 9／9 通過 |
-| B. 每個區塊重跑一次（第 10 節宣稱的可重跑） | 9／9 通過 |
-| C. 新增約束是否真的擋下它宣稱要擋的資料 | 73／73 符合設計 |
+| B. 每個區塊重跑一次（第 10 節宣稱的可重跑，含兩個 trigger 區塊） | 9／9 通過 |
+| C. 新增約束、外鍵與 trigger 是否真的擋下它宣稱要擋的資料 | 102／102 符合設計 |
 
-C 項逐條涵蓋本案每一條新增 CHECK、外鍵與唯一索引。其中與本版新增或修正的規則直接對應者包括：`CLOSED` 缺成交價、成交時點或 `deal_terms` 三鍵被拒；未成交挾帶成交價或成交條件被拒；同一 `valuation_run_id` 登錄第二筆結果被拒；`APPLIED_RECALCULATION` 只填 `recalculation_run_id` 被拒；回饋類型與生效路徑不相容被拒；已生效卻無 `applied_at` 被拒；吸收四欄只填一半、為負或與比例矛盾被拒；`policy_version_id` 未帶租戶後綴被拒；以政策標籤（而非識別碼）綁定警示或熱區組成被外鍵拒。
+C 項逐條涵蓋本案每一條新增 CHECK、外鍵、唯一索引與 trigger。其中與本版（v0.5.0）新增規則直接對應者為：宣稱 `APPROVED` 但 `workflow.approvals` 沒有對應核准列被拒；指向一筆尚未核准（`pending`）的核准列被拒；`AUTO_ACCEPTED` 卻挾帶核准連結被拒；同一核准決策被第二筆回饋重用被拒；**已被回饋引用的核准列改回 `returned` 被外鍵拒**；回饋或警示自述的租戶與其門市租戶不符被拒；綁定他租戶政策、或綁了政策卻不宣告租戶被拒；政策的回退目標指向他租戶版本被拒；熱區組成列被刪除、被二次撤銷、或在撤銷的同一句改寫其他欄位被 trigger 拒；探索決策寫入未累加即超出 Gate 上限被拒（含累計器實際被移動的正向斷言）；對已撤銷或已過期 Gate 的探索決策被拒；已扣抵的探索決策被改寫或刪除被拒；吸收結果缺來源識別或門市數、來源為空字串、門市數為負被拒。
+
+v0.4.0 已涵蓋且本版保留者包括：`CLOSED` 缺成交價、成交時點或 `deal_terms` 三鍵被拒；未成交挾帶成交價或成交條件被拒；同一 `valuation_run_id` 登錄第二筆結果被拒；`APPLIED_RECALCULATION` 只填 `recalculation_run_id` 被拒；回饋類型與生效路徑不相容被拒；已生效卻無 `applied_at` 被拒；吸收欄位只填一半、為負或與比例矛盾被拒；`policy_version_id` 未帶租戶後綴被拒。
 
 **C 項的兩項方法要求**（v0.4.0 補上，之前兩項皆不成立）：
 
 1. **案例隔離**。每個負向案例自帶其相依列（`asset.valuation_runs`、`geo.h3_cells`、`workflow.decisions`），不與其他案例共用。共用時，一列可能是被前一個案例留下的主鍵或唯一索引擋下，而非被該案例宣稱測試的約束擋下——案例照樣「通過」，卻什麼也沒證明。唯二刻意共用的是專門測試唯一索引的兩對案例。
-2. **拒絕原因具名**。每個負向案例宣告它預期的約束或索引名稱，只有當 PostgreSQL 的錯誤訊息確實出現該名稱時才計為符合設計。少數列必然同時違反兩條耦合的吸收約束（比例大於 1 必然也與其輸入不一致），這類案例宣告兩個名稱並接受其一；這仍排除了「因不相關的理由被拒」。腳本另在載入時檢查每個負向案例都有宣告名稱，否則直接中止。
+2. **拒絕原因具名**。每個負向案例宣告它預期的約束、索引或 trigger 名稱，只有當 PostgreSQL 的錯誤訊息確實出現該名稱時才計為符合設計（trigger 的 `RAISE EXCEPTION` 訊息因此一律以其函式名開頭）。少數列必然同時違反兩條耦合的吸收約束（比例大於 1 必然也與其輸入不一致），這類案例宣告兩個名稱並接受其一；這仍排除了「因不相關的理由被拒」。腳本另在載入時檢查每個負向案例都有宣告名稱，否則直接中止。
 
 腳本以非零結束碼表示任一項不符，故其結果可被外部重跑核對，不需信任本節的敘述。
 
-**此驗證的範圍限制，據實說明**：pgserver 內建的 PostgreSQL 未附 `uuid-ossp` 與 `postgis` 兩個擴充，因此 `000001_baseline_canonical_schema.sql` 無法在該環境逐字套用——這也正是版本庫既有資料庫測試標記 `requires_live_env` 的原因。腳本改以一份與 `000001` 在主鍵與型別上相容的相依樁（涵蓋本案引用到的 14 張表），並將 `uuid_generate_v4()` 接到內建的 `gen_random_uuid()`。**因此上述結果證明的是本修正案 DDL 自身的正確性，不是它與完整 baseline 的整合。** 後者需要具備 PostGIS 的 PostgreSQL 16 環境，屬部署前驗證，未在此完成。
+**此驗證的範圍限制，據實說明**：pgserver 內建的 PostgreSQL 未附 `uuid-ossp` 與 `postgis` 兩個擴充，因此 `000001_baseline_canonical_schema.sql` 無法在該環境逐字套用——這也正是版本庫既有資料庫測試標記 `requires_live_env` 的原因。腳本改以一份與 `000001` 在主鍵與型別上相容的相依樁（涵蓋本案引用到的 15 張表，v0.5.0 新增 `workflow.approvals`，並使 `core.stores` 帶上其 `tenant_id`），並將 `uuid_generate_v4()` 接到內建的 `gen_random_uuid()`。**因此上述結果證明的是本修正案 DDL 自身的正確性，不是它與完整 baseline 的整合。** 後者需要具備 PostGIS 的 PostgreSQL 16 環境，屬部署前驗證，未在此完成。
 
 ### 13.2 Python：Alert dataclass 欄位順序
 
@@ -1395,6 +1651,6 @@ TypeError: non-default argument 'policy_id' follows default argument
 1. **本案未處理 `ODP-SA-07` 第 6 節與 `ODP-ML-05` 第 5 節的 Evidence Level 定義衝突**。該衝突使 `ODP-BR-AD-004` 與 `ODP-AC-BR-005` 無法達成，屬 C3 級，需 ADR 裁定後才能設計。
 2. **`ODP-BR-LST-001` 的 fail-open 缺陷**（`modules/listing/application/promotion.py:272-303`，缺資料時給予滿分信心與預設熱區）不在本案 9 項範圍內，但其嚴重度高於本案多數項目，建議以獨立缺陷單優先處理。
 3. **稽核表缺資料庫層寫入限制**（有雜湊鏈可偵測竄改，無 `REVOKE UPDATE/DELETE`，RLS 僅存在於 assisted-listing-intake 子系統），影響 `ODP-BR-OPS-004`，屬平台級安全設計，需獨立評估。
-4. **兩代資料表的租戶模型不一致**（第 2 節事實 2）：`000001` 的模組表無 `tenant_id`，`000009` 之後的表有。本案新表採後者，因而使不一致更明顯。統一租戶模型屬平台級資料設計，需獨立評估，不宜夾帶在本案內完成。
+4. **兩代資料表的租戶模型仍未統一**（第 2 節事實 2）：`000001` 的模組表無 `tenant_id`，`000009` 之後的表有。v0.5.0 已為本案綁定政策的四張表補上 `tenant_id` 與租戶一致性外鍵（第 3.4 節），因為沒有它，逐租戶政策的隔離在資料庫層無法成立；但這只涵蓋本案觸及的四張表，`000001` 其餘模組表（如 `operations.interventions`、`network.network_plan_actions`）仍無租戶欄位。**全面統一租戶模型、以及第 11 節第二階段中三張無 store 錨點的表如何回填租戶，屬平台級資料設計**，需獨立評估，不宜夾帶在本案內完成。
 5. **`network.network_plan_actions.action_type` 無 CHECK 約束，且註解列舉缺 `TRANSFER`**（第 8 節）。該欄位目前接受任意字串，允許值僅存在於行末註解中。屬 NetPlan 領域範圍，不在本案 9 項落差內；但同型問題（以註解代替約束）正是本案第 6.2 節在 `asset.deal_outcomes` 上刻意避免的，建議一併納入後續資料完整性盤點。
 6. 本案所有設計**未經執行期驗證**——三個環境目前無應用工作負載運行。設計落地後須以實際執行證明其行為。
