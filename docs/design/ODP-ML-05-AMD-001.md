@@ -19,7 +19,7 @@ source_decision: ADR-0004
 
 ## 1. 修正目的
 
-`ADR-0004`（accepted，2026-09-01）以本文件第 5 節為 Evidence Level 的單一權威。本修正案補上該節缺少的一塊：**證據不可評估時如何表達**。
+`ADR-0004`（`docs/adr/ADR-0004-evidence-level-single-authority.md`，status: accepted，2026-09-01）以本文件第 5 節為 Evidence Level 的單一權威。本修正案補上該節缺少的一塊：**證據不可評估時如何表達**。
 
 變更類別為 **C2（Non-breaking design）**：L0–L5 階梯本身一字不動，本案只新增與其正交的狀態。既有的因果門檻、級名與語意皆不受影響。
 
@@ -64,7 +64,7 @@ source_decision: ADR-0004
 > | 樣本過小 | 暫不納入 | 本文件與實作皆未定義最小樣本門檻。門檻確立後方可加入 |
 > | 資料品質失敗 | 暫不納入 | 目前無資料品質訊號進入評估函式。訊號接通後方可加入 |
 >
-> 新增原因碼時**必須**同時提供其判定路徑。一個宣告了卻無人能產生的原因碼，與階梯上一個無人能產生的等級同樣有害：`causal_candidate` 即以此形式在 canonical schema 中存活數月而未被察覺（`ODP-EVIDENCE-LEVEL-ALIGNMENT-001`）。
+> 新增原因碼時**必須**同時提供其判定路徑。一個宣告了卻無人能產生的原因碼，與階梯上一個無人能產生的等級同樣有害：`causal_candidate` 即以此形式在 canonical schema 中存活數月而未被察覺（`ODP-EVIDENCE-LEVEL-ALIGNMENT-001`，PR #1094）。
 
 ## 4. 既有規範的延伸
 
@@ -74,7 +74,7 @@ source_decision: ADR-0004
 
 該句維持不變，並明確其適用範圍：「Evidence 不足」包含兩種情形 —— `evidence_assessable = false`（不可評估），以及 `evidence_level` 低於 `CAUSAL_MIN_EVIDENCE`（可評估但未達因果門檻）。兩者皆不得使用確定語氣。
 
-## 5. 已落地的實作
+## 5. 對應實作
 
 | 變更 | 位置 | Task |
 |---|---|---|
@@ -82,6 +82,8 @@ source_decision: ADR-0004
 | `assess_evidence()` 取代 `assign_evidence_level()` | 同上 | 同上 |
 | `is_causal_evidence()` 於不可評估時短路，不進入序數比較 | 同上 | 同上 |
 | `_EVIDENCE_ORDER` 維持純有序，未新增成員 | 同上 | 同上 |
+
+上述變更由 PR #1095 交付，於本修正案送審時**尚未併入 `dev`**；`ADR-0004` 本身（PR #1090）亦同。請以 `task/ODP-EVIDENCE-ASSESSABILITY-001` 查核，不要以 `dev` 查核。
 
 `CAUSAL_MIN_EVIDENCE = L3` 未變更。本修正案不調整因果宣稱的門檻。
 

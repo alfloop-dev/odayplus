@@ -19,7 +19,7 @@ source_decision: ADR-0004
 
 ## 1. 修正目的
 
-`ADR-0004`（accepted，2026-09-01）裁定 Evidence Level 以 `ODP-ML-05` 第 5 節為單一權威。本修正案執行該裁決在 `ODP-SA-07` 這一側的後果：移除本文件自行定義的階梯，並修訂 `ODP-BR-AD-004` 的表述使其可被實作滿足。
+`ADR-0004`（`docs/adr/ADR-0004-evidence-level-single-authority.md`，status: accepted，2026-09-01）裁定 Evidence Level 以 `ODP-ML-05` 第 5 節為單一權威。本修正案執行該裁決在 `ODP-SA-07` 這一側的後果：移除本文件自行定義的階梯，並修訂 `ODP-BR-AD-004` 的表述使其可被實作滿足。
 
 變更類別依 `ODP-00-04` 判定為 **C3（Breaking）**：本案移除一份正式交付文件既有的列舉定義，並改變一條 Hard-Constraint 級業務規則的判定介面。依 C3 規則需業務 owner、架構 owner 與資料／服務 owner 三方核准。
 
@@ -83,14 +83,16 @@ source_decision: ADR-0004
 |---|---|---|
 | `ODP-AC-BR-005` | 無法達成 —— 判定所需的值不存在於實作採用的階梯 | 可驗收：`evidence_assessable = false` 時 UI 不得出現因果確定語氣，且原因碼可稽核 |
 
-## 6. 已落地的實作
+## 6. 對應實作
 
-本修正案描述的機制已實作，非提案：
+本修正案描述的機制已寫成程式碼，非提案：
 
-| 變更 | Task |
-|---|---|
-| `EvidenceAssessment`、`EvidenceInsufficiencyReason`、`assess_evidence()`、`is_causal_evidence()` 短路 | `ODP-EVIDENCE-ASSESSABILITY-001` |
-| 持久化層對齊 L0–L5、移除 `DEFAULT 'medium'` 與孤兒值 `causal_candidate` | `ODP-EVIDENCE-LEVEL-ALIGNMENT-001` |
+| 變更 | Task | 交付 PR |
+|---|---|---|
+| `EvidenceAssessment`、`EvidenceInsufficiencyReason`、`assess_evidence()`、`is_causal_evidence()` 短路 | `ODP-EVIDENCE-ASSESSABILITY-001` | #1095 |
+| 持久化層對齊 L0–L5、移除 `DEFAULT 'medium'` 與孤兒值 `causal_candidate` | `ODP-EVIDENCE-LEVEL-ALIGNMENT-001` | #1094 |
+
+上列 PR 與本修正案的裁決依據 `ADR-0004`（PR #1090）在本文件送審時**皆尚未併入 `dev`**。因此請以各該 task 分支查核，而非以 `dev` 查核：在 `dev` 上 `assess_evidence()` 尚不存在。三者互為前置，本修正案不應早於 `ADR-0004` 併入。
 
 文件在此**跟隨**實作而非領先。這是刻意的：本次衝突的成因，正是規格層先行定義而實作各自為政，最終產生三套並存的值。
 
