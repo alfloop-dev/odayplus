@@ -48,10 +48,11 @@ def evaluate_finalize_gate(task: dict[str, Any]) -> FinalizeGateResult:
             error=f"{type(exc).__name__}: {exc}",
         )
 
-    try:
-        current_head = str(current_head).strip()
-    except Exception:
-        current_head = None
+    if current_head is not None:
+        try:
+            current_head = str(current_head).strip()
+        except Exception:
+            current_head = None
 
     if not current_head:
         return FinalizeGateResult(
