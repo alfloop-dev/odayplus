@@ -67,6 +67,26 @@ class AlertLevel(StrEnum):
     RED = "red"
 
 
+class AlertDisposition(StrEnum):
+    """The canonical alert evaluation dispositions (ODP-FR-FCT-006)."""
+
+    TRUE_POSITIVE = "TRUE_POSITIVE"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    KNOWN_CONTEXT = "KNOWN_CONTEXT"
+    UNRESOLVED = "UNRESOLVED"
+
+    @classmethod
+    def from_str(cls, value: str | AlertDisposition) -> AlertDisposition:
+        if isinstance(value, cls):
+            return value
+        normalized = str(value).strip().upper()
+        for member in cls:
+            if member.value == normalized or member.name.upper() == normalized:
+                return member
+        valid = ", ".join(m.name for m in cls)
+        raise ForecastOpsError(f"Invalid alert disposition '{value}'. Must be one of: {valid}")
+
+
 class ForecastAlertPolicyError(ForecastOpsError):
     """A forecast alert policy is missing or cannot be evaluated safely."""
 
@@ -540,6 +560,38 @@ class Alert:
     disposition: str | None = None
     disposition_set_by: str | None = None
     disposition_set_at: datetime | None = None
+    deterioration_confirmed_at: datetime | None = None
+
+    @property
+    def lead_time_days(self) -> int | None:
+        """Advance warning lead time in days.
+
+        Defined as deterioration_confirmed_at - opened_at, and only valid
+        when disposition is TRUE_POSITIVE (ODP-FR-FCT-006).
+        """
+        if self.disposition is None or self.deterioration_confirmed_at is None:
+            return None
+        try:
+            disp = (
+                self.disposition
+                if isinstance(self.disposition, AlertDisposition)
+                else AlertDisposition.from_str(self.disposition)
+            )
+        except Exception:
+            return None
+        if disp is not AlertDisposition.TRUE_POSITIVE:
+            return None
+        det_date = (
+            self.deterioration_confirmed_at.date()
+            if isinstance(self.deterioration_confirmed_at, datetime)
+            else self.deterioration_confirmed_at
+        )
+        open_date = (
+            self.opened_at.date()
+            if isinstance(self.opened_at, datetime)
+            else self.opened_at
+        )
+        return (det_date - open_date).days
 
     def acknowledge(self, *, actor: str, note: str | None = None, now: datetime) -> Alert:
         """Return an acknowledged copy of this alert.
@@ -563,22 +615,67 @@ class Alert:
         )
 
     def close_with_disposition(
-        self, *, disposition: str, actor: str, now: datetime, note: str | None = None
+        self,
+        *,
+        disposition: str | AlertDisposition,
+        actor: str,
+        now: datetime,
+        note: str | None = None,
+        deterioration_confirmed_at: datetime | None = None,
     ) -> Alert:
         """Return a closed copy of this alert with recorded disposition."""
-        if not disposition or not disposition.strip():
+        if not disposition or not str(disposition).strip():
             raise ForecastOpsError("alert disposition requires a disposition value")
         if not actor or not actor.strip():
             raise ForecastOpsError("alert disposition requires an actor")
+        disp_val = (
+            disposition.value
+            if isinstance(disposition, AlertDisposition)
+            else str(disposition).strip()
+        )
         return replace(
             self,
             status="closed",
             closed_at=now,
-            disposition=disposition.strip(),
+            disposition=disp_val,
             disposition_set_by=actor.strip(),
             disposition_set_at=now,
             acknowledgement_note=note or self.acknowledgement_note,
+            deterioration_confirmed_at=(
+                deterioration_confirmed_at
+                if deterioration_confirmed_at is not None
+                else self.deterioration_confirmed_at
+            ),
         )
+
+    def with_evaluation(
+        self,
+        *,
+        disposition: str | AlertDisposition,
+        deterioration_confirmed_at: datetime | None = None,
+        actor: str | None = None,
+        now: datetime | None = None,
+        close: bool = False,
+    ) -> Alert:
+        """Return a copy of this alert updated with evaluation disposition and deterioration."""
+        disp_val = (
+            disposition.value
+            if isinstance(disposition, AlertDisposition)
+            else str(disposition).strip()
+        )
+        changes: dict[str, Any] = {
+            "disposition": disp_val,
+            "deterioration_confirmed_at": deterioration_confirmed_at,
+        }
+        if actor is not None:
+            changes["disposition_set_by"] = actor.strip()
+        if now is not None:
+            changes["disposition_set_at"] = now
+        if close:
+            changes["status"] = "closed"
+            if now is not None and self.closed_at is None:
+                changes["closed_at"] = now
+        return replace(self, **changes)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -597,11 +694,21 @@ class Alert:
             "acknowledged_by": self.acknowledged_by,
             "acknowledged_at": self.acknowledged_at.isoformat() if self.acknowledged_at else None,
             "acknowledgement_note": self.acknowledgement_note,
-            "disposition": self.disposition,
+            "disposition": (
+                self.disposition.value
+                if isinstance(self.disposition, AlertDisposition)
+                else self.disposition
+            ),
             "disposition_set_by": self.disposition_set_by,
             "disposition_set_at": (
                 self.disposition_set_at.isoformat() if self.disposition_set_at else None
             ),
+            "deterioration_confirmed_at": (
+                self.deterioration_confirmed_at.isoformat()
+                if self.deterioration_confirmed_at
+                else None
+            ),
+            "lead_time_days": self.lead_time_days,
         }
 
 

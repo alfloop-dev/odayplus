@@ -31,6 +31,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0006",
         "0007",
         "0008",
+        "0009",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -76,6 +77,19 @@ def test_decision_policy_registry_ddl_is_reachable_from_alembic_head() -> None:
         for asset in registry_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000014_decision_policy_registry.sql"}
+
+
+def test_alert_precision_tracking_ddl_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-FCT-006: Alert precision and lead time tracking schema."""
+    plan = build_migration_plan(environment="dev")
+    precision_step = next(step for step in plan.steps if step.revision == "0009")
+
+    assert precision_step.path.endswith("0009_alert_precision_tracking.py")
+    assert {
+        asset.path
+        for asset in precision_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000016_alert_precision_tracking.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
