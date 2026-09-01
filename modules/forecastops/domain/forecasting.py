@@ -562,6 +562,75 @@ class Alert:
     disposition_set_at: datetime | None = None
     deterioration_confirmed_at: datetime | None = None
 
+    @classmethod
+    def from_mapping(cls, data: Mapping[str, Any]) -> Alert:
+        """Build an alert from its serialized API/document representation.
+
+        ``to_dict`` includes the derived ``lead_time_days`` field, so passing
+        that payload directly to the dataclass constructor is not a valid
+        round-trip.  Keep deserialization here so batch jobs can accept both
+        domain alerts and durable/API mappings without silently dropping the
+        alert evaluation fields.
+        """
+
+        def optional_datetime(value: Any) -> datetime | None:
+            if value is None or value == "":
+                return None
+            return _parse_datetime(value)
+
+        raw_level = data["alert_level"]
+        alert_level = (
+            raw_level
+            if isinstance(raw_level, AlertLevel)
+            else AlertLevel(str(raw_level).strip().lower())
+        )
+        raw_policy_version_id = data.get("policy_version_id")
+        return cls(
+            alert_id=str(data["alert_id"]),
+            tenant_id=str(data["tenant_id"]),
+            store_id=str(data["store_id"]),
+            alert_level=alert_level,
+            alert_reason_code=str(data.get("alert_reason_code") or ""),
+            evidence_json=dict(data.get("evidence_json") or {}),
+            opened_at=_parse_datetime(data["opened_at"]),
+            policy_id=str(data.get("policy_id") or ""),
+            policy_version=str(data.get("policy_version") or ""),
+            policy_version_id=(
+                str(raw_policy_version_id) if raw_policy_version_id is not None else None
+            ),
+            status=str(data.get("status") or "open"),
+            closed_at=optional_datetime(data.get("closed_at")),
+            acknowledged_by=(
+                str(data["acknowledged_by"])
+                if data.get("acknowledged_by") is not None
+                else None
+            ),
+            acknowledged_at=optional_datetime(data.get("acknowledged_at")),
+            acknowledgement_note=(
+                str(data["acknowledgement_note"])
+                if data.get("acknowledgement_note") is not None
+                else None
+            ),
+            disposition=(
+                data["disposition"].value
+                if isinstance(data.get("disposition"), AlertDisposition)
+                else (
+                    str(data["disposition"])
+                    if data.get("disposition") is not None
+                    else None
+                )
+            ),
+            disposition_set_by=(
+                str(data["disposition_set_by"])
+                if data.get("disposition_set_by") is not None
+                else None
+            ),
+            disposition_set_at=optional_datetime(data.get("disposition_set_at")),
+            deterioration_confirmed_at=optional_datetime(
+                data.get("deterioration_confirmed_at")
+            ),
+        )
+
     @property
     def lead_time_days(self) -> int | None:
         """Advance warning lead time in days.
@@ -591,7 +660,8 @@ class Alert:
             if isinstance(self.opened_at, datetime)
             else self.opened_at
         )
-        return (det_date - open_date).days
+        lead_time = (det_date - open_date).days
+        return lead_time if lead_time >= 0 else None
 
     def acknowledge(self, *, actor: str, note: str | None = None, now: datetime) -> Alert:
         """Return an acknowledged copy of this alert.

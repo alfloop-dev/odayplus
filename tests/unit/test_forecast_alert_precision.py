@@ -435,3 +435,126 @@ def test_backfill_alert_precision_minimum_observations_check() -> None:
     assert res_suff.disposition == "FALSE_POSITIVE"
     assert metrics_suff["false_positive_count"] == 1
 
+
+def test_backfill_preserves_manual_disposition() -> None:
+    """A human adjudication must not be replaced by a later batch run."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    manually_disposed = _make_alert(
+        alert_id="a-manual-disposition",
+        store_id="store-manual-disposition",
+        opened_at=opened,
+    ).close_with_disposition(
+        disposition=AlertDisposition.KNOWN_CONTEXT,
+        actor="ops-manager",
+        now=datetime(2026, 6, 2, 10, 0, tzinfo=UTC),
+        note="Store remodeling was already known to operations.",
+    )
+    observations = [
+        StoreDayObservation(
+            store_id="store-manual-disposition",
+            business_date=date(2026, 6, day),
+            actual_revenue=95_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+        for day in range(1, 31)
+    ]
+
+    updated, metrics = backfill_alert_precision(
+        [manually_disposed],
+        observations=observations,
+        policy_repository=policy_repo,
+        evaluation_horizon_days=28,
+        now=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+
+    assert updated == [manually_disposed]
+    assert updated[0].disposition_set_by == "ops-manager"
+    assert metrics["known_context_count"] == 1
+    assert metrics["false_positive_count"] == 0
+
+
+def test_backfill_is_idempotent_and_does_not_clear_confirmation_without_new_evidence() -> None:
+    """A second run must retain the first run's disposition and lead-time evidence."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(alert_id="a-rerun", store_id="store-rerun", opened_at=opened)
+    observations = [
+        StoreDayObservation(
+            store_id="store-rerun",
+            business_date=date(2026, 6, 8),
+            actual_revenue=60_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    ]
+
+    first, _ = backfill_alert_precision(
+        [alert],
+        observations=observations,
+        policy_repository=policy_repo,
+        now=datetime(2026, 6, 9, tzinfo=UTC),
+    )
+    second, second_metrics = backfill_alert_precision(
+        first,
+        observations=(),
+        policy_repository=policy_repo,
+        now=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+
+    assert second == first
+    assert second[0].disposition == AlertDisposition.TRUE_POSITIVE.value
+    assert second[0].deterioration_confirmed_at == datetime(
+        2026, 6, 8, 9, 0, tzinfo=UTC
+    )
+    assert second[0].lead_time_days == 7
+    assert second_metrics["true_positive_count"] == 1
+
+
+def test_backfill_preserves_existing_confirmation_on_unresolved_alert() -> None:
+    """Missing new observations cannot erase a previously recorded confirmation."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    confirmed = datetime(2026, 6, 8, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    alert = _make_alert(
+        alert_id="a-existing-confirmation",
+        store_id="store-existing-confirmation",
+        opened_at=opened,
+        disposition=AlertDisposition.UNRESOLVED,
+        deterioration_confirmed_at=confirmed,
+    )
+
+    updated, _ = backfill_alert_precision(
+        [alert],
+        observations=(),
+        policy_repository=policy_repo,
+        now=datetime(2026, 6, 9, tzinfo=UTC),
+    )
+
+    assert updated[0].disposition == AlertDisposition.UNRESOLVED.value
+    assert updated[0].deterioration_confirmed_at == confirmed
+
+
+def test_alert_mapping_round_trip_and_green_metrics_exclusion() -> None:
+    """Serialized alerts are accepted by backfill and GREEN is not an alert metric."""
+    opened = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    policy_repo = InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+    green = _make_alert(alert_id="green", alert_level=AlertLevel.GREEN, opened_at=opened)
+    alert = _make_alert(alert_id="mapped", store_id="store-mapped", opened_at=opened)
+    observations = [
+        StoreDayObservation(
+            store_id="store-mapped",
+            business_date=date(2026, 6, 8),
+            actual_revenue=60_000.0,
+            site_score_baseline_p50=100_000.0,
+        )
+    ]
+
+    updated, metrics = backfill_alert_precision(
+        [alert.to_dict()],
+        observations=observations,
+        policy_repository=policy_repo,
+    )
+
+    assert updated[0].disposition == AlertDisposition.TRUE_POSITIVE.value
+    assert metrics["total_alerts"] == 1
+    assert calculate_alert_precision_metrics([green, updated[0]])["total_alerts"] == 1

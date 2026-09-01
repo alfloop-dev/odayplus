@@ -367,6 +367,14 @@ def calculate_alert_precision_metrics(
     total_count = 0
 
     for item in alerts:
+        raw_level = item.alert_level if isinstance(item, Alert) else item.get("alert_level")
+        if (
+            isinstance(raw_level, AlertLevel) and raw_level is AlertLevel.GREEN
+        ) or str(raw_level or "").strip().lower() == AlertLevel.GREEN.value:
+            # GREEN is a normal forecast outcome, not an alert eligible for
+            # precision evaluation.  Counting it as UNRESOLVED would pollute
+            # both the alert inventory and the maturity denominator.
+            continue
         total_count += 1
         disp_str: str | None = None
         lead_time_val: int | None = None
@@ -458,6 +466,10 @@ def backfill_alert_precision(
         raise ForecastAlertPolicyError(
             "forecast alert policy_repository is required; refusing to evaluate alert precision"
         )
+    if evaluation_horizon_days <= 0:
+        raise ForecastOpsError("evaluation_horizon_days must be greater than zero")
+    if min_observations is not None and min_observations <= 0:
+        raise ForecastOpsError("min_observations must be greater than zero")
 
     eval_now = now or datetime.now(UTC)
     min_obs_required = (
@@ -467,7 +479,7 @@ def backfill_alert_precision(
     )
 
     # 1. Parse and group context annotations by store
-    context_annotations: list[tuple[str, date, date]] = []
+    context_annotations: list[tuple[str, str, date, date]] = []
     for fb in feedbacks:
         fb_obj = fb if isinstance(fb, ForecastFeedback) else ForecastFeedback.from_mapping(fb)
         if (
@@ -475,7 +487,12 @@ def backfill_alert_precision(
             and fb_obj.status in {FeedbackStatus.ACCEPTED, FeedbackStatus.APPROVED}
         ):
             context_annotations.append(
-                (fb_obj.store_id, fb_obj.target_date_start, fb_obj.target_date_end)
+                (
+                    fb_obj.tenant_id,
+                    fb_obj.store_id,
+                    fb_obj.target_date_start,
+                    fb_obj.target_date_end,
+                )
             )
 
     # 2. Parse and group observations by store
@@ -493,10 +510,25 @@ def backfill_alert_precision(
     updated_alerts: list[Alert] = []
 
     for item in alerts:
-        alert = item if isinstance(item, Alert) else Alert(**item)
+        alert = item if isinstance(item, Alert) else Alert.from_mapping(item)
         if alert.alert_level is AlertLevel.GREEN or alert.alert_level == "green":
             updated_alerts.append(alert)
             continue
+
+        # A batch backfill may be rerun, but it must never supersede an
+        # operator's adjudication (including the existing feedback path's
+        # free-form dispositions).  UNRESOLVED is the only prior result that
+        # remains eligible for re-evaluation as more observations arrive.
+        existing_disposition = (
+            alert.disposition.value
+            if isinstance(alert.disposition, AlertDisposition)
+            else str(alert.disposition or "").strip().upper()
+        )
+        if existing_disposition and existing_disposition != AlertDisposition.UNRESOLVED.value:
+            updated_alerts.append(alert)
+            continue
+
+        prior_confirmation = alert.deterioration_confirmed_at
 
         open_dt = _utc_datetime(alert.opened_at)
         open_d = open_dt.date()
@@ -504,14 +536,17 @@ def backfill_alert_precision(
 
         # Check if overlapping with a CONTEXT_ANNOTATION
         has_known_context = any(
-            store_id == alert.store_id and start_d <= horizon_end_d and end_d >= open_d
-            for store_id, start_d, end_d in context_annotations
+            tenant_id == alert.tenant_id
+            and store_id == alert.store_id
+            and start_d <= horizon_end_d
+            and end_d >= open_d
+            for tenant_id, store_id, start_d, end_d in context_annotations
         )
 
         if has_known_context:
             updated = alert.with_evaluation(
                 disposition=AlertDisposition.KNOWN_CONTEXT,
-                deterioration_confirmed_at=None,
+                deterioration_confirmed_at=prior_confirmation,
                 actor=actor,
                 now=eval_now,
             )
@@ -566,6 +601,10 @@ def backfill_alert_precision(
                 open_dt.second,
                 tzinfo=UTC,
             )
+            if prior_confirmation is not None:
+                prior_dt = _utc_datetime(prior_confirmation)
+                if prior_dt <= det_dt:
+                    det_dt = prior_confirmation
             updated = alert.with_evaluation(
                 disposition=AlertDisposition.TRUE_POSITIVE,
                 deterioration_confirmed_at=det_dt,
@@ -582,14 +621,14 @@ def backfill_alert_precision(
             if window_elapsed and has_sufficient_obs:
                 updated = alert.with_evaluation(
                     disposition=AlertDisposition.FALSE_POSITIVE,
-                    deterioration_confirmed_at=None,
+                    deterioration_confirmed_at=prior_confirmation,
                     actor=actor,
                     now=eval_now,
                 )
             else:
                 updated = alert.with_evaluation(
                     disposition=AlertDisposition.UNRESOLVED,
-                    deterioration_confirmed_at=None,
+                    deterioration_confirmed_at=prior_confirmation,
                     actor=actor,
                     now=eval_now,
                 )
