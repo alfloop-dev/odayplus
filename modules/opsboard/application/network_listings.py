@@ -493,7 +493,12 @@ class NetworkListingService:
             "floor": lst.floor,
             "frontageMeters": int(lst.frontage_m) if lst.frontage_m else 0,
             "listingConfidence": lst.confidence,
-            "geocodeConfidence": lst.confidence,
+            # Not lst.confidence. That is extraction confidence -- how sure the
+            # parser is about the rent and area it read -- and a listing whose
+            # address never resolved would otherwise report a fully-confident
+            # geocode to the promotion gate, which is the same fail-open the V1
+            # adapter had. 0.0 until the address below supplies a real value.
+            "geocodeConfidence": 0.0,
             "sourceUrl": lst.snapshot_id,
         }
         # Carry the persisted geocode through the dict layer. Without this the
