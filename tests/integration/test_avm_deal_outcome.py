@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
@@ -12,6 +13,7 @@ from apps.api.app.routes.avm import create_avm_router
 from modules.avm.application.valuation import AVMService
 from modules.avm.domain.valuation import ValuationInput
 from modules.avm.infrastructure.repositories import InMemoryAVMRepository
+from modules.dealroom.domain.confidential_access import create_identity_proof
 from shared.audit import InMemoryAuditLog
 from shared.auth.identity import Principal, Role
 
@@ -43,7 +45,7 @@ def test_avm_deal_outcomes_migration_contract() -> None:
     assert rev6.down_revision == "0005"
 
 
-def test_avm_router_deal_outcomes_and_calibration_endpoints() -> None:
+def test_avm_router_deal_outcomes_and_calibration_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import FastAPI, Request
 
     repo = InMemoryAVMRepository()
@@ -84,7 +86,22 @@ def test_avm_router_deal_outcomes_and_calibration_endpoints() -> None:
     app.include_router(router)
     client = TestClient(app)
 
-    fin_headers = {"x-subject-id": "usr-fin-001", "x-roles": "finance_legal"}
+    authority_key = "test-avm-outcome-authority-key-v1"
+    monkeypatch.setenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", authority_key)
+    identity_proof = create_identity_proof(
+        "usr-fin-001",
+        Role.FINANCE_LEGAL,
+        "tenant-avm-001",
+        authority_key=authority_key,
+    )
+    fin_headers = {
+        "x-subject-id": "usr-fin-001",
+        "x-roles": "finance_legal",
+        "x-tenant-id": "tenant-avm-001",
+        "x-clearance": "RESTRICTED",
+        "x-data-room-access": "true",
+        "x-identity-proof": identity_proof,
+    }
     aud_headers = {"x-subject-id": "usr-aud-001", "x-roles": "auditor"}
 
     # 1. POST /avm/deal-outcomes as FINANCE_LEGAL
@@ -150,3 +167,19 @@ def test_avm_router_deal_outcomes_and_calibration_endpoints() -> None:
     assert calib_data["sold_count"] == 1
     assert calib_data["p10_p90_coverage_rate"] == 1.0
     assert calib_data["is_coverage_target_met"] is True
+
+    # An accepted write with an unknown valuation must fail calibration
+    # validation cleanly, rather than producing a server error.
+    unknown_valuation_payload = {
+        **deal_payload,
+        "valuation_id": "valuation-does-not-exist",
+    }
+    resp_unknown = client.post(
+        "/avm/deal-outcomes",
+        json=unknown_valuation_payload,
+        headers=fin_headers,
+    )
+    assert resp_unknown.status_code == 201, resp_unknown.text
+    resp_unknown_calib = client.post("/avm/calibration", headers=fin_headers)
+    assert resp_unknown_calib.status_code == 422, resp_unknown_calib.text
+    assert "Missing valuation report" in resp_unknown_calib.json()["detail"]

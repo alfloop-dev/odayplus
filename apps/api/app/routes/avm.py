@@ -74,7 +74,7 @@ else:
 
     class DealOutcomeExportPayload(BaseModel):
         actor: str = Field(min_length=1)
-        role: str = "finance_legal"
+        role: str | None = None
         reason: str = ""
 
 
@@ -189,6 +189,14 @@ else:
             try:
                 return fn()
             except AVMError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            except ValueError as exc:
+                # Domain alignment/validation failures are client errors, not
+                # uncaught 500s (for example an outcome referencing an unknown
+                # valuation report).
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(exc),
@@ -484,15 +492,34 @@ else:
         @router.post("/deal-outcomes/export", dependencies=[Depends(require_permission("avm", Action.EXPORT, engine=authz_engine))])
         def export_deal_outcomes(body: DealOutcomeExportPayload, request: Request) -> dict[str, Any]:
             from modules.avm.application.calibration import record_deal_outcome_export_audit
+            principal = getattr(request.state, "operator_principal", None)
+            if principal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "CONFIDENTIAL_PRINCIPAL_REQUIRED",
+                        "message": "confidential exports require an authenticated principal",
+                    },
+                )
             items = service.list_deal_outcomes()
             export_result = record_deal_outcome_export_audit(
                 actor_id=body.actor,
                 role=body.role,
                 deal_outcomes=items,
+                principal=principal,
                 audit_log=active_audit_log,
                 tenant_id=tenant_id(request),
                 correlation_id=request.state.correlation_id,
+                export_reason=body.reason,
             )
+            if export_result["decision"] != "PERMIT":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "CONFIDENTIAL_EXPORT_DENIED",
+                        "message": export_result["reason"],
+                    },
+                )
             return {
                 "export_metadata": export_result,
                 "items": [item.to_dict(redact_settlement_price=False) for item in items],

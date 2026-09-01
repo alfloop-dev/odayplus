@@ -18,7 +18,10 @@ from shared.auth.identity import DataClassification, Principal, Role
 from shared.auth.rbac import Action
 
 IDEAL_P10_P90_COVERAGE = 0.80
-MINIMUM_ACCEPTABLE_COVERAGE = 0.75
+# The coverage gate is the canonical 80% P10-P90 target.  Keeping a lower
+# second threshold made ``is_coverage_target_met`` report success while the
+# governed outcome-calibration gate still failed the same report.
+MINIMUM_ACCEPTABLE_COVERAGE = IDEAL_P10_P90_COVERAGE
 
 
 @dataclass(frozen=True)
@@ -327,50 +330,113 @@ def assert_finance_view_authorized(principal: Principal | None) -> None:
 
 def record_deal_outcome_export_audit(
     actor_id: str,
-    role: Role | str,
+    role: Role | str | None,
     deal_outcomes: Sequence[DealOutcome],
     *,
+    principal: Principal | None = None,
+    access_context: Mapping[str, Any] | None = None,
     authority_key: str | None = None,
     audit_log: Any = None,
     tenant_id: str = "tenant-avm-001",
     correlation_id: str = "",
+    export_reason: str = "",
 ) -> dict[str, Any]:
-    """Record sensitive settlement price export audit event according to ODP-BR-OPS-002."""
+    """Record a sensitive settlement-price export decision.
+
+    The identity proof and ABAC attributes must come from the authenticated
+    caller (or an explicitly supplied trusted access context).  This function
+    deliberately never mints its own proof and never supplies affirmative
+    authentication, tenant, clearance, or data-room facts.  With no external
+    authority key the confidential auditor therefore fails closed.
+    """
     from modules.avm.domain.outcome import get_production_authority_verifier_key
     from modules.dealroom.domain.confidential_access import (
         ConfidentialAccessAttempt,
         ConfidentialAccessAuditor,
+        ConfidentialAccessDecision,
         ConfidentialLevel,
         assert_no_confidential_leak,
-        create_identity_proof,
     )
     from shared.audit import AuditEvent
 
-    role_val = role if isinstance(role, Role) else (Role(role) if str(role) in Role.__members__.values() else Role.FINANCE_LEGAL)
-    key = authority_key or get_production_authority_verifier_key() or "prod-avm-outcome-authority-key-v1"
-    proof = create_identity_proof(actor_id, role_val, tenant_id, authority_key=key)
+    def _parse_role(value: Role | str | None) -> Role | None:
+        if isinstance(value, Role):
+            return value
+        if value is None:
+            return None
+        try:
+            return Role(str(value))
+        except ValueError:
+            return None
+
+    role_val = _parse_role(role)
+    # ``role=None`` means the HTTP payload omitted the legacy hint.  Select a
+    # role actually held by the principal; an unrecognised non-null role is
+    # never upgraded to a privileged role.
+    if role_val is None and role is None and principal is not None:
+        role_val = next(
+            (
+                candidate
+                for candidate in (Role.FINANCE_LEGAL, Role.PLATFORM_ADMIN)
+                if candidate in principal.roles
+            ),
+            None,
+        )
+    role_repr = role_val.value if role_val is not None else str(role)
+    key = authority_key or get_production_authority_verifier_key()
+
+    # A principal is the only source of actor/role facts for an HTTP export.
+    # Keep the legacy function shape for non-HTTP callers, but require their
+    # context to be supplied explicitly rather than manufacturing one here.
+    principal_mismatch = False
+    if principal is not None:
+        principal_mismatch = (
+            actor_id != principal.subject_id
+            or role_val is None
+            or role_val not in principal.roles
+        )
+        actor_id = principal.subject_id
+        trusted_context: dict[str, Any] = {
+            "authenticated": principal.authenticated,
+            "verified_identity": bool(
+                principal.attributes.get("verified_identity", False)
+            ),
+            "identity_proof_sha256": principal.attributes.get(
+                "identity_proof_sha256", ""
+            ),
+            "tenant_id": principal.tenant_id or "",
+            "data_room_access": bool(
+                principal.attributes.get("data_room_access", False)
+            ),
+            "tenant_matched": bool(
+                principal.tenant_id and principal.tenant_id == tenant_id
+            ),
+            "clearance": _confidential_clearance_name(principal),
+        }
+        if principal.attributes.get("event_id"):
+            trusted_context["event_id"] = principal.attributes["event_id"]
+        context = trusted_context
+    else:
+        context = dict(access_context or {})
+        if not context:
+            principal_mismatch = True
 
     attempt = ConfidentialAccessAttempt(
         actor_id=actor_id,
-        role=role_val,
+        role=role_val if role_val is not None else role_repr,
         resource="avm",
         action=Action.EXPORT,
-        context={
-            "authenticated": True,
-            "verified_identity": True,
-            "identity_proof_sha256": proof,
-            "tenant_id": tenant_id,
-            "data_room_access": True,
-            "tenant_matched": True,
-            "clearance": "HIGH",
-        },
+        context=context,
     )
 
-    decision, reason, receipt = ConfidentialAccessAuditor.evaluate_access(
+    decision, reason, _ = ConfidentialAccessAuditor.evaluate_access(
         attempt,
         ConfidentialLevel.HIGH,
         authority_key=key,
     )
+    if principal_mismatch:
+        decision = ConfidentialAccessDecision.DENY
+        reason = "Export actor or role does not match the authenticated principal"
 
     # Collect raw prices for redaction audit verification
     raw_prices = [
@@ -380,13 +446,14 @@ def record_deal_outcome_export_audit(
     event_payload = {
         "export_id": f"export-deal-outcomes-{uuid4()}",
         "actor_id": actor_id,
-        "role": role_val.value,
+        "role": role_repr,
         "resource": "avm/deal_outcomes/export",
         "action": "export",
         "decision": decision.value,
         "reason": reason,
         "record_count": len(deal_outcomes),
         "exported_at": datetime.now(UTC).isoformat(),
+        "reason_provided": bool(export_reason.strip()),
         "zero_confidential_leak_verified": True,
     }
 
@@ -407,6 +474,18 @@ def record_deal_outcome_export_audit(
         )
 
     return event_payload
+
+
+def _confidential_clearance_name(principal: Principal) -> str:
+    """Map the platform classification ladder to the auditor's ladder."""
+    clearance = principal.scope.clearance
+    if clearance >= DataClassification.RESTRICTED:
+        return "HIGH"
+    if clearance >= DataClassification.CONFIDENTIAL:
+        return "MEDIUM"
+    if clearance >= DataClassification.INTERNAL:
+        return "LOW"
+    return "PUBLIC"
 
 
 __all__ = [

@@ -29,6 +29,7 @@ from modules.avm.domain.valuation import (
     ValuationReport,
 )
 from modules.avm.infrastructure.repositories import InMemoryAVMRepository
+from modules.dealroom.domain.confidential_access import create_identity_proof
 from shared.audit import InMemoryAuditLog
 from shared.auth.identity import Principal, Role
 
@@ -455,6 +456,13 @@ class TestFinanceAccessAndAudit:
 
     def test_record_deal_outcome_export_audit(self) -> None:
         audit_log = InMemoryAuditLog()
+        authority_key = "test-avm-outcome-authority-key-v1"
+        identity_proof = create_identity_proof(
+            "usr-fin-001",
+            Role.FINANCE_LEGAL,
+            "tenant-avm-001",
+            authority_key=authority_key,
+        )
         outcomes = [
             DealOutcome(outcome_id="o-1", valuation_id="r-1", store_id="s-1", sold=True, settlement_price=10_000_000.0),
             DealOutcome(outcome_id="o-2", valuation_id="r-2", store_id="s-2", sold=True, settlement_price=12_000_000.0),
@@ -465,12 +473,68 @@ class TestFinanceAccessAndAudit:
             deal_outcomes=outcomes,
             audit_log=audit_log,
             tenant_id="tenant-avm-001",
+            authority_key=authority_key,
+            access_context={
+                "authenticated": True,
+                "verified_identity": True,
+                "identity_proof_sha256": identity_proof,
+                "tenant_id": "tenant-avm-001",
+                "tenant_matched": True,
+                "data_room_access": True,
+                "clearance": "HIGH",
+            },
         )
         assert result["decision"] == "PERMIT"
         assert result["record_count"] == 2
         assert result["zero_confidential_leak_verified"] is True
         assert len(audit_log._events) == 1
         assert audit_log._events[0].event_type == "avm.deal_outcomes_exported.v1"
+
+    def test_record_deal_outcome_export_fails_closed_for_missing_key_and_role(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ODP_AVM_AUTHORITY_VERIFIER_KEY", raising=False)
+        monkeypatch.delenv("ODP_AVM_AUTHORITY_PUBLIC_KEY", raising=False)
+        outcome = DealOutcome(
+            outcome_id="o-1",
+            valuation_id="r-1",
+            store_id="s-1",
+            sold=True,
+            settlement_price=10_000_000.0,
+        )
+        context = {
+            "authenticated": True,
+            "verified_identity": True,
+            "identity_proof_sha256": "forged-proof",
+            "tenant_id": "tenant-avm-001",
+            "tenant_matched": True,
+            "data_room_access": True,
+            "clearance": "HIGH",
+        }
+        no_key = record_deal_outcome_export_audit(
+            actor_id="usr-fin-001",
+            role=Role.FINANCE_LEGAL,
+            deal_outcomes=[outcome],
+            access_context=context,
+        )
+        assert no_key["decision"] == "DENY"
+
+        authority_key = "test-avm-outcome-authority-key-v1"
+        unknown_proof = create_identity_proof(
+            "usr-fin-001",
+            "unknown_role",
+            "tenant-avm-001",
+            authority_key=authority_key,
+        )
+        unknown_role = record_deal_outcome_export_audit(
+            actor_id="usr-fin-001",
+            role="unknown_role",
+            deal_outcomes=[outcome],
+            authority_key=authority_key,
+            access_context={**context, "identity_proof_sha256": unknown_proof},
+        )
+        assert unknown_role["decision"] == "DENY"
+        assert unknown_role["role"] == "unknown_role"
 
 
 class TestAVMServiceIntegration:

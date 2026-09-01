@@ -27,7 +27,7 @@ from models.shared_ml import (
     compute_content_digest,
 )
 from models.shared_ml.oss_estimators import EstimatorTrainingResult, train_oss_estimator
-from modules.avm.domain.liquidity import LiquidityTrainingRecord
+from modules.avm.domain.deal_outcome import DealOutcome
 from modules.avm.infrastructure import LifelinesLiquiditySurvivalAdapter
 from modules.learninghub import (
     LearningHubService,
@@ -78,6 +78,7 @@ class PreparedRow:
     mapping: Mapping[str, Any]
     temporal_value: datetime
     segment_value: str
+    deal_outcome: DealOutcome | None = None
 
 
 @dataclass(frozen=True)
@@ -574,13 +575,7 @@ class BoundedModelTrainingRelease:
         snapshot_artifact_sha256: str,
     ) -> TrainingReleaseResult:
         survival_rows = [
-            LiquidityTrainingRecord(
-                duration_days=float(row.mapping["labels"][spec.label_name]),
-                sold=bool(row.mapping["labels"]["event_observed"]),
-                features={
-                    name: float(row.mapping["features"][name]) for name in spec.feature_columns
-                },
-            )
+            _liquidity_training_record(row, spec)
             for row in prepared
         ]
         adapter = LifelinesLiquiditySurvivalAdapter(model_version=version).fit(survival_rows)
@@ -760,6 +755,36 @@ def prepare_model_rows(
             ) from exc
         if not math.isfinite(label):
             raise ModelReadyDataError(f"{spec.key}: label values must be finite")
+        deal_outcome: DealOutcome | None = None
+        if spec.kind is ModelKind.SURVIVAL:
+            try:
+                deal_outcome = DealOutcome.from_mapping(
+                    {
+                        "outcome_id": raw.get("outcome_id"),
+                        "valuation_id": raw.get("valuation_id"),
+                        "store_id": raw.get("store_id"),
+                        "sold": raw.get(spec.event_column) if spec.event_column else None,
+                        "settlement_price": raw.get("settlement_price"),
+                        "settlement_date": raw.get("settlement_date"),
+                        "duration_days": raw.get(spec.label_column),
+                        "no_deal_reason_code": raw.get("no_deal_reason_code"),
+                        "deal_terms": raw.get("deal_terms", {}),
+                        "source_authority": raw.get("source_authority", ""),
+                    }
+                )
+            except (TypeError, ValueError) as exc:
+                raise ModelReadyDataError(
+                    f"{spec.key}: row is not backed by a canonical avm.deal_outcomes record"
+                ) from exc
+            # The label and event columns are consistency projections of the
+            # canonical outcome, not an independent source of truth.
+            if deal_outcome.duration_days != label or (
+                spec.event_column
+                and deal_outcome.sold != bool(raw[spec.event_column])
+            ):
+                raise ModelReadyDataError(
+                    f"{spec.key}: liquidity labels do not match canonical deal outcome"
+                )
         feature_values = {name: _feature_value(raw.get(name)) for name in spec.feature_columns}
         if any(value is None for value in feature_values.values()):
             continue
@@ -779,11 +804,13 @@ def prepare_model_rows(
             )
         if label_maturity_time > loaded.as_of_time:
             raise ModelReadyDataError(f"{spec.key}: label is not mature at training as_of_time")
-        labels: dict[str, Any] = {spec.label_name: label}
+        labels: dict[str, Any] = {
+            spec.label_name: deal_outcome.duration_days if deal_outcome else label
+        }
         if spec.event_column:
             if spec.event_column not in raw or raw[spec.event_column] is None:
                 continue
-            labels["event_observed"] = bool(raw[spec.event_column])
+            labels["event_observed"] = deal_outcome.sold if deal_outcome else bool(raw[spec.event_column])
         source_entity = str(raw.get("entity_id") or "")
         entity_id = f"{source_entity}:{temporal_value.isoformat()}"
         raw_source_ids = raw.get("source_snapshot_ids") or ()
@@ -825,6 +852,7 @@ def prepare_model_rows(
                 mapping=mapping,
                 temporal_value=temporal_value,
                 segment_value=segment_value,
+                deal_outcome=deal_outcome,
             )
         )
     if not prepared:
@@ -911,11 +939,7 @@ def _validate_survival_temporally(
     holdout_rows: Sequence[PreparedRow],
 ) -> TemporalValidationReport:
     records = [
-        LiquidityTrainingRecord(
-            duration_days=float(row.mapping["labels"][spec.label_name]),
-            sold=bool(row.mapping["labels"]["event_observed"]),
-            features={name: float(row.mapping["features"][name]) for name in spec.feature_columns},
-        )
+        _liquidity_training_record(row, spec)
         for row in training_rows
     ]
     adapter = LifelinesLiquiditySurvivalAdapter().fit(records)
@@ -977,6 +1001,20 @@ def _validate_survival_temporally(
         baseline_metrics=baseline_metrics,
         segments=segments,
         failed_rules=tuple(failures),
+    )
+
+
+def _liquidity_training_record(row: PreparedRow, spec: ModelSpec):
+    """Project a survival training record from the canonical deal outcome."""
+    if spec.kind is not ModelKind.SURVIVAL or row.deal_outcome is None:
+        raise ModelReadyDataError(
+            f"{spec.key}: liquidity training requires a canonical deal outcome"
+        )
+    return row.deal_outcome.to_liquidity_training_record(
+        {
+            name: float(row.mapping["features"][name])
+            for name in spec.feature_columns
+        }
     )
 
 
