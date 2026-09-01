@@ -1,24 +1,34 @@
-"""Versioned decision policies (ODP-SA-07 §8, ODP-SD-AMD-001 §2).
+"""Versioned decision policies (ODP-SA-07 §8, ODP-SD-AMD-001 §3.2, §3.3, §3.5).
 
 A Decision Policy is the thresholds and weights a decision was made under,
 stored as data with a version rather than compiled into the code that reads
-them. ODP-SA-07 §8 requires every formal Decision to record the `policy_id`
-and `policy_version` that produced it.
+them. ODP-SA-07 §8 requires every formal Decision to record the policy version
+that produced it.
 
-Two properties carry the weight here.
+Three properties carry the weight here.
 
-**Resolution is point-in-time.** `resolve_policy` takes the moment the
-decision is being made and returns the version in force *then* -- not the
-newest one. Re-running a three-month-old alert resolves to the policy that was
-live at the time, which is what makes ODP-AC-BR-004 answerable: a historical
-decision can say which policy called it.
+**Identity is two-layered.** `policy_label` is the cross-tenant, human-readable
+name that documents, module constants and UI copy refer to
+(`four-light-policy-v1`). `policy_version_id` is the per-tenant primary key
+that every foreign key points at (`four-light-policy-v1:<tenant uuid>`). The
+rule `policy_version_id = policy_label + ':' + tenant_id` is enforced in the
+database by `chk_decision_policy_version_id_format` and enforced here by
+`DecisionPolicy` itself, so the two layers cannot impersonate each other.
+
+**Resolution is point-in-time.** `resolve_policy` takes the moment the decision
+is being made and returns the version in force *then* -- not the newest one.
+Re-running a three-month-old alert resolves to the policy that was live at the
+time, which is what makes ODP-AC-BR-004 answerable: a historical decision can
+say which policy called it.
 
 **Resolution fails closed.** When no version covers the requested instant,
 `PolicyResolutionError` is raised. Callers must not fall back to built-in
-thresholds -- a decision produced under an unresolvable policy cannot record
-what governed it, and a default that silently substitutes for a missing policy
-is the same failure the promotion path had when a missing geocode confidence
-became 1.0 (ODP-LISTING-PROMOTION-FAILOPEN-001).
+thresholds, and must not assemble a `policy_version_id` out of a label and a
+tenant to paper over the gap (ODP-SD-AMD-001 §3.3): a decision produced under
+an unresolvable policy cannot record what governed it, and a default that
+silently substitutes for a missing policy is the same failure the promotion
+path had when a missing geocode confidence became 1.0
+(ODP-LISTING-PROMOTION-FAILOPEN-001).
 """
 
 from __future__ import annotations
@@ -32,6 +42,7 @@ __all__ = [
     "DecisionPolicy",
     "DecisionPolicyRepository",
     "InMemoryDecisionPolicyRepository",
+    "PolicyIdentityError",
     "PolicyResolutionError",
     "PolicySupersedeError",
     "resolve_policy",
@@ -50,9 +61,19 @@ class PolicySupersedeError(RuntimeError):
     """A supersede would break the single-version-in-force invariant."""
 
 
+class PolicyIdentityError(ValueError):
+    """The label, tenant and version id do not compose as the registry requires."""
+
+
 @dataclass(frozen=True)
 class DecisionPolicy:
-    """One version of one policy.
+    """One version of one policy, for one tenant.
+
+    The field set mirrors `workflow.decision_policies`. `policy_version_id` is
+    the key other rows reference; `policy_label` is what a human, a module
+    constant or a UI string names. Keeping both means a cross-tenant reference
+    never has to be spelled with a tenant in it, and a database reference never
+    has to be spelled without one.
 
     `declared_inputs` is not decoration. A policy states which inputs it
     actually consults, so that a policy reading one signal while its
@@ -61,6 +82,8 @@ class DecisionPolicy:
     implementation reads one.
     """
 
+    policy_version_id: str
+    policy_label: str
     policy_id: str
     policy_version: str
     policy_kind: str
@@ -73,6 +96,27 @@ class DecisionPolicy:
     rollback_policy_version: str | None = None
     approved_by: str = ""
     owner_role: str = ""
+
+    def __post_init__(self) -> None:
+        """Hold the naming rule that `chk_decision_policy_version_id_format` holds.
+
+        A row read out of the registry always satisfies it. Enforcing it here
+        too means an in-memory policy -- a test double, a seed, a decoded
+        payload -- cannot carry an identity the database would have refused,
+        which is what keeps the domain and the table talking about the same
+        thing.
+        """
+        if not self.policy_label or ":" in self.policy_label:
+            raise PolicyIdentityError(
+                f"policy_label {self.policy_label!r} must be non-empty and free of ':'; "
+                "the separator is what makes policy_version_id decompose uniquely"
+            )
+        expected = f"{self.policy_label}:{self.tenant_id}"
+        if self.policy_version_id != expected:
+            raise PolicyIdentityError(
+                f"policy_version_id {self.policy_version_id!r} does not match "
+                f"{expected!r}; the registry derives the key from the label and tenant"
+            )
 
     def covers(self, instant: datetime) -> bool:
         """Whether this version was in force at `instant`.
@@ -97,6 +141,8 @@ class DecisionPolicy:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "policy_version_id": self.policy_version_id,
+            "policy_label": self.policy_label,
             "policy_id": self.policy_id,
             "policy_version": self.policy_version,
             "policy_kind": self.policy_kind,
@@ -133,7 +179,10 @@ def resolve_policy(
     """Resolve the governing policy, or refuse.
 
     There is deliberately no `default` parameter. A caller that cannot resolve
-    a policy must not produce the decision.
+    a policy must not produce the decision, and must not construct a
+    `policy_version_id` from a label to carry on (ODP-SD-AMD-001 §3.3) -- the
+    registry's foreign keys would reject the result anyway, but only at write
+    time, long after the decision was taken.
     """
     policy = repository.find_effective(
         policy_kind=policy_kind, tenant_id=tenant_id, at=at
