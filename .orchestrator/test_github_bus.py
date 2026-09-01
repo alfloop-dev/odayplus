@@ -2068,10 +2068,21 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         pr.update(overrides)
         return pr
 
-    def _arm(self, pr: dict | None, *, bus_state: dict | None = None, run_gh_side_effect=None):
+    def _arm(
+        self,
+        pr: dict | None,
+        *,
+        bus_state: dict | None = None,
+        run_gh_side_effect=None,
+        readback: dict | None = None,
+    ):
         bus_state = bus_state if bus_state is not None else self._bus_state()
         with (
-            mock.patch.object(github_bus, "gh_json", return_value=pr),
+            mock.patch.object(
+                github_bus,
+                "gh_json",
+                side_effect=[pr, readback if readback is not None else pr],
+            ) as gh_json,
             mock.patch.object(
                 github_bus,
                 "run_gh",
@@ -2084,7 +2095,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 self._config(), bus_state, self.REPO, self._task()
             )
         entry = bus_state["tasks"][self.TASK_ID]
-        return changed, entry, run_gh, log
+        return changed, entry, run_gh, log, gh_json
 
     @staticmethod
     def _gh_calls(run_gh) -> list[list[str]]:
@@ -2093,7 +2104,10 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
     def test_draft_pr_is_undrafted_then_armed(self) -> None:
         """GitHub refuses auto-merge when the publisher leaves an adopted PR as draft."""
 
-        changed, entry, run_gh, log = self._arm(self._pr())
+        changed, entry, run_gh, log, gh_json = self._arm(
+            self._pr(),
+            readback=self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}),
+        )
 
         self.assertTrue(changed)
         calls = self._gh_calls(run_gh)
@@ -2102,21 +2116,30 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertIn("--auto", calls[1])
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
         self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_enabled")
+        self.assertEqual(gh_json.call_count, 2)
 
     def test_ready_pr_is_armed_without_being_touched_first(self) -> None:
-        changed, entry, run_gh, _ = self._arm(self._pr(isDraft=False))
+        changed, entry, run_gh, _, gh_json = self._arm(
+            self._pr(isDraft=False),
+            readback=self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}),
+        )
 
         self.assertTrue(changed)
         calls = self._gh_calls(run_gh)
         self.assertEqual([call[:2] for call in calls], [["pr", "merge"]])
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
+        self.assertEqual(gh_json.call_count, 2)
 
     def test_arming_is_not_repeated_once_github_reports_it(self) -> None:
         """The bus re-reads every approved PR each poll; a second call must be a no-op."""
 
         bus_state = self._bus_state()
-        self._arm(self._pr(isDraft=False), bus_state=bus_state)
-        changed, entry, run_gh, log = self._arm(
+        self._arm(
+            self._pr(isDraft=False),
+            bus_state=bus_state,
+            readback=self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"}),
+        )
+        changed, entry, run_gh, log, _ = self._arm(
             self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-08-06T00:00:00Z"}),
             bus_state=bus_state,
         )
@@ -2129,7 +2152,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
     def test_pr_against_the_default_branch_is_never_armed(self) -> None:
         """A stale ReviewBus PR aimed at main must not be handed the merge button."""
 
-        changed, entry, run_gh, log = self._arm(self._pr(baseRefName="main"))
+        changed, entry, run_gh, log, _ = self._arm(self._pr(baseRefName="main"))
 
         self.assertTrue(changed)
         self.assertEqual(self._gh_calls(run_gh), [])
@@ -2137,14 +2160,14 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_skipped")
 
     def test_pr_from_another_task_branch_is_never_armed(self) -> None:
-        changed, entry, run_gh, _ = self._arm(self._pr(headRefName="task/ODP-OTHER-002"))
+        changed, entry, run_gh, _, _ = self._arm(self._pr(headRefName="task/ODP-OTHER-002"))
 
         self.assertTrue(changed)
         self.assertEqual(self._gh_calls(run_gh), [])
         self.assertEqual(entry["auto_merge"]["state"], "skipped_branch_mismatch")
 
     def test_conflicting_pr_is_left_for_a_rebase(self) -> None:
-        changed, entry, run_gh, _ = self._arm(self._pr(mergeStateStatus="DIRTY"))
+        changed, entry, run_gh, _, _ = self._arm(self._pr(mergeStateStatus="DIRTY"))
 
         self.assertTrue(changed)
         self.assertEqual(self._gh_calls(run_gh), [])
@@ -2155,14 +2178,21 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
 
         for merge_state in ("BLOCKED", "BEHIND", "UNSTABLE"):
             with self.subTest(merge_state=merge_state):
-                changed, entry, run_gh, _ = self._arm(self._pr(isDraft=False, mergeStateStatus=merge_state))
+                changed, entry, run_gh, _, _ = self._arm(
+                    self._pr(isDraft=False, mergeStateStatus=merge_state),
+                    readback=self._pr(
+                        isDraft=False,
+                        mergeStateStatus=merge_state,
+                        autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"},
+                    ),
+                )
 
                 self.assertTrue(changed)
                 self.assertEqual(entry["auto_merge"]["state"], "enabled")
                 self.assertIn("--auto", self._gh_calls(run_gh)[0])
 
     def test_merged_pr_is_recorded_without_noise(self) -> None:
-        changed, entry, run_gh, log = self._arm(self._pr(state="MERGED"))
+        changed, entry, run_gh, log, _ = self._arm(self._pr(state="MERGED"))
 
         self.assertTrue(changed)
         self.assertEqual(self._gh_calls(run_gh), [])
@@ -2170,7 +2200,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertEqual(log.call_count, 0)
 
     def test_missing_pr_number_is_skipped_quietly(self) -> None:
-        _, entry, run_gh, log = self._arm(None, bus_state=self._bus_state(number=None))
+        _, entry, run_gh, log, _ = self._arm(None, bus_state=self._bus_state(number=None))
 
         self.assertEqual(self._gh_calls(run_gh), [])
         self.assertEqual(entry["auto_merge"]["state"], "skipped_no_pr")
@@ -2180,11 +2210,15 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         bus_state = self._bus_state()
         failure = github_bus.GitHubBusError("Auto-merge is not allowed for this repository")
 
-        first_changed, entry, _, first_log = self._arm(
-            self._pr(isDraft=False), bus_state=bus_state, run_gh_side_effect=failure
+        first_changed, entry, _, first_log, _ = self._arm(
+            self._pr(isDraft=False),
+            bus_state=bus_state,
+            run_gh_side_effect=failure,
         )
-        second_changed, entry, _, second_log = self._arm(
-            self._pr(isDraft=False), bus_state=bus_state, run_gh_side_effect=failure
+        second_changed, entry, _, second_log, _ = self._arm(
+            self._pr(isDraft=False),
+            bus_state=bus_state,
+            run_gh_side_effect=failure,
         )
 
         self.assertTrue(first_changed)
@@ -2192,6 +2226,60 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertFalse(second_changed)
         self.assertEqual(second_log.call_count, 0)
         self.assertEqual(entry["auto_merge"]["state"], "failed")
+
+    def test_zero_exit_without_armed_readback_fails_closed_and_retries(self) -> None:
+        bus_state = self._bus_state()
+
+        first_changed, entry, first_run_gh, first_log, first_gh_json = self._arm(
+            self._pr(isDraft=False),
+            bus_state=bus_state,
+            readback=self._pr(isDraft=False),
+        )
+
+        self.assertTrue(first_changed)
+        self.assertEqual([call[:2] for call in self._gh_calls(first_run_gh)], [["pr", "merge"]])
+        self.assertEqual(first_gh_json.call_count, 2)
+        expected_view = [
+            "pr",
+            "view",
+            "700",
+            "--repo",
+            self.REPO,
+            "--json",
+            github_bus.AUTO_MERGE_PR_FIELDS,
+        ]
+        self.assertEqual([call.args[0] for call in first_gh_json.call_args_list], [expected_view, expected_view])
+        self.assertEqual(entry["auto_merge"]["state"], "failed")
+        self.assertTrue(entry["auto_merge"]["retryable"])
+        self.assertEqual(entry["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
+        self.assertEqual(first_log.call_args.args[1]["type"], "github_auto_merge_failed")
+
+        second_changed, entry, second_run_gh, second_log, second_gh_json = self._arm(
+            self._pr(isDraft=False),
+            bus_state=bus_state,
+            readback=self._pr(
+                isDraft=False,
+                autoMergeRequest={"enabledAt": "2026-09-01T00:00:00Z"},
+            ),
+        )
+
+        self.assertTrue(second_changed)
+        self.assertEqual([call[:2] for call in self._gh_calls(second_run_gh)], [["pr", "merge"]])
+        self.assertEqual(second_gh_json.call_count, 2)
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+        self.assertEqual(second_log.call_args.args[1]["type"], "github_auto_merge_enabled")
+
+    def test_successful_mutation_readback_accepts_merged_pr(self) -> None:
+        changed, entry, run_gh, log, gh_json = self._arm(
+            self._pr(isDraft=False),
+            readback=self._pr(isDraft=False, state="MERGED", autoMergeRequest=None),
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(self._gh_calls(run_gh)[0][:2], ["pr", "merge"])
+        self.assertEqual(gh_json.call_count, 2)
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+        self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_enabled")
 
     def test_offline_propagates_for_bus_backoff(self) -> None:
         """Offline is the bus's own signal; swallowing it would hide the outage."""
@@ -2265,9 +2353,11 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "mergeStateStatus": "BLOCKED",
         }
         viewed = {**listed, "autoMergeRequest": None}
+        armed = {**viewed, "autoMergeRequest": {"enabledAt": "2026-09-01T00:00:00Z"}}
+        view_readbacks = iter([viewed, armed])
 
         def fake_gh_json(args: list[str]):
-            return [listed] if args[:2] == ["pr", "list"] else viewed
+            return [listed] if args[:2] == ["pr", "list"] else next(view_readbacks)
 
         bus_state: dict = {}
         with (
