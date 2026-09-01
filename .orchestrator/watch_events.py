@@ -253,8 +253,9 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
     if normalized_reason == "owned_finalize_dispatch":
         lifecycle_guardrails = (
             "這次是 immutable finalize dispatch。不得修改 tracked files、merge/rebase dev、"
-            "建立 commit、push branch 或再次執行 task_finalize.sh。只可核對 approved_head、"
-            "PR 與 CI；PR 尚未 merge 就保持 review_approved 並退出，merge 後才由 owner 執行 done。"
+            "建立 commit、push branch 或再次執行 task_finalize.sh。明確禁止執行 pytest、npm test、"
+            "build、lint、security scan 與 E2E 等驗證命令；送審前已完成驗證，finalizer 僅讀取與核對 exact approved head 的 "
+            "PR、CI 與 receipt。PR 尚未 merge 就保持 review_approved 並退出，merge 後才由 owner 執行 done。"
         )
     elif normalized_reason in {"review_ready_dispatch", "status:review"}:
         lifecycle_guardrails = (
@@ -286,11 +287,12 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
             "這是 reviewer-approved immutable head 的 finalize lane：\n"
             f"- 核准分支是 `{branch_name}`；只能讀取與核對，不可更新 branch。\n"
             "- 即使 branch 落後 dev，也不可 merge、rebase、cherry-pick、commit 或 push；merge queue 會在暫存 ref 組合 base。\n"
-            "- working tree 若有 tracked diff，回報 blocker 並停止，不可把它納入已核准交付。"
+            "- working tree 若有 tracked diff，回報 blocker 並停止，不可把它納入已核准交付。\n"
+            "- 禁止執行 pytest、npm test、build、lint、security scan 與 E2E 等測試或驗證命令；僅讀取 exact approved head 的 PR、CI 與 receipt。"
         )
         finalize_guardrails = (
             "依 `.orchestrator/skills/task-closeout-finalization.md` 的 immutable finalize 流程："
-            "確認 exact approved SHA 的 PR 已 merged，再用 "
+            "僅讀取 exact approved head 的 PR、CI 與 receipt 證據，不得重跑測試；確認 exact approved SHA 的 PR 已 merged，再用 "
             f"`AI_NAME={display_name_for(config, agent['id'])} \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" done` 結案。"
         )
     else:
