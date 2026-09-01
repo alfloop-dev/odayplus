@@ -333,6 +333,7 @@ modules/adlift/infrastructure/__init__.py,product_system,product_required,true,,
 modules/adlift/infrastructure/causal_adapters.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/adlift/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/adlift/tests/test_adlift_production_execution.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+modules/adlift/tests/test_evidence_assessability.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/adlift/tests/test_odp_cap_adlift_report_001_acceptance.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/adlift/tests/test_statsmodels_did_and_challengers.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/adlift/workers/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
