@@ -42,12 +42,11 @@ import {
   type LoginThrottleStore,
   type ThrottleDecision,
 } from "../src/lib/auth/loginThrottle";
+import { resolveAuthMode, isOidcEnabled } from "../src/lib/auth/runtime";
 import {
-  resolveAuthMode,
-  isOidcEnabled,
-  isOidcConfigured,
-  verifyCsrfOrigin,
-} from "../src/lib/auth/runtime";
+  MockSessionStore,
+  setSessionStoreForTests,
+} from "../src/lib/auth/sessionStore";
 
 // ─── Shared constants ────────────────────────────────────────────────────────
 
@@ -137,11 +136,29 @@ function getRequest(
   return new NextRequest(url);
 }
 
+function sessionCookieValue(response: Response): string {
+  const header = response.headers.get("set-cookie");
+  const prefix = `${webSessionCookieName}=`;
+  const value = header
+    ?.split(";", 1)[0]
+    .replace(prefix, "");
+  if (!value) throw new Error("login response did not set a session cookie");
+  return value;
+}
+
 // ─── Setup / Teardown ────────────────────────────────────────────────────────
+
+beforeEach(() => {
+  // Keep the route journey on the non-production test double. The route still
+  // creates and reads the same server-side session shape, while this prevents
+  // a developer DATABASE_URL from sending the suite to a real PostgreSQL host.
+  setSessionStoreForTests(new MockSessionStore());
+});
 
 afterEach(() => {
   setLoginThrottleForTests(undefined);
   setIdentityStoreForTests(undefined);
+  setSessionStoreForTests(undefined);
   vi.unstubAllEnvs();
   delete process.env.ODP_WEB_SESSION_SECRET;
   delete process.env.ODP_DEPLOY_ENV;
@@ -232,6 +249,18 @@ describe("§1 Password login success & failure (Contract §2, §3)", () => {
     const body = await response.json();
     expect(body.ok).toBe(true);
     expect(body.subject).toBe("operator");
+
+    // Resolve the opaque browser reference through the same server-side store
+    // the route wrote. Tenant context must come from identity.sessions, not
+    // from a browser-visible cookie claim or response body.
+    const session = await readWebSession(sessionCookieValue(response));
+    expect(session).toMatchObject({
+      accountId: "acc-operator",
+      tenantId: "tenant-beta",
+      subject: "operator",
+      provider: "local_password",
+    });
+    expect(session?.accessToken).toBeTruthy();
   });
 
   it("HTML form POST 成功後 redirect 303 到 returnTo", async () => {
