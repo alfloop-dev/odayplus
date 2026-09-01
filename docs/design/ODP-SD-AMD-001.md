@@ -1343,12 +1343,77 @@ DROP TRIGGER IF EXISTS trg_exploration_decisions_append_only
 CREATE TRIGGER trg_exploration_decisions_append_only
     BEFORE UPDATE OR DELETE ON pricing.exploration_decisions
     FOR EACH ROW EXECUTE FUNCTION pricing.exploration_decisions_append_only();
+
+-- Gate 本身的受控轉換。逐筆決策不可改寫（上方），但若 Gate 這一列仍可自由
+-- UPDATE，累計器就形同虛設：把 budget_consumed 改回 0 即可重新取得全部預算，
+-- 把 effective_to 往後推即可延長授權，把 revoked_at 改回 NULL 即可撤銷撤銷。
+-- 三條路徑都不經過任何既有 trigger，因為那些只掛在子表上。
+CREATE OR REPLACE FUNCTION pricing.exploration_gates_controlled_update()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION
+            'exploration_gates_controlled_update: DELETE is not permitted (gate_id=%)',
+            OLD.gate_id USING ERRCODE = '23514';
+    END IF;
+
+    -- 授權的內容本身不可變。改動範圍、上限或授權者，等同發一張新 Gate。
+    IF ROW(NEW.gate_id, NEW.tenant_id, NEW.scope_brand_id, NEW.scope_store_group,
+           NEW.scope_sku_group, NEW.budget_limit, NEW.effective_from,
+           NEW.approved_by, NEW.rollback_condition,
+           NEW.decision_policy_version_id, NEW.created_at)
+       IS DISTINCT FROM
+       ROW(OLD.gate_id, OLD.tenant_id, OLD.scope_brand_id, OLD.scope_store_group,
+           OLD.scope_sku_group, OLD.budget_limit, OLD.effective_from,
+           OLD.approved_by, OLD.rollback_condition,
+           OLD.decision_policy_version_id, OLD.created_at)
+    THEN
+        RAISE EXCEPTION
+            'exploration_gates_controlled_update: authorisation fields are immutable '
+            '(gate_id=%); issue a new gate instead', OLD.gate_id
+            USING ERRCODE = '23514';
+    END IF;
+
+    -- 累計器只增不減。減少或歸零等於把已經花掉的探索預算變回可用。
+    IF NEW.budget_consumed < OLD.budget_consumed THEN
+        RAISE EXCEPTION
+            'exploration_gates_controlled_update: budget_consumed must not decrease '
+            '(gate_id=%, % -> %)', OLD.gate_id, OLD.budget_consumed, NEW.budget_consumed
+            USING ERRCODE = '23514';
+    END IF;
+
+    -- 授權期間只能提前結束，不能延後。延長授權是一個新的核准決定。
+    IF NEW.effective_to > OLD.effective_to THEN
+        RAISE EXCEPTION
+            'exploration_gates_controlled_update: effective_to must not be extended '
+            '(gate_id=%, % -> %)', OLD.gate_id, OLD.effective_to, NEW.effective_to
+            USING ERRCODE = '23514';
+    END IF;
+
+    -- 撤銷是單向的：NULL 可設為時點，已撤銷者不得復原也不得改時點。
+    IF OLD.revoked_at IS NOT NULL
+       AND NEW.revoked_at IS DISTINCT FROM OLD.revoked_at
+    THEN
+        RAISE EXCEPTION
+            'exploration_gates_controlled_update: revocation is irreversible '
+            '(gate_id=%)', OLD.gate_id USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_exploration_gates_controlled_update
+    ON pricing.exploration_gates;
+CREATE TRIGGER trg_exploration_gates_controlled_update
+    BEFORE UPDATE OR DELETE ON pricing.exploration_gates
+    FOR EACH ROW EXECUTE FUNCTION pricing.exploration_gates_controlled_update();
 ```
 
 **多租戶隔離與 Gate 累計預算扣抵**：
 1. **租戶強綁定**：`pricing.exploration_decisions` 透過 `(gate_id, tenant_id)` 複合外鍵直接參照 `pricing.exploration_gates(gate_id, tenant_id)`，由資料庫核心層確保決策租戶與授權 Gate 租戶嚴格一致，防止跨租戶借用 Gate 探索。
 2. **總預算累計扣抵與防超支**：單筆決策之 `budget_consumed` 僅記錄該次探索消耗，Gate 之累計消耗則由 `pricing.exploration_gates.budget_consumed` 追蹤。兩者由 `trg_exploration_decisions_accrue` 在**同一次 INSERT 內**綁定：寫入一筆探索決策必然累加至其 Gate，且該 Gate 必須在決策時點有效（未撤銷、落在授權期間內），否則整筆寫入被拒。累加後 `chk_gate_budget_consumed (budget_consumed <= budget_limit)` 立即生效，因此第 N 筆使累計超出上限的決策會被資料庫回滾，多筆並行寫入亦由該列的行鎖序列化，不會出現兩筆同時通過的競態。
 3. **扣抵不可回收**：`trg_exploration_decisions_append_only` 禁止對已寫入的探索決策做 UPDATE 或 DELETE。否則刪掉一筆決策就能讓累計器與逐筆紀錄不再對應——預算看似歸還，實際已花掉的探索卻已發生。
+4. **Gate 本身受控轉換**：`trg_exploration_gates_controlled_update` 讓授權這一列同樣不可自由改寫。授權內容（範圍、上限、期間起點、核准者、綁定政策）不可變；`budget_consumed` 只增不減；`effective_to` 只能提前不能延後；`revoked_at` 只能由 NULL 設為時點且不可復原。缺這一道時，子表的 append-only 保護是空的——不必碰任何一筆決策，只要 `UPDATE pricing.exploration_gates SET budget_consumed = 0` 就能重新取得全部預算，而 `ODP-BR-PRICE-004` 的 Hard Constraint 同樣只存在於文件。
 
 **v0.4.0 的漏洞，與這次的修法**。前一版的第 2 點是一段**寫給呼叫端看的協定**：文中要求「交易中必須原子執行 `UPDATE ... budget_consumed + :decision_budget`」，但資料庫沒有任何機制要求它真的被執行。`pricing.exploration_decisions` 的唯一預算約束是 `budget_consumed >= 0`，因此直接 `INSERT` 一批決策而不動 Gate，總預算就完全繞過——`ODP-BR-PRICE-004` 的 Hard Constraint 只存在於文件。把累加移進 trigger 之後，「逐筆決策」與「累計預算」不再是兩份需要同步的資料，而是同一次寫入的兩個面向；呼叫端也不再需要（也不得）自行執行那段 UPDATE，重複扣抵的風險一併消失。
 
@@ -1615,7 +1680,13 @@ uv run --no-project --python 3.12 --with pgserver \
 |---|---|
 | A. 9 個 DDL 區塊套用於 baseline 相依樁 | 9／9 通過 |
 | B. 每個區塊重跑一次（第 10 節宣稱的可重跑，含兩個 trigger 區塊） | 9／9 通過 |
-| C. 新增約束、外鍵與 trigger 是否真的擋下它宣稱要擋的資料 | 102／102 符合設計 |
+| C. 新增約束、外鍵與 trigger 是否真的擋下它宣稱要擋的資料 | 124／124 符合設計 |
+
+**這個數字說的是什麼，不說什麼**。124／124 指「124 個案例的行為與其宣告一致」——每個負向案例被拒，且拒絕訊息中出現它指名的那個約束；每個正向案例被接受。它**不**保證每個已宣告的約束都有案例。
+
+v0.5.0 的 102／102 就是在這個區別上誇大了：`chk_decision_policy_kind`／`window`／`reason`／`params`、`chk_deal_outcome_kind`／`reason_code`／`price_positive`、`chk_composition_kind`／`revert_order`、`chk_gate_budget_limit`／`revoke_order`、`fk_decisions_policy_version`、`fk_exploration_decisions_tenant` 當時皆無具名案例。那些約束若被打錯字或整條刪去，套件仍會報全綠——通過數只覆蓋存在的案例。v0.6.0 為上列每一條補上具名案例，並補上 `trg_exploration_gates_controlled_update` 的九個案例。
+
+補案例的過程本身也印證了逐案斷言約束名的必要：新增的三個案例第一次執行時是 `WRONGCAUSE` 而非 `OK`——`workflow.decisions` 沒有 `tenant_id` 欄、`pricing.exploration_decisions` 的欄位是 `algorithm` 而非 `decided_at`、而 `SETTLED` 案例未帶 `no_deal_reason_code` 因此被 `chk_deal_outcome_closed_fields` 先攔下。若只斷言「被拒」，這三個案例都會以假象通過，並宣稱測到了它們其實沒碰到的約束。
 
 C 項逐條涵蓋本案每一條新增 CHECK、外鍵、唯一索引與 trigger。其中與本版（v0.5.0）新增規則直接對應者為：宣稱 `APPROVED` 但 `workflow.approvals` 沒有對應核准列被拒；指向一筆尚未核准（`pending`）的核准列被拒；`AUTO_ACCEPTED` 卻挾帶核准連結被拒；同一核准決策被第二筆回饋重用被拒；**已被回饋引用的核准列改回 `returned` 被外鍵拒**；回饋或警示自述的租戶與其門市租戶不符被拒；綁定他租戶政策、或綁了政策卻不宣告租戶被拒；政策的回退目標指向他租戶版本被拒；熱區組成列被刪除、被二次撤銷、或在撤銷的同一句改寫其他欄位被 trigger 拒；探索決策寫入未累加即超出 Gate 上限被拒（含累計器實際被移動的正向斷言）；對已撤銷或已過期 Gate 的探索決策被拒；已扣抵的探索決策被改寫或刪除被拒；吸收結果缺來源識別或門市數、來源為空字串、門市數為負被拒。
 

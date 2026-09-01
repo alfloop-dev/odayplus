@@ -220,6 +220,18 @@ def deal_case(
 SHARED_VALUATION = uid("valuation:shared-for-unique-index")
 
 DEAL_CASES = [
+    # Declared but previously unexercised deal-outcome constraints.
+    # reason must be present so chk_deal_outcome_closed_fields is satisfied and
+    # the row reaches the constraint under test.
+    deal_case("deal: outcome_kind outside the declared set", kind="SETTLED",
+              reason="'PRICE_GAP'", accepted=False,
+              expects=("chk_deal_outcome_kind",)),
+    deal_case("deal: no_deal_reason_code outside the declared set", kind="WITHDRAWN",
+              reason="'BUYER_VANISHED'", accepted=False,
+              expects=("chk_deal_outcome_reason_code",)),
+    deal_case("deal: non-positive realized price", kind="CLOSED", price="0",
+              at="now()", terms=FULL_TERMS, accepted=False,
+              expects=("chk_deal_outcome_price_positive",)),
     deal_case("deal: CLOSED with price, date and terms",
               kind="CLOSED", price="1000", at="now()", terms=FULL_TERMS, accepted=True),
     deal_case("deal: CLOSED missing price",
@@ -534,6 +546,17 @@ def composition_case(
 
 
 COMPOSITION_CASES = [
+    # Declared but previously unexercised composition constraints.
+    composition_case("composition: kind outside the declared set",
+                     zone=uid("zone:kind-probe"), kind="ANNEXED", accepted=False,
+                     expects=("chk_composition_kind",)),
+    Case("composition: reverted before it was decided",
+         "INSERT INTO expansion.heatzone_composition (zone_id, tenant_id, member_cell_id,"
+         " composition_kind, decided_by, decided_at, decision_policy_version_id,"
+         f" reverted_at) VALUES ('MZ-00000000000000ff',{TENANT},{uid('cell:revert-order')},"
+         f"'MERGED','system',now(),{POLICY},now() - interval '1 day')",
+         False, ("chk_composition_revert_order",),
+         setup=f"INSERT INTO geo.h3_cells (geo_cell_id) VALUES ({uid('cell:revert-order')});"),
     composition_case("composition: MERGED decided by system",
                      zone="'MZ-0123456789abcdef'", kind="MERGED", cell=CELL,
                      accepted=True),
@@ -655,6 +678,69 @@ GATE_CASES = [
     Case("gate: policy owned by another tenant",
          GATE_COLUMNS + f"({TENANT},1000,0,now(),now()+interval '30 day','a','revert',"
          f"{POLICY_T2})", False, ("fk_exploration_gates_decision_policy",)),
+
+    # trg_exploration_gates_controlled_update. Without these the append-only
+    # protection on exploration_decisions is hollow: the accumulator, the
+    # window and the revocation all live on the gate row, and none of them were
+    # guarded. Each case below is a way to recover spent budget or extend an
+    # authorisation without touching a single decision row.
+    Case("gate: consumed budget reset to zero",
+         f"UPDATE pricing.exploration_gates SET budget_consumed = 0 WHERE gate_id = {GATE_ID}",
+         False, ("exploration_gates_controlled_update",)),
+    Case("gate: consumed budget reduced",
+         "UPDATE pricing.exploration_gates SET budget_consumed = budget_consumed - 1"
+         f" WHERE gate_id = {GATE_ID}",
+         False, ("exploration_gates_controlled_update",)),
+    Case("gate: authorisation window extended",
+         "UPDATE pricing.exploration_gates SET effective_to = effective_to + interval '30 day'"
+         f" WHERE gate_id = {GATE_ID}",
+         False, ("exploration_gates_controlled_update",)),
+    Case("gate: budget limit raised in place",
+         "UPDATE pricing.exploration_gates SET budget_limit = budget_limit * 10"
+         f" WHERE gate_id = {GATE_ID}",
+         False, ("exploration_gates_controlled_update",)),
+    Case("gate: scope widened in place",
+         "UPDATE pricing.exploration_gates SET scope_sku_group = 'everything'"
+         f" WHERE gate_id = {GATE_ID}",
+         False, ("exploration_gates_controlled_update",)),
+    Case("gate: deletion",
+         f"DELETE FROM pricing.exploration_gates WHERE gate_id = {GATE_ID}",
+         False, ("exploration_gates_controlled_update",)),
+    Case("gate: revocation is permitted",
+         f"UPDATE pricing.exploration_gates SET revoked_at = now() WHERE gate_id = {GATE_ID}",
+         True),
+    Case("gate: revocation cannot be undone",
+         f"UPDATE pricing.exploration_gates SET revoked_at = NULL WHERE gate_id = {GATE_ID}",
+         False, ("exploration_gates_controlled_update",),
+         setup=f"UPDATE pricing.exploration_gates SET revoked_at = now()"
+               f" WHERE gate_id = {GATE_ID};"),
+    Case("gate: early termination is permitted",
+         "UPDATE pricing.exploration_gates SET effective_to = effective_to - interval '1 day'"
+         f" WHERE gate_id = {GATE_ID}",
+         True),
+
+    # Declared but previously unexercised gate constraints.
+    Case("gate: non-positive budget limit",
+         GATE_COLUMNS + f"({TENANT},0,0,now(),now()+interval '30 day','a','revert',{POLICY})",
+         False, ("chk_gate_budget_limit",)),
+    Case("decision: policy_version_id with no registry row",
+         "INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES"
+         f" ({uid('decision:dangling-policy')},'no-such-policy:{TENANT[1:-1]}')",
+         False, ("fk_decisions_policy_version",)),
+    Case("exploration_decision: tenant with no core.tenants row",
+         "INSERT INTO pricing.exploration_decisions (decision_id, gate_id, tenant_id,"
+         " sku_id, baseline_price, explored_price, budget_consumed, algorithm) VALUES"
+         f" ({uid('decision:orphan-tenant')},{GATE_ID},"
+         "'99999999-9999-9999-9999-999999999999'::uuid,'sku-1',100,105,1,'thompson')",
+         False, ("fk_exploration_decisions_tenant", "fk_exploration_decisions_gate_tenant"),
+         setup="INSERT INTO workflow.decisions (decision_id, policy_version_id) VALUES"
+               f" ({uid('decision:orphan-tenant')},{POLICY});"),
+    Case("gate: revoked before the authorisation began",
+         "INSERT INTO pricing.exploration_gates (tenant_id, budget_limit, budget_consumed,"
+         " effective_from, effective_to, approved_by, rollback_condition, revoked_at,"
+         f" decision_policy_version_id) VALUES ({TENANT},1000,0,now(),"
+         f"now()+interval '30 day','a','revert',now()-interval '1 day',{POLICY})",
+         False, ("chk_gate_revoke_order",)),
 ]
 
 
@@ -756,11 +842,18 @@ def policy_case(
     tenant: str = TENANT,
     kind: str = "forecast_alert",
     inputs: str = "ARRAY['sitescore_gap_ratio']",
+    reason: str = "x",
+    params: str = "'{}'::jsonb",
+    effective_to: str = "NULL",
     expects: tuple[str, ...] = (),
 ) -> Case:
     statement = (
-        POLICY_INSERT + f"('{version_id}','{policy_label}','{policy_id}','{version}',"
-        f"'{kind}',{tenant},now(),'ops','a',now(),'in','out','x','{{}}'::jsonb,{inputs})"
+        POLICY_INSERT.replace(
+            " effective_from, owner_role", " effective_from, effective_to, owner_role"
+        )
+        + f"('{version_id}','{policy_label}','{policy_id}','{version}',"
+        f"'{kind}',{tenant},now(),{effective_to},'ops','a',now(),'in','out',"
+        f"'{reason}',{params},{inputs})"
     )
     return Case(label, statement, accepted, expects)
 
@@ -797,6 +890,32 @@ POLICY_CASES = [
                 version_id=f"other-policy-v1:{TENANT_2[1:-1]}",
                 policy_label="other-policy-v1", policy_id="other-policy",
                 version="1.0.0", tenant=TENANT_2, accepted=True),
+
+    # Constraints that were declared but never exercised. A passing run said
+    # nothing about them: the count only covered cases that existed, so a
+    # constraint with no case could have been dropped or mistyped and the suite
+    # would still have reported all-green.
+    policy_case("policy: kind outside the declared set",
+                version_id=f"kind-probe-v1:{TENANT[1:-1]}", policy_label="kind-probe-v1",
+                policy_id="kind-probe", version="1.0.0", kind="not_a_policy_kind",
+                accepted=False, expects=("chk_decision_policy_kind",)),
+    policy_case("policy: window ending before it starts",
+                version_id=f"window-probe-v1:{TENANT[1:-1]}",
+                policy_label="window-probe-v1", policy_id="window-probe",
+                version="1.0.0", kind="netplan_action",
+                effective_to="now() - interval '1 day'",
+                accepted=False, expects=("chk_decision_policy_window",)),
+    policy_case("policy: empty change_reason",
+                version_id=f"reason-probe-v1:{TENANT[1:-1]}",
+                policy_label="reason-probe-v1", policy_id="reason-probe",
+                version="1.0.0", kind="heatzone_merge", reason="",
+                accepted=False, expects=("chk_decision_policy_reason",)),
+    policy_case("policy: parameters that are not a JSON object",
+                version_id=f"params-probe-v1:{TENANT[1:-1]}",
+                policy_label="params-probe-v1", policy_id="params-probe",
+                version="1.0.0", kind="sitescore_recommendation",
+                params="'[]'::jsonb",
+                accepted=False, expects=("chk_decision_policy_params",)),
     Case("policy: rollback target owned by another tenant",
          "INSERT INTO workflow.decision_policies (policy_version_id, policy_label,"
          " policy_id, policy_version, policy_kind, tenant_id, effective_from,"
