@@ -7131,6 +7131,138 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_superseded")
 
 
+class WorkerWorktreeActivityTests(unittest.TestCase):
+    """Worktree changes extend the existing poller activity window."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="pantheon-worktree-activity-")
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.repo = self.root / "repo"
+        self.worktree = self.root / "worker"
+        self.repo.mkdir()
+        self._git("init", "-b", "dev")
+        self._git("config", "user.email", "tests@example.invalid")
+        self._git("config", "user.name", "Supervisor tests")
+        (self.repo / "tracked.txt").write_text("base\n", encoding="utf-8")
+        self._git("add", "tracked.txt")
+        self._git("commit", "-m", "base")
+        self._git("worktree", "add", "-b", "task/ACTIVITY-001", str(self.worktree), "dev")
+
+    def _git(self, *args: str, cwd: Path | None = None) -> str:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd or self.repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+
+    def _config(self) -> dict[str, Any]:
+        return {
+            "paths": {"status_file": str(self.repo / "ai-status.json")},
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+            },
+            "supervisor": {"stall_after_seconds": 300},
+            "ready_dispatcher": {
+                "active_worker_statuses": [
+                    "running", "waiting_approval", "suspended_approval", "manual_pending", "stalled",
+                ],
+            },
+        }
+
+    def _worker(self, *, dirty_mtime_at: str, head_sha: str) -> dict[str, Any]:
+        old = "2026-08-31T00:00:00Z"
+        return {
+            "run_id": "run-activity-1",
+            "task_id": "ACTIVITY-001",
+            "provider": "codex",
+            "agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-activity-1",
+            "pid": 1234,
+            "last_event_at": old,
+            "last_process_activity_at": old,
+            "workspace_mode": "isolated_worktree",
+            "workspace_path": str(self.worktree),
+            "workspace_branch": "task/ACTIVITY-001",
+            "worktree_activity": {
+                "status": "verified",
+                "head_sha": head_sha,
+                "dirty_path_count": 0,
+                "last_activity_at": old,
+                "dirty_mtime_at": dirty_mtime_at,
+            },
+        }
+
+    def _poll(self, config: dict[str, Any], state: dict[str, Any], task: dict[str, Any]) -> bool:
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "update_from_log"),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            return supervisor.poll_workers(config, state)
+
+    def test_dirty_worktree_mtime_prevents_stall_when_log_and_process_are_silent(self) -> None:
+        head_sha = self._git("rev-parse", "HEAD")
+        old_mtime = datetime.fromisoformat("2026-08-31T00:00:00+00:00").timestamp()
+        (self.worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        (self.worktree / "untracked.txt").write_text("new\n", encoding="utf-8")
+        now = datetime.now(UTC)
+        os.utime(self.worktree / "tracked.txt", (now.timestamp(), now.timestamp()))
+        os.utime(self.worktree / "untracked.txt", (now.timestamp(), now.timestamp()))
+        state = {
+            "queue": {"events": {"evt-activity-1": {"status": "started"}}},
+            "workers": {
+                "run-activity-1": self._worker(
+                    dirty_mtime_at=datetime.fromtimestamp(old_mtime, tz=UTC).isoformat().replace("+00:00", "Z"),
+                    head_sha=head_sha,
+                )
+            },
+        }
+        task = {"id": "ACTIVITY-001", "status": "in_progress", "owner": "Codex", "reviewer": "Codex"}
+
+        self.assertTrue(self._poll(self._config(), state, task))
+        worker = state["workers"]["run-activity-1"]
+        self.assertEqual(worker["status"], "running")
+        activity = worker["worktree_activity"]
+        self.assertEqual(activity["status"], "verified")
+        self.assertEqual(activity["dirty_path_count"], 2)
+        self.assertGreater(activity["last_activity_at"], "2026-08-31T00:00:00Z")
+        self.assertNotIn("tracked.txt", json.dumps(activity))
+        self.assertNotIn("changed", json.dumps(activity))
+
+    def test_without_new_worktree_activity_the_same_worker_stalls(self) -> None:
+        head_sha = self._git("rev-parse", "HEAD")
+        old = "2026-08-31T00:00:00Z"
+        (self.worktree / "tracked.txt").write_text("changed\n", encoding="utf-8")
+        old_timestamp = datetime.fromisoformat("2026-08-31T00:00:00+00:00").timestamp()
+        os.utime(self.worktree / "tracked.txt", (old_timestamp, old_timestamp))
+        state = {
+            "queue": {"events": {"evt-activity-1": {"status": "started"}}},
+            "workers": {
+                "run-activity-1": self._worker(dirty_mtime_at=old, head_sha=head_sha)
+            },
+        }
+        task = {"id": "ACTIVITY-001", "status": "in_progress", "owner": "Codex", "reviewer": "Codex"}
+
+        self.assertTrue(self._poll(self._config(), state, task))
+        self.assertEqual(state["workers"]["run-activity-1"]["status"], "stalled")
+
+
 class SingleSupervisorGuardTests(unittest.TestCase):
     def test_cmdline_match_requires_supervisor_as_executable_or_python_script(self) -> None:
         script = str(Path(supervisor.__file__).resolve())
