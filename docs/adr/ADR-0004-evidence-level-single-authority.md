@@ -50,7 +50,7 @@ review_trigger: "Review when a sixth evidence tier is proposed, or when automate
 
 | 層 | 位置 | 值 | 產生者 | 消費者 |
 |---|---|---|---|---|
-| 實作 ① | `modules/adlift/domain/incrementality.py` | `L0_ANECDOTAL`…`L5_POLICY_READY`（`.value` = `"L0"`…`"L5"`） | AdLift 增量分析 | AdLift API（`adlift.py:271`） |
+| 實作 ① | `modules/adlift/domain/incrementality.py` | `L0_ANECDOTAL`…`L5_POLICY_READY`（`.value` = `"L0"`…`"L5"`） | AdLift 增量分析 | AdLift API（`apps/api/app/routes/adlift.py:271`） |
 | 實作 ② | `shared/domain/models.py:419`、`infra/db/migrations/000001_baseline_canonical_schema.sql:490`、`packages/schemas/canonical/index.ts:358` | `low` / `medium` / `high` / `causal_candidate`，預設 `'medium'` | 無 | dbt `intervention_panel_view.sql`（讀取永不出現的值） |
 | 實作 ③ | `apps/web/features/operator/growthViewModel.ts` | `high` / `medium` / `low`（`ConfidenceLevel`） | 前端 fixtures | 營收成長工作區 |
 
@@ -114,7 +114,7 @@ def is_causal_evidence(level: EvidenceLevel) -> bool:
 |---|---|
 | `ODP-SA-07` §6 | 整節改為引用 `ODP-ML-05` §5；補充 `INSUFFICIENT_EVIDENCE` 作為正交狀態 |
 | `ODP-SA-07` §3（`ODP-BR-AD-004`） | 表述改為「`evidence_assessable = false` 時對外呈現為 `INSUFFICIENT_EVIDENCE` 並記錄原因碼」 |
-| `ODP-ML-05` §5 | 補上正交狀態與四個原因碼 |
+| `ODP-ML-05` §5 | 已由 `ODP-ML-05-AMD-001` §5.2 落地正交狀態，並僅宣告有產生路徑的 `NO_TREATMENT_DATA` 原因碼 |
 
 ### 實作
 
