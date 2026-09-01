@@ -239,6 +239,35 @@ class PromotionService:
                 "Tenant isolation mismatch"
             )
 
+        if decision == "APPROVE":
+            listing_id = promo.get("listing_id")
+            if not listing_id:
+                raise ValueError(f"Promotion decision {promotion_decision_id} missing listing_id")
+            listing = self.listing_repository.get_listing(listing_id)
+            if not listing:
+                raise ValueError(f"Listing {listing_id} not found")
+
+            # Re-run the candidate gate on the record actually being promoted,
+            # before mutating approval state or starting the saga.
+            #
+            # request_promotion() gates these fields at intake, but nothing
+            # re-checked them here, and every accessor in the derivation below
+            # supplied a plausible-looking default for a missing value: "HZ-01" for
+            # an absent cell, "" for an absent address, 1.0 for an absent geocode
+            # confidence, 75.0 when heat-zone scoring raised. A listing with no
+            # address therefore reached score_site() carrying full confidence and a
+            # passing demand signal, and could come back GO. ODP-BR-LST-001 is a
+            # Hard Constraint: no address or failed geocode must not enter
+            # SiteScore.
+            #
+            # It runs before state transition so a gate failure leaves the
+            # durable record in PENDING_REVIEW rather than mutating it to APPROVED
+            # without a candidate or stranding the promotion mid-saga.
+            promotion_address = self._assert_promotable(listing)
+        else:
+            listing = None
+            promotion_address = None
+
         current_state = to_state_enum(promo["status"])
         promo_agg = PromotionAggregate(
             id=promotion_decision_id,
@@ -274,38 +303,11 @@ class PromotionService:
             correlation_id=context.correlation_id,
         )
 
-        listing_id = promo["listing_id"]
-        listing = self.listing_repository.get_listing(listing_id)
-        if not listing:
-            raise ValueError(f"Listing {listing_id} not found")
-
         # Remember original listing status and candidate count for compensation
         if hasattr(listing, "get"):
             before_status = listing.get("status")
         else:
             before_status = getattr(listing, "listing_status", None)
-
-        # Re-run the candidate gate on the record actually being promoted,
-        # before the saga starts moving.
-        #
-        # request_promotion() gates these fields at intake, but nothing
-        # re-checked them here, and every accessor in the derivation below
-        # supplied a plausible-looking default for a missing value: "HZ-01" for
-        # an absent cell, "" for an absent address, 1.0 for an absent geocode
-        # confidence, 75.0 when heat-zone scoring raised. A listing with no
-        # address therefore reached score_site() carrying full confidence and a
-        # passing demand signal, and could come back GO. ODP-BR-LST-001 is a
-        # Hard Constraint: no address or failed geocode must not enter
-        # SiteScore.
-        #
-        # It runs here rather than inside the saga because a gate failure is
-        # not a scoring failure. The except branch below compensates a
-        # candidate that already exists and leaves it for job.replay to restart
-        # from SCORE_QUEUED; neither applies to a listing that should never
-        # have been promoted. CANDIDATE_CREATING -> SCORE_FAILED is not a legal
-        # transition either, so raising from inside would replace this denial
-        # with a workflow-state error and strand the promotion mid-saga.
-        promotion_address = self._assert_promotable(listing)
 
         candidate_created_flag = False
         candidate_id = str(uuid.uuid4())

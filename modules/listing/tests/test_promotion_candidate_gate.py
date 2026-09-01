@@ -350,6 +350,13 @@ class TestPromotionSagaFailsClosedOnGeocodeFailure:
 
         assert excinfo.value.code is DenialCode.SOURCE_POLICY_DENIED
         assert "Candidate gate failed at promotion: missing geocode" in str(excinfo.value)
+        # Defect 4: Review gate failure must not mutate approval state in-place.
+        # Stored promotion record must remain PENDING_REVIEW at its original version.
+        stored = service.promotion_repository.get_promotion(requested["promotion_decision_id"])
+        assert stored is not None
+        assert stored["status"] == "PENDING_REVIEW"
+        assert stored["version"] == requested["version"]
+        assert stored.get("reviewer") is None
 
     def test_no_candidate_is_created_when_the_gate_fails_at_review(self) -> None:
         """The observable Hard Constraint: nothing reaches SiteScore.
@@ -367,6 +374,37 @@ class TestPromotionSagaFailsClosedOnGeocodeFailure:
 
         assert repo.list_candidates() == []
         assert repo.get_listing(LISTING_ID).listing_status == "active"
+        stored = service.promotion_repository.get_promotion(requested["promotion_decision_id"])
+        assert stored is not None
+        assert stored["status"] == "PENDING_REVIEW"
+        assert stored["version"] == requested["version"]
+
+    def test_gate_failure_at_review_leaves_promotion_retryable(self) -> None:
+        """State integrity: after a review-time gate rejection, the pending
+        promotion record remains in PENDING_REVIEW and can be approved once the
+        address issue is resolved."""
+        repo = _seed_repository(geocode_confidence=0.95)
+        service = _promotion_service(repo)
+        requested = _request(service)
+
+        # Address degrades before review
+        repo.addresses[0] = replace(repo.addresses[0], geocode_confidence=0.0)
+        with pytest.raises(DomainValidationError):
+            _review(service, requested["promotion_decision_id"], key="review-attempt-1")
+
+        stored = service.promotion_repository.get_promotion(requested["promotion_decision_id"])
+        assert stored is not None
+        assert stored["status"] == "PENDING_REVIEW"
+        assert stored["version"] == requested["version"]
+        assert repo.list_candidates() == []
+
+        # Address is fixed / re-geocoded
+        repo.addresses[0] = replace(repo.addresses[0], geocode_confidence=0.95)
+
+        # Retrying review now successfully transitions through the saga
+        completed = _review(service, requested["promotion_decision_id"], key="review-attempt-2")
+        assert completed["status"] == "COMPLETED"
+        assert len(repo.list_candidates()) == 1
 
     def test_missing_address_record_fails_closed_at_review(self) -> None:
         """No address at all, rather than a bad geocode.
@@ -384,6 +422,10 @@ class TestPromotionSagaFailsClosedOnGeocodeFailure:
 
         assert excinfo.value.code is DenialCode.SOURCE_POLICY_DENIED
         assert repo.list_candidates() == []
+        stored = service.promotion_repository.get_promotion(requested["promotion_decision_id"])
+        assert stored is not None
+        assert stored["status"] == "PENDING_REVIEW"
+        assert stored["version"] == requested["version"]
 
 
 class TestPromotionSagaStillCompletesForAGeocodedListing:
