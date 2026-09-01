@@ -392,6 +392,7 @@ modules/external_data/providers/taiwan_real_estate.py,product_system,product_req
 modules/external_data/providers/weather_demographics.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/security/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/security/assisted_listing_retrieval.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/external_data/tests/test_snapshot_generation_provenance.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/external_data/workers/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/workers/scheduled_fetch.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
