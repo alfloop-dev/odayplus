@@ -1,0 +1,461 @@
+.ganttContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--odp-color-bg-surface, #ffffff);
+  border: 1px solid var(--odp-color-border-default, #d7deea);
+  border-radius: var(--odp-radius-md, 8px);
+  padding: 16px;
+  color: var(--odp-color-text-primary, #172033);
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.headerRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--odp-color-border-default, #e2e8f0);
+  padding-bottom: 12px;
+}
+
+.titleArea {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.titleArea h4 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.titleArea p {
+  margin: 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.policyBadgeGroup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.policyBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+}
+
+.policyBadgeStrong {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.viewToggleGroup {
+  display: inline-flex;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #f8fafc;
+}
+
+.viewToggleButton {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: none;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.viewToggleButtonActive {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.legendBar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.legendTitle {
+  font-weight: 600;
+  color: #475569;
+  margin-right: 4px;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #334155;
+}
+
+.legendColorBox {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+/* Action Type Colors */
+.actionOpen {
+  background: #10b981;
+  color: #ffffff;
+}
+.actionKeep {
+  background: #3b82f6;
+  color: #ffffff;
+}
+.actionImprove {
+  background: #8b5cf6;
+  color: #ffffff;
+}
+.actionMove {
+  background: #f59e0b;
+  color: #ffffff;
+}
+.actionExit {
+  background: #ef4444;
+  color: #ffffff;
+}
+.actionTransfer {
+  background: #06b6d4;
+  color: #ffffff;
+}
+
+.bindingAlertBox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-left: 4px solid #f59e0b;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #92400e;
+}
+
+.bindingAlertBox strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+/* Gantt Chart Grid Area */
+.ganttScrollWrapper {
+  position: relative;
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+  min-height: 220px;
+}
+
+.ganttTableContainer {
+  position: relative;
+  width: 100%;
+  min-width: 640px;
+  display: grid;
+}
+
+.ganttHeaderGrid {
+  display: grid;
+  grid-template-columns: 200px repeat(var(--gantt-cols, 4), 1fr);
+  background: #f1f5f9;
+  border-bottom: 2px solid #cbd5e1;
+  font-weight: 700;
+  font-size: 12px;
+  color: #334155;
+}
+
+.entityHeaderCell {
+  padding: 10px 12px;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+}
+
+.quarterHeaderCell {
+  padding: 10px 12px;
+  text-align: center;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.quarterHeaderCell:last-child {
+  border-right: none;
+}
+
+.ganttRowsContainer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.ganttRow {
+  display: grid;
+  grid-template-columns: 200px repeat(var(--gantt-cols, 4), 1fr);
+  border-bottom: 1px solid #f1f5f9;
+  min-height: 58px;
+  transition: background-color 0.1s ease;
+}
+
+.ganttRow:hover {
+  background: #f8fafc;
+}
+
+.ganttRow:last-child {
+  border-bottom: none;
+}
+
+.entityLabelCell {
+  padding: 8px 12px;
+  border-right: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  background: #ffffff;
+}
+
+.entityIdText {
+  font-weight: 700;
+  font-size: 13px;
+  color: #0f172a;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.entitySubText {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.ganttCell {
+  padding: 6px 8px;
+  border-right: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.ganttCell:last-child {
+  border-right: none;
+}
+
+/* Action Bar Item */
+.actionBar {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  position: relative;
+  z-index: 2;
+  cursor: default;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.actionBar:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.12);
+  z-index: 10;
+}
+
+.actionBarTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.actionBadgeText {
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.actionMetaRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  opacity: 0.92;
+}
+
+/* Binding Constraint Warning State */
+.actionBarBinding {
+  border: 2px dashed #b45309 !important;
+  box-shadow: 0 0 0 2px #fde68a, 0 2px 4px rgba(180, 83, 9, 0.2);
+}
+
+.bindingBadge {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* SVG Dependency Layer */
+.dependencySvgLayer {
+  position: absolute;
+  top: 0;
+  left: 200px;
+  width: calc(100% - 200px);
+  height: 100%;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.dependencyPath {
+  fill: none;
+  stroke: #4f46e5;
+  stroke-width: 2;
+  stroke-dasharray: 4 2;
+  transition: stroke 0.2s ease;
+}
+
+.dependencyArrow {
+  fill: #4f46e5;
+}
+
+/* Table View */
+.tableViewWrapper {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.equivalentTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.equivalentTable th {
+  background: #f1f5f9;
+  padding: 10px 12px;
+  border-bottom: 2px solid #cbd5e1;
+  font-weight: 700;
+  color: #334155;
+  white-space: nowrap;
+}
+
+.equivalentTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  color: #1e293b;
+  vertical-align: middle;
+}
+
+.equivalentTable tr:hover td {
+  background: #f8fafc;
+}
+
+.actionTag {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 11px;
+  text-align: center;
+}
+
+.monoText {
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dependencyText {
+  font-size: 11px;
+  color: #4338ca;
+  background: #eef2ff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.constraintTag {
+  font-size: 11px;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.dependenciesSection {
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.dependenciesSection h5 {
+  margin: 0 0 6px 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.dependenciesList {
+  margin: 0;
+  padding-left: 20px;
+  color: #475569;
+}
+
+.dependenciesList li {
+  margin-bottom: 4px;
+}
+
+.emptyState {
+  padding: 32px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+  background: #f8fafc;
+  border-radius: 6px;
+  border: 1px dashed #cbd5e1;
+}
