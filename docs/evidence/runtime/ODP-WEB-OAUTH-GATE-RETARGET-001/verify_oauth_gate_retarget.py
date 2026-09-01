@@ -29,7 +29,7 @@ def check_archive_task(task_id: str, expected_pr: int) -> dict:
     archive_file = ARCHIVE_DIR / f"{task_id}.json"
     if not archive_file.exists():
         raise AssertionError(f"Archive file for {task_id} not found at {archive_file}")
-    with open(archive_file, "r", encoding="utf-8") as f:
+    with open(archive_file, encoding="utf-8") as f:
         data = json.load(f)
 
     assert data.get("terminal_status") == "done", f"{task_id} terminal_status is not done"
@@ -53,7 +53,7 @@ def check_canonical_status() -> None:
         print(f"Note: ai-status.json not found at {status_file}, skipping live status check.")
         return
 
-    with open(status_file, "r", encoding="utf-8") as f:
+    with open(status_file, encoding="utf-8") as f:
         state = json.load(f)
 
     tasks = {t.get("id"): t for t in state.get("tasks", []) if isinstance(t, dict) and "id" in t}
@@ -78,7 +78,7 @@ def check_canonical_status() -> None:
 def check_receipt_and_graph() -> None:
     receipt_file = EVIDENCE_DIR / "retarget-receipt.json"
     assert receipt_file.exists(), f"retarget-receipt.json missing at {receipt_file}"
-    with open(receipt_file, "r", encoding="utf-8") as f:
+    with open(receipt_file, encoding="utf-8") as f:
         receipt = json.load(f)
 
     assert receipt.get("task_id") == "ODP-WEB-OAUTH-GATE-RETARGET-001"
