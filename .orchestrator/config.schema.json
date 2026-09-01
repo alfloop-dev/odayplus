@@ -1122,6 +1122,12 @@
         "stall_log_interval_seconds": {
           "type": "integer",
           "minimum": 0
+        },
+        "reclaim_settled_unmerged": {
+          "type": "boolean"
+        },
+        "reap_orphan_holders": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
