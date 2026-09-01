@@ -2271,7 +2271,156 @@ def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, A
         # again. Only rate-limits the repeat: a change in the refusal mix still
         # logs immediately.
         "stall_log_interval_seconds": int(settings.get("stall_log_interval_seconds", 3600) or 0),
+        # A settled task's worktree is reclaimable whether or not its branch
+        # merged. Commits and refs live in the repository, not in the checkout,
+        # so removing a clean worktree destroys nothing the branch does not
+        # already hold. Requiring a merge kept 17 of 68 worktrees on the live
+        # host forever: their tasks were done, their branches never landed, and
+        # no later event could ever make them mergeable.
+        "reclaim_settled_unmerged": bool(settings.get("reclaim_settled_unmerged", True)),
+        # Signal init-reparented holders inside a settled task's worktree.
+        # Without this the pruner can name an orphan-pinned worktree but never
+        # act on it, which is how 28 pgserver instances -- the oldest twelve
+        # days old -- kept their worktrees pinned indefinitely.
+        "reap_orphan_holders": bool(settings.get("reap_orphan_holders", True)),
     }
+
+
+# `superseded` and `cancelled` are settled for reclaim purposes even though no
+# deliverable came out of them: the task will not be worked again, so nothing
+# will ever return to its worktree.
+_SETTLED_TASK_STATUSES = frozenset({"archived", "cancelled", "closed", "done", "superseded"})
+
+
+@_entrypoint
+def _worktree_task_id(worktree_path: Path) -> str:
+    """The task id a managed worktree directory name encodes.
+
+    Lease renewal appends `.lease_<ts>_<hex>`, and it appends again on each
+    subsequent renewal, so `odp-x-001.lease_A.lease_B` names one task rather
+    than three. Everything from the first marker on is provenance, not
+    identity.
+    """
+    base = worktree_path.name.split(".lease_", 1)[0]
+    return base.strip().upper()
+
+
+@_entrypoint
+def _task_board_settlement_index(config: dict[str, Any]) -> dict[str, str]:
+    """Map every task the board still carries to `settled` or `active`.
+
+    Read once per tick rather than once per worktree: the board is a single
+    file and a 68-worktree scan would otherwise open it 68 times.
+    """
+    from common import load_status
+
+    index: dict[str, str] = {}
+    try:
+        tasks = load_status(config).get("tasks", []) or []
+    except (OSError, ValueError):
+        return index
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip().upper()
+        if not task_id:
+            continue
+        status = str(task.get("status") or "").strip().lower()
+        index[task_id] = "settled" if status in _SETTLED_TASK_STATUSES else "active"
+    return index
+
+
+@_entrypoint
+def _task_settlement(config: dict[str, Any], task_id: str, board_index: dict[str, str]) -> str:
+    """`settled`, `active`, or `unknown` for the task owning a worktree.
+
+    `unknown` is deliberately not folded into `settled`. A directory whose name
+    matches no task on the board and none in the archive is one this function
+    cannot explain, and deciding removal from an absence of evidence is how a
+    reclaimer eats work nobody showed it. Such a worktree keeps the old
+    merged-branch requirement and is reclaimed only on the original terms.
+    """
+    if not task_id:
+        return "unknown"
+    on_board = board_index.get(task_id)
+    if on_board is not None:
+        return on_board
+    # Not on the board. `done` archives a task and drops it from the board in
+    # one step, so the archive -- not the board's silence -- is what proves
+    # settlement.
+    from common import delivery_status_root, load_json
+
+    try:
+        archive_file = delivery_status_root(config) / "ai-task-archive" / "tasks" / f"{task_id}.json"
+        if not archive_file.exists():
+            return "unknown"
+        snapshot = load_json(archive_file, default=None)
+    except (OSError, ValueError):
+        return "unknown"
+    if not isinstance(snapshot, dict):
+        return "unknown"
+    task = snapshot.get("task")
+    if not isinstance(task, dict):
+        return "unknown"
+    # The archive envelope is evidence of a terminal task only when both
+    # copies of lifecycle state agree.  A parseable JSON object with a `task`
+    # dict is not enough: a partially written, hand-shaped, or nonterminal
+    # snapshot must not turn a worktree into a deletion candidate.
+    terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()
+    task_status = str(task.get("status") or "").strip().lower()
+    if terminal_status in _SETTLED_TASK_STATUSES and terminal_status == task_status:
+        return "settled"
+    return "unknown"
+
+
+@_entrypoint
+def _signal_orphan_holders(bucket: dict[str, Any], worktree_path: Path, pids: list[int]) -> str:
+    """Ask this worktree's orphaned holders to exit; escalate on the next tick.
+
+    Two ticks, never one. `SIGTERM` reaches a pgserver as a *smart* shutdown --
+    it waits for clients that, the worker being gone, will never disconnect --
+    so the honest choices are to block the supervisor loop waiting for a death
+    that may not come, or to signal now and check later. This does the latter:
+    the removal itself is not attempted here at all. Once the holders are gone
+    the worktree stops appearing in `live_paths` and a later tick reclaims it
+    through the ordinary path, with every other guard still applied.
+
+    Returns what this tick did, for the scan report.
+    """
+    import signal
+
+    reaps = bucket.setdefault("orphan_reaps", {})
+    key = str(worktree_path)
+    record = reaps.get(key) if isinstance(reaps.get(key), dict) else None
+    escalate = bool(record and record.get("signalled_at"))
+    sig = signal.SIGKILL if escalate else signal.SIGTERM
+    delivered: list[int] = []
+    for pid in pids:
+        try:
+            os.kill(int(pid), sig)
+        except (OSError, ValueError, OverflowError):
+            # Already gone, or not ours to signal. Either way this pid is not
+            # what keeps the worktree pinned.
+            continue
+        delivered.append(int(pid))
+    if not delivered:
+        reaps.pop(key, None)
+        return "already_gone"
+    reaps[key] = {
+        "pids": sorted(delivered),
+        "signalled_at": utc_now(),
+        "escalated": escalate,
+    }
+    return "escalated" if escalate else "signalled"
+
+
+@_entrypoint
+def _forget_orphan_reap(bucket: dict[str, Any], worktree_path: Path) -> None:
+    """Drop reap bookkeeping for a worktree that no longer needs it."""
+    reaps = bucket.get("orphan_reaps")
+    if isinstance(reaps, dict):
+        reaps.pop(str(worktree_path), None)
+
 
 @_entrypoint
 def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
@@ -2444,6 +2593,10 @@ def prune_orphan_worktrees(
             continue
 
     live_paths = _scan_process_paths_in_root(base_root)
+    # Read once per tick. Which task owns a worktree is what separates "this
+    # branch has not landed yet" from "this branch will never land", and only
+    # the board and the archive know that; git cannot tell them apart.
+    board_index = _task_board_settlement_index(config)
 
     max_removals = max(0, settings["max_removals_per_tick"])
     removed: list[str] = []
@@ -2461,6 +2614,8 @@ def prune_orphan_worktrees(
     # capped state before the scan even starts.
     capped = max_removals <= 0
     orphan_reports: list[tuple[str, list[int]]] = []
+    reaped: dict[str, int] = {}
+    settled_unmerged = 0
     unmanaged = 0
     unmanaged_paths: list[str] = []
     # Pruning has the same authority boundary as leasing: each distinct local
@@ -2581,15 +2736,48 @@ def prune_orphan_worktrees(
                 if orphan_pids and not still_parented:
                     skipped["live_process_orphaned"] = skipped.get("live_process_orphaned", 0) + 1
                     orphan_reports.append((str(wt_path), sorted(orphan_pids)))
+                    # Naming an orphan-pinned worktree was the whole of the
+                    # previous behaviour, and a report nobody acts on leaves
+                    # the space pinned just as firmly. Only a settled task's
+                    # holders are signalled: while the task can still be worked
+                    # its processes are somebody's working state, however
+                    # detached from a parent they look.
+                    if settings["reap_orphan_holders"] and (
+                        _task_settlement(config, _worktree_task_id(wt_path), board_index) == "settled"
+                    ):
+                        outcome = _signal_orphan_holders(bucket, wt_path, sorted(orphan_pids))
+                        reaped[outcome] = reaped.get(outcome, 0) + 1
                 else:
                     skipped["live_process"] = skipped.get("live_process", 0) + 1
+                    # A real tenant moved in. Any reap streak recorded against
+                    # this path describes holders that are no longer the reason
+                    # it is busy.
+                    _forget_orphan_reap(bucket, wt_path)
                 continue
+            # Merge state answers "is this work safe to discard". For a task
+            # that can still be worked it is the right question. For a settled
+            # one it is unanswerable in the only direction that matters: the
+            # task is finished, so no future event will ever merge the branch,
+            # and the worktree it left behind would be refused on the same
+            # ground forever. What the merge check actually protects -- the
+            # commits -- lives in the repository and survives the checkout's
+            # removal either way; the branch ref is not touched here.
+            settlement = _task_settlement(config, _worktree_task_id(wt_path), board_index)
+            reclaim_unmerged = settings["reclaim_settled_unmerged"] and settlement == "settled"
             branch = _worktree_record_branch(record)
+            unmerged = False
             if branch:
                 if branch not in merged_branches:
-                    skipped["branch_not_merged"] = skipped.get("branch_not_merged", 0) + 1
-                    continue
+                    if not reclaim_unmerged:
+                        skipped["branch_not_merged"] = skipped.get("branch_not_merged", 0) + 1
+                        continue
+                    unmerged = True
             elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
+                # A detached HEAD has no branch ref whose commits remain
+                # reachable after the checkout is removed.  Settlement can
+                # waive the named-branch merge requirement, but it cannot
+                # waive this ancestry proof: the detached commit may be
+                # reachable only through the worktree metadata itself.
                 skipped["detached_head_not_merged"] = skipped.get("detached_head_not_merged", 0) + 1
                 continue
             status_proc = subprocess.run(
@@ -2612,6 +2800,12 @@ def prune_orphan_worktrees(
             )
             if remove_proc.returncode == 0:
                 removed.append(str(wt_path))
+                _forget_orphan_reap(bucket, wt_path)
+                if unmerged:
+                    # Reclaimed on the settled-task rule alone. Reported
+                    # separately so that relaxing the merge requirement stays
+                    # auditable rather than disappearing into the total.
+                    settled_unmerged += 1
                 if len(removed) >= max_removals:
                     capped = True
             else:
@@ -2651,6 +2845,17 @@ def prune_orphan_worktrees(
         "orphaned_worktrees": [
             {"path": path, "pids": pids} for path, pids in orphan_reports
         ],
+        # What this tick did about those orphans, keyed by outcome:
+        # `signalled` (SIGTERM sent), `escalated` (SIGKILL, the holder having
+        # survived an earlier SIGTERM), `already_gone` (nothing left to
+        # signal). Reclaim itself happens on a later tick, once the holders
+        # stop appearing in the live-process scan, so a non-empty value here
+        # with `removed: 0` is the expected shape rather than another stall.
+        "orphan_reaps": dict(sorted(reaped.items())),
+        # Of `removed`, how many were reclaimed because their task is settled
+        # despite an unmerged branch. Zero means every reclaim this tick would
+        # also have passed the old merged-only rule.
+        "settled_unmerged_reclaimed": settled_unmerged,
     }
 
     if removed:
