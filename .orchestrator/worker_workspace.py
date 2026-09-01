@@ -574,6 +574,184 @@ def compute_worktree_state_identity(
     return f"{inspection.kind}:{inspection.fingerprint}:{head_sha}"
 
 
+def _worker_worktree_activity_failure(worker: dict[str, Any], reason: str) -> bool:
+    """Record a non-healthy worktree probe without retaining sensitive detail."""
+    previous = worker.get("worktree_activity")
+    previous = dict(previous) if isinstance(previous, dict) else {}
+    activity = {
+        "status": "unverifiable",
+        "reason": reason,
+    }
+    if previous.get("last_activity_at"):
+        activity["last_activity_at"] = previous["last_activity_at"]
+    if previous.get("head_sha"):
+        activity["head_sha"] = previous["head_sha"]
+    if previous.get("dirty_mtime_at"):
+        activity["dirty_mtime_at"] = previous["dirty_mtime_at"]
+    if previous.get("dirty_path_count") is not None:
+        activity["dirty_path_count"] = previous["dirty_path_count"]
+    if activity == previous:
+        return False
+    worker["worktree_activity"] = activity
+    return True
+
+
+@_entrypoint
+def observe_worker_worktree_activity(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None = None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Observe trusted task-worktree activity for the lifecycle stall guard.
+
+    This is deliberately a probe, not a lease or scheduler.  A worker's
+    Supervisor-created task worktree is trusted only when its path, branch,
+    repository common directory, and registered worktree record still agree.
+    Git status is then reduced to task-owned (blocking) entries; Supervisor
+    materialized context is excluded by the same cleanliness policy used at
+    handoff.  The worker record keeps only opaque state needed to compare the
+    next poll: timestamps, a commit SHA, a count, and reason codes.
+    """
+    now_dt = (now or datetime.now(UTC)).astimezone(UTC)
+    if str(worker.get("workspace_mode") or "") != "isolated_worktree":
+        # Legacy/file-inbox workers have no trusted worktree activity source.
+        return False
+
+    raw_path = str(worker.get("workspace_path") or "").strip()
+    if not raw_path:
+        return _worker_worktree_activity_failure(worker, "missing_worktree")
+    try:
+        worktree_path = Path(raw_path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return _worker_worktree_activity_failure(worker, "unresolvable_worktree")
+    if not worktree_path.exists() or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
+        return _worker_worktree_activity_failure(worker, "missing_worktree")
+
+    # A path in worker state is not sufficient authority by itself. Reuse the
+    # registry binding and worktree identity checks from workspace leasing so a
+    # stale/foreign checkout cannot manufacture a fresh activity timestamp.
+    try:
+        task_record = task if isinstance(task, dict) else canonical_task_record(config, worker.get("task_id"))
+        if not isinstance(task_record, dict) and worker.get("repository_id"):
+            task_record = {
+                "id": worker.get("task_id"),
+                "repository": worker.get("repository_id"),
+            }
+        repo_root, _repo_source = worker_task_repo_root(config, task_record)
+        if repo_root is None or not _worktree_matches_repo_common_dir(repo_root, worktree_path):
+            return _worker_worktree_activity_failure(worker, "untrusted_repository")
+        expected_branch = str(worker.get("workspace_branch") or "").strip()
+        if not expected_branch:
+            expected_branch = worker_task_branch(config, str(worker.get("task_id") or ""), task_record)
+        branch_rc, current_branch = _git_output(
+            worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD"
+        )
+        if branch_rc != 0 or not current_branch or current_branch != expected_branch:
+            return _worker_worktree_activity_failure(worker, "wrong_branch")
+        registered = False
+        for record in _git_worktree_records(repo_root):
+            record_path = str(record.get("worktree") or "").strip()
+            if not record_path:
+                continue
+            try:
+                same_path = Path(record_path).resolve() == worktree_path
+            except (OSError, RuntimeError, ValueError):
+                same_path = False
+            if same_path and _worktree_record_branch(record) == expected_branch:
+                registered = True
+                break
+        if not registered:
+            return _worker_worktree_activity_failure(worker, "unregistered_worktree")
+        head_sha = _git_commit_oid(worktree_path, "HEAD")
+        if not head_sha:
+            return _worker_worktree_activity_failure(worker, "head_unreadable")
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=worktree_path,
+            capture_output=True,
+            check=False,
+        )
+        if status_proc.returncode != 0:
+            return _worker_worktree_activity_failure(worker, "status_unreadable")
+        entries = _parse_porcelain_entries(status_proc.stdout)
+        materialized_paths = _worker_materialized_context_paths(state, worker)
+        blocking_entries = _blocking_dirt_entries(
+            entries,
+            worktree_path=worktree_path,
+            materialized_paths=materialized_paths,
+        )
+        dirty_mtimes: list[datetime] = []
+        for code, rel_path in blocking_entries:
+            try:
+                metadata = (worktree_path / rel_path).lstat()
+                dirty_mtime = datetime.fromtimestamp(metadata.st_mtime, tz=UTC)
+                # A future timestamp cannot prove that the worker wrote during
+                # this poll window.  Ignore it (as with a deleted/unreadable
+                # path) rather than clamping it to ``now``: clamping turns a
+                # single clock-skewed file into fresh activity on every poll.
+                if dirty_mtime <= now_dt:
+                    dirty_mtimes.append(dirty_mtime)
+            except FileNotFoundError:
+                # A deleted tracked path is expected to be absent at this
+                # point. Keep the rest of this status sample: another dirty
+                # path may still provide valid activity evidence.
+                if "D" in code:
+                    continue
+                return _worker_worktree_activity_failure(worker, "dirty_mtime_unreadable")
+            except (OSError, OverflowError, ValueError):
+                # A dirty path whose timestamp cannot be read is not evidence
+                # of activity. Do not let a partial status sample keep a worker
+                # alive.
+                return _worker_worktree_activity_failure(worker, "dirty_mtime_unreadable")
+    except Exception:
+        # Git/registry failures are diagnostic only. They must never become a
+        # healthy activity signal or break settlement of the worker itself.
+        return _worker_worktree_activity_failure(worker, "probe_failed")
+
+    previous = worker.get("worktree_activity")
+    previous = dict(previous) if isinstance(previous, dict) else {}
+    previous_head = str(previous.get("head_sha") or "")
+    previous_dirty_mtime = _parse_iso_utc(str(previous.get("dirty_mtime_at") or ""))
+    previous_activity = _parse_iso_utc(str(previous.get("last_activity_at") or ""))
+    dirty_mtime = max(dirty_mtimes) if dirty_mtimes else None
+
+    activity_candidates: list[datetime] = []
+    if previous_head and previous_head != head_sha:
+        # The commit timestamp is not authoritative for when this poll first
+        # observed the transition (it may have been authored earlier), so use
+        # the trusted observation time.
+        activity_candidates.append(now_dt)
+    if dirty_mtime is not None:
+        if previous_dirty_mtime is not None:
+            if dirty_mtime > previous_dirty_mtime:
+                activity_candidates.append(dirty_mtime)
+        else:
+            launch_at = _parse_iso_utc(str(worker.get("last_event_at") or ""))
+            if launch_at is None or dirty_mtime > launch_at.astimezone(UTC):
+                activity_candidates.append(dirty_mtime)
+    candidate = max(activity_candidates) if activity_candidates else None
+    last_activity = previous_activity
+    if candidate is not None and (last_activity is None or candidate > last_activity):
+        last_activity = candidate
+
+    activity: dict[str, Any] = {
+        "status": "verified",
+        "head_sha": head_sha,
+        "dirty_path_count": len(blocking_entries),
+    }
+    if dirty_mtime is not None:
+        activity["dirty_mtime_at"] = isoformat_utc(dirty_mtime)
+    if last_activity is not None:
+        activity["last_activity_at"] = isoformat_utc(last_activity)
+    if activity == previous:
+        return False
+    worker["worktree_activity"] = activity
+    return True
+
+
 @_entrypoint
 def is_worktree_lease_block_repaired(entry: dict[str, Any]) -> bool:
     """Return True when a recorded lease block's worktree is verified clean and idle."""

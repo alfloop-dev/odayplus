@@ -14,8 +14,14 @@ from __future__ import annotations
 from datetime import date
 
 from modules.adlift import AdCampaign, StoreDayMetric, run_incrementality
-from modules.forecastops import ForecastInput, StoreDayObservation, forecast_stores
+from modules.forecastops import (
+    ForecastInput,
+    StoreDayObservation,
+    default_forecast_alert_policy,
+    forecast_stores,
+)
 from modules.priceops import PriceElasticityEstimate
+from shared.governance import InMemoryDecisionPolicyRepository
 from solver.pricing.demand import ElasticityFit, estimate_elasticity
 
 # --- scikit-learn elasticity estimation -----------------------------------
@@ -163,7 +169,12 @@ def test_prediction_band_width_reflects_series_volatility() -> None:
         "noisy", [800.0, 1_200.0, 800.0, 1_200.0, 800.0, 1_200.0, 800.0, 1_200.0, 800.0, 1_200.0]
     )
 
-    outputs, _alerts, _handoffs = forecast_stores([smooth, noisy])
+    outputs, _alerts, _handoffs = forecast_stores(
+        [smooth, noisy],
+        policy_repository=InMemoryDecisionPolicyRepository(
+            [default_forecast_alert_policy("tenant-test")]
+        ),
+    )
     by_store = {output.store_id: output for output in outputs}
 
     def relative_width(store_id: str) -> float:

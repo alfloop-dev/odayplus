@@ -43,6 +43,7 @@ __all__ = [
     "UNDER_REALIZED_RATIO_KEY",
     "AbsorbingStoreObservation",
     "AbsorptionInputError",
+    "AbsorptionNotMeasurableError",
     "AbsorptionResult",
     "compute_absorbed_demand",
 ]
@@ -61,6 +62,14 @@ class AbsorptionInputError(ValueError):
     cannot be computed must keep its previous standing and say so, not silently
     read as "nothing absorbed" -- which would rank it as though it were still
     untouched.
+    """
+
+
+class AbsorptionNotMeasurableError(AbsorptionInputError):
+    """The supplied evidence is valid but cannot produce a measurement yet.
+
+    This is distinct from malformed or contradictory input so application
+    assemblers can refuse the measurement without parsing exception prose.
     """
 
 
@@ -198,7 +207,7 @@ def compute_absorbed_demand(
         # Distinct from "nothing absorbed": with no observations at all there is
         # no evidence either way, and the caller must not record a zero as if it
         # had been measured.
-        raise AbsorptionInputError(
+        raise AbsorptionNotMeasurableError(
             "no store observations supplied; absorption cannot be measured without "
             "realised revenue"
         )
@@ -224,7 +233,7 @@ def compute_absorbed_demand(
         eligible.append(obs)
 
     if not eligible:
-        raise AbsorptionInputError(
+        raise AbsorptionNotMeasurableError(
             f"every observed store is inside the {min_days}-day ramp window; "
             "absorption is not measurable yet for this zone"
         )

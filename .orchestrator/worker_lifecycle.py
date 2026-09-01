@@ -705,6 +705,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 continue
         previous_last_event_at = worker.get("last_event_at")
         previous_last_process_activity_at = worker.get("last_process_activity_at")
+        previous_worktree_activity_at = (
+            (worker.get("worktree_activity") or {}).get("last_activity_at")
+            if isinstance(worker.get("worktree_activity"), dict)
+            else None
+        )
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
             if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):
                 task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
@@ -743,6 +748,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         runner_reports_failure = _runner_reports_failure(worker)
         if not runner_reports_failure:
             update_from_log(config, worker)
+        worktree_activity_changed = observe_worker_worktree_activity(
+            config,
+            state,
+            worker,
+            task_map.get(str(worker.get("task_id") or "")),
+            now=now,
+        )
+        if worktree_activity_changed:
+            changed = True
         try:
             adopted_approval = (
                 correlate_deferred_tool_approval(config, worker, approval_state)
@@ -888,6 +902,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         process_activity_advanced = bool(
             worker.get("last_process_activity_at")
             and worker.get("last_process_activity_at") > str(previous_last_process_activity_at or "")
+        )
+        current_worktree_activity_at = (
+            (worker.get("worktree_activity") or {}).get("last_activity_at")
+            if isinstance(worker.get("worktree_activity"), dict)
+            else None
+        )
+        worktree_activity_advanced = bool(
+            current_worktree_activity_at
+            and current_worktree_activity_at > str(previous_worktree_activity_at or "")
         )
         if not runner_reports_failure and manual_pending_inbox_can_auto_redeliver(
             config, state, provider_report, worker
@@ -1231,7 +1254,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
 
         if alive:
-            if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
+            if worker.get("status") == "stalled" and (
+                last_event_advanced or process_activity_advanced or worktree_activity_advanced
+            ):
                 worker["status"] = "running"
                 write_activity_log(
                     config,
@@ -1239,7 +1264,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "type": "worker_recovered",
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
-                        "message": "Worker produced output or process activity after being marked stalled; status restored to running.",
+                        "message": "Worker produced output, process, or worktree activity after being marked stalled; status restored to running.",
                         "worker_run_id": worker["run_id"],
                     },
                 )
@@ -1286,7 +1311,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     continue
             activity_times = [
                 parse_iso_timestamp(str(value or ""))
-                for value in (worker.get("last_event_at"), worker.get("last_process_activity_at"))
+                for value in (
+                    worker.get("last_event_at"),
+                    worker.get("last_process_activity_at"),
+                    current_worktree_activity_at,
+                )
             ]
             activity_times = [value.astimezone(UTC) for value in activity_times if value is not None]
             if activity_times:

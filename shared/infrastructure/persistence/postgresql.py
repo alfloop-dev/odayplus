@@ -52,6 +52,7 @@ _REQUIRED_RELATIONS = (
     "core.stores",
     "core.tenants",
     "core.transactions",
+    "workflow.decision_policies",
 )
 
 
