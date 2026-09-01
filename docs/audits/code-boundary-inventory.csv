@@ -470,6 +470,7 @@ modules/listing/domain/intake_states.py,product_system,product_required,true,,en
 modules/listing/domain/models.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/listing/tests/test_promotion_candidate_gate.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/market_intelligence_api/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/market_intelligence_api/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/market_intelligence_api/application/auth.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -545,6 +546,7 @@ modules/opsboard/infrastructure/__init__.py,product_system,product_required,true
 modules/opsboard/infrastructure/seed_data.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/integrations/emgi.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/persistence/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/opsboard/tests/test_network_listing_geocode_mapping.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/priceops/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/priceops/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/priceops/application/pricing.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
