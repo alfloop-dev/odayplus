@@ -7,7 +7,9 @@ import {
   type PlanGanttActionItem,
   type PlanGanttDependency,
 } from "../PlanGanttChart";
+import { RebalancePanel } from "../RebalancePanel";
 import type { NetPlanDiagnostic } from "../../types";
+import type { RebalanceQueueRow } from "../../networkFindAreasViewModel";
 
 afterEach(cleanup);
 
@@ -33,7 +35,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
       risk_score: 0.3,
       capacity_delta: 20,
       is_binding: true,
-      binding_reasons: ["max_budget (超過區域改善預算上限)"],
+      binding_reasons: ["max_budget: STORE-101 改善預算受限"],
     },
     {
       entity_id: "STORE-202",
@@ -112,13 +114,13 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     },
   ];
 
-  it("1. Renders horizontal quarter axis and rows for each planning entity", () => {
+  it("1. Renders horizontal quarter axis and rows for each planning entity from backend data", () => {
     render(
       <PlanGanttChart
         scenarioId="NP-2026-Q1-Q4"
         scenarioName="2026 全年店網重配優化方案"
-        policyId="netplan-network-policy"
-        policyVersion="netplan-network-policy-v1"
+        policyId="pol-net-001"
+        policyVersion="pol-v2.1"
         quarters={["2026Q1", "2026Q2", "2026Q3", "2026Q4"]}
         actions={sampleActions}
       />
@@ -188,7 +190,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(openBar).toHaveTextContent("OPEN");
   });
 
-  it("3. Renders dependency lines expressing ODP-FR-NET-002 temporal hard constraints", () => {
+  it("3. Renders authoritative dependency lines without generating fake synthetic sequence links", () => {
     render(
       <PlanGanttChart
         actions={sampleActions}
@@ -203,7 +205,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
 
     // Verify dependency lines are drawn
     const lines = screen.getAllByTestId("gantt-dependency-line");
-    expect(lines.length).toBeGreaterThanOrEqual(2);
+    expect(lines.length).toBe(2);
 
     // Verify accessible textual summary list of ODP-FR-NET-002 temporal constraints
     const depList = screen.getByTestId("gantt-dependencies-list");
@@ -213,7 +215,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(depList).toHaveTextContent("SITE-C01");
   });
 
-  it("4. Highlights Binding Constraints and conflicts with warning alert styling", () => {
+  it("4. Highlights only affected Binding Constraints and leaves unaffected stores unflagged (Regression Test)", () => {
     render(
       <PlanGanttChart
         actions={sampleActions}
@@ -230,13 +232,25 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(summaryBox).toHaveTextContent("max_budget");
     expect(summaryBox).toHaveTextContent("solver cannot produce a complete quarter action list");
 
-    // Verify warning badge on the affected action bar
+    // Affected store: STORE-101 in 2026Q2 is flagged as binding
     const bindingBadge = screen.getByTestId("gantt-binding-badge-STORE-101-2026Q2");
     expect(bindingBadge).toBeInTheDocument();
     expect(bindingBadge).toHaveTextContent("⚠️ Binding");
+    const affectedBar = screen.getByTestId("gantt-bar-STORE-101-2026Q2");
+    expect(affectedBar).toHaveAttribute("data-is-binding", "true");
 
-    const bar = screen.getByTestId("gantt-bar-STORE-101-2026Q2");
-    expect(bar).toHaveAttribute("data-is-binding", "true");
+    // Unaffected stores: MUST NOT be marked as binding (prevents blanket rawBindingConstraints bug!)
+    const unaffectedBar1 = screen.getByTestId("gantt-bar-STORE-202-2026Q1");
+    expect(unaffectedBar1).toHaveAttribute("data-is-binding", "false");
+    expect(screen.queryByTestId("gantt-binding-badge-STORE-202-2026Q1")).not.toBeInTheDocument();
+
+    const unaffectedBar2 = screen.getByTestId("gantt-bar-STORE-202-2026Q2");
+    expect(unaffectedBar2).toHaveAttribute("data-is-binding", "false");
+    expect(screen.queryByTestId("gantt-binding-badge-STORE-202-2026Q2")).not.toBeInTheDocument();
+
+    const unaffectedBar3 = screen.getByTestId("gantt-bar-SITE-C02-2026Q4");
+    expect(unaffectedBar3).toHaveAttribute("data-is-binding", "false");
+    expect(screen.queryByTestId("gantt-binding-badge-SITE-C02-2026Q4")).not.toBeInTheDocument();
   });
 
   it("5. Provides equivalent table view with complete information parity and view toggle", () => {
@@ -244,7 +258,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
       <PlanGanttChart
         actions={sampleActions}
         quarters={["2026Q1", "2026Q2", "2026Q3", "2026Q4"]}
-        bindingConstraints={["max_budget"]}
+        bindingConstraints={["max_budget: STORE-101"]}
         defaultView="gantt"
       />
     );
@@ -270,8 +284,8 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(screen.getByTestId("table-row-SITE-C01-2026Q3")).toHaveTextContent("MOVE");
     expect(screen.getByTestId("table-row-SITE-C02-2026Q4")).toHaveTextContent("OPEN");
 
-    // Verify binding constraint tag in table
-    expect(screen.getByTestId("table-binding-tag-STORE-101")).toBeInTheDocument();
+    // Verify binding constraint tag in table for affected entity
+    expect(screen.getByTestId("table-binding-tag-STORE-101-2026Q2")).toBeInTheDocument();
 
     // Toggle back to Gantt view
     const ganttToggleBtn = screen.getByTestId("view-toggle-gantt");
@@ -279,13 +293,13 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(screen.getByTestId("gantt-view-container")).toBeInTheDocument();
   });
 
-  it("6. Renders both policy_id and policy_version on approval / scenario header", () => {
-    render(
+  it("6. Renders authoritative policy_id and policy_version without hardcoded defaults", () => {
+    const { rerender } = render(
       <PlanGanttChart
         scenarioId="NP-SCENARIO-AUDIT-001"
         scenarioName="旗艦店網核准方案"
-        policyId="netplan-network-policy"
-        policyVersion="netplan-network-policy-v1"
+        policyId="gov-policy-alpha-001"
+        policyVersion="v3.4.1"
         solverVersion="netplan-ortools-mip-v1"
         objectiveScore={1840000.5}
         actions={sampleActions}
@@ -299,33 +313,67 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     // Verify policy_id is explicitly presented
     const policyIdElem = screen.getByTestId("gantt-policy-id");
     expect(policyIdElem).toBeInTheDocument();
-    expect(policyIdElem).toHaveTextContent("netplan-network-policy");
+    expect(policyIdElem).toHaveTextContent("gov-policy-alpha-001");
 
     // Verify policy_version is explicitly presented
     const policyVersionElem = screen.getByTestId("gantt-policy-version");
     expect(policyVersionElem).toBeInTheDocument();
-    expect(policyVersionElem).toHaveTextContent("netplan-network-policy-v1");
+    expect(policyVersionElem).toHaveTextContent("v3.4.1");
 
-    // Verify solver version and score
-    expect(screen.getByTestId("gantt-solver-version")).toHaveTextContent("netplan-ortools-mip-v1");
-    expect(screen.getByTestId("gantt-objective-score")).toHaveTextContent("1840000.5");
+    // Re-render without policy_id/policy_version -> must NOT synthesize fallback strings
+    rerender(
+      <PlanGanttChart
+        scenarioId="NP-SCENARIO-AUDIT-002"
+        scenarioName="未指定政策方案"
+        actions={sampleActions}
+      />
+    );
+
+    expect(screen.getByTestId("gantt-policy-id")).toHaveTextContent("—");
+    expect(screen.getByTestId("gantt-policy-version")).toHaveTextContent("—");
   });
 
-  it("7. Handles empty actions gracefully without errors", () => {
+  it("7. Does not synthesize fake quarters when actions lack quarter metadata", () => {
+    // Actions without any quarter metadata (like pure ActionOption.to_dict output)
+    const rawActionOptions: PlanGanttActionItem[] = [
+      {
+        entity_id: "STORE-303",
+        action: "IMPROVE",
+        budget_cost: 500000,
+        expected_gross_margin: 700000,
+        risk_score: 0.2,
+      },
+    ];
+
+    render(
+      <PlanGanttChart
+        scenarioId="NP-NO-QUARTERS"
+        actions={rawActionOptions}
+      />
+    );
+
+    // In Gantt view, because no quarters exist, empty state is displayed rather than fake Q1..Q4
+    expect(screen.getByTestId("gantt-empty-state")).toHaveTextContent("尚無規劃實體或季度行動資料");
+
+    // Switch to Table view: flat list shows the action with '—' quarter
+    fireEvent.click(screen.getByTestId("view-toggle-table"));
+    expect(screen.getByTestId("table-row-STORE-303-")).toHaveTextContent("STORE-303");
+    expect(screen.getByTestId("table-row-STORE-303-")).toHaveTextContent("IMPROVE");
+  });
+
+  it("8. Handles empty actions gracefully without errors", () => {
     render(
       <PlanGanttChart
         scenarioId="NP-EMPTY"
         scenarioName="空白規劃方案"
-        policyId="netplan-network-policy"
-        policyVersion="netplan-network-policy-v1"
         actions={[]}
       />
     );
 
-    expect(screen.getByTestId("gantt-empty-state")).toHaveTextContent("尚無規劃實體或行動資料");
+    expect(screen.getByTestId("gantt-empty-state")).toHaveTextContent("尚無規劃實體或季度行動資料");
   });
 
-  it("8. Fires onActionClick handler when clicking an action bar", () => {
+  it("9. Fires onActionClick handler when clicking an action bar", () => {
     const handleClick = vi.fn();
     render(
       <PlanGanttChart
@@ -344,5 +392,96 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
         action: "OPEN",
       })
     );
+  });
+
+  it("10. Integration: RebalancePanel renders authoritative actions and policy without synthetic fabrication", () => {
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-01",
+        storeId: "STORE-REB-01",
+        storeName: "中壢站前店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "低效門市評估",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-KEEP-01",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-KEEP-01",
+            name: "方案 A: 既有門市改善",
+            roi: "18.5%",
+            inv: "450K",
+            payback: "1.2 年",
+            risk: "低",
+            time: "2026Q1",
+            policy_id: "pol-gov-network-2026",
+            policy_version: "v2.0",
+            score: 88.5,
+            actions: [
+              {
+                entity_id: "STORE-REB-01",
+                entity_name: "中壢站前店",
+                quarter: "2026Q1",
+                action: "IMPROVE",
+                budget_cost: 450000,
+                expected_gross_margin: 620000,
+                risk_score: 0.25,
+              },
+            ],
+          },
+          {
+            id: "SCENARIO-EMPTY-02",
+            name: "方案 B: 無行動空案",
+            roi: "0%",
+            inv: "0",
+            payback: "—",
+            risk: "高",
+            time: "—",
+            // Notice: actions is missing/empty!
+          },
+        ],
+      },
+    ];
+
+    const { rerender } = render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={vi.fn()}
+      />
+    );
+
+    // 1. Verify selection section renders PlanGanttChart with authoritative policy metadata
+    expect(screen.getByTestId("rebalance-selection-STORE-REB-01")).toBeInTheDocument();
+    expect(screen.getByTestId("gantt-policy-id")).toHaveTextContent("pol-gov-network-2026");
+    expect(screen.getByTestId("gantt-policy-version")).toHaveTextContent("v2.0");
+    expect(screen.getByTestId("gantt-bar-STORE-REB-01-2026Q1")).toHaveTextContent("IMPROVE");
+
+    // 2. Select scenario with NO actions -> verify RebalancePanel does NOT synthesize fake actions!
+    const rowWithEmptyScenario: RebalanceQueueRow[] = [
+      {
+        ...mockRows[0],
+        selectedScenarioId: "SCENARIO-EMPTY-02",
+      },
+    ];
+
+    rerender(
+      <RebalancePanel
+        rows={rowWithEmptyScenario}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={vi.fn()}
+      />
+    );
+
+    // Empty state should be shown, NOT synthetic EXIT/MOVE/IMPROVE actions!
+    expect(screen.getByTestId("gantt-empty-state")).toHaveTextContent("尚無規劃實體或季度行動資料");
+    expect(screen.queryByTestId("gantt-bar-STORE-REB-01-2026Q1")).not.toBeInTheDocument();
+    expect(screen.getByTestId("gantt-policy-id")).toHaveTextContent("—");
   });
 });

@@ -71,10 +71,6 @@ export interface PlanGanttProps {
   isApprovalView?: boolean;
 }
 
-const DEFAULT_POLICY_ID = "netplan-network-policy";
-const DEFAULT_POLICY_VERSION = "netplan-network-policy-v1";
-const DEFAULT_QUARTERS = ["Q1", "Q2", "Q3", "Q4"];
-
 export const ACTION_COLOR_CLASSES: Record<string, string> = {
   OPEN: styles.actionOpen,
   KEEP: styles.actionKeep,
@@ -110,7 +106,7 @@ function normalizeAction(raw: string | undefined): NetworkPlanActionType {
   return "KEEP";
 }
 
-function parseEntityAndQuarter(actionItem: PlanGanttActionItem, defaultQuarterFallback: string): {
+function parseEntityAndQuarter(actionItem: PlanGanttActionItem): {
   entityId: string;
   entityName: string;
   quarter: string;
@@ -123,7 +119,7 @@ function parseEntityAndQuarter(actionItem: PlanGanttActionItem, defaultQuarterFa
     return {
       entityId: rawEntityId,
       entityName: rawName || rawEntityId,
-      quarter: rawQuarter.toUpperCase(),
+      quarter: rawQuarter.toUpperCase().trim(),
     };
   }
 
@@ -133,14 +129,14 @@ function parseEntityAndQuarter(actionItem: PlanGanttActionItem, defaultQuarterFa
     return {
       entityId: colonMatch[1],
       entityName: rawName || colonMatch[1],
-      quarter: colonMatch[2].toUpperCase(),
+      quarter: colonMatch[2].toUpperCase().trim(),
     };
   }
 
   return {
     entityId: rawEntityId,
     entityName: rawName || rawEntityId,
-    quarter: defaultQuarterFallback,
+    quarter: "",
   };
 }
 
@@ -153,6 +149,25 @@ function formatCurrency(val?: number): string {
     return `NT$${(val / 1_000).toFixed(0)}K`;
   }
   return `NT$${val.toLocaleString()}`;
+}
+
+function checkActionBinding(
+  actionItem: PlanGanttActionItem,
+  entityId: string,
+  diagnostics?: NetPlanDiagnostic[],
+  bindingConstraints?: string[]
+): { isBinding: boolean; bindingReasons: string[] } {
+  const isExplicitBinding = Boolean(actionItem.is_binding || actionItem.isBinding);
+  const isDiagnosed = Boolean(
+    diagnostics?.some((d) => d.affected_stores.includes(entityId))
+  );
+  const matchingConstraints = (bindingConstraints || []).filter((c) =>
+    c.toLowerCase().includes(entityId.toLowerCase())
+  );
+  const explicitReasons = actionItem.binding_reasons || actionItem.bindingReasons || [];
+  const allReasons = Array.from(new Set([...explicitReasons, ...matchingConstraints]));
+  const isBinding = isExplicitBinding || isDiagnosed || matchingConstraints.length > 0 || explicitReasons.length > 0;
+  return { isBinding, bindingReasons: allReasons };
 }
 
 export function PlanGanttChart({
@@ -180,28 +195,27 @@ export function PlanGanttChart({
   const [activeView, setActiveView] = useState<"gantt" | "table">(defaultView);
   const arrowMarkerId = useId();
 
-  const effectivePolicyId = policyId || policy_id || DEFAULT_POLICY_ID;
-  const effectivePolicyVersion = policyVersion || policy_version || DEFAULT_POLICY_VERSION;
-  const effectiveSolverVersion = solverVersion || solver_version || "netplan-ortools-mip-v1";
+  const effectivePolicyId = policyId || policy_id || null;
+  const effectivePolicyVersion = policyVersion || policy_version || null;
+  const effectiveSolverVersion = solverVersion || solver_version || null;
   const rawActions = useMemo(() => actions || selected_actions || [], [actions, selected_actions]);
   const rawBindingConstraints = useMemo(
     () => bindingConstraints || binding_constraints || [],
     [bindingConstraints, binding_constraints]
   );
 
-  // Discover and sort all quarters
+  // Discover and sort all backend-provided quarters
   const quarters = useMemo(() => {
     if (customQuarters && customQuarters.length > 0) {
       return customQuarters;
     }
     const foundQuarters = new Set<string>();
-    rawActions.forEach((item, index) => {
-      const parsed = parseEntityAndQuarter(item, DEFAULT_QUARTERS[index % DEFAULT_QUARTERS.length]);
-      foundQuarters.add(parsed.quarter);
+    rawActions.forEach((item) => {
+      const parsed = parseEntityAndQuarter(item);
+      if (parsed.quarter) {
+        foundQuarters.add(parsed.quarter);
+      }
     });
-    if (foundQuarters.size === 0) {
-      return DEFAULT_QUARTERS;
-    }
     return Array.from(foundQuarters).sort();
   }, [customQuarters, rawActions]);
 
@@ -222,9 +236,8 @@ export function PlanGanttChart({
       dependencies: string[];
     }> = [];
 
-    rawActions.forEach((item, index) => {
-      const fallbackQuarter = quarters[index % quarters.length] || DEFAULT_QUARTERS[0];
-      const parsed = parseEntityAndQuarter(item, fallbackQuarter);
+    rawActions.forEach((item) => {
+      const parsed = parseEntityAndQuarter(item);
       const actionType = normalizeAction(item.action);
 
       entitySet.add(parsed.entityId);
@@ -233,22 +246,20 @@ export function PlanGanttChart({
         entityTypes[parsed.entityId] = (item.entity_type || item.entityType)!;
       }
 
-      if (!map[parsed.entityId]) {
-        map[parsed.entityId] = {};
+      if (parsed.quarter) {
+        if (!map[parsed.entityId]) {
+          map[parsed.entityId] = {};
+        }
+        map[parsed.entityId][parsed.quarter] = item;
       }
-      map[parsed.entityId][parsed.quarter] = item;
 
-      // Check binding constraint status
-      const isExplicitBinding = Boolean(item.is_binding || item.isBinding);
-      const isDiagnosed = Boolean(
-        diagnostics?.some((d) => d.affected_stores.includes(parsed.entityId))
+      // Check binding constraint status strictly scoped to this entity
+      const { isBinding, bindingReasons } = checkActionBinding(
+        item,
+        parsed.entityId,
+        diagnostics,
+        rawBindingConstraints
       );
-      const matchingBindingConstraints = rawBindingConstraints.filter(
-        (c) =>
-          c.toLowerCase().includes(parsed.entityId.toLowerCase()) ||
-          c.toLowerCase().includes(actionType.toLowerCase())
-      );
-      const isBinding = isExplicitBinding || isDiagnosed || matchingBindingConstraints.length > 0;
 
       const itemDependencies = item.depends_on || item.dependsOn || [];
 
@@ -259,7 +270,7 @@ export function PlanGanttChart({
         action: actionType,
         raw: item,
         isBinding,
-        bindingReasons: item.binding_reasons || item.bindingReasons || matchingBindingConstraints,
+        bindingReasons,
         dependencies: itemDependencies,
       });
     });
@@ -275,9 +286,9 @@ export function PlanGanttChart({
       entityActionMap: map,
       parsedActionList: flatList,
     };
-  }, [rawActions, quarters, diagnostics, rawBindingConstraints]);
+  }, [rawActions, diagnostics, rawBindingConstraints]);
 
-  // Derive ODP-FR-NET-002 temporal dependencies
+  // Resolve authoritative ODP-FR-NET-002 dependencies (no synthetic cross-quarter generation)
   const resolvedDependencies = useMemo<PlanGanttDependency[]>(() => {
     if (dependencies && dependencies.length > 0) {
       return dependencies;
@@ -285,47 +296,23 @@ export function PlanGanttChart({
 
     const result: PlanGanttDependency[] = [];
 
-    // 1. Explicit item dependencies
+    // Explicit item dependencies only
     parsedActionList.forEach((item) => {
       item.dependencies.forEach((depEntityId, idx) => {
         result.push({
           id: `dep-explicit-${item.entityId}-${depEntityId}-${idx}`,
           fromEntityId: depEntityId,
           toEntityId: item.entityId,
-          toQuarter: item.quarter,
+          toQuarter: item.quarter || undefined,
           type: "precedence",
           label: "時序相依 (Precedence)",
-          description: `ODP-FR-NET-002: ${depEntityId} 必須在 ${item.entityId} (${item.quarter}) 之前完成`,
+          description: `ODP-FR-NET-002: ${depEntityId} 必須在 ${item.entityId}${item.quarter ? ` (${item.quarter})` : ""} 之前完成`,
         });
       });
     });
 
-    // 2. Temporal sequence constraints across quarters for the same entity or MOVE/TRANSFER
-    entities.forEach((entity) => {
-      const quartersWithAction = quarters.filter((q) => entityActionMap[entity.id]?.[q]);
-      for (let i = 0; i < quartersWithAction.length - 1; i++) {
-        const q1 = quartersWithAction[i];
-        const q2 = quartersWithAction[i + 1];
-        const a1 = entityActionMap[entity.id][q1];
-        const a2 = entityActionMap[entity.id][q2];
-        const act1 = normalizeAction(a1.action);
-        const act2 = normalizeAction(a2.action);
-
-        result.push({
-          id: `dep-temporal-${entity.id}-${q1}-${q2}`,
-          fromEntityId: entity.id,
-          fromQuarter: q1,
-          toEntityId: entity.id,
-          toQuarter: q2,
-          type: "temporal_hard_constraint",
-          label: `ODP-FR-NET-002 ${act1} → ${act2}`,
-          description: `ODP-FR-NET-002 時序硬限制: ${entity.id} 於 ${q1} (${act1}) 必須先行於 ${q2} (${act2})`,
-        });
-      }
-    });
-
     return result;
-  }, [dependencies, parsedActionList, entities, quarters, entityActionMap]);
+  }, [dependencies, parsedActionList]);
 
   return (
     <section
@@ -354,18 +341,20 @@ export function PlanGanttChart({
             data-testid="gantt-policy-id"
             title="方案政策識別碼 (policy_id)"
           >
-            policy_id: <strong>{effectivePolicyId}</strong>
+            policy_id: <strong>{effectivePolicyId ?? "—"}</strong>
           </span>
           <span
             className={`${styles.policyBadge} ${styles.policyBadgeStrong}`}
             data-testid="gantt-policy-version"
             title="方案政策版本 (policy_version)"
           >
-            policy_version: <strong>{effectivePolicyVersion}</strong>
+            policy_version: <strong>{effectivePolicyVersion ?? "—"}</strong>
           </span>
-          <span className={styles.policyBadge} data-testid="gantt-solver-version">
-            solver: {effectiveSolverVersion}
-          </span>
+          {effectiveSolverVersion ? (
+            <span className={styles.policyBadge} data-testid="gantt-solver-version">
+              solver: {effectiveSolverVersion}
+            </span>
+          ) : null}
           {objectiveScore !== undefined ? (
             <span className={styles.policyBadge} data-testid="gantt-objective-score">
               score: {objectiveScore.toFixed(1)}
@@ -434,9 +423,9 @@ export function PlanGanttChart({
       {/* Gantt Chart View */}
       {activeView === "gantt" && (
         <div className={styles.ganttScrollWrapper} data-testid="gantt-view-container">
-          {entities.length === 0 ? (
+          {entities.length === 0 || quarters.length === 0 ? (
             <div className={styles.emptyState} data-testid="gantt-empty-state">
-              尚無規劃實體或行動資料
+              尚無規劃實體或季度行動資料
             </div>
           ) : (
             <div
@@ -557,11 +546,12 @@ export function PlanGanttChart({
                       }
 
                       const actionType = normalizeAction(actionItem.action);
-                      const isExplicitBinding = Boolean(actionItem.is_binding || actionItem.isBinding);
-                      const isDiagnosed = Boolean(
-                        diagnostics?.some((d) => d.affected_stores.includes(entity.id))
+                      const { isBinding } = checkActionBinding(
+                        actionItem,
+                        entity.id,
+                        diagnostics,
+                        rawBindingConstraints
                       );
-                      const isBinding = isExplicitBinding || isDiagnosed || rawBindingConstraints.length > 0;
                       const gm = actionItem.expected_gross_margin ?? actionItem.expectedGrossMargin;
                       const cost = actionItem.budget_cost ?? actionItem.budgetCost;
 
@@ -675,7 +665,7 @@ export function PlanGanttChart({
                     </td>
                     <td>
                       {item.isBinding ? (
-                        <span className={styles.constraintTag} data-testid={`table-binding-tag-${item.entityId}`}>
+                        <span className={styles.constraintTag} data-testid={`table-binding-tag-${item.entityId}-${item.quarter || 'noq'}`}>
                           ⚠️ {item.bindingReasons.length > 0 ? item.bindingReasons.join(", ") : "Binding Constraint"}
                         </span>
                       ) : (

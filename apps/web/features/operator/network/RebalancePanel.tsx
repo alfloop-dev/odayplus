@@ -269,23 +269,13 @@ export function RebalancePanel({
               <PlanGanttChart
                 scenarioId={selectedScenario?.id ?? selected.selectedScenarioId}
                 scenarioName={selectedScenario?.name ?? `NetPlan: ${selected.storeName}`}
-                policyId={selectedScenario?.policy_id || selectedScenario?.policyId || "netplan-network-policy"}
-                policyVersion={selectedScenario?.policy_version || selectedScenario?.policyVersion || selectedScenario?.modelVersion || "netplan-network-policy-v1"}
-                solverVersion={selectedScenario?.solverVersion || "netplan-ortools-mip-v1"}
+                policyId={selectedScenario?.policy_id || selectedScenario?.policyId}
+                policyVersion={selectedScenario?.policy_version || selectedScenario?.policyVersion}
+                solverVersion={selectedScenario?.solverVersion}
                 objectiveScore={selectedScenario?.score}
-                actions={selectedScenario?.actions || [
-                  {
-                    entity_id: selected.storeId || selected.id,
-                    entity_name: selected.storeName,
-                    quarter: "2026Q1",
-                    action: selectedScenario?.name?.includes("Exit") ? "EXIT" : selectedScenario?.name?.includes("Move") ? "MOVE" : "IMPROVE",
-                    budget_cost: selectedScenario?.investmentTwd || (selectedScenario?.inv?.includes("450K") ? 450000 : 1900000),
-                    expected_gross_margin: 620000,
-                    risk_score: 0.35,
-                    is_binding: selectedScenario?.isInfeasible,
-                  },
-                ]}
-                bindingConstraints={selectedScenario?.bindingConstraints || (selectedScenario?.diagnostics?.map((d) => d.violated_constraint) ?? [])}
+                actions={selectedScenario?.actions || selectedScenario?.selected_actions}
+                bindingConstraints={selectedScenario?.bindingConstraints || selectedScenario?.binding_constraints || (selectedScenario?.diagnostics?.map((d) => d.violated_constraint) ?? [])}
+                dependencies={selectedScenario?.dependencies}
                 diagnostics={selectedScenario?.diagnostics}
               />
             </section>
