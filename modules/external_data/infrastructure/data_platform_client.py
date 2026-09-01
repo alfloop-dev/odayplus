@@ -32,6 +32,7 @@ from packages.oday_data_contracts_client import (
 )
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
+    OperationalStartObservation,
     StoreDailyPerformance,
     StoreDayCoverage,
     StoreReference,
@@ -889,6 +890,26 @@ class DataPlatformClient:
         except Exception as err:
             raise DataPlatformValidationError(
                 f"Failed to parse StoreDailyPerformance: {err}"
+            ) from err
+
+    def get_operational_start_observation(self, store_id: str) -> OperationalStartObservation:
+        """Retrieve OperationalStartObservation for store_id."""
+        doc_id = store_id
+        raw = self._transport.fetch_document(
+            "oday.operational-start-observation.v1",
+            document_id=doc_id,
+            params={"store_id": store_id},
+        )
+        if raw is None:
+            raise DataPlatformDocumentNotFoundError(
+                f"OperationalStartObservation not found for store_id={store_id}",
+                details={"store_id": store_id},
+            )
+        try:
+            return OperationalStartObservation.from_dict(raw)
+        except Exception as err:
+            raise DataPlatformValidationError(
+                f"Failed to parse OperationalStartObservation: {err}"
             ) from err
 
 

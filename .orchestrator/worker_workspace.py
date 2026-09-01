@@ -574,6 +574,184 @@ def compute_worktree_state_identity(
     return f"{inspection.kind}:{inspection.fingerprint}:{head_sha}"
 
 
+def _worker_worktree_activity_failure(worker: dict[str, Any], reason: str) -> bool:
+    """Record a non-healthy worktree probe without retaining sensitive detail."""
+    previous = worker.get("worktree_activity")
+    previous = dict(previous) if isinstance(previous, dict) else {}
+    activity = {
+        "status": "unverifiable",
+        "reason": reason,
+    }
+    if previous.get("last_activity_at"):
+        activity["last_activity_at"] = previous["last_activity_at"]
+    if previous.get("head_sha"):
+        activity["head_sha"] = previous["head_sha"]
+    if previous.get("dirty_mtime_at"):
+        activity["dirty_mtime_at"] = previous["dirty_mtime_at"]
+    if previous.get("dirty_path_count") is not None:
+        activity["dirty_path_count"] = previous["dirty_path_count"]
+    if activity == previous:
+        return False
+    worker["worktree_activity"] = activity
+    return True
+
+
+@_entrypoint
+def observe_worker_worktree_activity(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None = None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Observe trusted task-worktree activity for the lifecycle stall guard.
+
+    This is deliberately a probe, not a lease or scheduler.  A worker's
+    Supervisor-created task worktree is trusted only when its path, branch,
+    repository common directory, and registered worktree record still agree.
+    Git status is then reduced to task-owned (blocking) entries; Supervisor
+    materialized context is excluded by the same cleanliness policy used at
+    handoff.  The worker record keeps only opaque state needed to compare the
+    next poll: timestamps, a commit SHA, a count, and reason codes.
+    """
+    now_dt = (now or datetime.now(UTC)).astimezone(UTC)
+    if str(worker.get("workspace_mode") or "") != "isolated_worktree":
+        # Legacy/file-inbox workers have no trusted worktree activity source.
+        return False
+
+    raw_path = str(worker.get("workspace_path") or "").strip()
+    if not raw_path:
+        return _worker_worktree_activity_failure(worker, "missing_worktree")
+    try:
+        worktree_path = Path(raw_path).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return _worker_worktree_activity_failure(worker, "unresolvable_worktree")
+    if not worktree_path.exists() or not worktree_path.is_dir() or not (worktree_path / ".git").exists():
+        return _worker_worktree_activity_failure(worker, "missing_worktree")
+
+    # A path in worker state is not sufficient authority by itself. Reuse the
+    # registry binding and worktree identity checks from workspace leasing so a
+    # stale/foreign checkout cannot manufacture a fresh activity timestamp.
+    try:
+        task_record = task if isinstance(task, dict) else canonical_task_record(config, worker.get("task_id"))
+        if not isinstance(task_record, dict) and worker.get("repository_id"):
+            task_record = {
+                "id": worker.get("task_id"),
+                "repository": worker.get("repository_id"),
+            }
+        repo_root, _repo_source = worker_task_repo_root(config, task_record)
+        if repo_root is None or not _worktree_matches_repo_common_dir(repo_root, worktree_path):
+            return _worker_worktree_activity_failure(worker, "untrusted_repository")
+        expected_branch = str(worker.get("workspace_branch") or "").strip()
+        if not expected_branch:
+            expected_branch = worker_task_branch(config, str(worker.get("task_id") or ""), task_record)
+        branch_rc, current_branch = _git_output(
+            worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD"
+        )
+        if branch_rc != 0 or not current_branch or current_branch != expected_branch:
+            return _worker_worktree_activity_failure(worker, "wrong_branch")
+        registered = False
+        for record in _git_worktree_records(repo_root):
+            record_path = str(record.get("worktree") or "").strip()
+            if not record_path:
+                continue
+            try:
+                same_path = Path(record_path).resolve() == worktree_path
+            except (OSError, RuntimeError, ValueError):
+                same_path = False
+            if same_path and _worktree_record_branch(record) == expected_branch:
+                registered = True
+                break
+        if not registered:
+            return _worker_worktree_activity_failure(worker, "unregistered_worktree")
+        head_sha = _git_commit_oid(worktree_path, "HEAD")
+        if not head_sha:
+            return _worker_worktree_activity_failure(worker, "head_unreadable")
+        status_proc = subprocess.run(
+            ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            cwd=worktree_path,
+            capture_output=True,
+            check=False,
+        )
+        if status_proc.returncode != 0:
+            return _worker_worktree_activity_failure(worker, "status_unreadable")
+        entries = _parse_porcelain_entries(status_proc.stdout)
+        materialized_paths = _worker_materialized_context_paths(state, worker)
+        blocking_entries = _blocking_dirt_entries(
+            entries,
+            worktree_path=worktree_path,
+            materialized_paths=materialized_paths,
+        )
+        dirty_mtimes: list[datetime] = []
+        for code, rel_path in blocking_entries:
+            try:
+                metadata = (worktree_path / rel_path).lstat()
+                dirty_mtime = datetime.fromtimestamp(metadata.st_mtime, tz=UTC)
+                # A future timestamp cannot prove that the worker wrote during
+                # this poll window.  Ignore it (as with a deleted/unreadable
+                # path) rather than clamping it to ``now``: clamping turns a
+                # single clock-skewed file into fresh activity on every poll.
+                if dirty_mtime <= now_dt:
+                    dirty_mtimes.append(dirty_mtime)
+            except FileNotFoundError:
+                # A deleted tracked path is expected to be absent at this
+                # point. Keep the rest of this status sample: another dirty
+                # path may still provide valid activity evidence.
+                if "D" in code:
+                    continue
+                return _worker_worktree_activity_failure(worker, "dirty_mtime_unreadable")
+            except (OSError, OverflowError, ValueError):
+                # A dirty path whose timestamp cannot be read is not evidence
+                # of activity. Do not let a partial status sample keep a worker
+                # alive.
+                return _worker_worktree_activity_failure(worker, "dirty_mtime_unreadable")
+    except Exception:
+        # Git/registry failures are diagnostic only. They must never become a
+        # healthy activity signal or break settlement of the worker itself.
+        return _worker_worktree_activity_failure(worker, "probe_failed")
+
+    previous = worker.get("worktree_activity")
+    previous = dict(previous) if isinstance(previous, dict) else {}
+    previous_head = str(previous.get("head_sha") or "")
+    previous_dirty_mtime = _parse_iso_utc(str(previous.get("dirty_mtime_at") or ""))
+    previous_activity = _parse_iso_utc(str(previous.get("last_activity_at") or ""))
+    dirty_mtime = max(dirty_mtimes) if dirty_mtimes else None
+
+    activity_candidates: list[datetime] = []
+    if previous_head and previous_head != head_sha:
+        # The commit timestamp is not authoritative for when this poll first
+        # observed the transition (it may have been authored earlier), so use
+        # the trusted observation time.
+        activity_candidates.append(now_dt)
+    if dirty_mtime is not None:
+        if previous_dirty_mtime is not None:
+            if dirty_mtime > previous_dirty_mtime:
+                activity_candidates.append(dirty_mtime)
+        else:
+            launch_at = _parse_iso_utc(str(worker.get("last_event_at") or ""))
+            if launch_at is None or dirty_mtime > launch_at.astimezone(UTC):
+                activity_candidates.append(dirty_mtime)
+    candidate = max(activity_candidates) if activity_candidates else None
+    last_activity = previous_activity
+    if candidate is not None and (last_activity is None or candidate > last_activity):
+        last_activity = candidate
+
+    activity: dict[str, Any] = {
+        "status": "verified",
+        "head_sha": head_sha,
+        "dirty_path_count": len(blocking_entries),
+    }
+    if dirty_mtime is not None:
+        activity["dirty_mtime_at"] = isoformat_utc(dirty_mtime)
+    if last_activity is not None:
+        activity["last_activity_at"] = isoformat_utc(last_activity)
+    if activity == previous:
+        return False
+    worker["worktree_activity"] = activity
+    return True
+
+
 @_entrypoint
 def is_worktree_lease_block_repaired(entry: dict[str, Any]) -> bool:
     """Return True when a recorded lease block's worktree is verified clean and idle."""
@@ -2093,7 +2271,156 @@ def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, A
         # again. Only rate-limits the repeat: a change in the refusal mix still
         # logs immediately.
         "stall_log_interval_seconds": int(settings.get("stall_log_interval_seconds", 3600) or 0),
+        # A settled task's worktree is reclaimable whether or not its branch
+        # merged. Commits and refs live in the repository, not in the checkout,
+        # so removing a clean worktree destroys nothing the branch does not
+        # already hold. Requiring a merge kept 17 of 68 worktrees on the live
+        # host forever: their tasks were done, their branches never landed, and
+        # no later event could ever make them mergeable.
+        "reclaim_settled_unmerged": bool(settings.get("reclaim_settled_unmerged", True)),
+        # Signal init-reparented holders inside a settled task's worktree.
+        # Without this the pruner can name an orphan-pinned worktree but never
+        # act on it, which is how 28 pgserver instances -- the oldest twelve
+        # days old -- kept their worktrees pinned indefinitely.
+        "reap_orphan_holders": bool(settings.get("reap_orphan_holders", True)),
     }
+
+
+# `superseded` and `cancelled` are settled for reclaim purposes even though no
+# deliverable came out of them: the task will not be worked again, so nothing
+# will ever return to its worktree.
+_SETTLED_TASK_STATUSES = frozenset({"archived", "cancelled", "closed", "done", "superseded"})
+
+
+@_entrypoint
+def _worktree_task_id(worktree_path: Path) -> str:
+    """The task id a managed worktree directory name encodes.
+
+    Lease renewal appends `.lease_<ts>_<hex>`, and it appends again on each
+    subsequent renewal, so `odp-x-001.lease_A.lease_B` names one task rather
+    than three. Everything from the first marker on is provenance, not
+    identity.
+    """
+    base = worktree_path.name.split(".lease_", 1)[0]
+    return base.strip().upper()
+
+
+@_entrypoint
+def _task_board_settlement_index(config: dict[str, Any]) -> dict[str, str]:
+    """Map every task the board still carries to `settled` or `active`.
+
+    Read once per tick rather than once per worktree: the board is a single
+    file and a 68-worktree scan would otherwise open it 68 times.
+    """
+    from common import load_status
+
+    index: dict[str, str] = {}
+    try:
+        tasks = load_status(config).get("tasks", []) or []
+    except (OSError, ValueError):
+        return index
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip().upper()
+        if not task_id:
+            continue
+        status = str(task.get("status") or "").strip().lower()
+        index[task_id] = "settled" if status in _SETTLED_TASK_STATUSES else "active"
+    return index
+
+
+@_entrypoint
+def _task_settlement(config: dict[str, Any], task_id: str, board_index: dict[str, str]) -> str:
+    """`settled`, `active`, or `unknown` for the task owning a worktree.
+
+    `unknown` is deliberately not folded into `settled`. A directory whose name
+    matches no task on the board and none in the archive is one this function
+    cannot explain, and deciding removal from an absence of evidence is how a
+    reclaimer eats work nobody showed it. Such a worktree keeps the old
+    merged-branch requirement and is reclaimed only on the original terms.
+    """
+    if not task_id:
+        return "unknown"
+    on_board = board_index.get(task_id)
+    if on_board is not None:
+        return on_board
+    # Not on the board. `done` archives a task and drops it from the board in
+    # one step, so the archive -- not the board's silence -- is what proves
+    # settlement.
+    from common import delivery_status_root, load_json
+
+    try:
+        archive_file = delivery_status_root(config) / "ai-task-archive" / "tasks" / f"{task_id}.json"
+        if not archive_file.exists():
+            return "unknown"
+        snapshot = load_json(archive_file, default=None)
+    except (OSError, ValueError):
+        return "unknown"
+    if not isinstance(snapshot, dict):
+        return "unknown"
+    task = snapshot.get("task")
+    if not isinstance(task, dict):
+        return "unknown"
+    # The archive envelope is evidence of a terminal task only when both
+    # copies of lifecycle state agree.  A parseable JSON object with a `task`
+    # dict is not enough: a partially written, hand-shaped, or nonterminal
+    # snapshot must not turn a worktree into a deletion candidate.
+    terminal_status = str(snapshot.get("terminal_status") or "").strip().lower()
+    task_status = str(task.get("status") or "").strip().lower()
+    if terminal_status in _SETTLED_TASK_STATUSES and terminal_status == task_status:
+        return "settled"
+    return "unknown"
+
+
+@_entrypoint
+def _signal_orphan_holders(bucket: dict[str, Any], worktree_path: Path, pids: list[int]) -> str:
+    """Ask this worktree's orphaned holders to exit; escalate on the next tick.
+
+    Two ticks, never one. `SIGTERM` reaches a pgserver as a *smart* shutdown --
+    it waits for clients that, the worker being gone, will never disconnect --
+    so the honest choices are to block the supervisor loop waiting for a death
+    that may not come, or to signal now and check later. This does the latter:
+    the removal itself is not attempted here at all. Once the holders are gone
+    the worktree stops appearing in `live_paths` and a later tick reclaims it
+    through the ordinary path, with every other guard still applied.
+
+    Returns what this tick did, for the scan report.
+    """
+    import signal
+
+    reaps = bucket.setdefault("orphan_reaps", {})
+    key = str(worktree_path)
+    record = reaps.get(key) if isinstance(reaps.get(key), dict) else None
+    escalate = bool(record and record.get("signalled_at"))
+    sig = signal.SIGKILL if escalate else signal.SIGTERM
+    delivered: list[int] = []
+    for pid in pids:
+        try:
+            os.kill(int(pid), sig)
+        except (OSError, ValueError, OverflowError):
+            # Already gone, or not ours to signal. Either way this pid is not
+            # what keeps the worktree pinned.
+            continue
+        delivered.append(int(pid))
+    if not delivered:
+        reaps.pop(key, None)
+        return "already_gone"
+    reaps[key] = {
+        "pids": sorted(delivered),
+        "signalled_at": utc_now(),
+        "escalated": escalate,
+    }
+    return "escalated" if escalate else "signalled"
+
+
+@_entrypoint
+def _forget_orphan_reap(bucket: dict[str, Any], worktree_path: Path) -> None:
+    """Drop reap bookkeeping for a worktree that no longer needs it."""
+    reaps = bucket.get("orphan_reaps")
+    if isinstance(reaps, dict):
+        reaps.pop(str(worktree_path), None)
+
 
 @_entrypoint
 def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
@@ -2266,6 +2593,10 @@ def prune_orphan_worktrees(
             continue
 
     live_paths = _scan_process_paths_in_root(base_root)
+    # Read once per tick. Which task owns a worktree is what separates "this
+    # branch has not landed yet" from "this branch will never land", and only
+    # the board and the archive know that; git cannot tell them apart.
+    board_index = _task_board_settlement_index(config)
 
     max_removals = max(0, settings["max_removals_per_tick"])
     removed: list[str] = []
@@ -2283,6 +2614,8 @@ def prune_orphan_worktrees(
     # capped state before the scan even starts.
     capped = max_removals <= 0
     orphan_reports: list[tuple[str, list[int]]] = []
+    reaped: dict[str, int] = {}
+    settled_unmerged = 0
     unmanaged = 0
     unmanaged_paths: list[str] = []
     # Pruning has the same authority boundary as leasing: each distinct local
@@ -2403,15 +2736,48 @@ def prune_orphan_worktrees(
                 if orphan_pids and not still_parented:
                     skipped["live_process_orphaned"] = skipped.get("live_process_orphaned", 0) + 1
                     orphan_reports.append((str(wt_path), sorted(orphan_pids)))
+                    # Naming an orphan-pinned worktree was the whole of the
+                    # previous behaviour, and a report nobody acts on leaves
+                    # the space pinned just as firmly. Only a settled task's
+                    # holders are signalled: while the task can still be worked
+                    # its processes are somebody's working state, however
+                    # detached from a parent they look.
+                    if settings["reap_orphan_holders"] and (
+                        _task_settlement(config, _worktree_task_id(wt_path), board_index) == "settled"
+                    ):
+                        outcome = _signal_orphan_holders(bucket, wt_path, sorted(orphan_pids))
+                        reaped[outcome] = reaped.get(outcome, 0) + 1
                 else:
                     skipped["live_process"] = skipped.get("live_process", 0) + 1
+                    # A real tenant moved in. Any reap streak recorded against
+                    # this path describes holders that are no longer the reason
+                    # it is busy.
+                    _forget_orphan_reap(bucket, wt_path)
                 continue
+            # Merge state answers "is this work safe to discard". For a task
+            # that can still be worked it is the right question. For a settled
+            # one it is unanswerable in the only direction that matters: the
+            # task is finished, so no future event will ever merge the branch,
+            # and the worktree it left behind would be refused on the same
+            # ground forever. What the merge check actually protects -- the
+            # commits -- lives in the repository and survives the checkout's
+            # removal either way; the branch ref is not touched here.
+            settlement = _task_settlement(config, _worktree_task_id(wt_path), board_index)
+            reclaim_unmerged = settings["reclaim_settled_unmerged"] and settlement == "settled"
             branch = _worktree_record_branch(record)
+            unmerged = False
             if branch:
                 if branch not in merged_branches:
-                    skipped["branch_not_merged"] = skipped.get("branch_not_merged", 0) + 1
-                    continue
+                    if not reclaim_unmerged:
+                        skipped["branch_not_merged"] = skipped.get("branch_not_merged", 0) + 1
+                        continue
+                    unmerged = True
             elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
+                # A detached HEAD has no branch ref whose commits remain
+                # reachable after the checkout is removed.  Settlement can
+                # waive the named-branch merge requirement, but it cannot
+                # waive this ancestry proof: the detached commit may be
+                # reachable only through the worktree metadata itself.
                 skipped["detached_head_not_merged"] = skipped.get("detached_head_not_merged", 0) + 1
                 continue
             status_proc = subprocess.run(
@@ -2434,6 +2800,12 @@ def prune_orphan_worktrees(
             )
             if remove_proc.returncode == 0:
                 removed.append(str(wt_path))
+                _forget_orphan_reap(bucket, wt_path)
+                if unmerged:
+                    # Reclaimed on the settled-task rule alone. Reported
+                    # separately so that relaxing the merge requirement stays
+                    # auditable rather than disappearing into the total.
+                    settled_unmerged += 1
                 if len(removed) >= max_removals:
                     capped = True
             else:
@@ -2473,6 +2845,17 @@ def prune_orphan_worktrees(
         "orphaned_worktrees": [
             {"path": path, "pids": pids} for path, pids in orphan_reports
         ],
+        # What this tick did about those orphans, keyed by outcome:
+        # `signalled` (SIGTERM sent), `escalated` (SIGKILL, the holder having
+        # survived an earlier SIGTERM), `already_gone` (nothing left to
+        # signal). Reclaim itself happens on a later tick, once the holders
+        # stop appearing in the live-process scan, so a non-empty value here
+        # with `removed: 0` is the expected shape rather than another stall.
+        "orphan_reaps": dict(sorted(reaped.items())),
+        # Of `removed`, how many were reclaimed because their task is settled
+        # despite an unmerged branch. Zero means every reclaim this tick would
+        # also have passed the old merged-only rule.
+        "settled_unmerged_reclaimed": settled_unmerged,
     }
 
     if removed:

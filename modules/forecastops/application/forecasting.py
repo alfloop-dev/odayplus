@@ -39,6 +39,7 @@ from modules.forecastops.runtime import (
     ForecastOpsRuntimeConfigurationError,
     forecastops_production_required,
 )
+from shared.governance import DecisionPolicyRepository
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class ForecastOpsService:
         engine_options: Mapping[str, Any] | None = None,
         model_runtime: ProductionModelRuntime | None = None,
         runtime_mode: str | None = None,
+        policy_repository: DecisionPolicyRepository | None = None,
     ) -> None:
         self.production_required = forecastops_production_required(runtime_mode)
         if self.production_required and (
@@ -74,6 +76,7 @@ class ForecastOpsService:
                 "ForecastOps production requires an injected durable repository"
             )
         self.repository = repository or InMemoryForecastOpsRepository()
+        self.policy_repository = policy_repository
         self.model_runtime = model_runtime
         selected_engine: str | ForecastEngine | None = engine
         if selected_engine is None and self.production_required and model_runtime is not None:
@@ -109,6 +112,7 @@ class ForecastOpsService:
         engine: str | ForecastEngine | None = None,
         model_name: str | None = None,
         engine_options: Mapping[str, Any] | None = None,
+        policy_repository: DecisionPolicyRepository | None = None,
     ) -> ForecastOpsResult:
         from datetime import UTC
         from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -164,12 +168,18 @@ class ForecastOpsService:
             production_required=self.production_required,
         )
         run_id = prediction_run_id or f"pred-run-forecast-{uuid4()}"
+        active_policy_repository = (
+            policy_repository
+            if policy_repository is not None
+            else self.policy_repository
+        )
         forecasts, alerts, handoffs = forecast_stores(
             normalized_inputs,
             prediction_origin_time=origin,
             scored_at=scored_at,
             prediction_run_id=run_id,
             engine=selected_engine,
+            policy_repository=active_policy_repository,
         )
         saved_forecasts = tuple(self.repository.save_forecast(forecast) for forecast in forecasts)
 

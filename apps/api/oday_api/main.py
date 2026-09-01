@@ -111,6 +111,7 @@ else:
         heatzone_store: HeatZoneResultStore | None = None,
         avm_repository: Any = None,
         forecastops_repository: Any = None,
+        forecastops_policy_repository: Any = None,
         netplan_repository: Any = None,
         netplan_approval_verifier: Any = None,
         learninghub_repository: Any = None,
@@ -1118,6 +1119,11 @@ else:
         )
 
         forecast_repository = forecastops_repository or bundle.forecastops_repository
+        forecast_policy_repository = (
+            forecastops_policy_repository
+            if forecastops_policy_repository is not None
+            else getattr(bundle, "forecastops_policy_repository", None)
+        )
         netplan_repo = netplan_repository or bundle.netplan_repository
         learning_repo = learninghub_repository or bundle.learninghub_repository
         model_artifacts = artifact_store or bundle.artifact_store
@@ -1353,6 +1359,7 @@ else:
             api,
             create_forecastops_router(
                 repository=forecast_repository,
+                policy_repository=forecast_policy_repository,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("forecastops"),
                 model_runtime=model_runtime,

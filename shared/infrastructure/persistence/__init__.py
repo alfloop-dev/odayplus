@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from modules.opsboard.application.store_ops import DurableStoreOpsRepository
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
+from shared.infrastructure.persistence.decision_policy import (
+    DurableDecisionPolicyRepository,
+    SqlDecisionPolicyRepository,
+)
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.factory import (
@@ -85,6 +89,7 @@ __all__ = [
     "DurableArtifactStore",
     "DurableAuditLog",
     "DurableDecisionStore",
+    "DurableDecisionPolicyRepository",
     "DurableForecastOpsRepository",
     "DurableHeatZoneResultStore",
     "DurableInterventionRepository",
@@ -129,6 +134,7 @@ __all__ = [
     "PostgreSQLSchemaError",
     "SnapshotSink",
     "SqliteDocumentStore",
+    "SqlDecisionPolicyRepository",
     "SqliteEngine",
     "build_lineage_manifest",
     "build_migration_manifest_checksum",

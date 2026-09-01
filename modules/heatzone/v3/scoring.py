@@ -235,6 +235,12 @@ def score_heatzone_v3_feature(
         absorption_basis_source_ids=(
             absorption.basis_source_ids if absorption is not None else ()
         ),
+        absorption_excluded_store_ids=(
+            absorption.excluded_store_ids if absorption is not None else ()
+        ),
+        absorption_excluded_reasons=(
+            dict(absorption.excluded_reasons) if absorption is not None else {}
+        ),
     )
 
 

@@ -84,6 +84,7 @@ def handle_forecast(job: JobRecord, persistence: PersistenceBundle) -> None:
         prediction_origin_time=prediction_origin,
         scored_at=job.created_at,
         repository=repo,
+        policy_repository=getattr(persistence, "forecastops_policy_repository", None),
         model_runtime=model_runtime,
         runtime_mode="production" if production_required else "local",
     )
