@@ -79,6 +79,11 @@ class PersistenceBundle:
     # has an identity_store and session_service wired rather than None.
     identity_store: Any = None
     session_service: Any = None
+    # Decision-policy registry binding is supplied by the deployment that
+    # owns workflow.decision_policies. Keeping it optional preserves the
+    # memory/SQLite construction path while allowing API and worker callers to
+    # share one registry repository when it is available.
+    forecastops_policy_repository: Any = None
 
 
     @property

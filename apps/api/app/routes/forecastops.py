@@ -162,6 +162,7 @@ else:
         job_queue: JobQueue | None = None,
         model_binding: ModelBinding | None = None,
         model_runtime: ProductionModelRuntime | None = None,
+        policy_repository: Any = None,
         require_production_model: bool | None = None,
         require_durable_jobs: bool | None = None,
         runtime_mode: str | None = None,
@@ -195,6 +196,7 @@ else:
                 repository=forecast_repository,
                 model_runtime=model_runtime,
                 runtime_mode=runtime_mode,
+                policy_repository=policy_repository,
             )
         except ForecastOpsRuntimeConfigurationError as exc:
             composition_error = exc
@@ -342,6 +344,7 @@ else:
                     prediction_origin_time=body.prediction_origin_time,
                     repository=forecast_repository,
                     engine=registered_engine,
+                    policy_repository=policy_repository,
                 )
                 binding = model_binding
                 if (

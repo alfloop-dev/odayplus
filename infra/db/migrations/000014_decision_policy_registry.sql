@@ -155,6 +155,43 @@ BEGIN
     END IF;
 END $$;
 
+-- ODP-FORECAST-ALERT-POLICY-001: bind the ForecastOps alert record to the
+-- policy registry. The baseline alert table predates the registry, so these
+-- columns remain nullable for historical rows; every new domain Alert carries
+-- all three values. The composite foreign key is what prevents a policy key
+-- from being applied across tenants once a writer supplies the binding.
+DO $$
+BEGIN
+    IF to_regclass('operations.alerts') IS NOT NULL THEN
+        ALTER TABLE operations.alerts
+            ADD COLUMN IF NOT EXISTS tenant_id UUID,
+            ADD COLUMN IF NOT EXISTS policy_id VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS policy_version VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
+
+        -- Existing canonical alerts already have a tenant through their
+        -- store. Backfill that scope before new rows start using the FK.
+        UPDATE operations.alerts AS alert
+        SET tenant_id = store.tenant_id
+        FROM core.stores AS store
+        WHERE alert.store_id = store.store_id
+          AND alert.tenant_id IS NULL;
+
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint
+            WHERE conname = 'fk_alerts_decision_policy_version'
+        ) THEN
+            ALTER TABLE operations.alerts
+                ADD CONSTRAINT fk_alerts_decision_policy_version
+                FOREIGN KEY (decision_policy_version_id, tenant_id)
+                REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
+                NOT VALID;
+        END IF;
+        CREATE INDEX IF NOT EXISTS idx_alerts_decision_policy_version
+            ON operations.alerts(decision_policy_version_id, tenant_id);
+    END IF;
+END $$;
+
 -- Initial policy rows, one pair per tenant. The retrofit row is inserted first:
 -- it is the rollback target of the row that follows it, and the composite
 -- self-reference is checked at insert time.
@@ -214,6 +251,9 @@ SELECT
     '機制導入，門檻沿用常數，納入資料品質守衛',
     'four-light-policy-0.0.0-retrofit:' || t.tenant_id::text,
     '{"thresholds": [{"level": "RED", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.35}, {"level": "ORANGE", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.20}, {"level": "YELLOW", "input": "sitescore_gap_ratio", "op": "<=", "value": -0.10}], "data_quality_guard": {"max_staleness_days": 2, "on_violation": "SUPPRESS_HIGH_CONFIDENCE"}}'::jsonb,
-    ARRAY['sitescore_gap_ratio', 'data_quality.staleness_days']
+    -- The runtime evaluator reads sitescore_gap_ratio. The quality guard is
+    -- policy metadata evaluated against the forecast's derived freshness
+    -- context, not a second declared decision input.
+    ARRAY['sitescore_gap_ratio']
 FROM core.tenants t
 ON CONFLICT (policy_version_id) DO NOTHING;
