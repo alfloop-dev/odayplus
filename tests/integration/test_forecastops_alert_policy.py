@@ -7,11 +7,13 @@ import pytest
 
 from modules.forecastops import (
     AlertLevel,
+    ForecastAlertPolicyError,
     ForecastInput,
     ForecastOpsService,
     InMemoryForecastOpsRepository,
     StoreDayObservation,
     default_forecast_alert_policy,
+    forecast_stores,
 )
 from shared.governance import (
     DecisionPolicy,
@@ -155,6 +157,11 @@ def test_missing_policy_fails_closed_before_persisting_forecast_or_alert() -> No
 
     assert repository.latest_forecasts(TENANT_ID) == []
     assert repository.list_alerts(TENANT_ID) == []
+
+
+def test_missing_policy_repository_is_rejected_instead_of_using_threshold_fallback() -> None:
+    with pytest.raises(ForecastAlertPolicyError, match="policy_repository is required"):
+        forecast_stores([_input()], scored_at=V1_TIME)
 
 
 def test_stale_guard_is_part_of_policy_evaluation_and_suppresses_red() -> None:

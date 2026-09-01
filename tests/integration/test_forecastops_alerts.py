@@ -15,12 +15,22 @@ from modules.forecastops import (
     InMemoryForecastOpsRepository,
     StoreDayObservation,
     build_store_timeseries,
+    default_forecast_alert_policy,
     run_forecastops_batch_forecast,
 )
+from shared.governance import InMemoryDecisionPolicyRepository
 from tests.integration._authz import FORECASTOPS_HEADERS
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
 TENANT_ID = "tenant-test"
+
+
+def _policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
+
+
+def _app():
+    return create_app(forecastops_policy_repository=_policy_repository())
 
 
 def _observation(day: int, revenue: float, baseline: float = 100_000.0) -> StoreDayObservation:
@@ -54,7 +64,7 @@ def test_store_timeseries_view_groups_and_orders_observations() -> None:
 
 def test_forecast_job_emits_four_light_alerts_and_handoffs() -> None:
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     observations = tuple(_observation(day, 80_000 - day * 2_000) for day in range(20, 27))
 
     result = service.forecast(
@@ -109,10 +119,16 @@ def test_batch_worker_persists_versions() -> None:
     ]
 
     first = run_forecastops_batch_forecast(
-        inputs=inputs, job_id="forecast-job-1", repository=repository
+        inputs=inputs,
+        job_id="forecast-job-1",
+        repository=repository,
+        policy_repository=_policy_repository(),
     )
     second = run_forecastops_batch_forecast(
-        inputs=inputs, job_id="forecast-job-2", repository=repository
+        inputs=inputs,
+        job_id="forecast-job-2",
+        repository=repository,
+        policy_repository=_policy_repository(),
     )
 
     assert first.job_id == "forecast-job-1"
@@ -123,7 +139,7 @@ def test_batch_worker_persists_versions() -> None:
 
 
 def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
-    client = TestClient(create_app(), headers=FORECASTOPS_HEADERS)
+    client = TestClient(_app(), headers=FORECASTOPS_HEADERS)
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
         "inputs": [
@@ -187,7 +203,7 @@ def test_forecastops_api_runs_alert_handoff_loop_and_is_idempotent() -> None:
 
 
 def test_forecastops_prediction_run_replay() -> None:
-    client = TestClient(create_app(), headers=FORECASTOPS_HEADERS)
+    client = TestClient(_app(), headers=FORECASTOPS_HEADERS)
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
         "inputs": [
@@ -231,7 +247,7 @@ def test_forecastops_prediction_run_replay() -> None:
 
 
 def _declining_result(repository: InMemoryForecastOpsRepository):
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     observations = tuple(_observation(day, 80_000 - day * 2_000) for day in range(20, 27))
     return service, service.forecast(
         [
@@ -313,7 +329,7 @@ def test_execute_handoff_links_intervention_and_rejects_reexecute() -> None:
 
 
 def test_api_acknowledge_alert_and_execute_handoff_with_audit() -> None:
-    client = TestClient(create_app(), headers=FORECASTOPS_HEADERS)
+    client = TestClient(_app(), headers=FORECASTOPS_HEADERS)
     corr = {"x-correlation-id": "corr-forecast-ack-exec"}
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),

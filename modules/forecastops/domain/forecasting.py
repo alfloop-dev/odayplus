@@ -15,7 +15,6 @@ from modules.forecastops.model_contract import FORECASTOPS_HORIZON_WEEKS
 from shared.governance import (
     DecisionPolicy,
     DecisionPolicyRepository,
-    InMemoryDecisionPolicyRepository,
     resolve_policy,
 )
 
@@ -530,8 +529,8 @@ class Alert:
     # existing ForecastOps API (for example ``four-light-policy-v1``). The
     # tenant-bound registry key is also retained in evidence_json as
     # ``policy_version_id`` for consumers that read the evidence envelope.
-    policy_id: str = FORECAST_ALERT_POLICY_ID
-    policy_version: str = FOUR_LIGHT_POLICY_VERSION
+    policy_id: str
+    policy_version: str
     policy_version_id: str | None = None
     status: str = "open"
     closed_at: datetime | None = None
@@ -699,16 +698,9 @@ def forecast_stores(
         for item in inputs
     )
     if policy_repository is None:
-        tenant_ids = {
-            str(item.tenant_id).strip()
-            for item in normalized_inputs
-            if str(item.tenant_id or "").strip()
-        }
-        active_policy_repository: DecisionPolicyRepository = InMemoryDecisionPolicyRepository(
-            default_forecast_alert_policy(tenant_id) for tenant_id in sorted(tenant_ids)
+        raise ForecastAlertPolicyError(
+            "forecast alert policy_repository is required; refusing to produce alerts"
         )
-    else:
-        active_policy_repository = policy_repository
     outputs: list[ForecastOutput] = []
     alerts: list[Alert] = []
     handoffs: list[InterventionHandoff] = []
@@ -727,7 +719,7 @@ def forecast_stores(
         alert = _alert_for(
             output,
             opened_at=scored_time,
-            policy_repository=active_policy_repository,
+            policy_repository=policy_repository,
         )
         alerts.append(alert)
         handoff = _handoff_for(alert, output, created_at=scored_time)
@@ -862,13 +854,12 @@ def _alert_for(
     opened_at: datetime,
     policy_repository: DecisionPolicyRepository | None = None,
 ) -> Alert:
-    active_policy_repository = (
-        policy_repository
-        if policy_repository is not None
-        else InMemoryDecisionPolicyRepository([default_forecast_alert_policy(output.tenant_id)])
-    )
+    if policy_repository is None:
+        raise ForecastAlertPolicyError(
+            "forecast alert policy_repository is required; refusing to produce an alert"
+        )
     policy = resolve_policy(
-        active_policy_repository,
+        policy_repository,
         policy_kind=FORECAST_ALERT_POLICY_KIND,
         tenant_id=output.tenant_id,
         at=_utc_datetime(opened_at),

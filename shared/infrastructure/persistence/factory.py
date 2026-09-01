@@ -156,6 +156,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.sitescore.infrastructure.repositories import InMemorySiteScoreRepository
     from shared.audit.events import InMemoryAuditLog
     from shared.audit.persistence import InMemoryEvidenceBundleStore
+    from shared.governance import InMemoryDecisionPolicyRepository
     from shared.identity import (
         InMemoryIdentityStore,
         InMemorySessionRepository,
@@ -188,6 +189,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         job_queue=InMemoryJobQueue(),
         avm_repository=InMemoryAVMRepository(),
         forecastops_repository=InMemoryForecastOpsRepository(),
+        forecastops_policy_repository=InMemoryDecisionPolicyRepository(),
         netplan_repository=InMemoryNetPlanRepository(),
         learninghub_repository=InMemoryLearningHubRepository(),
         artifact_store=InMemoryArtifactStore(),
@@ -225,6 +227,7 @@ def _durable_bundle(
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
+    from shared.governance import InMemoryDecisionPolicyRepository
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
@@ -287,6 +290,7 @@ def _durable_bundle(
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        forecastops_policy_repository=InMemoryDecisionPolicyRepository(),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
         artifact_store=DurableArtifactStore(store),
@@ -332,6 +336,7 @@ def _postgres_bundle(
         validate_required_tables,
     )
     from shared.infrastructure.persistence.audit_log import DurableAuditLog
+    from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
     from shared.infrastructure.persistence.external_data import DurableIngestionRunStore
     from shared.infrastructure.persistence.job_queue import DurableJobQueue
     from shared.infrastructure.persistence.operator_network_listings import (
@@ -405,6 +410,7 @@ def _postgres_bundle(
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
         forecastops_repository=DurableForecastOpsRepository(store),
+        forecastops_policy_repository=SqlDecisionPolicyRepository(engine),
         netplan_repository=DurableNetPlanRepository(store),
         learninghub_repository=DurableLearningHubRepository(store),
         artifact_store=DurableArtifactStore(store),
