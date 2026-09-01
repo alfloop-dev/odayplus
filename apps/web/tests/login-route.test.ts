@@ -578,7 +578,7 @@ describe("§4 OIDC optional deployment (Contract §3.2, T14, T19)", () => {
     process.env.ODP_AUTH_MODE = "oidc";
     process.env.ODP_WEB_OIDC_ISSUER = "https://accounts.google.com";
     process.env.ODP_WEB_OIDC_CLIENT_ID = "test-client-id";
-    process.env.ODP_WEB_OIDC_CLIENT_SECRET = "test-client-secret";
+    process.env.ODP_WEB_OIDC_CLIENT_SECRET = "stub";
 
     const response = await GET(getRequest("/login"));
     expect(response.status).toBe(200);
@@ -595,7 +595,7 @@ describe("§4 OIDC optional deployment (Contract §3.2, T14, T19)", () => {
     process.env.ODP_AUTH_MODE = "oidc";
     process.env.ODP_WEB_OIDC_ISSUER = "https://accounts.google.com";
     process.env.ODP_WEB_OIDC_CLIENT_ID = "test-client-id";
-    process.env.ODP_WEB_OIDC_CLIENT_SECRET = "test-client-secret";
+    process.env.ODP_WEB_OIDC_CLIENT_SECRET = "stub";
     installThrottle();
     setIdentityStoreForTests(new MockIdentityStore(ACCOUNTS));
 
