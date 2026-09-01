@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
@@ -49,6 +52,34 @@ def _create_sample_observations(
         )
         for day in range(days)
     )
+
+
+def test_feedback_migration_is_applied_by_the_alembic_chain() -> None:
+    """The feedback table is a named ODP-FR-FCT-008 deliverable, so the DDL must
+    both say what the design ratified and be reachable from the Alembic head.
+    A ``.sql`` file with no revision behind it is schema the release manifest
+    advertises and no environment ever gets."""
+    migration_path = Path("infra/db/migrations/000015_forecastops_feedback.sql").resolve()
+    assert migration_path.exists(), "000015_forecastops_feedback.sql must exist"
+    sql = migration_path.read_text(encoding="utf-8")
+
+    assert "CREATE SCHEMA IF NOT EXISTS forecastops;" in sql
+    assert "CREATE TABLE IF NOT EXISTS forecastops.feedback" in sql
+    assert "feedback_type VARCHAR(50) NOT NULL" in sql
+    assert "target_date_start DATE NOT NULL" in sql
+    assert "target_date_end DATE NOT NULL" in sql
+    assert "status VARCHAR(50) NOT NULL" in sql
+    assert "approved_by VARCHAR(100)" in sql
+    assert "disposition VARCHAR(100)" in sql
+
+    config = Config("infra/db/migrations/alembic.ini")
+    script = ScriptDirectory.from_config(config)
+    heads = script.get_heads()
+    assert len(heads) == 1, f"migration chain must stay linear, found heads: {heads}"
+    rev7 = script.get_revision("0007")
+    assert rev7 is not None
+    assert rev7.down_revision == "0006"
+    assert "000015_forecastops_feedback.sql" in Path(rev7.path).read_text(encoding="utf-8")
 
 
 def test_context_annotation_feedback_auto_accepted_and_filters_training_and_precision() -> None:
