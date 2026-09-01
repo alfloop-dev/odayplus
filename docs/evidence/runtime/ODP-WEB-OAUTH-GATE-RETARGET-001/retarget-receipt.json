@@ -2,14 +2,39 @@
   "task_id": "ODP-WEB-OAUTH-GATE-RETARGET-001",
   "title": "以帳密預設驗證收據取代 rollout 的舊 OAuth 人工 gate",
   "phase": "Wave Auth 3 - Gate Retarget",
-  "owner": "Antigravity4",
+  "owner": "Antigravity3",
   "reviewer": "Claude",
-  "created_at": "2026-09-01T15:26:00Z",
+  "created_at": "2026-09-01T15:41:44Z",
   "secret_values_redacted": true,
   "retarget_decision": {
     "action": "RETARGET_OAUTH_GATE_TO_PASSWORD_FIRST_VERIFICATION",
     "rationale": "Following the merge and verification of password-first authentication and optional OIDC deployment, the dev/staging/prod rollout dependency on the legacy human OAuth gate is retargeted to verified password-first security receipts. Google OAuth is repositioned as an optional enablement task rather than a deployment prerequisite.",
     "premature_unblock_prevented": true
+  },
+  "canonical_dependency_mutation": {
+    "mutated_by": "Antigravity3",
+    "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+    "timestamp": "2026-09-01T15:41:44Z",
+    "event_type": "dependency_update",
+    "old_dependencies": [
+      "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+      "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+      "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "DPF-EMGI-LIVE-ROLLOUT-001",
+      "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+      "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001"
+    ],
+    "new_dependencies": [
+      "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+      "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+      "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "DPF-EMGI-LIVE-ROLLOUT-001",
+      "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+      "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+      "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+    ],
+    "message": "以已完成之 ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 帳密預設安全驗收取代舊 Human OAuth gate 依賴",
+    "source": "canonical_cli"
   },
   "prerequisites": {
     "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002": {

@@ -5,9 +5,11 @@ Validates:
 1. Prerequisite tasks (ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002, ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001)
    are terminal 'done' with valid merge commit evidence in ai-task-archive.
 2. HUMAN-GCP-WEB-OAUTH-CLIENTS-001 is repositioned as optional OIDC gate (status: todo, not deleted/done).
-3. ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 dependency graph does not require human OAuth client creation.
-4. All 7 rollout gates and fail-closed platform policies remain strictly enforced.
-5. Retarget receipt and updated dependency graph are structurally complete and secret-free.
+3. ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 dependency graph does not require human OAuth client creation,
+   and explicitly requires ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002.
+4. Canonical status mutation (dependency_update) was executed via CLI and logged in activity log.
+5. All 7 rollout gates and fail-closed platform policies remain strictly enforced.
+6. Retarget receipt and updated dependency graph are structurally complete and secret-free.
 """
 
 from __future__ import annotations
@@ -72,7 +74,32 @@ def check_canonical_status() -> None:
     assert "HUMAN-GCP-WEB-OAUTH-CLIENTS-001" not in depends_on, (
         "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 must not depend on HUMAN-GCP-WEB-OAUTH-CLIENTS-001"
     )
-    print("✓ ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 does not depend on HUMAN-GCP-WEB-OAUTH-CLIENTS-001")
+    assert "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002" in depends_on, (
+        "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 must explicitly depend on ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002"
+    )
+    print("✓ ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 retargeted: excludes HUMAN-GCP-WEB-OAUTH-CLIENTS-001 and includes ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002")
+
+
+def check_activity_log() -> None:
+    log_file = STATUS_ROOT / "ai-activity-log.jsonl"
+    if not log_file.exists():
+        print(f"Note: ai-activity-log.jsonl not found at {log_file}, skipping log check.")
+        return
+    found = False
+    with open(log_file, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            if (
+                entry.get("type") == "dependency_update"
+                and entry.get("task_id") == "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001"
+                and "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002" in entry.get("new_dependencies", [])
+            ):
+                found = True
+                print(f"✓ Found dependency_update event in activity log by {entry.get('agent')} at {entry.get('ts')}")
+                break
+    assert found, "No dependency_update event adding ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 found in activity log"
 
 
 def check_receipt_and_graph() -> None:
@@ -86,6 +113,7 @@ def check_receipt_and_graph() -> None:
     assert "prerequisites" in receipt
     assert "rollout_retarget_matrix" in receipt
     assert "dag_integrity_audit" in receipt
+    assert "canonical_dependency_mutation" in receipt
     print("✓ retarget-receipt.json structure validated")
 
     graph_file = EVIDENCE_DIR / "updated-rollout-dependency-graph.md"
@@ -107,7 +135,10 @@ def main() -> int:
     # 2. Canonical status validation
     check_canonical_status()
 
-    # 3. Receipt and graph artifact validation
+    # 3. Canonical activity log validation
+    check_activity_log()
+
+    # 4. Receipt and graph artifact validation
     check_receipt_and_graph()
 
     print("\nAll verification assertions PASSED successfully (0 discrepancies).")
@@ -116,3 +147,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
