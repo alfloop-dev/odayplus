@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from modules.heatzone.domain.scoring import HeatZoneFeatureInput
+from modules.heatzone.v3.absorption import AbsorptionResult
 from modules.heatzone.v3.contract import HeatZoneV3Input
 from packages.oday_data_contracts_client.models.machine_capacity import MachineCapacityRecord
 from packages.oday_data_contracts_client.models.store_coverage import StoreDayCoverage
@@ -122,6 +123,7 @@ def from_market_cell_profile(
     housing_units_override: float | None = None,
     active_listing_count_override: int | None = None,
     median_listing_rent_override: float | None = None,
+    absorption: AbsorptionResult | None = None,
 ) -> HeatZoneV3Input:
     """Adapt a canonical emgi.market-cell-profile.v1 cell into a HeatZone v3 input."""
     if isinstance(cell, Mapping):
@@ -231,6 +233,7 @@ def from_market_cell_profile(
         conf = min(conf, max(0.0, 1.0 - float(cell_obj.demographics.uncertainty_pct) / 100.0))
 
     return HeatZoneV3Input(
+        absorption=absorption,
         h3_index=cell_obj.h3_index,
         h3_resolution=cell_obj.h3_resolution,
         cell_id=cell_obj.cell_id,
@@ -284,6 +287,7 @@ def from_catchment_profile(
     poi_count_override: int | None = None,
     housing_units_override: float | None = None,
     active_listing_count_override: int | None = None,
+    absorption: AbsorptionResult | None = None,
 ) -> HeatZoneV3Input:
     """Adapt a canonical emgi.catchment-profile.v1 profile into a HeatZone v3 input."""
     if isinstance(profile, Mapping):
@@ -416,6 +420,7 @@ def from_catchment_profile(
         conf *= 0.8
 
     return HeatZoneV3Input(
+        absorption=absorption,
         h3_index=h3_idx,
         h3_resolution=h3_res,
         cell_id=f"catchment:{prof_obj.profile_id}",
@@ -469,6 +474,7 @@ def from_legacy_feature_input(
     overall_readiness: ReadinessLevel = ReadinessLevel.ready,
     coverage_ratio: float = 1.0,
     tenant_id: str = "default",
+    absorption: AbsorptionResult | None = None,
 ) -> HeatZoneV3Input:
     """Bridge legacy v1 HeatZoneFeatureInput into HeatZoneV3Input."""
     if isinstance(legacy, Mapping):
@@ -506,6 +512,7 @@ def from_legacy_feature_input(
     housing = housing_units_override if housing_units_override is not None else hh
 
     return HeatZoneV3Input(
+        absorption=absorption,
         h3_index=h3_index,
         h3_resolution=h3_resolution,
         cell_id=f"legacy:{h3_index}",

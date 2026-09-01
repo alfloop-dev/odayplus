@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from modules.heatzone.v3.absorption import AbsorptionResult
 from packages.oday_data_contracts_client.models.machine_capacity import MachineCapacityRecord
 from packages.oday_data_contracts_client.models.store_coverage import StoreDayCoverage
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
@@ -129,6 +130,14 @@ class HeatZoneV3Input:
     component_manifest_refs: list[ProductComponentRef] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # Measured absorption (ODP-FR-HZ-004)
+    #
+    # How much of this zone's demand our own stores are already taking, computed
+    # from realised revenue by `compute_absorbed_demand`. `None` means it was not
+    # measured -- which is not the same as nothing being absorbed, and the score
+    # result says so rather than letting the two look alike.
+    absorption: AbsorptionResult | None = None
+
 
 @dataclass(frozen=True)
 class HeatZoneV3ScoreResult:
@@ -163,6 +172,9 @@ class HeatZoneV3ScoreResult:
     county: str = ""
     district: str = ""
     admin_code: str = ""
+    absorption_measured: bool = False
+    absorption_ratio: float | None = None
+    absorption_basis_source_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -195,6 +207,9 @@ class HeatZoneV3ScoreResult:
             "county": self.county,
             "district": self.district,
             "admin_code": self.admin_code,
+            "absorption_measured": self.absorption_measured,
+            "absorption_ratio": self.absorption_ratio,
+            "absorption_basis_source_ids": list(self.absorption_basis_source_ids),
         }
 
     def to_map_feature(self) -> dict[str, Any]:
@@ -222,6 +237,8 @@ class HeatZoneV3ScoreResult:
                 "district": self.district,
                 "warnings": list(self.warnings),
                 "reasons": list(self.reasons),
+                "absorption_measured": self.absorption_measured,
+                "absorption_ratio": self.absorption_ratio,
             },
         }
 
@@ -265,6 +282,15 @@ class HeatZoneV3ScoreResult:
             county=str(data.get("county", "")),
             district=str(data.get("district", "")),
             admin_code=str(data.get("admin_code", "")),
+            absorption_measured=bool(data.get("absorption_measured", False)),
+            absorption_ratio=(
+                float(data["absorption_ratio"])
+                if data.get("absorption_ratio") is not None
+                else None
+            ),
+            absorption_basis_source_ids=tuple(
+                str(s) for s in data.get("absorption_basis_source_ids", ())
+            ),
         )
 
 
