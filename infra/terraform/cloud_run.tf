@@ -188,6 +188,13 @@ resource "google_cloud_run_v2_service" "web" {
       egress = "ALL_TRAFFIC"
     }
 
+    volumes {
+      name = "cloudsql"
+      cloud_sql_instance {
+        instances = [google_sql_database_instance.primary.connection_name]
+      }
+    }
+
     containers {
       image = var.web_image
 
@@ -203,6 +210,21 @@ resource "google_cloud_run_v2_service" "web" {
         }
         cpu_idle          = true
         startup_cpu_boost = true
+      }
+
+      volume_mounts {
+        name       = "cloudsql"
+        mount_path = "/cloudsql"
+      }
+
+      env {
+        name = "ODAY_DATABASE_URL"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.database_url.secret_id
+            version = google_secret_manager_secret_version.database_url.version
+          }
+        }
       }
 
       dynamic "env" {
@@ -286,10 +308,13 @@ resource "google_cloud_run_v2_service" "web" {
   depends_on = [
     google_cloud_run_v2_service_iam_member.web_invokes_api,
     google_compute_subnetwork_iam_member.web_network_user,
+    google_project_iam_member.web_cloud_sql_client,
+    google_secret_manager_secret_iam_member.web_database_url,
     google_secret_manager_secret_iam_member.web_session_secret,
     google_secret_manager_secret_iam_member.web_oidc_client_secret,
     google_secret_manager_secret_iam_member.web_identity_token_signing_key,
     google_secret_manager_secret_iam_member.api_identity_token_signing_key,
+    google_secret_manager_secret_version.database_url,
     google_secret_manager_secret_version.web_session_secret,
   ]
 }
