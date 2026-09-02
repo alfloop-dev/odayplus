@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -18,6 +19,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
+    logger = logging.getLogger("oday-api.audit")
 
     class EvidenceExportPayload(BaseModel):
         program_id: str = Field(min_length=1)
@@ -120,9 +122,20 @@ else:
                         decision_card_from_mapping(card) for card in body.decision_cards
                     ),
                 )
-            except (AuditEvidenceExportError, KeyError, ValueError) as exc:
+            except (AuditEvidenceExportError, ValueError) as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            except RuntimeError as exc:
+                correlation_id = getattr(request.state, "correlation_id", None) or "unknown"
+                logger.exception(
+                    "Unexpected runtime error during evidence export (correlation_id=%s): %s",
+                    correlation_id,
+                    exc,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Audit evidence export failed; correlation_id={correlation_id}",
                 ) from exc
             payload = bundle.to_dict()
             payload["correlation_id"] = request.state.correlation_id

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -48,6 +49,8 @@ else:
         PlanRequest,
         run_priceops_optimizer_batch,
     )
+
+    logger = logging.getLogger("oday-api.priceops")
 
 
     class PriceOpsPlanItemPayload(BaseModel):
@@ -848,9 +851,21 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
-            except (ApprovalBlockedError, MissingRollbackPlanError, ValueError, RuntimeError) as exc:
+            except (ApprovalBlockedError, MissingRollbackPlanError, ValueError) as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            except RuntimeError as exc:
+                correlation_id = getattr(request.state, "correlation_id", None) or "unknown"
+                logger.exception(
+                    "Unexpected runtime error during PriceOps plan transition (plan_id=%s, correlation_id=%s): %s",
+                    plan_id,
+                    correlation_id,
+                    exc,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"PriceOps plan transition failed; correlation_id={correlation_id}",
                 ) from exc
             audit_event = _record_audit(
                 audit_log,
