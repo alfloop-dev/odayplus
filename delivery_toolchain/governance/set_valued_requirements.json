@@ -36,7 +36,7 @@
           "name": "DILUTION",
           "status": "satisfied",
           "evidence": "solver/netplan/model.py::NetPlanConstraints.max_open_per_dilution_zone",
-          "note": "A per-catchment cap on OPEN actions. Cannibalisation is pairwise between sites and the model is linear, so this is the part of the effect a count can carry, not the whole effect."
+          "note": "A per-catchment cap on OPEN actions. Cannibalisation is pairwise between sites and the model is linear, so this is the part of the effect a count can carry, not the whole effect. DECIDED 2026-09-02: the full pairwise form is not pursued. Linearising it costs O(n^2) auxiliary variables, but the deciding reason is that the pairwise dilution coefficients are themselves model outputs carrying substantial uncertainty -- optimising precisely against uncertain coefficients manufactures precision the inputs do not support. The better next investment is the measurement: ODP-FR-HZ-004 absorption now produces realised dilution figures, and improving those changes the answer more than improving the optimisation over the current ones."
         },
         {
           "name": "LEASE",
@@ -46,7 +46,7 @@
         {
           "name": "SEQUENCING",
           "status": "absent",
-          "note": "Needs a time dimension: per-period resource caps and precedence between actions. ActionOption.period_key is carried and reported but never constrained. Reported through ConstraintClass.SEQUENCING on every solve."
+          "note": "Needs a time dimension: per-period resource caps and precedence between actions. ActionOption.period_key is carried and reported but never constrained. DECIDED 2026-09-02: not modelled, and not scheduled. A per-period constraint is only worth having if per-period capacity data exists to feed it, and it does not -- construction and labour capacity are supplied to the solver as single totals. A constraint fed by a figure nobody measures is decorative, which is the pattern this work exists to remove. The risk it would have covered (a plan reported feasible while unschedulable) is already handled by ConstraintClass.SEQUENCING appearing in unmodelled_constraint_classes on every solve. Revisit when a planning cycle needs per-period sequencing AND the per-period capacity figures exist."
         }
       ]
     },
