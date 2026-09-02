@@ -11,6 +11,8 @@ from uuid import uuid4
 
 import numpy as np
 
+from shared.governance.vocabularies import EvidenceLevel
+
 # Versions (output-contract principle §5.1 of ODP-MOD-07).
 ADLIFT_MODEL_VERSION = "adlift-statsmodels-matched-did-v2"
 ADLIFT_FEATURE_VERSION = "matched-control-view-v1"
@@ -34,17 +36,14 @@ class AdLiftProductionExecutionError(RuntimeError):
     """Raised when production DiD data or the statsmodels runtime is unavailable."""
 
 
-class EvidenceLevel(StrEnum):
-    """Causal evidence ladder (ODP-ML-05 §5). v1 produces L0–L3 only."""
-
-    L0_ANECDOTAL = "L0"  # anecdotal: treatment observed, nothing to compare against
-    L1_BEFORE_AFTER = "L1"  # before/after, no control group
-    L2_MATCHED_DESCRIPTIVE = "L2"  # matched control but pre-trend/balance not clean
-    L3_DID_VALIDATED = "L3"  # control + pre-trend + balance checks pass
-    L4_RANDOMIZED = "L4"  # experimental / near-random (out of v1 scope)
-    L5_POLICY_READY = "L5"  # replicated, policy ready (out of v1 scope)
-
-
+# The ladder is generated from packages/schemas/canonical/vocabularies.json and
+# re-exported here so `from modules.adlift.domain.incrementality import
+# EvidenceLevel` keeps working. AdLift v1 produces L0-L3; L4 and L5 are defined
+# by the ladder but out of this module's scope to emit.
+#
+# It used to be declared here, with an identical copy in
+# modules/intervention/domain/lifecycle.py. Two identical definitions drift the
+# moment one of them is edited, and nothing was watching for that.
 # Ordering for ladder comparisons; causal claims require >= L3 (ODP-ML-05 §5).
 _EVIDENCE_ORDER: tuple[EvidenceLevel, ...] = (
     EvidenceLevel.L0_ANECDOTAL,

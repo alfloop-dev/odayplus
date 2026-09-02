@@ -109,6 +109,15 @@ jobs:
       - name: Check set-valued requirements against their member lists
         run: uv run python delivery_toolchain/governance/check_requirement_members.py
 
+      # A concept spanning a Python enum, a TypeScript contract and an API
+      # payload has three lifecycles and no owner, and forks silently. Evidence
+      # Level had four definitions; ODP-EVIDENCE-LEVEL-ALIGNMENT-001 aligned it
+      # once by hand and still missed three of them, because a sweep is not a
+      # standing constraint. This fails on a stale generated module, a diverging
+      # canonical TypeScript type, or a new definition of a governed vocabulary.
+      - name: Check governed vocabularies for drift and new forks
+        run: uv run python delivery_toolchain/governance/generate_vocabularies.py --check
+
       - name: Lint orchestrator code
         run: uv run ruff check .orchestrator delivery_toolchain scripts
 
