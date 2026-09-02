@@ -55,6 +55,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     SOURCES_OFF_PROVIDER_MODE,
     build_release_manifest,
     build_sources_off_attestation,
+    build_sources_off_egress_evidence,
     compute_data_contract_digest,
     compute_source_policy_digest,
     extract_rollback_release_binding,
@@ -116,13 +117,15 @@ def derive_sources_off_posture(
     *,
     workflow_path: Path,
     enabled_sources: list[str] | None = None,
+    root: Path = ROOT,
 ) -> dict[str, Any]:
     """從 release SHA 上的 deploy workflow 推導出實際的 data-plane posture。
 
     sources-off 證據必須來自這個 release 真正部署的設定，不能由呼叫端填寫，
     否則「來源全關」就只是一句宣告。因此這裡只讀 workflow：runtime 拿到的
     ``ODP_EXTERNAL_PROVIDER_MODE``、有沒有接上 provider credential、有沒有接上
-    provider endpoint（等同放行 public egress）。
+    provider endpoint（等同放行 public egress），以及 Runtime Release 是否保留
+    Cloud Run VPC connector/egress binding。
 
     任何一項不符 disabled／零 credential／default-deny 的結果都會照實記錄，
     由 :func:`sources_off_attestation_errors` fail closed；這裡不做修正。
@@ -167,7 +170,38 @@ def derive_sources_off_posture(
                 "public_egress": "allowed" if egress_open else SOURCE_EGRESS_DENIED,
             }
         )
-    return {"provider_mode": provider_mode, "sources_inventory": inventory}
+    workflow_vpc_binding = all(
+        _wired_env_value(workflow_text, name) is not None
+        for name in ("ODP_CLOUD_RUN_VPC_CONNECTOR", "ODP_CLOUD_RUN_VPC_EGRESS")
+    )
+    deploy_entrypoint = root / "product_ops/deployment/deploy_cloud_run_waji.sh"
+    deploy_entrypoint_text = (
+        deploy_entrypoint.read_text(encoding="utf-8")
+        if deploy_entrypoint.is_file()
+        else ""
+    )
+    deploy_entrypoint_vpc_binding = all(
+        token in deploy_entrypoint_text
+        for token in (
+            '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"',
+            '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"',
+        )
+    )
+    provider_credentials_runtime = (
+        "present"
+        if any(entry["credentials_present"] for entry in inventory)
+        else "absent"
+    )
+    return {
+        "provider_mode": provider_mode,
+        "sources_inventory": inventory,
+        "egress_evidence": build_sources_off_egress_evidence(
+            workflow_vpc_binding=workflow_vpc_binding,
+            deploy_entrypoint_vpc_binding=deploy_entrypoint_vpc_binding,
+            provider_credentials_runtime=provider_credentials_runtime,
+            root=root,
+        ),
+    }
 
 
 def resolve_created_at(release_sha: str, root: Path = ROOT) -> str:
@@ -338,6 +372,7 @@ def build_handoff(
                             else root / DEFAULT_WORKFLOW_PATH
                         ),
                         enabled_sources=enabled_sources,
+                        root=root,
                     )
                 except HandoffError as exc:
                     errors.extend(exc.errors)
@@ -348,6 +383,7 @@ def build_handoff(
                         source_policy_digest=compute_source_policy_digest(root=root),
                         provider_mode=posture["provider_mode"],
                         sources_inventory=posture["sources_inventory"],
+                        egress_evidence=posture["egress_evidence"],
                     )
                     posture_errors = sources_off_attestation_errors(
                         candidate,

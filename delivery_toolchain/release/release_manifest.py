@@ -134,6 +134,38 @@ SOURCES_OFF_ATTESTATION_FIELDS = (
 )
 
 
+
+# The posture inventory is not allowed to turn the absence of an endpoint
+# variable into a security verdict. A sources-off release must carry proof
+# that the *single* Runtime Release path actually binds Cloud Run to the
+# fail-closed VPC/firewall contract. These values are deliberately boring and
+# secret-free; the digest is over the checked-in IaC/deploy entrypoint files.
+SOURCES_OFF_EGRESS_EVIDENCE_FIELDS = (
+    "kind",
+    "cloud_run_egress",
+    "firewall_egress",
+    "workflow_vpc_binding",
+    "deploy_entrypoint_vpc_binding",
+    "provider_credentials_runtime",
+    "proof_source",
+    "contract_digest",
+)
+SOURCES_OFF_EGRESS_EVIDENCE_KIND = "runtime-release-egress-contract"
+SOURCES_OFF_CLOUD_RUN_EGRESS = "ALL_TRAFFIC"
+SOURCES_OFF_FIREWALL_EGRESS = "default-deny"
+SOURCES_OFF_PROVIDER_CREDENTIALS = "absent"
+
+# These are the checked-in contract inputs for the one Runtime Release path.
+# Their digest makes the otherwise secret-free posture receipt specific to the
+# workflow, deploy entrypoint, and firewall/IaC that will consume it.
+SOURCES_OFF_EGRESS_CONTRACT_FILES = (
+    ".github/workflows/deploy-dev.yml",
+    "product_ops/deployment/deploy_cloud_run_waji.sh",
+    "infra/terraform/cloud_run.tf",
+    "infra/terraform/network.tf",
+)
+
+
 def is_exact_sha(value: Any) -> bool:
     """Return whether *value* is a lowercase 40-character git SHA."""
 
@@ -243,6 +275,12 @@ def sources_off_posture_payload(attestation: Any) -> dict[str, Any]:
                 {field: entry.get(field) for field in SOURCE_POSTURE_FIELDS}
             )
         normalised_inventory.sort(key=lambda entry: str(entry.get("source_id")))
+    evidence = attestation.get("egress_evidence")
+    normalised_evidence = (
+        {field: evidence.get(field) for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS}
+        if isinstance(evidence, dict)
+        else {}
+    )
     return {
         "provider_mode": attestation.get("provider_mode"),
         "egress_posture": attestation.get("egress_posture"),
@@ -250,6 +288,7 @@ def sources_off_posture_payload(attestation: Any) -> dict[str, Any]:
         "all_sources_disabled": attestation.get("all_sources_disabled"),
         "zero_credentials_present": attestation.get("zero_credentials_present"),
         "sources_inventory": normalised_inventory,
+        "egress_evidence": normalised_evidence,
     }
 
 
@@ -288,6 +327,7 @@ def build_sources_off_attestation(
     source_policy_digest: str,
     provider_mode: str,
     sources_inventory: list[dict[str, Any]],
+    egress_evidence: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Seal an observed sources-off posture into a bound attestation.
 
@@ -304,6 +344,8 @@ def build_sources_off_attestation(
         for entry in sources_inventory
     ]
     inventory.sort(key=lambda entry: str(entry.get("source_id")))
+    if egress_evidence is None:
+        egress_evidence = build_sources_off_egress_evidence()
     attestation: dict[str, Any] = {
         "provider_mode": provider_mode,
         "egress_posture": _derived_egress_posture(inventory),
@@ -311,6 +353,7 @@ def build_sources_off_attestation(
         "all_sources_disabled": _derived_all_disabled(inventory),
         "zero_credentials_present": _derived_zero_credentials(inventory),
         "sources_inventory": inventory,
+        "egress_evidence": copy.deepcopy(egress_evidence),
     }
     attestation["binding_digest"] = compute_sources_off_binding_digest(
         candidate_sha=candidate_sha,
@@ -445,6 +488,22 @@ def sources_off_attestation_errors(
             f"{label}.egress_posture must be {SOURCES_OFF_EGRESS_POSTURE!r} for a "
             f"sources-off release; got {derived_egress!r}"
         )
+
+    evidence = attestation.get("egress_evidence")
+    if not isinstance(evidence, dict):
+        errors.append(f"{label}.egress_evidence must be an object")
+        evidence = {}
+    for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
+        if field not in evidence:
+            errors.append(f"{label}.egress_evidence missing required field: {field}")
+    expected_evidence = build_sources_off_egress_evidence()
+    for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
+        if evidence.get(field) != expected_evidence.get(field):
+            errors.append(
+                f"{label}.egress_evidence.{field} is not the checked-in Runtime "
+                "Release egress contract"
+            )
+    errors.extend(_sources_off_egress_contract_errors())
 
     recorded_binding = attestation.get("binding_digest")
     if not is_sha256_digest(recorded_binding):
@@ -882,6 +941,89 @@ def compute_file_set_digest(paths: Any, *, root: Path = ROOT) -> str:
     return "sha256:" + h.hexdigest()
 
 
+def compute_sources_off_egress_contract_digest(root: Path = ROOT) -> str:
+    """Hash the checked-in Runtime Release egress contract inputs."""
+
+    return compute_file_set_digest(
+        (root / relative_path for relative_path in SOURCES_OFF_EGRESS_CONTRACT_FILES),
+        root=root,
+    )
+
+
+def build_sources_off_egress_evidence(
+    *,
+    workflow_vpc_binding: bool = True,
+    deploy_entrypoint_vpc_binding: bool = True,
+    provider_credentials_runtime: str = SOURCES_OFF_PROVIDER_CREDENTIALS,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    """Derive the secret-free proof attached to a sources-off attestation.
+
+    The workflow reader supplies the two binding observations and the builder
+    supplies the contract digest.  The manifest validator independently checks
+    the same checked-in inputs, so these fields are evidence, not a caller's
+    free-form override.
+    """
+
+    return {
+        "kind": SOURCES_OFF_EGRESS_EVIDENCE_KIND,
+        "cloud_run_egress": (
+            SOURCES_OFF_CLOUD_RUN_EGRESS if workflow_vpc_binding else "unbound"
+        ),
+        "firewall_egress": (
+            SOURCES_OFF_FIREWALL_EGRESS
+            if deploy_entrypoint_vpc_binding
+            else "unverified"
+        ),
+        "workflow_vpc_binding": "verified" if workflow_vpc_binding else "unbound",
+        "deploy_entrypoint_vpc_binding": (
+            "verified" if deploy_entrypoint_vpc_binding else "unbound"
+        ),
+        "provider_credentials_runtime": provider_credentials_runtime,
+        "proof_source": list(SOURCES_OFF_EGRESS_CONTRACT_FILES),
+        "contract_digest": compute_sources_off_egress_contract_digest(root=root),
+    }
+
+
+def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
+    """Check the concrete VPC/firewall contract behind a posture receipt."""
+
+    errors: list[str] = []
+    paths = {relative: root / relative for relative in SOURCES_OFF_EGRESS_CONTRACT_FILES}
+    missing = [relative for relative, path in paths.items() if not path.is_file()]
+    if missing:
+        return [
+            "sources-off egress contract is incomplete; missing: " + ", ".join(missing)
+        ]
+
+    workflow = paths[".github/workflows/deploy-dev.yml"].read_text(encoding="utf-8")
+    if "ODP_CLOUD_RUN_VPC_CONNECTOR:" not in workflow:
+        errors.append("deploy workflow does not bind ODP_CLOUD_RUN_VPC_CONNECTOR")
+    if "ODP_CLOUD_RUN_VPC_EGRESS:" not in workflow:
+        errors.append("deploy workflow does not bind ODP_CLOUD_RUN_VPC_EGRESS")
+
+    deploy = paths["product_ops/deployment/deploy_cloud_run_waji.sh"].read_text(
+        encoding="utf-8"
+    )
+    if '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"' not in deploy:
+        errors.append("deploy entrypoint does not pass the VPC connector to Cloud Run")
+    if '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' not in deploy:
+        errors.append("deploy entrypoint does not pass the VPC egress mode to Cloud Run")
+
+    cloud_run = paths["infra/terraform/cloud_run.tf"].read_text(encoding="utf-8")
+    if 'egress = "ALL_TRAFFIC"' not in cloud_run:
+        errors.append("cloud_run.tf does not enforce ALL_TRAFFIC VPC egress")
+
+    network = paths["infra/terraform/network.tf"].read_text(encoding="utf-8")
+    try:
+        from infra.terraform.validate_contract import validate_egress_contract
+    except ImportError as exc:  # pragma: no cover - repository packaging failure
+        errors.append(f"cannot load Terraform egress contract verifier: {exc}")
+    else:
+        errors.extend(validate_egress_contract(network))
+    return errors
+
+
 def compute_migration_digest(root: Path = ROOT) -> str:
     """Compute deterministic SHA-256 digest over infra/db/migrations SQL files."""
     migrations_dir = root / "infra/db/migrations"
@@ -1058,7 +1200,13 @@ __all__ = [
     "REQUIRED_FIELDS_V2",
     "SNAPSHOT_FIELDS",
     "SOURCES_OFF_ATTESTATION_FIELDS",
+    "SOURCES_OFF_EGRESS_CONTRACT_FILES",
+    "SOURCES_OFF_EGRESS_EVIDENCE_FIELDS",
+    "SOURCES_OFF_EGRESS_EVIDENCE_KIND",
     "SOURCES_OFF_EGRESS_POSTURE",
+    "SOURCES_OFF_CLOUD_RUN_EGRESS",
+    "SOURCES_OFF_FIREWALL_EGRESS",
+    "SOURCES_OFF_PROVIDER_CREDENTIALS",
     "SOURCES_OFF_PROVIDER_MODE",
     "SOURCE_EGRESS_DENIED",
     "SOURCE_POSTURE_FIELDS",
@@ -1066,6 +1214,7 @@ __all__ = [
     "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
     "build_release_manifest",
+    "build_sources_off_egress_evidence",
     "build_sources_off_attestation",
     "component_binding_errors",
     "compute_data_contract_digest",
@@ -1073,6 +1222,7 @@ __all__ = [
     "compute_manifest_digest",
     "compute_migration_digest",
     "compute_source_policy_digest",
+    "compute_sources_off_egress_contract_digest",
     "compute_sources_off_binding_digest",
     "extract_rollback_release_binding",
     "is_exact_sha",

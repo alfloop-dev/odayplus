@@ -632,6 +632,21 @@ def test_sources_off_release_without_any_data_plane_evidence_fails_closed() -> N
     )
 
 
+def test_sources_off_attestation_requires_the_checked_in_egress_contract() -> None:
+    manifest = sources_off_manifest()
+    manifest["sources_off_attestation"]["egress_evidence"]["firewall_egress"] = "allow-all"
+    manifest["sources_off_attestation"]["binding_digest"] = compute_sources_off_binding_digest(
+        candidate_sha=manifest["candidate_sha"],
+        components=manifest["components"],
+        source_policy_digest=manifest["source_policy_digest"],
+        posture=sources_off_posture_payload(manifest["sources_off_attestation"]),
+    )
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    errors = validate_manifest(manifest)
+    assert any("egress_evidence.firewall_egress" in err for err in errors)
+
+
 def test_sources_off_attestation_with_an_enabled_source_fails_closed() -> None:
     inventory = clean_sources_inventory()
     inventory[8]["status"] = "enabled"

@@ -1160,7 +1160,14 @@ WORKFLOW_PATH = ROOT / ".github/workflows/deploy-dev.yml"
 
 
 def sources_off_workflow(**wired: str) -> str:
-    lines = ["jobs:", "  deploy:", "    env:", "      ODP_EXTERNAL_PROVIDER_MODE: disabled"]
+    lines = [
+        "jobs:",
+        "  deploy:",
+        "    env:",
+        "      ODP_EXTERNAL_PROVIDER_MODE: disabled",
+        "      ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}",
+        "      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}",
+    ]
     for name, value in wired.items():
         lines.append(f"      {name}: {value}")
     return "\n".join(lines) + "\n"
@@ -1355,7 +1362,9 @@ def test_a_commented_out_credential_is_not_read_as_wired(tmp_path: Path) -> None
         "  deploy:\n"
         "    env:\n"
         "      # ODP_POI_PROVIDER_API_KEY stays unset until a source is approved\n"
-        "      ODP_EXTERNAL_PROVIDER_MODE: disabled\n",
+        "      ODP_EXTERNAL_PROVIDER_MODE: disabled\n"
+        "      ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}\n"
+        "      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}\n",
         encoding="utf-8",
     )
 
@@ -1365,6 +1374,24 @@ def test_a_commented_out_credential_is_not_read_as_wired(tmp_path: Path) -> None
         workflow_path=workflow,
     )
     assert manifest["sources_off_attestation"]["zero_credentials_present"] is True
+
+
+def test_a_sources_off_workflow_without_vpc_binding_fails_closed(tmp_path: Path) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow().replace(
+            "      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}\n", ""
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any("cloud_run_egress" in err for err in excinfo.value.errors)
 
 
 def test_an_enabled_source_never_gets_a_sources_off_attestation() -> None:
