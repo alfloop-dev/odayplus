@@ -53,6 +53,8 @@ def resolve_elasticity(
     observations: list[dict[str, float]] | None = None,
     supplied_value: float | None = None,
     supplied_confidence: float | None = None,
+    supplied_min_price: float | None = None,
+    supplied_max_price: float | None = None,
     horizon: str = "4week",
     prediction_origin_time: datetime | None = None,
 ) -> tuple[PriceElasticityEstimate, dict[str, Any]]:
@@ -81,6 +83,8 @@ def resolve_elasticity(
                 if supplied_confidence is not None
                 else DEFAULT_SUPPLIED_CONFIDENCE
             ),
+            applicable_min_price=supplied_min_price,
+            applicable_max_price=supplied_max_price,
             horizon=horizon,
             prediction_origin_time=prediction_origin_time or datetime.now(UTC),
         )
@@ -102,6 +106,8 @@ def _binding_metadata(
         "sample_size": sample_size,
         "elasticity_value": estimate.elasticity_value,
         "confidence": estimate.confidence,
+        "applicable_min_price": estimate.applicable_min_price,
+        "applicable_max_price": estimate.applicable_max_price,
         "horizon": estimate.horizon,
     }
 

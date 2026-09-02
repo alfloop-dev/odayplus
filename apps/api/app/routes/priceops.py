@@ -59,6 +59,8 @@ else:
         baseline_demand: float
         elasticity_value: float | None = None
         confidence: float | None = None
+        applicable_min_price: float | None = None
+        applicable_max_price: float | None = None
         price_demand_observations: list[dict[str, float]] | None = None
         margin_floor_ratio: float = 0.15
         max_increase_pct: float = 0.15
@@ -683,6 +685,8 @@ else:
             observations=item.price_demand_observations,
             supplied_value=item.elasticity_value,
             supplied_confidence=item.confidence,
+            supplied_min_price=item.applicable_min_price,
+            supplied_max_price=item.applicable_max_price,
             horizon=item.horizon,
             prediction_origin_time=_parse_time(item.prediction_origin_time),
         )
@@ -699,6 +703,8 @@ else:
                 price_ladder_step=item.price_ladder_step,
                 min_price=item.min_price,
                 max_price=item.max_price,
+                applicable_min_price=item.applicable_min_price if item.applicable_min_price is not None else estimate.applicable_min_price,
+                applicable_max_price=item.applicable_max_price if item.applicable_max_price is not None else estimate.applicable_max_price,
             ),
             baseline_demand=item.baseline_demand,
             elasticity=estimate,
