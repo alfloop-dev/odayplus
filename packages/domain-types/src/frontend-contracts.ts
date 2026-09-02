@@ -1,5 +1,5 @@
 import type { AuditMeta, Confidence, DataQuality, FieldVisibility, Interval } from "./common.ts";
-import type { DecisionStatus, FourLight, JobStatus, ModelStatus, RiskLevel } from "./status.ts";
+import type { DecisionStatus, EvidenceLevel, FourLight, JobStatus, ModelStatus, RiskLevel } from "./status.ts";
 
 /**
  * Frontend domain contracts for the shared UI and ui-domain packages.
@@ -192,7 +192,7 @@ export type InterventionTimelineContract = {
   executionStatus: string;
   observationWindow: { startsAt: string; endsAt: string };
   outcomeStatus: DecisionStatus;
-  evidenceLevel: "high" | "medium" | "low" | "insufficient";
+  evidenceLevel: EvidenceLevel | null;
   nodes: Array<TimelineEvent & { step: InterventionTimelineStep }>;
   audit?: AuditMeta;
 };
@@ -221,7 +221,7 @@ export type AdLiftReportCardContract = {
   incrementalRevenue: Interval;
   incrementalGrossMargin: Interval;
   iromi: Interval;
-  evidenceLevel: "high" | "medium" | "low" | "insufficient";
+  evidenceLevel: EvidenceLevel | "INSUFFICIENT_EVIDENCE" | null;
   continueStopRecommendation: "CONTINUE" | "STOP" | "INVESTIGATE";
   contaminationWarnings: string[];
   dataQuality?: DataQuality;

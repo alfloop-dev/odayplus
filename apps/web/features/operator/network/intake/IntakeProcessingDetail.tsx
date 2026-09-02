@@ -81,7 +81,7 @@ export function IntakeProcessingDetail(props: IntakeProcessingDetailProps) {
     Boolean(recoveryError) ||
     record.stage === "FAILED" ||
     record.stage === "QUARANTINED" ||
-    jobs.some((job) => job.status === "DEAD_LETTER" || job.status === "FAILED");
+    jobs.some((job) => job.delivery_state === "DEAD_LETTER" || job.status === "FAILED");
   const preservedInput = useMemo(() => buildPreservedInput(record), [record]);
   const providerListingId = authoritativeParsedValue(
     record,

@@ -204,10 +204,13 @@ else:
     class JobStatus(str, Enum):
         QUEUED = "QUEUED"
         RUNNING = "RUNNING"
-        RETRYING = "RETRYING"
         SUCCEEDED = "SUCCEEDED"
         FAILED = "FAILED"
         CANCELLED = "CANCELLED"
+        PARTIAL = "PARTIAL"
+
+    class JobDeliveryState(str, Enum):
+        RETRYING = "RETRYING"
         DEAD_LETTER = "DEAD_LETTER"
 
     class SlaState(str, Enum):
@@ -626,10 +629,43 @@ else:
     class JobReceipt(BaseModel):
         job_id: UuidString
         status: JobStatus
+        delivery_state: JobDeliveryState | None = None
         checkpoint: str
         attempt: int
         version: int
         correlation_id: UuidString
+
+    def _job_receipt_payload(job: dict[str, Any]) -> dict[str, Any]:
+        """Adapt legacy queue statuses at the public receipt read boundary.
+
+        Older rows encoded delivery mechanics directly in ``status``. Keep
+        those rows readable without allowing RETRYING or DEAD_LETTER to leak
+        into the outcome enum, and do not mutate the stored row while reading.
+        """
+        payload = dict(job)
+        raw_status = payload.get("status")
+        status = (
+            raw_status.value.upper()
+            if isinstance(raw_status, Enum)
+            else str(raw_status or "").upper()
+        )
+        raw_delivery_state = payload.get("delivery_state")
+        delivery_state = (
+            raw_delivery_state.value.upper()
+            if isinstance(raw_delivery_state, Enum)
+            else str(raw_delivery_state).upper() if raw_delivery_state else None
+        )
+
+        if status == "RETRYING":
+            status = "QUEUED"
+            delivery_state = "RETRYING"
+        elif status == "DEAD_LETTER":
+            status = "FAILED"
+            delivery_state = "DEAD_LETTER"
+
+        payload["status"] = status
+        payload["delivery_state"] = delivery_state
+        return payload
 
     class ReasonCommand(BaseModel):
         model_config = ConfigDict(extra="forbid")
@@ -2399,7 +2435,7 @@ else:
             )
 
             def make() -> tuple[dict[str, Any], int]:
-                if job.get("status") not in {"FAILED", "DEAD_LETTER"}:
+                if job.get("status") != "FAILED" and job.get("delivery_state") != "DEAD_LETTER" and job.get("status") != "DEAD_LETTER":
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 if body.checkpoint.value != job.get("checkpoint"):
                     raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
@@ -2407,11 +2443,13 @@ else:
                 job["attempt"] += 1
                 job["version"] += 1
                 job["status"] = "QUEUED"
+                job["delivery_state"] = "RETRYING"
                 job["checkpoint"] = body.checkpoint.value
 
                 receipt_val = {
                     "job_id": job_id,
                     "status": "QUEUED",
+                    "delivery_state": "RETRYING",
                     "checkpoint": body.checkpoint.value,
                     "attempt": job["attempt"],
                     "version": job["version"],
@@ -2471,7 +2509,7 @@ else:
                 correlation_id=request.headers.get("x-correlation-id"),
             )
             response.headers["ETag"] = f'W/"{job["version"]}"'
-            return JobReceipt(**job)
+            return JobReceipt(**_job_receipt_payload(job))
 
         @router.get(
             "/saved-views",

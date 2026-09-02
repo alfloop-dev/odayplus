@@ -1,7 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import {
+  CAUSAL_MIN_EVIDENCE,
   dataStatusTone,
   fourLightTone,
+  meetsCausalThreshold,
   type AdLiftReportCardContract,
   type AuditMeta,
   type CandidateSiteCardContract,
@@ -628,8 +630,21 @@ export function RootCauseEvidenceCard({ evidence, "data-testid": testId = "root-
 }
 
 export function InterventionTimeline({ timeline, "data-testid": testId = "intervention-timeline" }: InterventionTimelineProps) {
+  const level = timeline.evidenceLevel;
+  // Tones split on CAUSAL_MIN_EVIDENCE rather than on an independent banding,
+  // so the badge cannot read "acceptable" for a rung the causal gate rejects.
+  // Gray is unrated, which is not the bottom of the ladder but off it entirely
+  // (ADR-0004 D3) — the operator's next step is to assess, not to strengthen.
+  const tone = level === null
+    ? "gray"
+    : !meetsCausalThreshold(level)
+      ? "orange"
+      : level === CAUSAL_MIN_EVIDENCE
+        ? "yellow"
+        : "green";
+  const badgeLabel = level ? `Evidence ${level}` : "Evidence Unrated";
   return (
-    <DomainCard title={timeline.interventionType} eyebrow={`Intervention ${timeline.interventionId} · ${entityLabel(timeline.store)}`} badge={<StatusBadge label={`Evidence ${timeline.evidenceLevel}`} tone={timeline.evidenceLevel === "high" ? "green" : timeline.evidenceLevel === "medium" ? "yellow" : "orange"} />} testId={testId}>
+    <DomainCard title={timeline.interventionType} eyebrow={`Intervention ${timeline.interventionId} · ${entityLabel(timeline.store)}`} badge={<StatusBadge label={badgeLabel} tone={tone} />} testId={testId}>
       <FieldGrid>
         <Field label="Eligibility" value={timeline.eligibilityStatus} />
         <Field label="Conflict" value={timeline.conflictStatus} />
@@ -683,7 +698,10 @@ export function AdLiftReportCard({ report, "data-testid": testId = "ad-lift-repo
         <Field label="Treatment stores" value={report.treatmentStores.length} />
         <Field label="Control stores" value={report.controlStores.length} />
         <Field label="Pre-trend" value={report.preTrendStatus} />
-        <Field label="Evidence level" value={report.evidenceLevel} />
+        {/* Field hides a null value, which would drop the row entirely and
+            leave "unrated" indistinguishable from "not shown". ODP-BR-AD-004
+            requires the unrated case to read as INSUFFICIENT_EVIDENCE. */}
+        <Field label="Evidence level" value={report.evidenceLevel ?? "INSUFFICIENT_EVIDENCE"} />
       </FieldGrid>
       <Section title="Lift intervals">
         <IntervalBand label="Incremental revenue" interval={report.incrementalRevenue} />

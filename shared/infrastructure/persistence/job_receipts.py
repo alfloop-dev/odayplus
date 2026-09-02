@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from shared.infrastructure.persistence.job_queue import DurableJobQueue
-from shared.jobs.queue import JobRecord, JobRequest, JobStatus
+from shared.jobs.queue import JobDeliveryState, JobRecord, JobRequest, JobStatus
 
 
 class JobQueue(Protocol):
@@ -23,6 +23,7 @@ class JobQueue(Protocol):
         status: JobStatus,
         payload: dict[str, Any] | None = None,
         *,
+        delivery_state: JobDeliveryState | None = None,
         expected_version: int | None = None,
         fence_token: int | None = None,
         error_message: str | None = None,

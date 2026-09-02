@@ -463,6 +463,20 @@ export type EvidenceGovernancePayload = {
   role: string;
 };
 
+/** Causal evidence ladder.
+
+ADR-0004 D3: absence is not a tier. A value of ``None`` means the evidence was
+never assessed, and it must stay distinguishable from ``L0``, which is a
+measurement -- anecdotal, but taken. No member of this enum may be used as a
+default for an unassessed claim.
+
+Assessability is orthogonal and travels alongside as a separate boolean; see
+modules/adlift/domain/incrementality.py, where ``assessable`` is a field of its
+own rather than a level.
+
+Authority: ADR-0004 / ODP-ML-05 §5. */
+export type EvidenceLevel = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
+
 /** POST /operator/governance/evidence-package — export an Evidence Package. */
 export type EvidencePackagePayload = {
   actorName?: string | null;
@@ -796,18 +810,22 @@ export type JobCreatePayload = {
   payload?: Record<string, unknown>;
 };
 
+/** JobDeliveryState */
+export type JobDeliveryState = "RETRYING" | "DEAD_LETTER";
+
 /** JobReceipt */
 export type JobReceipt = {
   attempt: number;
   checkpoint: string;
   correlation_id: string;
+  delivery_state?: JobDeliveryState | null;
   job_id: string;
   status: JobStatus;
   version: number;
 };
 
 /** JobStatus */
-export type JobStatus = "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "DEAD_LETTER";
+export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
 
 /** ListingImportPayload */
 export type ListingImportPayload = {
@@ -1085,7 +1103,7 @@ export type PriceOpsDecisionWritebackPayload = {
 export type PriceOpsEvaluationPayload = {
   actor?: string;
   actual_gross_margin: number;
-  evidence_level?: string;
+  evidence_level?: EvidenceLevel | null;
   generated_at?: string | null;
   measurement_method?: string;
   negative_impact_threshold?: number;
@@ -1637,7 +1655,7 @@ export type apps__api__app__routes__operator_modules__growth__ConflictCheckPaylo
 export type apps__api__app__routes__operator_modules__growth__OutcomePayload = {
   actorName?: string | null;
   actorRoleId?: string | null;
-  evidenceLevel?: string;
+  evidenceLevel?: EvidenceLevel | null;
   observedLift?: number | null;
   outcome: string;
   rationale?: string;
