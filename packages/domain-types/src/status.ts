@@ -98,6 +98,7 @@ export const FOUR_LIGHTS: readonly FourLight[] = [
   "RED",
 ];
 
+/** Weakest first. The array order is the ladder order (ODP-ML-05 §5). */
 export const EVIDENCE_LEVELS: readonly EvidenceLevel[] = [
   "L0",
   "L1",
@@ -106,6 +107,27 @@ export const EVIDENCE_LEVELS: readonly EvidenceLevel[] = [
   "L4",
   "L5",
 ];
+
+/**
+ * Below this rung a causal claim is not permitted (ODP-BR-AD-001).
+ * Mirrors CAUSAL_MIN_EVIDENCE in shared/governance/evidence.py; the two sides
+ * of the wire must gate on the same rung or the UI closes what the API refuses.
+ */
+export const CAUSAL_MIN_EVIDENCE: EvidenceLevel = "L3";
+
+/**
+ * Whether `level` is strong enough to support a causal claim.
+ *
+ * `null` is false because the evidence was never assessed, not because it
+ * ranks below L0 — ADR-0004 D3 keeps "unrated" off the ladder rather than at
+ * its bottom, so callers must not collapse it into the weakest tier.
+ */
+export function meetsCausalThreshold(level: EvidenceLevel | null | undefined): boolean {
+  if (level == null) {
+    return false;
+  }
+  return EVIDENCE_LEVELS.indexOf(level) >= EVIDENCE_LEVELS.indexOf(CAUSAL_MIN_EVIDENCE);
+}
 
 /** Map a DataStatus to its display tone (component contracts §4.13). */
 export const dataStatusTone: Record<DataStatus, StatusTone> = {

@@ -5,6 +5,8 @@ from datetime import date, datetime, time
 from typing import Any
 from uuid import uuid4
 
+from shared.governance.vocabularies import EvidenceLevel
+
 
 @dataclass(frozen=True)
 class Tenant:
@@ -422,8 +424,13 @@ class InterventionOutcome:
     # default -- the previous "medium" stored an unassessed outcome as
     # medium-strength evidence. `causal_candidate` was a dead value: nothing
     # produced or tested for it, and the concept it named is carried by
-    # CAUSAL_MIN_EVIDENCE = L3 in modules/adlift/domain/incrementality.py.
-    evidence_level: str | None = None
+    # CAUSAL_MIN_EVIDENCE = L3 in shared/governance/evidence.py.
+    #
+    # Typed as the ladder rather than `str | None`: a plain string is what let
+    # "medium" and "pending" sit in this field looking like evidence claims, and
+    # this record is the persistence shape, so whatever lands here is what a
+    # reader downstream will believe.
+    evidence_level: EvidenceLevel | None = None
     side_effect_json: dict[str, Any] = field(default_factory=dict)
     label_maturity_time: datetime = field(default_factory=datetime.now)
 

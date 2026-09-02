@@ -4,7 +4,7 @@ import Link from "next/link";
 import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@oday-plus/ui";
-import { dataStatusTone } from "@oday-plus/domain-types";
+import { CAUSAL_MIN_EVIDENCE, dataStatusTone, meetsCausalThreshold } from "@oday-plus/domain-types";
 import {
   BUILDER_STEPS,
   buildGrowthViewModel,
@@ -1003,12 +1003,14 @@ function GrowthActionDetail({
   const currentItem = { ...item, status };
   const gate = closeoutGate(currentItem);
   const stepIndex = STATUS_STEP[status] ?? 0;
+  // 未評級不是最低一級：ADR-0004 D3 要求「沒有評估」與「評估後很弱」分開呈現，
+  // 兩者的補救動作不同（前者要先做評估，後者要補強設計）。
   const evidenceRisk =
     item.evidenceLevel === null
-      ? "未評級"
-      : item.evidenceLevel === "L0" || item.evidenceLevel === "L1" || item.evidenceLevel === "L2"
-        ? `證據等級 ${item.evidenceLevel}（低於因果門檻 L3，需補強對照組）`
-        : `證據等級 ${item.evidenceLevel}`;
+      ? "證據未評級，需先完成證據評估"
+      : meetsCausalThreshold(item.evidenceLevel)
+        ? `證據等級 ${item.evidenceLevel}`
+        : `證據等級 ${item.evidenceLevel}（低於因果門檻 ${CAUSAL_MIN_EVIDENCE}，需補強對照組）`;
 
   return (
     <aside className={g.detailPanel} data-testid="growth-item-detail" aria-label={`${item.name} 詳情`}>

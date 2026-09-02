@@ -33,6 +33,9 @@ import type {
   EvidenceLevel,
   StatusTone,
 } from "@oday-plus/domain-types";
+// Value import: the causal threshold is shared with the backend gate in
+// modules/opsboard/application/growth.py, so this view model must not restate it.
+import { meetsCausalThreshold } from "@oday-plus/domain-types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import {
   operatorFixturesAllowed,
@@ -910,7 +913,8 @@ const OUTCOME_STAGES: GrowthStatus[] = ["OUTCOME_READY", "CLOSED"];
  * Rules (deterministic, evidence-aware):
  *   - window not matured / no observation → PENDING
  *   - non-positive observed lift          → INEFFECTIVE
- *   - low evidence, or positive but below target → INCONCLUSIVE
+ *   - evidence below CAUSAL_MIN_EVIDENCE, or never rated at all, or positive
+ *     but below target                    → INCONCLUSIVE
  *   - met target with adequate evidence   → EFFECTIVE
  */
 export function judgeEffectiveness(item: GrowthItem): GrowthOutcome {
@@ -920,13 +924,7 @@ export function judgeEffectiveness(item: GrowthItem): GrowthOutcome {
   if (item.observedLift <= 0) {
     return "INEFFECTIVE";
   }
-  if (
-    item.evidenceLevel === null ||
-    item.evidenceLevel === "L0" ||
-    item.evidenceLevel === "L1" ||
-    item.evidenceLevel === "L2" ||
-    item.observedLift < item.targetLift
-  ) {
+  if (!meetsCausalThreshold(item.evidenceLevel) || item.observedLift < item.targetLift) {
     return "INCONCLUSIVE";
   }
   return "EFFECTIVE";

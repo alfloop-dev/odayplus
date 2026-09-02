@@ -30,6 +30,18 @@
       "task_id": "ODP-LEARNINGHUB-PROD-FIX-001",
       "reason": "Monitor actor identity is derived from the authenticated principal instead of trusting an arbitrary request-body default.",
       "migration": "Callers should omit evaluated_by and authenticate normally; during migration, a supplied value must exactly match the authenticated principal."
+    },
+    {
+      "signature": "request.type:POST /api/v1/operator/growth/actions/{action_id}/outcome:evidenceLevel",
+      "task_id": "ODP-EVIDENCE-LEVEL-API-DEFAULT-002",
+      "reason": "The field was a free string defaulting to \"medium\", so an outcome writeback that said nothing about evidence was stored as a medium-strength causal claim (ADR-0004 D3). It is now the L0-L5 ladder, nullable, with no default.",
+      "migration": "Send a canonical rung (L0..L5), or omit the field / send null when the evidence was never assessed. Callers sending \"high\"/\"medium\"/\"low\" must map to the ladder; there is no automatic conversion, because the old values never carried a defensible mapping."
+    },
+    {
+      "signature": "request.type:POST /api/v1/priceops/plans/{plan_id}/evaluate:evidence_level",
+      "task_id": "ODP-EVIDENCE-LEVEL-API-DEFAULT-002",
+      "reason": "Same defect on the PriceOps evaluation write path: a free string defaulting to \"medium\" recorded an unassessed pilot evaluation as medium evidence.",
+      "migration": "Send a canonical rung (L0..L5), or omit the field / send null for an unrated evaluation. An unrecognised value is now rejected at the boundary instead of stored verbatim."
     }
   ]
 }

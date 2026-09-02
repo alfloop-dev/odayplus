@@ -35,6 +35,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from shared.audit.events import AuditEvent, InMemoryAuditLog
+from shared.governance.evidence import coerce_evidence_level, meets_causal_threshold
+from shared.governance.vocabularies import EvidenceLevel
 
 # ---------------------------------------------------------------------------
 # Error hierarchy
@@ -136,14 +138,25 @@ def _judge_effectiveness(
     status: str,
     observed_lift: float | None,
     target_lift: float,
-    evidence_level: str | None,
+    evidence_level: EvidenceLevel | str | None,
 ) -> str:
-    """Classify effectiveness: PENDING | EFFECTIVE | INEFFECTIVE | INCONCLUSIVE."""
+    """Classify effectiveness: PENDING | EFFECTIVE | INEFFECTIVE | INCONCLUSIVE.
+
+    "Evidence strong enough to call the lift real" is asked of
+    shared.governance.evidence, which holds the single CAUSAL_MIN_EVIDENCE
+    threshold, rather than spelled out here as a list of the weak rungs.
+    Listing them inverts the rule: a rung added to the ladder would then be
+    silently promoted to sufficient by this function's omission of it.
+
+    Unrated is inconclusive, not effective: a campaign whose evidence nobody
+    assessed has not been shown to work, and before ADR-0004 it defaulted to
+    "medium" and closed as if it had.
+    """
     if status not in _OUTCOME_STAGES or observed_lift is None:
         return "PENDING"
     if observed_lift <= 0:
         return "INEFFECTIVE"
-    if evidence_level in ("L0", "L1", "L2", None) or observed_lift < target_lift:
+    if not meets_causal_threshold(evidence_level) or observed_lift < target_lift:
         return "INCONCLUSIVE"
     return "EFFECTIVE"
 
@@ -1140,7 +1153,7 @@ class GrowthService:
         outcome: str,
         required_action: str,
         observed_lift: float | None = None,
-        evidence_level: str | Any | None = None,
+        evidence_level: EvidenceLevel | str | None = None,
         rationale: str = "",
         actor_role_id: str = "opsLead",
         actor_name: str = "Operator",
@@ -1165,12 +1178,15 @@ class GrowthService:
                 f"current status: {action['status']}"
             )
 
+        # The write boundary for this action's evidence claim. An unrecognised
+        # rung is refused here rather than stored, and omitting the field leaves
+        # the existing claim alone instead of overwriting it with a default.
+        rated_evidence_level = coerce_evidence_level(evidence_level, field="evidenceLevel")
+
         if observed_lift is not None:
             action["observedLift"] = observed_lift
-        if evidence_level is not None:
-            action["evidenceLevel"] = (
-                evidence_level.value if hasattr(evidence_level, "value") else evidence_level
-            )
+        if rated_evidence_level is not None:
+            action["evidenceLevel"] = rated_evidence_level.value
         if rationale:
             action["rationale"] = rationale
         action["growthOutcome"] = outcome
@@ -1213,7 +1229,9 @@ class GrowthService:
                 "outcome": outcome,
                 "requiredAction": required_action,
                 "observedLift": observed_lift,
-                "evidenceLevel": evidence_level,
+                "evidenceLevel": (
+                    rated_evidence_level.value if rated_evidence_level is not None else None
+                ),
                 "newStatus": action["status"],
                 "idempotencyKey": idempotency_key,
             },
