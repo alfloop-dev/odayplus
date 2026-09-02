@@ -258,7 +258,11 @@ handle_deployment_exit() {
         "${SCHEDULER_CANDIDATE_JOB}" || rollback_status=$?
     fi
     if [ "${rollback_status}" -ne 0 ]; then
-      echo "Error: one or more Cloud Run traffic restores failed." >&2
+      if [ "${recovery_mode}" = "initial-release-cleanup" ]; then
+        echo "Error: one or more Cloud Run recovery actions failed." >&2
+      else
+        echo "Error: one or more Cloud Run traffic restores failed." >&2
+      fi
     fi
     if [ "${SCHEDULER_ROLLBACK_ARMED}" = "true" ]; then
       echo "Restoring the recorded Cloud Scheduler trigger targets." >&2

@@ -146,3 +146,25 @@ def test_initial_recovery_fails_closed_when_candidate_readback_fails(
     assert read_log(fake_gcloud) == []
     assert "cannot read back candidate Cloud Run Job" in result.stderr
 
+
+def test_initial_recovery_fails_closed_when_candidate_delete_fails(
+    fake_gcloud: tuple[Path, Path],
+) -> None:
+    jobs = (
+        "oday-migration-r-dddddddddddd",
+        "oday-worker-r-dddddddddddd",
+        "oday-scheduler-r-dddddddddddd",
+    )
+
+    result = run_cleanup(
+        fake_gcloud,
+        jobs,
+        FAKE_PRESENT=",".join(jobs),
+        FAKE_DELETE_FAILURE="oday-worker-r-dddddddddddd",
+    )
+
+    assert result.returncode != 0
+    assert read_log(fake_gcloud) == [f"delete:{job}" for job in jobs]
+    assert "DELETE_FAILED" in result.stderr
+
+

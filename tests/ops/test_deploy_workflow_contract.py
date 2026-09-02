@@ -1689,6 +1689,7 @@ def test_a_failed_first_deploy_does_not_claim_a_rollback_it_cannot_do() -> None:
     ):
         assert candidate in deploy_script
     assert "delete_candidate_job" in traffic_helpers
+    assert "Error: one or more Cloud Run recovery actions failed." in deploy_script
     # The pre-existing honest branch stays: an absent snapshot deletes the
     # bootstrap candidate rather than restoring traffic that was never there.
     assert "Deleting bootstrap candidate service" in traffic_helpers
