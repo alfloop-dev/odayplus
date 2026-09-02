@@ -25,8 +25,8 @@ TRANSCRIPT_TXT = EVIDENCE_DIR / "live-readback-transcript.txt"
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-EXPECTED_CURRENT_CANDIDATE = "38de35a7bac2d6c6f6d8d079ffaf16abf6163c29"
-EXPECTED_BUILD_RUN_ID = 33627271466
+EXPECTED_CURRENT_CANDIDATE = "d858e1c3a75489b5ecae5f67920fb314289a93d9"
+EXPECTED_BUILD_RUN_ID = 33642907363
 
 
 def verify_evidence_bundle() -> list[str]:
@@ -91,14 +91,12 @@ def verify_evidence_bundle() -> list[str]:
         errors.append(f"hosted build run must be {EXPECTED_BUILD_RUN_ID}")
     if build_exec.get("release_sha") != EXPECTED_CURRENT_CANDIDATE:
         errors.append("hosted build release_sha does not match current candidate")
-    if build_exec.get("result") != "failure":
-        errors.append("hosted build result must remain failure")
-    if build_exec.get("failed_step") != "Write the build-once artifact handoff":
-        errors.append("hosted build failure step must remain the handoff step")
-    if build_exec.get("handoff_manifest_published") is not False:
-        errors.append("handoff_manifest_published must be false")
-    if build_exec.get("image_handoff_published") is not False:
-        errors.append("image_handoff_published must be false")
+    if build_exec.get("result") != "success":
+        errors.append("hosted build result must be success")
+    if build_exec.get("handoff_manifest_published") is not True:
+        errors.append("handoff_manifest_published must be true")
+    if build_exec.get("image_handoff_published") is not True:
+        errors.append("image_handoff_published must be true")
 
     # Check candidate reconciliation
     cand_rec = audit.get("candidate_reconciliation", {})
@@ -141,8 +139,8 @@ def verify_evidence_bundle() -> list[str]:
         errors.append("historical_receipts_sha256 must contain all seven historical receipts")
 
     live_state = audit.get("live_gcp_runtime_state", {})
-    if live_state.get("current_readback_result") != "blocked_by_gcp_authority":
-        errors.append("current GCP readback must record the authority blocker")
+    if live_state.get("current_readback_result") != "predeploy_target_absence_verified":
+        errors.append("current GCP readback must record hosted pre-deploy target absence")
     if live_state.get("deployment_commands_run") is not False:
         errors.append("deployment_commands_run must be false")
 
