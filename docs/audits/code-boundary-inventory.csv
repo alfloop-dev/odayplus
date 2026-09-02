@@ -421,6 +421,7 @@ modules/forecastops/infrastructure/forecast_engines.py,product_system,product_re
 modules/forecastops/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/model_contract.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/forecastops/runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/forecastops/tests/test_forecast_quality_scores.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/forecastops/tests/test_forecastops_production_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/forecastops/tests/test_oss_forecast_engines.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/forecastops/workers/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.

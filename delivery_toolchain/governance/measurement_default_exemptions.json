@@ -13,11 +13,6 @@
       "reason": "check_support_and_abstention abstains below 0.25, and the composite score multiplies by confidence. An unmeasured zone scores as a fully trusted one."
     },
     {
-      "field": "modules/forecastops/domain/forecasting.py::StoreDayObservation.data_quality_score",
-      "owner": "Antigravity2",
-      "reason": "A store-day whose quality score never arrives is weighted as flawless. The identical field was written into the heat zone absorption module during the FR verification work and removed in review (fb75a142) for exactly this reason; this one is still live."
-    },
-    {
       "field": "modules/heatzone/domain/scoring.py::HeatZoneFeatureInput.average_confidence",
       "owner": "Antigravity6",
       "reason": "v2 heat zone scoring multiplies confidence into the composite and suppresses below a floor; the default hides missing confidence from both."
@@ -81,11 +76,6 @@
       "field": "shared/domain/models.py::DataSnapshot.quality_score",
       "owner": "Claude2",
       "reason": "A snapshot whose quality was never assessed is recorded as flawless, and downstream consumers resolve quality through this record."
-    },
-    {
-      "field": "modules/forecastops/domain/forecasting.py::ForecastOutput.data_quality_score",
-      "owner": "Antigravity2",
-      "reason": "Arrived with ODP-FORECAST-ALERT-POLICY-001 (fa01d4ba) while this check was being written, and the check refused it on its first contact with new code. Unlike the others it is read -- production_model.py:148 takes min() across observations -- which makes it worse, not better: forecasting.py:201 uses _first_present(..., default=1.0), so an observation deserialised without a quality field is scored perfect and then folded into that minimum. Needs its own fix deciding what a forecast should do when input quality is unknown; exempted here to record the date and the cause, not to settle it."
     }
   ],
   "_owner_note": "Owners are grouped by module so fields that have to be decided together are not split. shared/domain/models.py holds six canonical models (Poi, CompetitorStore, Listing, Prediction, HeatZoneScore, DataSnapshot) and goes to one owner for that reason: whatever absence means for a Listing's confidence it should mean for a Prediction's, and deciding them separately is how the next vocabulary fork starts. The two heatzone entries are the ones to fix first -- they are what put check_support_and_abstention out of reach for a zone with no coverage data."
