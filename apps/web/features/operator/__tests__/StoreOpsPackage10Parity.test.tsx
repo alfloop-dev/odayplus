@@ -96,13 +96,13 @@ describe("Package 10 Store Ops parity", () => {
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
-  it("aborts in-flight fetch and suppresses console.error when the document is hidden", async () => {
+  it("aborts in-flight fetch before pagehide TypeError and suppresses console.error", async () => {
     let capturedSignal: AbortSignal | undefined;
     const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
       capturedSignal = init?.signal as AbortSignal;
       return new Promise((_, reject) => {
         init?.signal?.addEventListener("abort", () => {
-          reject(new DOMException("The document is being unloaded.", "AbortError"));
+          reject(new TypeError("Failed to fetch"));
         });
       });
     });
