@@ -47,8 +47,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
-    EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS,
-    EXTERNAL_SOURCE_ENDPOINT_ENV_VARS,
+    classify_source_env_var,
+    env_var_belongs_to_source,
     EXTERNAL_SOURCE_INVENTORY,
     IMAGE_DIGEST_PATTERN,
     SOURCE_EGRESS_DENIED,
@@ -115,6 +115,23 @@ def _wired_env_value(workflow_text: str, name: str) -> str | None:
     if not wired:
         return None
     return wired[0]
+
+
+def _wired_env_names(workflow_text: str) -> tuple[str, ...]:
+    """回傳 workflow 真正接到 runtime 的環境變數名稱（去重、排序）。
+
+    和 :func:`_wired_env_value` 同一個判準：只認 ``NAME: value`` 且值非空，所以
+    註解裡提到的變數名稱不算接線。列舉名稱而不是逐一查已知清單，release
+    toolchain 才不需要自己記住任何 provider 的變數叫什麼。
+    """
+
+    pattern = re.compile(r"^[ \t]*([A-Z][A-Z0-9_]*):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    names = {
+        match.group(1)
+        for match in pattern.finditer(workflow_text)
+        if match.group(2).strip().strip('"').strip("'")
+    }
+    return tuple(sorted(names))
 
 
 def derive_sources_off_posture(
@@ -200,17 +217,32 @@ def derive_sources_off_posture(
         and resolved_cloud_run_egress == SOURCES_OFF_CLOUD_RUN_EGRESS
         and not contract_errors
     )
+    wired_env_names = _wired_env_names(workflow_text)
     inventory: list[dict[str, Any]] = []
     for source_id in EXTERNAL_SOURCE_INVENTORY:
+        attributed = [
+            env_var
+            for env_var in wired_env_names
+            if env_var_belongs_to_source(env_var, source_id)
+        ]
         credentialed = any(
-            _wired_env_value(workflow_text, env_var) is not None
-            for env_var in EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS.get(source_id, ())
+            classify_source_env_var(env_var) == "credential" for env_var in attributed
         )
         egress_open = any(
-            _wired_env_value(workflow_text, env_var) is not None
-            for env_var in EXTERNAL_SOURCE_ENDPOINT_ENV_VARS.get(source_id, ())
+            classify_source_env_var(env_var) == "endpoint" for env_var in attributed
         )
-        disabled = provider_mode == SOURCES_OFF_PROVIDER_MODE and source_id not in enabled
+        # 這個 source 自己的 posture flag 是觀察到的事實，不是宣告。只要 workflow
+        # 有接上而值不是 disabled，就以它為準，不讓「來源全關」停在一句聲明。
+        status_flags_off = all(
+            _wired_env_value(workflow_text, env_var) == SOURCE_STATUS_DISABLED
+            for env_var in attributed
+            if classify_source_env_var(env_var) == "status"
+        )
+        disabled = (
+            provider_mode == SOURCES_OFF_PROVIDER_MODE
+            and source_id not in enabled
+            and status_flags_off
+        )
         inventory.append(
             {
                 "source_id": source_id,

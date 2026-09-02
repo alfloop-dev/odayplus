@@ -15,8 +15,8 @@ from delivery_toolchain.release.migrate_gate_registry import (
 )
 from delivery_toolchain.release.release_manifest import (
     EXPECTED_EXTERNAL_SOURCE_COUNT,
-    EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS,
-    EXTERNAL_SOURCE_ENDPOINT_ENV_VARS,
+    classify_source_env_var,
+    env_var_belongs_to_source,
     EXTERNAL_SOURCE_INVENTORY,
     SOURCES_OFF_CLOUD_RUN_EGRESS,
     SOURCES_OFF_EGRESS_POSTURE,
@@ -617,27 +617,85 @@ def test_canonical_source_inventory_matches_the_dev_rollout_audit() -> None:
     )
 
 
-def test_credential_and_endpoint_env_vars_match_the_runtime_provider_registry() -> None:
-    """The restated env var names must not drift from the provider registry."""
+def _registry_env_vars() -> tuple[set[str], set[str]]:
+    """讀 runtime provider registry 真正宣告的 credential / endpoint 變數名。
+
+    這個檔案在 ``tests/**``，是 disposition record 明文允許持有 provider
+    credential 名稱的路徑之一；``delivery_toolchain/release/`` 不是。所以「名單」
+    留在測試這一側，production 端只留形狀判斷。
+    """
 
     from modules.external_data.connectors.provider_registry import provider_registry
 
-    registry_credentials: set[str] = set()
-    registry_endpoints: set[str] = set()
+    credentials: set[str] = set()
+    endpoints: set[str] = set()
     for provider in provider_registry():
         for credential in provider.credentials:
-            registry_credentials.add(credential.env_var)
+            credentials.add(credential.env_var)
         if provider.endpoint_env_var:
-            registry_endpoints.add(provider.endpoint_env_var)
+            endpoints.add(provider.endpoint_env_var)
+    return credentials, endpoints
 
-    restated_credentials = {
-        env_var for names in EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS.values() for env_var in names
-    }
-    restated_endpoints = {
-        env_var for names in EXTERNAL_SOURCE_ENDPOINT_ENV_VARS.values() for env_var in names
-    }
-    assert restated_credentials == registry_credentials
-    assert restated_endpoints == registry_endpoints
+
+def test_every_registry_credential_is_attributed_to_a_source_as_a_credential() -> None:
+    """形狀判斷必須完整覆蓋 registry 宣告的每一個 provider credential。
+
+    這是取代「把名單抄一份到 release 端」的保護：release code 不再記得任何
+    provider 變數名，所以改由測試證明它推導出來的結果和封閉的 registry 一致。
+    """
+
+    registry_credentials, _ = _registry_env_vars()
+    assert registry_credentials, "provider registry declared no credentials"
+
+    for env_var in sorted(registry_credentials):
+        owners = [
+            source_id
+            for source_id in EXTERNAL_SOURCE_INVENTORY
+            if env_var_belongs_to_source(env_var, source_id)
+        ]
+        assert owners, f"{env_var} is attributed to no source in the inventory"
+        assert classify_source_env_var(env_var) == "credential", (
+            f"{env_var} is a registry credential but reads as an endpoint"
+        )
+
+
+def test_every_registry_endpoint_is_attributed_to_a_source_as_an_endpoint() -> None:
+    registry_credentials, registry_endpoints = _registry_env_vars()
+    assert registry_endpoints, "provider registry declared no endpoints"
+
+    for env_var in sorted(registry_endpoints - registry_credentials):
+        owners = [
+            source_id
+            for source_id in EXTERNAL_SOURCE_INVENTORY
+            if env_var_belongs_to_source(env_var, source_id)
+        ]
+        assert owners, f"{env_var} is attributed to no source in the inventory"
+        assert classify_source_env_var(env_var) == "endpoint", (
+            f"{env_var} is a registry endpoint but reads as a credential"
+        )
+
+
+def test_a_source_never_claims_another_source_s_variable() -> None:
+    """字詞比對不能把某個 source 的變數算到另一個 source 頭上。
+
+    ``competitor_store_snapshot`` 和 ``store_opening_authority_snapshot`` 共用
+    ``store``；如果 ``store`` 沒有被當成通用字丟掉，前者會吃下後者的 attestation。
+    """
+
+    registry_credentials, registry_endpoints = _registry_env_vars()
+    for env_var in sorted(registry_credentials | registry_endpoints):
+        owners = [
+            source_id
+            for source_id in EXTERNAL_SOURCE_INVENTORY
+            if env_var_belongs_to_source(env_var, source_id)
+        ]
+        assert len(owners) == 1, f"{env_var} is ambiguous across sources: {owners}"
+
+
+def test_an_unrecognised_secret_shape_is_read_as_a_credential() -> None:
+    """認不出來的字尾必須算成 credential，不能因為看不懂就放行。"""
+
+    assert classify_source_env_var("ODP_POI_PROVIDER_MYSTERY_BLOB") == "credential"
 
 
 def test_sources_off_release_is_admissible_without_a_masked_snapshot() -> None:

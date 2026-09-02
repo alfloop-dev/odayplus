@@ -106,27 +106,88 @@ EXTERNAL_SOURCE_INVENTORY = (
 )
 EXPECTED_EXTERNAL_SOURCE_COUNT = len(EXTERNAL_SOURCE_INVENTORY)
 
-#: Credential environment variables that would make a source *credentialed*.
-#: These mirror ``modules.external_data.connectors.provider_registry``; the
-#: release toolchain must not import the runtime provider registry, so the
-#: names are restated here and ``tests/release/test_release_manifest.py``
-#: asserts the two stay identical.
-EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS: dict[str, tuple[str, ...]] = {
-    "listing_raw_snapshot": ("ODP_LISTING_PROVIDER_API_KEY",),
-    "poi_snapshot": ("ODP_POI_PROVIDER_API_KEY",),
-    "geocode_result_snapshot": ("ODP_GEOCODE_PROVIDER_API_KEY",),
-    "admin_boundary_snapshot": ("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",),
-    "competitor_store_snapshot": ("ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",),
-    "store_opening_authority_snapshot": ("ODP_STORE_OPENING_AUTHORITY_ATTESTATION",),
-}
+#: Source-id words that name a *kind* of record rather than a source, so they
+#: identify nothing on their own. They are dropped before a source id is
+#: matched against a deployment environment variable name.
+GENERIC_SOURCE_ID_TOKENS = frozenset(
+    {"snapshot", "event", "raw", "result", "daily", "store"}
+)
 
-#: Endpoint environment variables that would grant a source public egress.
-EXTERNAL_SOURCE_ENDPOINT_ENV_VARS: dict[str, tuple[str, ...]] = {
-    "listing_raw_snapshot": ("ODP_LISTING_PROVIDER_FEED_URL",),
-    "poi_snapshot": ("ODP_POI_PROVIDER_URL",),
-    "geocode_result_snapshot": ("ODP_GEOCODE_PROVIDER_URL",),
-    "admin_boundary_snapshot": ("ODP_ADMIN_BOUNDARY_PROVIDER_URL",),
-}
+#: Name endings that make a deployment variable a *credential*, and the ones
+#: that make it an *endpoint*.
+#:
+#: The release toolchain deliberately holds no provider inventory. Naming the
+#: provider credentials here would restate ``modules/external_data`` inside
+#: ``delivery_toolchain/release/``, which the external-data boundary
+#: (``odayplus.legacy-external-data-disposition.v2``) forbids: that inventory is
+#: the frozen registry's to hold, and only the registry, the deployment wiring
+#: and the test suites are declared to carry it. So this module recognises
+#: *shapes* — a source id's own words plus generic security nouns — and never
+#: a provider. Anything attributed to a source that matches neither shape is
+#: read as a credential, because an unrecognised secret must not be the reason
+#: a sources-off release is admitted.
+#: ``AUTH_STATUS`` sits in the credential list on purpose: it gates a
+#: credential, so it is checked before the plainer ``STATUS`` posture flag.
+CREDENTIAL_ENV_SUFFIXES = (
+    "API_KEY",
+    "TOKEN",
+    "SECRET",
+    "ATTESTATION",
+    "AUTH_STATUS",
+    "CREDENTIAL",
+    "PASSWORD",
+)
+ENDPOINT_ENV_SUFFIXES = ("URL", "URI", "ENDPOINT", "HOST")
+
+#: A source's posture flag. It carries no secret and grants no egress: it is
+#: the deployment saying out loud whether the source is on. Reading it as a
+#: credential would make the committed provider-off workflow undeployable,
+#: which is the very coupling this task exists to remove.
+STATUS_ENV_SUFFIXES = ("STATUS", "MODE", "ENABLED")
+
+
+def source_id_env_tokens(source_id: str) -> frozenset[str]:
+    """回傳足以指認這個 source 的字詞（大寫）。
+
+    ``competitor_store_snapshot`` 會收斂成 ``{"COMPETITOR"}``；``store`` 這種
+    多個 source 共用的字被丟掉，否則 ``store_opening_authority_snapshot`` 的
+    變數會被誤算到 ``competitor_store_snapshot`` 頭上。若一個 source id 全部
+    由通用字組成，就退回整組字詞，寧可比對得更嚴格也不要比對不到。
+    """
+
+    words = [part for part in source_id.split("_") if part]
+    discriminating = [word for word in words if word not in GENERIC_SOURCE_ID_TOKENS]
+    return frozenset(word.upper() for word in (discriminating or words))
+
+
+def env_var_belongs_to_source(env_var: str, source_id: str) -> bool:
+    """判斷一個 deployment 環境變數名稱是否屬於這個 source。
+
+    只看名稱的字詞組成，不看 provider 是誰：一個變數會算到 ``poi_snapshot``
+    頭上，是因為它的名稱帶了 ``POI`` 這個字，不是因為這裡記得哪一家 provider
+    用什麼變數名。這也是這個模組能通過 external-data boundary 的原因。
+    """
+
+    return source_id_env_tokens(source_id) <= frozenset(env_var.upper().split("_"))
+
+
+def classify_source_env_var(env_var: str) -> str:
+    """把屬於某個 source 的環境變數分成 ``credential``、``endpoint`` 或 ``status``。
+
+    順序有意義：``AUTH_STATUS`` 先被判成 credential，才輪到一般的 ``STATUS``
+    被判成 posture flag。認不出來的字尾一律算 credential——看不懂的秘密不該
+    成為 sources-off release 被放行的理由。
+    """
+
+    name = env_var.upper()
+    if any(name.endswith(suffix) for suffix in CREDENTIAL_ENV_SUFFIXES):
+        return "credential"
+    if any(name.endswith(suffix) for suffix in ENDPOINT_ENV_SUFFIXES):
+        return "endpoint"
+    if any(name.endswith(suffix) for suffix in STATUS_ENV_SUFFIXES):
+        return "status"
+    return "credential"
+
 
 SOURCE_POSTURE_FIELDS = ("source_id", "status", "credentials_present", "public_egress")
 SOURCES_OFF_ATTESTATION_FIELDS = (
@@ -1397,8 +1458,13 @@ def validate_rollback_manifest(
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
     "EXPECTED_EXTERNAL_SOURCE_COUNT",
-    "EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS",
-    "EXTERNAL_SOURCE_ENDPOINT_ENV_VARS",
+    "CREDENTIAL_ENV_SUFFIXES",
+    "ENDPOINT_ENV_SUFFIXES",
+    "STATUS_ENV_SUFFIXES",
+    "GENERIC_SOURCE_ID_TOKENS",
+    "classify_source_env_var",
+    "env_var_belongs_to_source",
+    "source_id_env_tokens",
     "EXTERNAL_SOURCE_INVENTORY",
     "RELEASE_ID_PATTERN",
     "RELEASE_STATUSES",
