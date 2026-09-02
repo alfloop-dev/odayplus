@@ -20,22 +20,15 @@ result now says so rather than leaving the reader to assume otherwise.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-
 import pytest
 
-from modules.netplan.application.production import (
-    NetPlanProductionExecutionError,
-    _solve_ortools_cp_sat,
-)
-from modules.netplan.domain.planning import NetPlanScenario, NetPlanScenarioStatus
 from solver.netplan.model import (
     ActionOption,
     ConstraintClass,
     NetPlanConstraints,
     NetworkAction,
 )
-from solver.netplan.optimizer import build_feasible_candidates, solve_network_plan
+from solver.netplan.optimizer import solve_network_plan
 
 
 def _option(
@@ -62,20 +55,6 @@ def _solve(options, constraints):
         options_by_entity=options,
         constraints=constraints,
         isolate_process=False,
-    )
-
-
-def _scenario(options, constraints) -> NetPlanScenario:
-    return NetPlanScenario(
-        scenario_id="sc-1",
-        tenant_id="t-1",
-        scenario_name="hard constraint coverage",
-        planning_horizon="2026Q1",
-        options_by_entity=options,
-        constraints=constraints,
-        status=NetPlanScenarioStatus.DRAFT,
-        created_at=datetime(2026, 1, 1, tzinfo=UTC),
-        correlation_id="corr-1",
     )
 
 
@@ -238,39 +217,6 @@ class TestAnUndeclaredCostIsRefusedRatherThanReadAsZero:
             )
         assert "max_construction_days" in str(excinfo.value)
 
-    def test_an_unzoned_opening_may_not_slip_past_the_dilution_cap(self) -> None:
-        """The fail-open shape.
-
-        The cap counted only the OPEN options that happened to carry a zone, so
-        an opening with a blank zone was invisible to it: a plan could hold its
-        one permitted opening in `hz-1` and an unmeasured opening beside it, and
-        still report DILUTION as modelled. A blank zone is not "dilutes
-        nothing", it is "nobody said", and the two may not be read alike.
-        """
-        options = {
-            "site-a": (_option("site-a", dilution_zone_id="hz-1"),),
-            "site-b": (_option("site-b"),),
-        }
-        with pytest.raises(ValueError) as excinfo:
-            _solve(
-                options,
-                NetPlanConstraints(max_budget=1_000_000.0, max_open_per_dilution_zone=1),
-            )
-        assert "site-b" in str(excinfo.value)
-
-    def test_an_unzoned_opening_is_not_offered_as_a_candidate(self) -> None:
-        """The same rule on the enumeration path, which supplies both the
-        SCIP-unavailable fallback plan and the alternatives a reader is shown.
-        An opening whose dilution nobody measured did not clear the cap."""
-        candidates = build_feasible_candidates(
-            options_by_entity={"site-a": (_option("site-a"),)},
-            constraints=NetPlanConstraints(
-                max_budget=1_000_000.0, max_open_per_dilution_zone=1
-            ),
-            risk_penalty=100_000.0,
-        )
-        assert candidates == []
-
     def test_a_dilution_cap_with_no_zoned_opening_is_refused(self) -> None:
         """A cap that cannot bind anything is not a constraint, and leaving it
         silent would let DILUTION be reported as modelled when nothing was
@@ -375,161 +321,3 @@ class TestAlternativesClearTheSameBar:
         for candidate in result.alternatives:
             used = sum(a.construction_days or 0.0 for a in candidate.actions)
             assert used <= 50.0, f"alternative uses {used} construction days"
-
-
-class TestTheProductionSolverEnforcesTheSameBar:
-    """`NetPlanService.solve` routes production solves through the CP-SAT model
-    in `modules.netplan.application.production`, not through `solve_network_plan`.
-
-    Constraining only the reference solver leaves the shipped path exactly as it
-    was, while the tests above go green -- a change that is fully covered and
-    fully ineffective. These tests exercise the production model directly.
-    """
-
-    def test_construction_capacity_binds_on_the_production_path(self) -> None:
-        """The reviewer's repro: two 40-day openings under a 50-day pool.
-
-        Before this change the production model applied budget, gross margin,
-        capacity, risk and action counts, and nothing else -- so it returned
-        both openings and reported optimal."""
-        options = {
-            "site-a": (
-                _option("site-a", construction_days=40.0),
-                _option("site-a", NetworkAction.KEEP, gm=10_000.0, cost=0.0, construction_days=0.0),
-            ),
-            "site-b": (
-                _option("site-b", construction_days=40.0),
-                _option("site-b", NetworkAction.KEEP, gm=10_000.0, cost=0.0, construction_days=0.0),
-            ),
-        }
-        result = _solve_ortools_cp_sat(
-            _scenario(
-                options,
-                NetPlanConstraints(max_budget=1_000_000.0, max_construction_days=50.0),
-            )
-        )
-        used = sum(a.construction_days or 0.0 for a in result.selected_actions)
-        assert used <= 50.0, f"production plan uses {used} construction days"
-        assert sum(1 for a in result.selected_actions if a.action is NetworkAction.OPEN) == 1
-
-    def test_equipment_and_labour_bind_on_the_production_path(self) -> None:
-        for attribute, cap_label in (
-            ("equipment_units", "max_equipment_units"),
-            ("labour_headcount", "max_labour_headcount"),
-        ):
-            options = {
-                "site-a": (
-                    _option("site-a", **{attribute: 8.0}),
-                    _option(
-                        "site-a",
-                        NetworkAction.KEEP,
-                        gm=10_000.0,
-                        cost=0.0,
-                        **{attribute: 0.0},
-                    ),
-                ),
-                "site-b": (
-                    _option("site-b", **{attribute: 8.0}),
-                    _option(
-                        "site-b",
-                        NetworkAction.KEEP,
-                        gm=10_000.0,
-                        cost=0.0,
-                        **{attribute: 0.0},
-                    ),
-                ),
-            }
-            result = _solve_ortools_cp_sat(
-                _scenario(
-                    options,
-                    NetPlanConstraints(max_budget=1_000_000.0, **{cap_label: 10.0}),
-                )
-            )
-            used = sum(getattr(a, attribute) or 0.0 for a in result.selected_actions)
-            assert used <= 10.0, f"production plan uses {used} of {attribute}"
-
-    def test_the_coverage_floor_binds_on_the_production_path(self) -> None:
-        options = {
-            "site-a": (
-                _option("site-a", NetworkAction.EXIT, gm=800_000.0, cost=0.0, coverage_delta=-5.0),
-                _option("site-a", NetworkAction.KEEP, gm=10_000.0, cost=0.0, coverage_delta=0.0),
-            )
-        }
-        result = _solve_ortools_cp_sat(
-            _scenario(
-                options,
-                NetPlanConstraints(max_budget=1_000_000.0, min_coverage_delta=0.0),
-            )
-        )
-        assert [a.action for a in result.selected_actions] == [NetworkAction.KEEP]
-
-    def test_two_openings_in_one_catchment_are_refused_on_the_production_path(self) -> None:
-        options = {
-            "site-a": (
-                _option("site-a", dilution_zone_id="hz-1"),
-                _option("site-a", NetworkAction.KEEP, gm=10_000.0, cost=0.0),
-            ),
-            "site-b": (
-                _option("site-b", dilution_zone_id="hz-1"),
-                _option("site-b", NetworkAction.KEEP, gm=10_000.0, cost=0.0),
-            ),
-        }
-        result = _solve_ortools_cp_sat(
-            _scenario(
-                options,
-                NetPlanConstraints(max_budget=1_000_000.0, max_open_per_dilution_zone=1),
-            )
-        )
-        opens = [a for a in result.selected_actions if a.action is NetworkAction.OPEN]
-        assert len(opens) == 1
-
-    def test_an_undeclared_cost_is_refused_on_the_production_path(self) -> None:
-        """The reference solver refuses a cap no option costed. The production
-        solver used to accept it and read the missing figure as zero."""
-        options = {"site-a": (_option("site-a"),)}
-        with pytest.raises(NetPlanProductionExecutionError) as excinfo:
-            _solve_ortools_cp_sat(
-                _scenario(
-                    options,
-                    NetPlanConstraints(max_budget=1_000_000.0, max_construction_days=50.0),
-                )
-            )
-        assert "max_construction_days" in str(excinfo.value)
-
-    def test_an_unzoned_opening_is_refused_on_the_production_path(self) -> None:
-        options = {
-            "site-a": (_option("site-a", dilution_zone_id="hz-1"),),
-            "site-b": (_option("site-b"),),
-        }
-        with pytest.raises(NetPlanProductionExecutionError) as excinfo:
-            _solve_ortools_cp_sat(
-                _scenario(
-                    options,
-                    NetPlanConstraints(max_budget=1_000_000.0, max_open_per_dilution_zone=1),
-                )
-            )
-        assert "dilution_zone_id" in str(excinfo.value)
-
-    def test_the_production_result_says_which_classes_it_tested(self) -> None:
-        """An empty pair reads as "no claim made". The production result carried
-        exactly that while presenting itself as a solved plan."""
-        result = _solve_ortools_cp_sat(
-            _scenario(
-                {"site-a": (_option("site-a"),)},
-                NetPlanConstraints(max_budget=1_000_000.0),
-            )
-        )
-        assert result.modelled_constraint_classes == (ConstraintClass.CAPITAL,)
-        assert ConstraintClass.CONSTRUCTION in result.unmodelled_constraint_classes
-        assert ConstraintClass.LEASE in result.unmodelled_constraint_classes
-        assert ConstraintClass.SEQUENCING in result.unmodelled_constraint_classes
-
-    def test_an_infeasible_production_result_still_declares_its_classes(self) -> None:
-        result = _solve_ortools_cp_sat(
-            _scenario(
-                {"site-a": (_option("site-a", cost=900_000.0, construction_days=90.0),)},
-                NetPlanConstraints(max_budget=1_000.0, max_construction_days=50.0),
-            )
-        )
-        assert result.infeasible
-        assert ConstraintClass.CONSTRUCTION in result.modelled_constraint_classes

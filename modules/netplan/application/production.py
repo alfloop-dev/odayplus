@@ -14,14 +14,13 @@ from solver.netplan import (
     STATUS_FEASIBLE,
     STATUS_INFEASIBLE,
     STATUS_OPTIMAL,
+    NetworkAction,
     NetworkPlanSolveResult,
 )
-from solver.netplan.model import NetworkAction
 from solver.netplan.optimizer import (
-    RESOURCE_CAPS,
+    _require_declared_resource,
+    _require_open_options_declare_zone,
     diagnose_infeasible,
-    dilution_zones,
-    require_declared_constraint_inputs,
 )
 from solver.netplan.robust import (
     STATUS_FAILED as ROBUST_FAILED,
@@ -85,7 +84,15 @@ class NetPlanProductionExecutor:
         except Exception as exc:
             if isinstance(exc, NetPlanProductionExecutionError):
                 raise
-            raise NetPlanProductionExecutionError("OR-Tools NetPlan execution failed") from exc
+            # Carry the cause's message. An input the model refuses -- an option
+            # with no declared construction cost, an opening in no catchment --
+            # is a rejection, not a solver failure, and reporting it as
+            # "execution failed" sends the reader to look at OR-Tools. ODP-FR-NET-004
+            # requires the reason for an unusable result to be reported, and a
+            # reason reachable only through __cause__ is not reported.
+            raise NetPlanProductionExecutionError(
+                f"OR-Tools NetPlan execution failed: {exc}"
+            ) from exc
         if primary.solver_status not in {
             STATUS_OPTIMAL,
             STATUS_FEASIBLE,
@@ -192,23 +199,8 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
     ):
         return _infeasible_primary(scenario)
 
-    # The production solve admits exactly what the reference solve admits. These
-    # rules previously lived only in `solver.netplan.optimizer`, so production --
-    # the only path that ships -- enforced none of them: a scenario capped at 50
-    # construction days came back with two 40-day openings and called itself
-    # optimal. Reusing the reference validator, rather than restating it here, is
-    # what keeps the two from diverging again.
-    try:
-        require_declared_constraint_inputs(scenario.options_by_entity, scenario.constraints)
-    except ValueError as exc:
-        raise NetPlanProductionExecutionError(str(exc)) from exc
-
     money_scale = 100
     risk_scale = 1_000_000
-    # CP-SAT takes integer coefficients, so resource figures are carried at a
-    # fixed scale. Three decimal places is finer than any of these quantities is
-    # actually measured to -- construction days, equipment units, headcount.
-    resource_scale = 1_000
     model = cp_model.CpModel()
     variables = {
         (entity_id, index): model.new_bool_var(f"action_{entity_id}_{index}")
@@ -253,44 +245,6 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
             )
             <= round(scenario.constraints.max_average_risk * entity_count * risk_scale)
         )
-    # Shared delivery resources: same shape as the budget, a fixed pool every
-    # selected option draws from.
-    for attribute, cap_label in RESOURCE_CAPS:
-        cap = getattr(scenario.constraints, cap_label)
-        if cap is None:
-            continue
-        model.add(
-            sum(
-                variables[(entity_id, index)]
-                * round(float(getattr(option, attribute)) * resource_scale)
-                for entity_id, options in scenario.options_by_entity.items()
-                for index, option in enumerate(options)
-            )
-            <= round(cap * resource_scale)
-        )
-    if scenario.constraints.min_coverage_delta is not None:
-        model.add(
-            sum(
-                variables[(entity_id, index)]
-                * round(float(option.coverage_delta) * resource_scale)
-                for entity_id, options in scenario.options_by_entity.items()
-                for index, option in enumerate(options)
-            )
-            >= round(scenario.constraints.min_coverage_delta * resource_scale)
-        )
-    if scenario.constraints.max_open_per_dilution_zone is not None:
-        # Every OPEN option carries a zone by the time we get here, so this
-        # count is over all of them, not just the ones that happened to declare.
-        for zone in sorted(dilution_zones(scenario.options_by_entity)):
-            model.add(
-                sum(
-                    variables[(entity_id, index)]
-                    for entity_id, options in scenario.options_by_entity.items()
-                    for index, option in enumerate(options)
-                    if option.action is NetworkAction.OPEN and option.dilution_zone_id == zone
-                )
-                <= scenario.constraints.max_open_per_dilution_zone
-            )
     for action, minimum in scenario.constraints.min_action_counts.items():
         model.add(
             sum(
@@ -311,6 +265,66 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
             )
             <= maximum
         )
+
+    # ODP-FR-NET-002 in the production solver.
+    #
+    # These duplicate `solver/netplan/optimizer.py`, which is the shape that let
+    # the gap open: the pywraplp model there and this CP-SAT model are two
+    # implementations of one requirement, and a constraint added to one is
+    # simply absent from the other. NetPlanService routes production solves
+    # through here, so constraints that exist only in the other file are
+    # constraints production does not have.
+    for attribute, cap, label in (
+        ("construction_days", scenario.constraints.max_construction_days, "max_construction_days"),
+        ("equipment_units", scenario.constraints.max_equipment_units, "max_equipment_units"),
+        ("labour_headcount", scenario.constraints.max_labour_headcount, "max_labour_headcount"),
+    ):
+        if cap is None:
+            continue
+        _require_declared_resource(scenario.options_by_entity, attribute, label)
+        model.add(
+            sum(
+                variables[(entity_id, index)]
+                * round(float(getattr(option, attribute)) * money_scale)
+                for entity_id, options in scenario.options_by_entity.items()
+                for index, option in enumerate(options)
+            )
+            <= round(cap * money_scale)
+        )
+
+    if scenario.constraints.min_coverage_delta is not None:
+        _require_declared_resource(
+            scenario.options_by_entity, "coverage_delta", "min_coverage_delta"
+        )
+        model.add(
+            sum(
+                variables[(entity_id, index)]
+                * round(float(option.coverage_delta) * money_scale)
+                for entity_id, options in scenario.options_by_entity.items()
+                for index, option in enumerate(options)
+            )
+            >= round(scenario.constraints.min_coverage_delta * money_scale)
+        )
+
+    if scenario.constraints.max_open_per_dilution_zone is not None:
+        _require_open_options_declare_zone(scenario.options_by_entity)
+        zones = {
+            option.dilution_zone_id
+            for options in scenario.options_by_entity.values()
+            for option in options
+            if option.action is NetworkAction.OPEN
+        }
+        for zone in sorted(zones):
+            model.add(
+                sum(
+                    variables[(entity_id, index)]
+                    for entity_id, options in scenario.options_by_entity.items()
+                    for index, option in enumerate(options)
+                    if option.action is NetworkAction.OPEN
+                    and option.dilution_zone_id == zone
+                )
+                <= scenario.constraints.max_open_per_dilution_zone
+            )
     model.maximize(
         sum(
             variables[(entity_id, index)]

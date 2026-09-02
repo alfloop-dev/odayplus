@@ -135,28 +135,23 @@ def check(repo_root: Path, manifest_path: Path) -> tuple[list[Failure], dict[str
         if not members:
             failures.append(Failure(requirement, "-", "declares no members"))
             continue
-        # The count is the only thing that catches a member being deleted from
-        # the list: the list is self-consistent after the deletion, so nothing
-        # else in this file would notice. An optional count is therefore not a
-        # weaker check but an absent one -- omitting it is exactly the edit a
-        # shrinking requirement would make.
+        # member_count is required, not optional. It exists to catch a member
+        # being deleted from the list, and an entry that omits it can shrink
+        # without anything noticing -- which is the failure this file models,
+        # one level up. Codex2 raised this in review of ODP-GATE-EXECUTION-PATH-001.
         declared_total = entry.get("member_count")
         if declared_total is None:
             failures.append(
                 Failure(
                     requirement,
                     "-",
-                    f"declares no member_count; state it as {len(members)} so that "
-                    "dropping a member from the list is a detectable change",
+                    "declares no member_count; without it the member list can shrink "
+                    "and still pass, which is the drift this check exists to catch",
                 )
             )
-        elif isinstance(declared_total, bool) or not isinstance(declared_total, int):
+        elif not isinstance(declared_total, int) or isinstance(declared_total, bool):
             failures.append(
-                Failure(
-                    requirement,
-                    "-",
-                    f"member_count must be an integer, got {declared_total!r}",
-                )
+                Failure(requirement, "-", f"member_count must be an integer, got {declared_total!r}")
             )
         elif declared_total != len(members):
             failures.append(

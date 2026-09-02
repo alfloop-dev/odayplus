@@ -19,6 +19,15 @@ from delivery_toolchain.governance.check_requirement_members import (
 
 
 def _manifest(tmp_path: Path, payload: dict) -> Path:
+    """Write a manifest, filling in member_count where the case is not about it.
+
+    member_count is required (Codex2's review finding), so a fixture that omits
+    it would fail for a reason unrelated to what it is testing. The cases that
+    do exercise the field set it explicitly and are left alone.
+    """
+    for entry in payload.get("requirements", []):
+        if "member_count" not in entry and entry.get("members") is not None:
+            entry["member_count"] = len(entry["members"])
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
@@ -41,7 +50,6 @@ class TestEvidenceMustPointSomewhereReal:
                 "requirements": [
                     {
                         "id": "R-1",
-                        "member_count": 1,
                         "members": [
                             {"name": "A", "status": "satisfied", "evidence": "pkg/mod.py::Gone"}
                         ],
@@ -59,13 +67,7 @@ class TestEvidenceMustPointSomewhereReal:
             tmp_path,
             {
                 "requirements": [
-                    {
-                        "id": "R-1",
-                        "member_count": 1,
-                        "members": [
-                            {"name": "A", "status": "satisfied", "evidence": "pkg/nope.py::Thing"}
-                        ],
-                    }
+                    {"id": "R-1", "members": [{"name": "A", "status": "satisfied", "evidence": "pkg/nope.py::Thing"}]}
                 ]
             },
         )
@@ -76,15 +78,7 @@ class TestEvidenceMustPointSomewhereReal:
         root = _repo(tmp_path)
         manifest = _manifest(
             tmp_path,
-            {
-                "requirements": [
-                    {
-                        "id": "R-1",
-                        "member_count": 1,
-                        "members": [{"name": "A", "status": "satisfied"}],
-                    }
-                ]
-            },
+            {"requirements": [{"id": "R-1", "members": [{"name": "A", "status": "satisfied"}]}]},
         )
         failures, _ = check(root, manifest)
         assert "no evidence" in failures[0].problem
@@ -97,7 +91,6 @@ class TestEvidenceMustPointSomewhereReal:
                 "requirements": [
                     {
                         "id": "R-1",
-                        "member_count": 2,
                         "members": [
                             {"name": "A", "status": "satisfied", "evidence": "pkg/mod.py::Thing"},
                             {"name": "B", "status": "satisfied", "evidence": "pkg/mod.py::Thing.field"},
@@ -118,15 +111,7 @@ class TestAGapMustBeWrittenDown:
         root = _repo(tmp_path)
         manifest = _manifest(
             tmp_path,
-            {
-                "requirements": [
-                    {
-                        "id": "R-1",
-                        "member_count": 1,
-                        "members": [{"name": "A", "status": "absent"}],
-                    }
-                ]
-            },
+            {"requirements": [{"id": "R-1", "members": [{"name": "A", "status": "absent"}]}]},
         )
         failures, _ = check(root, manifest)
         assert "no note" in failures[0].problem
@@ -137,13 +122,7 @@ class TestAGapMustBeWrittenDown:
             tmp_path,
             {
                 "requirements": [
-                    {
-                        "id": "R-1",
-                        "member_count": 1,
-                        "members": [
-                            {"name": "A", "status": "absent", "note": "needs a time dimension"}
-                        ],
-                    }
+                    {"id": "R-1", "members": [{"name": "A", "status": "absent", "note": "needs a time dimension"}]}
                 ]
             },
         )
@@ -172,77 +151,28 @@ class TestTheListItselfIsGuarded:
         failures, _ = check(root, manifest)
         assert "member_count says 3" in failures[0].problem
 
-    def test_a_requirement_with_no_member_count_is_refused(self, tmp_path: Path) -> None:
-        """An optional count is not a weaker guard, it is no guard.
-
-        The count is the only thing here that can see a member being deleted:
-        after the deletion the list is still internally consistent, so every
-        other rule in the file still passes. If omitting the count were allowed,
-        the cheapest way to make a shrinking requirement go green would be to
-        delete the count along with the member -- one edit, no failure.
-        """
+    def test_a_requirement_without_a_member_count_is_refused(self, tmp_path: Path) -> None:
+        """Codex2 raised this in review: member_count was optional, so an entry
+        that simply omitted it could shrink without anything noticing -- the
+        very drift this file models, one level up. It is now required."""
         root = _repo(tmp_path)
-        manifest = _manifest(
-            tmp_path,
-            {
-                "requirements": [
-                    {
-                        "id": "R-1",
-                        "members": [{"name": "A", "status": "absent", "note": "x"}],
-                    }
-                ]
-            },
-        )
-        failures, _ = check(root, manifest)
-        assert any("declares no member_count" in f.problem for f in failures)
-
-    def test_dropping_a_member_and_its_count_together_still_fails(
-        self, tmp_path: Path
-    ) -> None:
-        """The evasion the previous test exists to close, spelled out: a
-        two-member requirement shrunk to one, with the count removed rather
-        than corrected. Every member left in the list is well-formed."""
-        root = _repo(tmp_path)
-        manifest = _manifest(
-            tmp_path,
-            {
-                "requirements": [
-                    {
-                        "id": "R-1",
-                        "members": [
-                            {"name": "A", "status": "satisfied", "evidence": "pkg/mod.py::Thing"}
-                        ],
-                    }
-                ]
-            },
-        )
-        failures, _ = check(root, manifest)
-        assert failures, "a requirement that shrank passed with no member_count"
-
-    def test_a_non_integer_member_count_is_refused(self, tmp_path: Path) -> None:
-        """`"1"` and `1.0` compare unequal to `len(members)` and would have
-        been caught, but `True` equals `1` in Python -- a count of `true` would
-        have satisfied a one-member list and then never bound again."""
-        root = _repo(tmp_path)
-        for bad in ("1", True, 1.0):
-            manifest = _manifest(
-                tmp_path,
+        path = tmp_path / "manifest.json"
+        path.write_text(
+            json.dumps(
                 {
                     "requirements": [
-                        {
-                            "id": "R-1",
-                            "member_count": bad,
-                            "members": [{"name": "A", "status": "absent", "note": "x"}],
-                        }
+                        {"id": "R-1", "members": [{"name": "A", "status": "absent", "note": "x"}]}
                     ]
-                },
-            )
-            failures, _ = check(root, manifest)
-            assert any(
-                "member_count must be an integer" in f.problem for f in failures
-            ), f"member_count={bad!r} was accepted"
+                }
+            ),
+            encoding="utf-8",
+        )
+        failures, _ = check(root, path)
+        assert any("declares no member_count" in f.problem for f in failures)
 
-    def test_a_matching_member_count_passes(self, tmp_path: Path) -> None:
+    def test_a_non_integer_member_count_is_refused(self, tmp_path: Path) -> None:
+        """A string count compares unequal to len() and would read as a
+        mismatch rather than as a malformed manifest."""
         root = _repo(tmp_path)
         manifest = _manifest(
             tmp_path,
@@ -250,14 +180,23 @@ class TestTheListItselfIsGuarded:
                 "requirements": [
                     {
                         "id": "R-1",
-                        "member_count": 1,
+                        "member_count": "1",
                         "members": [{"name": "A", "status": "absent", "note": "x"}],
                     }
                 ]
             },
         )
         failures, _ = check(root, manifest)
-        assert failures == []
+        assert any("must be an integer" in f.problem for f in failures)
+
+    def test_every_seeded_requirement_declares_its_count(self) -> None:
+        """The checked-in manifest must not carry an entry that predates the
+        requirement, or the rule would be enforced only on new ones."""
+        import json as _json
+
+        payload = _json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        missing = [e["id"] for e in payload["requirements"] if "member_count" not in e]
+        assert not missing, f"entries without member_count: {missing}"
 
     def test_a_duplicate_member_is_caught(self, tmp_path: Path) -> None:
         root = _repo(tmp_path)
@@ -267,7 +206,6 @@ class TestTheListItselfIsGuarded:
                 "requirements": [
                     {
                         "id": "R-1",
-                        "member_count": 2,
                         "members": [
                             {"name": "A", "status": "absent", "note": "x"},
                             {"name": "A", "status": "absent", "note": "x"},
@@ -285,22 +223,16 @@ class TestTheListItselfIsGuarded:
         root = _repo(tmp_path)
         manifest = _manifest(
             tmp_path,
-            {
-                "requirements": [
-                    {
-                        "id": "R-1",
-                        "member_count": 1,
-                        "members": [{"name": "A", "status": "partial"}],
-                    }
-                ]
-            },
+            {"requirements": [{"id": "R-1", "members": [{"name": "A", "status": "partial"}]}]},
         )
         failures, _ = check(root, manifest)
         assert "not one of" in failures[0].problem
 
     def test_a_requirement_with_no_members_is_refused(self, tmp_path: Path) -> None:
         root = _repo(tmp_path)
-        manifest = _manifest(tmp_path, {"requirements": [{"id": "R-1", "members": []}]})
+        path = tmp_path / "manifest.json"
+        path.write_text(json.dumps({"requirements": [{"id": "R-1", "members": []}]}), encoding="utf-8")
+        manifest = path
         failures, _ = check(root, manifest)
         assert "declares no members" in failures[0].problem
 
