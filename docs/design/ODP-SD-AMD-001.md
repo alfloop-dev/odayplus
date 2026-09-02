@@ -42,7 +42,7 @@ baseline_commit: origin/dev@29a10711
 | 這組設計彼此自洽，且約束確實會擋下它宣稱要擋的資料（第 13 節在真實 PostgreSQL 上驗證） | 任何環境已套用它們 |
 | 每項落差的實作歸屬明確（第 12.1 節） | 實作已完成或已驗收 |
 
-第 13 節的驗證因此是**設計自洽性驗證**：它證明這組 DDL 能套用在 baseline 樁上、可重跑、且 138 個約束案例的行為與宣告一致。它不證明生產環境有這些結構。實作是否正確交付，由各實作 task 自己的 migration 與測試證明。
+第 13 節的驗證因此是**設計自洽性驗證**：它證明這組 DDL 能套用在 baseline 樁上、可重跑，且 140 個具名案例的行為與宣告一致。它不證明生產環境有這些結構。實作是否正確交付，由各實作 task 自己的 migration 與測試證明。
 
 ### 1.1 設計原則
 
@@ -385,7 +385,7 @@ END $$;
 
 ```sql
 ALTER TABLE operations.alerts
-    ADD COLUMN IF NOT EXISTS forecast_output_id UUID REFERENCES operations.forecast_outputs(forecast_output_id),
+    ADD COLUMN IF NOT EXISTS forecast_output_id UUID,
     ADD COLUMN IF NOT EXISTS tenant_id UUID REFERENCES core.tenants(tenant_id),
     ADD COLUMN IF NOT EXISTS decision_policy_version_id VARCHAR(100);
 ALTER TABLE expansion.heatzone_scores
@@ -527,6 +527,15 @@ BEGIN
             UNIQUE (forecast_output_id, tenant_id);
     END IF;
     IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'fk_alerts_forecast_output_tenant'
+    ) THEN
+        ALTER TABLE operations.alerts
+            ADD CONSTRAINT fk_alerts_forecast_output_tenant
+            FOREIGN KEY (forecast_output_id, tenant_id)
+            REFERENCES operations.forecast_outputs(forecast_output_id, tenant_id)
+            MATCH FULL NOT VALID;
+    END IF;
+    IF NOT EXISTS (
         SELECT 1 FROM pg_constraint WHERE conname = 'uq_predictions_prediction_tenant'
     ) THEN
         ALTER TABLE learning.predictions
@@ -641,6 +650,8 @@ def _alert_for(
 ```
 
 **評估識別（Evaluation Identity）的必要性**。在基線版本中，`alert_id` 僅由 `_stable_id("forecast-alert", output.forecast_output_id)` 生成。這導致當同一筆預測輸出套用兩個不同版本政策進行試算或回溯時，產生的 `alert_id` 完全相同，在 `operations.alerts` 寫入時會引發主鍵衝突或覆寫歷史，無法滿足 `ODP-AC-FR-008`（同一預測結果以不同政策版本評估可得不同燈號且兩者皆可重現與持久化共存）。修訂後，評估識別由 `(forecast_output_id, decision_policy_version_id)` 複合決定，`alert_id` 衍生納入政策版本，並在資料庫層建立唯一索引 `idx_alerts_forecast_policy`，確保多版本判定可獨立持久化與查詢。
+
+`forecast_output_id` 與 `tenant_id` 另以 `fk_alerts_forecast_output_tenant` 複合外鍵綁定同一租戶的預測輸出；評估識別不能以警示列自述的租戶跨域引用別的租戶預測。
 
 **既有 `policy_version` 的處置**。`ForecastOutput.policy_version` 目前填入常數 `FOUR_LIGHT_POLICY_VERSION = "four-light-policy-v1"`（`modules/forecastops/domain/forecasting.py:38`、`:537`），並被複製進 `evidence_json["policy_version"]`。依第 3.2 節的命名規則，該常數的值正是**政策標籤**（`policy_label`），不是主鍵：
 
@@ -814,7 +825,7 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
     -- 結構化生效狀態與重算血統（取代自由文字 applied_effect）
     applied_status          VARCHAR(50) NOT NULL DEFAULT 'PENDING_APPLICATION',
     not_applied_reason_code VARCHAR(100),
-    recalculation_forecast_output_id UUID REFERENCES operations.forecast_outputs(forecast_output_id),
+    recalculation_forecast_output_id UUID,
     recalculation_run_id    UUID REFERENCES learning.prediction_runs(prediction_run_id),
     applied_at              TIMESTAMP WITH TIME ZONE,
 
@@ -834,6 +845,9 @@ CREATE TABLE IF NOT EXISTS operations.forecast_feedback (
         REFERENCES operations.alerts(alert_id, tenant_id),
     CONSTRAINT fk_feedback_forecast_output_tenant
         FOREIGN KEY (target_forecast_output_id, tenant_id)
+        REFERENCES operations.forecast_outputs(forecast_output_id, tenant_id),
+    CONSTRAINT fk_feedback_recalculation_forecast_output_tenant
+        FOREIGN KEY (recalculation_forecast_output_id, tenant_id)
         REFERENCES operations.forecast_outputs(forecast_output_id, tenant_id),
     CONSTRAINT fk_feedback_prediction_tenant
         FOREIGN KEY (target_prediction_id, tenant_id)
@@ -986,9 +1000,9 @@ v0.5.0 把核准變成參照完整性問題：
 
 **修正內容為何要三欄**。`OUTCOME_CORRECTION` 的語意是「系統取得的實績有誤」。只記「有誤」而不記原值、正確值與指標名，核准者無從判斷是否該核准，事後也無從稽核核准是否正確。`observed_value` 保留系統原值，使修正可被還原比對。
 
-**結構化重算血統（Provenance）**。為滿足「後續預測輸出須可查詢其是否受回饋影響」，設計引入 `recalculation_forecast_output_id` 與 `recalculation_run_id` 兩項明確外鍵，取代模糊的文字描述：
+**結構化重算血統（Provenance）**。為滿足「後續預測輸出須可查詢其是否受回饋影響」，設計引入 `recalculation_forecast_output_id` 與 `recalculation_run_id` 兩項明確外鍵，並以 `fk_feedback_recalculation_forecast_output_tenant` 將重算輸出與回饋綁在同一租戶，取代模糊的文字描述：
 1. 當 `OUTCOME_CORRECTION` 經 Data Owner 核准並觸發批次重算後，管線將新產生的 `forecast_output_id` 回填至本表的 `recalculation_forecast_output_id`，並將 `applied_status` 更新為 `APPLIED_RECALCULATION`、`applied_at` 填入生效時點。
-2. 查詢任一預測輸出是否受回饋影響，只需執行 `SELECT * FROM operations.forecast_feedback WHERE recalculation_forecast_output_id = :id`，即可完整重現該預測所吸收之營運回饋清單與修正前／後實績差異。
+2. 查詢任一預測輸出是否受回饋影響，只需以同租戶條件執行 `SELECT * FROM operations.forecast_feedback WHERE (recalculation_forecast_output_id, tenant_id) = (:id, :tenant_id)`，即可完整重現該預測所吸收之營運回饋清單與修正前／後實績差異。
 3. 若回饋因故未生效（如核准駁回或超出時間窗），`applied_status` 設為 `NOT_APPLIED`，並由 `chk_feedback_not_applied_reason` 強制填寫 `not_applied_reason_code`。
 
 **上一版的錯誤，與這次的修法**。v0.3.0 的 `chk_feedback_recalculation_provenance` 寫成 `recalculation_forecast_output_id IS NOT NULL OR recalculation_run_id IS NOT NULL`，也就是只填 `recalculation_run_id` 也算合格。但第 2 點宣稱的查詢是以 `recalculation_forecast_output_id` 為條件——一筆只有 run id 的列，在那個查詢裡查不到，卻仍被標記為已重算。**該約束因此容許了它自己宣稱要杜絕的狀態**。v0.4.0 改為必填 `recalculation_forecast_output_id`；`recalculation_run_id` 維持選填，作為重算批次的附加線索，但不能單獨充當血統。反向也一併封死：非 `APPLIED_RECALCULATION` 的列不得挾帶任何重算欄位，避免出現「有重算輸出但狀態說沒生效」的矛盾列。
@@ -1753,11 +1767,13 @@ POST   /api/v1/priceops/exploration-candidates        依 Gate 授權產生探�
 | `core.stores` | `uq_stores_store_tenant` | 讓「門市的租戶」成為可被複合外鍵引用的欄位對 |
 | `core.brands` | `uq_brands_brand_tenant` | 同上（品牌），供 `fk_exploration_gates_brand_tenant` 引用 |
 | `operations.alerts` | `uq_alerts_alert_tenant` | 供 `fk_feedback_alert_tenant` 引用 |
-| `operations.forecast_outputs` | `uq_forecast_outputs_output_tenant`、`fk_forecast_outputs_store_tenant`（`NOT VALID`） | 供回饋複合外鍵引用；租戶必須就是其門市的租戶 |
+| `operations.forecast_outputs` | `uq_forecast_outputs_output_tenant`、`fk_forecast_outputs_store_tenant`（`NOT VALID`） | 供回饋與警示的複合外鍵引用；租戶必須就是其門市的租戶 |
 | `asset.valuation_runs` | `uq_valuation_runs_run_tenant`、`fk_valuation_runs_store_tenant`（`NOT VALID`） | 同上（估值） |
 | `learning.predictions` | `uq_predictions_prediction_tenant` | 供 `fk_feedback_prediction_tenant` 引用；租戶為自述（第 12.0 節） |
 | `operations.alerts` | `fk_alerts_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 政策綁定必須指向真實政策列，且該政策必須屬於同一租戶 |
 | `operations.alerts` | `fk_alerts_store_tenant`（`NOT VALID`） | 警示自述的租戶必須就是其門市的租戶 |
+| `operations.alerts` | `fk_alerts_forecast_output_tenant`（複合、`MATCH FULL`、`NOT VALID`） | 評估警示與其預測輸出必須屬於同一租戶 |
+| `operations.forecast_feedback` | `fk_feedback_recalculation_forecast_output_tenant`（複合、`MATCH FULL`） | 重算後預測輸出必須與回饋屬於同一租戶 |
 | `expansion.heatzone_scores` | `fk_heatzone_scores_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 同上（政策部分） |
 | `expansion.site_score_runs` | `fk_site_score_runs_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 同上 |
 | `network.network_plans` | `fk_network_plans_decision_policy`（複合、`MATCH FULL`、`NOT VALID`） | 同上 |
@@ -1865,7 +1881,7 @@ ALTER TABLE operations.alerts ALTER COLUMN decision_policy_version_id SET NOT NU
 
 ### 12.0 已知限制：`learning.predictions` 的租戶只能自述
 
-本案為六處單欄參照補上同租戶複合外鍵。其中五處的租戶是**可驗證的**：`core.brands`、`core.stores` 本身帶 `tenant_id`；`operations.forecast_outputs` 與 `asset.valuation_runs` 有 `store_id NOT NULL`，故其租戶由門市推導（`fk_forecast_outputs_store_tenant`、`fk_valuation_runs_store_tenant`，與 `fk_alerts_store_tenant` 同一模式）——寫入端無法宣稱一個與其門市不符的租戶。
+本案為跨表 lineage 參照補上同租戶複合外鍵。其中可由既有資料推導租戶的目標是**可驗證的**：`core.brands`、`core.stores` 本身帶 `tenant_id`；`operations.forecast_outputs` 與 `asset.valuation_runs` 有 `store_id NOT NULL`，故其租戶由門市推導（`fk_forecast_outputs_store_tenant`、`fk_valuation_runs_store_tenant`、`fk_alerts_forecast_output_tenant`，與 `fk_alerts_store_tenant` 同一模式）——寫入端無法宣稱一個與其門市不符的租戶。`forecast_feedback.recalculation_forecast_output_id` 也以同一複合鍵綁定，避免重算血統跨租戶。
 
 `learning.predictions` 不同：它既無 `tenant_id` 也無 `store_id`，baseline 沒有任何可推導租戶的路徑。本案為它加了 `tenant_id` 並建立 `uq_predictions_prediction_tenant`，使 `fk_feedback_prediction_tenant` 成立——**回饋與其預測必須同租戶**這一點因此可被資料庫強制。但「這筆預測屬於哪個租戶」本身是寫入端自述的，沒有第二個來源可以反駁它。
 
@@ -1903,8 +1919,8 @@ ALTER TABLE operations.alerts ALTER COLUMN decision_policy_version_id SET NOT NU
 | 落差 | 實作 task | 狀態 |
 |---|---|---|
 | 平台級 Decision Policy 機制 | `ODP-DECISION-POLICY-CORE-001` | 已併入 `dev`（migration `000014`） |
-| `FCT-005` 四燈改由政策產生 | `ODP-FORECAST-ALERT-POLICY-001` | 進行中 |
-| `FCT-006` 預警提前天數與 Precision | `ODP-FORECAST-ALERT-PRECISION-001` | 待前置完成 |
+| `FCT-005` 四燈改由政策產生 | `ODP-FORECAST-ALERT-POLICY-001` | 已併入 `dev`（PR #1106） |
+| `FCT-006` 預警提前天數與 Precision | `ODP-FORECAST-ALERT-PRECISION-001` | 已併入 `dev`（PR #1121） |
 | `FCT-008` Feedback 機制 | `ODP-FORECAST-FEEDBACK-001` | 已併入 `dev` |
 | `FCT-008` 相關的不實 UI 文案移除 | `ODP-UI-FALSE-FEEDBACK-COPY-001` | 已併入 `dev` |
 | `AVM-005`／`008` 成交結果回收 | `ODP-AVM-DEAL-OUTCOME-001` | 已併入 `dev` |
@@ -1936,9 +1952,9 @@ uv run --no-project --python 3.12 --with pgserver \
 |---|---|
 | A. 9 個 DDL 區塊套用於 baseline 相依樁 | 9／9 通過 |
 | B. 每個區塊重跑一次（第 10 節宣稱的可重跑，含兩個 trigger 區塊） | 9／9 通過 |
-| C. 新增約束、外鍵與 trigger 是否真的擋下它宣稱要擋的資料 | 138／138 符合設計 |
+| C. 具名約束、外鍵與 trigger 案例是否符合宣告 | 140／140 符合設計 |
 
-**這個數字說的是什麼，不說什麼**。138／138 指「138 個案例的行為與其宣告一致」——每個負向案例被拒，且拒絕訊息中出現它指名的那個約束；每個正向案例被接受。它**不**保證每個已宣告的約束都有案例。
+**這個數字說的是什麼，不說什麼**。140／140 指「140 個案例的行為與其宣告一致」——每個負向案例被拒，且拒絕訊息中出現它指名的那個約束；每個正向案例被接受。它**不**宣稱每個 supporting key、查詢索引或 enum guard 都已具備獨立負向案例；未列入的約束仍由 A／B 的套用與可重跑檢查驗證其存在與語法。
 
 v0.5.0 的 102／102 就是在這個區別上誇大了：`chk_decision_policy_kind`／`window`／`reason`／`params`、`chk_deal_outcome_kind`／`reason_code`／`price_positive`、`chk_composition_kind`／`revert_order`、`chk_gate_budget_limit`／`revoke_order`、`fk_decisions_policy_version`、`fk_exploration_decisions_tenant` 當時皆無具名案例。那些約束若被打錯字或整條刪去，套件仍會報全綠——通過數只覆蓋存在的案例。v0.6.0 為上列每一條補上具名案例，並補上 `trg_exploration_gates_controlled_update` 的九個案例。
 
@@ -1946,7 +1962,7 @@ v0.5.0 的 102／102 就是在這個區別上誇大了：`chk_decision_policy_ki
 
 補案例的過程本身也印證了逐案斷言約束名的必要：新增的三個案例第一次執行時是 `WRONGCAUSE` 而非 `OK`——`workflow.decisions` 沒有 `tenant_id` 欄、`pricing.exploration_decisions` 的欄位是 `algorithm` 而非 `decided_at`、而 `SETTLED` 案例未帶 `no_deal_reason_code` 因此被 `chk_deal_outcome_closed_fields` 先攔下。若只斷言「被拒」，這三個案例都會以假象通過，並宣稱測到了它們其實沒碰到的約束。
 
-C 項逐條涵蓋本案每一條新增 CHECK、外鍵、唯一索引與 trigger。其中與本版（v0.5.0）新增規則直接對應者為：宣稱 `APPROVED` 但 `workflow.approvals` 沒有對應核准列被拒；指向一筆尚未核准（`pending`）的核准列被拒；`AUTO_ACCEPTED` 卻挾帶核准連結被拒；同一核准決策被第二筆回饋重用被拒；**已被回饋引用的核准列改回 `returned` 被外鍵拒**；回饋或警示自述的租戶與其門市租戶不符被拒；綁定他租戶政策、或綁了政策卻不宣告租戶被拒；政策的回退目標指向他租戶版本被拒；熱區組成列被刪除、被二次撤銷、或在撤銷的同一句改寫其他欄位被 trigger 拒；探索決策寫入未累加即超出 Gate 上限被拒（含累計器實際被移動的正向斷言）；對已撤銷或已過期 Gate 的探索決策被拒；已扣抵的探索決策被改寫或刪除被拒；吸收結果缺來源識別或門市數、來源為空字串、門市數為負被拒。
+C 項只對腳本列出的具名治理案例作行為宣稱。其中與本版新增規則直接對應者為：宣稱 `APPROVED` 但 `workflow.approvals` 沒有對應核准列被拒；指向一筆尚未核准（`pending`）的核准列被拒；`AUTO_ACCEPTED` 卻挾帶核准連結被拒；同一核准決策被第二筆回饋重用被拒；**已被回饋引用的核准列改回 `returned` 被外鍵拒**；回饋、警示或重算血統自述的租戶與其目標不符被拒；綁定他租戶政策、或綁了政策卻不宣告租戶被拒；政策的回退目標指向他租戶版本被拒；熱區組成列被刪除、被二次撤銷、或在撤銷的同一句改寫其他欄位被 trigger 拒；探索決策寫入未累加即超出 Gate 上限被拒（含累計器實際被移動的正向斷言）；對已撤銷或已過期 Gate 的探索決策被拒；已扣抵的探索決策被改寫或刪除被拒；吸收結果缺來源識別或門市數、來源為空字串、門市數為負被拒。其餘 enum guard 與 supporting key 的完整獨立案例不在本案行為覆蓋宣稱內。
 
 v0.4.0 已涵蓋且本版保留者包括：`CLOSED` 缺成交價、成交時點或 `deal_terms` 三鍵被拒；未成交挾帶成交價或成交條件被拒；同一 `valuation_run_id` 登錄第二筆結果被拒；`APPLIED_RECALCULATION` 只填 `recalculation_run_id` 被拒；回饋類型與生效路徑不相容被拒；已生效卻無 `applied_at` 被拒；吸收欄位只填一半、為負或與比例矛盾被拒；`policy_version_id` 未帶租戶後綴被拒。
 

@@ -125,9 +125,11 @@ CREATE TABLE network.network_plans (
 TENANT = "'11111111-1111-1111-1111-111111111111'"
 TENANT_2 = "'11111111-1111-1111-1111-222222222222'"
 STORE = "'22222222-2222-2222-2222-222222222222'"
+STORE_2 = "'22222222-2222-2222-2222-333333333333'"
 CELL = "'33333333-3333-3333-3333-333333333333'"
 FORECAST = "'55555555-5555-5555-5555-555555555555'"
 RECALC_OUTPUT = "'55555555-5555-5555-5555-666666666666'"
+FORECAST_T2 = "'55555555-5555-5555-5555-777777777777'"
 ALERT = "'66666666-6666-6666-6666-666666666666'"
 PREDICTION_RUN = "'99999999-9999-9999-9999-999999999999'"
 GATE_ID = "'88888888-8888-8888-8888-888888888888'"
@@ -144,9 +146,12 @@ POLICY_T2 = f"'{POLICY_LABEL}:{TENANT_2[1:-1]}'"
 SEED = f"""
 INSERT INTO core.stores (store_id, tenant_id) VALUES ({STORE}, {TENANT})
     ON CONFLICT DO NOTHING;
+INSERT INTO core.stores (store_id, tenant_id) VALUES ({STORE_2}, {TENANT_2})
+    ON CONFLICT DO NOTHING;
 INSERT INTO geo.h3_cells (geo_cell_id) VALUES ({CELL}) ON CONFLICT DO NOTHING;
 INSERT INTO operations.forecast_outputs (forecast_output_id, tenant_id)
-    VALUES ({FORECAST},{TENANT}), ({RECALC_OUTPUT},{TENANT}) ON CONFLICT DO NOTHING;
+    VALUES ({FORECAST},{TENANT}), ({RECALC_OUTPUT},{TENANT}),
+           ({FORECAST_T2},{TENANT_2}) ON CONFLICT DO NOTHING;
 INSERT INTO learning.prediction_runs (prediction_run_id)
     VALUES ({PREDICTION_RUN}) ON CONFLICT DO NOTHING;
 INSERT INTO operations.alerts (alert_id, store_id, tenant_id, alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id)
@@ -498,6 +503,13 @@ FEEDBACK_CASES = [
                   applied="'APPLIED_DISPOSITION'", applied_at="now()",
                   tenant=TENANT_2, accepted=False,
                   expects=("fk_feedback_store_tenant",)),
+    feedback_case("feedback: recalculation output owned by another tenant",
+                  kind="OUTCOME_CORRECTION", forecast=FORECAST_T2,
+                  approval="APPROVED", approved_by="'approver'", approved_at="now()",
+                  **CORRECTION, applied="'APPLIED_RECALCULATION'",
+                  recalc_output=FORECAST, recalc_run=PREDICTION_RUN, applied_at="now()",
+                  tenant=TENANT_2, store=STORE_2, accepted=False,
+                  expects=("fk_feedback_recalculation_forecast_output_tenant",)),
 ]
 
 # One approval must not be able to authorise two corrections: both rows below
@@ -778,10 +790,12 @@ GATE_CASES = [
          False, ("fk_feedback_alert_tenant",),
          setup="INSERT INTO core.stores (store_id, tenant_id) VALUES"
                f" ({uid('store:t2-alert')},{TENANT_2});"
+               " INSERT INTO operations.forecast_outputs (forecast_output_id, store_id, tenant_id) VALUES"
+               f" ({uid('output:t2-alert')},{uid('store:t2-alert')},{TENANT_2});"
                " INSERT INTO operations.alerts (alert_id, store_id, tenant_id,"
-               " alert_reason_code, evidence_json, decision_policy_version_id) VALUES"
+               " alert_reason_code, evidence_json, forecast_output_id, decision_policy_version_id) VALUES"
                f" ({uid('alert:t2-scoped')},{uid('store:t2-alert')},{TENANT_2},"
-               f"'sitescore_gap','{{}}'::jsonb,{POLICY_T2});"),
+               f"'sitescore_gap','{{}}'::jsonb,{uid('output:t2-alert')},{POLICY_T2});"),
     Case("scoped: feedback targeting another tenant's forecast output",
          FEEDBACK_COLUMNS + f"({TENANT},{STORE},'OUTCOME_CORRECTION',NULL,"
          f"{uid('output:t2-scoped')},NULL,"
@@ -1126,6 +1140,9 @@ ALERT_CASES = [
     alert_case("alert: tenant not owning the store",
                policy=POLICY_T2, tenant=TENANT_2, accepted=False,
                expects=("fk_alerts_store_tenant",)),
+    alert_case("alert: forecast output owned by another tenant",
+               policy=POLICY_T2, tenant=TENANT_2, store=STORE_2, forecast=FORECAST,
+               accepted=False, expects=("fk_alerts_forecast_output_tenant",)),
     Case("alert: deterioration before opened_at",
          "UPDATE operations.alerts SET deterioration_confirmed_at = opened_at -"
          f" interval '1 day' WHERE alert_id = {ALERT}",
