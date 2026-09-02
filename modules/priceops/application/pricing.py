@@ -16,8 +16,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from shared.governance.vocabularies import EvidenceLevel
-
 from models.shared_ml.production_runtime import (
     ProductionExecutionConfigurationError,
     production_execution_required,
@@ -61,6 +59,7 @@ from modules.priceops.infrastructure.oss_optimizer import (
     PriceOpsProductionOptimizer,
 )
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
+from shared.governance.vocabularies import EvidenceLevel
 from solver.pricing.optimizer import STATUS_INFEASIBLE, STATUS_OPTIMAL
 
 # Label maturity horizon when the caller does not supply one explicitly.

@@ -16,7 +16,6 @@ from typing import Any
 from uuid import uuid4
 
 from shared.governance.vocabularies import EvidenceLevel
-
 from solver.pricing.constraints import (
     PRICING_POLICY_ID,
     PRICING_POLICY_KIND,

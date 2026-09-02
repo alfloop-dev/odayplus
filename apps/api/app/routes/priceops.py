@@ -31,7 +31,6 @@ except ModuleNotFoundError:  # pragma: no cover
 else:
     from apps.api.app.routes._common import durable_store_required
     from models.priceops.binding import ElasticityInputError, resolve_elasticity
-    from shared.governance.vocabularies import EvidenceLevel
     from modules.priceops.application import (
         ApprovalBlockedError,
         MissingRollbackPlanError,
@@ -50,6 +49,7 @@ else:
         PlanRequest,
         run_priceops_optimizer_batch,
     )
+    from shared.governance.vocabularies import EvidenceLevel
 
     logger = logging.getLogger("oday-api.priceops")
 

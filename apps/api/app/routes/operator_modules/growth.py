@@ -24,7 +24,6 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from apps.api.app.routes.operator_modules.live_service import resolve_service
-from shared.governance.vocabularies import EvidenceLevel
 from modules.opsboard.application.growth import (
     GrowthCloseoutGateError,
     GrowthConflict,
@@ -32,6 +31,7 @@ from modules.opsboard.application.growth import (
     GrowthPolicyError,
     GrowthService,
 )
+from shared.governance.vocabularies import EvidenceLevel
 
 # ---------------------------------------------------------------------------
 # Request / response DTOs

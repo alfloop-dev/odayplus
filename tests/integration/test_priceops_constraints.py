@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from shared.governance.vocabularies import EvidenceLevel
 from modules.priceops import (
     PRICEOPS_SOLVER_VERSION,
     ApprovalBlockedError,
