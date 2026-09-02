@@ -1,6 +1,14 @@
 from __future__ import annotations
 
-from modules.heatzone.domain.scoring import HeatZoneFeatureInput, score_heatzones
+from dataclasses import replace
+from datetime import UTC, datetime
+
+from modules.external_data.geo import GeoFeatureSnapshot
+from modules.heatzone.domain.scoring import (
+    HeatZoneFeatureInput,
+    HeatZoneState,
+    score_heatzones,
+)
 from modules.heatzone.v3 import (
     CONTRACT_ID,
     CONTRACT_VERSION,
@@ -72,6 +80,8 @@ from packages.oday_data_product_contracts_client.models.market_cell_profile impo
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     PeriodGrain as MarketCellPeriodGrain,
 )
+
+SNAPSHOT_TIME = datetime(2026, 6, 27, 8, 0, tzinfo=UTC)
 
 
 def _sample_source_support() -> SourceSupportSummary:
@@ -508,10 +518,120 @@ def test_heatzone_v2_suppresses_when_confidence_or_quality_unmeasured() -> None:
     scores = score_heatzones([inp_none])
     assert len(scores) == 1
     assert scores[0].confidence == 0.0
-    from modules.heatzone.domain.scoring import HeatZoneState
     assert scores[0].state is HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
     assert "low_confidence" in scores[0].warnings
 
+
+def test_heatzone_v2_suppresses_when_only_average_confidence_is_measured() -> None:
+    """One measured side is not a measured composite: data quality stays unknown."""
+    inp = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=0.9,
+        data_quality_score=None,
+    )
+
+    score = score_heatzones([inp])[0]
+
+    assert score.confidence == 0.0
+    assert score.state is HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert "low_confidence" in score.warnings
+
+
+def test_heatzone_v2_suppresses_when_only_data_quality_is_measured() -> None:
+    """Mirror of the above: a measured data quality does not stand in for confidence."""
+    inp = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=None,
+        data_quality_score=0.9,
+    )
+
+    score = score_heatzones([inp])[0]
+
+    assert score.confidence == 0.0
+    assert score.state is HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert "low_confidence" in score.warnings
+
+
+def test_heatzone_v2_unmeasured_quality_never_outranks_measured_quality() -> None:
+    """Absence must never buy a higher confidence than an actual measurement."""
+    measured = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=0.9,
+        data_quality_score=0.9,
+    )
+    partially_measured = HeatZoneFeatureInput(
+        h3_index="884a1072b1fffff",
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=0.9,
+        data_quality_score=None,
+    )
+
+    by_h3 = {score.h3_index: score for score in score_heatzones([measured, partially_measured])}
+
+    assert by_h3["884a1072b7fffff"].confidence == 0.81
+    assert by_h3["884a1072b7fffff"].state is not HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert by_h3["884a1072b1fffff"].confidence < by_h3["884a1072b7fffff"].confidence
+
+
+def test_heatzone_v2_from_mapping_leaves_absent_quality_unmeasured() -> None:
+    """from_mapping is the realistic ingress: an absent quality key stays None."""
+    without_quality = HeatZoneFeatureInput.from_mapping(
+        {"h3_index": "884a1072b7fffff", "poi_count": 10, "average_confidence": 0.9}
+    )
+    with_quality = HeatZoneFeatureInput.from_mapping(
+        {
+            "h3_index": "884a1072b7fffff",
+            "poi_count": 10,
+            "average_confidence": 0.9,
+            "data_quality_score": 0.9,
+        }
+    )
+
+    assert without_quality.average_confidence == 0.9
+    assert without_quality.data_quality_score is None
+    assert with_quality.data_quality_score == 0.9
+
+    assert score_heatzones([without_quality])[0].confidence == 0.0
+    assert score_heatzones([with_quality])[0].confidence == 0.81
+
+
+def test_heatzone_v2_geo_snapshot_conversion_carries_competitor_capacity() -> None:
+    """competitor_capacity is measured per cell by the geo pipeline and must survive."""
+    snapshot = GeoFeatureSnapshot(
+        h3_index="884a1072b7fffff",
+        h3_resolution=9,
+        feature_snapshot_time=SNAPSHOT_TIME,
+        view_version="geo-grid-view-v1",
+        poi_count=30,
+        competitor_count=2,
+        competitor_capacity=200.0,
+        average_confidence=0.9,
+        source_snapshot_ids=("geo-1",),
+    )
+
+    feature = HeatZoneFeatureInput.from_geo_feature_snapshot(
+        snapshot, data_quality_score=0.9
+    )
+    assert feature.competitor_capacity == 200.0
+
+    saturated = score_heatzones([feature])[0]
+    uncontested = score_heatzones(
+        [
+            HeatZoneFeatureInput.from_geo_feature_snapshot(
+                replace(snapshot, competitor_capacity=0.0), data_quality_score=0.9
+            )
+        ]
+    )[0]
+
+    assert saturated.unmet_demand_score < uncontested.unmet_demand_score
+    assert saturated.score < uncontested.score
 
 
 # -----------------------------------------------------------------------------

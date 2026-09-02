@@ -42,6 +42,7 @@ def test_heatzone_worker_scores_ranks_and_states_geo_features() -> None:
                 median_listing_rent=130_000,
                 competitor_capacity=18,
                 average_confidence=0.82,
+                data_quality_score=0.95,
                 source_snapshot_ids=("geo-20260627",),
                 existing_store_count=3,
             ),
@@ -52,13 +53,51 @@ def test_heatzone_worker_scores_ranks_and_states_geo_features() -> None:
     assert result.status == "succeeded"
     assert [score.priority_rank for score in result.scores] == [1, 2]
     assert result.scores[0].h3_index == "h3r9_0100_0100"
-    assert result.scores[0].state == HeatZoneState.UNTOUCHED
     assert result.scores[0].score > result.scores[1].score
     assert result.scores[0].unmet_demand_score > 0
     assert result.scores[0].format_fit_score > 0
-    assert result.scores[0].confidence == 0.92
+    # A GeoFeatureSnapshot carries an average_confidence but no data quality
+    # measurement, so the composite is not computable and v2 fails closed
+    # instead of reading the absent component as a perfect 1.0.
+    assert result.scores[0].confidence == 0.0
+    assert result.scores[0].state == HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert result.scores[1].confidence == 0.779
     assert result.scores[1].state == HeatZoneState.SATURATED
-    assert result.to_dict()["map_features"][0]["properties"]["status"] == "UNTOUCHED"
+    assert (
+        result.to_dict()["map_features"][0]["properties"]["status"]
+        == "SUPPRESSED_LOW_CONFIDENCE"
+    )
+
+
+def test_heatzone_geo_snapshot_clears_suppression_when_data_quality_is_measured() -> None:
+    """The snapshot bridge takes a measured data quality; supplying it reaches a real state."""
+    snapshot = GeoFeatureSnapshot(
+        h3_index="h3r9_0100_0100",
+        h3_resolution=9,
+        feature_snapshot_time=SNAPSHOT_TIME,
+        view_version="geo-grid-view-v1",
+        poi_count=18,
+        competitor_count=1,
+        active_listing_count=6,
+        median_listing_rent=55_000,
+        competitor_capacity=4,
+        average_confidence=0.92,
+        source_snapshot_ids=("poi-20260627", "listing-20260627"),
+    )
+
+    result = run_heatzone_batch_score(
+        job_id="hz-job-measured",
+        prediction_origin_time=PREDICTION_TIME,
+        features=[
+            HeatZoneFeatureInput.from_geo_feature_snapshot(
+                snapshot, data_quality_score=0.95
+            )
+        ],
+    )
+
+    assert result.scores[0].confidence == 0.874
+    assert result.scores[0].state == HeatZoneState.UNTOUCHED
+    assert result.scores[0].warnings == ()
 
 
 def test_heatzone_state_rules_cover_absorbed_under_realized_and_expandable() -> None:
@@ -72,6 +111,7 @@ def test_heatzone_state_rules_cover_absorbed_under_realized_and_expandable() -> 
                 "active_listing_count": 2,
                 "median_listing_rent": 65_000,
                 "average_confidence": 0.8,
+                "data_quality_score": 0.95,
                 "source_snapshot_ids": ["geo"],
                 "existing_store_count": 1,
             },
@@ -81,6 +121,7 @@ def test_heatzone_state_rules_cover_absorbed_under_realized_and_expandable() -> 
                 "poi_count": 16,
                 "active_listing_count": 5,
                 "average_confidence": 0.8,
+                "data_quality_score": 0.95,
                 "source_snapshot_ids": ["geo"],
                 "existing_store_count": 1,
                 "realized_revenue_ratio": 0.5,
@@ -92,6 +133,7 @@ def test_heatzone_state_rules_cover_absorbed_under_realized_and_expandable() -> 
                 "competitor_count": 0,
                 "active_listing_count": 5,
                 "average_confidence": 0.8,
+                "data_quality_score": 0.95,
                 "source_snapshot_ids": ["geo"],
                 "existing_store_count": 1,
             },
@@ -152,6 +194,7 @@ def test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target
                 "active_listing_count": 4,
                 "median_listing_rent": 50_000,
                 "average_confidence": 0.9,
+                "data_quality_score": 0.95,
                 "source_snapshot_ids": ["poi", "listing"],
             }
             for _ in range(20)

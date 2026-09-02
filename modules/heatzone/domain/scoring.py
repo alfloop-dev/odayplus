@@ -85,6 +85,7 @@ class HeatZoneFeatureInput:
             competitor_count=snapshot.competitor_count,
             active_listing_count=snapshot.active_listing_count,
             median_listing_rent=snapshot.median_listing_rent,
+            competitor_capacity=snapshot.competitor_capacity,
             average_confidence=(
                 _bounded(snapshot.average_confidence)
                 if snapshot.average_confidence is not None
@@ -331,12 +332,14 @@ def _score_feature(
         + rent_feasibility * weights.rent_feasibility
         + (1.0 - cannibalization_risk) * weights.cannibalization_inverse
     )
-    if feature.average_confidence is None and feature.data_quality_score is None:
+    # Fail closed on either quality component being unmeasured. Substituting a
+    # 1.0 identity for the missing side is the same claim as the dataclass
+    # default this task removed: it reports an unmeasured cell as measured, and
+    # scores it strictly above a cell whose quality was actually measured at the
+    # same figure. v3 scoring fails closed on either side being None; the two
+    # paths must agree on what absence means.
+    if feature.average_confidence is None or feature.data_quality_score is None:
         confidence = 0.0
-    elif feature.average_confidence is None:
-        confidence = _bounded(feature.data_quality_score)
-    elif feature.data_quality_score is None:
-        confidence = _bounded(feature.average_confidence)
     else:
         confidence = _bounded(feature.average_confidence * feature.data_quality_score)
     warnings = _warnings(feature, confidence)
