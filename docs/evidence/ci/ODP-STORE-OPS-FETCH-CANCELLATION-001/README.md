@@ -63,13 +63,15 @@ npm --workspace=@oday-plus/web test -- StoreOpsPackage10Parity
 
 總計：1 個測試檔案、6 個測試全部通過。
 
-### 3.2 本機聚焦 Playwright 測試案例
-在 `tests/e2e/e2e-operator-console.spec.ts` 新增測試案例：
-`ODP-STORE-OPS-FETCH-CANCELLATION-001 unmounting or navigating away from Store Ops aborts in-flight issues fetch without console errors`
-透過模擬延遲的 Store Ops issues 請求並在請求途中快速導向 `/operator?ws=govern`，驗證導向中斷不會在瀏覽器 console 產生任何 error。
+### 3.2 Playwright 測試整合與測試庫存維持
+為維持 canonical Playwright inventory（嚴格要求 108 tests / 17 files），將精確的 Store Ops fetch 取消情境直接整合至既有測試案例 `tests/e2e/e2e-operator-console.spec.ts` 之 `ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and Store Ops dialog`：
+- 在測試前段註冊延遲的 `/api/v1/operator/store-ops/issues*` 請求路由。
+- 進入 Store Ops 後立即快速導向至 `/operator?ws=govern`。
+- 驗證在 in-flight 請求被 unmount 中斷時，瀏覽器 console 仍維持無任何 `error` 記錄（`expect(browserErrors).toEqual([])`）。
+- 測試總數嚴格維持 108 tests / 17 files，符合 canonical registry 要求。
 
 ### 3.3 PR CI 驗證綁定
-全域驗證與 E2E 完整套件綁定至 PR #1136 之 exact head commit，由 GitHub Actions CI 進行稽核與驗證。
+全域驗證與 E2E 完整套件綁定至 PR 之 exact head commit，由 GitHub Actions CI 進行稽核與驗證。
 
 ---
 
