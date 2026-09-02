@@ -1632,6 +1632,28 @@
             ],
             "title": "Dataset Snapshot Id"
           },
+          "feature_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feature Set Id"
+          },
+          "label_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label Set Id"
+          },
           "require_training_eligible": {
             "default": true,
             "title": "Require Training Eligible",
