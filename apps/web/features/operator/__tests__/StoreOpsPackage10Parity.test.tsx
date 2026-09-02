@@ -96,6 +96,28 @@ describe("Package 10 Store Ops parity", () => {
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
+  it("aborts in-flight fetch and suppresses console.error when the document is hidden", async () => {
+    let capturedSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      capturedSignal = init?.signal as AbortSignal;
+      return new Promise((_, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The document is being unloaded.", "AbortError"));
+        });
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    render(<DesignStoreOpsWorkspace onOpenWorkflow={vi.fn()} />);
+
+    expect(capturedSignal).toBeDefined();
+    window.dispatchEvent(new Event("pagehide"));
+
+    await waitFor(() => expect(capturedSignal?.aborted).toBe(true));
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
   it("logs console.error and exposes error gate on real API failure when mounted", async () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "true");
     vi.stubEnv("ODP_DATA_BINDING_MODE", "live");
@@ -130,4 +152,3 @@ describe("Package 10 Store Ops parity", () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith("Error loading Store Ops issues:", expect.any(Error));
   });
 });
-

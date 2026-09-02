@@ -524,6 +524,13 @@ export function DesignStoreOpsWorkspace({
   useEffect(() => {
     let cancelled = false;
     const controller = new AbortController();
+    const cancelStoreOpsFetch = () => {
+      cancelled = true;
+      controller.abort();
+    };
+
+    window.addEventListener("beforeunload", cancelStoreOpsFetch);
+    window.addEventListener("pagehide", cancelStoreOpsFetch);
 
     async function loadStoreOpsIssues() {
       const params = new URLSearchParams();
@@ -591,8 +598,9 @@ export function DesignStoreOpsWorkspace({
 
     loadStoreOpsIssues();
     return () => {
-      cancelled = true;
-      controller.abort();
+      window.removeEventListener("beforeunload", cancelStoreOpsFetch);
+      window.removeEventListener("pagehide", cancelStoreOpsFetch);
+      cancelStoreOpsFetch();
     };
   }, [
     fixturesAllowed,

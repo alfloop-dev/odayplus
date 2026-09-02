@@ -28,6 +28,10 @@ test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and S
   });
 
   const browserErrors: string[] = [];
+  let resolveStoreOpsRequestStarted: (() => void) | undefined;
+  const storeOpsRequestStarted = new Promise<void>((resolve) => {
+    resolveStoreOpsRequestStarted = resolve;
+  });
   page.on("console", (message) => {
     if (message.type() === "error") {
       browserErrors.push(message.text());
@@ -36,6 +40,7 @@ test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and S
   page.on("pageerror", (error) => browserErrors.push(error.message));
 
   await page.route("**/api/v1/operator/store-ops/issues*", async (route) => {
+    resolveStoreOpsRequestStarted?.();
     await new Promise((resolve) => setTimeout(resolve, 1500));
     await route.fulfill({
       status: 200,
@@ -73,6 +78,7 @@ test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and S
   await expect(
     page.locator('[data-screen-label="Store Ops 門市營運"]'),
   ).toContainText("ISS-1024");
+  await storeOpsRequestStarted;
   await page
     .getByRole("button", { exact: true, name: "完成 Triage" })
     .last()
