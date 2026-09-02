@@ -39,7 +39,7 @@ from shared.infrastructure.persistence import (
     build_persistence,
 )
 from shared.infrastructure.persistence.factory import _durable_bundle
-from shared.jobs.queue import JobRequest
+from shared.jobs.queue import JobDeliveryState, JobRequest, JobStatus
 from tests.integration._authz import FORECASTOPS_HEADERS
 
 PREDICTION_TIME = datetime(2026, 6, 27, 9, 0, tzinfo=UTC)
@@ -395,6 +395,83 @@ def test_durable_job_queue_idempotency_survives_restart(db_path) -> None:
         assert replay.job_id == job_id
     finally:
         reopened.engine.close()
+
+
+def test_durable_job_delivery_state_is_persisted_without_inference(db_path) -> None:
+    bundle = _durable_bundle(db_path)
+    try:
+        job, created = bundle.job_queue.enqueue(
+            JobRequest(job_type="forecast", payload={"k": 1}, idempotency_key="delivery-1"),
+            correlation_id="corr-delivery-1",
+        )
+        assert created is True
+        assert job.status == JobStatus.QUEUED
+        assert job.delivery_state is None
+
+        first_claim = bundle.job_queue.claim_next(worker_id="worker-first")
+        assert first_claim is not None
+        assert first_claim.status == JobStatus.RUNNING
+        # attempts=1 is the first claim, not evidence of a retry.
+        assert first_claim.delivery_state is None
+
+        assert bundle.job_queue.fail(job.job_id) is True
+        queued_retry = bundle.job_queue.get(job.job_id)
+        assert queued_retry is not None
+        assert queued_retry.status == JobStatus.QUEUED
+        assert queued_retry.delivery_state == JobDeliveryState.RETRYING
+    finally:
+        bundle.engine.close()
+
+    reopened = _durable_bundle(db_path)
+    try:
+        retry_claim = reopened.job_queue.claim_next(worker_id="worker-retry")
+        assert retry_claim is not None
+        assert retry_claim.status == JobStatus.RUNNING
+        assert retry_claim.delivery_state == JobDeliveryState.RETRYING
+
+        reopened.engine.execute(
+            "UPDATE durable_jobs SET attempts = ?, status = ? WHERE job_id = ?",
+            (retry_claim.max_retries, JobStatus.RUNNING.value, job.job_id),
+        )
+        assert reopened.job_queue.fail(job.job_id) is True
+        dead_letter = reopened.job_queue.get(job.job_id)
+        assert dead_letter is not None
+        assert dead_letter.status == JobStatus.FAILED
+        assert dead_letter.delivery_state == JobDeliveryState.DEAD_LETTER
+    finally:
+        reopened.engine.close()
+
+
+@pytest.mark.parametrize(
+    ("legacy_status", "expected_status", "expected_delivery_state"),
+    [
+        ("RETRYING", JobStatus.QUEUED, JobDeliveryState.RETRYING),
+        ("DEAD_LETTER", JobStatus.FAILED, JobDeliveryState.DEAD_LETTER),
+    ],
+)
+def test_durable_job_queue_reads_legacy_delivery_statuses(
+    db_path,
+    legacy_status: str,
+    expected_status: JobStatus,
+    expected_delivery_state: JobDeliveryState,
+) -> None:
+    bundle = _durable_bundle(db_path)
+    try:
+        job, _ = bundle.job_queue.enqueue(
+            JobRequest(job_type="forecast", payload={}, idempotency_key=f"legacy-{legacy_status}"),
+            correlation_id=f"corr-legacy-{legacy_status}",
+        )
+        bundle.engine.execute(
+            "UPDATE durable_jobs SET status = ?, delivery_state = NULL WHERE job_id = ?",
+            (legacy_status, job.job_id),
+        )
+
+        record = bundle.job_queue.get(job.job_id)
+        assert record is not None
+        assert record.status == expected_status
+        assert record.delivery_state == expected_delivery_state
+    finally:
+        bundle.engine.close()
 
 
 def test_product_domain_writes_survive_restart(db_path) -> None:

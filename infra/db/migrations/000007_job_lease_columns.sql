@@ -10,3 +10,4 @@ ALTER TABLE durable_jobs ADD COLUMN locked_by TEXT;
 ALTER TABLE durable_jobs ADD COLUMN heartbeat_at TEXT;
 ALTER TABLE durable_jobs ADD COLUMN lease_expires_at TEXT;
 ALTER TABLE durable_jobs ADD COLUMN error_message TEXT;
+ALTER TABLE durable_jobs ADD COLUMN delivery_state TEXT;

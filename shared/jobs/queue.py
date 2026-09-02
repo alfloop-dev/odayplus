@@ -205,7 +205,7 @@ class InMemoryJobQueue:
                 new_record = dataclasses.replace(
                     record,
                     status=JobStatus.RUNNING,
-                    delivery_state=JobDeliveryState.RETRYING if record.attempts > 0 else None,
+                    delivery_state=record.delivery_state,
                     attempts=record.attempts + 1,
                     leased_until=leased_until,
                 )
@@ -321,7 +321,7 @@ class InMemoryJobQueue:
                         correlation_id=record.correlation_id,
                         idempotency_key=record.idempotency_key,
                         status=JobStatus.RUNNING,
-                        delivery_state=JobDeliveryState.RETRYING if record.attempts > 0 else None,
+                        delivery_state=record.delivery_state,
                         job_id=record.job_id,
                         created_at=record.created_at,
                         fence_token=record.fence_token + 1,

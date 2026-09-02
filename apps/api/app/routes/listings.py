@@ -644,10 +644,14 @@ else:
         """
         payload = dict(job)
         raw_status = payload.get("status")
-        status = raw_status.value if isinstance(raw_status, Enum) else str(raw_status or "").upper()
+        status = (
+            raw_status.value.upper()
+            if isinstance(raw_status, Enum)
+            else str(raw_status or "").upper()
+        )
         raw_delivery_state = payload.get("delivery_state")
         delivery_state = (
-            raw_delivery_state.value
+            raw_delivery_state.value.upper()
             if isinstance(raw_delivery_state, Enum)
             else str(raw_delivery_state).upper() if raw_delivery_state else None
         )
