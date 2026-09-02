@@ -2,11 +2,11 @@
   "schema_version": 1,
   "task_id": "ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
   "title": "sources-off release admission 與 snapshot 需求解耦驗證收據",
-  "agent": "Codex",
+  "agent": "Claude2",
   "reviewer": "Codex2",
   "branch": "task/ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
-  "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
-  "head_sha_note": "以 runtime-boundary code head 2e50af62 重新執行指定 focused selection、runtime receipt focused tests、secret scan、ruff 與 shell syntax，全部 exit 0；其後僅更新此收據與 README。",
+  "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+  "head_sha_note": "第二次 reviewer reopen 指出 PR #1128 的 product CI 有 9 個 failure（external-data boundary 6 個、deploy 契約 3 個）。本收據是修正後在 code head f7a1c7143764f2b1823373b113c4e8d5abc58b2a 重新量測的結果：先跑原本紅掉的那 9 個測試所在檔案，再跑 task 指定的 focused selection 與兩個 CI job 的 lint／boundary gate。其後僅更新此收據與 README。",
   "secret_values_redacted": true,
   "runs": [
     {
@@ -14,12 +14,13 @@
       "command": "uv run --frozen pytest -q tests/release/test_build_release_handoff.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_dev_rollout.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
-      "started_at": "2026-09-02T05:29:20Z",
-      "finished_at": "2026-09-02T05:29:36Z",
-      "duration_seconds": 15.914,
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "started_at": "2026-09-02T06:36:22Z",
+      "finished_at": "2026-09-02T06:36:35Z",
+      "duration_seconds": 12.269,
       "selection": {
         "scope": "targeted",
+        "test_count": 255,
         "items": [
           "tests/ops/test_deploy_workflow_contract.py",
           "tests/ops/test_dev_rollout.py",
@@ -27,64 +28,152 @@
           "tests/release/test_release_manifest.py",
           "tests/release/test_release_manifest_cli.py",
           "tests/release/test_runtime_admission.py"
-        ],
-        "fingerprint": "feb59460090b3bd33854a0202fba7a56"
-      },
-      "runner": "pytest"
-    },
-    {
-      "purpose": "runtime receipt focused tests at code head 2e50af62e507090531153683a804aa651e571a7c",
-      "command": "uv run --frozen pytest -q tests/ops/test_cloud_run_job_entrypoint.py tests/ops/test_release_receipts.py tests/ops/test_deploy_workflow_contract.py",
-      "exit_code": 0,
-      "outcome": "passed",
-      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
-      "duration_seconds": 18.89,
-      "selection": {
-        "scope": "runtime probe, receipt readback, and workflow contract",
-        "items": [
-          "tests/ops/test_cloud_run_job_entrypoint.py",
-          "tests/ops/test_release_receipts.py",
-          "tests/ops/test_deploy_workflow_contract.py"
         ]
       },
       "runner": "pytest"
     },
     {
-      "purpose": "secret scan over code head 2e50af62e507090531153683a804aa651e571a7c",
-      "command": "uv run --frozen python delivery_toolchain/security/secret_scan.py",
+      "purpose": "reopen #2 的 6 個 external-data boundary failure",
+      "command": "uv run --frozen pytest -q tests/architecture/test_external_data_boundary.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
-      "duration_seconds": 19.57,
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "duration_seconds": 58.452,
       "selection": {
-        "scope": "repository secret scan",
-        "items": ["delivery_toolchain/security/secret_scan.py"]
+        "scope": "external-data boundary gate",
+        "items": [
+          "tests/architecture/test_external_data_boundary.py"
+        ],
+        "previously_failing": [
+          "test_every_detected_provider_reference_is_declared",
+          "test_live_tree_has_no_boundary_violations",
+          "test_cli_exits_zero_on_the_live_tree",
+          "test_cli_bare_check_runs_the_complete_fail_closed_gate",
+          "test_cli_json_report_is_machine_readable",
+          "test_validator_runs_as_a_script"
+        ]
       },
-      "result_line": "Secrets scan passed successfully. No violations found."
+      "runner": "pytest"
     },
     {
-      "purpose": "lint over the changed surfaces at code head 2e50af62e507090531153683a804aa651e571a7c",
-      "command": "uv run --frozen ruff check delivery_toolchain/release/ tests/release/ tests/ops/",
+      "purpose": "reopen #2 的 3 個 deploy 契約 failure",
+      "command": "uv run --frozen pytest -q tests/ops/test_cloud_run_live_deployment.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
-      "duration_seconds": 0.18,
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "duration_seconds": 51.09,
       "selection": {
-        "scope": "changed release and ops surfaces",
-        "items": ["delivery_toolchain/release/", "tests/release/", "tests/ops/"]
+        "scope": "Runtime Release deploy entrypoint contract",
+        "items": [
+          "tests/ops/test_cloud_run_live_deployment.py"
+        ],
+        "previously_failing": [
+          "test_deploy_script_runs_repository_validators_with_locked_python",
+          "test_deploy_preflight_imports_runtime_dependencies_via_locked_python",
+          "test_deploy_script_captures_job_proof_without_describe_latest"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "runtime probe 與 receipt readback focused tests",
+      "command": "uv run --frozen pytest -q tests/ops/test_cloud_run_job_entrypoint.py tests/ops/test_release_receipts.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "duration_seconds": 5.156,
+      "selection": {
+        "scope": "runtime probe and receipt allowlist",
+        "items": [
+          "tests/ops/test_cloud_run_job_entrypoint.py",
+          "tests/ops/test_release_receipts.py"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "CI orchestrator job 的測試範圍",
+      "command": "uv run --frozen pytest -q -m \"not requires_live_env\" delivery_toolchain scripts tests/tooling",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "duration_seconds": 29.413,
+      "selection": {
+        "scope": "orchestrator CI job test scope",
+        "items": [
+          "delivery_toolchain",
+          "scripts",
+          "tests/tooling"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "CI orchestrator job 的 code boundary gate",
+      "command": "uv run --frozen python delivery_toolchain/governance/check_code_boundaries.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "duration_seconds": 6.595,
+      "selection": {
+        "scope": "repository code boundary inventory",
+        "items": [
+          "delivery_toolchain/governance/check_code_boundaries.py"
+        ]
+      },
+      "result_line": "Code boundary checks passed for 1045 files."
+    },
+    {
+      "purpose": "CI orchestrator job 的 lint 範圍",
+      "command": "uv run --frozen ruff check .orchestrator delivery_toolchain scripts",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "duration_seconds": 0.109,
+      "selection": {
+        "scope": "orchestrator CI job lint scope",
+        "items": [
+          ".orchestrator",
+          "delivery_toolchain",
+          "scripts"
+        ]
       },
       "result_line": "All checks passed!"
     },
     {
-      "purpose": "shell syntax validation at code head 2e50af62e507090531153683a804aa651e571a7c",
+      "purpose": "CI product job 的 lint 範圍",
+      "command": "uv run --frozen ruff check tests modules apps shared models solver pipelines infra",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "duration_seconds": 0.091,
+      "selection": {
+        "scope": "product CI job lint scope",
+        "items": [
+          "tests",
+          "modules",
+          "apps",
+          "shared",
+          "models",
+          "solver",
+          "pipelines",
+          "infra"
+        ]
+      },
+      "result_line": "All checks passed!"
+    },
+    {
+      "purpose": "shell syntax validation",
       "command": "bash -n product_ops/deployment/deploy_cloud_run_waji.sh",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
-      "duration_seconds": 0.00,
+      "head_sha": "f7a1c7143764f2b1823373b113c4e8d5abc58b2a",
+      "duration_seconds": 0.007,
       "selection": {
         "scope": "Runtime Release deploy entrypoint",
-        "items": ["product_ops/deployment/deploy_cloud_run_waji.sh"]
+        "items": [
+          "product_ops/deployment/deploy_cloud_run_waji.sh"
+        ]
       },
       "runner": "bash"
     }
@@ -122,5 +211,24 @@
     "snapshot missing object_generation or carrying a negative/non-integer generation",
     "runtime receipt missing candidate, manifest, resolved egress, or semantic content binding",
     "runtime probe timeout, DNS failure, or unknown network error treated as denial"
-  ]
+  ],
+  "inherited_from": {
+    "previous_owner": "Codex",
+    "previous_head_sha": "d586693905bb4ea3b67d2bccad2a616246bdd6c6",
+    "note": "ownership 於 2 次 reviewer reopen 後移交 Claude2；本次只修 reopen 指出的缺陷，未重寫既有 admission 設計。"
+  },
+  "not_run_locally": {
+    "command": "uv run --frozen pytest -m \"not requires_live_env and not performance\" tests modules apps shared models -n auto",
+    "reason": "完整 product suite 在這台機器上跑到 8% 就已耗時約 25 分鐘（機器被其他 worker 佔用），估計需數小時，因此中止（SIGTERM，記為 interrupted 而非 pass）。改為直接量測 reopen 指出的 9 個 failure 所在檔案、task 指定 selection、以及兩個 CI job 的 lint／boundary gate。完整 product gate 以 PR CI 的 exact head 結果為準。",
+    "outcome": "interrupted"
+  },
+  "known_unrelated_local_failures": {
+    "command": "uv run --frozen pytest -q -n auto tests/security",
+    "exit_code": 1,
+    "failures": [
+      "tests/security/test_oss_license_gate.py (8 tests)",
+      "tests/security/test_supply_chain_security_gate.py::test_sbom_and_provenance_present_and_valid"
+    ],
+    "assessment": "全部是 SBOM／OSS notice／license attestation 與本機已安裝套件樹的比對。本 branch 對 origin/dev 的 18 個變更檔案不含 sbom.json、package-lock.json、uv.lock 或任何 license artifact，因此這些 failure 與本 task 無關，在 origin/dev 上以相同環境會得到相同結果。CI 會先跑 npm ci 與 uv sync，本機沒有。"
+  }
 }

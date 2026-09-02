@@ -4,9 +4,9 @@
 admission 語意。
 
 - 任務狀態：實作完成，等待正式 review submission
-- Owner：Codex · Reviewer：Codex2
-- 量測 code head：`2e50af62e507090531153683a804aa651e571a7c`
-- base advance：merge commit `2e820da79a4615f17dc9e56c6a2059053b52761a`，包含 `origin/dev@4956eae4d76d1fd838ce97440957b49c0dbab8fb`
+- Owner：Claude2 · Reviewer：Codex2（第二次 reopen 後由 Codex 移交）
+- 量測 code head：`f7a1c7143764f2b1823373b113c4e8d5abc58b2a`
+- base advance：merge commit `9f59424740fd606f47041a2df23d21c76ab12faa`，包含 `origin/dev@a5d85428597ff196973105ca68ca7e042dd804e1`
 
 ## 1. 問題
 
@@ -78,6 +78,42 @@ admission 語意。
    receipt content digest 及 contract digest 證據。CLI、dispatch input 與 repository vars **都沒有**可以
    傳入 posture 或 binding digest 的管道。
 
+## 2.1 posture 怎麼在不認得任何 provider 的前提下推導
+
+第一版把 provider credential 與 endpoint 的變數名抄了一份到
+`delivery_toolchain/release/`，好讓 build 階段知道要找什麼。那份抄寫本身違反
+external-data boundary（`odayplus.legacy-external-data-disposition.v2`）：那份封閉
+清單屬於 frozen registry，disposition record 只授權 registry、deployment wiring 與
+測試套件持有它，`delivery_toolchain/release/` 不在其中。六個 architecture 測試因此
+變紅。
+
+現在改成**形狀判斷**，release 端不再記得任何 provider：
+
+- **歸屬**：一個接線變數屬於哪個 source，由 source id 自己的字詞決定。
+  `poi_snapshot` 的識別字是 `POI`，所以名稱帶 `POI` 的變數算在它頭上。
+  `snapshot`／`event`／`raw`／`result`／`daily`／`store` 這些多個 source 共用的字
+  會先被丟掉，否則 `competitor_store_snapshot` 會吃掉
+  `store_opening_authority_snapshot` 的 attestation。
+- **分類**：用通用的安全名詞字尾判斷是 credential（`API_KEY`／`TOKEN`／`SECRET`／
+  `ATTESTATION`／`AUTH_STATUS`…）、endpoint（`URL`／`URI`／`ENDPOINT`／`HOST`）或
+  posture flag（`STATUS`／`MODE`／`ENABLED`）。`AUTH_STATUS` 排在 `STATUS` 前面，
+  因為它守的是 credential。
+- **認不出來就當 credential**：不熟悉的秘密不該成為 sources-off release 被放行的
+  理由。
+- **posture flag 是觀察到的事實**：來源自己的 status 變數若有接線而值不是
+  `disabled`，就以它為準把該來源標成 enabled。「16 個來源全關」因此不再只是一句
+  由 `ODP_EXTERNAL_PROVIDER_MODE` 推出來的宣告。
+
+覆蓋範圍反而變大：原本的對照表只列了 6 個來源的變數，形狀判斷涵蓋全部 16 個。
+名單本身移到 `tests/release/`（disposition record 明文允許持有 credential 名稱的
+路徑），由測試證明形狀判斷重現 runtime registry 的每一個 credential 與 endpoint，
+且沒有任何一個變數被歸屬到兩個來源。
+
+這也是防漂移的機制：registry 若新增一個形狀判斷認不出來、或歸屬不到任何來源的
+credential，這幾個測試就會紅，而不是讓 sources-off admission 悄悄少檢查一項。
+形狀判斷本身仍有極限——名稱不帶來源字詞的 credential 不會被歸屬——所以把
+「registry 是封閉清單」這件事釘在測試裡，比在 release 端多抄一份名單更能撐住。
+
 ## 3. Fail-closed 條件
 
 | 情境 | 結果 |
@@ -102,6 +138,8 @@ admission 語意。
 | attestation 與 `data_snapshot` 同時存在 | 拒絕 |
 | 上一核准 release 仍綁著 `data_snapshot`，本次改用 attestation | 拒絕（anti-downgrade） |
 | deploy workflow 沒有宣告 `ODP_EXTERNAL_PROVIDER_MODE` | 拒絕（不猜） |
+| 來源自己的 status 變數有接線但值不是 `disabled` | 拒絕（以觀察值為準，不採信宣告） |
+| 歸屬到某來源的變數字尾認不出來 | 當成 credential 而拒絕 |
 
 最後一列的 anti-downgrade 是這次的核心：一旦某個 release 是以 masked snapshot
 被放行的，下一個 release 不能靠宣告自己 sources-off 就擺脫 snapshot 驗證。
@@ -136,23 +174,51 @@ attestation。
 
 | 檔案 | 變更 |
 |---|---|
-| `delivery_toolchain/release/release_manifest.py` | attestation schema、VPC/firewall contract evidence、binding digest、fail-closed 驗證、rollback binding、anti-downgrade |
-| `delivery_toolchain/release/build_release_handoff.py` | 從 deploy workflow 推導 posture 與 egress wiring、build 端 anti-downgrade、嚴格路徑保留 |
+| `delivery_toolchain/release/release_manifest.py` | attestation schema、VPC/firewall contract evidence、binding digest、fail-closed 驗證、rollback binding、anti-downgrade；provider 名單改為形狀判斷（§2.1） |
+| `delivery_toolchain/release/build_release_handoff.py` | 從 deploy workflow 推導 posture 與 egress wiring、build 端 anti-downgrade、嚴格路徑保留；改為列舉接線變數再判形狀，並讀取 status flag |
 | `delivery_toolchain/release/release_receipts.py` | 將 probe receipt 納入既有 literal artifact allowlist |
 | `delivery_toolchain/release/check_release_environment.py` | deploy environment 必須解析 VPC connector 與 egress，避免空值退回 public path |
-| `product_ops/deployment/deploy_cloud_run_waji.sh` | sources-off 強制 connector、`ALL_TRAFFIC`，並在 promotion 前執行 public-egress probe、寫入 secret-free receipt |
+| `product_ops/deployment/deploy_cloud_run_waji.sh` | sources-off 強制 connector、`ALL_TRAFFIC`，並在 promotion 前執行 public-egress probe、寫入 secret-free receipt；probe 相關的 python 一律走 `run_locked_python` |
 | `.github/workflows/deploy-dev.yml` | `external_sources_enabled` input、`--external-source` 接線與 probe receipt allowlist |
-| `tests/release/test_release_manifest.py` | 20 個 focused 正／負向測試 |
+| `tests/release/test_release_manifest.py` | 20 個 focused 正／負向測試；registry 對照改為證明形狀判斷與 runtime registry 等價且歸屬唯一 |
 | `tests/release/test_build_release_handoff.py` | 12 個 focused 正／負向測試 |
 | `tests/ops/test_deploy_workflow_contract.py` | 斷言 posture 沒有 dispatch 管道 |
-| `tests/ops/test_release_receipts.py` | 驗證 probe receipt 與既有 upload allowlist 一致 |
+| `tests/ops/test_cloud_run_live_deployment.py` | resolver 改釘「一份實作」而非 caller 數；補 sources-off deploy 的 VPC/manifest fixture；把 `python3 -c` 一併關上 |
+| `tests/ops/test_cloud_run_job_entrypoint.py` | probe 只接受明確 network-policy errno 的 focused 測試 |
+| `product_ops/deployment/cloud_run_job_entrypoint.py` | `public-egress-probe` 子命令與 secret-free runtime receipt |
+| `tests/release/test_release_environment_precheck.py` | deploy environment 必須解析 VPC connector/egress |
+| `tests/release/test_release_manifest_cli.py`、`tests/release/test_runtime_admission.py` | 既有 fixture 補上 `object_generation` |
+| `docs/evidence/runtime/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001/verify_build_handoff_wiring.py` | 前一個 task 的 evidence 驗證腳本：`object_generation` 成為必要欄位後，fixture 必須跟著補，否則該腳本會失敗 |
 
 ## 7. 驗證
 
-見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
-在 code head `2e50af62` 以指定 focused selection 通過：exit 0、20.25 秒；收據不含
-任何 secret 值。另以同一 code head 執行 runtime probe/receipt/workflow focused suite
-（18.89 秒）、secret scan（19.57 秒）、ruff（0.18 秒）與 shell syntax（0.00 秒），
-全部 exit 0；probe 只接受明確 network-policy errno，並由 Cloud Logging readback
+見 [`verification-receipt.json`](verification-receipt.json)。全部在 code head
+`f7a1c714` 量測，收據不含任何 secret 值。
+
+第二次 reviewer reopen 指出的 9 個 product CI failure 已逐一量測為綠：
+
+| 量測 | exit | 秒 |
+|---|---|---|
+| task 指定 focused selection（255 tests） | 0 | 12.27 |
+| `tests/architecture/test_external_data_boundary.py`（原本紅 6 個） | 0 | 58.45 |
+| `tests/ops/test_cloud_run_live_deployment.py`（原本紅 3 個） | 0 | 51.09 |
+| runtime probe／receipt focused tests | 0 | 5.16 |
+| CI orchestrator job 測試範圍 | 0 | 29.41 |
+| `check_code_boundaries.py` | 0 | 6.60 |
+| ruff（orchestrator 與 product 兩個 job 的範圍） | 0 | 0.11／0.09 |
+| `bash -n` deploy entrypoint | 0 | 0.01 |
+
+**本機沒有跑完的**：完整 product suite（`pytest ... tests modules apps shared
+models -n auto`）在這台機器上 25 分鐘只跑到 8%，估計要數小時，因此中止；依
+verification evidence policy 記為 `interrupted`，不是 pass。完整 product gate 以
+PR CI 的 exact head 結果為準。
+
+**本機已知的無關紅燈**：`tests/security` 有 9 個 failure，全部是 SBOM／OSS
+notice／license attestation 與本機已安裝套件樹的比對。本 branch 對 `origin/dev`
+的 18 個變更檔案不含 `sbom.json`、`package-lock.json`、`uv.lock` 或任何 license
+artifact，所以在 `origin/dev` 上以相同環境會得到相同結果；CI 會先跑 `npm ci` 與
+`uv sync`，本機沒有。
+
+probe 行為未變更：只接受明確 network-policy errno，並由 Cloud Logging readback
 驗證實際 runtime receipt 的 candidate、manifest、resolved egress 與 semantic content
 digest 後才保留 evidence。
