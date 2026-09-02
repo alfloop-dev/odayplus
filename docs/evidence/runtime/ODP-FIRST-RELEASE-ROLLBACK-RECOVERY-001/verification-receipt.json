@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+  "title": "首次 dev release 的 fail-closed recovery admission 驗證收據",
+  "agent": "Claude2",
+  "reviewer": "Codex",
+  "branch": "task/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+  "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+  "head_sha_note": "579d6ceb 是本 branch 最後一個含 code 變更的 commit；其後只有一個 evidence commit（僅新增 docs/evidence/runtime/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001/），review submission 的 exact head 即該 evidence commit。",
+  "base": {
+    "ref": "origin/dev",
+    "sha": "38de35a7bac2d6c6f6d8d079ffaf16abf6163c29",
+    "behind_count": 0,
+    "note": "量測時 git rev-list --count HEAD..origin/dev = 0，未落後，因此沒有做 base advance merge。"
+  },
+  "secret_values_redacted": true,
+  "verification_declaration": {
+    "declared_commands": "none",
+    "note": "task 的 verification 欄位為空，delivery_toolchain/git/task_verification.py check 回報「declares no verification commands; nothing to prove」（exit 0）。因此沒有機器 receipt 可綁；下列 runs 是本收據自行記錄的量測。"
+  },
+  "runs": [
+    {
+      "purpose": "task 主要 selection：release toolchain 與 Runtime Release 契約",
+      "command": "uv run --frozen --python 3.12 python -m pytest -p no:warnings -q tests/release/ tests/ops/test_deploy_workflow_contract.py tests/ops/test_cloud_run_live_deployment.py tests/ops/test_runtime_config_code_closeout.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "duration_seconds": 67,
+      "selection": {
+        "scope": "targeted",
+        "test_count": 830,
+        "items": [
+          "tests/release/",
+          "tests/ops/test_deploy_workflow_contract.py",
+          "tests/ops/test_cloud_run_live_deployment.py",
+          "tests/ops/test_runtime_config_code_closeout.py"
+        ],
+        "new_coverage": [
+          "讀回為空的 target 產出可放行、無 rollback_release 的 manifest",
+          "同一 release SHA 重跑 build 產出位元相同的 handoff 與 binding digest",
+          "首次 release 的 manifest 可被第二個 release 當成 rollback target",
+          "記錄明寫 rollback_target_available=false 與 delete-candidate-zero-traffic",
+          "readback 中任一 target exists 或 serving_traffic 為 true 即拒",
+          "readback 少讀任一 target（api/web/migration/worker/scheduler）即拒",
+          "dev 的 admission 不能對 staging/production 重放",
+          "target_environment 為 staging/production/prod/空字串皆拒",
+          "啟用外部來源的 release 不得走此分支",
+          "schema v1 manifest 不得攜帶此記錄",
+          "manifest 同時帶 rollback_release 與 initial_release_recovery 即拒",
+          "記錄被搬到另一個 candidate SHA 即 binding 失效",
+          "rebuild 後 component image digest 改變即 binding 失效",
+          "manifest 不得自行重新定義 recovery_method / recovery_actions / rollback_target_available",
+          "prior_release_absent 與自身 readback 不符即拒",
+          "probe_command 非契約字串即拒",
+          "readback 或記錄夾帶 binding digest 未涵蓋的欄位即拒",
+          "--rollback-manifest 與 --initial-release-readback 同時指定即拒",
+          "readback 不接受 inline JSON、遠端 URI、不存在的檔案",
+          "缺 rollback 的拒絕訊息指名替代分支",
+          "CLI 以 readback 檔案產出首次 release handoff；target 非空時不寫任何輸出",
+          "workflow：readback 先於 handoff、重讀先於 lease 消費且不可條件化",
+          "workflow：首次 release 主張只有 boolean input，無 readback/posture/digest 的 dispatch 或 vars 通道",
+          "workflow：仍只有一個 deploy workflow、一個 admission job、一次 lease 檢查",
+          "deploy 失敗路徑不宣稱可回滾到不存在的版本"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "probe 本身的讀回語意（fake gcloud）",
+      "command": "uv run --frozen --python 3.12 python -m pytest -p no:warnings -q tests/release/test_probe_release_target_absence.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "duration_seconds": 4,
+      "selection": {
+        "scope": "included in the task selection above",
+        "test_count": 17,
+        "items": [
+          "tests/release/test_probe_release_target_absence.py"
+        ],
+        "new_coverage": [
+          "gcloud 成功但輸出為空＝不存在，可產出 readback 並直接餵給 build_handoff",
+          "gcloud 非零 exit（權限）不得被讀成 target 為空，且不寫任何檔案",
+          "gcloud 回傳多筆同名結果即拒（無法斷定）",
+          "既有 service 或殘留 migration job 都讓 target 不為空",
+          "readback 不含任何時間或 run id，兩次讀回位元相同",
+          "staging/production 不得被以首次 release 名義讀回",
+          "未綁定資源名稱（如 migration job）只擋這一步",
+          "admission 模式對一般 release 的 manifest no-op（即使 target 全滿）",
+          "admission 模式重讀通過時寫出綁 candidate SHA／manifest digest／target env／recovery method 的 receipt",
+          "build 與 deploy 之間 target 被填滿即 fail closed",
+          "manifest 的 readback 指向另一個 target（project 不同）即拒",
+          "兩種模式互斥；腳本可作為命令直接執行"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "CI orchestrator job 的測試範圍",
+      "command": "uv run --frozen --python 3.12 python -m pytest -p no:warnings -q -m \"not requires_live_env\" delivery_toolchain scripts tests/tooling",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "duration_seconds": 34,
+      "selection": {
+        "scope": "orchestrator CI job test scope",
+        "items": [
+          "delivery_toolchain",
+          "scripts",
+          "tests/tooling"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "完整 tests/ops 套件（確認 Runtime Release 接線與 deploy 腳本改動沒有 latent 破壞）",
+      "command": "uv run --frozen --python 3.12 python -m pytest -p no:warnings -q tests/ops",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "selection": {
+        "scope": "full tests/ops suite",
+        "test_count": 820,
+        "items": [
+          "tests/ops"
+        ]
+      },
+      "runner": "pytest",
+      "note": "前景執行會被本機資源中止，改以背景執行並回收完整 exit code。"
+    },
+    {
+      "purpose": "external-data boundary gate（本 task 動到 release toolchain 與 deploy 腳本）",
+      "command": "uv run --frozen --python 3.12 python -m pytest -p no:warnings -q tests/architecture/test_external_data_boundary.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "selection": {
+        "scope": "external-data boundary gate",
+        "items": [
+          "tests/architecture/test_external_data_boundary.py"
+        ]
+      },
+      "runner": "pytest",
+      "note": "前景執行時兩次被 SIGTERM 中止在 86%（本機資源，非測試失敗），改以背景執行取得完整 exit code 0。"
+    },
+    {
+      "purpose": "CI orchestrator job 的 lint 範圍",
+      "command": "uv run --frozen --python 3.12 ruff check .orchestrator delivery_toolchain scripts",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "duration_seconds": 0.4,
+      "result_line": "All checks passed!"
+    },
+    {
+      "purpose": "CI product job 的 lint 範圍",
+      "command": "uv run --frozen --python 3.12 ruff check tests modules apps shared models solver pipelines infra",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "duration_seconds": 0.4,
+      "result_line": "All checks passed!"
+    },
+    {
+      "purpose": "CI 的 code boundary gate",
+      "command": "uv run --frozen --python 3.12 python delivery_toolchain/governance/check_code_boundaries.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "duration_seconds": 8,
+      "result_line": "Code boundary checks passed for 1047 files.",
+      "note": "第一次量測為 exit 1（inventory is stale），因為新增了 probe_release_target_absence.py 與其測試。以 --write-inventory 重生後另立 commit 579d6ceb，本列是在 579d6ceb 的量測結果。"
+    },
+    {
+      "purpose": "build 階段的 secret scan",
+      "command": "uv run --frozen --python 3.12 python delivery_toolchain/security/secret_scan.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "duration_seconds": 10,
+      "result_line": "Secrets scan passed successfully. No violations found."
+    },
+    {
+      "purpose": "deploy 腳本語法",
+      "command": "bash -n product_ops/deployment/deploy_cloud_run_waji.sh && bash -n product_ops/deployment/cloud_run_release_traffic.sh",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+      "duration_seconds": 0.02,
+      "runner": "bash"
+    }
+  ],
+  "mutation_checks": [
+    {
+      "removed_protection": "initial_release_recovery_errors 不再重算 binding_digest（把 elif candidate_sha is not None or components is not None 改成 elif False）",
+      "caught_by": "tests/release/test_release_manifest.py::test_a_first_release_admission_lifted_onto_another_candidate_fails_closed",
+      "observed": "FAILED",
+      "reverted": true
+    },
+    {
+      "removed_protection": "admission 的 target 重讀步驟加上 if: ${{ inputs.initial_release_recovery }}",
+      "caught_by": "tests/ops/test_deploy_workflow_contract.py::test_admission_re_reads_the_target_before_the_lease_is_consumed",
+      "observed": "FAILED（a conditional re-read is one a forged manifest can dispatch around）",
+      "reverted": true
+    },
+    {
+      "removed_protection": "probe 把 gcloud 非零 exit code 當成「資源不存在」（把 if proc.returncode != 0 改成 if False）",
+      "caught_by": "tests/release/test_probe_release_target_absence.py::test_a_gcloud_that_cannot_look_is_not_a_target_that_is_empty",
+      "observed": "FAILED，且 probe 在 gcloud 拒絕存取時仍印出「未發現任何既有 release」",
+      "reverted": true
+    }
+  ],
+  "evidence_policy_conformance": {
+    "own_exit_code_preserved": true,
+    "no_pipe_without_pipefail": true,
+    "no_or_true_suffix": true,
+    "no_backgrounding": "external-data boundary gate 與完整 tests/ops 兩項改以背景執行並回收完整 exit code，原因見各該列 note；其餘皆前景執行",
+    "interrupted_runs_reported_as_interrupted": true,
+    "reruns_of_a_measured_head": "code boundary gate 在加入 inventory 更新前後各量測一次；因為 head 改變（579d6ceb），不是同一個 head 的重跑。"
+  },
+  "not_run_locally": {
+    "command": "uv run --frozen pytest -m \"not requires_live_env and not performance\" tests modules apps shared models -n auto",
+    "reason": "完整 product suite 在這台機器上需數小時；前景執行 tests/architecture + tests/ops 時在 7% 被 SIGTERM 中止。改為量測 task selection、完整 tests/ops、兩個 CI job 的 lint、boundary gate、secret scan，以及本 task 動到的 external-data boundary gate。完整 product gate 以 PR CI 的 exact head 結果為準。",
+    "outcome": "interrupted"
+  },
+  "live_target_not_exercised": {
+    "reason": "本機沒有也不應該有 dev 環境的 GCP 憑證，因此沒有對真實 Cloud Run target 做過讀回。probe 的覆蓋以 fake gcloud 模擬三種真實回應（成功但空輸出、非零 exit、多筆同名結果）。首次部署的端到端證明需要一次真正的 Runtime Release dispatch。",
+    "outcome": "not_run"
+  },
+  "measured_at": "2026-09-02T12:50:00Z",
+  "code_head_sha": "579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0",
+  "code_head_note": "所有量測都在 579d6ceb 上執行。evidence commit 只新增本目錄的兩個檔案，不含任何 code、workflow 或測試變更。"
+}
