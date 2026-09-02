@@ -20,8 +20,6 @@ from solver.pricing.constraints import (
     PRICING_POLICY_KIND,
     PRICING_POLICY_SEMVER,
     PRICING_POLICY_VERSION,
-    VIOLATION_ABOVE_APPLICABLE_RANGE,
-    VIOLATION_BELOW_APPLICABLE_RANGE,
     ConstraintViolation,
     PriceConstraints,
     default_pricing_policy,
