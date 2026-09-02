@@ -262,6 +262,7 @@ delivery_toolchain/security/generate_oss_notice.py,development_delivery_tooling,
 delivery_toolchain/security/generate_sbom.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/sast_scan.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/secret_scan.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+docs/evidence/ODP-SD-AMD-001_ddl_check.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/completion/ODP-ORCH-ANTIGRAVITY-ROTATION-FIX-001/repro_p0_findings.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/execution-control/ODP-ORCH-VERIFICATION-EVIDENCE-001/generate_receipt_bundle.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-DEPLOY-JOB-RECEIPT-UPLOAD-001/simulate_artifact_selection.py,evidence_artifact,evidence_only,false,,,conditional,The evidence retention period and audit obligations have ended.
