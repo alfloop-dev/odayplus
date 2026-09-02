@@ -15,8 +15,16 @@ from models.shared_ml import (
     thresholds_from_decision_policy,
     validate_model_candidate,
 )
-from modules.learninghub.application.monitor import evaluate_guardrails
-from modules.learninghub.application.release import LearningHubService
+from modules.learninghub.application import (
+    LearningHubService,
+    ModelReleaseDecision,
+    ReleaseType,
+)
+from modules.learninghub.application.monitor import (
+    MonitorStatus,
+    RecommendedAction,
+    evaluate_guardrails,
+)
 from modules.learninghub.domain import (
     DatasetSnapshot,
     MonitoringSignalType,
@@ -24,6 +32,7 @@ from modules.learninghub.domain import (
     build_dataset_snapshot,
 )
 from modules.learninghub.infrastructure import InMemoryLearningHubRepository
+from modules.learninghub.workers import run_learninghub_release_monitor
 from shared.governance.decision_policy import (
     DecisionPolicy,
     InMemoryDecisionPolicyRepository,
@@ -273,3 +282,80 @@ def test_evaluate_guardrails_and_monitor_release_degradation() -> None:
     assert breaches[0].baseline_value == 0.03
     assert pytest.approx(breaches[0].degradation, 0.0001) == 0.03
     assert "degradation 0.0300 exceeds maximum allowed 0.015" in breaches[0].detail
+
+
+def test_release_worker_run_monitor_evaluates_baseline_degradation() -> None:
+    repo = InMemoryLearningHubRepository()
+    service = LearningHubService(repository=repo)
+    snapshot = _make_snapshot()
+    repo.save_dataset_snapshot(snapshot)
+
+    v1 = ModelVersion(
+        model_name="revenue_predictor",
+        version="v1.0.0",
+        artifact_uri="gs://models/rev/v1",
+        dataset_snapshot_id=snapshot.dataset_snapshot_id,
+        feature_schema_version="v1",
+        label_version="v1",
+        metrics={"auc": 0.90, "w4_smape": 0.07},
+        stage=ModelStage.PRODUCTION,
+    )
+    repo.save_model_version(v1)
+
+    decision = ModelReleaseDecision(
+        release_id="rel-worker-test-001",
+        model_name="revenue_predictor",
+        from_version=None,
+        to_version="v1.0.0",
+        release_type=ReleaseType.FULL,
+        reason="initial release",
+        approval_id="approval-1",
+        rollback_target="v1.0.0",
+        monitoring_window="24h",
+        success_criteria=(),
+        fail_criteria=(),
+        affected_modules=(),
+        requested_by="ml-engineer",
+        approved_by="risk-officer",
+        model_card_checksum="sha256:test",
+        release_revision=1,
+    )
+    repo.save_release_decision(decision)
+
+    assessment = run_learninghub_release_monitor(
+        {
+            "release_id": "rel-worker-test-001",
+            "observed_metrics": {"auc": 0.82, "w4_smape": 0.11},
+            "guardrails": [
+                {
+                    "metric_name": "auc",
+                    "min_value": 0.75,
+                    "max_degradation": 0.05,
+                    "higher_is_better": True,
+                },
+                {
+                    "metric_name": "w4_smape",
+                    "max_value": 0.15,
+                    "max_degradation": 0.02,
+                    "higher_is_better": False,
+                },
+            ],
+            "evaluated_by": "on-call-monitor",
+            "correlation_id": "corr-worker-monitor-1",
+        },
+        service=service,
+    )
+
+    assert assessment.status is MonitorStatus.BREACHED
+    assert assessment.recommended_action is RecommendedAction.ROLLBACK
+    assert len(assessment.breaches) == 2
+    auc_breach = next(b for b in assessment.breaches if b.metric_name == "auc")
+    assert auc_breach.baseline_value == 0.90
+    assert pytest.approx(auc_breach.degradation, 0.0001) == 0.08
+    assert "auc degradation 0.0800 exceeds maximum allowed 0.05" in auc_breach.detail
+
+    smape_breach = next(b for b in assessment.breaches if b.metric_name == "w4_smape")
+    assert smape_breach.baseline_value == 0.07
+    assert pytest.approx(smape_breach.degradation, 0.0001) == 0.04
+    assert "w4_smape degradation 0.0400 exceeds maximum allowed 0.02" in smape_breach.detail
+
