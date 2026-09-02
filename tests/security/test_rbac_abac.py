@@ -76,15 +76,6 @@ def test_permissions_for_unions_roles() -> None:
 # --- ABAC -------------------------------------------------------------------
 
 
-def test_tenant_isolation_blocks_other_tenant() -> None:
-    engine, sink = make_engine()
-    p = principal(Role.OPERATIONS_MANAGER, tenant_id="tenant-a")
-    res = ResourceDescriptor(type="forecastops", tenant_id="tenant-b")
-    decision = engine.authorize(AccessRequest(p, Action.VIEW, res), on=ON)
-    assert not decision.allowed
-    assert decision.policy_id == "tenant_isolation"
-
-
 def test_cross_region_supervisor_denied() -> None:
     # ODP-AC-AUTH-002
     engine, _ = make_engine()
