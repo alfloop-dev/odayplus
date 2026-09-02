@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS durable_jobs (
     job_id           TEXT PRIMARY KEY,
     job_type         TEXT NOT NULL,
     status           TEXT NOT NULL,
+    delivery_state   TEXT,
     correlation_id   TEXT NOT NULL,
     idempotency_key  TEXT,
     payload_json     TEXT NOT NULL DEFAULT '{}',

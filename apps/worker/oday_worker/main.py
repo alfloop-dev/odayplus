@@ -11,7 +11,7 @@ from uuid import uuid4
 from apps.worker.oday_worker.handlers import build_default_registry
 from shared.infrastructure.persistence.factory import PersistenceBundle, build_persistence
 from shared.infrastructure.persistence.job_queue import JobFenceRejectedError
-from shared.jobs.queue import JobRecord, JobStatus, NonRetryableJobError
+from shared.jobs.queue import JobDeliveryState, JobRecord, JobStatus, NonRetryableJobError
 from shared.jobs.registry import JobRegistry
 from shared.observability import ProductionMetricsExporter, SpanKind, Telemetry, TraceContext
 
@@ -211,6 +211,11 @@ class ODayWorker:
                             job.job_id,
                             target_status,
                             payload=payload if target_status == JobStatus.QUEUED else None,
+                            delivery_state=(
+                                JobDeliveryState.RETRYING
+                                if target_status == JobStatus.QUEUED
+                                else JobDeliveryState.DEAD_LETTER
+                            ),
                             expected_version=current_version,
                             fence_token=job.fence_token,
                             error_message=str(exc),

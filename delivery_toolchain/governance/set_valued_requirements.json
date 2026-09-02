@@ -118,32 +118,32 @@
         {
           "name": "QUEUED",
           "status": "satisfied",
-          "evidence": "shared/jobs/queue.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus"
         },
         {
           "name": "RUNNING",
           "status": "satisfied",
-          "evidence": "shared/jobs/queue.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus"
         },
         {
           "name": "SUCCEEDED",
           "status": "satisfied",
-          "evidence": "shared/jobs/queue.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus"
         },
         {
           "name": "FAILED",
           "status": "satisfied",
-          "evidence": "shared/jobs/queue.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus"
         },
         {
           "name": "CANCELLED",
           "status": "satisfied",
-          "evidence": "shared/jobs/queue.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus"
         },
         {
           "name": "PARTIAL",
           "status": "absent",
-          "note": "Neither shared/jobs/queue.py::JobStatus (lowercase, five states) nor apps/api/app/routes/listings.py::JobStatus (uppercase, seven states including RETRYING and DEAD_LETTER) has it, and no job in the tree reports it. The two enums are also a vocabulary fork -- see the FR report, cause 03."
+          "note": "JobStatus in shared/governance/vocabularies.py now carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics."
         }
       ]
     },

@@ -149,3 +149,29 @@ class TestTheGeneratedEnumIsUsable:
 
         assert adlift_level is canonical
         assert intervention_level is canonical
+
+    def test_job_delivery_state_is_defined_and_separate(self) -> None:
+        """Delivery state carries queue mechanics (RETRYING, DEAD_LETTER)
+        separately from job outcome status."""
+        from shared.governance.vocabularies import JobDeliveryState
+
+        assert [member.value for member in JobDeliveryState] == ["retrying", "dead_letter"]
+
+    def test_shared_jobs_queue_uses_canonical_vocabularies(self) -> None:
+        """The queue domain model imports canonical vocabularies rather than
+        declaring its own fork."""
+        from shared.governance.vocabularies import (
+            JobDeliveryState as canonical_delivery,
+        )
+        from shared.governance.vocabularies import (
+            JobStatus as canonical_status,
+        )
+        from shared.jobs.queue import (
+            JobDeliveryState as queue_delivery,
+        )
+        from shared.jobs.queue import (
+            JobStatus as queue_status,
+        )
+
+        assert queue_status is canonical_status
+        assert queue_delivery is canonical_delivery

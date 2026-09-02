@@ -796,18 +796,22 @@ export type JobCreatePayload = {
   payload?: Record<string, unknown>;
 };
 
+/** JobDeliveryState */
+export type JobDeliveryState = "RETRYING" | "DEAD_LETTER";
+
 /** JobReceipt */
 export type JobReceipt = {
   attempt: number;
   checkpoint: string;
   correlation_id: string;
+  delivery_state?: JobDeliveryState | null;
   job_id: string;
   status: JobStatus;
   version: number;
 };
 
 /** JobStatus */
-export type JobStatus = "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "DEAD_LETTER";
+export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
 
 /** ListingImportPayload */
 export type ListingImportPayload = {

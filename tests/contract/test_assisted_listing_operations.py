@@ -842,6 +842,7 @@ def test_url_intake_and_concurrency_lifecycle(client: TestClient) -> None:
     assert resp_get_job.json() == {
         "job_id": job_id,
         "status": "SUCCEEDED",
+        "delivery_state": None,
         "checkpoint": "SCORE_QUEUED",
         "attempt": 0,
         "version": 1,
@@ -924,6 +925,7 @@ def test_job_retry_operation(client: TestClient) -> None:
     job_receipt = resp_retry.json()
     assert job_receipt["job_id"] == job_id
     assert job_receipt["status"] == "QUEUED"
+    assert job_receipt["delivery_state"] == "RETRYING"
     assert job_receipt["checkpoint"] == "PARSING"
 
     # Retry job tenant isolation
@@ -1818,3 +1820,169 @@ def test_every_effective_operation_has_a_schema_valid_runtime_response() -> None
         for method, operation in path_item.items()
         if method in {"get", "post", "put", "patch", "delete"}
     }
+
+
+def test_job_receipt_retrying_delivery_state_with_running_and_queued(
+    client: TestClient,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/listings/retrying-contract-test",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-retrying-setup-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202
+    intake_receipt = submitted.json()
+    job_id = intake_receipt["job_id"]
+    store = _store_with_intake(intake_receipt["intake_id"])
+
+    # 1. RETRYING with QUEUED status
+    store.jobs[job_id]["status"] = "QUEUED"
+    store.jobs[job_id]["delivery_state"] = "RETRYING"
+    store.jobs[job_id]["attempt"] = 1
+
+    resp_queued = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A)
+    assert resp_queued.status_code == 200
+    queued_receipt = resp_queued.json()
+    assert queued_receipt["status"] == "QUEUED"
+    assert queued_receipt["delivery_state"] == "RETRYING"
+    assert queued_receipt["attempt"] == 1
+
+    # 2. RETRYING with RUNNING status
+    store.jobs[job_id]["status"] = "RUNNING"
+    store.jobs[job_id]["delivery_state"] = "RETRYING"
+    store.jobs[job_id]["attempt"] = 1
+
+    resp_running = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A)
+    assert resp_running.status_code == 200
+    running_receipt = resp_running.json()
+    assert running_receipt["status"] == "RUNNING"
+    assert running_receipt["delivery_state"] == "RETRYING"
+    assert running_receipt["attempt"] == 1
+
+
+def test_job_receipt_dead_letter_delivery_state_with_failed_and_retry(
+    client: TestClient,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/listings/dlq-contract-test",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-dlq-setup-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202
+    intake_receipt = submitted.json()
+    job_id = intake_receipt["job_id"]
+    store = _store_with_intake(intake_receipt["intake_id"])
+
+    # DEAD_LETTER with FAILED status (retry budget exhausted)
+    store.jobs[job_id]["status"] = "FAILED"
+    store.jobs[job_id]["delivery_state"] = "DEAD_LETTER"
+    store.jobs[job_id]["attempt"] = 3
+    store.jobs[job_id]["checkpoint"] = "PARSING"
+    store.intakes[intake_receipt["intake_id"]]["state"] = "FAILED"
+
+    resp_dlq = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A)
+    assert resp_dlq.status_code == 200
+    dlq_receipt = resp_dlq.json()
+    assert dlq_receipt["status"] == "FAILED"
+    assert dlq_receipt["delivery_state"] == "DEAD_LETTER"
+    assert dlq_receipt["attempt"] == 3
+
+    # Replay/retry from DEAD_LETTER moves job to QUEUED with RETRYING delivery_state
+    resp_retry = client.post(
+        f"/api/v1/jobs/{job_id}/retry",
+        json={"checkpoint": "PARSING", "reason": "Retry after resolving DLQ root cause"},
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-dlq-retry-{uuid4()}",
+            "If-Match": f'W/"{store.jobs[job_id]["version"]}"',
+        },
+    )
+    assert resp_retry.status_code == 202
+    retry_receipt = resp_retry.json()
+    assert retry_receipt["status"] == "QUEUED"
+    assert retry_receipt["delivery_state"] == "RETRYING"
+    assert retry_receipt["attempt"] == 4
+
+
+def test_job_receipt_partial_outcome_status(
+    client: TestClient,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": "https://example.com/listings/partial-contract-test",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-partial-setup-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202
+    intake_receipt = submitted.json()
+    job_id = intake_receipt["job_id"]
+    store = _store_with_intake(intake_receipt["intake_id"])
+
+    # PARTIAL outcome status (some work succeeded, some failed; not retrying)
+    store.jobs[job_id]["status"] = "PARTIAL"
+    store.jobs[job_id]["delivery_state"] = None
+
+    resp_partial = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A)
+    assert resp_partial.status_code == 200
+    partial_receipt = resp_partial.json()
+    assert partial_receipt["status"] == "PARTIAL"
+    assert partial_receipt["delivery_state"] is None
+
+
+@pytest.mark.parametrize(
+    ("legacy_status", "expected_status", "expected_delivery_state"),
+    [
+        ("RETRYING", "QUEUED", "RETRYING"),
+        ("DEAD_LETTER", "FAILED", "DEAD_LETTER"),
+    ],
+)
+def test_job_receipt_adapts_legacy_delivery_statuses(
+    client: TestClient,
+    legacy_status: str,
+    expected_status: str,
+    expected_delivery_state: str,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": f"https://example.com/listings/legacy-{legacy_status.lower()}",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-legacy-{legacy_status.lower()}-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202
+    intake_receipt = submitted.json()
+    job_id = intake_receipt["job_id"]
+    store = _store_with_intake(intake_receipt["intake_id"])
+
+    # This is the pre-separation shape: delivery mechanics lived in status.
+    store.jobs[job_id]["status"] = legacy_status
+    store.jobs[job_id].pop("delivery_state", None)
+
+    response = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A)
+    assert response.status_code == 200
+    receipt = response.json()
+    assert receipt["status"] == expected_status
+    assert receipt["delivery_state"] == expected_delivery_state
+    assert store.jobs[job_id]["status"] == legacy_status
+    assert "delivery_state" not in store.jobs[job_id]
