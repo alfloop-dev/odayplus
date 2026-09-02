@@ -78,6 +78,8 @@ def _zone(h3: str, **overrides) -> HeatZoneV3Input:
         median_rent_per_ping=1_500.0,
         own_store_count=1,
         own_store_machine_capacity=12.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     base.update(overrides)
     return HeatZoneV3Input(**base)
