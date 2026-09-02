@@ -340,6 +340,8 @@ export type DataRoomExportPayload = {
 /** DatasetSnapshotPayload */
 export type DatasetSnapshotPayload = {
   dataset_snapshot_id?: string | null;
+  feature_set_id?: string | null;
+  label_set_id?: string | null;
   require_training_eligible?: boolean;
   rows: Record<string, unknown>[];
 };
