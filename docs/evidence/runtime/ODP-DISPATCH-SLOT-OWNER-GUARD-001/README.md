@@ -2,8 +2,9 @@
 
 - 任務 ID: `ODP-DISPATCH-SLOT-OWNER-GUARD-001`
 - 執行身分: `Antigravity3`
-- 審查者: `Codex`
+- 審查者: `Claude`
 - 日期: 2026-09-02
+- Base Advance Composed: `origin/dev` @ `66412db403bc`
 
 ---
 
@@ -21,7 +22,7 @@
 
 ### 2.1 新指派 Fail-Fast 與可行動錯誤提示
 在 `scripts/ai_status.py` 中：
-1. `is_dispatch_slot_config` 與 `resolve_dispatch_slot_info`：正確識別具有 `dispatch_slot_for` 或 `dispatch_slot_for_pool` 的 slot 配置。
+1. `is_dispatch_slot_config` 與 `resolve_dispatch_slot_info`：以 `agent_id` 與 `slot_id` 唯一識別 slot 配置，排除以 `display_name` 比對，避免在 slot 與邏輯 worker 共享 `display_name`（如 fixture 與 alias 配置形狀）時誤把邏輯 worker 判斷為 slot。
 2. `configured_agent_names`：將實體 dispatch slot 從合法可指派 worker 清單排除。
 3. `resolve_actor_reference`：在接收 caller 輸入（如 `assign`、`AI_NAME`、`handoff`、`blocked`）時，若輸入為 dispatch slot，立即以 `SystemExit` 中斷，輸出可行動錯誤，提示對應的邏輯 worker（如 `Specify logical worker 'Antigravity' instead.`）或帳號池（如 `Specify a logical worker from account pool 'claude_main' instead.`），防止寫入不一致資料。
 
@@ -39,8 +40,9 @@
 
 ### 3.1 測試套件執行結果
 1. `python3 -m unittest scripts/test_ai_status.py`
-   - 執行 215 項測試，全數通過 (OK)。
+   - 執行 216 項測試，全數通過 (OK)。
    - 包含新增之 `test_dispatch_slots_are_excluded_from_configured_agents_and_rejected_on_assignment`，驗證 CLI/assign fail-fast 與錯誤提示。
+   - 包含新增之 `test_dispatch_slot_sharing_display_name_with_logical_worker_does_not_block_logical_worker`，驗證 slot 與邏輯 worker 同名或共用 display_name 時，邏輯 worker 正常指派且 slot 被正確攔截。
 
 2. `PYTHONPATH=.orchestrator python3 -m unittest discover -s .orchestrator -p "test_supervisor.py"`
    - 執行 549 項測試，全數通過 (OK)。

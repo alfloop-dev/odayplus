@@ -913,17 +913,21 @@ def resolve_dispatch_slot_info(name: str | None) -> tuple[bool, str | None, str 
     agents = merged_orchestrator_config().get("agents")
     if not isinstance(agents, dict):
         return False, None, None
+    raw_casefold = raw.casefold()
+    raw_normalized = orchestrator_common.normalize_agent_id(raw) if hasattr(orchestrator_common, "normalize_agent_id") else re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
     for agent_id, agent in agents.items():
         if not isinstance(agent, dict) or not is_dispatch_slot_config(agent):
             continue
-        declared = str(agent.get("display_name") or agent_id or "").strip()
         slot_id = str(agent.get("slot_id") or agent_id or "").strip()
+        norm_agent_id = orchestrator_common.normalize_agent_id(agent_id) if hasattr(orchestrator_common, "normalize_agent_id") else re.sub(r"[^a-z0-9]+", "_", str(agent_id).lower()).strip("_")
+        norm_slot_id = orchestrator_common.normalize_agent_id(slot_id) if hasattr(orchestrator_common, "normalize_agent_id") else re.sub(r"[^a-z0-9]+", "_", slot_id.lower()).strip("_")
         candidate_names = {
             str(agent_id).casefold(),
-            declared.casefold(),
+            norm_agent_id,
             slot_id.casefold(),
-        }
-        if raw.casefold() in candidate_names:
+            norm_slot_id,
+        } - {""}
+        if raw_casefold in candidate_names or (raw_normalized and raw_normalized in candidate_names):
             target_agent = str(agent.get("dispatch_slot_for") or "").strip() or None
             target_pool = str(agent.get("dispatch_slot_for_pool") or agent.get("account_pool") or "").strip() or None
             return True, target_agent, target_pool
