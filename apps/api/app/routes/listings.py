@@ -635,6 +635,34 @@ else:
         version: int
         correlation_id: UuidString
 
+    def _job_receipt_payload(job: dict[str, Any]) -> dict[str, Any]:
+        """Adapt legacy queue statuses at the public receipt read boundary.
+
+        Older rows encoded delivery mechanics directly in ``status``. Keep
+        those rows readable without allowing RETRYING or DEAD_LETTER to leak
+        into the outcome enum, and do not mutate the stored row while reading.
+        """
+        payload = dict(job)
+        raw_status = payload.get("status")
+        status = raw_status.value if isinstance(raw_status, Enum) else str(raw_status or "").upper()
+        raw_delivery_state = payload.get("delivery_state")
+        delivery_state = (
+            raw_delivery_state.value
+            if isinstance(raw_delivery_state, Enum)
+            else str(raw_delivery_state).upper() if raw_delivery_state else None
+        )
+
+        if status == "RETRYING":
+            status = "QUEUED"
+            delivery_state = "RETRYING"
+        elif status == "DEAD_LETTER":
+            status = "FAILED"
+            delivery_state = "DEAD_LETTER"
+
+        payload["status"] = status
+        payload["delivery_state"] = delivery_state
+        return payload
+
     class ReasonCommand(BaseModel):
         model_config = ConfigDict(extra="forbid")
         reason: str = Field(..., min_length=3, max_length=4000)
@@ -2477,7 +2505,7 @@ else:
                 correlation_id=request.headers.get("x-correlation-id"),
             )
             response.headers["ETag"] = f'W/"{job["version"]}"'
-            return JobReceipt(**job)
+            return JobReceipt(**_job_receipt_payload(job))
 
         @router.get(
             "/saved-views",

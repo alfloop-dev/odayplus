@@ -1945,3 +1945,44 @@ def test_job_receipt_partial_outcome_status(
     assert partial_receipt["status"] == "PARTIAL"
     assert partial_receipt["delivery_state"] is None
 
+
+@pytest.mark.parametrize(
+    ("legacy_status", "expected_status", "expected_delivery_state"),
+    [
+        ("RETRYING", "QUEUED", "RETRYING"),
+        ("DEAD_LETTER", "FAILED", "DEAD_LETTER"),
+    ],
+)
+def test_job_receipt_adapts_legacy_delivery_statuses(
+    client: TestClient,
+    legacy_status: str,
+    expected_status: str,
+    expected_delivery_state: str,
+) -> None:
+    submitted = client.post(
+        "/api/v1/intakes/url",
+        json={
+            "original_url": f"https://example.com/listings/legacy-{legacy_status.lower()}",
+            "scope": {"tenant_id": TENANT_A},
+        },
+        headers={
+            **HEADERS_A,
+            "Idempotency-Key": f"idem-legacy-{legacy_status.lower()}-{uuid4()}",
+        },
+    )
+    assert submitted.status_code == 202
+    intake_receipt = submitted.json()
+    job_id = intake_receipt["job_id"]
+    store = _store_with_intake(intake_receipt["intake_id"])
+
+    # This is the pre-separation shape: delivery mechanics lived in status.
+    store.jobs[job_id]["status"] = legacy_status
+    store.jobs[job_id].pop("delivery_state", None)
+
+    response = client.get(f"/api/v1/jobs/{job_id}/receipt", headers=HEADERS_A)
+    assert response.status_code == 200
+    receipt = response.json()
+    assert receipt["status"] == expected_status
+    assert receipt["delivery_state"] == expected_delivery_state
+    assert store.jobs[job_id]["status"] == legacy_status
+    assert "delivery_state" not in store.jobs[job_id]
