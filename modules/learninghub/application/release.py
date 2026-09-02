@@ -6,8 +6,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from hashlib import sha256
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from shared.governance.decision_policy import DecisionPolicy
 
 from models.shared_ml import (
     ArtifactKind,
@@ -28,6 +31,7 @@ from models.shared_ml.validation import (
     SegmentMetric,
     ValidationRun,
     ValidationStatus,
+    thresholds_from_decision_policy,
     validate_model_candidate,
 )
 from modules.learninghub.application.monitor import (
@@ -364,8 +368,10 @@ class LearningHubService:
         thresholds: Sequence[MetricThreshold],
         segment_metrics: Sequence[SegmentMetric] = (),
         segment_thresholds: Sequence[SegmentMetricThreshold] = (),
+        baseline_segment_metrics: Sequence[SegmentMetric] = (),
         calibration_summary: Mapping[str, Any] | None = None,
         min_training_records: int = 1,
+        decision_policy: DecisionPolicy | None = None,
     ) -> ValidationRun:
         snapshot = self.repository.get_dataset_snapshot(dataset_snapshot_id)
         if snapshot is None:
@@ -379,8 +385,10 @@ class LearningHubService:
             thresholds=thresholds,
             segment_metrics=segment_metrics,
             segment_thresholds=segment_thresholds,
+            baseline_segment_metrics=baseline_segment_metrics,
             calibration_summary=calibration_summary,
             min_training_records=min_training_records,
+            decision_policy=decision_policy,
         )
         return self.repository.save_validation_run(validation_run)
 
@@ -1515,9 +1523,10 @@ class LearningHubService:
         signal_type: MonitoringSignalType,
         observed_metrics: Mapping[str, float],
         baseline_metrics: Mapping[str, float],
-        thresholds: Sequence[MetricThreshold],
+        thresholds: Sequence[MetricThreshold] = (),
         requested_by: str = "system",
         reason: str | None = None,
+        policy: DecisionPolicy | None = None,
     ) -> RetrainingRequest | None:
         snapshot = self.repository.get_dataset_snapshot(dataset_snapshot_id)
         if snapshot is None:
@@ -1528,8 +1537,16 @@ class LearningHubService:
         if production is None:
             raise LearningHubError(f"no production model registered for {model_name}")
 
+        effective_thresholds = list(thresholds)
+        if policy is not None:
+            policy_thresholds = thresholds_from_decision_policy(policy)
+            existing_names = {t.metric_name for t in effective_thresholds}
+            for pt in policy_thresholds:
+                if pt.metric_name not in existing_names:
+                    effective_thresholds.append(pt)
+
         breaches: list[MonitoringBreach] = []
-        for threshold in thresholds:
+        for threshold in effective_thresholds:
             if threshold.metric_name not in observed_metrics:
                 breaches.append(
                     MonitoringBreach(
@@ -1540,15 +1557,36 @@ class LearningHubService:
                     )
                 )
                 continue
-            status, message = threshold.evaluate(float(observed_metrics[threshold.metric_name]))
+            baseline_value = (
+                float(baseline_metrics[threshold.metric_name])
+                if threshold.metric_name in baseline_metrics
+                else None
+            )
+            status, message = threshold.evaluate(
+                float(observed_metrics[threshold.metric_name]),
+                baseline_value=baseline_value,
+            )
             if status is ValidationStatus.PASSED:
                 continue
+            higher = (
+                threshold.higher_is_better
+                if threshold.higher_is_better is not None
+                else (threshold.min_value is not None or threshold.warning_min_value is not None or threshold.max_value is None)
+            )
+            obs_val = float(observed_metrics[threshold.metric_name])
+            deg = (
+                ((baseline_value - obs_val) if higher else (obs_val - baseline_value))
+                if baseline_value is not None
+                else None
+            )
             breaches.append(
                 MonitoringBreach(
                     metric_name=threshold.metric_name,
-                    observed_value=float(observed_metrics[threshold.metric_name]),
+                    observed_value=obs_val,
                     threshold_message=message or threshold.metric_name,
                     severity=status.value,
+                    baseline_value=baseline_value,
+                    degradation=deg,
                 )
             )
 
@@ -1562,6 +1600,7 @@ class LearningHubService:
             baseline_metrics=dict(baseline_metrics),
             breaches=tuple(breaches),
             requested_by=requested_by,
+            decision_policy_version_id=policy.policy_version_id if policy else None,
         )
         self.repository.save_monitoring_evaluation(evaluation)
         if not evaluation.triggered:
@@ -1579,6 +1618,7 @@ class LearningHubService:
             baseline_metrics=dict(baseline_metrics),
             requested_by=requested_by,
             auto_promotion=False,
+            decision_policy_version_id=policy.policy_version_id if policy else None,
         )
         return self.repository.save_retraining_request(request)
 
@@ -1589,9 +1629,10 @@ class LearningHubService:
         dataset_snapshot_id: str,
         observed_metrics: Mapping[str, float],
         baseline_metrics: Mapping[str, float],
-        thresholds: Sequence[MetricThreshold],
+        thresholds: Sequence[MetricThreshold] = (),
         requested_by: str = "system",
         reason: str | None = None,
+        policy: DecisionPolicy | None = None,
     ) -> RetrainingRequest | None:
         return self.evaluate_monitoring(
             model_name=model_name,
@@ -1602,6 +1643,7 @@ class LearningHubService:
             thresholds=thresholds,
             requested_by=requested_by,
             reason=reason,
+            policy=policy,
         )
 
     def compare_inference(
@@ -1712,6 +1754,7 @@ class LearningHubService:
         release_id: str,
         observed_metrics: Mapping[str, float],
         guardrails: Sequence[MetricThreshold],
+        baseline_metrics: Mapping[str, float] | None = None,
         evaluated_by: str = "release-monitor",
         correlation_id: str = "learninghub-monitor",
     ) -> ReleaseMonitorAssessment:
@@ -1730,7 +1773,15 @@ class LearningHubService:
         monitoring_window = decision.monitoring_window
         rollback_target = decision.rollback_target
 
-        breaches = evaluate_guardrails(observed_metrics, guardrails)
+        resolved_baseline = baseline_metrics
+        if resolved_baseline is None:
+            model_ver = self.repository.get_model_version(model_name, version)
+            if model_ver is not None and model_ver.metrics:
+                resolved_baseline = model_ver.metrics
+
+        breaches = evaluate_guardrails(
+            observed_metrics, guardrails, baseline_metrics=resolved_baseline
+        )
         status = MonitorStatus.BREACHED if breaches else MonitorStatus.HEALTHY
         recommended_action = (
             RecommendedAction.ROLLBACK if breaches and rollback_target else RecommendedAction.NONE
