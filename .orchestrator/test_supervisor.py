@@ -573,6 +573,96 @@ class AccountPoolSchedulingTests(unittest.TestCase):
             )
         self.assertEqual(persist.call_args.kwargs["new_waiting_for"], "Antigravity")
 
+    def test_assignment_integrity_flags_and_reassigns_dispatch_slot_owner_and_reviewer(self) -> None:
+        config = self._config()
+        config["paths"] = {"status_file": "/tmp/status.json", "activity_log": "/tmp/activity.jsonl"}
+        config["account_pools"]["claude_main"] = {"max_concurrent": 1, "state": "healthy"}
+        config["agents"]["claude"] = {
+            "id": "claude", "display_name": "Claude", "provider": "claude", "account_pool": "claude_main",
+        }
+        config["agents"]["claude_slot_1"] = {
+            "id": "claude_slot_1", "display_name": "claude_slot_1", "provider": "claude",
+            "account_pool": "claude_main", "dispatch_slot_for_pool": "claude_main", "slot_id": "claude_slot_1",
+        }
+        config["providers"]["claude"] = {}
+
+        # 1. Audit issues when owner is a dispatch slot
+        task_slot_owner = {"id": "TASK-SLOT-1", "status": "todo", "priority": "P2", "owner": "ag_slot_1", "reviewer": "Claude"}
+        issues = supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task_slot_owner)
+        self.assertTrue(any("owner_unavailable:actor ag_slot_1 is a dispatch slot" in issue for issue in issues))
+
+        # 2. Normalize converges slot owner to viable logical worker
+        status = {"tasks": [task_slot_owner]}
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_log,
+        ):
+            self.assertTrue(
+                supervisor.normalize_task_assignment_integrity(config, {"workers": {}}, status, task_slot_owner)
+            )
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Claude")
+        write_log.assert_called_once()
+        self.assertEqual(write_log.call_args[0][1]["type"], "task_assignment_integrity_repaired")
+
+        # 3. Audit and normalize when reviewer is a dispatch slot
+        task_slot_reviewer = {"id": "TASK-SLOT-2", "status": "todo", "priority": "P2", "owner": "Antigravity", "reviewer": "claude_slot_1"}
+        issues_rev = supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task_slot_reviewer)
+        self.assertTrue(any("reviewer_unavailable:actor claude_slot_1 is a dispatch slot" in issue for issue in issues_rev))
+
+        status_rev = {"tasks": [task_slot_reviewer]}
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist_rev,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(
+                supervisor.normalize_task_assignment_integrity(config, {"workers": {}}, status_rev, task_slot_reviewer)
+            )
+        self.assertEqual(persist_rev.call_args.kwargs["new_owner"], "Antigravity")
+        self.assertEqual(persist_rev.call_args.kwargs["new_reviewer"], "Claude")
+
+    def test_assignment_integrity_does_not_create_dispatch_loop_for_slot_owner(self) -> None:
+        """Tasks assigned to dispatch slots converge to logical workers and dispatch successfully without retry loops."""
+        config = self._config()
+        config["paths"] = {"status_file": "/tmp/status.json", "activity_log": "/tmp/activity.jsonl"}
+        config["account_pools"]["claude_main"] = {"max_concurrent": 1, "state": "healthy"}
+        config["agents"]["claude"] = {
+            "id": "claude", "display_name": "Claude", "provider": "claude", "account_pool": "claude_main",
+        }
+        config["providers"]["claude"] = {}
+
+        task = {
+            "id": "TASK-SLOT-LOOP-GUARD",
+            "title": "Slot recovery test",
+            "status": "todo",
+            "priority": "P2",
+            "owner": "ag_slot_1",
+            "reviewer": "Claude",
+            "depends_on": [],
+        }
+
+        # Prove dispatch_loop_agent_ids excludes ag_slot_1
+        loop_agents = supervisor.dispatch_loop_agent_ids(config)
+        self.assertNotIn("ag_slot_1", loop_agents)
+        self.assertIn("antigravity", loop_agents)
+
+        # Normalization repairs task owner to Antigravity
+        status = {"tasks": [task]}
+        with mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist, \
+             mock.patch.object(supervisor, "write_activity_log"):
+            repaired = supervisor.normalize_task_assignment_integrity(config, {"workers": {}}, status, task)
+            self.assertTrue(repaired)
+            self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+
+        # Once normalized, task is eligible for Antigravity and leaves todo state upon dispatch
+        normalized_task = dict(task, owner="Antigravity", reviewer="Claude")
+        self.assertTrue(supervisor.agent_can_take_task(config, "Antigravity", normalized_task))
+        self.assertFalse(supervisor.agent_can_take_task(config, "ag_slot_1", normalized_task))
+        self.assertEqual(
+            supervisor.task_actor_assignment_block_reason(config, {"workers": {}}, normalized_task, "Antigravity"),
+            None,
+        )
+
 
 
     def test_quota_failure_fences_sibling_slots_and_hands_off(self) -> None:
