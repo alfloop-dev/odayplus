@@ -175,6 +175,8 @@ def _priceops_payload(tenant_id: str, *, current_price: float = 4.0) -> dict:
                 "current_price": current_price,
                 "baseline_demand": 100.0,
                 "elasticity_value": -1.1,
+                "applicable_min_price": 3.0,
+                "applicable_max_price": 5.0,
                 "confidence": 0.8,
             }
         ],
@@ -633,6 +635,8 @@ def test_production_routes_reject_in_memory_job_receipts() -> None:
                     "current_price": 4,
                     "baseline_demand": 100,
                     "elasticity_value": -1.1,
+                    "applicable_min_price": 3.0,
+                    "applicable_max_price": 5.0,
                     "confidence": 0.8,
                 }
             ],
