@@ -139,7 +139,7 @@ export const interventionTimelineFixture: InterventionTimelineContract = {
   executionStatus: "scheduled",
   observationWindow: { startsAt: "2026-07-01", endsAt: "2026-07-28" },
   outcomeStatus: "OBSERVING",
-  evidenceLevel: "medium",
+  evidenceLevel: "L2",
   nodes: [
     { step: "Triggered", timestamp: "2026-06-29T01:00:00Z", actor: "system", eventType: "trigger", status: "done", description: "Residual crossed alert policy." },
     { step: "Eligibility checked", timestamp: "2026-06-29T01:05:00Z", actor: "system", eventType: "eligibility", status: "done", description: "Store is eligible." },
@@ -172,7 +172,7 @@ export const adLiftReportFixture: AdLiftReportCardContract = {
   incrementalRevenue: { p10: 70000, p50: 120000, p90: 180000, unit: "TWD" },
   incrementalGrossMargin: { p10: 21000, p50: 38000, p90: 62000, unit: "TWD" },
   iromi: { p10: 1.2, p50: 1.9, p90: 2.7, unit: "x" },
-  evidenceLevel: "medium",
+  evidenceLevel: "L3",
   continueStopRecommendation: "CONTINUE",
   contaminationWarnings: ["One treatment store also has a local promotion"],
   dataQuality: domainDataQualityFixture,

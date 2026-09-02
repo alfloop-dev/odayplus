@@ -30,8 +30,12 @@ import type {
   Confidence,
   DataStatus,
   DecisionStatus,
+  EvidenceLevel,
   StatusTone,
 } from "@oday-plus/domain-types";
+// Value import: the causal threshold is shared with the backend gate in
+// modules/opsboard/application/growth.py, so this view model must not restate it.
+import { meetsCausalThreshold } from "@oday-plus/domain-types";
 import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 import {
   operatorFixturesAllowed,
@@ -121,7 +125,7 @@ export type GrowthItem = {
   targetLift: number;
   /** observed lift once the window matures; null while still observing. */
   observedLift: number | null;
-  evidenceLevel: ConfidenceLevel;
+  evidenceLevel: EvidenceLevel | null;
   rationale: string;
   rollbackPlan: string;
   store?: string;
@@ -271,7 +275,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     observationWindow: "2026-06-20 ~ 2026-07-04（14 天）",
     targetLift: 2.0,
     observedLift: 2.6,
-    evidenceLevel: "high",
+    evidenceLevel: "L3",
     rationale: "對照組配對通過 pre-trend 檢定；調價後晚餐營收顯著高於基準。",
     rollbackPlan: "回復價目表 pb-2026.06.19，30 分鐘內生效，觀察 48 小時。",
     store: "都會晚餐高潛力組",
@@ -295,7 +299,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     observationWindow: "2026-06-18 ~ 2026-07-02（14 天）",
     targetLift: 3.0,
     observedLift: -1.4,
-    evidenceLevel: "medium",
+    evidenceLevel: "L2",
     rationale: "下調外送費後訂單量未提升，宵夜營收較基準下滑。",
     rollbackPlan: "回復外送費結構 fs-2026.06.17，先 canary 12 小時再全量。",
     store: "宵夜外送流失組",
@@ -318,7 +322,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     observationWindow: "2026-06-25 ~ 2026-07-09（14 天）",
     targetLift: 1.5,
     observedLift: 0.6,
-    evidenceLevel: "low",
+    evidenceLevel: "L1",
     rationale: "觀察期營收微幅上升但未達標，對照組樣本不足以判定因果。",
     rollbackPlan: "回復加價包設定 cfg-2026.06.24；維持既有午餐主力價。",
     store: "郊區午餐守成組",
@@ -341,7 +345,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     observationWindow: "2026-07-05 ~ 2026-07-19（觀察中）",
     targetLift: 2.5,
     observedLift: null,
-    evidenceLevel: "medium",
+    evidenceLevel: null,
     rationale: "活動執行中，觀察窗尚未成熟，暫無成效判定。",
     rollbackPlan: "停用加點推薦模組設定 cfg-2026.07.05。",
     store: "都會晚餐高潛力組",
@@ -364,7 +368,7 @@ export const GROWTH_ITEMS: GrowthItem[] = [
     observationWindow: "尚未排程",
     targetLift: 2.0,
     observedLift: null,
-    evidenceLevel: "low",
+    evidenceLevel: null,
     rationale: "草稿：待補齊對照組與 pre-trend 檢定後送審。",
     rollbackPlan: "草稿階段無執行，無需 rollback。",
     store: "宵夜外送流失組",
@@ -608,7 +612,7 @@ export async function writeGrowthOutcome(params: {
   outcome: GrowthOutcome;
   requiredAction: CloseoutRequiredAction;
   observedLift?: number | null;
-  evidenceLevel?: ConfidenceLevel;
+  evidenceLevel?: EvidenceLevel | null;
   rationale?: string;
 }): Promise<{ actionId: string; outcome: string; correlationId: string } | null> {
   const idempotencyKey = newIdempotencyKey();
@@ -627,7 +631,7 @@ export async function writeGrowthOutcome(params: {
       outcome: params.outcome,
       requiredAction: params.requiredAction,
       observedLift: params.observedLift ?? null,
-      evidenceLevel: params.evidenceLevel ?? "medium",
+      evidenceLevel: params.evidenceLevel ?? null,
       rationale: params.rationale ?? "",
     }),
   });
@@ -909,7 +913,8 @@ const OUTCOME_STAGES: GrowthStatus[] = ["OUTCOME_READY", "CLOSED"];
  * Rules (deterministic, evidence-aware):
  *   - window not matured / no observation → PENDING
  *   - non-positive observed lift          → INEFFECTIVE
- *   - low evidence, or positive but below target → INCONCLUSIVE
+ *   - evidence below CAUSAL_MIN_EVIDENCE, or never rated at all, or positive
+ *     but below target                    → INCONCLUSIVE
  *   - met target with adequate evidence   → EFFECTIVE
  */
 export function judgeEffectiveness(item: GrowthItem): GrowthOutcome {
@@ -919,7 +924,7 @@ export function judgeEffectiveness(item: GrowthItem): GrowthOutcome {
   if (item.observedLift <= 0) {
     return "INEFFECTIVE";
   }
-  if (item.evidenceLevel === "low" || item.observedLift < item.targetLift) {
+  if (!meetsCausalThreshold(item.evidenceLevel) || item.observedLift < item.targetLift) {
     return "INCONCLUSIVE";
   }
   return "EFFECTIVE";

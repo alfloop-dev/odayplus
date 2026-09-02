@@ -15,6 +15,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+from shared.governance.evidence import coerce_evidence_level
+from shared.governance.vocabularies import EvidenceLevel
 from solver.pricing.constraints import (
     PRICING_POLICY_ID,
     PRICING_POLICY_KIND,
@@ -678,7 +680,12 @@ class LabelRegistryEntry:
     label_key: str
     measurement_method: str
     label_maturity_time: datetime
-    evidence_level: str = "pending"
+    # A label is registered before its outcome matures, so it starts unrated.
+    # It used to start at the free string "pending", which is not a rung: any
+    # reader comparing it against the ladder got a value the ladder cannot
+    # place. ADR-0004 D3 spells "not assessed yet" as None (`status` already
+    # carries the lifecycle stage this string was doubling as).
+    evidence_level: EvidenceLevel | None = None
     status: str = "registered"
 
     def to_dict(self) -> dict[str, Any]:
@@ -689,7 +696,9 @@ class LabelRegistryEntry:
             "label_key": self.label_key,
             "measurement_method": self.measurement_method,
             "label_maturity_time": self.label_maturity_time.isoformat(),
-            "evidence_level": self.evidence_level,
+            "evidence_level": (
+                self.evidence_level.value if self.evidence_level is not None else None
+            ),
             "status": self.status,
         }
 
@@ -790,7 +799,7 @@ class PricingEffectEvaluation:
     outcome_window: tuple[datetime, datetime]
     label_maturity_time: datetime
     measurement_method: str
-    evidence_level: str
+    evidence_level: EvidenceLevel | None
     baseline_gross_margin: float
     expected_incremental_gross_margin: float
     actual_incremental_gross_margin: float
@@ -809,7 +818,9 @@ class PricingEffectEvaluation:
             ],
             "label_maturity_time": self.label_maturity_time.isoformat(),
             "measurement_method": self.measurement_method,
-            "evidence_level": self.evidence_level,
+            "evidence_level": (
+                self.evidence_level.value if self.evidence_level is not None else None
+            ),
             "baseline_gross_margin": self.baseline_gross_margin,
             "expected_incremental_gross_margin": self.expected_incremental_gross_margin,
             "actual_incremental_gross_margin": self.actual_incremental_gross_margin,
@@ -1092,12 +1103,19 @@ def evaluate_effect(
     outcome_window: tuple[datetime, datetime],
     label_maturity_time: datetime,
     measurement_method: str = "before_after",
-    evidence_level: str = "medium",
+    evidence_level: EvidenceLevel | str | None = None,
     negative_impact_threshold: float = DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
     generated_at: datetime | None = None,
     evaluation_id: str | None = None,
 ) -> PricingEffectEvaluation:
-    """Attribute realised effect and decide continue/adjust/stop/rollback."""
+    """Attribute realised effect and decide continue/adjust/stop/rollback.
+
+    This is the write boundary for the evaluation record's evidence claim: a
+    string is accepted (callers arrive from JSON) but only as a name for a rung,
+    and an unrecognised one is refused rather than stored. Omitting it stores
+    None -- the evaluation says nothing about evidence, which is what happened.
+    """
+    rated_evidence_level = coerce_evidence_level(evidence_level)
     actual_incremental = round(actual_gross_margin - baseline_gross_margin, 4)
     if baseline_gross_margin > 0:
         impact_ratio = round(actual_incremental / baseline_gross_margin, 6)
@@ -1137,7 +1155,7 @@ def evaluate_effect(
         outcome_window=outcome_window,
         label_maturity_time=label_maturity_time,
         measurement_method=measurement_method,
-        evidence_level=evidence_level,
+        evidence_level=rated_evidence_level,
         baseline_gross_margin=round(baseline_gross_margin, 4),
         expected_incremental_gross_margin=round(expected_incremental_gross_margin, 4),
         actual_incremental_gross_margin=actual_incremental,

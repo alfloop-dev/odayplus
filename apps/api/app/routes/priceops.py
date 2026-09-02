@@ -49,6 +49,7 @@ else:
         PlanRequest,
         run_priceops_optimizer_batch,
     )
+    from shared.governance.vocabularies import EvidenceLevel
 
     logger = logging.getLogger("oday-api.priceops")
 
@@ -135,7 +136,7 @@ else:
         actual_gross_margin: float
         actor: str = Field(default="system", min_length=1)
         measurement_method: str = "before_after"
-        evidence_level: str = "medium"
+        evidence_level: EvidenceLevel | None = None
         negative_impact_threshold: float = 0.05
         outcome_window_start: str | None = None
         outcome_window_end: str | None = None

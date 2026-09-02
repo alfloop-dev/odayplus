@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import numpy as np
 
+from shared.governance import evidence as governed_evidence
 from shared.governance.vocabularies import EvidenceLevel
 
 # Versions (output-contract principle §5.1 of ODP-MOD-07).
@@ -45,15 +46,12 @@ class AdLiftProductionExecutionError(RuntimeError):
 # modules/intervention/domain/lifecycle.py. Two identical definitions drift the
 # moment one of them is edited, and nothing was watching for that.
 # Ordering for ladder comparisons; causal claims require >= L3 (ODP-ML-05 §5).
-_EVIDENCE_ORDER: tuple[EvidenceLevel, ...] = (
-    EvidenceLevel.L0_ANECDOTAL,
-    EvidenceLevel.L1_BEFORE_AFTER,
-    EvidenceLevel.L2_MATCHED_DESCRIPTIVE,
-    EvidenceLevel.L3_DID_VALIDATED,
-    EvidenceLevel.L4_RANDOMIZED,
-    EvidenceLevel.L5_POLICY_READY,
-)
-CAUSAL_MIN_EVIDENCE = EvidenceLevel.L3_DID_VALIDATED
+# Both are re-exported from shared.governance.evidence rather than declared
+# again here. PriceOps and Growth gate on the same threshold, and a second copy
+# of L3 is how a threshold change lands in one consumer and not the others --
+# the same failure the ladder itself had before ODP-EVIDENCE-LEVEL-ALIGNMENT-001.
+_EVIDENCE_ORDER: tuple[EvidenceLevel, ...] = governed_evidence.EVIDENCE_ORDER
+CAUSAL_MIN_EVIDENCE: EvidenceLevel = governed_evidence.CAUSAL_MIN_EVIDENCE
 
 
 class EvidenceInsufficiencyReason(StrEnum):
@@ -117,11 +115,9 @@ class EvidenceAssessment:
 
 def is_causal_evidence(assessment: EvidenceAssessment) -> bool:
     """Causal claims need L3+, and need the ladder to apply in the first place."""
-    if not assessment.assessable or assessment.level is None:
+    if not assessment.assessable:
         return False
-    return _EVIDENCE_ORDER.index(assessment.level) >= _EVIDENCE_ORDER.index(
-        CAUSAL_MIN_EVIDENCE
-    )
+    return governed_evidence.meets_causal_threshold(assessment.level)
 
 
 class PreTrendStatus(StrEnum):

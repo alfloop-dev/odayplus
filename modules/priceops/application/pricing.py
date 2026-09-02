@@ -59,6 +59,7 @@ from modules.priceops.infrastructure.oss_optimizer import (
     PriceOpsProductionOptimizer,
 )
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
+from shared.governance.vocabularies import EvidenceLevel
 from solver.pricing.optimizer import STATUS_INFEASIBLE, STATUS_OPTIMAL
 
 # Label maturity horizon when the caller does not supply one explicitly.
@@ -590,7 +591,9 @@ class PriceOpsService:
         actual_gross_margin: float,
         actor: str = "system",
         measurement_method: str = "before_after",
-        evidence_level: str = "medium",
+        # A rung name or None. evaluate_effect() refuses anything else rather
+        # than letting a free string reach the stored evaluation (ADR-0004 D3).
+        evidence_level: EvidenceLevel | str | None = None,
         negative_impact_threshold: float = DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
         outcome_window: tuple[datetime, datetime] | None = None,
         generated_at: datetime | None = None,
