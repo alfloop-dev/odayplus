@@ -4,8 +4,8 @@
 build-once handoff 對「target 上還沒有任何已核准 release」時無條件要求上一核准
 rollback release 的語意缺口。
 
-- 任務狀態：實作完成，等待正式 review submission
-- Owner：Claude2 · Reviewer：Codex
+- 任務狀態：修補完成，等待正式 review submission
+- Owner：Antigravity4 · Reviewer：Codex
 - 量測 code head：`579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0`（本 branch 最後一個含
   code 變更的 commit；其後只有 evidence commit，僅新增本目錄）
 - base：`origin/dev@38de35a7bac2d6c6f6d8d079ffaf16abf6163c29`，量測時
@@ -132,15 +132,12 @@ manifest，可以直接被第二個 release 當成 rollback target
 
 | 項目 | 結果 |
 | --- | --- |
-| `pytest tests/release/ tests/ops/test_deploy_workflow_contract.py tests/ops/test_cloud_run_live_deployment.py tests/ops/test_runtime_config_code_closeout.py` | exit 0，830 tests |
-| `pytest -m "not requires_live_env" delivery_toolchain scripts tests/tooling` | exit 0 |
-| `pytest tests/ops`（完整 820 tests） | exit 0 |
-| `pytest tests/architecture/test_external_data_boundary.py` | exit 0 |
-| `ruff check .orchestrator delivery_toolchain scripts` | exit 0 |
-| `ruff check tests modules apps shared models solver pipelines infra` | exit 0 |
-| `check_code_boundaries.py` | exit 0，1047 files |
-| `secret_scan.py` | exit 0 |
-| `bash -n`（兩個 deploy shell） | exit 0 |
+| `pytest tests/ops/test_first_release_recovery.py` | exit 0，3 tests |
+| `pytest tests/release/test_probe_release_target_absence.py` | exit 0，19 tests |
+| `pytest tests/release/test_release_manifest.py -k 'first_release or target_that_still_holds_a_release or partial_readback or declared_probe_command or field_the_binding_digest or enabled_source_keeps'` | exit 0，17 tests |
+| `pytest tests/release/test_build_release_handoff.py -k 'first_release or target or rollback_manifest_and_a_readback'` | exit 0，10 tests |
+| `pytest tests/ops/test_deploy_workflow_contract.py -k 'first_release or admission_re_reads_the_target or failed_first_deploy or build_phase_reads_the_target_back'` | exit 0，6 tests |
+| PR exact-head CI（orchestrator/product/E2E、lint、boundary、secret scan） | 交由 GitHub Actions；本機未重跑廣泛套件 |
 
 ### 4.1 mutation 檢查
 
