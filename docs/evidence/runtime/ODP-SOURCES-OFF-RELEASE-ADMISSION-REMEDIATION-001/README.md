@@ -5,7 +5,7 @@ admission 語意。
 
 - 任務狀態：實作完成，等待正式 review submission
 - Owner：Codex · Reviewer：Codex2
-- 量測 code head：`5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048`
+- 量測 code head：`2e50af62e507090531153683a804aa651e571a7c`
 - base advance：merge commit `2e820da79a4615f17dc9e56c6a2059053b52761a`，包含 `origin/dev@4956eae4d76d1fd838ce97440957b49c0dbab8fb`
 
 ## 1. 問題
@@ -150,7 +150,7 @@ attestation。
 ## 7. 驗證
 
 見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
-在 code head `5d6826a6` 以指定 focused selection 通過：exit 0、15.914 秒；收據不含
+在 code head `2e50af62` 以指定 focused selection 通過：exit 0、20.25 秒；收據不含
 任何 secret 值。另以同一 code head 執行 runtime probe/receipt/workflow focused suite
 （18.89 秒）、secret scan（19.57 秒）、ruff（0.18 秒）與 shell syntax（0.00 秒），
 全部 exit 0；probe 只接受明確 network-policy errno，並由 Cloud Logging readback

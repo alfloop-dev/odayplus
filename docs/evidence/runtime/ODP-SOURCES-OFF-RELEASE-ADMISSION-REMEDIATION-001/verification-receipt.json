@@ -5,8 +5,8 @@
   "agent": "Codex",
   "reviewer": "Codex2",
   "branch": "task/ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
-  "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
-  "head_sha_note": "以 anchor code head 5d6826a6 重新執行指定 focused selection、runtime receipt focused tests、secret scan、ruff 與 shell syntax，全部 exit 0；其後僅更新此收據與 README。",
+  "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
+  "head_sha_note": "以 runtime-boundary code head 2e50af62 重新執行指定 focused selection、runtime receipt focused tests、secret scan、ruff 與 shell syntax，全部 exit 0；其後僅更新此收據與 README。",
   "secret_values_redacted": true,
   "runs": [
     {
@@ -14,7 +14,7 @@
       "command": "uv run --frozen pytest -q tests/release/test_build_release_handoff.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_dev_rollout.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
       "started_at": "2026-09-02T05:29:20Z",
       "finished_at": "2026-09-02T05:29:36Z",
       "duration_seconds": 15.914,
@@ -33,11 +33,11 @@
       "runner": "pytest"
     },
     {
-      "purpose": "runtime receipt focused tests at code head 5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "purpose": "runtime receipt focused tests at code head 2e50af62e507090531153683a804aa651e571a7c",
       "command": "uv run --frozen pytest -q tests/ops/test_cloud_run_job_entrypoint.py tests/ops/test_release_receipts.py tests/ops/test_deploy_workflow_contract.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
       "duration_seconds": 18.89,
       "selection": {
         "scope": "runtime probe, receipt readback, and workflow contract",
@@ -50,11 +50,11 @@
       "runner": "pytest"
     },
     {
-      "purpose": "secret scan over code head 5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "purpose": "secret scan over code head 2e50af62e507090531153683a804aa651e571a7c",
       "command": "uv run --frozen python delivery_toolchain/security/secret_scan.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
       "duration_seconds": 19.57,
       "selection": {
         "scope": "repository secret scan",
@@ -63,11 +63,11 @@
       "result_line": "Secrets scan passed successfully. No violations found."
     },
     {
-      "purpose": "lint over the changed surfaces at code head 5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "purpose": "lint over the changed surfaces at code head 2e50af62e507090531153683a804aa651e571a7c",
       "command": "uv run --frozen ruff check delivery_toolchain/release/ tests/release/ tests/ops/",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
       "duration_seconds": 0.18,
       "selection": {
         "scope": "changed release and ops surfaces",
@@ -76,11 +76,11 @@
       "result_line": "All checks passed!"
     },
     {
-      "purpose": "shell syntax validation at code head 5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "purpose": "shell syntax validation at code head 2e50af62e507090531153683a804aa651e571a7c",
       "command": "bash -n product_ops/deployment/deploy_cloud_run_waji.sh",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "head_sha": "2e50af62e507090531153683a804aa651e571a7c",
       "duration_seconds": 0.00,
       "selection": {
         "scope": "Runtime Release deploy entrypoint",
