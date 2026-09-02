@@ -211,14 +211,19 @@ export type IntakeSummary = {
   masked_fields?: string[];
 };
 
+export type JobDeliveryState = "RETRYING" | "DEAD_LETTER";
+
 export type JobReceipt = {
   job_id: string;
-  status: "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "DEAD_LETTER";
+  status: JobStatus;
+  delivery_state?: JobDeliveryState | null;
   checkpoint: string;
   attempt: number;
   version: number;
   correlation_id: string;
 };
+
+export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "PARTIAL";
 
 export type ManualIntakeRow = {
   source_id?: string;

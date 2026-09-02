@@ -3988,6 +3988,14 @@
         "title": "JobCreatePayload",
         "type": "object"
       },
+      "JobDeliveryState": {
+        "enum": [
+          "RETRYING",
+          "DEAD_LETTER"
+        ],
+        "title": "JobDeliveryState",
+        "type": "string"
+      },
       "JobReceipt": {
         "properties": {
           "attempt": {
@@ -4003,13 +4011,23 @@
             "title": "Correlation Id",
             "type": "string"
           },
+          "delivery_state": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JobDeliveryState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "job_id": {
             "format": "uuid",
             "title": "Job Id",
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/JobReceiptStatus"
+            "$ref": "#/components/schemas/JobStatus"
           },
           "version": {
             "title": "Version",
@@ -4027,17 +4045,16 @@
         "title": "JobReceipt",
         "type": "object"
       },
-      "JobReceiptStatus": {
+      "JobStatus": {
         "enum": [
           "QUEUED",
           "RUNNING",
-          "RETRYING",
           "SUCCEEDED",
           "FAILED",
           "CANCELLED",
-          "DEAD_LETTER"
+          "PARTIAL"
         ],
-        "title": "JobReceiptStatus",
+        "title": "JobStatus",
         "type": "string"
       },
       "ListingImportPayload": {

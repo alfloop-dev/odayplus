@@ -56,16 +56,16 @@ import type {
   AssignmentRequest,
   SlaPauseRequest,
   SlaReceipt,
+  JobDeliveryState,
   JobReceipt,
-  JobReceiptStatus,
+  JobStatus,
   PromotionDecisionReceipt,
   PromotionRequest,
   RetryRequest,
   ReviewDecisionRequest,
 } from "./generated/types";
 
-export type { ErrorEnvelope, JobReceiptStatus };
-export type JobStatus = JobReceiptStatus;
+export type { ErrorEnvelope, JobDeliveryState, JobReceipt, JobStatus };
 
 export type HealthResponse = {
   status: string;

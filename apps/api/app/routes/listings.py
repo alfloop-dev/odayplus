@@ -201,13 +201,16 @@ else:
         CANDIDATE_CREATING = "CANDIDATE_CREATING"
         SCORE_QUEUED = "SCORE_QUEUED"
 
-    class JobReceiptStatus(str, Enum):
+    class JobStatus(str, Enum):
         QUEUED = "QUEUED"
         RUNNING = "RUNNING"
-        RETRYING = "RETRYING"
         SUCCEEDED = "SUCCEEDED"
         FAILED = "FAILED"
         CANCELLED = "CANCELLED"
+        PARTIAL = "PARTIAL"
+
+    class JobDeliveryState(str, Enum):
+        RETRYING = "RETRYING"
         DEAD_LETTER = "DEAD_LETTER"
 
     class SlaState(str, Enum):
@@ -625,7 +628,8 @@ else:
 
     class JobReceipt(BaseModel):
         job_id: UuidString
-        status: JobReceiptStatus
+        status: JobStatus
+        delivery_state: JobDeliveryState | None = None
         checkpoint: str
         attempt: int
         version: int
@@ -2399,7 +2403,7 @@ else:
             )
 
             def make() -> tuple[dict[str, Any], int]:
-                if job.get("status") not in {"FAILED", "DEAD_LETTER"}:
+                if job.get("status") != "FAILED" and job.get("delivery_state") != "DEAD_LETTER" and job.get("status") != "DEAD_LETTER":
                     raise HTTPException(409, "WORKFLOW_STATE_DENIED")
                 if body.checkpoint.value != job.get("checkpoint"):
                     raise HTTPException(409, "CHECKPOINT_UNAVAILABLE")
@@ -2407,11 +2411,13 @@ else:
                 job["attempt"] += 1
                 job["version"] += 1
                 job["status"] = "QUEUED"
+                job["delivery_state"] = "RETRYING"
                 job["checkpoint"] = body.checkpoint.value
 
                 receipt_val = {
                     "job_id": job_id,
                     "status": "QUEUED",
+                    "delivery_state": "RETRYING",
                     "checkpoint": body.checkpoint.value,
                     "attempt": job["attempt"],
                     "version": job["version"],
