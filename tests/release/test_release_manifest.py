@@ -39,6 +39,7 @@ from delivery_toolchain.release.release_manifest import (
     env_var_belongs_to_source,
     extract_rollback_release_binding,
     initial_release_recovery_errors,
+    release_candidate_job_name,
     sources_off_posture_payload,
     validate_manifest,
     validate_release_admission,
@@ -1026,7 +1027,13 @@ def empty_target_readback(**overrides) -> dict:
             {
                 "component": component,
                 "resource_kind": resource_kind,
-                "resource_name": f"oday-plus-{component}",
+                "resource_name": (
+                    release_candidate_job_name(
+                        f"oday-plus-{component}", FIRST_RELEASE_SHA
+                    )
+                    if resource_kind == "cloud-run-job"
+                    else f"oday-plus-{component}"
+                ),
                 "exists": False,
                 "serving_traffic": False,
             }

@@ -37,6 +37,7 @@ from delivery_toolchain.release.release_manifest import (
     compute_manifest_digest,
     compute_source_policy_digest,
     extract_rollback_release_binding,
+    release_candidate_job_name,
     validate_manifest,
     validate_release_admission,
     validate_rollback_manifest,
@@ -1523,7 +1524,11 @@ def empty_target_readback(**overrides) -> dict:
             {
                 "component": component,
                 "resource_kind": resource_kind,
-                "resource_name": f"oday-plus-{component}",
+                "resource_name": (
+                    release_candidate_job_name(f"oday-plus-{component}", SHA)
+                    if resource_kind == "cloud-run-job"
+                    else f"oday-plus-{component}"
+                ),
                 "exists": False,
                 "serving_traffic": False,
             }
