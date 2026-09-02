@@ -31,7 +31,7 @@ from models.shared_ml.validation import (
     SegmentMetric,
     ValidationRun,
     ValidationStatus,
-    thresholds_from_decision_policy,
+    effective_thresholds,
     validate_model_candidate,
 )
 from modules.learninghub.application.monitor import (
@@ -1537,16 +1537,10 @@ class LearningHubService:
         if production is None:
             raise LearningHubError(f"no production model registered for {model_name}")
 
-        effective_thresholds = list(thresholds)
-        if policy is not None:
-            policy_thresholds = thresholds_from_decision_policy(policy)
-            existing_names = {t.metric_name for t in effective_thresholds}
-            for pt in policy_thresholds:
-                if pt.metric_name not in existing_names:
-                    effective_thresholds.append(pt)
+        effective = effective_thresholds(thresholds, policy)
 
         breaches: list[MonitoringBreach] = []
-        for threshold in effective_thresholds:
+        for threshold in effective:
             if threshold.metric_name not in observed_metrics:
                 breaches.append(
                     MonitoringBreach(

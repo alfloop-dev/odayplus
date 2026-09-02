@@ -506,10 +506,17 @@ class BoundedModelTrainingRelease:
                 MetricThreshold(
                     "normalized_mae",
                     max_value=spec.max_normalized_mae,
+                    # The temporal baseline is produced by the same
+                    # TrainingPipelineRunner and must remain a hard release
+                    # gate, not merely an informational comparison.
+                    max_degradation=0.05,
+                    higher_is_better=False,
                 ),
                 MetricThreshold(
                     "p80_coverage",
                     min_value=spec.min_p80_coverage,
+                    max_degradation=0.05,
+                    higher_is_better=True,
                 ),
             ),
             segment_field=spec.segment_column,
@@ -603,6 +610,8 @@ class BoundedModelTrainingRelease:
                 MetricThreshold(
                     "normalized_mae",
                     max_value=spec.max_normalized_mae,
+                    max_degradation=0.05,
+                    higher_is_better=False,
                 ),
                 MetricThreshold("observed_event_rate", min_value=0.02),
             ),

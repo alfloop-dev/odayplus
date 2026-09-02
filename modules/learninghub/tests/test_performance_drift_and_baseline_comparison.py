@@ -258,6 +258,11 @@ def test_decision_policy_governs_performance_drift_thresholds() -> None:
         signal_type=MonitoringSignalType.DRIFT,
         observed_metrics={"auc": 0.81, "w4_smape": 0.10},
         baseline_metrics={"auc": 0.90, "w4_smape": 0.07},
+        # Legacy caller values must not weaken the governed policy.
+        thresholds=(
+            MetricThreshold("auc", min_value=0.01),
+            MetricThreshold("w4_smape", max_value=1.0),
+        ),
         policy=governing,
     )
 
@@ -265,6 +270,26 @@ def test_decision_policy_governs_performance_drift_thresholds() -> None:
     assert retrain_req.decision_policy_version_id == "model-perf-policy-v1:tenant-corp"
     eval_record = repo.get_monitoring_evaluation(retrain_req.trigger_evaluation_id)
     assert eval_record.decision_policy_version_id == "model-perf-policy-v1:tenant-corp"
+    assert [breach.metric_name for breach in eval_record.breaches] == ["auc", "w4_smape"]
+
+    validation = validate_model_candidate(
+        model_name="revenue_predictor",
+        model_version="v2.0.0",
+        dataset_snapshot=snapshot,
+        metrics={"auc": 0.81, "w4_smape": 0.10},
+        baseline_metrics={"auc": 0.90, "w4_smape": 0.07},
+        thresholds=(MetricThreshold("auc", min_value=0.01),),
+        decision_policy=governing,
+    )
+    assert validation.status is ValidationStatus.FAILED
+    assert {threshold.metric_name for threshold in validation.thresholds} == {
+        "auc",
+        "w4_smape",
+    }
+    assert {failure.rule_name for failure in validation.failed_rules} == {
+        "auc",
+        "w4_smape",
+    }
 
 
 def test_evaluate_guardrails_and_monitor_release_degradation() -> None:
@@ -358,4 +383,3 @@ def test_release_worker_run_monitor_evaluates_baseline_degradation() -> None:
     assert smape_breach.baseline_value == 0.07
     assert pytest.approx(smape_breach.degradation, 0.0001) == 0.04
     assert "w4_smape degradation 0.0400 exceeds maximum allowed 0.02" in smape_breach.detail
-

@@ -140,6 +140,11 @@ else:
 
     class ReleaseMonitorPayload(BaseModel):
         observed_metrics: dict[str, float] = Field(min_length=1)
+        # A monitor run must carry the comparison snapshot when it is not
+        # available from the released model registry record.  ``None`` keeps
+        # the existing fallback to the released model's metrics for callers
+        # that use that durable baseline.
+        baseline_metrics: dict[str, float] | None = None
         guardrails: list[MonitorGuardrailPayload] = Field(min_length=1)
         # Bound from the authenticated principal, like release actors.
         evaluated_by: str | None = None
@@ -473,6 +478,7 @@ else:
                     release_id=release_id,
                     observed_metrics=body.observed_metrics,
                     guardrails=[_threshold(item) for item in body.guardrails],
+                    baseline_metrics=body.baseline_metrics,
                     evaluated_by=evaluated_by,
                     correlation_id=request.state.correlation_id,
                 )

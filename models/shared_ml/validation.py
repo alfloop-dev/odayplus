@@ -298,6 +298,23 @@ def thresholds_from_decision_policy(
     return thresholds
 
 
+def effective_thresholds(
+    thresholds: Sequence[MetricThreshold],
+    decision_policy: DecisionPolicy | None,
+) -> list[MetricThreshold]:
+    """Resolve validation thresholds with the governing policy as authority.
+
+    A caller may still provide the legacy threshold argument while a migration
+    is being completed, but it must not be able to weaken or replace a
+    threshold from a recorded policy.  Once a policy is supplied, its metric
+    threshold rows are the complete effective set; the caller values are not a
+    second, unrecorded source of governance.
+    """
+    if decision_policy is None:
+        return list(thresholds)
+    return thresholds_from_decision_policy(decision_policy)
+
+
 def validate_model_candidate(
     *,
     model_name: str,
@@ -327,15 +344,9 @@ def validate_model_candidate(
         )
         worst_status = ValidationStatus.FAILED
 
-    effective_thresholds = list(thresholds)
-    if decision_policy is not None:
-        policy_thresholds = thresholds_from_decision_policy(decision_policy)
-        existing_names = {t.metric_name for t in effective_thresholds}
-        for pt in policy_thresholds:
-            if pt.metric_name not in existing_names:
-                effective_thresholds.append(pt)
+    effective = effective_thresholds(thresholds, decision_policy)
 
-    for threshold in effective_thresholds:
+    for threshold in effective:
         if threshold.metric_name not in metrics:
             failures.append(
                 ValidationRuleFailure(
@@ -415,7 +426,7 @@ def validate_model_candidate(
         status=worst_status,
         metrics=dict(metrics),
         baseline_metrics=dict(baseline_metrics),
-        thresholds=tuple(effective_thresholds),
+        thresholds=tuple(effective),
         segment_metrics=tuple(segment_metrics),
         calibration_summary=dict(calibration_summary or {}),
         failed_rules=tuple(failures),
@@ -430,6 +441,7 @@ __all__ = [
     "ValidationRuleFailure",
     "ValidationRun",
     "ValidationStatus",
+    "effective_thresholds",
     "thresholds_from_decision_policy",
     "validate_model_candidate",
 ]
