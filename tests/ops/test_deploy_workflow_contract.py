@@ -1433,7 +1433,7 @@ def test_admission_verifies_the_transported_manifest_not_the_committed_one() -> 
     step = _named_step(jobs["admission"], "Validate supervisor release admission")
     run = step["run"]
 
-    assert f'--manifest "${{RELEASE_RECEIPT_DIR}}/admitted-manifest/RELEASE_MANIFEST.json"' in run, (
+    assert '--manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json"' in run, (
         "admission must be handed the downloaded artifact; its default resolves "
         "to the manifest committed at the release SHA, which no build produced"
     )
