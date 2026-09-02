@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 
 from modules.external_data.geo import GeoFeatureSnapshot
 from modules.heatzone.domain.scoring import (
+    HEATZONE_FEATURE_VERSION,
     HeatZoneFeatureInput,
     HeatZoneState,
     score_heatzones,
+    to_heatzone_model_row,
 )
 from modules.heatzone.v3 import (
     CONTRACT_ID,
@@ -728,6 +730,11 @@ def test_adapt_catchment_profile_document() -> None:
             status=DomainStatus.available,
             median_rent_per_ping=2500.0,
             sample_count=15,
+            # Stated because the adapter derives confidence from observations
+            # only. Without a measured figure the profile abstains, which is
+            # covered separately by
+            # test_adapt_catchment_profile_without_measured_confidence_abstains.
+            confidence_pct=90.0,
         ),
         mobility=CatchmentMobility(
             status=DomainStatus.available,
@@ -761,6 +768,214 @@ def test_adapt_catchment_profile_document() -> None:
     res = batch_result.scores[0]
     assert res.score is not None
     assert res.district == "Zhongshan"
+
+
+def _catchment_profile_with(
+    *,
+    rent_confidence_pct: float | None = None,
+    demographics_uncertainty_pct: float | None = None,
+    demographics_status: DomainStatus = DomainStatus.available,
+) -> CatchmentProfile:
+    """A ready, fully covered catchment profile with configurable quality signals."""
+    return CatchmentProfile(
+        profile_id="prof-quality-001",
+        period_grain=CatchmentPeriodGrain.MONTHLY,
+        period_key="2026-08",
+        origin=CatchmentOrigin(
+            origin_id="orig-001",
+            origin_h3="884a1072b7fffff",
+            latitude=25.04,
+            longitude=121.56,
+            origin_geom={"type": "Point", "coordinates": [121.56, 25.04]},
+            county="Taipei",
+            district="Zhongshan",
+        ),
+        boundary=CatchmentBoundary(
+            catchment_id="boundary-001",
+            travel_mode=TravelMode.motorcycle,
+            cutoff_seconds=600,
+            routing_engine="valhalla",
+            graph_version="2026.08",
+            h3_cells=["884a1072b7fffff"],
+            h3_resolution=9,
+            total_cells_count=1,
+            geom={"type": "Polygon", "coordinates": [[[121.5, 25.0], [121.6, 25.0], [121.6, 25.1], [121.5, 25.0]]]},
+        ),
+        demographics=CatchmentDemographics(
+            status=demographics_status,
+            total_population=8500.0,
+            household_count=3200.0,
+            daytime_population_ratio=1.5,
+            uncertainty_pct=demographics_uncertainty_pct,
+        ),
+        competitors=CatchmentCompetitors(
+            status=DomainStatus.available,
+            active_competitors=3,
+            total_capacity=50.0,
+        ),
+        rent=CatchmentRent(
+            status=DomainStatus.available,
+            median_rent_per_ping=2500.0,
+            sample_count=15,
+            confidence_pct=rent_confidence_pct,
+        ),
+        mobility=CatchmentMobility(
+            status=DomainStatus.available,
+            activity_population=7000.0,
+            resident_population=5000.0,
+        ),
+        traffic=CatchmentTrafficAccess(status=DomainStatus.available),
+        coverage=CatchmentCoverage(
+            overall_readiness=CatchmentReadinessLevel.ready,
+            domain_coverage={"DEMOGRAPHICS": "complete", "COMPETITOR": "complete", "RENT": "complete"},
+            has_gaps=False,
+        ),
+        source_support=_sample_source_support(),
+    )
+
+
+def test_adapt_catchment_profile_without_measured_confidence_abstains() -> None:
+    """A catchment that measured no confidence must reach the abstention gate.
+
+    Every domain is available and coverage is complete, so nothing else in this
+    profile fails closed. Seeding confidence at 1.0 scores it as fully trusted
+    and puts the ``confidence < 0.25`` gate out of reach through this ingress,
+    exactly as it was out of reach through ``from_market_cell_profile``.
+    """
+    unmeasured = from_catchment_profile(_catchment_profile_with())
+    assert unmeasured.confidence is None
+
+    unmeasured_result = score_heatzone_v3_feature(unmeasured)
+    assert unmeasured_result.abstained is True
+    assert unmeasured_result.score is None
+    assert (
+        AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value
+        in unmeasured_result.abstain_reasons
+    )
+
+
+def test_adapt_catchment_profile_derives_confidence_from_observations() -> None:
+    """Measured quality signals drive confidence; the weakest one wins."""
+    from_rent = from_catchment_profile(
+        _catchment_profile_with(rent_confidence_pct=90.0)
+    )
+    assert from_rent.confidence == 90.0 / 100.0
+    assert score_heatzone_v3_feature(from_rent).abstained is False
+
+    from_demographics = from_catchment_profile(
+        _catchment_profile_with(demographics_uncertainty_pct=95.0)
+    )
+    assert round(from_demographics.confidence, 4) == 0.05
+    demographics_result = score_heatzone_v3_feature(from_demographics)
+    assert demographics_result.abstained is True
+    assert (
+        AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value
+        in demographics_result.abstain_reasons
+    )
+
+    weakest_wins = from_catchment_profile(
+        _catchment_profile_with(rent_confidence_pct=90.0, demographics_uncertainty_pct=40.0)
+    )
+    assert round(weakest_wins.confidence, 4) == 0.6
+
+
+def test_adapt_catchment_profile_unavailable_domain_only_discounts() -> None:
+    """An unavailable domain discounts an observed figure, never invents one."""
+    discounted = from_catchment_profile(
+        _catchment_profile_with(
+            rent_confidence_pct=90.0,
+            demographics_status=DomainStatus.unavailable,
+        )
+    )
+    assert round(discounted.confidence, 4) == round(0.9 * 0.8, 4)
+
+    still_unmeasured = from_catchment_profile(
+        _catchment_profile_with(demographics_status=DomainStatus.unavailable)
+    )
+    assert still_unmeasured.confidence is None
+
+
+def test_shadow_synthetic_baseline_carries_v3_measured_quality() -> None:
+    """The synthesized v2 baseline must reflect what the v3 input measured.
+
+    v3 composes quality as ``confidence * coverage_ratio``; the v2 baseline
+    composes it as ``average_confidence * data_quality_score``. If shadow mode
+    only carries confidence across, every synthesized baseline fails closed at
+    confidence 0.0 regardless of the input, and every comparison is against a
+    uniformly suppressed baseline.
+    """
+    measured = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        h3_resolution=9,
+        poi_count=30,
+        active_competitor_count=2,
+        competitor_capacity=40.0,
+        median_rent_per_ping=2400.0,
+        active_listing_count=6,
+        own_store_count=1,
+        confidence=0.9,
+        coverage_ratio=0.9,
+        county="Taipei",
+        district="Zhongshan",
+    )
+    unmeasured = replace(measured, confidence=None, coverage_ratio=None)
+
+    runner = HeatZoneV3ShadowRunner()
+
+    measured_comparison = runner.evaluate_inputs([measured]).comparisons[0]
+    assert measured_comparison.baseline_state != HeatZoneState.SUPPRESSED_LOW_CONFIDENCE.value
+    assert measured_comparison.baseline_score is not None
+
+    unmeasured_comparison = runner.evaluate_inputs([unmeasured]).comparisons[0]
+    assert unmeasured_comparison.baseline_state == HeatZoneState.SUPPRESSED_LOW_CONFIDENCE.value
+
+
+def test_heatzone_model_row_carries_measured_geocode_confidence() -> None:
+    """A training-view row's measured confidence must reach the model row.
+
+    ``average_geocode_confidence`` is the column name in both the model-ready
+    training view and the emitted model row, so ingress has to recognise it.
+    Dropping it used to be invisible because the field defaulted to a perfect
+    1.0; with the default removed it would instead feed a null into inference.
+    """
+    row = {
+        "tenant_id": "tenant-live-001",
+        "h3_index": "884a1072b7fffff",
+        "h3_resolution": 9,
+        "cell_latitude": 25.033,
+        "cell_longitude": 121.565,
+        "average_geocode_confidence": 0.98,
+        "prior_opened_store_count": 1,
+        "prior_28d_cell_net_revenue": 80_000.0,
+        "prior_90d_cell_net_revenue": 250_000.0,
+        "prior_28d_transaction_count": 12,
+        "prior_90d_transaction_count": 40,
+        "prior_90d_transaction_days": 24,
+        "poi_count": 4,
+        "source_snapshot_ids": ["poi-live"],
+        "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
+        "view_version": HEATZONE_FEATURE_VERSION,
+    }
+
+    assert to_heatzone_model_row(row)["average_geocode_confidence"] == 0.98
+
+
+def test_heatzone_model_row_refuses_unmeasured_geocode_confidence() -> None:
+    """The dataclass branch must refuse a null the mapping branch already refuses."""
+    unmeasured = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        tenant_id="tenant-live-001",
+        view_version=HEATZONE_FEATURE_VERSION,
+        source_snapshot_ids=("poi-live",),
+    )
+    assert unmeasured.average_confidence is None
+
+    try:
+        to_heatzone_model_row(unmeasured)
+    except ValueError as exc:
+        assert "not a complete" in str(exc)
+    else:  # pragma: no cover - the assertion below reports the failure
+        raise AssertionError("expected an unmeasured model row to be refused")
 
 
 def test_adapt_legacy_feature_input_bridge() -> None:
@@ -1273,6 +1488,11 @@ def test_heatzone_v3_r3_readiness_usable_with_gaps_is_supported() -> None:
             status=DomainStatus.available,
             median_rent_per_ping=2500.0,
             sample_count=15,
+            # Stated because the adapter derives confidence from observations
+            # only. Without a measured figure the profile abstains, which is
+            # covered separately by
+            # test_adapt_catchment_profile_without_measured_confidence_abstains.
+            confidence_pct=90.0,
         ),
         mobility=CatchmentMobility(
             status=DomainStatus.available,

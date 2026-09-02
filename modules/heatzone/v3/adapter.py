@@ -520,13 +520,27 @@ def from_catchment_profile(
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
     support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
 
-    conf = 1.0
-    if prof_obj.demographics.status is not DomainStatus.available:
-        conf *= 0.8
-    if prof_obj.competitors.status is not DomainStatus.available:
-        conf *= 0.8
-    if prof_obj.rent.status is not DomainStatus.available:
-        conf *= 0.8
+    # Confidence calculation: derived only from observed signals; None when
+    # unmeasured. Domain availability is a presence flag, not a confidence
+    # measurement, so it may only discount a figure that was actually observed.
+    # Seeding 1.0 here would let a profile that measured no confidence at all
+    # reach scoring as fully trusted, putting the confidence abstention gate
+    # out of reach through this ingress exactly as it was through
+    # from_market_cell_profile.
+    conf_values: list[float] = []
+    if prof_obj.rent.confidence_pct is not None:
+        conf_values.append(max(0.0, min(1.0, float(prof_obj.rent.confidence_pct) / 100.0)))
+    if prof_obj.demographics.uncertainty_pct is not None:
+        conf_values.append(
+            max(0.0, min(1.0, 1.0 - float(prof_obj.demographics.uncertainty_pct) / 100.0))
+        )
+    if conf_values:
+        conf = min(conf_values)
+        for domain in (prof_obj.demographics, prof_obj.competitors, prof_obj.rent):
+            if domain.status is not DomainStatus.available:
+                conf *= 0.8
+    else:
+        conf = None
 
     effective_absorption = absorption
     if (

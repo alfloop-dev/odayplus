@@ -106,7 +106,17 @@ class HeatZoneFeatureInput:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> HeatZoneFeatureInput:
-        raw_conf = _first_present(data, "average_confidence", "confidence", default=None)
+        raw_conf = _first_present(
+            data,
+            "average_confidence",
+            "confidence",
+            # The model-ready training view and to_heatzone_model_row both
+            # name this column average_geocode_confidence. Without the alias
+            # a row that measured it reads as unmeasured here and the
+            # measurement is dropped on the way back into the model row.
+            "average_geocode_confidence",
+            default=None,
+        )
         raw_dq = _data_quality_score(data)
         return cls(
             h3_index=str(data["h3_index"]),
@@ -420,6 +430,10 @@ def to_heatzone_model_row(
         or not value.tenant_id
         or not value.h3_index
         or not value.source_snapshot_ids
+        # average_geocode_confidence is a declared model feature. The mapping
+        # branch above already refuses a null for it; the dataclass branch must
+        # refuse one too rather than feed an unmeasured null into inference.
+        or value.average_confidence is None
     ):
         raise ValueError(
             f"HeatZone production model input is not a complete {HEATZONE_FEATURE_VERSION} row"
