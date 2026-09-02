@@ -201,6 +201,8 @@ def test_deploy_script_runs_repository_validators_with_locked_python() -> None:
     assert "python3 product_ops/deployment/validate_cloud_run_live_deployment.py" not in text
     assert "python3 delivery_toolchain/e2e/check_live_e2e_gate.py" not in text
     assert text.count("python3 - ") == 2
+    # `python3 -c` is the same bare-interpreter hole in a different spelling.
+    assert "python3 -c" not in text
     assert text.count("imports only Python's standard library") == 2
 
 
@@ -272,6 +274,16 @@ def test_deploy_preflight_imports_runtime_dependencies_via_locked_python(
             "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
             "PREFLIGHT_REPORT": str(report_path),
             "JOB_REPORT_DIR": str(tmp_path / "job-reports"),
+            # complete_env() holds ODP_EXTERNAL_PROVIDER_MODE=disabled, so this
+            # is a sources-off deploy and the script requires the VPC binding
+            # and the admitted manifest digest that carry the default-deny
+            # claim. The real deploy job supplies both (deploy-dev.yml wires
+            # ODP_CLOUD_RUN_VPC_CONNECTOR and MANIFEST_DIGEST into the job that
+            # runs this script); without them the fixture is not a complete
+            # deploy environment.
+            "ODP_CLOUD_RUN_VPC_CONNECTOR": "projects/p/locations/l/connectors/c",
+            "ODP_CLOUD_RUN_VPC_EGRESS": "all",
+            "MANIFEST_DIGEST": "sha256:" + "0" * 64,
         }
     )
     result = subprocess.run(
@@ -5107,8 +5119,12 @@ def test_deploy_script_captures_job_proof_without_describe_latest() -> None:
         "    product_ops/deployment/validate_cloud_run_live_deployment.py "
         "resolve-latest-execution \\\n"
     ) in text
-    # Both the success proof and the failure forensics share one resolver.
-    assert text.count("capture_latest_execution ") == 2
+    # One resolver implementation, shared by every execution readback there is:
+    # the success proof, the failure forensics, and the sources-off egress
+    # probe. The count that matters is the number of resolver bodies, not the
+    # number of callers, so pin that directly.
+    assert text.count("gcloud run jobs executions list") == 1
+    assert text.count("capture_latest_execution ") == 3
     assert (
         'capture_latest_execution "${job}" "${JOB_REPORT_DIR}/${kind}-execution.json" || true'
     ) in text

@@ -47,8 +47,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
-    classify_source_env_var,
-    env_var_belongs_to_source,
     EXTERNAL_SOURCE_INVENTORY,
     IMAGE_DIGEST_PATTERN,
     SOURCE_EGRESS_DENIED,
@@ -60,8 +58,10 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     build_release_manifest,
     build_sources_off_attestation,
     build_sources_off_egress_evidence,
+    classify_source_env_var,
     compute_data_contract_digest,
     compute_source_policy_digest,
+    env_var_belongs_to_source,
     extract_rollback_release_binding,
     is_exact_sha,
     load_manifest,

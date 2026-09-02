@@ -459,7 +459,7 @@ write_public_egress_probe_receipt() {
   local actual_egress="$3"
   local execution="$4"
   mkdir -p "$(dirname "${PUBLIC_EGRESS_PROBE_REPORT}")"
-  python3 - "${PUBLIC_EGRESS_PROBE_REPORT}" "${result}" "${reason}" \
+  run_locked_python - "${PUBLIC_EGRESS_PROBE_REPORT}" "${result}" "${reason}" \
     "${actual_egress}" "${execution}" <<'PY'
 import json
 import hashlib
@@ -505,7 +505,7 @@ capture_public_egress_probe_receipt() {
     echo "Error: unable to read back the public egress probe execution." >&2
     return 1
   fi
-  if ! execution_name="$(python3 - "${execution_file}" <<'PY'
+  if ! execution_name="$(run_locked_python - "${execution_file}" <<'PY'
 import json
 import sys
 
@@ -593,7 +593,7 @@ run_public_egress_probe() {
     write_public_egress_probe_receipt "failed" "job_readback_failed" "" "not_run"
     return 1
   fi
-  if ! actual_egress="$(printf '%s' "${description}" | python3 -c '
+  if ! actual_egress="$(printf '%s' "${description}" | run_locked_python -c '
 import json
 import sys
 

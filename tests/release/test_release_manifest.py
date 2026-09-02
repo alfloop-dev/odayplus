@@ -15,8 +15,6 @@ from delivery_toolchain.release.migrate_gate_registry import (
 )
 from delivery_toolchain.release.release_manifest import (
     EXPECTED_EXTERNAL_SOURCE_COUNT,
-    classify_source_env_var,
-    env_var_belongs_to_source,
     EXTERNAL_SOURCE_INVENTORY,
     SOURCES_OFF_CLOUD_RUN_EGRESS,
     SOURCES_OFF_EGRESS_POSTURE,
@@ -25,11 +23,13 @@ from delivery_toolchain.release.release_manifest import (
     SOURCES_OFF_RUNTIME_PROBE_RESULT,
     build_release_manifest,
     build_sources_off_attestation,
+    classify_source_env_var,
     compute_data_contract_digest,
     compute_manifest_digest,
     compute_source_policy_digest,
     compute_sources_off_binding_digest,
     compute_sources_off_probe_receipt_content_digest,
+    env_var_belongs_to_source,
     extract_rollback_release_binding,
     sources_off_posture_payload,
     validate_manifest,
