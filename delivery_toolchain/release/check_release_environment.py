@@ -94,6 +94,11 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_MIGRATION_JOB",
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
+        # Sources-off is only safe when the actual deploy environment resolves
+        # both halves of the VPC binding; an empty vars.* expression otherwise
+        # silently falls back to public Cloud Run egress.
+        "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "ODP_CLOUD_RUN_VPC_EGRESS",
     ),
     # Staging release-scoped names, endpoints, tenants, and service accounts
     # come from Terraform outputs. This gate admits only the long-lived

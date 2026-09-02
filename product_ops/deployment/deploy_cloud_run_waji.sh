@@ -74,6 +74,22 @@ if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
   esac
 fi
 
+# A provider-off Runtime Release must route all traffic through the VPC.
+# `private-ranges-only` would leave public destinations on Cloud Run's direct
+# egress path, so accepting it here would turn an absent endpoint into a false
+# default-deny claim. This guard runs before the first Cloud Run mutation.
+if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
+  : "${ODP_CLOUD_RUN_VPC_CONNECTOR:?Error: sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR.}"
+  case "${ODP_CLOUD_RUN_VPC_EGRESS:-}" in
+    all|all-traffic)
+      ;;
+    *)
+      echo "Error: sources-off deploy requires ALL_TRAFFIC VPC egress; got '${ODP_CLOUD_RUN_VPC_EGRESS:-}'." >&2
+      exit 1
+      ;;
+  esac
+fi
+
 CLOUD_RUN_NETWORK_ARGS=()
 if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
   CLOUD_RUN_NETWORK_ARGS+=("--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}")

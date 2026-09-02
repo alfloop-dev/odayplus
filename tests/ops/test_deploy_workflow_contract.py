@@ -968,6 +968,8 @@ def test_deploy_script_rejects_partial_or_invalid_vpc_config_before_cloud_run() 
     assert "ODP_CLOUD_RUN_VPC_EGRESS is required with ODP_CLOUD_RUN_VPC_CONNECTOR" in script
     assert "ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS" in script
     assert "all|all-traffic|private-ranges-only" in script
+    assert "sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR" in script
+    assert "sources-off deploy requires ALL_TRAFFIC VPC egress" in script
     assert guard_end < first_cloud_run_call
 
 

@@ -997,6 +997,8 @@ def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
         ]
 
     workflow = paths[".github/workflows/deploy-dev.yml"].read_text(encoding="utf-8")
+    if "ODP_EXTERNAL_PROVIDER_MODE: disabled" not in workflow:
+        errors.append("deploy workflow does not fix ODP_EXTERNAL_PROVIDER_MODE to disabled")
     if "ODP_CLOUD_RUN_VPC_CONNECTOR:" not in workflow:
         errors.append("deploy workflow does not bind ODP_CLOUD_RUN_VPC_CONNECTOR")
     if "ODP_CLOUD_RUN_VPC_EGRESS:" not in workflow:
@@ -1009,6 +1011,8 @@ def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
         errors.append("deploy entrypoint does not pass the VPC connector to Cloud Run")
     if '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"' not in deploy:
         errors.append("deploy entrypoint does not pass the VPC egress mode to Cloud Run")
+    if "sources-off deploy requires ALL_TRAFFIC VPC egress" not in deploy:
+        errors.append("deploy entrypoint does not fail closed on non-ALL_TRAFFIC sources-off egress")
 
     cloud_run = paths["infra/terraform/cloud_run.tf"].read_text(encoding="utf-8")
     if 'egress = "ALL_TRAFFIC"' not in cloud_run:
