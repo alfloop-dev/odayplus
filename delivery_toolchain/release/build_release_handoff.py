@@ -59,6 +59,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     compute_data_contract_digest,
     compute_source_policy_digest,
     extract_rollback_release_binding,
+    _sources_off_egress_contract_errors,
     is_exact_sha,
     load_manifest,
     sources_off_attestation_errors,
@@ -151,25 +152,6 @@ def derive_sources_off_posture(
         )
 
     enabled = set(enabled_sources or [])
-    inventory: list[dict[str, Any]] = []
-    for source_id in EXTERNAL_SOURCE_INVENTORY:
-        credentialed = any(
-            _wired_env_value(workflow_text, env_var) is not None
-            for env_var in EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS.get(source_id, ())
-        )
-        egress_open = any(
-            _wired_env_value(workflow_text, env_var) is not None
-            for env_var in EXTERNAL_SOURCE_ENDPOINT_ENV_VARS.get(source_id, ())
-        )
-        disabled = provider_mode == SOURCES_OFF_PROVIDER_MODE and source_id not in enabled
-        inventory.append(
-            {
-                "source_id": source_id,
-                "status": SOURCE_STATUS_DISABLED if disabled else "enabled",
-                "credentials_present": credentialed,
-                "public_egress": "allowed" if egress_open else SOURCE_EGRESS_DENIED,
-            }
-        )
     workflow_vpc_binding = (
         _wired_env_value(workflow_text, "ODP_CLOUD_RUN_VPC_CONNECTOR")
         == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
@@ -189,6 +171,37 @@ def derive_sources_off_posture(
             '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"',
         )
     )
+    contract_errors = _sources_off_egress_contract_errors(root=root)
+    egress_contract_verified = (
+        workflow_vpc_binding
+        and deploy_entrypoint_vpc_binding
+        and not contract_errors
+    )
+    inventory: list[dict[str, Any]] = []
+    for source_id in EXTERNAL_SOURCE_INVENTORY:
+        credentialed = any(
+            _wired_env_value(workflow_text, env_var) is not None
+            for env_var in EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS.get(source_id, ())
+        )
+        egress_open = any(
+            _wired_env_value(workflow_text, env_var) is not None
+            for env_var in EXTERNAL_SOURCE_ENDPOINT_ENV_VARS.get(source_id, ())
+        )
+        disabled = provider_mode == SOURCES_OFF_PROVIDER_MODE and source_id not in enabled
+        inventory.append(
+            {
+                "source_id": source_id,
+                "status": SOURCE_STATUS_DISABLED if disabled else "enabled",
+                "credentials_present": credentialed,
+                "public_egress": (
+                    "allowed"
+                    if egress_open
+                    else SOURCE_EGRESS_DENIED
+                    if egress_contract_verified
+                    else "unverified"
+                ),
+            }
+        )
     provider_credentials_runtime = (
         "present"
         if any(entry["credentials_present"] for entry in inventory)
