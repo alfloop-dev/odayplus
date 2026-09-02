@@ -44,40 +44,32 @@
 
 ---
 
-## 3. 測試與驗證證據 (Verification Evidence)
+## 3. 本機 Focused 測試與 PR CI 驗證 (Verification)
 
-### 3.1 單元測試回歸 (`apps/web/features/operator/__tests__/StoreOpsPackage10Parity.test.tsx`)
-新增了 3 項確定性單元測試：
-1. `aborts in-flight fetch and suppresses console.error and state update on unmount`：確認元件卸載時主動 abort 請求，且不觸發 `console.error` 與 state 寫入。
-2. `logs console.error and exposes error gate on real API failure when mounted`：確認在真實網路異常（非取消）時，正確輸出 `console.error` 並顯示錯誤頁面閘道。
-3. `handles HTTP 500 responses with error state and console.error when mounted`：確認在 HTTP 500 錯誤時，正確記錄錯誤並顯示 API 狀態碼。
+依任務規則僅執行與 Store Ops 取消修復直接相關之 focused selection，全域回歸測試交由 PR exact-head CI 執行：
 
-**執行結果**：
+### 3.1 本機聚焦單元測試 (`apps/web/features/operator/__tests__/StoreOpsPackage10Parity.test.tsx`)
+執行指令：
 ```bash
 npm --workspace=@oday-plus/web test -- StoreOpsPackage10Parity
-# Test Files  1 passed (1)
-# Tests       6 passed (6)
-# Duration    4.32s
 ```
+**執行結果**：
+- `renders the full-store four-light summary and dense three-part workspace`：Passed
+- `applies and clears Package 10 quick filters against the Issue queue`：Passed
+- `filters lifecycle groups and exposes evidence detail tabs`：Passed
+- `aborts in-flight fetch and suppresses console.error and state update on unmount`：Passed（驗證元件卸載時 AbortController 中斷請求且無 console.error）
+- `logs console.error and exposes error gate on real API failure when mounted`：Passed（驗證未取消的真實網路異常仍有 console.error 與錯誤閘道）
+- `handles HTTP 500 responses with error state and console.error when mounted`：Passed（驗證未取消的 HTTP 500 回應保留錯誤診斷）
 
-全域 Web 測試套件：
-```bash
-npm --workspace=@oday-plus/web test
-# Test Files  54 passed (54)
-# Tests       487 passed (487)
-```
+總計：1 個測試檔案、6 個測試全部通過。
 
-### 3.2 靜態代碼與類型檢查
-```bash
-npm --workspace=@oday-plus/web run typecheck
-# tsc --noEmit: Passed with 0 errors
+### 3.2 本機聚焦 Playwright 測試案例
+在 `tests/e2e/e2e-operator-console.spec.ts` 新增測試案例：
+`ODP-STORE-OPS-FETCH-CANCELLATION-001 unmounting or navigating away from Store Ops aborts in-flight issues fetch without console errors`
+透過模擬延遲的 Store Ops issues 請求並在請求途中快速導向 `/operator?ws=govern`，驗證導向中斷不會在瀏覽器 console 產生任何 error。
 
-npm --workspace=@oday-plus/web run lint
-# next lint: Passed (No ESLint warnings or errors)
-```
-
-### 3.3 端到端 Playwright 測試情境 (`tests/e2e/e2e-operator-console.spec.ts`)
-新增 `ODP-STORE-OPS-FETCH-CANCELLATION-001 unmounting or navigating away from Store Ops aborts in-flight issues fetch without console errors` 測試案例，透過設定延遲 route 模擬 Store Ops 請求進行中時快速導向 Govern 頁面，驗證瀏覽器主控台不會產生任何錯誤訊息。
+### 3.3 PR CI 驗證綁定
+全域驗證與 E2E 完整套件綁定至 PR #1136 之 exact head commit，由 GitHub Actions CI 進行稽核與驗證。
 
 ---
 
