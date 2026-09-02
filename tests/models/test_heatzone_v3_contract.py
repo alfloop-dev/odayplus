@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.heatzone.domain.scoring import HeatZoneFeatureInput
+from modules.heatzone.domain.scoring import HeatZoneFeatureInput, score_heatzones
 from modules.heatzone.v3 import (
     CONTRACT_ID,
     CONTRACT_VERSION,
@@ -293,6 +293,8 @@ def test_heatzone_v3_sensitivity_to_own_store_cannibalization() -> None:
         active_listing_count=5,
         own_store_count=0,
         own_store_machine_capacity=0.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     low_cannibalization = score_heatzone_v3_feature(base_input)
@@ -308,6 +310,8 @@ def test_heatzone_v3_sensitivity_to_own_store_cannibalization() -> None:
         active_listing_count=5,
         own_store_count=3,
         own_store_machine_capacity=30.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     high_cannibalization = score_heatzone_v3_feature(high_cann_input)
@@ -325,6 +329,8 @@ def test_heatzone_v3_sensitivity_to_rent_and_listing_availability() -> None:
         household_count=2000.0,
         median_rent_per_ping=1500.0,
         active_listing_count=8,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     high_rent_input = HeatZoneV3Input(
         h3_index="884a1072b7fffff",
@@ -332,6 +338,8 @@ def test_heatzone_v3_sensitivity_to_rent_and_listing_availability() -> None:
         household_count=2000.0,
         median_rent_per_ping=4800.0,
         active_listing_count=1,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     res_low = score_heatzone_v3_feature(low_rent_input)
@@ -438,18 +446,70 @@ def test_heatzone_v3_abstains_when_critical_domain_quarantined_or_missing() -> N
     assert any(AbstainReasonCode.MISSING_REQUIRED_DOMAINS.value in r for r in res.abstain_reasons)
 
 
-def test_heatzone_v3_abstains_when_data_confidence_unacceptably_low() -> None:
+def test_heatzone_v3_abstains_when_coverage_ratio_is_none() -> None:
+    """Fail-closed: unmeasured coverage (None) must reach abstention gate with INSUFFICIENT_COVERAGE."""
     inp = HeatZoneV3Input(
         h3_index="884a1072b7fffff",
         population=5000.0,
-        confidence=0.15,
+        coverage_ratio=None,
+        confidence=1.0,
     )
 
     res = score_heatzone_v3_feature(inp)
 
     assert res.abstained is True
     assert res.score is None
+    assert res.state is HeatZoneV3State.ABSTAINED
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value in res.abstain_reasons
+    assert res.input_dimensions["coverage_ratio"] is None
+
+
+def test_heatzone_v3_abstains_when_confidence_is_none() -> None:
+    """Fail-closed: unmeasured confidence (None) must reach abstention gate with DATA_QUALITY_UNACCEPTABLE."""
+    inp = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        population=5000.0,
+        coverage_ratio=1.0,
+        confidence=None,
+    )
+
+    res = score_heatzone_v3_feature(inp)
+
+    assert res.abstained is True
+    assert res.score is None
+    assert res.state is HeatZoneV3State.ABSTAINED
     assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+
+
+def test_heatzone_v3_abstains_when_both_coverage_and_confidence_are_unmeasured() -> None:
+    """Fail-closed: default constructed HeatZoneV3Input (no coverage or confidence) abstains."""
+    inp = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        population=5000.0,
+    )
+
+    res = score_heatzone_v3_feature(inp)
+
+    assert res.abstained is True
+    assert res.score is None
+    assert res.state is HeatZoneV3State.ABSTAINED
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value in res.abstain_reasons
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+
+
+def test_heatzone_v2_suppresses_when_confidence_or_quality_unmeasured() -> None:
+    """Fail-closed in v2: missing confidence/quality defaults to None and suppresses."""
+    inp_none = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        poi_count=10,
+    )
+    scores = score_heatzones([inp_none])
+    assert len(scores) == 1
+    assert scores[0].confidence == 0.0
+    from modules.heatzone.domain.scoring import HeatZoneState
+    assert scores[0].state is HeatZoneState.SUPPRESSED_LOW_CONFIDENCE
+    assert "low_confidence" in scores[0].warnings
+
 
 
 # -----------------------------------------------------------------------------
@@ -592,6 +652,7 @@ def test_adapt_legacy_feature_input_bridge() -> None:
         median_listing_rent=2200.0,
         active_listing_count=5,
         existing_store_count=1,
+        average_confidence=0.85,
         admin_city="Taipei",
         admin_district="Neihu",
     )
@@ -626,6 +687,8 @@ def test_manifest_document_linkage() -> None:
         population=5000.0,
         household_count=2000.0,
         poi_count=10,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     runner = HeatZoneV3ShadowRunner()
@@ -651,6 +714,8 @@ def test_shadow_runner_generates_side_by_side_comparison_with_baseline() -> None
         median_rent_per_ping=1800.0,
         active_listing_count=7,
         own_store_count=0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     inp2 = HeatZoneV3Input(
         h3_index="884a1072b1fffff",
@@ -662,6 +727,8 @@ def test_shadow_runner_generates_side_by_side_comparison_with_baseline() -> None
         median_rent_per_ping=3500.0,
         active_listing_count=2,
         own_store_count=1,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
 
     runner = HeatZoneV3ShadowRunner()
@@ -705,6 +772,8 @@ def test_heatzone_v3_score_result_round_trips() -> None:
         active_competitor_count=1,
         median_rent_per_ping=2000.0,
         active_listing_count=4,
+        coverage_ratio=1.0,
+        confidence=1.0,
         county="Taipei",
         district="Xinyi",
     )
@@ -726,7 +795,12 @@ def test_heatzone_v3_score_result_round_trips() -> None:
 
 
 def test_heatzone_v3_batch_result_round_trips() -> None:
-    inp = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0)
+    inp = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        population=5000.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
+    )
     runner = HeatZoneV3ShadowRunner()
     batch = runner.evaluate_inputs([inp])
 
@@ -744,10 +818,10 @@ def test_heatzone_v3_batch_result_round_trips() -> None:
 def test_heatzone_v3_deterministic_ranking_order() -> None:
     """Verify features are deterministically ranked by score descending with abstained at the end."""
     inps = [
-        HeatZoneV3Input(h3_index="cell_low", population=1500.0, poi_count=2, active_competitor_count=4, competitor_capacity=50.0),
-        HeatZoneV3Input(h3_index="cell_abstained", population=8000.0, overall_readiness=ReadinessLevel.blocked),
-        HeatZoneV3Input(h3_index="cell_high", population=9000.0, poi_count=25, active_competitor_count=1, competitor_capacity=10.0),
-        HeatZoneV3Input(h3_index="cell_mid", population=5000.0, poi_count=10, active_competitor_count=2, competitor_capacity=20.0),
+        HeatZoneV3Input(h3_index="cell_low", population=1500.0, poi_count=2, active_competitor_count=4, competitor_capacity=50.0, coverage_ratio=1.0, confidence=1.0),
+        HeatZoneV3Input(h3_index="cell_abstained", population=8000.0, overall_readiness=ReadinessLevel.blocked, coverage_ratio=1.0, confidence=1.0),
+        HeatZoneV3Input(h3_index="cell_high", population=9000.0, poi_count=25, active_competitor_count=1, competitor_capacity=10.0, coverage_ratio=1.0, confidence=1.0),
+        HeatZoneV3Input(h3_index="cell_mid", population=5000.0, poi_count=10, active_competitor_count=2, competitor_capacity=20.0, coverage_ratio=1.0, confidence=1.0),
     ]
 
     results = score_heatzones_v3(inps)
@@ -783,6 +857,8 @@ def test_heatzone_v3_abstains_when_critical_domain_empty_even_if_ready_and_no_ga
         overall_readiness=ReadinessLevel.ready,
         has_coverage_gaps=False,
         domain_coverage={"DEMOGRAPHICS": "empty", "COMPETITOR": "complete", "RENT": "complete"},
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     res = score_heatzone_v3_feature(inp)
     assert res.abstained is True
@@ -792,9 +868,9 @@ def test_heatzone_v3_abstains_when_critical_domain_empty_even_if_ready_and_no_ga
 
 def test_heatzone_v3_rent_feasibility_monotonic_without_rent_data() -> None:
     """C1: rent_feasibility must be monotonic when effective_rent <= 0 (0 listings=0.0 <= 1 listing=0.08 <= 5 listings=0.40)."""
-    inp_0 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=0)
-    inp_1 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=1)
-    inp_5 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=5)
+    inp_0 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=0, coverage_ratio=1.0, confidence=1.0)
+    inp_1 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=1, coverage_ratio=1.0, confidence=1.0)
+    inp_5 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=5, coverage_ratio=1.0, confidence=1.0)
 
     res_0 = score_heatzone_v3_feature(inp_0)
     res_1 = score_heatzone_v3_feature(inp_1)
@@ -817,6 +893,8 @@ def test_heatzone_v3_saturated_state_when_competitor_saturated_and_zero_own_stor
         competitor_capacity=60.0,
         own_store_count=0,
         own_store_machine_capacity=0.0,
+        coverage_ratio=1.0,
+        confidence=1.0,
     )
     res = score_heatzone_v3_feature(inp)
     assert res.state is HeatZoneV3State.SATURATED

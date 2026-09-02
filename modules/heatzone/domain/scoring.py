@@ -49,11 +49,11 @@ class HeatZoneFeatureInput:
     active_listing_count: int = 0
     median_listing_rent: float = 0.0
     competitor_capacity: float = 0.0
-    average_confidence: float = 1.0
+    average_confidence: float | None = None
     source_snapshot_ids: tuple[str, ...] = ()
     existing_store_count: int = 0
     realized_revenue_ratio: float | None = None
-    data_quality_score: float = 1.0
+    data_quality_score: float | None = None
     admin_city: str = ""
     admin_district: str = ""
     cell_latitude: float = 0.0
@@ -72,6 +72,7 @@ class HeatZoneFeatureInput:
         *,
         existing_store_count: int = 0,
         realized_revenue_ratio: float | None = None,
+        data_quality_score: float | None = None,
         admin_city: str = "",
         admin_district: str = "",
     ) -> HeatZoneFeatureInput:
@@ -85,17 +86,20 @@ class HeatZoneFeatureInput:
             active_listing_count=snapshot.active_listing_count,
             median_listing_rent=snapshot.median_listing_rent,
             competitor_capacity=snapshot.competitor_capacity,
-            average_confidence=_value_or_default(snapshot.average_confidence, 1.0),
+            average_confidence=snapshot.average_confidence,
             source_snapshot_ids=snapshot.source_snapshot_ids,
             existing_store_count=existing_store_count,
             prior_opened_store_count=existing_store_count,
             realized_revenue_ratio=realized_revenue_ratio,
+            data_quality_score=data_quality_score,
             admin_city=admin_city,
             admin_district=admin_district,
         )
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> HeatZoneFeatureInput:
+        raw_conf = _first_present(data, "average_confidence", "confidence", default=None)
+        raw_dq = _data_quality_score(data)
         return cls(
             h3_index=str(data["h3_index"]),
             tenant_id=str(data.get("tenant_id") or ""),
@@ -122,13 +126,11 @@ class HeatZoneFeatureInput:
                     default=0.0,
                 )
             ),
-            average_confidence=_bounded(
-                _first_present(data, "average_confidence", "confidence", default=1.0)
-            ),
+            average_confidence=_bounded(raw_conf) if raw_conf is not None else None,
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
             existing_store_count=int(_value_or_default(data.get("existing_store_count"), 0)),
             realized_revenue_ratio=_optional_float(data.get("realized_revenue_ratio")),
-            data_quality_score=_bounded(_data_quality_score(data)),
+            data_quality_score=_bounded(raw_dq) if raw_dq is not None else None,
             admin_city=str(data.get("admin_city") or ""),
             admin_district=str(data.get("admin_district") or ""),
             cell_latitude=float(data.get("cell_latitude") or 0.0),
@@ -322,7 +324,14 @@ def _score_feature(
         + rent_feasibility * weights.rent_feasibility
         + (1.0 - cannibalization_risk) * weights.cannibalization_inverse
     )
-    confidence = _bounded(feature.average_confidence * feature.data_quality_score)
+    if feature.average_confidence is None and feature.data_quality_score is None:
+        confidence = 0.0
+    elif feature.average_confidence is None:
+        confidence = _bounded(feature.data_quality_score)
+    elif feature.data_quality_score is None:
+        confidence = _bounded(feature.average_confidence)
+    else:
+        confidence = _bounded(feature.average_confidence * feature.data_quality_score)
     warnings = _warnings(feature, confidence)
     reasons = _reasons(
         unmet_demand=unmet_demand,
@@ -512,7 +521,7 @@ def _data_quality_score(data: Mapping[str, Any]) -> Any:
     data_quality = data.get("data_quality")
     if isinstance(data_quality, int | float | str):
         return data_quality
-    return 1.0
+    return None
 
 
 def _optional_float(value: Any) -> float | None:

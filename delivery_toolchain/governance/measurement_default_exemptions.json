@@ -3,29 +3,9 @@
   "_severity_note": "The two HeatZoneV3Input entries are the sharpest: check_support_and_abstention abstains when confidence < 0.25 or coverage_ratio < 0.50, so these defaults make that gate unreachable for a zone whose coverage was never measured. They should be fixed before the rest.",
   "exemptions": [
     {
-      "field": "modules/heatzone/v3/contract.py::HeatZoneV3Input.coverage_ratio",
-      "owner": "Antigravity6",
-      "reason": "check_support_and_abstention abstains below 0.50. A zone built without a coverage figure defaults to 1.0 and can never reach the abstention gate that exists to fail closed outside platform support. Highest-severity entry in this file."
-    },
-    {
-      "field": "modules/heatzone/v3/contract.py::HeatZoneV3Input.confidence",
-      "owner": "Antigravity6",
-      "reason": "check_support_and_abstention abstains below 0.25, and the composite score multiplies by confidence. An unmeasured zone scores as a fully trusted one."
-    },
-    {
       "field": "modules/forecastops/domain/forecasting.py::StoreDayObservation.data_quality_score",
       "owner": "Antigravity2",
       "reason": "A store-day whose quality score never arrives is weighted as flawless. The identical field was written into the heat zone absorption module during the FR verification work and removed in review (fb75a142) for exactly this reason; this one is still live."
-    },
-    {
-      "field": "modules/heatzone/domain/scoring.py::HeatZoneFeatureInput.average_confidence",
-      "owner": "Antigravity6",
-      "reason": "v2 heat zone scoring multiplies confidence into the composite and suppresses below a floor; the default hides missing confidence from both."
-    },
-    {
-      "field": "modules/heatzone/domain/scoring.py::HeatZoneFeatureInput.data_quality_score",
-      "owner": "Antigravity6",
-      "reason": "Same shape as the v3 entry above; carried into the v2 scoring path."
     },
     {
       "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.average_confidence",

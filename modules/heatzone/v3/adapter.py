@@ -274,7 +274,7 @@ def from_market_cell_profile(
         valid_domains = sum(1 for v in domain_cov.values() if str(v).lower() in ("complete", "partial", "fresh", "available"))
         cov_ratio = valid_domains / len(domain_cov)
     else:
-        cov_ratio = 1.0 if not has_gaps else 0.8
+        cov_ratio = None
         
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
     support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
@@ -514,7 +514,7 @@ def from_catchment_profile(
         valid_domains = sum(1 for v in domain_cov.values() if str(v).lower() in ("complete", "partial", "fresh", "available"))
         cov_ratio = valid_domains / len(domain_cov)
     else:
-        cov_ratio = 1.0 if not has_gaps else 0.8
+        cov_ratio = None
         
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
     support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
@@ -636,7 +636,8 @@ def from_legacy_feature_input(
         median_listing_rent = float(data.get("median_listing_rent", 0.0))
         active_listing_count = int(data.get("active_listing_count", 0))
         existing_store_count = int(data.get("existing_store_count", 0))
-        confidence = float(data.get("average_confidence", 1.0))
+        confidence_raw = data.get("average_confidence", data.get("confidence"))
+        confidence = float(confidence_raw) if confidence_raw is not None else None
         admin_city = str(data.get("admin_city", ""))
         admin_district = str(data.get("admin_district", ""))
         lat = float(data.get("cell_latitude", 0.0)) if data.get("cell_latitude") else None

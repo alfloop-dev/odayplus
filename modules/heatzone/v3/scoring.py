@@ -50,8 +50,8 @@ def check_support_and_abstention(feature: HeatZoneV3Input) -> tuple[bool, tuple[
     if feature.is_quarantined:
         reasons.append(AbstainReasonCode.SOURCE_QUARANTINED.value)
 
-    # 3. Coverage ratio threshold
-    if feature.coverage_ratio < 0.50:
+    # 3. Coverage ratio threshold (None means unmeasured -> fail closed)
+    if feature.coverage_ratio is None or feature.coverage_ratio < 0.50:
         reasons.append(AbstainReasonCode.INSUFFICIENT_COVERAGE.value)
 
     # 4. Declared support level
@@ -66,8 +66,8 @@ def check_support_and_abstention(feature: HeatZoneV3Input) -> tuple[bool, tuple[
         elif cov_state_str in {"empty", "missing", "unobserved"} and domain.upper() in {"DEMOGRAPHICS", "COMPETITOR", "GEOGRAPHY"}:
             reasons.append(f"{AbstainReasonCode.MISSING_REQUIRED_DOMAINS.value}:{domain.lower()}_{cov_state_str}")
 
-    # 6. Unacceptable confidence / quality floor
-    if feature.confidence < 0.25:
+    # 6. Unacceptable confidence / quality floor (None means unmeasured -> fail closed)
+    if feature.confidence is None or feature.confidence < 0.25:
         reasons.append(AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value)
 
     if reasons:
@@ -152,7 +152,17 @@ def score_heatzone_v3_feature(
     )
 
     # Composite Score
-    confidence = max(0.0, min(1.0, feature.confidence * (feature.coverage_ratio if feature.coverage_ratio > 0 else 1.0)))
+    if feature.confidence is None or feature.coverage_ratio is None:
+        confidence = 0.0
+    else:
+        confidence = max(
+            0.0,
+            min(
+                1.0,
+                feature.confidence
+                * (feature.coverage_ratio if feature.coverage_ratio > 0 else 1.0),
+            ),
+        )
 
     if is_abstained:
         score = None
