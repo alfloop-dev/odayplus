@@ -253,6 +253,7 @@ delivery_toolchain/release/check_release_environment.py,development_delivery_too
 delivery_toolchain/release/check_release_phase.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/release/check_runtime_admission.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/release/migrate_gate_registry.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/release/probe_release_target_absence.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/release/release_lease.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/release/release_manifest.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/release/release_receipts.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -987,6 +988,7 @@ tests/performance/assisted_listing_intake/test_capacity.py,verification,verifica
 tests/performance/test_acceptance_budgets.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/performance/test_load_and_soak.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/release/test_build_release_handoff.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/release/test_probe_release_target_absence.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/release/test_release_environment_precheck.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/release/test_release_lease.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/release/test_release_manifest.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
