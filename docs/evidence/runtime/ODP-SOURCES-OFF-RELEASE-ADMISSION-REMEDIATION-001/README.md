@@ -136,5 +136,4 @@ attestation。
 見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
 在 code head `88e46a91` 以指定 focused selection 通過：exit 0、19.432 秒；收據不含
 任何 secret 值。測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**，
-`delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 code head 通過；文件追加後會在
-最終 head 再執行一次 exact selection。
+`delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 code head 通過；文件追加前已在最終 head 再執行一次 exact selection。
