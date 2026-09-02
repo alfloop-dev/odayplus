@@ -42,6 +42,11 @@ else:
         rows: list[dict[str, Any]] = Field(min_length=1)
         dataset_snapshot_id: str | None = None
         require_training_eligible: bool = True
+        # These identifiers bind the snapshot to the governed feature/label
+        # registries.  The service enforces the BLOCKED feature/label gate when
+        # they are supplied, so they must remain part of the HTTP contract.
+        feature_set_id: str | None = None
+        label_set_id: str | None = None
 
 
     class DqTriagePayload(BaseModel):
@@ -214,6 +219,8 @@ else:
                     body.rows,
                     dataset_snapshot_id=body.dataset_snapshot_id,
                     require_training_eligible=body.require_training_eligible,
+                    feature_set_id=body.feature_set_id,
+                    label_set_id=body.label_set_id,
                 )
             except ValueError as exc:
                 raise HTTPException(
@@ -592,6 +599,8 @@ else:
             "prediction_origin_time": snapshot.prediction_origin_time.isoformat(),
             "time_range": [value.isoformat() for value in snapshot.time_range],
             "source_snapshot_ids": list(snapshot.source_snapshot_ids),
+            "feature_set_id": snapshot.feature_set_id,
+            "label_set_id": snapshot.label_set_id,
             "created_at": snapshot.created_at.isoformat(),
         }
 

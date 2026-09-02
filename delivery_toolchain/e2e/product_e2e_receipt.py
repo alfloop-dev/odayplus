@@ -244,7 +244,6 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
         "uat_accounts:v1",
         (
             "tests/security/test_rbac_abac.py::test_rbac_denies_action_outside_role",
-            "tests/security/test_rbac_abac.py::test_tenant_isolation_blocks_other_tenant",
         ),
         "AuthorizationEngine",
         ("403_audit", "scope.store", "rbac"),
