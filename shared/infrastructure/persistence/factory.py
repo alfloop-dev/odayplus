@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import Any
 
 from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
-from shared.governance import InMemoryDecisionPolicyRepository
+from shared.governance import (
+    InMemoryDecisionPolicyRepository,
+    default_model_performance_drift_policy,
+)
 
 DEFAULT_DB_PATH = ".odp_data/durable.sqlite3"
 _DURABLE_MODES = {"durable", "sqlite"}
@@ -145,7 +148,14 @@ def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
         "tenant-gate",
     )
     return InMemoryDecisionPolicyRepository(
-        [default_forecast_alert_policy(t) for t in seeded_tenants]
+        [
+            policy
+            for tenant_id in seeded_tenants
+            for policy in (
+                default_forecast_alert_policy(tenant_id),
+                default_model_performance_drift_policy(tenant_id),
+            )
+        ]
     )
 
 

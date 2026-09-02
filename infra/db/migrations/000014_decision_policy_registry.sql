@@ -94,7 +94,8 @@ CREATE TABLE IF NOT EXISTS workflow.decision_policies (
     ),
     CONSTRAINT chk_decision_policy_kind CHECK (
         policy_kind IN ('forecast_alert', 'heatzone_merge', 'heatzone_absorption',
-                        'sitescore_recommendation', 'price_exploration', 'netplan_action')
+                        'sitescore_recommendation', 'price_exploration', 'netplan_action',
+                        'model_performance_drift')
     ),
     CONSTRAINT chk_decision_policy_window CHECK (
         effective_to IS NULL OR effective_to > effective_from
@@ -276,8 +277,71 @@ AS $seed_forecast_alert_policy$
     ON CONFLICT (policy_version_id) DO NOTHING;
 $seed_forecast_alert_policy$;
 
+-- ODP-LEARNINGHUB-BASELINE-DRIFT-002: production model training resolves
+-- this versioned policy before validation.  The metric rows are model keyed
+-- because absolute quality limits differ by model; baseline degradation caps
+-- are present in every production row.
+CREATE OR REPLACE FUNCTION workflow.seed_model_performance_drift_policy(p_tenant_id UUID)
+RETURNS void
+LANGUAGE sql
+AS $seed_model_performance_drift_policy$
+    INSERT INTO workflow.decision_policies (
+        policy_version_id, policy_label, policy_id, policy_version, policy_kind,
+        tenant_id, effective_from, effective_to,
+        owner_role, approved_by, approved_at,
+        input_contract, output_contract, change_reason,
+        rollback_policy_version, parameters, declared_inputs
+    )
+    VALUES (
+        'model-performance-drift-policy-v1:' || p_tenant_id::text,
+        'model-performance-drift-policy-v1',
+        'model-performance-drift-policy',
+        '1.0.0',
+        'model_performance_drift',
+        p_tenant_id,
+        '2026-09-01 00:00:00+00',
+        NULL,
+        'model-risk-owner',
+        'architecture_owner',
+        '2026-09-01 00:00:00+00',
+        'ModelMetrics',
+        'ValidationRun',
+        'Bind production model validation and baseline drift to versioned release gates',
+        NULL,
+        '{"metric_thresholds_by_model": {
+          "forecast_revenue_interval": {
+            "normalized_mae": {"max_value": 0.35, "max_degradation": 0.05, "higher_is_better": false},
+            "p80_coverage": {"min_value": 0.65, "max_degradation": 0.05, "higher_is_better": true}
+          },
+          "dealroom_avm": {
+            "normalized_mae": {"max_value": 0.30, "max_degradation": 0.05, "higher_is_better": false},
+            "p80_coverage": {"min_value": 0.70, "max_degradation": 0.05, "higher_is_better": true}
+          },
+          "listing_property_avm": {
+            "normalized_mae": {"max_value": 0.30, "max_degradation": 0.05, "higher_is_better": false},
+            "p80_coverage": {"min_value": 0.70, "max_degradation": 0.05, "higher_is_better": true}
+          },
+          "sitescore_propensity": {
+            "normalized_mae": {"max_value": 0.25, "max_degradation": 0.05, "higher_is_better": false},
+            "p80_coverage": {"min_value": 0.70, "max_degradation": 0.05, "higher_is_better": true}
+          },
+          "heatzone_priority": {
+            "normalized_mae": {"max_value": 0.30, "max_degradation": 0.05, "higher_is_better": false},
+            "p80_coverage": {"min_value": 0.65, "max_degradation": 0.05, "higher_is_better": true}
+          },
+          "avm_liquidity": {
+            "normalized_mae": {"max_value": 0.45, "max_degradation": 0.05, "higher_is_better": false},
+            "observed_event_rate": {"min_value": 0.02, "higher_is_better": true}
+          }
+        }}'::jsonb,
+        ARRAY['metrics', 'baseline_metrics']
+    )
+    ON CONFLICT (policy_version_id) DO NOTHING;
+$seed_model_performance_drift_policy$;
+
 -- Backfill: the tenants that exist at migration time.
 SELECT workflow.seed_forecast_alert_policy(t.tenant_id) FROM core.tenants t;
+SELECT workflow.seed_model_performance_drift_policy(t.tenant_id) FROM core.tenants t;
 
 -- Onboarding: every tenant created from here on. A trigger rather than a call
 -- inside `_upsert_merchant` because the registry has to hold for whichever
@@ -304,5 +368,29 @@ BEGIN
             AFTER INSERT ON core.tenants
             FOR EACH ROW
             EXECUTE FUNCTION workflow.seed_forecast_alert_policy_on_tenant();
+    END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION workflow.seed_model_performance_drift_policy_on_tenant()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $seed_model_performance_drift_policy_on_tenant$
+BEGIN
+    PERFORM workflow.seed_model_performance_drift_policy(NEW.tenant_id);
+    RETURN NULL;
+END;
+$seed_model_performance_drift_policy_on_tenant$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgname = 'trg_seed_model_performance_drift_policy'
+          AND tgrelid = 'core.tenants'::regclass
+    ) THEN
+        CREATE TRIGGER trg_seed_model_performance_drift_policy
+            AFTER INSERT ON core.tenants
+            FOR EACH ROW
+            EXECUTE FUNCTION workflow.seed_model_performance_drift_policy_on_tenant();
     END IF;
 END $$;

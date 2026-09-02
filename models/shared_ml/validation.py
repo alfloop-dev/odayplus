@@ -262,6 +262,8 @@ class ValidationRun:
 
 def thresholds_from_decision_policy(
     policy: DecisionPolicy,
+    *,
+    model_name: str | None = None,
 ) -> list[MetricThreshold]:
     """Extract MetricThreshold list from a governed DecisionPolicy.
 
@@ -279,6 +281,21 @@ def thresholds_from_decision_policy(
     default_warning_max_rel_deg = policy.parameters.get("default_warning_max_relative_degradation")
 
     metric_configs = policy.parameters.get("metric_thresholds", {})
+    by_model = policy.parameters.get("metric_thresholds_by_model")
+    if by_model is not None:
+        if not isinstance(by_model, Mapping) or not model_name:
+            raise ValueError(
+                f"policy {policy.policy_version_id} requires a model name for threshold resolution"
+            )
+        if model_name not in by_model:
+            raise ValueError(
+                f"policy {policy.policy_version_id} has no threshold rows for model {model_name}"
+            )
+        metric_configs = by_model[model_name]
+    if not isinstance(metric_configs, Mapping):
+        raise ValueError(
+            f"policy {policy.policy_version_id} metric thresholds must be an object"
+        )
     for metric_name, cfg in metric_configs.items():
         if isinstance(cfg, dict):
             thresholds.append(
@@ -301,18 +318,98 @@ def thresholds_from_decision_policy(
 def effective_thresholds(
     thresholds: Sequence[MetricThreshold],
     decision_policy: DecisionPolicy | None,
+    *,
+    model_name: str | None = None,
 ) -> list[MetricThreshold]:
     """Resolve validation thresholds with the governing policy as authority.
 
-    A caller may still provide the legacy threshold argument while a migration
-    is being completed, but it must not be able to weaken or replace a
-    threshold from a recorded policy.  Once a policy is supplied, its metric
-    threshold rows are the complete effective set; the caller values are not a
-    second, unrecorded source of governance.
+    A caller may still provide model-specific threshold arguments while a
+    migration is being completed, but it must not be able to weaken a
+    threshold from a recorded policy.  Policy rows are authoritative for each
+    matching metric; a caller may only contribute a stricter bound or an
+    additional metric gate.
     """
     if decision_policy is None:
         return list(thresholds)
-    return thresholds_from_decision_policy(decision_policy)
+    governed = thresholds_from_decision_policy(decision_policy, model_name=model_name)
+    caller_by_metric: dict[str, MetricThreshold] = {
+        threshold.metric_name: threshold for threshold in thresholds
+    }
+    effective: list[MetricThreshold] = []
+    for policy_threshold in governed:
+        caller_threshold = caller_by_metric.get(policy_threshold.metric_name)
+        if caller_threshold is None:
+            effective.append(policy_threshold)
+            continue
+        effective.append(
+            MetricThreshold(
+                metric_name=policy_threshold.metric_name,
+                min_value=_stricter_min(
+                    policy_threshold.min_value, caller_threshold.min_value
+                ),
+                max_value=_stricter_max(
+                    policy_threshold.max_value, caller_threshold.max_value
+                ),
+                warning_min_value=_stricter_min(
+                    policy_threshold.warning_min_value,
+                    caller_threshold.warning_min_value,
+                ),
+                warning_max_value=_stricter_max(
+                    policy_threshold.warning_max_value,
+                    caller_threshold.warning_max_value,
+                ),
+                max_degradation=_stricter_max_degradation(
+                    policy_threshold.max_degradation,
+                    caller_threshold.max_degradation,
+                ),
+                max_relative_degradation=_stricter_max_degradation(
+                    policy_threshold.max_relative_degradation,
+                    caller_threshold.max_relative_degradation,
+                ),
+                warning_max_degradation=_stricter_max_degradation(
+                    policy_threshold.warning_max_degradation,
+                    caller_threshold.warning_max_degradation,
+                ),
+                warning_max_relative_degradation=_stricter_max_degradation(
+                    policy_threshold.warning_max_relative_degradation,
+                    caller_threshold.warning_max_relative_degradation,
+                ),
+                higher_is_better=(
+                    policy_threshold.higher_is_better
+                    if policy_threshold.higher_is_better is not None
+                    else caller_threshold.higher_is_better
+                ),
+            )
+        )
+    governed_names = {threshold.metric_name for threshold in governed}
+    effective.extend(
+        threshold for threshold in thresholds if threshold.metric_name not in governed_names
+    )
+    return effective
+
+
+def _stricter_min(left: float | None, right: float | None) -> float | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return max(left, right)
+
+
+def _stricter_max(left: float | None, right: float | None) -> float | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return min(left, right)
+
+
+def _stricter_max_degradation(left: float | None, right: float | None) -> float | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return min(left, right)
 
 
 def validate_model_candidate(
@@ -344,7 +441,11 @@ def validate_model_candidate(
         )
         worst_status = ValidationStatus.FAILED
 
-    effective = effective_thresholds(thresholds, decision_policy)
+    effective = effective_thresholds(
+        thresholds,
+        decision_policy,
+        model_name=model_name,
+    )
 
     for threshold in effective:
         if threshold.metric_name not in metrics:

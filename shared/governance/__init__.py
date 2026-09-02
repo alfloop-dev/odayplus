@@ -16,6 +16,15 @@ from shared.governance.decision_policy import (
     PolicySupersedeError,
     resolve_policy,
 )
+from shared.governance.model_performance import (
+    MODEL_PERFORMANCE_DRIFT_POLICY_ID,
+    MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
+    MODEL_PERFORMANCE_DRIFT_POLICY_LABEL,
+    MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID,
+    MODEL_PERFORMANCE_DRIFT_POLICY_VERSION,
+    MODEL_PERFORMANCE_METRIC_THRESHOLDS,
+    default_model_performance_drift_policy,
+)
 
 __all__ = [
     "DecisionPolicy",
@@ -24,5 +33,12 @@ __all__ = [
     "PolicyIdentityError",
     "PolicyResolutionError",
     "PolicySupersedeError",
+    "MODEL_PERFORMANCE_DRIFT_POLICY_ID",
+    "MODEL_PERFORMANCE_DRIFT_POLICY_KIND",
+    "MODEL_PERFORMANCE_DRIFT_POLICY_LABEL",
+    "MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID",
+    "MODEL_PERFORMANCE_DRIFT_POLICY_VERSION",
+    "MODEL_PERFORMANCE_METRIC_THRESHOLDS",
+    "default_model_performance_drift_policy",
     "resolve_policy",
 ]

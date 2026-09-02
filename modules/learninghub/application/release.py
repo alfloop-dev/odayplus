@@ -1537,7 +1537,11 @@ class LearningHubService:
         if production is None:
             raise LearningHubError(f"no production model registered for {model_name}")
 
-        effective = effective_thresholds(thresholds, policy)
+        effective = effective_thresholds(
+            thresholds,
+            policy,
+            model_name=model_name,
+        )
 
         breaches: list[MonitoringBreach] = []
         for threshold in effective:

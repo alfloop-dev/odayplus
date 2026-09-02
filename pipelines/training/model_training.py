@@ -26,6 +26,7 @@ from models.shared_ml.oss_estimators import (
 )
 from modules.learninghub import LearningHubService
 from pipelines.features import FeaturePipelineArtifact
+from shared.governance import DecisionPolicy
 
 
 class TrainingPipelineError(ValueError):
@@ -95,6 +96,7 @@ class TrainingPipelineRunner:
         actor: str = "system",
         run_id: str | None = None,
         git_sha: str | None = None,
+        decision_policy: DecisionPolicy | None = None,
     ) -> TrainingPipelineResult:
         snapshot = self.service.repository.get_dataset_snapshot(
             feature_artifact.dataset_snapshot_id
@@ -188,6 +190,7 @@ class TrainingPipelineRunner:
             segment_metrics=segments,
             segment_thresholds=segment_thresholds,
             calibration_summary=calibration,
+            decision_policy=decision_policy,
         )
         validation_payload = {
             "artifact_type": "validation_report",
