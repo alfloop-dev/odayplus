@@ -1,19 +1,29 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from modules.forecastops.domain.forecasting import (
+    FORECAST_ALERT_POLICY_KIND,
+    Alert,
+    AlertDisposition,
+    AlertLevel,
+    ForecastAlertPolicyError,
     ForecastOpsError,
     ForecastOutput,
     StoreDayObservation,
     _parse_date,
     _parse_datetime,
+    _policy_thresholds,
+    _sitescore_gap_ratio,
+    _utc_datetime,
 )
+from shared.governance import DecisionPolicyRepository, resolve_policy
 
 
 class FeedbackType(StrEnum):
@@ -186,6 +196,7 @@ class ForecastFeedback:
                 raise ForecastOpsError("alert_id is required for ALERT_DISPOSITION")
             if not str(disposition or "").strip():
                 raise ForecastOpsError("disposition is required for ALERT_DISPOSITION")
+            disposition = AlertDisposition.from_str(disposition).value
             status = FeedbackStatus.ACCEPTED
 
         return cls(
@@ -340,11 +351,314 @@ def calculate_forecast_precision(
     }
 
 
+def calculate_alert_precision_metrics(
+    alerts: Iterable[Alert | Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Calculate precision and advance warning lead time metrics across alerts (ODP-FR-FCT-006).
+
+    Precision = TRUE_POSITIVE / (TRUE_POSITIVE + FALSE_POSITIVE)
+    The denominator strictly excludes KNOWN_CONTEXT and UNRESOLVED alerts.
+    Lead time (days) = deterioration_confirmed_at - opened_at, only valid for TRUE_POSITIVE alerts.
+    """
+    tp_count = 0
+    fp_count = 0
+    kc_count = 0
+    un_count = 0
+    lead_times: list[int] = []
+    total_count = 0
+
+    for item in alerts:
+        raw_level = item.alert_level if isinstance(item, Alert) else item.get("alert_level")
+        if (
+            isinstance(raw_level, AlertLevel) and raw_level is AlertLevel.GREEN
+        ) or str(raw_level or "").strip().lower() == AlertLevel.GREEN.value:
+            # GREEN is a normal forecast outcome, not an alert eligible for
+            # precision evaluation.  Counting it as UNRESOLVED would pollute
+            # both the alert inventory and the maturity denominator.
+            continue
+        total_count += 1
+        disp_str: str | None = None
+        lead_time_val: int | None = None
+
+        if isinstance(item, Alert):
+            lead_time_val = item.lead_time_days
+            if item.disposition is not None:
+                disp_str = (
+                    item.disposition.value
+                    if isinstance(item.disposition, AlertDisposition)
+                    else str(item.disposition).strip().upper()
+                )
+        elif isinstance(item, Mapping):
+            raw_disp = item.get("disposition")
+            if raw_disp is not None:
+                disp_str = str(raw_disp).strip().upper()
+            raw_lead = item.get("lead_time_days")
+            if raw_lead is not None:
+                try:
+                    lead_time_val = int(raw_lead)
+                except (ValueError, TypeError):
+                    pass
+            elif disp_str == AlertDisposition.TRUE_POSITIVE.value:
+                det_raw = item.get("deterioration_confirmed_at")
+                open_raw = item.get("opened_at")
+                if det_raw and open_raw:
+                    try:
+                        d_date = _parse_datetime(det_raw).date()
+                        o_date = _parse_datetime(open_raw).date()
+                        lead_time_val = (d_date - o_date).days
+                    except Exception:
+                        pass
+
+        if disp_str == AlertDisposition.TRUE_POSITIVE.value:
+            tp_count += 1
+            if lead_time_val is not None:
+                lead_times.append(lead_time_val)
+        elif disp_str == AlertDisposition.FALSE_POSITIVE.value:
+            fp_count += 1
+        elif disp_str == AlertDisposition.KNOWN_CONTEXT.value:
+            kc_count += 1
+        else:
+            un_count += 1
+
+    evaluated_count = tp_count + fp_count
+    precision = round(tp_count / evaluated_count, 4) if evaluated_count > 0 else None
+    mean_lead_time = round(sum(lead_times) / len(lead_times), 2) if lead_times else None
+    min_lead_time = min(lead_times) if lead_times else None
+    max_lead_time = max(lead_times) if lead_times else None
+
+    return {
+        "total_alerts": total_count,
+        "true_positive_count": tp_count,
+        "false_positive_count": fp_count,
+        "known_context_count": kc_count,
+        "unresolved_count": un_count,
+        "evaluated_alert_count": evaluated_count,
+        "precision": precision,
+        "mean_lead_time_days": mean_lead_time,
+        "min_lead_time_days": min_lead_time,
+        "max_lead_time_days": max_lead_time,
+        "lead_time_sample_count": len(lead_times),
+    }
+
+
+def backfill_alert_precision(
+    alerts: Iterable[Alert | Mapping[str, Any]],
+    *,
+    observations: Iterable[StoreDayObservation | Mapping[str, Any]],
+    feedbacks: Iterable[ForecastFeedback | Mapping[str, Any]] = (),
+    policy_repository: DecisionPolicyRepository | None = None,
+    evaluation_horizon_days: int = 28,
+    min_observations: int | None = None,
+    as_of: datetime | None = None,
+    actor: str = "precision_backfill_job",
+    now: datetime | None = None,
+) -> tuple[list[Alert], dict[str, Any]]:
+    """Backfill deterioration_confirmed_at and disposition for alerts per policy thresholds (ODP-FR-FCT-006).
+
+    - deterioration_confirmed_at: The earliest date strictly after opened_at where actual
+      performance breached the same policy threshold that produced the alert, within
+      the evaluation horizon.  The opened day is the trigger evidence and is never
+      reused as an outcome confirmation.
+    - disposition:
+      - TRUE_POSITIVE: deterioration breached threshold within evaluation window.
+      - FALSE_POSITIVE: evaluation window elapsed with sufficient observations and no deterioration.
+      - KNOWN_CONTEXT: alert period overlaps with active CONTEXT_ANNOTATION (e.g. remodeling).
+      - UNRESOLVED: observation window not yet complete or insufficient observations.
+    """
+    if policy_repository is None:
+        raise ForecastAlertPolicyError(
+            "forecast alert policy_repository is required; refusing to evaluate alert precision"
+        )
+    if evaluation_horizon_days <= 0:
+        raise ForecastOpsError("evaluation_horizon_days must be greater than zero")
+    if min_observations is not None and min_observations <= 0:
+        raise ForecastOpsError("min_observations must be greater than zero")
+
+    eval_now = now or datetime.now(UTC)
+    as_of_d = _utc_datetime(as_of).date() if as_of is not None else None
+    min_obs_required = (
+        max(1, min_observations)
+        if min_observations is not None
+        else (min(evaluation_horizon_days, 14) if evaluation_horizon_days > 0 else 1)
+    )
+
+    # 1. Parse and group context annotations by store
+    context_annotations: list[tuple[str, str, date, date]] = []
+    for fb in feedbacks:
+        fb_obj = fb if isinstance(fb, ForecastFeedback) else ForecastFeedback.from_mapping(fb)
+        if (
+            fb_obj.feedback_type is FeedbackType.CONTEXT_ANNOTATION
+            and fb_obj.status in {FeedbackStatus.ACCEPTED, FeedbackStatus.APPROVED}
+        ):
+            context_annotations.append(
+                (
+                    fb_obj.tenant_id,
+                    fb_obj.store_id,
+                    fb_obj.target_date_start,
+                    fb_obj.target_date_end,
+                )
+            )
+
+    # 2. Parse and group observations by store
+    obs_by_store: dict[str, list[StoreDayObservation]] = defaultdict(list)
+    for obs in observations:
+        obs_obj = (
+            obs
+            if isinstance(obs, StoreDayObservation)
+            else StoreDayObservation.from_mapping(obs)
+        )
+        obs_by_store[obs_obj.store_id].append(obs_obj)
+    for s_id in obs_by_store:
+        obs_by_store[s_id].sort(key=lambda o: o.business_date)
+
+    updated_alerts: list[Alert] = []
+
+    for item in alerts:
+        alert = item if isinstance(item, Alert) else Alert.from_mapping(item)
+        if alert.alert_level is AlertLevel.GREEN or alert.alert_level == "green":
+            updated_alerts.append(alert)
+            continue
+
+        # A batch backfill may be rerun, but it must never supersede an
+        # operator's adjudication (including the existing feedback path's
+        # free-form dispositions).  UNRESOLVED is the only prior result that
+        # remains eligible for re-evaluation as more observations arrive.
+        existing_disposition = (
+            alert.disposition.value
+            if isinstance(alert.disposition, AlertDisposition)
+            else str(alert.disposition or "").strip().upper()
+        )
+        if existing_disposition and existing_disposition != AlertDisposition.UNRESOLVED.value:
+            updated_alerts.append(alert)
+            continue
+
+        prior_confirmation = alert.deterioration_confirmed_at
+
+        open_dt = _utc_datetime(alert.opened_at)
+        open_d = open_dt.date()
+        horizon_end_d = open_d + timedelta(days=evaluation_horizon_days)
+
+        # Check if overlapping with a CONTEXT_ANNOTATION
+        has_known_context = any(
+            tenant_id == alert.tenant_id
+            and store_id == alert.store_id
+            and start_d <= horizon_end_d
+            and end_d >= open_d
+            for tenant_id, store_id, start_d, end_d in context_annotations
+        )
+
+        if has_known_context:
+            updated = alert.with_evaluation(
+                disposition=AlertDisposition.KNOWN_CONTEXT,
+                deterioration_confirmed_at=prior_confirmation,
+                actor=actor,
+                now=eval_now,
+            )
+            updated_alerts.append(updated)
+            continue
+
+        # Resolve policy threshold (fail-closed per ODP-SD-AMD-001 §3.3)
+        policy = resolve_policy(
+            policy_repository,
+            policy_kind=FORECAST_ALERT_POLICY_KIND,
+            tenant_id=alert.tenant_id,
+            at=open_dt,
+        )
+        thresholds = _policy_thresholds(policy)
+
+        lvl = (
+            alert.alert_level
+            if isinstance(alert.alert_level, AlertLevel)
+            else AlertLevel(str(alert.alert_level).lower())
+        )
+        threshold_value = thresholds.get(lvl, thresholds[AlertLevel.YELLOW])
+
+        # The observation on open_d is the signal that triggered the alert.  It is
+        # not an outcome that can confirm the alert, so confirmation must use a
+        # subsequent business day while keeping the same policy threshold.
+        # The horizon endpoint remains inclusive: a 28-day horizon covers the
+        # 28 post-opening dates open_d + 1 through open_d + 28.
+        store_obs_in_window = [
+            o for o in obs_by_store.get(alert.store_id, [])
+            if open_d < o.business_date <= horizon_end_d
+            and (as_of_d is None or o.business_date <= as_of_d)
+        ]
+
+        # Valid observations in window: must have a positive baseline to evaluate sitescore gap
+        valid_obs_in_window = [
+            o for o in store_obs_in_window
+            if o.site_score_baseline_p50 is not None and o.site_score_baseline_p50 > 0
+        ]
+
+        deterioration_found = False
+        deterioration_date: date | None = None
+
+        for o in valid_obs_in_window:
+            gap = _sitescore_gap_ratio(actual=o.actual_revenue, baseline=o.site_score_baseline_p50)
+            if gap <= threshold_value:
+                deterioration_found = True
+                deterioration_date = o.business_date
+                break
+
+        if deterioration_found and deterioration_date is not None:
+            det_dt = datetime(
+                deterioration_date.year,
+                deterioration_date.month,
+                deterioration_date.day,
+                open_dt.hour,
+                open_dt.minute,
+                open_dt.second,
+                tzinfo=UTC,
+            )
+            if prior_confirmation is not None:
+                prior_dt = _utc_datetime(prior_confirmation)
+                if prior_dt <= det_dt:
+                    det_dt = prior_confirmation
+            updated = alert.with_evaluation(
+                disposition=AlertDisposition.TRUE_POSITIVE,
+                deterioration_confirmed_at=det_dt,
+                actor=actor,
+                now=eval_now,
+            )
+        else:
+            all_store_obs = [
+                o
+                for o in obs_by_store.get(alert.store_id, [])
+                if as_of_d is None or o.business_date <= as_of_d
+            ]
+            max_obs_d = max((o.business_date for o in all_store_obs), default=open_d)
+            curr_eval_d = as_of_d or max_obs_d
+            window_elapsed = max_obs_d >= horizon_end_d or curr_eval_d >= horizon_end_d
+            has_sufficient_obs = len(valid_obs_in_window) >= min_obs_required
+
+            if window_elapsed and has_sufficient_obs:
+                updated = alert.with_evaluation(
+                    disposition=AlertDisposition.FALSE_POSITIVE,
+                    deterioration_confirmed_at=prior_confirmation,
+                    actor=actor,
+                    now=eval_now,
+                )
+            else:
+                updated = alert.with_evaluation(
+                    disposition=AlertDisposition.UNRESOLVED,
+                    deterioration_confirmed_at=prior_confirmation,
+                    actor=actor,
+                    now=eval_now,
+                )
+
+        updated_alerts.append(updated)
+
+    metrics = calculate_alert_precision_metrics(updated_alerts)
+    return updated_alerts, metrics
+
+
 __all__ = [
     "FORBIDDEN_FEEDBACK_OVERRIDE_KEYS",
     "FeedbackStatus",
     "FeedbackType",
     "ForecastFeedback",
+    "backfill_alert_precision",
+    "calculate_alert_precision_metrics",
     "calculate_forecast_precision",
     "filter_training_observations",
     "validate_feedback_payload",
