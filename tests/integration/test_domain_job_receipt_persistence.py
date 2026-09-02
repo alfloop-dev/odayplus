@@ -14,7 +14,9 @@ from apps.api.app.routes.interventions import create_interventions_router
 from apps.api.app.routes.priceops import create_priceops_router
 from apps.api.app.routes.sitescore import create_sitescore_router
 from apps.api.oday_api.main import create_app
+from modules.forecastops import default_forecast_alert_policy
 from shared.api.idempotency import IdempotencyConflictError
+from shared.governance import InMemoryDecisionPolicyRepository
 from shared.infrastructure.persistence.command_receipts import (
     TenantScopedCommandReceiptStore,
 )
@@ -31,6 +33,15 @@ from tests.integration._authz import (
 
 TENANT_A = "tenant-a"
 TENANT_B = "tenant-b"
+
+
+def _forecast_policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository(
+        [
+            default_forecast_alert_policy(TENANT_A),
+            default_forecast_alert_policy(TENANT_B),
+        ]
+    )
 
 
 def _assert_receipts_are_not_worker_jobs(queue, claim) -> None:
@@ -164,6 +175,8 @@ def _priceops_payload(tenant_id: str, *, current_price: float = 4.0) -> dict:
                 "current_price": current_price,
                 "baseline_demand": 100.0,
                 "elasticity_value": -1.1,
+                "applicable_min_price": 3.0,
+                "applicable_max_price": 5.0,
                 "confidence": 0.8,
             }
         ],
@@ -378,7 +391,12 @@ def test_forecast_receipt_and_idempotency_survive_app_restart_by_tenant(
     db_path = tmp_path / "forecast-receipts.sqlite3"
     bundle = _durable_bundle(db_path)
     try:
-        first_client = TestClient(create_app(persistence=bundle))
+        first_client = TestClient(
+            create_app(
+                persistence=bundle,
+                forecastops_policy_repository=_forecast_policy_repository(),
+            )
+        )
         first = first_client.post(
             "/forecastops/forecast-jobs",
             headers=_headers(FORECASTOPS_HEADERS, TENANT_A, "same-key"),
@@ -392,7 +410,12 @@ def test_forecast_receipt_and_idempotency_survive_app_restart_by_tenant(
 
     reopened = _durable_bundle(db_path)
     try:
-        second_client = TestClient(create_app(persistence=reopened))
+        second_client = TestClient(
+            create_app(
+                persistence=reopened,
+                forecastops_policy_repository=_forecast_policy_repository(),
+            )
+        )
         replay = second_client.post(
             "/forecastops/forecast-jobs",
             headers=_headers(FORECASTOPS_HEADERS, TENANT_A, "same-key"),
@@ -612,6 +635,8 @@ def test_production_routes_reject_in_memory_job_receipts() -> None:
                     "current_price": 4,
                     "baseline_demand": 100,
                     "elasticity_value": -1.1,
+                    "applicable_min_price": 3.0,
+                    "applicable_max_price": 5.0,
                     "confidence": 0.8,
                 }
             ],

@@ -29,6 +29,7 @@ from modules.external_data.infrastructure.data_platform_client import (
 )
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
+    OperationalStartObservation,
     StoreDailyPerformance,
     StoreDayCoverage,
     StoreReference,
@@ -713,6 +714,32 @@ class MarketDataFacade:
             raise MarketDataValidationError(f"Invalid store daily performance schema: {err}", details=err.details) from err
         except DataPlatformClientError as err:
             raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+
+    def get_operational_start_observation(
+        self,
+        store_id: str,
+        *,
+        principal: Principal | None = None,
+    ) -> OperationalStartObservation:
+        """Authorized read of OperationalStartObservation."""
+        self._authorize_read("operational_start", store_id, principal=principal)
+        try:
+            return self._client.get_operational_start_observation(store_id)
+        except DataPlatformDocumentNotFoundError as err:
+            raise MarketDataNotFoundError(
+                f"Operational start observation not found for store_id={store_id}: {err}",
+                details=err.details,
+            ) from err
+        except DataPlatformValidationError as err:
+            raise MarketDataValidationError(
+                f"Invalid operational start observation schema: {err}",
+                details=err.details,
+            ) from err
+        except DataPlatformClientError as err:
+            raise MarketDataFacadeError(
+                f"Data platform client error: {err}",
+                details=err.details,
+            ) from err
 
     # -----------------------------------------------------------------------
     # System Diagnostics & Health

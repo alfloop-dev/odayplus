@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from modules.heatzone.v3.absorption import AbsorptionResult
 from modules.heatzone.v3.contract import (
     MODEL_VERSION,
     AbstainReasonCode,
@@ -129,7 +130,18 @@ def score_heatzone_v3_feature(
 
     # Dimension 9: Coverage-adjusted Unmet Demand & Format Fit
     demand_base = demographic_vitality * 0.40 + poi_demand * 0.30 + competition_gap * 0.30
-    unmet_demand = min(1.0, demand_base * (1.0 - cannibalization_risk * 0.45))
+    absorption = feature.absorption
+    if absorption is not None:
+        # Measured (ODP-FR-HZ-004): the share of this zone's demand our own
+        # stores actually took, from realised revenue. It replaces the proxy
+        # below rather than adjusting it -- store *presence* stops standing in
+        # for demand *served* the moment we can measure the latter.
+        unmet_demand = min(1.0, demand_base * (1.0 - absorption.absorption_ratio))
+    else:
+        # Unmeasured: own-store count and machine capacity are all we have, so
+        # a zone whose first store is thriving and one whose first store is
+        # idle score the same. `_warnings_v3` marks the result accordingly.
+        unmet_demand = min(1.0, demand_base * (1.0 - cannibalization_risk * 0.45))
 
     format_fit = min(
         1.0,
@@ -164,6 +176,7 @@ def score_heatzone_v3_feature(
         listing_availability=listing_availability,
         demographic_vitality=demographic_vitality,
         is_abstained=is_abstained,
+        absorption=absorption,
     )
 
     input_dims = {
@@ -215,6 +228,19 @@ def score_heatzone_v3_feature(
         county=feature.county,
         district=feature.district,
         admin_code=feature.admin_code,
+        absorption_measured=absorption is not None,
+        absorption_ratio=(
+            round(absorption.absorption_ratio, 4) if absorption is not None else None
+        ),
+        absorption_basis_source_ids=(
+            absorption.basis_source_ids if absorption is not None else ()
+        ),
+        absorption_excluded_store_ids=(
+            absorption.excluded_store_ids if absorption is not None else ()
+        ),
+        absorption_excluded_reasons=(
+            dict(absorption.excluded_reasons) if absorption is not None else {}
+        ),
     )
 
 
@@ -278,6 +304,12 @@ def _state_for_v3(
 ) -> HeatZoneV3State:
     if confidence < 0.35:
         return HeatZoneV3State.SUPPRESSED_LOW_CONFIDENCE
+    if feature.absorption is not None and feature.absorption.under_realized:
+        # Little demand left, but not because the zone is served: the stores we
+        # already opened here are taking less than policy expects of them. That
+        # calls for fixing those stores, not for ranking the zone down -- which
+        # is why it is answered before saturation.
+        return HeatZoneV3State.UNDER_REALIZED
     if cannibalization_risk >= 0.75 or unmet_demand < 0.25:
         return HeatZoneV3State.SATURATED
     if feature.own_store_count == 0 and feature.own_store_machine_capacity == 0:
@@ -299,6 +331,12 @@ def _warnings_v3(feature: HeatZoneV3Input, confidence: float, is_abstained: bool
         warnings.append("sparse_rent_sample_count")
     if feature.is_quarantined:
         warnings.append("source_quarantined")
+    if feature.absorption is None and (
+        feature.own_store_count > 0 or feature.own_store_machine_capacity > 0
+    ):
+        # We have stores here and no measurement of what they are serving, so
+        # the zone is ranked on structural proxies as though it were untouched.
+        warnings.append("absorption_unmeasured")
     return tuple(warnings)
 
 
@@ -311,11 +349,14 @@ def _reasons_v3(
     listing_availability: float,
     demographic_vitality: float,
     is_abstained: bool,
+    absorption: AbsorptionResult | None = None,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
     if is_abstained:
         reasons.append("model_abstained")
         return tuple(reasons)
+    if absorption is not None and absorption.absorption_ratio > 0.0:
+        reasons.append("demand_absorbed_by_own_stores")
     if unmet_demand >= 0.65:
         reasons.append("high_unmet_demand")
     if format_fit >= 0.65:

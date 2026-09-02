@@ -32,10 +32,16 @@ def estimate_elasticity(
     n = len(valid_points)
     
     # Safety Check: insufficient data points
+    valid_prices = [p for p, _ in valid_points]
+    min_p = round(min(valid_prices), 4) if valid_prices else None
+    max_p = round(max(valid_prices), 4) if valid_prices else None
+
     if n < MIN_SAMPLES:
         return PriceElasticityEstimate(
             elasticity_value=DEFAULT_ELASTICITY,
             confidence=0.3,  # Low confidence due to small sample
+            applicable_min_price=min_p,
+            applicable_max_price=max_p,
             prediction_origin_time=origin_time,
         )
         
@@ -56,6 +62,8 @@ def estimate_elasticity(
         return PriceElasticityEstimate(
             elasticity_value=DEFAULT_ELASTICITY,
             confidence=0.1,  # extremely low confidence
+            applicable_min_price=min_p,
+            applicable_max_price=max_p,
             prediction_origin_time=origin_time,
         )
         
@@ -82,6 +90,8 @@ def estimate_elasticity(
         return PriceElasticityEstimate(
             elasticity_value=-0.1,
             confidence=min(confidence, 0.2),  # penalize confidence
+            applicable_min_price=min_p,
+            applicable_max_price=max_p,
             prediction_origin_time=origin_time,
         )
         
@@ -91,11 +101,15 @@ def estimate_elasticity(
         return PriceElasticityEstimate(
             elasticity_value=-3.0,
             confidence=min(confidence, 0.4),  # penalize confidence due to extreme estimation
+            applicable_min_price=min_p,
+            applicable_max_price=max_p,
             prediction_origin_time=origin_time,
         )
         
     return PriceElasticityEstimate(
         elasticity_value=round(beta, 4),
         confidence=confidence,
+        applicable_min_price=min_p,
+        applicable_max_price=max_p,
         prediction_origin_time=origin_time,
     )

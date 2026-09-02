@@ -71,17 +71,53 @@ def _alembic_config(database: Any) -> Config:
     return config
 
 
+# `stamp("0002")` records the baseline and data-domain revisions as applied
+# without running them: both begin `CREATE EXTENSION postgis`, which the bundled
+# pgserver this suite falls back to does not have. Every revision from 0003 to
+# 0007 creates a schema of its own, so the claim cost nothing to back up.
+#
+# 0008 (decision policy registry) is the first revision that binds into the
+# baseline rather than beside it -- it foreign-keys `core.tenants` and
+# constrains `workflow.decisions`, both from 0001. So the stamp now has to come
+# with the objects the later revisions reference, or `upgrade("head")` fails on
+# a table the revision it claims to have applied was supposed to create. Only
+# the referenced shape is needed, which is what keeps this postgis-free.
+_BASELINE_OBJECTS_LATER_REVISIONS_BIND_TO = """
+CREATE SCHEMA IF NOT EXISTS core;
+CREATE SCHEMA IF NOT EXISTS workflow;
+
+CREATE TABLE IF NOT EXISTS core.tenants (
+    tenant_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_name VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workflow.decisions (
+    decision_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_type       VARCHAR(100) NOT NULL,
+    entity_id         VARCHAR(255) NOT NULL,
+    policy_version_id VARCHAR(100) NOT NULL,
+    created_by        VARCHAR(255) NOT NULL,
+    created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+"""
+
+
+def _stamp_baseline(database: Any) -> None:
+    command.stamp(_alembic_config(database), "0002")
+    with database.connect() as connection:
+        connection.execute(_BASELINE_OBJECTS_LATER_REVISIONS_BIND_TO)
+
+
 def _upgrade_official_schema(database: Any) -> None:
-    config = _alembic_config(database)
-    command.stamp(config, "0002")
-    command.upgrade(config, "head")
+    _stamp_baseline(database)
+    command.upgrade(_alembic_config(database), "head")
 
 
 def _create_model_view_prerequisites(database: Any) -> None:
     with database.connect() as connection:
         connection.execute(
             """
-            CREATE SCHEMA core;
+            CREATE SCHEMA IF NOT EXISTS core;
             CREATE SCHEMA data_plane;
             CREATE TABLE core.stores (
                 store_id UUID PRIMARY KEY,
@@ -209,7 +245,7 @@ def test_alembic_head_installs_official_schema_and_both_view_branches(
     intake_blank_db: Any,
 ) -> None:
     runtime_url, _alembic_url = _urls(intake_blank_db)
-    command.stamp(_alembic_config(intake_blank_db), "0002")
+    _stamp_baseline(intake_blank_db)
     _create_model_view_prerequisites(intake_blank_db)
     engine = PostgresEngine(
         runtime_url,

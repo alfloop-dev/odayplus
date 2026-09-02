@@ -968,6 +968,8 @@ def test_deploy_script_rejects_partial_or_invalid_vpc_config_before_cloud_run() 
     assert "ODP_CLOUD_RUN_VPC_EGRESS is required with ODP_CLOUD_RUN_VPC_CONNECTOR" in script
     assert "ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS" in script
     assert "all|all-traffic|private-ranges-only" in script
+    assert "sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR" in script
+    assert "sources-off deploy requires ALL_TRAFFIC VPC egress" in script
     assert guard_end < first_cloud_run_call
 
 
@@ -978,6 +980,18 @@ def test_deploy_job_passes_optional_vpc_config_through_environment() -> None:
 
     assert deploy_env["ODP_CLOUD_RUN_VPC_CONNECTOR"] == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
     assert deploy_env["ODP_CLOUD_RUN_VPC_EGRESS"] == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
+
+
+def test_sources_off_probe_persists_and_validates_the_runtime_receipt() -> None:
+    """A successful probe must be the observed container receipt, not a local claim."""
+    script = _deploy_script_text()
+
+    assert "capture_public_egress_probe_receipt" in script
+    assert "gcloud logging read" in script
+    assert "validate_sources_off_probe_receipt" in script
+    assert script.index("capture_public_egress_probe_receipt") < script.index(
+        "upsert_scheduler_trigger"
+    )
 
 
 def test_production_bluegreen_verification_gated_on_production_environment() -> None:
@@ -1073,6 +1087,77 @@ def test_the_lease_input_is_optional_so_the_build_phase_can_run_without_one() ->
     assert set(phase["options"]) == {"build", "deploy"}
 
 
+def test_workflow_dispatch_declares_masked_snapshot_and_rollback_inputs() -> None:
+    """The build phase accepts approved masked snapshot and rollback manifest inputs."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    expected_inputs = {
+        "data_snapshot_id",
+        "data_snapshot_uri",
+        "data_snapshot_object_generation",
+        "data_snapshot_content_sha",
+        "data_snapshot_file",
+        "rollback_manifest",
+    }
+    for name in expected_inputs:
+        assert name in inputs, f"deploy-dev.yml missing {name} input"
+        assert inputs[name]["required"] is False
+        assert inputs[name]["default"] == ""
+
+
+def test_the_build_phase_declares_expected_enabled_sources_but_never_the_posture() -> None:
+    """Sources-off is derived from what is deployed, not supplied by the dispatcher.
+
+    ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: an operator may declare
+    which sources this release expects to be *enabled* -- that is what makes the
+    approved masked snapshot mandatory. The sources-off posture itself, and the
+    digest binding it to this candidate, must have no dispatch channel at all;
+    otherwise the evidence would be whatever the dispatcher typed.
+    """
+
+    workflow_text = (WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8")
+    parsed = yaml.safe_load(workflow_text)
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    assert "external_sources_enabled" in inputs
+    assert inputs["external_sources_enabled"]["required"] is False
+    assert inputs["external_sources_enabled"]["default"] == ""
+
+    assert "--external-source" in workflow_text
+    for forbidden in (
+        "--sources-off-binding-digest",
+        "--sources-off-attestation",
+        "--sources-off-file",
+        "sources_off_binding_digest",
+        "ODP_SOURCES_OFF_ATTESTATION",
+    ):
+        assert forbidden not in workflow_text, (
+            f"deploy-dev.yml must not offer {forbidden}: a sources-off posture that "
+            "can be handed in is not evidence"
+        )
+
+
+def test_dispatch_input_descriptions_do_not_name_files_that_do_not_exist() -> None:
+    """An example path is an instruction, and a wrong one sends operators nowhere.
+
+    `rollback_manifest` once pointed at `docs/evidence/gates/PREV_RELEASE_MANIFEST.json`,
+    which has never existed in this repository.
+    """
+
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+    repo_path = re.compile(r"\b[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+\.(?:json|ya?ml|py|md|sh)\b")
+
+    missing = [
+        (name, candidate)
+        for name, spec in inputs.items()
+        for candidate in repo_path.findall(spec.get("description") or "")
+        if not (ROOT / candidate).exists()
+    ]
+    assert not missing, f"deploy-dev.yml inputs cite files that do not exist: {missing}"
+
+
 def test_admission_binds_the_handoff_images_to_the_manifest() -> None:
     """A lease admits this release's artifacts, not any digest presented."""
 
@@ -1095,6 +1180,7 @@ def test_the_build_phase_publishes_the_artifact_handoff_it_hands_forward() -> No
 
     handoff = _named_step(jobs["build"], "Write the build-once artifact handoff")
     run = handoff["run"]
+    env = handoff.get("env", {})
     assert "delivery_toolchain/release/build_release_handoff.py" in run
     for component in ("api", "web", "worker", "scheduler"):
         assert f'--component "{component}=' in run
@@ -1102,6 +1188,17 @@ def test_the_build_phase_publishes_the_artifact_handoff_it_hands_forward() -> No
     assert "--signature-ref" in run
     assert "--manifest-output" in run
     assert "--images-output" in run
+
+    assert "DATA_SNAPSHOT_FILE" in env
+    assert "DATA_SNAPSHOT_ID" in env
+    assert "DATA_SNAPSHOT_URI" in env
+    assert "DATA_SNAPSHOT_CONTENT_SHA" in env
+    assert "ROLLBACK_MANIFEST" in env
+    assert "--data-snapshot-file" in run
+    assert "--data-snapshot-id" in run
+    assert "--data-snapshot-uri" in run
+    assert "--data-snapshot-content-sha256" in run
+    assert "--rollback-manifest" in run
 
     # Both halves of the handoff leave the run, or a later deploy phase has
     # nothing to be dispatched with.
@@ -1272,3 +1369,144 @@ def test_the_build_phase_publishes_its_binding_receipt() -> None:
     )
     assert upload["if"] == "always()", "a receipt only kept on success proves nothing"
     assert "release-environment-receipt" in upload["with"]["name"]
+
+
+# --------------------------------------------------------------------------
+# ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: the build/deploy manifest
+# handoff has to be a transport, not a shared checkout.
+#
+# `build` and `deploy` are separate `workflow_dispatch` runs -- `admission` only
+# runs when `needs.build.result == 'skipped'`. So the deploy checkout carries
+# exactly one manifest: the one committed at the release SHA. Admission's
+# `--manifest` default resolves to that committed file, which meant the
+# sources-off attestation and `manifest_digest` a build had just produced were
+# never the thing verified; the only way to change admission's input was to
+# commit a different manifest onto an immutable release SHA.
+#
+# These hold the transport that replaces it: the build run's manifest artifact
+# is downloaded by run id, admitted only against the digest the Supervisor lease
+# names, and handed to admission explicitly.
+# --------------------------------------------------------------------------
+
+_ADMITTED_MANIFEST_PATH = ".odp_data/release/admitted-manifest/RELEASE_MANIFEST.json"
+
+
+def _release_workflow() -> dict:
+    return yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+
+
+def _dispatch_inputs() -> dict:
+    # YAML resolves a bare `on:` key to the boolean True, so both spellings have
+    # to be tried -- the same accessor the older dispatch tests here use.
+    parsed = _release_workflow()
+    return parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+
+def test_the_deploy_phase_downloads_the_manifest_from_the_build_run_that_made_it() -> None:
+    jobs = _release_workflow()["jobs"]
+    download = _named_step(
+        jobs["admission"], "Download the candidate release manifest from its build run"
+    )
+
+    assert str(download["uses"]).startswith("actions/download-artifact@")
+    with_ = download["with"]
+    # The artifact name has to be the one the build phase publishes, keyed by the
+    # same release SHA, or the transport silently resolves to nothing.
+    published = _named_step(jobs["build"], "Publish candidate release manifest")
+    assert with_["name"] == published["with"]["name"]
+    assert "${{ inputs.release_sha }}" in str(with_["name"])
+    # Cross-run download needs the run id and a token; without `run-id` the
+    # action looks only inside the current run, where no build ever happened.
+    assert with_["run-id"] == "${{ inputs.manifest_run_id }}"
+    assert "github-token" in with_
+
+
+def test_the_workflow_may_read_other_runs_artifacts_but_not_write_them() -> None:
+    """`actions: read` is the whole permission the transport needs."""
+
+    permissions = _release_workflow()["permissions"]
+    assert permissions["actions"] == "read"
+
+
+def test_admission_verifies_the_transported_manifest_not_the_committed_one() -> None:
+    jobs = _release_workflow()["jobs"]
+    step = _named_step(jobs["admission"], "Validate supervisor release admission")
+    run = step["run"]
+
+    assert '--manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json"' in run, (
+        "admission must be handed the downloaded artifact; its default resolves "
+        "to the manifest committed at the release SHA, which no build produced"
+    )
+    assert '--manifest-digest "${MANIFEST_DIGEST_INPUT}"' in run
+    assert "--require-manifest-digest" in run, (
+        "without this, omitting the digest would silently re-enable the fallback"
+    )
+    assert step["env"]["MANIFEST_DIGEST_INPUT"] == "${{ inputs.manifest_digest }}"
+    assert "docs/evidence/gates/RELEASE_MANIFEST.json" not in run
+
+
+def test_the_transported_manifest_is_bound_before_the_lease_is_read() -> None:
+    """A mismatched artifact must fail before anything touches lease state."""
+
+    jobs = _release_workflow()["jobs"]
+    steps = _job_steps(jobs["admission"])
+    names = [str(step.get("name", "")) for step in steps]
+    bind_index = names.index("Bind the transported manifest to the digest the lease names")
+    admit_index = names.index("Validate supervisor release admission")
+    download_index = names.index(
+        "Download the candidate release manifest from its build run"
+    )
+    assert download_index < bind_index < admit_index
+
+    run = steps[bind_index]["run"]
+    assert "delivery_toolchain/release/release_manifest.py" in run
+    assert '--expected-digest "${MANIFEST_DIGEST_INPUT}"' in run
+    assert '--expected-sha "${RELEASE_SHA}"' in run
+    # This step proves transport, not deployability; the release verdict is
+    # admission's to make, and duplicating it here would let the two disagree.
+    assert "--structure-only" in run
+    # An artifact that never arrived must refuse rather than skip the binding.
+    assert "published no candidate release manifest" in run
+
+
+def test_the_manifest_transport_inputs_are_declared_and_never_defaulted() -> None:
+    inputs = _dispatch_inputs()
+    for name in ("manifest_run_id", "manifest_digest"):
+        assert name in inputs, f"the deploy phase cannot transport a manifest without {name}"
+        assert inputs[name]["type"] == "string"
+        # Empty is the build phase's value; a non-empty default would let a
+        # deploy inherit a manifest coordinate nobody dispatched.
+        assert inputs[name].get("default", "") == ""
+
+
+def test_the_phase_gate_refuses_a_deploy_that_names_no_manifest() -> None:
+    """The shape gate is where a missing coordinate is caught, before approval."""
+
+    jobs = _release_workflow()["jobs"]
+    step = _named_step(jobs["release_phase"], "Validate phase and artifact handoff preconditions")
+    run = step["run"]
+    env = step["env"]
+
+    assert env["MANIFEST_RUN_ID_INPUT"] == "${{ inputs.manifest_run_id }}"
+    assert env["MANIFEST_DIGEST_INPUT"] == "${{ inputs.manifest_digest }}"
+    assert '--manifest-run-id "${MANIFEST_RUN_ID_INPUT}"' in run
+    assert '--manifest-digest "${MANIFEST_DIGEST_INPUT}"' in run
+
+
+def test_no_manifest_coordinate_is_sourced_from_a_repository_variable() -> None:
+    """`vars.*` are mutable between the build and the deploy that consumes it.
+
+    Every other input the deploy phase binds to is an exact, dispatch-supplied
+    value. Falling back to a variable would make the manifest a release deploys
+    depend on configuration edited after the lease was issued.
+    """
+
+    jobs = _release_workflow()["jobs"]
+    for job_id in ("release_phase", "admission"):
+        for step in _job_steps(jobs[job_id]):
+            for key, value in (step.get("env") or {}).items():
+                if "MANIFEST" in key:
+                    assert "vars." not in str(value), f"{job_id}:{key}"
+            for key, value in (step.get("with") or {}).items():
+                if key in ("run-id",):
+                    assert "vars." not in str(value), f"{job_id}:{key}"

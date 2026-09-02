@@ -340,6 +340,8 @@ export type DataRoomExportPayload = {
 /** DatasetSnapshotPayload */
 export type DatasetSnapshotPayload = {
   dataset_snapshot_id?: string | null;
+  feature_set_id?: string | null;
+  label_set_id?: string | null;
   require_training_eligible?: boolean;
   rows: Record<string, unknown>[];
 };
@@ -558,6 +560,15 @@ export type FinanceApprovalPayload = {
 export type ForecastOpsAlertAcknowledgePayload = {
   actor: string;
   note?: string | null;
+};
+
+/** ForecastOpsAlertBackfillPayload */
+export type ForecastOpsAlertBackfillPayload = {
+  actor?: string | null;
+  as_of?: string | null;
+  evaluation_horizon_days?: number;
+  min_observations?: number | null;
+  store_id?: string | null;
 };
 
 /** ForecastOpsFeedbackApprovePayload */
@@ -1093,6 +1104,8 @@ export type PriceOpsOptimizerJobPayload = {
 
 /** PriceOpsPlanItemPayload */
 export type PriceOpsPlanItemPayload = {
+  applicable_max_price?: number | null;
+  applicable_min_price?: number | null;
   baseline_demand: number;
   confidence?: number | null;
   current_price: number;
@@ -1675,6 +1688,8 @@ export const API_PATHS = {
   "/api/v1/external-data/quarantine": ["GET"],
   "/api/v1/feature-flags": ["GET"],
   "/api/v1/forecastops/alerts": ["GET"],
+  "/api/v1/forecastops/alerts/backfill-precision": ["POST"],
+  "/api/v1/forecastops/alerts/precision": ["GET"],
   "/api/v1/forecastops/alerts/{alert_id}/acknowledge": ["POST"],
   "/api/v1/forecastops/feedbacks": ["GET", "POST"],
   "/api/v1/forecastops/feedbacks/{feedback_id}": ["GET"],

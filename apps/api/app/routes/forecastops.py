@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from threading import RLock
 from typing import Any
 from uuid import uuid4
@@ -36,6 +37,7 @@ else:
     )
     from modules.forecastops.domain import (
         FeedbackStatus,
+        ForecastAlertPolicyError,
         ForecastOpsError,
         ForecastOpsNotFoundError,
     )
@@ -45,6 +47,7 @@ else:
         forecastops_production_required,
     )
     from modules.forecastops.workers import ForecastOpsBatchResult, run_forecastops_batch_forecast
+    from shared.governance import PolicyResolutionError
 
     class ForecastOpsTimeseriesPayload(BaseModel):
         observations: list[dict[str, Any]] = Field(default_factory=list)
@@ -96,6 +99,13 @@ else:
     class ForecastOpsFeedbackRejectPayload(BaseModel):
         actor: str | None = None
         reason: str | None = None
+
+    class ForecastOpsAlertBackfillPayload(BaseModel):
+        store_id: str | None = None
+        evaluation_horizon_days: int = 28
+        min_observations: int | None = None
+        as_of: datetime | None = None
+        actor: str | None = None
 
     class ForecastOpsJobStore:
         def __init__(self) -> None:
@@ -162,6 +172,7 @@ else:
         job_queue: JobQueue | None = None,
         model_binding: ModelBinding | None = None,
         model_runtime: ProductionModelRuntime | None = None,
+        policy_repository: Any = None,
         require_production_model: bool | None = None,
         require_durable_jobs: bool | None = None,
         runtime_mode: str | None = None,
@@ -195,6 +206,7 @@ else:
                 repository=forecast_repository,
                 model_runtime=model_runtime,
                 runtime_mode=runtime_mode,
+                policy_repository=policy_repository,
             )
         except ForecastOpsRuntimeConfigurationError as exc:
             composition_error = exc
@@ -342,6 +354,7 @@ else:
                     prediction_origin_time=body.prediction_origin_time,
                     repository=forecast_repository,
                     engine=registered_engine,
+                    policy_repository=policy_repository,
                 )
                 binding = model_binding
                 if (
@@ -419,6 +432,16 @@ else:
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail={"code": exc.code, "message": str(exc)},
                     ) from exc
+                except PolicyResolutionError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={"code": "POLICY_RESOLUTION_ERROR", "message": str(exc)},
+                    ) from exc
+                except ForecastAlertPolicyError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={"code": "FORECAST_ALERT_POLICY_ERROR", "message": str(exc)},
+                    ) from exc
                 return build_receipt(
                     result,
                     job_id=result.job_id,
@@ -469,6 +492,16 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail={"code": exc.code, "message": str(exc)},
+                ) from exc
+            except PolicyResolutionError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "POLICY_RESOLUTION_ERROR", "message": str(exc)},
+                ) from exc
+            except ForecastAlertPolicyError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "FORECAST_ALERT_POLICY_ERROR", "message": str(exc)},
                 ) from exc
             payload = dict(outcome.value)
             payload["created"] = not outcome.replayed
@@ -554,6 +587,68 @@ else:
                 if level is None or alert.alert_level.value == level
             ]
             return {"items": [alert.to_dict() for alert in alerts], "count": len(alerts)}
+
+        @router.get(
+            "/alerts/precision",
+            dependencies=[
+                Depends(require_permission("forecastops", Action.VIEW, engine=authz_engine))
+            ],
+        )
+        def get_alert_precision(request: Request, store_id: str | None = None) -> dict[str, Any]:
+            return service.evaluate_alert_precision(tenant_id(request), store_id=store_id)
+
+        @router.post(
+            "/alerts/backfill-precision",
+            dependencies=[
+                Depends(require_permission("forecastops", Action.CREATE, engine=authz_engine))
+            ],
+        )
+        def backfill_precision(
+            body: ForecastOpsAlertBackfillPayload, request: Request
+        ) -> dict[str, Any]:
+            caller_actor = body.actor or getattr(
+                getattr(request.state, "operator_principal", None), "subject_id", "operator"
+            )
+            try:
+                result = service.backfill_alert_precision(
+                    tenant_id(request),
+                    store_id=body.store_id,
+                    as_of=body.as_of,
+                    evaluation_horizon_days=body.evaluation_horizon_days,
+                    min_observations=body.min_observations,
+                    actor=caller_actor,
+                )
+            except PolicyResolutionError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "POLICY_RESOLUTION_ERROR", "message": str(exc)},
+                ) from exc
+            except ForecastOpsError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            audit_event = active_audit_log.record(
+                AuditEvent(
+                    event_type="forecastops.alert.precision_backfilled.v1",
+                    actor=caller_actor,
+                    action="backfill_alert_precision",
+                    resource="forecastops/alerts/precision",
+                    outcome="succeeded",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "store_id": body.store_id,
+                        "as_of": body.as_of.isoformat() if body.as_of else None,
+                        "updated_count": result["updated_count"],
+                        "precision": result["metrics"].get("precision"),
+                        "true_positives": result["metrics"].get("true_positive_count"),
+                        "false_positives": result["metrics"].get("false_positive_count"),
+                    },
+                )
+            )
+            result["audit_event_id"] = audit_event.event_id
+            result["correlation_id"] = request.state.correlation_id
+            return result
 
         @router.post(
             "/alerts/{alert_id}/acknowledge",
@@ -947,6 +1042,7 @@ else:
 
     __all__ = [
         "ForecastOpsAlertAcknowledgePayload",
+        "ForecastOpsAlertBackfillPayload",
         "ForecastOpsFeedbackApprovePayload",
         "ForecastOpsFeedbackCreatePayload",
         "ForecastOpsFeedbackRejectPayload",

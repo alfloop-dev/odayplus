@@ -350,7 +350,12 @@ def test_raw_pytest_rejects_resealed_collection_error_contradiction() -> None:
 
 def test_raw_pytest_rejects_resealed_requested_and_collected_id_drift() -> None:
     artifact = json.loads((ROOT / RAW_PYTEST_PATH).read_text(encoding="utf-8"))
-    removed = artifact["payload"]["requested_node_ids"].pop()
+    removed = next(
+        nodeid
+        for nodeid in reversed(artifact["payload"]["requested_node_ids"])
+        if nodeid in PYTEST_NODE_IDS
+    )
+    artifact["payload"]["requested_node_ids"].remove(removed)
     phases = artifact["payload"]["phase_reports"].pop(removed)
     artifact["payload"]["requested_node_ids"].append("tests/security/forged.py::test_forged")
     artifact["payload"]["phase_reports"]["tests/security/forged.py::test_forged"] = phases

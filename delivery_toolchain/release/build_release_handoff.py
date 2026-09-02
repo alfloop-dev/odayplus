@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -45,12 +47,25 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    EXTERNAL_SOURCE_INVENTORY,
     IMAGE_DIGEST_PATTERN,
+    SOURCE_EGRESS_DENIED,
+    SOURCE_STATUS_DISABLED,
+    SOURCES_OFF_CLOUD_RUN_EGRESS,
+    SOURCES_OFF_PROVIDER_MODE,
+    SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
+    _sources_off_egress_contract_errors,
     build_release_manifest,
+    build_sources_off_attestation,
+    build_sources_off_egress_evidence,
+    classify_source_env_var,
     compute_data_contract_digest,
+    compute_source_policy_digest,
+    env_var_belongs_to_source,
     extract_rollback_release_binding,
     is_exact_sha,
     load_manifest,
+    sources_off_attestation_errors,
     validate_manifest,
     validate_release_admission,
     validate_rollback_manifest,
@@ -64,6 +79,13 @@ SHARED_COMPONENTS = {"migration": "worker"}
 
 DEFAULT_WORKFLOW_PATH = ".github/workflows/deploy-dev.yml"
 
+# ``gs://bucket/key`` survives ``str`` but not ``Path``: pathlib collapses the
+# double slash into ``gs:/bucket/key`` and the resulting "file does not exist"
+# names a path nobody passed. A remote pointer is not a fetch instruction this
+# script can honour -- the build phase reads the previous approved manifest out
+# of its own workspace -- so it is rejected by name instead.
+REMOTE_URI_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://")
+
 
 class HandoffError(Exception):
     """handoff 無法被寫出的原因集合。"""
@@ -76,6 +98,182 @@ class HandoffError(Exception):
 def _parse_assignment(raw: str) -> tuple[str, str]:
     name, _, value = str(raw).partition("=")
     return name.strip(), value.strip()
+
+
+PROVIDER_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
+
+
+def _wired_env_value(workflow_text: str, name: str) -> str | None:
+    """回傳 workflow 實際接到 runtime 的 env 值；未接線時回傳 ``None``。
+
+    只認 YAML 的 ``NAME: value`` 形式，因此註解裡提到變數名稱不會被誤判成接線。
+    """
+
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    values = [match.group(1).strip().strip('"').strip("'") for match in pattern.finditer(workflow_text)]
+    wired = [value for value in values if value]
+    if not wired:
+        return None
+    return wired[0]
+
+
+def _wired_env_names(workflow_text: str) -> tuple[str, ...]:
+    """回傳 workflow 真正接到 runtime 的環境變數名稱（去重、排序）。
+
+    和 :func:`_wired_env_value` 同一個判準：只認 ``NAME: value`` 且值非空，所以
+    註解裡提到的變數名稱不算接線。列舉名稱而不是逐一查已知清單，release
+    toolchain 才不需要自己記住任何 provider 的變數叫什麼。
+    """
+
+    pattern = re.compile(r"^[ \t]*([A-Z][A-Z0-9_]*):[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    names = {
+        match.group(1)
+        for match in pattern.finditer(workflow_text)
+        if match.group(2).strip().strip('"').strip("'")
+    }
+    return tuple(sorted(names))
+
+
+def derive_sources_off_posture(
+    *,
+    workflow_path: Path,
+    enabled_sources: list[str] | None = None,
+    resolved_egress: str | None = None,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    """從 release SHA 上的 deploy workflow 推導出實際的 data-plane posture。
+
+    sources-off 證據必須來自這個 release 真正部署的設定，不能由呼叫端填寫，
+    否則「來源全關」就只是一句宣告。因此這裡只讀 workflow：runtime 拿到的
+    ``ODP_EXTERNAL_PROVIDER_MODE``、有沒有接上 provider credential、有沒有接上
+    provider endpoint（等同放行 public egress），以及 Runtime Release 是否保留
+    Cloud Run VPC connector/egress binding。resolved egress 則來自同一 build job
+    已解析、且由 environment precheck 留下 receipt 的非 secret runtime value。
+
+    任何一項不符 disabled／零 credential／default-deny 的結果都會照實記錄，
+    由 :func:`sources_off_attestation_errors` fail closed；這裡不做修正，也不以
+    workflow 文字猜測缺失的 runtime egress。
+    """
+
+    try:
+        workflow_text = workflow_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HandoffError(
+            [
+                f"無法讀取 deploy workflow {workflow_path}：{exc}；"
+                "sources-off posture 必須由 release SHA 上的 workflow 推導，不接受手填。"
+            ]
+        ) from exc
+
+    provider_mode = _wired_env_value(workflow_text, PROVIDER_MODE_ENV_VAR)
+    if provider_mode is None:
+        raise HandoffError(
+            [
+                f"deploy workflow 沒有設定 {PROVIDER_MODE_ENV_VAR}；"
+                "無法推導 sources-off posture，因此不放行。"
+            ]
+        )
+
+    enabled = set(enabled_sources or [])
+    workflow_vpc_binding = (
+        _wired_env_value(workflow_text, "ODP_CLOUD_RUN_VPC_CONNECTOR")
+        == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
+        and _wired_env_value(workflow_text, "ODP_CLOUD_RUN_VPC_EGRESS")
+        == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
+    )
+    deploy_entrypoint = root / "product_ops/deployment/deploy_cloud_run_waji.sh"
+    deploy_entrypoint_text = (
+        deploy_entrypoint.read_text(encoding="utf-8")
+        if deploy_entrypoint.is_file()
+        else ""
+    )
+    deploy_entrypoint_vpc_binding = all(
+        token in deploy_entrypoint_text
+        for token in (
+            '"--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}"',
+            '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"',
+        )
+    )
+    runtime_probe_wiring = (
+        _wired_env_value(workflow_text, "PUBLIC_EGRESS_PROBE_REPORT")
+        == SOURCES_OFF_RUNTIME_PROBE_RECEIPT
+        and "public-egress-probe" in deploy_entrypoint_text
+        and "public-egress-probe.json" in deploy_entrypoint_text
+    )
+    raw_resolved_egress = (
+        resolved_egress
+        if resolved_egress is not None
+        else os.environ.get("ODP_CLOUD_RUN_VPC_EGRESS", "")
+    ).strip()
+    resolved_cloud_run_egress = {
+        "all": SOURCES_OFF_CLOUD_RUN_EGRESS,
+        "all-traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
+        "all_traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
+    }.get(raw_resolved_egress.lower(), raw_resolved_egress or "unresolved")
+    contract_errors = _sources_off_egress_contract_errors(root=root)
+    egress_contract_verified = (
+        workflow_vpc_binding
+        and deploy_entrypoint_vpc_binding
+        and resolved_cloud_run_egress == SOURCES_OFF_CLOUD_RUN_EGRESS
+        and not contract_errors
+    )
+    wired_env_names = _wired_env_names(workflow_text)
+    inventory: list[dict[str, Any]] = []
+    for source_id in EXTERNAL_SOURCE_INVENTORY:
+        attributed = [
+            env_var
+            for env_var in wired_env_names
+            if env_var_belongs_to_source(env_var, source_id)
+        ]
+        credentialed = any(
+            classify_source_env_var(env_var) == "credential" for env_var in attributed
+        )
+        egress_open = any(
+            classify_source_env_var(env_var) == "endpoint" for env_var in attributed
+        )
+        # 這個 source 自己的 posture flag 是觀察到的事實，不是宣告。只要 workflow
+        # 有接上而值不是 disabled，就以它為準，不讓「來源全關」停在一句聲明。
+        status_flags_off = all(
+            _wired_env_value(workflow_text, env_var) == SOURCE_STATUS_DISABLED
+            for env_var in attributed
+            if classify_source_env_var(env_var) == "status"
+        )
+        disabled = (
+            provider_mode == SOURCES_OFF_PROVIDER_MODE
+            and source_id not in enabled
+            and status_flags_off
+        )
+        inventory.append(
+            {
+                "source_id": source_id,
+                "status": SOURCE_STATUS_DISABLED if disabled else "enabled",
+                "credentials_present": credentialed,
+                "public_egress": (
+                    "allowed"
+                    if egress_open
+                    else SOURCE_EGRESS_DENIED
+                    if egress_contract_verified
+                    else "unverified"
+                ),
+            }
+        )
+    provider_credentials_runtime = (
+        "present"
+        if any(entry["credentials_present"] for entry in inventory)
+        else "absent"
+    )
+    return {
+        "provider_mode": provider_mode,
+        "sources_inventory": inventory,
+        "egress_evidence": build_sources_off_egress_evidence(
+            workflow_vpc_binding=workflow_vpc_binding,
+            deploy_entrypoint_vpc_binding=deploy_entrypoint_vpc_binding,
+            runtime_probe_wiring=runtime_probe_wiring,
+            resolved_cloud_run_egress=resolved_cloud_run_egress,
+            provider_credentials_runtime=provider_credentials_runtime,
+            root=root,
+        ),
+    }
 
 
 def resolve_created_at(release_sha: str, root: Path = ROOT) -> str:
@@ -111,7 +309,7 @@ def build_handoff(
     signature_refs: list[str],
     data_snapshot: dict[str, Any] | None = None,
     rollback_manifest: dict[str, Any] | str | Path | None = None,
-    rollback_release: dict[str, Any] | None = None,
+    rollback_release: dict[str, Any] | str | Path | None = None,
     release_id: str | None = None,
     created_at: str | None = None,
     created_by_workflow: str | None = None,
@@ -119,6 +317,7 @@ def build_handoff(
     external_sources_expected_enabled: list[str] | None = None,
     schema_version: int = 2,
     root: Path = ROOT,
+    workflow_path: Path | None = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """回傳 ``(image handoff, release manifest)``，或在任何缺口時 raise。"""
 
@@ -163,8 +362,9 @@ def build_handoff(
     effective_release_id = release_id or f"odp-{release_sha[:12]}"
     if rollback_manifest is not None and rollback_release is not None:
         errors.append(
-            "rollback_manifest 與 rollback_release 不可同時指定；"
-            "兩者都必須指向同一份完整 previous release manifest"
+            "rollback_manifest 與 rollback_release（CLI: --rollback-manifest 與 "
+            "--rollback-release-file）不可同時指定；兩者都必須指向同一份完整 "
+            "previous release manifest，這裡不會替你選一條"
         )
 
     rollback_source = rollback_manifest if rollback_manifest is not None else rollback_release
@@ -172,7 +372,23 @@ def build_handoff(
     if rollback_source is not None:
         previous_manifest: dict[str, Any] | None = None
         if isinstance(rollback_source, (str, Path)):
-            previous_manifest, previous_errors = load_manifest(Path(rollback_source))
+            raw_str = str(rollback_source).strip()
+            if raw_str.startswith("{") and raw_str.endswith("}"):
+                try:
+                    previous_manifest = json.loads(raw_str)
+                    previous_errors = validate_manifest(previous_manifest)
+                except Exception as exc:
+                    previous_manifest = None
+                    previous_errors = [f"無法解析 rollback manifest JSON 字串：{exc}"]
+            elif REMOTE_URI_PATTERN.match(raw_str):
+                previous_manifest = None
+                previous_errors = [
+                    f"{raw_str} 是遠端 URI，不是本機路徑；rollback manifest 只接受 build "
+                    "workspace 內的檔案路徑或 inline JSON。請先把上一核准 release manifest "
+                    "取回工作區再傳入。"
+                ]
+            else:
+                previous_manifest, previous_errors = load_manifest(Path(rollback_source))
             if previous_errors or previous_manifest is None:
                 errors.extend([f"無法載入 rollback manifest：{e}" for e in previous_errors])
         elif isinstance(rollback_source, dict):
@@ -191,11 +407,82 @@ def build_handoff(
             else:
                 resolved_rollback_release = extract_rollback_release_binding(previous_manifest)
 
+    enabled_sources = [
+        str(source).strip()
+        for source in (external_sources_expected_enabled or [])
+        if str(source).strip()
+    ]
+
+    manifest_components: dict[str, dict[str, str]] = {}
+    if len(images) == len(HANDOFF_COMPONENTS):
+        manifest_components = {name: {"image": images[name]} for name in HANDOFF_COMPONENTS}
+        for shared, source in SHARED_COMPONENTS.items():
+            manifest_components[shared] = {
+                "image": images[source],
+                "shares_image_with": source,
+            }
+
+    sources_off_attestation: dict[str, Any] | None = None
     if schema_version >= 2:
-        if data_snapshot is None:
-            errors.append(
-                "缺少 masked data snapshot 參照；build 階段必須綁定本次核准的 masked snapshot。"
-            )
+        if enabled_sources:
+            # 啟用來源的 release 完全維持既有嚴格路徑：沒有本次核准的 masked
+            # snapshot 就不是「比較弱的 manifest」，而是不能放行的 manifest。
+            if data_snapshot is None:
+                errors.append(
+                    "缺少 masked data snapshot 參照；build 階段啟用外部資料來源時必須綁定本次核准的 masked snapshot。"
+                )
+        elif data_snapshot is None:
+            # sources-off release 沒有可綁定的 masked snapshot，改以本 release
+            # 真正部署設定推導出的 provider-off posture 作為 data-plane 證據。
+            # 這裡不接受任何手填 digest、placeholder 或 raw artifact。
+            if manifest_components:
+                try:
+                    posture = derive_sources_off_posture(
+                        workflow_path=(
+                            workflow_path
+                            if workflow_path is not None
+                            else root / DEFAULT_WORKFLOW_PATH
+                        ),
+                        enabled_sources=enabled_sources,
+                        root=root,
+                    )
+                except HandoffError as exc:
+                    errors.extend(exc.errors)
+                else:
+                    candidate = build_sources_off_attestation(
+                        candidate_sha=release_sha,
+                        components=manifest_components,
+                        source_policy_digest=compute_source_policy_digest(root=root),
+                        provider_mode=posture["provider_mode"],
+                        sources_inventory=posture["sources_inventory"],
+                        egress_evidence=posture["egress_evidence"],
+                    )
+                    posture_errors = sources_off_attestation_errors(
+                        candidate,
+                        candidate_sha=release_sha,
+                        components=manifest_components,
+                        source_policy_digest=compute_source_policy_digest(root=root),
+                    )
+                    if posture_errors:
+                        errors.extend(
+                            "sources-off posture 不符合放行條件：" + error
+                            for error in posture_errors
+                        )
+                    else:
+                        sources_off_attestation = candidate
+
+            # Anti-downgrade：上一個核准 release 已經綁定 masked snapshot 時，
+            # 這一個 release 不能靠宣告 sources-off 就把那個 binding 換掉。
+            if isinstance(resolved_rollback_release, dict) and any(
+                key in resolved_rollback_release
+                for key in ("data_snapshot", "snapshot_pointer", "snapshot")
+            ):
+                errors.append(
+                    "上一核准 release 已綁定 masked data snapshot；"
+                    "本次不得以 sources-off posture 取代既有 snapshot binding，"
+                    "請改為綁定本次核准的 masked snapshot。"
+                )
+
         if resolved_rollback_release is None:
             errors.append(
                 "缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。"
@@ -203,13 +490,6 @@ def build_handoff(
 
     if errors:
         raise HandoffError(errors)
-
-    manifest_components = {name: {"image": images[name]} for name in HANDOFF_COMPONENTS}
-    for shared, source in SHARED_COMPONENTS.items():
-        manifest_components[shared] = {
-            "image": images[source],
-            "shares_image_with": source,
-        }
 
     manifest = build_release_manifest(
         release_id=effective_release_id,
@@ -223,8 +503,9 @@ def build_handoff(
             or f"github://{repository}/{DEFAULT_WORKFLOW_PATH}@{release_sha}"
         ),
         data_snapshot=data_snapshot,
+        sources_off_attestation=sources_off_attestation,
         rollback_release=resolved_rollback_release,
-        external_sources_expected_enabled=external_sources_expected_enabled or [],
+        external_sources_expected_enabled=enabled_sources,
         release_status="ready",
         schema_version=schema_version,
         root=root,
@@ -269,12 +550,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repository", default="alfloop-dev/odayplus")
     parser.add_argument("--data-snapshot-id", default=None)
     parser.add_argument("--data-snapshot-uri", default=None)
+    parser.add_argument("--data-snapshot-object-generation", default=None)
     parser.add_argument("--data-snapshot-sha256", default=None)
     parser.add_argument("--data-snapshot-content-sha256", default=None)
     parser.add_argument("--data-snapshot-contract-digest", default=None)
     parser.add_argument("--data-snapshot-file", type=Path, default=None)
     parser.add_argument("--data-snapshot-unmasked", action="store_true", default=False)
-    parser.add_argument("--rollback-manifest", type=Path, default=None)
+    parser.add_argument(
+        "--rollback-manifest",
+        default=None,
+        help=(
+            "Previous approved release manifest, as a path inside the build "
+            "workspace or as an inline JSON object"
+        ),
+    )
     parser.add_argument("--rollback-release-file", type=Path, default=None)
     parser.add_argument("--images-output", type=Path, required=True)
     parser.add_argument("--manifest-output", type=Path, required=True)
@@ -284,38 +573,93 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional GITHUB_OUTPUT file to receive manifest_digest and release_id.",
     )
+    parser.add_argument(
+        "--external-source",
+        action="append",
+        default=[],
+        dest="external_sources_expected_enabled",
+        help="External source expected to be enabled (default: none, sources-off).",
+    )
     args = parser.parse_args(argv)
 
     components = dict(_parse_assignment(raw) for raw in args.component)
 
+    # The approved snapshot arrives either as a whole file or as its separate
+    # fields, and the workflow reads each channel from a different place
+    # (dispatch inputs vs repository vars). Letting one channel win silently
+    # means a stale `vars` entry can replace the snapshot an operator just
+    # approved, and the manifest would record the substitution as if it were
+    # the approval. Mixing the channels is refused, exactly as
+    # ``rollback_manifest``/``rollback_release`` already are.
+    inline_snapshot_fields = {
+        "--data-snapshot-id": args.data_snapshot_id,
+        "--data-snapshot-uri": args.data_snapshot_uri,
+        "--data-snapshot-object-generation": args.data_snapshot_object_generation,
+        "--data-snapshot-sha256": args.data_snapshot_sha256,
+        "--data-snapshot-content-sha256": args.data_snapshot_content_sha256,
+    }
+    # These two never build a snapshot on their own, but they do modify the
+    # inline one, so passing them alongside a file is the same ambiguity.
+    inline_snapshot_modifiers = {
+        "--data-snapshot-contract-digest": args.data_snapshot_contract_digest,
+        "--data-snapshot-unmasked": args.data_snapshot_unmasked or None,
+    }
+    supplied_inline = sorted(
+        name
+        for name, value in {**inline_snapshot_fields, **inline_snapshot_modifiers}.items()
+        if value
+    )
+
     data_snapshot = None
+    if args.data_snapshot_file and supplied_inline:
+        print(
+            "approved masked data snapshot 有兩條互斥的來源，這裡不會替你選一條：",
+            file=sys.stderr,
+        )
+        print(
+            f"- --data-snapshot-file {args.data_snapshot_file} 與 "
+            + "、".join(supplied_inline)
+            + " 同時指定。",
+            file=sys.stderr,
+        )
+        print(
+            "- 只留下實際核准的那一條；workflow 端請清掉未使用的 dispatch input "
+            "或 repository vars fallback。",
+            file=sys.stderr,
+        )
+        return 1
+
     if args.data_snapshot_file:
         try:
             data_snapshot = json.loads(args.data_snapshot_file.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             print(f"無法讀取 data snapshot 檔案 {args.data_snapshot_file}：{exc}", file=sys.stderr)
             return 1
-    elif (
-        args.data_snapshot_id
-        or args.data_snapshot_uri
-        or args.data_snapshot_sha256
-        or args.data_snapshot_content_sha256
-    ):
+    elif any(inline_snapshot_fields.values()):
         contract_digest = (
             args.data_snapshot_contract_digest
             or compute_data_contract_digest(root=ROOT)
         )
+        raw_content_sha = (
+            args.data_snapshot_content_sha256
+            or args.data_snapshot_sha256
+            or ""
+        ).strip()
+        if len(raw_content_sha) == 64 and re.fullmatch(r"[0-9a-f]{64}", raw_content_sha):
+            raw_content_sha = f"sha256:{raw_content_sha}"
         data_snapshot = {
             "id": (args.data_snapshot_id or "").strip(),
             "uri": (args.data_snapshot_uri or "").strip(),
-            "content_sha256": (
-                args.data_snapshot_content_sha256 or args.data_snapshot_sha256 or ""
-            ).strip(),
+            "object_generation": (
+                int(args.data_snapshot_object_generation)
+                if args.data_snapshot_object_generation
+                and re.fullmatch(r"[0-9]+", args.data_snapshot_object_generation)
+                else args.data_snapshot_object_generation
+            ),
+            "content_sha256": raw_content_sha,
             "data_contract_digest": contract_digest,
             "masked": not args.data_snapshot_unmasked,
         }
-
-    rollback_file = args.rollback_manifest or args.rollback_release_file
 
     try:
         images, manifest = build_handoff(
@@ -324,11 +668,15 @@ def main(argv: list[str] | None = None) -> int:
             sbom_refs=[ref for ref in args.sbom_ref if str(ref).strip()],
             signature_refs=[ref for ref in args.signature_ref if str(ref).strip()],
             data_snapshot=data_snapshot,
-            rollback_manifest=rollback_file,
+            # Both, not `a or b`: collapsing them here would hide the same
+            # substitution that build_handoff refuses for the snapshot.
+            rollback_manifest=args.rollback_manifest,
+            rollback_release=args.rollback_release_file,
             release_id=args.release_id,
             created_at=args.created_at,
             created_by_workflow=args.created_by_workflow,
             repository=args.repository,
+            external_sources_expected_enabled=args.external_sources_expected_enabled,
         )
     except HandoffError as exc:
         print("build-once artifact handoff 無法產生：", file=sys.stderr)

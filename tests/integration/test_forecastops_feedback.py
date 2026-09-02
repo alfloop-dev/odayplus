@@ -19,8 +19,10 @@ from modules.forecastops import (
     InMemoryForecastOpsRepository,
     StoreDayObservation,
     calculate_forecast_precision,
+    default_forecast_alert_policy,
 )
 from shared.auth import Role
+from shared.governance import InMemoryDecisionPolicyRepository
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.repositories import DurableForecastOpsRepository
 from tests.integration._authz import (
@@ -34,6 +36,10 @@ DATA_OWNER_HEADERS = {
     **auth_headers(Role.DATA_OWNER),
     "x-tenant-id": TENANT_ID,
 }
+
+
+def _policy_repository() -> InMemoryDecisionPolicyRepository:
+    return InMemoryDecisionPolicyRepository([default_forecast_alert_policy(TENANT_ID)])
 
 
 def _create_sample_observations(
@@ -90,7 +96,7 @@ def test_context_annotation_feedback_auto_accepted_and_filters_training_and_prec
     - Serves as exclusion interval for training dataset and precision calculations.
     """
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     observations = _create_sample_observations(days=14)
 
     # 1. Ingest timeseries and create initial forecast
@@ -198,7 +204,7 @@ def test_outcome_correction_requires_data_owner_approval_and_recalculates_foreca
     - Does NOT directly overwrite forecast or decision fields.
     """
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     observations = _create_sample_observations(base_revenue=50_000.0, days=7)
     service.ingest_timeseries(observations, tenant_id=TENANT_ID)
 
@@ -265,7 +271,7 @@ def test_outcome_correction_requires_data_owner_approval_and_recalculates_foreca
 def test_outcome_correction_rejection_flow() -> None:
     """OUTCOME_CORRECTION rejection flow."""
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     observations = _create_sample_observations(days=7)
     service.ingest_timeseries(observations, tenant_id=TENANT_ID)
 
@@ -299,7 +305,7 @@ def test_alert_disposition_auto_accepted_and_closes_alert() -> None:
     - Closed alert cannot be acknowledged subsequently.
     """
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
     observations = tuple(
         StoreDayObservation(
             store_id="store-alert-001",
@@ -333,27 +339,46 @@ def test_alert_disposition_auto_accepted_and_closes_alert() -> None:
         store_id="store-alert-001",
         feedback_type=FeedbackType.ALERT_DISPOSITION,
         alert_id=alert.alert_id,
-        disposition="false_alarm_sensor_glitch",
+        disposition="Known Context",
         reason="IoT sensor offline gave zero machine cycle readings erroneously",
         actor="ops-manager-dan",
     )
 
     # Verification 1: Feedback auto-accepted
     assert feedback.status is FeedbackStatus.ACCEPTED
-    assert feedback.disposition == "false_alarm_sensor_glitch"
+    assert feedback.disposition == "KNOWN_CONTEXT"
 
     # Verification 2: Alert is closed with disposition
     updated_alert = repository.get_alert(TENANT_ID, alert.alert_id)
     assert updated_alert is not None
     assert updated_alert.status == "closed"
     assert updated_alert.closed_at is not None
-    assert updated_alert.disposition == "false_alarm_sensor_glitch"
+    assert updated_alert.disposition == "KNOWN_CONTEXT"
     assert updated_alert.disposition_set_by == "ops-manager-dan"
+
+    # A later precision run must recognize the canonical manual outcome and
+    # leave it out of automated re-evaluation.
+    backfill = service.backfill_alert_precision(TENANT_ID, store_id="store-alert-001")
+    assert backfill["updated_count"] == 0
+    assert backfill["alerts"][0]["disposition"] == "KNOWN_CONTEXT"
 
     # Verification 3: Closed alert cannot be acknowledged
     with pytest.raises(ForecastOpsError, match="closed and cannot be acknowledged"):
         service.acknowledge_alert(
             TENANT_ID, alert.alert_id, actor="ops-manager-dan", note="late ack"
+        )
+
+
+def test_alert_disposition_rejects_noncanonical_values() -> None:
+    with pytest.raises(ForecastOpsError, match="Invalid alert disposition"):
+        ForecastFeedback.create(
+            tenant_id=TENANT_ID,
+            store_id="store-alert-001",
+            feedback_type=FeedbackType.ALERT_DISPOSITION,
+            alert_id="alert-001",
+            disposition="false_alarm_sensor_glitch",
+            reason="Disposition must be one of the precision outcomes",
+            created_by="ops-manager-dan",
         )
 
 
@@ -364,7 +389,7 @@ def test_governance_rejection_of_direct_forecast_field_overrides() -> None:
     or decision fields. Direct overwrite attempts are strictly rejected.
     """
     repository = InMemoryForecastOpsRepository()
-    service = ForecastOpsService(repository=repository)
+    service = ForecastOpsService(repository=repository, policy_repository=_policy_repository())
 
     with pytest.raises(ForecastOpsError, match="ODP-BR-GOV-001 violation"):
         service.submit_feedback(
@@ -385,7 +410,7 @@ def test_governance_rejection_of_direct_forecast_field_overrides() -> None:
 
 def test_api_feedback_endpoints_and_rbac() -> None:
     """Integration test for API feedback endpoints, RBAC permissions, and security audit."""
-    app = create_app()
+    app = create_app(forecastops_policy_repository=_policy_repository())
     client = TestClient(app, headers=FORECASTOPS_HEADERS)
 
     # 1. Submit CONTEXT_ANNOTATION via POST /forecastops/feedbacks (requires forecastops:write)

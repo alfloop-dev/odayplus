@@ -76,3 +76,39 @@ def test_one_version_in_force_per_policy_per_tenant() -> None:
     assert "CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_policy_active" in sql
     assert "ON workflow.decision_policies (policy_id, tenant_id)" in sql
     assert "WHERE effective_to IS NULL" in sql
+
+
+def test_seeding_is_one_definition_shared_by_backfill_and_onboarding() -> None:
+    """`core.tenants` rows are written by the data plane at runtime, strictly
+    after `alembic upgrade head`. A migration-time backfill therefore covers
+    only the tenants that already exist -- on a fresh database, none -- so the
+    onboarding path needs the same seed, and the two must not be able to drift
+    into issuing different thresholds."""
+    sql = _sql()
+
+    assert "CREATE OR REPLACE FUNCTION workflow.seed_forecast_alert_policy(p_tenant_id UUID)" in sql
+    assert "SELECT workflow.seed_forecast_alert_policy(t.tenant_id) FROM core.tenants t;" in sql
+    assert "PERFORM workflow.seed_forecast_alert_policy(NEW.tenant_id);" in sql
+    assert "CREATE TRIGGER trg_seed_forecast_alert_policy" in sql
+    assert "AFTER INSERT ON core.tenants" in sql
+
+    # One definition means the thresholds appear once per policy version, in
+    # the function -- not once in the function and again in an inline backfill.
+    assert sql.count("'four-light-policy-0.0.0-retrofit',") == 1
+    assert sql.count("'four-light-policy-v1',") == 1
+
+
+def test_the_retrofit_version_carries_evaluable_thresholds() -> None:
+    """Point-in-time resolution to the retrofit row has to reproduce the light
+    a pre-mechanism alert would have shown. `_policy_thresholds()` rejects a
+    threshold missing `input` or `op`, so a retrofit row without them makes
+    every historical re-evaluation raise instead of reproduce."""
+    sql = _sql()
+    retrofit = sql.split("'0.0.0-retrofit',", 1)[1].split("ON CONFLICT", 1)[0]
+
+    for level, value in (("RED", "-0.35"), ("ORANGE", "-0.20"), ("YELLOW", "-0.10")):
+        fragment = (
+            f'{{"level": "{level}", "input": "sitescore_gap_ratio", '
+            f'"op": "<=", "value": {value}}}'
+        )
+        assert fragment in retrofit

@@ -43,6 +43,8 @@ def _alert(alert_id: str = "alert-live-1") -> Alert:
         alert_reason_code="REVENUE_DROP",
         evidence_json={"snapshot_id": "snapshot-live-1"},
         opened_at=datetime(2026, 7, 24, 8, 0, tzinfo=UTC),
+        policy_id="four-light-policy",
+        policy_version="four-light-policy-v1",
     )
 
 

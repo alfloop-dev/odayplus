@@ -13,6 +13,8 @@ from modules.forecastops.domain.feedback import (
     FeedbackStatus,
     FeedbackType,
     ForecastFeedback,
+    backfill_alert_precision,
+    calculate_alert_precision_metrics,
     calculate_forecast_precision,
     filter_training_observations,
     validate_feedback_payload,
@@ -39,6 +41,7 @@ from modules.forecastops.runtime import (
     ForecastOpsRuntimeConfigurationError,
     forecastops_production_required,
 )
+from shared.governance import DecisionPolicyRepository
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,7 @@ class ForecastOpsService:
         engine_options: Mapping[str, Any] | None = None,
         model_runtime: ProductionModelRuntime | None = None,
         runtime_mode: str | None = None,
+        policy_repository: DecisionPolicyRepository | None = None,
     ) -> None:
         self.production_required = forecastops_production_required(runtime_mode)
         if self.production_required and (
@@ -74,6 +78,7 @@ class ForecastOpsService:
                 "ForecastOps production requires an injected durable repository"
             )
         self.repository = repository or InMemoryForecastOpsRepository()
+        self.policy_repository = policy_repository
         self.model_runtime = model_runtime
         selected_engine: str | ForecastEngine | None = engine
         if selected_engine is None and self.production_required and model_runtime is not None:
@@ -109,6 +114,7 @@ class ForecastOpsService:
         engine: str | ForecastEngine | None = None,
         model_name: str | None = None,
         engine_options: Mapping[str, Any] | None = None,
+        policy_repository: DecisionPolicyRepository | None = None,
     ) -> ForecastOpsResult:
         from datetime import UTC
         from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -164,12 +170,18 @@ class ForecastOpsService:
             production_required=self.production_required,
         )
         run_id = prediction_run_id or f"pred-run-forecast-{uuid4()}"
+        active_policy_repository = (
+            policy_repository
+            if policy_repository is not None
+            else self.policy_repository
+        )
         forecasts, alerts, handoffs = forecast_stores(
             normalized_inputs,
             prediction_origin_time=origin,
             scored_at=scored_at,
             prediction_run_id=run_id,
             engine=selected_engine,
+            policy_repository=active_policy_repository,
         )
         saved_forecasts = tuple(self.repository.save_forecast(forecast) for forecast in forecasts)
 
@@ -540,6 +552,73 @@ class ForecastOpsService:
         observations = series.observations if series is not None else ()
         feedbacks = self.repository.list_feedbacks(tenant_id, store_id=store_id)
         return calculate_forecast_precision(forecast, observations, feedbacks)
+
+    def evaluate_alert_precision(
+        self,
+        tenant_id: str,
+        *,
+        store_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Calculate precision and lead time metrics across alerts for a tenant (ODP-FR-FCT-006)."""
+        if store_id is not None:
+            alerts = self.repository.list_alerts_by_store(tenant_id, store_id)
+        else:
+            alerts = self.repository.list_alerts(tenant_id)
+        return calculate_alert_precision_metrics(alerts)
+
+    def backfill_alert_precision(
+        self,
+        tenant_id: str,
+        *,
+        store_id: str | None = None,
+        as_of: datetime | None = None,
+        evaluation_horizon_days: int = 28,
+        min_observations: int | None = None,
+        actor: str = "precision_backfill_job",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Batch backfill deterioration_confirmed_at and disposition for alerts (ODP-FR-FCT-006)."""
+        if store_id is not None:
+            alerts = self.repository.list_alerts_by_store(tenant_id, store_id)
+            series = self.repository.get_series(tenant_id, store_id)
+            observations = series.observations if series is not None else ()
+            feedbacks = self.repository.list_feedbacks(tenant_id, store_id=store_id)
+        else:
+            alerts = self.repository.list_alerts(tenant_id)
+            all_series = self.repository.list_series(tenant_id)
+            observations = [obs for s in all_series for obs in s.observations]
+            feedbacks = self.repository.list_feedbacks(tenant_id)
+
+        original_alerts = {alert.alert_id: alert for alert in alerts}
+
+        updated_alerts, metrics = backfill_alert_precision(
+            alerts,
+            observations=observations,
+            feedbacks=feedbacks,
+            policy_repository=self.policy_repository,
+            evaluation_horizon_days=evaluation_horizon_days,
+            min_observations=min_observations,
+            as_of=as_of,
+            actor=actor,
+            now=now,
+        )
+
+        changed_alerts = [
+            alert
+            for alert in updated_alerts
+            if original_alerts.get(alert.alert_id) != alert
+        ]
+        for alert in changed_alerts:
+            self.repository.save_alert(alert)
+
+        return {
+            "tenant_id": tenant_id,
+            "store_id": store_id,
+            "updated_count": len(changed_alerts),
+            "as_of": _utc_datetime(as_of).isoformat() if as_of is not None else None,
+            "metrics": metrics,
+            "alerts": [a.to_dict() for a in updated_alerts],
+        }
 
 
 def _utc_datetime(value: datetime) -> datetime:
