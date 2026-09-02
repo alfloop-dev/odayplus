@@ -94,6 +94,7 @@ def create_prev_manifest_file(tmp_path: Path) -> Path:
         'data_snapshot': {
             'id': 'snap-prev-001',
             'uri': 'gs://odayplus-snapshots/masked/snap-prev-001.tar.gz',
+            'object_generation': 122,
             'content_sha256': 'sha256:' + '8' * 64,
             'data_contract_digest': compute_data_contract_digest(root=ROOT),
             'masked': True,
@@ -111,6 +112,7 @@ def create_prev_manifest_file(tmp_path: Path) -> Path:
             'data_snapshot': {
                 'id': 'snap-prev-000',
                 'uri': 'gs://odayplus-snapshots/masked/snap-prev-000.tar.gz',
+                'object_generation': 121,
                 'content_sha256': 'sha256:' + '8' * 64,
                 'data_contract_digest': compute_data_contract_digest(root=ROOT),
                 'masked': True,
@@ -129,6 +131,7 @@ def test_positive_flow_with_snapshot_file_and_rollback_manifest(tmp_path: Path, 
     data_snapshot = {
         'id': 'snap-approved-20260901-001',
         'uri': 'gs://odayplus-snapshots/masked/snap-approved-20260901-001.tar.gz',
+        'object_generation': 123,
         'content_sha256': 'sha256:' + '1' * 64,
         'data_contract_digest': compute_data_contract_digest(root=ROOT),
         'masked': True,
@@ -181,6 +184,7 @@ def test_missing_snapshot_fails_closed(tmp_path: Path, prev_manifest_path: Path)
         '--component', 'scheduler=asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/scheduler@sha256:' + 'd' * 64,
         '--sbom-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'e' * 64,
         '--signature-ref', 'asia-east1-docker.pkg.dev/odayplus/oday-plus-dev/api@sha256:' + 'f' * 64,
+        '--external-source', 'listing_raw_snapshot',
         '--rollback-manifest', str(prev_manifest_path),
         '--images-output', str(images_out),
         '--manifest-output', str(manifest_out),
@@ -381,6 +385,7 @@ def _base_argv(images_out: Path, manifest_out: Path) -> list[str]:
 APPROVED_SNAPSHOT = {
     'id': 'snap-approved-20260901-001',
     'uri': 'gs://odayplus-snapshots/masked/snap-approved-20260901-001.tar.gz',
+    'object_generation': 123,
     'content_sha256': 'sha256:' + '1' * 64,
 }
 
@@ -465,6 +470,7 @@ def test_either_snapshot_channel_alone_still_produces_the_same_manifest(
         _base_argv(tmp_path / 'images_inline_channel.json', inline_manifest_out) + [
             '--data-snapshot-id', snapshot['id'],
             '--data-snapshot-uri', snapshot['uri'],
+            '--data-snapshot-object-generation', str(snapshot['object_generation']),
             '--data-snapshot-content-sha256', snapshot['content_sha256'],
             '--rollback-manifest', str(prev_manifest_path),
         ]

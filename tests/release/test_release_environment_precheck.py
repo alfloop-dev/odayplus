@@ -247,7 +247,13 @@ def test_an_admitted_receipt_records_presence_but_never_a_value(
     assert receipt["secret_values_redacted"] is True
 
     serialized = json.dumps(receipt, ensure_ascii=False)
-    for value in values.values():
+    assert (
+        receipt["resolved_non_secret_values"]["ODP_CLOUD_RUN_VPC_EGRESS"]
+        == values["ODP_CLOUD_RUN_VPC_EGRESS"]
+    )
+    for name, value in values.items():
+        if name == "ODP_CLOUD_RUN_VPC_EGRESS":
+            continue
         assert value not in serialized
 
 

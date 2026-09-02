@@ -55,6 +55,7 @@ def build_manifest(candidate_sha: str = SHA) -> dict:
         "data_snapshot": {
             "id": "snap-test-001",
             "uri": "gs://odayplus-snapshots/masked/snap-test-001.tar.gz",
+            "object_generation": 123,
             "content_sha256": "sha256:" + "d" * 64,
             "data_contract_digest": "sha256:" + "b" * 64,
             "masked": True,
@@ -70,6 +71,7 @@ def build_manifest(candidate_sha: str = SHA) -> dict:
             "data_snapshot": {
                 "id": "snap-prev-001",
                 "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+                "object_generation": 122,
                 "content_sha256": "sha256:" + "f" * 64,
                 "data_contract_digest": "sha256:" + "b" * 64,
                 "masked": True,
@@ -194,6 +196,10 @@ def run_admission(release: dict, **overrides) -> tuple[int, dict]:
     ]
     if "action" in overrides:
         argv += ["--action", overrides["action"]]
+    if "manifest_digest" in overrides:
+        argv += ["--manifest-digest", overrides["manifest_digest"]]
+    if overrides.get("require_manifest_digest"):
+        argv.append("--require-manifest-digest")
     for name, image in (overrides.get("component_images") or {}).items():
         argv += ["--component-image", f"{name}={image}"]
     code = main(argv)
@@ -648,3 +654,141 @@ def test_a_component_binding_cannot_be_checked_against_an_unreadable_manifest(
     )
     assert code == 1
     assert receipt["admitted"] is False
+
+
+# --------------------------------------------------------------------------
+# ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: the manifest that gets
+# verified must be the one the build produced.
+#
+# Admission's `--manifest` defaults to `docs/evidence/gates/RELEASE_MANIFEST.json`
+# -- the file committed at the release SHA. The deploy phase is a separate
+# dispatch from the build, so that default is never the manifest this release
+# built: a fresh sources-off attestation, or new component digests, could not be
+# what admission checked without committing a new manifest onto an already-immutable
+# release SHA. The deploy phase now transports the build run's manifest artifact
+# and names the digest the lease was issued against; these hold that the named
+# digest is what actually decides, in both directions.
+# --------------------------------------------------------------------------
+
+
+def test_the_transported_manifest_is_admitted_when_it_hashes_to_the_named_digest(
+    release,
+) -> None:
+    code, receipt = run_admission(
+        release,
+        manifest_digest=release["manifest"]["manifest_digest"],
+        require_manifest_digest=True,
+        component_images={"api": MANIFEST_API_IMAGE},
+    )
+    assert code == 0
+    assert receipt["admitted"] is True
+    assert receipt["manifest_transport"]["expected_manifest_digest"] == (
+        release["manifest"]["manifest_digest"]
+    )
+    assert receipt["manifest_transport"]["digest_binding_required"] is True
+
+
+def test_a_manifest_that_is_not_the_one_the_lease_names_is_refused(
+    release, tmp_path
+) -> None:
+    """A different build's manifest is self-consistent too -- that is the point.
+
+    Substituting another run's artifact passes every structural check the
+    manifest can make about itself. Only the digest the lease was issued against
+    can tell the two apart, so a mismatch has to refuse and leave the lease
+    unspent.
+    """
+
+    other = build_manifest()
+    other["release_id"] = "rel-some-other-build"
+    other["manifest_digest"] = compute_manifest_digest(other)
+    assert other["manifest_digest"] != release["manifest"]["manifest_digest"]
+    other_path = tmp_path / "other-RELEASE_MANIFEST.json"
+    other_path.write_text(json.dumps(other), encoding="utf-8")
+
+    code, receipt = run_admission(
+        release,
+        manifest_path=other_path,
+        manifest_digest=release["manifest"]["manifest_digest"],
+        require_manifest_digest=True,
+        component_images={"api": MANIFEST_API_IMAGE},
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert any("manifest_digest does not match" in error for error in receipt["errors"])
+    assert release["store"].get(release["lease"]["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_a_tampered_manifest_cannot_be_re_signed_into_the_named_digest(
+    release,
+) -> None:
+    """Editing the transported bytes changes the digest, so it stops matching."""
+
+    rewrite(
+        release["manifest_path"],
+        lambda payload: payload.__setitem__("release_status", "blocked"),
+    )
+    code, receipt = run_admission(
+        release,
+        manifest_digest=release["manifest"]["manifest_digest"],
+        require_manifest_digest=True,
+        component_images={"api": MANIFEST_API_IMAGE},
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert release["store"].get(release["lease"]["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_admission_refuses_to_run_without_the_digest_it_must_bind_to(release) -> None:
+    """`--require-manifest-digest` is what stops a silent fallback.
+
+    Without it, omitting the digest would let admission accept whatever manifest
+    the path resolved to -- which is exactly the committed-file fallback this
+    task exists to remove.
+    """
+
+    code, receipt = run_admission(
+        release,
+        require_manifest_digest=True,
+        component_images={"api": MANIFEST_API_IMAGE},
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert any("--manifest-digest is required" in error for error in receipt["errors"])
+    assert release["store"].get(release["lease"]["lease_id"])["state"] == STATE_ISSUED
+
+
+@pytest.mark.parametrize(
+    "digest",
+    ["1" * 64, "sha256:" + "1" * 63, "sha256:" + "A" * 64, "sha256:not-hex"],
+)
+def test_a_malformed_expected_digest_is_refused_before_lease_state_is_touched(
+    release, digest: str
+) -> None:
+    code, receipt = run_admission(
+        release,
+        manifest_digest=digest,
+        require_manifest_digest=True,
+        component_images={"api": MANIFEST_API_IMAGE},
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert any("--manifest-digest must be a sha256" in error for error in receipt["errors"])
+    assert release["store"].get(release["lease"]["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_the_receipt_names_which_manifest_file_admission_actually_read(
+    release,
+) -> None:
+    """An audit cannot tell transport from fallback unless the receipt says."""
+
+    code, receipt = run_admission(
+        release,
+        manifest_digest=release["manifest"]["manifest_digest"],
+        require_manifest_digest=True,
+        component_images={"api": MANIFEST_API_IMAGE},
+    )
+    assert code == 0
+    assert receipt["manifest_transport"]["manifest_path"] == str(
+        release["manifest_path"]
+    )
