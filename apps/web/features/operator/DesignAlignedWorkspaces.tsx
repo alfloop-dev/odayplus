@@ -523,6 +523,14 @@ export function DesignStoreOpsWorkspace({
 
   useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
+    const cancelStoreOpsFetch = () => {
+      cancelled = true;
+      controller.abort();
+    };
+
+    window.addEventListener("beforeunload", cancelStoreOpsFetch);
+    window.addEventListener("pagehide", cancelStoreOpsFetch);
 
     async function loadStoreOpsIssues() {
       const params = new URLSearchParams();
@@ -544,6 +552,7 @@ export function DesignStoreOpsWorkspace({
       try {
         const response = await fetch(`/api/v1/operator/store-ops/issues?${params.toString()}`, {
           headers: operatorSecurityHeaders(roleId),
+          signal: controller.signal,
         });
         if (!response.ok) {
           throw new Error(`Store Ops API returned ${response.status}`);
@@ -565,6 +574,14 @@ export function DesignStoreOpsWorkspace({
           );
         }
       } catch (error) {
+        const isAbort =
+          cancelled ||
+          controller.signal.aborted ||
+          (error instanceof DOMException && error.name === "AbortError") ||
+          (error instanceof Error && error.name === "AbortError");
+        if (isAbort) {
+          return;
+        }
         console.error("Error loading Store Ops issues:", error);
         if (!cancelled) {
           setStoreOpsLoadState(fixturesAllowed ? "fixture" : "error");
@@ -581,7 +598,9 @@ export function DesignStoreOpsWorkspace({
 
     loadStoreOpsIssues();
     return () => {
-      cancelled = true;
+      window.removeEventListener("beforeunload", cancelStoreOpsFetch);
+      window.removeEventListener("pagehide", cancelStoreOpsFetch);
+      cancelStoreOpsFetch();
     };
   }, [
     fixturesAllowed,
