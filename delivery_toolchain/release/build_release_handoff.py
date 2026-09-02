@@ -170,9 +170,11 @@ def derive_sources_off_posture(
                 "public_egress": "allowed" if egress_open else SOURCE_EGRESS_DENIED,
             }
         )
-    workflow_vpc_binding = all(
-        _wired_env_value(workflow_text, name) is not None
-        for name in ("ODP_CLOUD_RUN_VPC_CONNECTOR", "ODP_CLOUD_RUN_VPC_EGRESS")
+    workflow_vpc_binding = (
+        _wired_env_value(workflow_text, "ODP_CLOUD_RUN_VPC_CONNECTOR")
+        == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
+        and _wired_env_value(workflow_text, "ODP_CLOUD_RUN_VPC_EGRESS")
+        == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
     )
     deploy_entrypoint = root / "product_ops/deployment/deploy_cloud_run_waji.sh"
     deploy_entrypoint_text = (

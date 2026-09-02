@@ -1394,6 +1394,26 @@ def test_a_sources_off_workflow_without_vpc_binding_fails_closed(tmp_path: Path)
     assert any("cloud_run_egress" in err for err in excinfo.value.errors)
 
 
+def test_a_sources_off_workflow_with_non_environment_vpc_egress_fails_closed(
+    tmp_path: Path,
+) -> None:
+    workflow = tmp_path / "deploy-dev.yml"
+    workflow.write_text(
+        sources_off_workflow().replace(
+            "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}", "private-ranges-only"
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(
+            data_snapshot=None,
+            rollback_release=sources_off_rollback(),
+            workflow_path=workflow,
+        )
+    assert any("cloud_run_egress" in err for err in excinfo.value.errors)
+
+
 def test_an_enabled_source_never_gets_a_sources_off_attestation() -> None:
     _, manifest = handoff(external_sources_expected_enabled=["listing_raw_snapshot"])
 
