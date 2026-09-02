@@ -245,6 +245,109 @@ SOURCES_OFF_EGRESS_CONTRACT_FILES = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Initial-release recovery admission
+# ---------------------------------------------------------------------------
+#
+# Schema v2 requires every release to bind the previous approved release, so a
+# rollback target is never a thing anyone has to find under pressure. That
+# requirement is unconditional, and on the *first* release into a target it is
+# unsatisfiable: there is no previous approved release to bind, so the build
+# phase can never write a handoff and the environment can never receive its
+# first deploy. The only ways out of that deadlock are all worse than the
+# deadlock -- fabricate a rollback manifest, relax the requirement for every
+# release, or add a second admission path that skips it.
+#
+# ``initial_release_recovery`` is the one narrow branch that resolves it, and it
+# is admissible only because it is *derived and bound* in the same way
+# ``sources_off_attestation`` is:
+#
+# * it carries a readback of the deploy target proving there is nothing there
+#   to roll back to -- every Cloud Run service and job this release deploys,
+#   observed absent, not declared absent;
+# * ``binding_digest`` covers this candidate SHA, these component image
+#   digests, this target environment, and this recovery method, so the record
+#   cannot be lifted onto another release, replayed after a rebuild, or
+#   re-pointed at another environment;
+# * ``recovery_method`` states what recovery actually is for a first release --
+#   delete the candidate and hold zero traffic. A first release has no earlier
+#   version, so a record that promised a rollback would be promising something
+#   that does not exist; and
+# * it is refused outside :data:`INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS` and
+#   refused for any release that expects an enabled external source. Staging,
+#   production, and every source-enabled release keep the unchanged
+#   rollback/snapshot requirements.
+#
+# Nothing here weakens the *second* release: once the target holds a release,
+# the readback observes it, this branch refuses, and the ordinary
+# ``rollback_release`` binding is the only way through.
+INITIAL_RELEASE_RECOVERY_KIND = "initial-release-recovery"
+
+#: What recovery means when there is no earlier release. Deleting the candidate
+#: and holding zero traffic is the whole of it; naming it here keeps the record
+#: from implying a rollback target that has never existed.
+INITIAL_RELEASE_RECOVERY_METHOD = "delete-candidate-zero-traffic"
+INITIAL_RELEASE_RECOVERY_ACTIONS = (
+    "delete-candidate-cloud-run-services",
+    "delete-candidate-cloud-run-jobs",
+    "delete-candidate-scheduler-triggers",
+    "hold-zero-traffic",
+)
+
+#: Only dev bootstraps this way. Staging is created per release and production
+#: is promoted into, so neither reaches a first deploy without an approved
+#: predecessor to bind.
+INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS = ("dev",)
+
+#: Every deploy target whose absence has to be observed before "this
+#: environment has no existing approved release" is a statement about the
+#: environment rather than about the two services someone happened to check.
+#: ``migration`` is listed separately from ``worker`` even though they share an
+#: image: they are distinct Cloud Run resources, and a leftover migration job
+#: is exactly the kind of prior state that makes a target not empty.
+INITIAL_RELEASE_TARGET_INVENTORY = (
+    ("api", "cloud-run-service"),
+    ("web", "cloud-run-service"),
+    ("migration", "cloud-run-job"),
+    ("scheduler", "cloud-run-job"),
+    ("worker", "cloud-run-job"),
+)
+INITIAL_RELEASE_READBACK_KIND = "runtime-release-target-absence-readback"
+
+#: The exact readback the record must have been produced by. Spelling it here
+#: rather than accepting any plausible-looking string keeps ``probe_command`` a
+#: contract with one implementation instead of a free-text provenance claim.
+INITIAL_RELEASE_PROBE_COMMAND = (
+    "gcloud run services list --format=value(metadata.name); "
+    "gcloud run jobs list --format=value(metadata.name)"
+)
+INITIAL_RELEASE_READBACK_FIELDS = (
+    "kind",
+    "target_environment",
+    "project",
+    "region",
+    "probe_command",
+    "targets",
+)
+INITIAL_RELEASE_TARGET_FIELDS = (
+    "component",
+    "resource_kind",
+    "resource_name",
+    "exists",
+    "serving_traffic",
+)
+INITIAL_RELEASE_RECOVERY_FIELDS = (
+    "kind",
+    "target_environment",
+    "recovery_method",
+    "recovery_actions",
+    "rollback_target_available",
+    "prior_release_absent",
+    "absence_readback",
+    "binding_digest",
+)
+
+
 def is_exact_sha(value: Any) -> bool:
     """Return whether *value* is a lowercase 40-character git SHA."""
 
@@ -625,6 +728,344 @@ def sources_off_attestation_errors(
     return errors
 
 
+def initial_release_readback_payload(readback: Any) -> dict[str, Any]:
+    """Return the readback subset ``binding_digest`` commits to.
+
+    Only the named fields travel into the digest, so this is also the reason
+    :func:`initial_release_readback_errors` refuses an unknown key: a field the
+    digest does not cover is a field the binding does not protect.
+    """
+
+    if not isinstance(readback, dict):
+        return {}
+    targets = readback.get("targets")
+    normalised_targets: list[dict[str, Any]] = []
+    if isinstance(targets, list):
+        for entry in targets:
+            if not isinstance(entry, dict):
+                continue
+            normalised_targets.append(
+                {field: entry.get(field) for field in INITIAL_RELEASE_TARGET_FIELDS}
+            )
+        normalised_targets.sort(key=lambda entry: str(entry.get("component")))
+    return {
+        "kind": readback.get("kind"),
+        "target_environment": readback.get("target_environment"),
+        "project": readback.get("project"),
+        "region": readback.get("region"),
+        "probe_command": readback.get("probe_command"),
+        "targets": normalised_targets,
+    }
+
+
+def compute_initial_release_binding_digest(
+    *,
+    candidate_sha: Any,
+    components: Any,
+    target_environment: Any,
+    recovery_method: Any,
+    readback: Any,
+) -> str:
+    """Bind an initial-release admission to one candidate, image set, and target.
+
+    An unbound version of this record would be the most useful forgery in the
+    pipeline: "this environment has nothing to roll back to" is true exactly
+    once per environment, and a copyable claim of it would admit every later
+    release without a rollback binding.  Binding it to the candidate SHA, the
+    component image digests, the target environment, and the recovery method is
+    what keeps it a statement about *this* release into *this* target.
+    """
+
+    payload = {
+        "candidate_sha": candidate_sha,
+        "component_images": _component_image_map(components),
+        "target_environment": target_environment,
+        "recovery_method": recovery_method,
+        "absence_readback": initial_release_readback_payload(readback),
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _derived_prior_release_absent(readback: Any) -> bool:
+    """Return whether the readback observed an empty target, end to end."""
+
+    targets = initial_release_readback_payload(readback).get("targets") or []
+    observed = {str(entry.get("component")) for entry in targets}
+    if observed != {name for name, _kind in INITIAL_RELEASE_TARGET_INVENTORY}:
+        return False
+    return all(
+        entry.get("exists") is False and entry.get("serving_traffic") is False
+        for entry in targets
+    )
+
+
+def build_initial_release_recovery(
+    *,
+    candidate_sha: str,
+    components: dict[str, Any],
+    target_environment: str,
+    absence_readback: dict[str, Any],
+) -> dict[str, Any]:
+    """Seal an observed empty deploy target into a bound initial-release record.
+
+    The caller supplies what it *read back* from the target and nothing else.
+    ``prior_release_absent``, ``rollback_target_available``, the recovery method
+    and its actions are derived here, and the digest is computed here, so a
+    record cannot claim an empty target over a readback that found one --
+    :func:`initial_release_recovery_errors` re-derives all of it and refuses the
+    manifest if the two disagree.
+    """
+
+    readback = copy.deepcopy(absence_readback)
+    recovery: dict[str, Any] = {
+        "kind": INITIAL_RELEASE_RECOVERY_KIND,
+        "target_environment": target_environment,
+        "recovery_method": INITIAL_RELEASE_RECOVERY_METHOD,
+        "recovery_actions": list(INITIAL_RELEASE_RECOVERY_ACTIONS),
+        # Stated rather than implied. A first release has no earlier version, so
+        # the honest recovery is to remove the candidate and stay at zero
+        # traffic; recording "no rollback target" is what stops an operator
+        # reading this manifest as an offer to roll back.
+        "rollback_target_available": False,
+        "prior_release_absent": _derived_prior_release_absent(readback),
+        "absence_readback": readback,
+    }
+    recovery["binding_digest"] = compute_initial_release_binding_digest(
+        candidate_sha=candidate_sha,
+        components=components,
+        target_environment=target_environment,
+        recovery_method=INITIAL_RELEASE_RECOVERY_METHOD,
+        readback=readback,
+    )
+    return recovery
+
+
+def initial_release_readback_errors(
+    readback: Any,
+    *,
+    target_environment: Any = None,
+    label: str = "manifest.initial_release_recovery.absence_readback",
+) -> list[str]:
+    """Return why *readback* does not prove the deploy target is empty."""
+
+    if not isinstance(readback, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in INITIAL_RELEASE_READBACK_FIELDS:
+        if field not in readback:
+            errors.append(f"{label} missing required field: {field}")
+    unknown = sorted(set(readback) - set(INITIAL_RELEASE_READBACK_FIELDS))
+    if unknown:
+        errors.append(
+            f"{label} carries fields the binding digest does not cover: "
+            + ", ".join(unknown)
+        )
+
+    if readback.get("kind") != INITIAL_RELEASE_READBACK_KIND:
+        errors.append(
+            f"{label}.kind must be {INITIAL_RELEASE_READBACK_KIND!r}; "
+            f"got {readback.get('kind')!r}"
+        )
+    readback_environment = readback.get("target_environment")
+    if target_environment is not None and readback_environment != target_environment:
+        errors.append(
+            f"{label}.target_environment is {readback_environment!r}, but the record "
+            f"admits {target_environment!r}; the readback must be of the target being "
+            "deployed"
+        )
+    for field in ("project", "region"):
+        value = readback.get(field)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(
+                f"{label}.{field} must name the deploy target that was read back"
+            )
+    probe_command = readback.get("probe_command")
+    if probe_command != INITIAL_RELEASE_PROBE_COMMAND:
+        errors.append(
+            f"{label}.probe_command must be {INITIAL_RELEASE_PROBE_COMMAND!r}; a "
+            "readback that cannot name the command that observed the target is a "
+            "declaration, not evidence"
+        )
+
+    targets = readback.get("targets")
+    expected_targets = dict(INITIAL_RELEASE_TARGET_INVENTORY)
+    if not isinstance(targets, list):
+        errors.append(f"{label}.targets must be a list")
+        return errors
+
+    observed: list[str] = []
+    for index, entry in enumerate(targets):
+        entry_label = f"{label}.targets[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{entry_label} must be an object")
+            continue
+        entry_unknown = sorted(set(entry) - set(INITIAL_RELEASE_TARGET_FIELDS))
+        if entry_unknown:
+            errors.append(
+                f"{entry_label} carries fields the binding digest does not cover: "
+                + ", ".join(entry_unknown)
+            )
+        component = entry.get("component")
+        if isinstance(component, str):
+            observed.append(component)
+        else:
+            errors.append(f"{entry_label}.component must be a string")
+        if isinstance(component, str) and component in expected_targets:
+            if entry.get("resource_kind") != expected_targets[component]:
+                errors.append(
+                    f"{entry_label}.resource_kind must be "
+                    f"{expected_targets[component]!r} for {component!r}"
+                )
+        resource_name = entry.get("resource_name")
+        if not isinstance(resource_name, str) or not resource_name.strip():
+            errors.append(
+                f"{entry_label}.resource_name must name the resource that was probed"
+            )
+        if entry.get("exists") is not False:
+            errors.append(
+                f"{entry_label}.exists must be False; {component!r} already exists in "
+                "the target, so this environment has a release and the ordinary "
+                "rollback binding applies"
+            )
+        if entry.get("serving_traffic") is not False:
+            errors.append(
+                f"{entry_label}.serving_traffic must be False; {component!r} is "
+                "serving traffic, so this is not an initial release"
+            )
+
+    missing = sorted(set(expected_targets) - set(observed))
+    unexpected = sorted(set(observed) - set(expected_targets))
+    duplicated = sorted({name for name in observed if observed.count(name) > 1})
+    if missing:
+        errors.append(
+            f"{label}.targets does not read back every deploy target; missing: "
+            + ", ".join(missing)
+        )
+    if unexpected:
+        errors.append(
+            f"{label}.targets reads back resources that are not deploy targets: "
+            + ", ".join(unexpected)
+        )
+    if duplicated:
+        errors.append(f"{label}.targets repeats targets: " + ", ".join(duplicated))
+    return errors
+
+
+def initial_release_recovery_errors(
+    recovery: Any,
+    *,
+    candidate_sha: Any = None,
+    components: Any = None,
+    environment: Any = None,
+    label: str = "manifest.initial_release_recovery",
+) -> list[str]:
+    """Return why *recovery* is not an admissible initial-release admission.
+
+    ``environment`` is the target a deploy is actually about to run against.
+    When it is supplied the record must be the one issued for that target;
+    omitting it validates the record on its own terms, which is what auditing a
+    stored manifest needs.
+    """
+
+    if not isinstance(recovery, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in INITIAL_RELEASE_RECOVERY_FIELDS:
+        if field not in recovery:
+            errors.append(f"{label} missing required field: {field}")
+    unknown = sorted(set(recovery) - set(INITIAL_RELEASE_RECOVERY_FIELDS))
+    if unknown:
+        errors.append(
+            f"{label} carries fields the binding digest does not cover: "
+            + ", ".join(unknown)
+        )
+
+    if recovery.get("kind") != INITIAL_RELEASE_RECOVERY_KIND:
+        errors.append(
+            f"{label}.kind must be {INITIAL_RELEASE_RECOVERY_KIND!r}; "
+            f"got {recovery.get('kind')!r}"
+        )
+
+    target_environment = recovery.get("target_environment")
+    if target_environment not in INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS:
+        errors.append(
+            f"{label}.target_environment must be one of "
+            f"{list(INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS)}; got "
+            f"{target_environment!r}. Staging and production keep the unchanged "
+            "rollback binding requirement"
+        )
+    if environment is not None and target_environment != environment:
+        errors.append(
+            f"{label}.target_environment is {target_environment!r}, but this deploy "
+            f"targets {environment!r}; an initial-release admission is valid only for "
+            "the target it read back"
+        )
+
+    recovery_method = recovery.get("recovery_method")
+    if recovery_method != INITIAL_RELEASE_RECOVERY_METHOD:
+        errors.append(
+            f"{label}.recovery_method must be {INITIAL_RELEASE_RECOVERY_METHOD!r}; "
+            f"got {recovery_method!r}. There is no earlier release to roll back to, "
+            "so recovery is deleting the candidate and holding zero traffic"
+        )
+    if recovery.get("recovery_actions") != list(INITIAL_RELEASE_RECOVERY_ACTIONS):
+        errors.append(
+            f"{label}.recovery_actions must be "
+            f"{list(INITIAL_RELEASE_RECOVERY_ACTIONS)}; the recovery a first release "
+            "can perform is not open to redefinition by the manifest"
+        )
+    if recovery.get("rollback_target_available") is not False:
+        errors.append(
+            f"{label}.rollback_target_available must be False; an initial release has "
+            "no approved predecessor, and recording otherwise would promise a rollback "
+            "to a version that does not exist"
+        )
+
+    readback = recovery.get("absence_readback")
+    errors.extend(
+        initial_release_readback_errors(
+            readback,
+            target_environment=target_environment,
+            label=f"{label}.absence_readback",
+        )
+    )
+    derived_absent = _derived_prior_release_absent(readback)
+    if recovery.get("prior_release_absent") is not derived_absent:
+        errors.append(
+            f"{label}.prior_release_absent does not match its own absence_readback"
+        )
+    elif derived_absent is not True:
+        errors.append(
+            f"{label}.prior_release_absent must be True; the readback did not observe "
+            "an empty deploy target, so this release must bind a rollback release"
+        )
+
+    recorded_binding = recovery.get("binding_digest")
+    if not is_sha256_digest(recorded_binding):
+        errors.append(
+            f"{label}.binding_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    elif candidate_sha is not None or components is not None:
+        expected_binding = compute_initial_release_binding_digest(
+            candidate_sha=candidate_sha,
+            components=components,
+            target_environment=target_environment,
+            recovery_method=recovery_method,
+            readback=readback,
+        )
+        if recorded_binding != expected_binding:
+            errors.append(
+                f"{label}.binding_digest is not bound to this release's candidate SHA, "
+                "component image digests, target environment, and recovery method"
+            )
+    return errors
+
+
 def validate_manifest(
     manifest: Any,
     *,
@@ -650,7 +1091,16 @@ def validate_manifest(
         )
         required_fields = REQUIRED_FIELDS_V1
     elif version == 2:
-        required_fields = REQUIRED_FIELDS_V2
+        # `rollback_release` is required of every v2 release except the one that
+        # provably has no predecessor to bind. That release carries
+        # `initial_release_recovery` instead, and every other v2 requirement --
+        # data-plane evidence, immutable references, digest binding -- still
+        # applies to it unchanged.
+        required_fields = (
+            REQUIRED_FIELDS_V1
+            if manifest.get("initial_release_recovery") is not None
+            else REQUIRED_FIELDS_V2
+        )
     else:
         required_fields = REQUIRED_FIELDS_V1
 
@@ -795,6 +1245,37 @@ def validate_manifest(
                 "manifest.data_contract_digest"
             )
 
+    # Validate initial_release_recovery if present. It is the alternative to a
+    # rollback binding, never an addition to one: a release that has a
+    # predecessor to bind has no first-release admission to make.
+    initial_release_recovery = manifest.get("initial_release_recovery")
+    if initial_release_recovery is not None:
+        if version != 2:
+            errors.append(
+                "manifest.initial_release_recovery requires schema_version 2; a v1 "
+                "manifest carries no bound initial-release admission"
+            )
+        if manifest.get("rollback_release") is not None:
+            errors.append(
+                "manifest.initial_release_recovery must not accompany "
+                "manifest.rollback_release; a release with an approved predecessor "
+                "binds that predecessor and makes no initial-release claim"
+            )
+        if isinstance(sources_enabled, list) and sources_enabled:
+            errors.append(
+                "manifest.initial_release_recovery must not appear on a manifest "
+                "whose external_sources_expected_enabled is non-empty; a release that "
+                "expects enabled external sources keeps the rollback and masked "
+                "snapshot requirements"
+            )
+        errors.extend(
+            initial_release_recovery_errors(
+                initial_release_recovery,
+                candidate_sha=manifest.get("candidate_sha"),
+                components=manifest.get("components"),
+            )
+        )
+
     # Validate rollback_release if present
     rollback_release = manifest.get("rollback_release")
     if rollback_release is not None:
@@ -888,7 +1369,9 @@ def validate_manifest(
     return errors
 
 
-def validate_release_admission(manifest: Any) -> list[str]:
+def validate_release_admission(
+    manifest: Any, *, environment: str | None = None
+) -> list[str]:
     """Return why a structurally valid manifest cannot be deployed.
 
     A blocked manifest is intentionally still hashable and reviewable: it is
@@ -896,6 +1379,12 @@ def validate_release_admission(manifest: Any) -> list[str]:
     not, however, a deployable artifact.  Keeping this predicate separate from
     ``validate_manifest`` lets auditors inspect a blocked candidate without
     accidentally treating it as a successful release.
+
+    ``environment`` is the target a deploy is about to run against.  It matters
+    only for a manifest admitted through ``initial_release_recovery``: that
+    admission was granted by reading back one specific empty target, so it may
+    not be replayed against a different one.  Auditing a stored manifest omits
+    it and gets the record validated on its own terms.
     """
 
     errors = validate_manifest(manifest)
@@ -958,9 +1447,33 @@ def validate_release_admission(manifest: Any) -> list[str]:
                 "release whose rollback_release still binds a data_snapshot; a "
                 "sources-off posture may not override an existing snapshot binding"
             )
-    if manifest.get("rollback_release") is None:
+    # Every release binds the version it can fall back to. The single exception
+    # is a release into a target that provably holds no approved release, which
+    # binds an initial-release admission instead -- see
+    # ``INITIAL_RELEASE_RECOVERY_KIND``. There is no third option and no way to
+    # carry both.
+    rollback_release = manifest.get("rollback_release")
+    initial_release_recovery = manifest.get("initial_release_recovery")
+    if rollback_release is None and initial_release_recovery is None:
         errors.append(
             "release admission requires manifest.rollback_release with verified candidate sha and components"
+        )
+    elif rollback_release is not None and initial_release_recovery is not None:
+        errors.append(
+            "release admission refuses a manifest carrying both "
+            "manifest.rollback_release and manifest.initial_release_recovery; the "
+            "two are alternatives, and a release with a predecessor binds it"
+        )
+    elif initial_release_recovery is not None:
+        errors.extend(
+            error
+            for error in initial_release_recovery_errors(
+                initial_release_recovery,
+                candidate_sha=manifest.get("candidate_sha"),
+                components=components,
+                environment=environment,
+            )
+            if error not in errors
         )
     return errors
 
@@ -1326,6 +1839,7 @@ def build_release_manifest(
     data_snapshot: dict[str, Any] | None = None,
     sources_off_attestation: dict[str, Any] | None = None,
     rollback_release: dict[str, Any] | None = None,
+    initial_release_recovery: dict[str, Any] | None = None,
     external_sources_expected_enabled: list[str] | None = None,
     release_status: str | None = None,
     schema_version: int = CURRENT_SCHEMA_VERSION,
@@ -1358,6 +1872,8 @@ def build_release_manifest(
         manifest["sources_off_attestation"] = sources_off_attestation
     if rollback_release is not None:
         manifest["rollback_release"] = rollback_release
+    if initial_release_recovery is not None:
+        manifest["initial_release_recovery"] = initial_release_recovery
     if release_status is not None:
         manifest["release_status"] = release_status
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
@@ -1503,6 +2019,21 @@ __all__ = [
     "compute_sources_off_probe_receipt_content_digest",
     "compute_sources_off_binding_digest",
     "extract_rollback_release_binding",
+    "INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS",
+    "INITIAL_RELEASE_PROBE_COMMAND",
+    "INITIAL_RELEASE_READBACK_FIELDS",
+    "INITIAL_RELEASE_READBACK_KIND",
+    "INITIAL_RELEASE_RECOVERY_ACTIONS",
+    "INITIAL_RELEASE_RECOVERY_FIELDS",
+    "INITIAL_RELEASE_RECOVERY_KIND",
+    "INITIAL_RELEASE_RECOVERY_METHOD",
+    "INITIAL_RELEASE_TARGET_FIELDS",
+    "INITIAL_RELEASE_TARGET_INVENTORY",
+    "build_initial_release_recovery",
+    "compute_initial_release_binding_digest",
+    "initial_release_readback_errors",
+    "initial_release_readback_payload",
+    "initial_release_recovery_errors",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
