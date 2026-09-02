@@ -5,8 +5,8 @@ admission 語意。
 
 - 任務狀態：實作完成，等待正式 review submission
 - Owner：Codex · Reviewer：Codex2
-- 量測 code head：`40b38809ac9cc7c081765941f8aca8240633b827`
-- base advance：merge commit `181dc823bde876a2e4087002c2a3efb609b9c9f5`，包含 `origin/dev@4f28c2316af6`
+- 量測 code head：`5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048`
+- base advance：merge commit `2e820da79a4615f17dc9e56c6a2059053b52761a`，包含 `origin/dev@4956eae4d76d1fd838ce97440957b49c0dbab8fb`
 
 ## 1. 問題
 
@@ -150,8 +150,9 @@ attestation。
 ## 7. 驗證
 
 見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
-在 code head `40b38809` 以指定 focused selection 通過：exit 0、29.04 秒；收據不含
-任何 secret 值。測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**；同一
-code head 的 secret scan（14.72 秒）、ruff（0.10 秒）、release/staging regression
-sweep（22.53 秒）與 shell syntax（0.00 秒）皆 exit 0；probe gate 與 receipt wiring
-亦已檢查。
+在 code head `5d6826a6` 以指定 focused selection 通過：exit 0、15.914 秒；收據不含
+任何 secret 值。另以同一 code head 執行 runtime probe/receipt/workflow focused suite
+（18.89 秒）、secret scan（19.57 秒）、ruff（0.18 秒）與 shell syntax（0.00 秒），
+全部 exit 0；probe 只接受明確 network-policy errno，並由 Cloud Logging readback
+驗證實際 runtime receipt 的 candidate、manifest、resolved egress 與 semantic content
+digest 後才保留 evidence。

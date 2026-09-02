@@ -5,8 +5,8 @@
   "agent": "Codex",
   "reviewer": "Codex2",
   "branch": "task/ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
-  "head_sha": "40b38809ac9cc7c081765941f8aca8240633b827",
-  "head_sha_note": "以最終 exact code head 40b38809 重新執行指定 focused selection、secret scan、ruff 與 regression，全部 exit 0；其後僅更新此收據與 README。",
+  "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+  "head_sha_note": "以 anchor code head 5d6826a6 重新執行指定 focused selection、runtime receipt focused tests、secret scan、ruff 與 shell syntax，全部 exit 0；其後僅更新此收據與 README。",
   "secret_values_redacted": true,
   "runs": [
     {
@@ -14,10 +14,10 @@
       "command": "uv run --frozen pytest -q tests/release/test_build_release_handoff.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_dev_rollout.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "40b38809ac9cc7c081765941f8aca8240633b827",
-      "started_at": "2026-09-02T05:00:33Z",
-      "finished_at": "2026-09-02T05:01:02Z",
-      "duration_seconds": 29.04,
+      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "started_at": "2026-09-02T05:29:20Z",
+      "finished_at": "2026-09-02T05:29:36Z",
+      "duration_seconds": 15.914,
       "selection": {
         "scope": "targeted",
         "items": [
@@ -33,12 +33,29 @@
       "runner": "pytest"
     },
     {
-      "purpose": "secret scan over code head 40b38809ac9cc7c081765941f8aca8240633b827",
+      "purpose": "runtime receipt focused tests at code head 5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "command": "uv run --frozen pytest -q tests/ops/test_cloud_run_job_entrypoint.py tests/ops/test_release_receipts.py tests/ops/test_deploy_workflow_contract.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "duration_seconds": 18.89,
+      "selection": {
+        "scope": "runtime probe, receipt readback, and workflow contract",
+        "items": [
+          "tests/ops/test_cloud_run_job_entrypoint.py",
+          "tests/ops/test_release_receipts.py",
+          "tests/ops/test_deploy_workflow_contract.py"
+        ]
+      },
+      "runner": "pytest"
+    },
+    {
+      "purpose": "secret scan over code head 5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
       "command": "uv run --frozen python delivery_toolchain/security/secret_scan.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "40b38809ac9cc7c081765941f8aca8240633b827",
-      "duration_seconds": 14.72,
+      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "duration_seconds": 19.57,
       "selection": {
         "scope": "repository secret scan",
         "items": ["delivery_toolchain/security/secret_scan.py"]
@@ -46,12 +63,12 @@
       "result_line": "Secrets scan passed successfully. No violations found."
     },
     {
-      "purpose": "lint over the changed surfaces at code head 40b38809ac9cc7c081765941f8aca8240633b827",
+      "purpose": "lint over the changed surfaces at code head 5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
       "command": "uv run --frozen ruff check delivery_toolchain/release/ tests/release/ tests/ops/",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "40b38809ac9cc7c081765941f8aca8240633b827",
-      "duration_seconds": 0.10,
+      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
+      "duration_seconds": 0.18,
       "selection": {
         "scope": "changed release and ops surfaces",
         "items": ["delivery_toolchain/release/", "tests/release/", "tests/ops/"]
@@ -59,28 +76,11 @@
       "result_line": "All checks passed!"
     },
     {
-      "purpose": "regression sweep over adjacent release and staging suites at code head 40b38809ac9cc7c081765941f8aca8240633b827",
-      "command": "uv run --frozen pytest -q tests/release/ tests/ops/test_release_receipts.py tests/ops/test_ephemeral_staging_lifecycle.py",
-      "exit_code": 0,
-      "outcome": "passed",
-      "head_sha": "40b38809ac9cc7c081765941f8aca8240633b827",
-      "duration_seconds": 22.53,
-      "selection": {
-        "scope": "release and adjacent staging regression",
-        "items": [
-          "tests/release/",
-          "tests/ops/test_release_receipts.py",
-          "tests/ops/test_ephemeral_staging_lifecycle.py"
-        ]
-      },
-      "runner": "pytest"
-    },
-    {
-      "purpose": "shell syntax validation at code head 40b38809ac9cc7c081765941f8aca8240633b827",
+      "purpose": "shell syntax validation at code head 5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
       "command": "bash -n product_ops/deployment/deploy_cloud_run_waji.sh",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "40b38809ac9cc7c081765941f8aca8240633b827",
+      "head_sha": "5d6826a6e8d2afc5f1f3df7f7e4e2ef6a5faf048",
       "duration_seconds": 0.00,
       "selection": {
         "scope": "Runtime Release deploy entrypoint",
@@ -118,6 +118,9 @@
     "deploy workflow wiring a provider endpoint",
     "deploy workflow declaring no provider mode at all",
     "deploy workflow missing Cloud Run VPC egress binding",
-    "deploy workflow missing public-egress probe receipt wiring"
+    "deploy workflow missing public-egress probe receipt wiring",
+    "snapshot missing object_generation or carrying a negative/non-integer generation",
+    "runtime receipt missing candidate, manifest, resolved egress, or semantic content binding",
+    "runtime probe timeout, DNS failure, or unknown network error treated as denial"
   ]
 }
