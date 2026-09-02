@@ -3614,6 +3614,8 @@ def task_actor_assignment_block_reason(
     agent = (config.get("agents", {}) or {}).get(normalized)
     if not isinstance(agent, dict):
         return f"unregistered actor {name}"
+    if agent_is_dispatch_slot(agent):
+        return f"actor {name} is a dispatch slot"
     if not require_dispatch_eligibility:
         return None
     if not agent_can_take_task(config, name, task):

@@ -1485,6 +1485,24 @@ def get_agent_reassignment_candidates(
     if failing_norm:
         seen.add(failing_norm)
 
+    failing_agent_cfg = (config.get("agents", {}) or {}).get(normalize_agent_id(failing_norm))
+    if isinstance(failing_agent_cfg, dict) and agent_is_dispatch_slot(failing_agent_cfg):
+        target_agent = str(failing_agent_cfg.get("dispatch_slot_for") or "").strip()
+        if target_agent:
+            target_disp = display_name_for(config, target_agent) or target_agent
+            if target_disp and target_disp not in seen and not is_human_gate_agent(target_disp):
+                candidates.append(target_disp)
+                seen.add(target_disp)
+        target_pool = str(failing_agent_cfg.get("dispatch_slot_for_pool") or failing_agent_cfg.get("account_pool") or "").strip()
+        if target_pool:
+            for ag_id, ag in (config.get("agents", {}) or {}).items():
+                if isinstance(ag, dict) and not agent_is_dispatch_slot(ag):
+                    if str(ag.get("account_pool") or "").strip() == target_pool:
+                        ag_disp = display_name_for(config, ag_id) or ag_id
+                        if ag_disp and ag_disp not in seen and not is_human_gate_agent(ag_disp):
+                            candidates.append(ag_disp)
+                            seen.add(ag_disp)
+
     known_names = sorted(list(known_agent_display_names(config)))
     default_pool = [
         "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7",
@@ -1528,7 +1546,8 @@ def known_agent_display_names(config: dict[str, Any]) -> set[str]:
     return {
         str(agent.get("display_name") or agent.get("name") or agent_id).strip()
         for agent_id, agent in (config.get("agents", {}) or {}).items()
-        if str(agent.get("display_name") or agent.get("name") or agent_id).strip()
+        if not agent_is_dispatch_slot(agent if isinstance(agent, dict) else {})
+        and str(agent.get("display_name") or agent.get("name") or agent_id).strip()
     }
 
 @_entrypoint
@@ -1603,6 +1622,10 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
 def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
     name = str(agent_name or "").strip()
     if not name:
+        return False
+    normalized = normalize_agent_id(name)
+    agent = (config.get("agents", {}) or {}).get(normalized) if isinstance(config.get("agents"), dict) else None
+    if isinstance(agent, dict) and agent_is_dispatch_slot(agent):
         return False
     # A task may contain historical/coordinator labels that are not worker
     # identities (for example CodexCoordinator).  Treat those labels as

@@ -4703,6 +4703,141 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
                 "Codex3", ai_status.resolve_actor_reference("Codex3", field="owner")
             )
 
+    def test_dispatch_slots_are_excluded_from_configured_agents_and_rejected_on_assignment(self) -> None:
+        """Physical dispatch slots are capacity resources, not actors, and fail fast with actionable guidance."""
+        config_payload = {
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "antigravity_slot_1": {
+                    "display_name": "antigravity_slot_1",
+                    "provider": "antigravity",
+                    "account_pool": "antigravity_main",
+                    "dispatch_slot_for": "antigravity",
+                    "slot_id": "antigravity_slot_1",
+                },
+                "claude_slot_1": {
+                    "display_name": "claude_slot_1",
+                    "provider": "claude",
+                    "account_pool": "claude_main",
+                    "dispatch_slot_for_pool": "claude_main",
+                    "slot_id": "claude_slot_1",
+                },
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "account_pool": "codex_main",
+                },
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="ai-status-slot-test-") as temp_dir:
+            orchestrator_dir = Path(temp_dir) / ".orchestrator"
+            config_file = self._write_config(orchestrator_dir, config_payload)
+            missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
+
+            with (
+                no_explicit_config_environment(),
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay),
+            ):
+                ai_status._MERGED_CONFIG_CACHE.clear()
+                configured = ai_status.configured_agent_names()
+                self.assertIn("Antigravity", configured)
+                self.assertIn("Codex", configured)
+                self.assertNotIn("antigravity_slot_1", configured)
+                self.assertNotIn("claude_slot_1", configured)
+
+                # Test resolve_actor_reference with dispatch_slot_for
+                with self.assertRaises(SystemExit) as ctx:
+                    ai_status.resolve_actor_reference("antigravity_slot_1", field="owner")
+                err = str(ctx.exception)
+                self.assertIn("Invalid owner: 'antigravity_slot_1' is a dispatch slot capacity resource, not an assignable actor", err)
+                self.assertIn("Specify logical worker 'antigravity' instead.", err)
+
+                # Test resolve_actor_reference with dispatch_slot_for_pool
+                with self.assertRaises(SystemExit) as ctx:
+                    ai_status.resolve_actor_reference("claude_slot_1", field="reviewer")
+                err = str(ctx.exception)
+                self.assertIn("Invalid reviewer: 'claude_slot_1' is a dispatch slot capacity resource, not an assignable actor", err)
+                self.assertIn("Specify a logical worker from account pool 'claude_main' instead.", err)
+
+                # Test assign command rejects dispatch slot before state mutation
+                state = {
+                    "agents": [],
+                    "tasks": [],
+                    "blockers": [],
+                    "handoffs": [],
+                }
+                with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}):
+                    with self.assertRaises(SystemExit) as ctx:
+                        ai_status.command_assign(state, ["ODP-SLOT-TEST-001", "antigravity_slot_1", "Codex"])
+                    self.assertIn("dispatch slot capacity resource", str(ctx.exception))
+                    self.assertEqual(len(state["tasks"]), 0)
+                ai_status._MERGED_CONFIG_CACHE.clear()
+
+    def test_dispatch_slot_sharing_display_name_with_logical_worker_does_not_block_logical_worker(self) -> None:
+        """A slot sharing display_name with a logical worker does not collide or block assigning the worker."""
+        config_payload = {
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "ag_slot_1": {
+                    "display_name": "Antigravity",
+                    "account_pool": "antigravity_main",
+                    "dispatch_slot_for_pool": "antigravity_main",
+                },
+                "codex": {
+                    "display_name": "Codex",
+                    "account_pool": "codex_main",
+                },
+            }
+        }
+        with tempfile.TemporaryDirectory(prefix="ai-status-slot-collision-") as temp_dir:
+            orchestrator_dir = Path(temp_dir) / ".orchestrator"
+            config_file = self._write_config(orchestrator_dir, config_payload)
+            missing_status_overlay = Path(temp_dir) / "status" / ".orchestrator" / "config.local.json"
+
+            with (
+                no_explicit_config_environment(),
+                mock.patch.object(ai_status, "CONFIG_FILE", config_file),
+                mock.patch.object(ai_status, "STATUS_ROOT_CONFIG_LOCAL_FILE", missing_status_overlay),
+            ):
+                ai_status._MERGED_CONFIG_CACHE.clear()
+                configured = ai_status.configured_agent_names()
+                self.assertIn("Antigravity", configured)
+                self.assertNotIn("ag_slot_1", configured)
+
+                # Logical worker Antigravity resolves successfully
+                resolved = ai_status.resolve_actor_reference("Antigravity", field="owner")
+                self.assertEqual(resolved, "Antigravity")
+
+                # The slot itself is rejected with actionable error
+                with self.assertRaises(SystemExit) as ctx:
+                    ai_status.resolve_actor_reference("ag_slot_1", field="owner")
+                err = str(ctx.exception)
+                self.assertIn("Invalid owner: 'ag_slot_1' is a dispatch slot capacity resource, not an assignable actor", err)
+                self.assertIn("Specify a logical worker from account pool 'antigravity_main' instead.", err)
+
+                # CLI assign with logical worker succeeds
+                state = {
+                    "agents": [],
+                    "tasks": [],
+                    "blockers": [],
+                    "handoffs": [],
+                }
+                with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}):
+                    ai_status.command_assign(state, ["ODP-SLOT-TEST-002", "Antigravity", "Codex"])
+                    self.assertEqual(len(state["tasks"]), 1)
+                    self.assertEqual(state["tasks"][0]["owner"], "Antigravity")
+                    self.assertEqual(state["tasks"][0]["reviewer"], "Codex")
+
+                ai_status._MERGED_CONFIG_CACHE.clear()
+
 
 class ActorCommandMutationGuardTests(unittest.TestCase):
     """Every mutating actor command must fail *before* it touches durable state."""
