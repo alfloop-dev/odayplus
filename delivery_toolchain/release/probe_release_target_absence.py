@@ -44,6 +44,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     initial_release_readback_payload,
     initial_release_recovery_errors,
     load_manifest,
+    release_candidate_job_name,
     validate_release_admission,
 )
 
@@ -75,27 +76,24 @@ def _lookup(
     gcloud: str,
     resource_kind: str,
     resource_name: str,
+    base_name: str,
     project: str,
     region: str,
-) -> bool:
-    """回傳 *resource_name* 是否存在於 target。
+) -> list[str]:
+    """回傳 target 中與這個 deploy target 相符的資源名稱。
 
-    只用 ``list --filter``，因為 ``describe`` 的「找不到」與「沒權限」都是非零
-    exit code，無法區分。``list`` 成功但輸出為空才是「不存在」這個事實；只要
-    ``gcloud`` 自己失敗，就 raise 而不是把它讀成不存在。
+    ``describe`` 的「找不到」與「沒權限」都是非零 exit code，無法區分。service
+    可以用 exact-name filter；Job 則必須讀回整個 Job 名稱集合，因為已核准
+    release 的 Job 是 ``<base>-r-<sha12>``，不是 base 名稱本身。list 成功但
+    沒有任何相關名稱才是「不存在」；只要 gcloud 自己失敗，就 raise 而不是把它
+    讀成不存在。
     """
 
     group, noun = RESOURCE_COMMANDS[resource_kind]
-    command = [
-        gcloud,
-        group,
-        noun,
-        "list",
-        f"--region={region}",
-        f"--project={project}",
-        f"--filter=metadata.name={resource_name}",
-        "--format=value(metadata.name)",
-    ]
+    command = [gcloud, group, noun, "list", f"--region={region}", f"--project={project}"]
+    if resource_kind == "cloud-run-service":
+        command.append(f"--filter=metadata.name={resource_name}")
+    command.append("--format=value(metadata.name)")
     proc = subprocess.run(command, check=False, capture_output=True, text=True)
     if proc.returncode != 0:
         raise ProbeError(
@@ -107,8 +105,20 @@ def _lookup(
             ]
         )
     observed = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if resource_kind == "cloud-run-job":
+        # The base name is retained as a legacy target, and every release
+        # candidate starts with the same reserved prefix. Treat either as
+        # occupied. This is intentionally conservative: an unexpected
+        # same-prefix Job is safer to reject than to mistake for an empty
+        # first-release target.
+        candidate_prefix = release_candidate_job_name(base_name, "0" * 40)[:-12]
+        return [
+            name
+            for name in observed
+            if name == base_name or name.startswith(candidate_prefix)
+        ]
     if not observed:
-        return False
+        return []
     if observed != [resource_name]:
         raise ProbeError(
             [
@@ -116,7 +126,7 @@ def _lookup(
                 f"{'、'.join(observed)}；無法斷定 target 是否為空。"
             ]
         )
-    return True
+    return [resource_name]
 
 
 def probe_target_absence(
@@ -125,11 +135,19 @@ def probe_target_absence(
     project: str,
     region: str,
     targets: dict[str, str],
+    candidate_sha: str,
     gcloud: str = "gcloud",
 ) -> dict[str, Any]:
     """讀回整個部署 target，全空才回傳 readback；任何一個存在就 raise。"""
 
     errors: list[str] = []
+    if not isinstance(candidate_sha, str) or not candidate_sha:
+        errors.append(
+            "缺少 candidate SHA；Job target 必須依 exact release SHA 解析成實際的 "
+            "SHA-suffixed candidate name，不能只讀 base Job name。"
+        )
+    elif not (len(candidate_sha) == 40 and all(char in "0123456789abcdef" for char in candidate_sha)):
+        errors.append("candidate_sha 必須是 40 字元小寫 git SHA。")
     if target_environment not in INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS:
         errors.append(
             f"initial-release recovery 只適用於 "
@@ -159,19 +177,34 @@ def probe_target_absence(
     if errors:
         raise ProbeError(errors)
 
+    resolved_targets = dict(targets)
+    for component, resource_kind in INITIAL_RELEASE_TARGET_INVENTORY:
+        if resource_kind == "cloud-run-job":
+            try:
+                resolved_targets[component] = release_candidate_job_name(
+                    targets[component], candidate_sha
+                )
+            except ValueError as exc:
+                raise ProbeError([f"{component} 的 candidate Job 名稱無效：{exc}"]) from exc
+
     entries: list[dict[str, Any]] = []
     present: list[str] = []
     for component, resource_kind in sorted(INITIAL_RELEASE_TARGET_INVENTORY):
-        resource_name = targets[component]
-        exists = _lookup(
+        base_name = targets[component]
+        resource_name = resolved_targets[component]
+        observed = _lookup(
             gcloud=gcloud,
             resource_kind=resource_kind,
             resource_name=resource_name,
+            base_name=base_name,
             project=project,
             region=region,
         )
+        exists = bool(observed)
         if exists:
-            present.append(f"{component}（{resource_kind} {resource_name}）")
+            present.append(
+                f"{component}（{resource_kind} " + "、".join(observed) + "）"
+            )
         entries.append(
             {
                 "component": component,
@@ -257,6 +290,7 @@ def verify_manifest_recovery(
         project=project,
         region=region,
         targets=targets,
+        candidate_sha=manifest.get("candidate_sha"),
         gcloud=gcloud,
     )
     recorded_payload = initial_release_readback_payload(recovery.get("absence_readback"))
@@ -289,6 +323,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--environment", required=True)
     parser.add_argument("--project", required=True)
     parser.add_argument("--region", required=True)
+    parser.add_argument(
+        "--candidate-sha",
+        required=True,
+        help="Exact 40-character release SHA used to name candidate Cloud Run Jobs.",
+    )
     parser.add_argument(
         "--target",
         action="append",
@@ -363,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
             project=args.project,
             region=args.region,
             targets=targets,
+            candidate_sha=args.candidate_sha,
             gcloud=args.gcloud,
         )
     except ProbeError as exc:

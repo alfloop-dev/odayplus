@@ -1578,6 +1578,7 @@ def test_the_build_phase_reads_the_target_back_before_the_handoff_binds_it() -> 
 
     probe_step = _job_steps(job)[probe]
     assert "probe_release_target_absence.py" in probe_step["run"]
+    assert '--candidate-sha "${ODAY_RELEASE_SHA}"' in probe_step["run"]
     for component in _FIRST_RELEASE_DEPLOY_TARGETS:
         assert f'--target "{component}=' in probe_step["run"], (
             f"the readback must cover the {component} deploy target; a partial "
@@ -1610,6 +1611,7 @@ def test_admission_re_reads_the_target_before_the_lease_is_consumed() -> None:
     )
     assert "probe_release_target_absence.py" in step["run"]
     assert "--manifest" in step["run"]
+    assert '--candidate-sha "${{ inputs.release_sha }}"' in step["run"]
     for component in _FIRST_RELEASE_DEPLOY_TARGETS:
         assert f'--target "{component}=' in step["run"]
 
@@ -1679,6 +1681,14 @@ def test_a_failed_first_deploy_does_not_claim_a_rollback_it_cannot_do() -> None:
     assert "initial-release-cleanup" in traffic_helpers
     assert "release_recovery_mode " in deploy_script
     assert "There is no previous release to roll back to" in deploy_script
+    assert "cleanup_initial_release_candidates" in deploy_script
+    for candidate in (
+        '"${MIGRATION_CANDIDATE_JOB}"',
+        '"${WORKER_CANDIDATE_JOB}"',
+        '"${SCHEDULER_CANDIDATE_JOB}"',
+    ):
+        assert candidate in deploy_script
+    assert "delete_candidate_job" in traffic_helpers
     # The pre-existing honest branch stays: an absent snapshot deletes the
     # bootstrap candidate rather than restoring traffic that was never there.
     assert "Deleting bootstrap candidate service" in traffic_helpers

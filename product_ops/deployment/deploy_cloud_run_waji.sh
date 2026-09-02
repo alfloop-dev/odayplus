@@ -229,15 +229,21 @@ cleanup() {
 handle_deployment_exit() {
   local status=$?
   local rollback_status=0
+  local recovery_mode="unknown"
   trap - EXIT
   set +e
   if [ "${status}" -ne 0 ] \
     && [ "${ROLLBACK_ARMED}" = "true" ] \
     && [ "${DEPLOYMENT_COMMITTED}" != "true" ]; then
-    if [ "$(release_recovery_mode "${API_TRAFFIC_SNAPSHOT}" "${WEB_TRAFFIC_SNAPSHOT}")" = "initial-release-cleanup" ]; then
+    if recovery_mode="$(release_recovery_mode "${API_TRAFFIC_SNAPSHOT}" "${WEB_TRAFFIC_SNAPSHOT}")"; then
+      :
+    else
+      echo "Error: previous-release state could not be determined; no recovery mode is claimed." >&2
+    fi
+    if [ "${recovery_mode}" = "initial-release-cleanup" ]; then
       echo "Deployment failed on the first release into this target." >&2
       echo "There is no previous release to roll back to; recovery is deleting the candidate and holding zero traffic." >&2
-    else
+    elif [ "${recovery_mode}" = "rollback" ]; then
       echo "Deployment failed; restoring the recorded API/Web traffic split." >&2
     fi
     rollback_release_traffic \
@@ -245,6 +251,12 @@ handle_deployment_exit() {
       "${API_TRAFFIC_SNAPSHOT}" \
       "${WEB_SERVICE}" \
       "${WEB_TRAFFIC_SNAPSHOT}" || rollback_status=$?
+    if [ "${recovery_mode}" = "initial-release-cleanup" ]; then
+      cleanup_initial_release_candidates \
+        "${MIGRATION_CANDIDATE_JOB}" \
+        "${WORKER_CANDIDATE_JOB}" \
+        "${SCHEDULER_CANDIDATE_JOB}" || rollback_status=$?
+    fi
     if [ "${rollback_status}" -ne 0 ]; then
       echo "Error: one or more Cloud Run traffic restores failed." >&2
     fi

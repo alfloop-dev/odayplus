@@ -336,6 +336,13 @@ INITIAL_RELEASE_TARGET_FIELDS = (
     "exists",
     "serving_traffic",
 )
+
+# Cloud Run Job names are release-scoped so a prior release can remain
+# inspectable while the next candidate is prepared. Keep this naming rule in
+# the release toolchain as well as the deploy entrypoint: the initial-release
+# probe must inspect the names the deploy will actually create.
+RELEASE_JOB_NAME_MAX_LENGTH = 63
+RELEASE_JOB_NAME_SHA_LENGTH = 12
 INITIAL_RELEASE_RECOVERY_FIELDS = (
     "kind",
     "target_environment",
@@ -352,6 +359,26 @@ def is_exact_sha(value: Any) -> bool:
     """Return whether *value* is a lowercase 40-character git SHA."""
 
     return isinstance(value, str) and bool(re.fullmatch(r"[0-9a-f]{40}", value))
+
+
+def release_candidate_job_name(base_name: Any, candidate_sha: Any) -> str:
+    """Return the Cloud Run Job name used for one immutable release candidate.
+
+    The deploy script uses the same ``<base>-r-<sha12>`` convention. Cloud Run
+    caps resource names at 63 characters, so a long configured base is trimmed
+    before the release suffix is appended. Refusing malformed inputs here is
+    important: a probe that silently invents a different name can admit a
+    target the deploy will not actually use.
+    """
+
+    if not isinstance(base_name, str) or not base_name.strip():
+        raise ValueError("Cloud Run Job base name must be a non-empty string")
+    if not is_exact_sha(candidate_sha):
+        raise ValueError("candidate_sha must be a 40-character lowercase git SHA")
+    base = base_name.strip()
+    suffix = f"-r-{candidate_sha[:RELEASE_JOB_NAME_SHA_LENGTH]}"
+    prefix_length = RELEASE_JOB_NAME_MAX_LENGTH - len(suffix)
+    return f"{base[:prefix_length]}{suffix}"
 
 
 def is_sha256_digest(value: Any) -> bool:
@@ -847,6 +874,7 @@ def initial_release_readback_errors(
     readback: Any,
     *,
     target_environment: Any = None,
+    candidate_sha: Any = None,
     label: str = "manifest.initial_release_recovery.absence_readback",
 ) -> list[str]:
     """Return why *readback* does not prove the deploy target is empty."""
@@ -924,6 +952,19 @@ def initial_release_readback_errors(
         if not isinstance(resource_name, str) or not resource_name.strip():
             errors.append(
                 f"{entry_label}.resource_name must name the resource that was probed"
+            )
+        elif (
+            candidate_sha is not None
+            and entry.get("resource_kind") == "cloud-run-job"
+            and is_exact_sha(candidate_sha)
+            and not resource_name.endswith(
+                f"-r-{candidate_sha[:RELEASE_JOB_NAME_SHA_LENGTH]}"
+            )
+        ):
+            errors.append(
+                f"{entry_label}.resource_name must be the SHA-suffixed candidate Job "
+                f"name ending in -r-{candidate_sha[:RELEASE_JOB_NAME_SHA_LENGTH]}; "
+                "a base Job name does not identify the resource this release creates"
             )
         if entry.get("exists") is not False:
             errors.append(
@@ -1031,6 +1072,7 @@ def initial_release_recovery_errors(
         initial_release_readback_errors(
             readback,
             target_environment=target_environment,
+            candidate_sha=candidate_sha,
             label=f"{label}.absence_readback",
         )
     )

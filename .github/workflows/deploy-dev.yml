@@ -408,6 +408,7 @@ jobs:
           mkdir -p "${HANDOFF_DIR}"
           python3 delivery_toolchain/release/probe_release_target_absence.py \
             --environment "${{ inputs.environment }}" \
+            --candidate-sha "${ODAY_RELEASE_SHA}" \
             --project "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
             --target "api=${API_SERVICE}" \
@@ -828,6 +829,7 @@ jobs:
           set -euo pipefail
           python3 delivery_toolchain/release/probe_release_target_absence.py \
             --environment "${{ inputs.environment }}" \
+            --candidate-sha "${{ inputs.release_sha }}" \
             --project "${GCP_PROJECT}" \
             --region "${GCP_REGION}" \
             --target "api=${API_SERVICE}" \

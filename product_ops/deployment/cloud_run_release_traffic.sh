@@ -115,12 +115,56 @@ restore_service_traffic() {
 release_recovery_mode() {
   local api_snapshot="$1"
   local web_snapshot="$2"
-  if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${api_snapshot}")" = "true" ] \
-    || [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${web_snapshot}")" = "true" ]; then
+  local api_exists web_exists
+  if ! api_exists="$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${api_snapshot}")" \
+    || ! web_exists="$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${web_snapshot}")"; then
+    echo "Error: cannot determine whether a previous API/Web release exists; recovery mode is unknown." >&2
+    return 1
+  fi
+  if [ "${api_exists}" = "true" ] || [ "${web_exists}" = "true" ]; then
     printf 'rollback'
     return
   fi
-  printf 'initial-release-cleanup'
+  if [ "${api_exists}" = "false" ] && [ "${web_exists}" = "false" ]; then
+    printf 'initial-release-cleanup'
+    return
+  fi
+  echo "Error: API/Web pre-deploy snapshot has an invalid existence value; recovery mode is unknown." >&2
+  return 1
+}
+
+delete_candidate_job() {
+  local job="$1"
+  local existing
+  if ! existing="$(gcloud run jobs list \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --filter="metadata.name=${job}" \
+    --format='value(metadata.name)')"; then
+    echo "Error: cannot read back candidate Cloud Run Job '${job}' for cleanup." >&2
+    return 1
+  fi
+  if [ -z "${existing}" ]; then
+    return 0
+  fi
+  if [ "${existing}" != "${job}" ]; then
+    echo "Error: candidate Cloud Run Job lookup for '${job}' was ambiguous: ${existing}" >&2
+    return 1
+  fi
+  echo "Deleting first-release candidate Cloud Run Job '${job}'..." >&2
+  gcloud run jobs delete "${job}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --quiet
+}
+
+cleanup_initial_release_candidates() {
+  local failed=0
+  local job
+  for job in "$@"; do
+    delete_candidate_job "${job}" || failed=1
+  done
+  return "${failed}"
 }
 
 rollback_release_traffic() {

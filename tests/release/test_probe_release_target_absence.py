@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from delivery_toolchain.release.build_release_handoff import build_handoff
+from delivery_toolchain.release.build_release_handoff import HandoffError, build_handoff
 from delivery_toolchain.release.probe_release_target_absence import (
     ProbeError,
     main,
@@ -34,6 +34,7 @@ from delivery_toolchain.release.release_manifest import (
     INITIAL_RELEASE_RECOVERY_METHOD,
     INITIAL_RELEASE_TARGET_INVENTORY,
     initial_release_readback_errors,
+    release_candidate_job_name,
     validate_release_admission,
 )
 
@@ -48,8 +49,9 @@ TARGETS = {
 }
 
 # A `gcloud` stand-in that answers from the environment instead of the cloud.
-# It answers the same way the real one does: `list --filter` succeeds and prints
-# nothing for an absent resource, and exits non-zero when it could not look.
+# Services use an exact-name filter. Jobs intentionally return the complete
+# list, because the production probe must catch old SHA-suffixed release Jobs,
+# not just the current candidate name (or a never-used base name).
 FAKE_GCLOUD = '''#!/usr/bin/env python3
 import json
 import os
@@ -64,10 +66,17 @@ for argument in sys.argv[1:]:
     if argument.startswith("--filter=metadata.name="):
         name = argument.split("=", 2)[2]
 
-if name in unreadable:
+is_jobs_list = sys.argv[1:3] == ["run", "jobs"] and "list" in sys.argv
+if unreadable:
     print("PERMISSION_DENIED: caller lacks run.services.list", file=sys.stderr)
     raise SystemExit(1)
-if name in ambiguous:
+if is_jobs_list:
+    for resource in sorted(present):
+        print(resource)
+    for resource in sorted(ambiguous):
+        print(resource)
+        print(resource + "-2")
+elif name in ambiguous:
     print(name)
     print(name + "-2")
 elif name in present:
@@ -137,6 +146,8 @@ def probe_argv(fake_gcloud: Path, **extra: str) -> list[str]:
         extra.pop("project", "odayplus"),
         "--region",
         extra.pop("region", "asia-east1"),
+        "--candidate-sha",
+        extra.pop("candidate_sha", SHA),
         "--gcloud",
         str(fake_gcloud),
     ]
@@ -164,6 +175,14 @@ def test_an_empty_target_produces_a_readback_the_handoff_can_bind(
     assert readback["kind"] == INITIAL_RELEASE_READBACK_KIND
     assert readback["probe_command"] == INITIAL_RELEASE_PROBE_COMMAND
     assert initial_release_readback_errors(readback, target_environment="dev") == []
+    for component, resource_kind in INITIAL_RELEASE_TARGET_INVENTORY:
+        entry = next(item for item in readback["targets"] if item["component"] == component)
+        if resource_kind == "cloud-run-job":
+            assert entry["resource_name"] == release_candidate_job_name(
+                TARGETS[component], SHA
+            )
+        else:
+            assert entry["resource_name"] == TARGETS[component]
 
     manifest = first_release_manifest(readback)
     assert validate_release_admission(manifest, environment="dev") == []
@@ -212,6 +231,30 @@ def test_a_leftover_migration_job_makes_the_target_not_empty(
     set_cloud_state(monkeypatch, present=[TARGETS["migration"]])
 
     assert main(probe_argv(fake_gcloud, output=str(tmp_path / "readback.json"))) == 1
+
+
+def test_a_leftover_sha_suffixed_release_job_makes_the_target_not_empty(
+    monkeypatch: pytest.MonkeyPatch, fake_gcloud: Path, tmp_path: Path
+) -> None:
+    old_release_job = release_candidate_job_name(TARGETS["worker"], "a" * 40)
+    set_cloud_state(monkeypatch, present=[old_release_job])
+
+    assert main(probe_argv(fake_gcloud, output=str(tmp_path / "readback.json"))) == 1
+
+
+def test_a_base_job_readback_cannot_be_bound_to_a_candidate(
+    monkeypatch: pytest.MonkeyPatch, fake_gcloud: Path, tmp_path: Path
+) -> None:
+    set_cloud_state(monkeypatch)
+    output = tmp_path / "readback.json"
+    assert main(probe_argv(fake_gcloud, output=str(output))) == 0
+    readback = json.loads(output.read_text(encoding="utf-8"))
+    for entry in readback["targets"]:
+        if entry["resource_kind"] == "cloud-run-job":
+            entry["resource_name"] = TARGETS[entry["component"]]
+
+    with pytest.raises(HandoffError, match="SHA-suffixed candidate Job"):
+        first_release_manifest(readback)
 
 
 def test_a_gcloud_that_cannot_look_is_not_a_target_that_is_empty(
@@ -276,6 +319,8 @@ def test_an_unnamed_deploy_target_cannot_be_read_back(
         "odayplus",
         "--region",
         "asia-east1",
+        "--candidate-sha",
+        SHA,
         "--gcloud",
         str(fake_gcloud),
         "--output",
@@ -300,6 +345,7 @@ def test_a_partial_target_list_cannot_prove_an_empty_environment(
             project="odayplus",
             region="asia-east1",
             targets={"api": TARGETS["api"], "web": TARGETS["web"]},
+            candidate_sha=SHA,
             gcloud=str(fake_gcloud),
         )
     assert any("缺少部署 target" in error for error in excinfo.value.errors)
