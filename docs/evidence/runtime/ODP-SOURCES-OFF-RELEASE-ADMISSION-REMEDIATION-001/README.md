@@ -5,7 +5,7 @@ admission 語意。
 
 - 任務狀態：實作完成，等待正式 review submission
 - Owner：Codex · Reviewer：Codex2
-- 量測 code head：`88e46a91b32c5bd7fdbe109eeb00b5d02c85cd27`
+- 量測 code head：`ac96f32435ceee205e4f4d8d722718f1901938f1`
 - base advance：merge commit `181dc823bde876a2e4087002c2a3efb609b9c9f5`，包含 `origin/dev@4f28c2316af6`
 
 ## 1. 問題
@@ -44,11 +44,16 @@ admission 語意。
     "firewall_egress": "default-deny",
     "workflow_vpc_binding": "verified",
     "deploy_entrypoint_vpc_binding": "verified",
+    "runtime_probe_wiring": "verified",
+    "runtime_probe": "public_egress_denied",
+    "runtime_probe_receipt": ".odp_data/deployment/public-egress-probe.json",
     "provider_credentials_runtime": "absent",
     "proof_source": [".github/workflows/deploy-dev.yml",
                      "product_ops/deployment/deploy_cloud_run_waji.sh",
                      "infra/terraform/cloud_run.tf",
-                     "infra/terraform/network.tf"],
+                     "infra/terraform/network.tf",
+                     "product_ops/deployment/staging_lifecycle.py",
+                     "product_ops/deployment/cloud_run_job_entrypoint.py"],
     "contract_digest": "sha256:<computed over the checked-in contract files>"
   },
   "binding_digest": "sha256:..."
@@ -66,7 +71,8 @@ admission 語意。
    的 provider 設定（`ODP_EXTERNAL_PROVIDER_MODE`、有無接上 provider credential、
    有無接上 provider endpoint），並讀取同一 Runtime Release 的 VPC connector/
    egress wiring；再封裝 Cloud Run `ALL_TRAFFIC`、Terraform default-deny firewall
-   與 contract digest 證據。CLI、dispatch input 與 repository vars **都沒有**可以
+   與 promotion 前 public-egress deny probe、secret-free runtime receipt 及 contract
+   digest 證據。CLI、dispatch input 與 repository vars **都沒有**可以
    傳入 posture 或 binding digest 的管道。
 
 ## 3. Fail-closed 條件
@@ -79,6 +85,9 @@ admission 語意。
 | `provider_mode != "disabled"` | 拒絕 |
 | workflow 缺少 Cloud Run VPC connector 或 egress binding | 拒絕 |
 | deploy entrypoint 未把 connector/egress 傳給 Cloud Run | 拒絕 |
+| deploy entrypoint 未在 promotion 前執行 public-egress deny probe | 拒絕 |
+| probe 未確認候選 worker job 為 `ALL_TRAFFIC` | 拒絕 |
+| public-egress probe receipt 未保留或 wiring 未綁定 | 拒絕 |
 | Cloud Run IaC 不是 `ALL_TRAFFIC` 或 Terraform firewall contract 失效 | 拒絕 |
 | egress evidence 缺欄位、credential runtime 非 absent、或 contract digest 不符 | 拒絕 |
 | inventory 未涵蓋全部 16 個來源 | 拒絕 |
@@ -125,8 +134,8 @@ attestation。
 | `delivery_toolchain/release/release_manifest.py` | attestation schema、VPC/firewall contract evidence、binding digest、fail-closed 驗證、rollback binding、anti-downgrade |
 | `delivery_toolchain/release/build_release_handoff.py` | 從 deploy workflow 推導 posture 與 egress wiring、build 端 anti-downgrade、嚴格路徑保留 |
 | `delivery_toolchain/release/check_release_environment.py` | deploy environment 必須解析 VPC connector 與 egress，避免空值退回 public path |
-| `product_ops/deployment/deploy_cloud_run_waji.sh` | sources-off 在首次 Cloud Run mutation 前強制 connector 與 `ALL_TRAFFIC` |
-| `.github/workflows/deploy-dev.yml` | `external_sources_enabled` input 與 `--external-source` 接線 |
+| `product_ops/deployment/deploy_cloud_run_waji.sh` | sources-off 強制 connector、`ALL_TRAFFIC`，並在 promotion 前執行 public-egress probe、寫入 secret-free receipt |
+| `.github/workflows/deploy-dev.yml` | `external_sources_enabled` input、`--external-source` 接線與 probe receipt allowlist |
 | `tests/release/test_release_manifest.py` | 20 個 focused 正／負向測試 |
 | `tests/release/test_build_release_handoff.py` | 12 個 focused 正／負向測試 |
 | `tests/ops/test_deploy_workflow_contract.py` | 斷言 posture 沒有 dispatch 管道 |
@@ -134,6 +143,7 @@ attestation。
 ## 7. 驗證
 
 見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
-在 code head `88e46a91` 以指定 focused selection 通過：exit 0、19.432 秒；收據不含
+在 code head `ac96f324` 以指定 focused selection 通過：exit 0、25.81 秒；收據不含
 任何 secret 值。測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**，
-`delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 code head 通過；文件追加前已在最終 head 再執行一次 exact selection。
+`delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 code head 通過；probe gate、
+receipt wiring 與 shell syntax 亦已檢查。

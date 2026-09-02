@@ -5,8 +5,8 @@
   "agent": "Codex",
   "reviewer": "Codex2",
   "branch": "task/ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
-  "head_sha": "88e46a91b32c5bd7fdbe109eeb00b5d02c85cd27",
-  "head_sha_note": "以最終 exact code head 88e46a91 重新執行指定 focused selection、secret scan 與 ruff，全部 exit 0；其後僅更新此收據與 README。",
+  "head_sha": "ac96f32435ceee205e4f4d8d722718f1901938f1",
+  "head_sha_note": "以最終 exact code head ac96f324 重新執行指定 focused selection、secret scan 與 ruff，全部 exit 0；其後僅更新此收據與 README。",
   "secret_values_redacted": true,
   "runs": [
     {
@@ -14,10 +14,10 @@
       "command": "uv run --frozen pytest -q tests/release/test_build_release_handoff.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_dev_rollout.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "88e46a91b32c5bd7fdbe109eeb00b5d02c85cd27",
-      "started_at": "2026-09-02T04:46:43Z",
-      "finished_at": "2026-09-02T04:47:02Z",
-      "duration_seconds": 19.432,
+      "head_sha": "ac96f32435ceee205e4f4d8d722718f1901938f1",
+      "started_at": "2026-09-02T05:00:00Z",
+      "finished_at": "2026-09-02T05:00:26Z",
+      "duration_seconds": 25.81,
       "selection": {
         "scope": "targeted",
         "items": [
@@ -33,21 +33,21 @@
       "runner": "pytest"
     },
     {
-      "purpose": "secret scan over code head 88e46a91b32c5bd7fdbe109eeb00b5d02c85cd27",
+      "purpose": "secret scan over code head ac96f32435ceee205e4f4d8d722718f1901938f1",
       "command": "uv run --frozen python delivery_toolchain/security/secret_scan.py",
       "exit_code": 0,
       "outcome": "passed",
       "result_line": "Secrets scan passed successfully. No violations found."
     },
     {
-      "purpose": "lint over the changed surfaces at code head 88e46a91b32c5bd7fdbe109eeb00b5d02c85cd27",
+      "purpose": "lint over the changed surfaces at code head ac96f32435ceee205e4f4d8d722718f1901938f1",
       "command": "uv run --frozen ruff check delivery_toolchain/release/ tests/release/ tests/ops/",
       "exit_code": 0,
       "outcome": "passed",
       "result_line": "All checks passed!"
     },
     {
-      "purpose": "regression sweep over adjacent release and staging suites at code head 88e46a91b32c5bd7fdbe109eeb00b5d02c85cd27",
+      "purpose": "regression sweep over adjacent release and staging suites at code head ac96f32435ceee205e4f4d8d722718f1901938f1",
       "command": "uv run --frozen pytest -q tests/release/ tests/ops/test_release_receipts.py tests/ops/test_ephemeral_staging_lifecycle.py",
       "exit_code": 0,
       "outcome": "passed"
@@ -81,6 +81,7 @@
     "deploy workflow wiring a provider credential",
     "deploy workflow wiring a provider endpoint",
     "deploy workflow declaring no provider mode at all",
-    "deploy workflow missing Cloud Run VPC egress binding"
+    "deploy workflow missing Cloud Run VPC egress binding",
+    "deploy workflow missing public-egress probe receipt wiring"
   ]
 }
