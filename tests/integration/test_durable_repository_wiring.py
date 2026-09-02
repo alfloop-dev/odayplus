@@ -400,6 +400,9 @@ def test_durable_job_queue_idempotency_survives_restart(db_path) -> None:
 def test_durable_job_delivery_state_is_persisted_without_inference(db_path) -> None:
     bundle = _durable_bundle(db_path)
     try:
+        columns = {row["name"] for row in bundle.engine.query("PRAGMA table_info(durable_jobs)")}
+        assert "delivery_state" in columns
+
         job, created = bundle.job_queue.enqueue(
             JobRequest(job_type="forecast", payload={"k": 1}, idempotency_key="delivery-1"),
             correlation_id="corr-delivery-1",
