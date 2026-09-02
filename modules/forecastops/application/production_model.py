@@ -145,7 +145,11 @@ def _feature_row(
         **model_features,
         "horizon_weeks": horizon_weeks,
         "horizon_days": horizon_weeks * 7,
-        "data_quality_score": min(float(item.data_quality_score) for item in observations),
+        "data_quality_score": (
+            None
+            if any(item.data_quality_score is None for item in observations)
+            else min(float(item.data_quality_score) for item in observations)
+        ),
         "site_score_baseline_p50": latest.site_score_baseline_p50,
         "observation_count": len(observations),
         "feature_snapshot_time": feature_snapshot_time.isoformat(),
