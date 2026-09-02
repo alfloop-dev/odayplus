@@ -3,9 +3,10 @@
 修正 Runtime Release 把「所有外部來源保持關閉」誤判為「缺少 masked snapshot」的
 admission 語意。
 
-- 任務狀態：實作完成，等待 review
-- Owner：Claude2 · Reviewer：Codex2
-- 量測 head：`b1b3c6420278de69ae08a463c70123234d031b81`
+- 任務狀態：實作完成，等待正式 review submission
+- Owner：Codex · Reviewer：Codex2
+- 量測 code head：`2eb194c113f8466cab5fc4081b4bcd8091198ca7`
+- base advance：merge commit `181dc823bde876a2e4087002c2a3efb609b9c9f5`，包含 `origin/dev@4f28c2316af6`
 
 ## 1. 問題
 
@@ -37,6 +38,19 @@ admission 語意。
     {"source_id": "...", "status": "disabled",
      "credentials_present": false, "public_egress": "denied"}
   ],
+  "egress_evidence": {
+    "kind": "runtime-release-egress-contract",
+    "cloud_run_egress": "ALL_TRAFFIC",
+    "firewall_egress": "default-deny",
+    "workflow_vpc_binding": "verified",
+    "deploy_entrypoint_vpc_binding": "verified",
+    "provider_credentials_runtime": "absent",
+    "proof_source": [".github/workflows/deploy-dev.yml",
+                     "product_ops/deployment/deploy_cloud_run_waji.sh",
+                     "infra/terraform/cloud_run.tf",
+                     "infra/terraform/network.tf"],
+    "contract_digest": "sha256:<computed over the checked-in contract files>"
+  },
   "binding_digest": "sha256:..."
 }
 ```
@@ -50,8 +64,10 @@ admission 語意。
    rebuild 後沿用、也無法跨 source policy 變更存活。
 3. **推導而非填寫**：build 階段從該 release SHA 上的 deploy workflow 讀出實際部署
    的 provider 設定（`ODP_EXTERNAL_PROVIDER_MODE`、有無接上 provider credential、
-   有無接上 provider endpoint）再封裝。CLI、dispatch input 與 repository vars
-   **都沒有**可以傳入 posture 或 binding digest 的管道。
+   有無接上 provider endpoint），並讀取同一 Runtime Release 的 VPC connector/
+   egress wiring；再封裝 Cloud Run `ALL_TRAFFIC`、Terraform default-deny firewall
+   與 contract digest 證據。CLI、dispatch input 與 repository vars **都沒有**可以
+   傳入 posture 或 binding digest 的管道。
 
 ## 3. Fail-closed 條件
 
@@ -61,6 +77,10 @@ admission 語意。
 | 任一來源 `credentials_present` 為 true | 拒絕 |
 | 任一來源 `public_egress != "denied"`／`egress_posture != "default-deny"` | 拒絕 |
 | `provider_mode != "disabled"` | 拒絕 |
+| workflow 缺少 Cloud Run VPC connector 或 egress binding | 拒絕 |
+| deploy entrypoint 未把 connector/egress 傳給 Cloud Run | 拒絕 |
+| Cloud Run IaC 不是 `ALL_TRAFFIC` 或 Terraform firewall contract 失效 | 拒絕 |
+| egress evidence 缺欄位、credential runtime 非 absent、或 contract digest 不符 | 拒絕 |
 | inventory 未涵蓋全部 16 個來源 | 拒絕 |
 | verdict 欄位與自身 inventory 不一致（重算 digest 也一樣） | 拒絕 |
 | binding digest 屬於別的 candidate SHA／image digests／source policy | 拒絕 |
@@ -102,8 +122,8 @@ attestation。
 
 | 檔案 | 變更 |
 |---|---|
-| `delivery_toolchain/release/release_manifest.py` | attestation schema、binding digest、fail-closed 驗證、rollback binding、anti-downgrade |
-| `delivery_toolchain/release/build_release_handoff.py` | 從 deploy workflow 推導 posture、build 端 anti-downgrade、嚴格路徑保留 |
+| `delivery_toolchain/release/release_manifest.py` | attestation schema、VPC/firewall contract evidence、binding digest、fail-closed 驗證、rollback binding、anti-downgrade |
+| `delivery_toolchain/release/build_release_handoff.py` | 從 deploy workflow 推導 posture 與 egress wiring、build 端 anti-downgrade、嚴格路徑保留 |
 | `.github/workflows/deploy-dev.yml` | `external_sources_enabled` input 與 `--external-source` 接線 |
 | `tests/release/test_release_manifest.py` | 20 個 focused 正／負向測試 |
 | `tests/release/test_build_release_handoff.py` | 12 個 focused 正／負向測試 |
@@ -111,6 +131,8 @@ attestation。
 
 ## 7. 驗證
 
-見 [`verification-receipt.json`](verification-receipt.json)。收據不含任何 secret
-值：測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**，
-`delivery_toolchain/security/secret_scan.py` 於同一 head 通過。
+見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
+在 code head `2eb194c1` 以指定 focused selection 通過：exit 0、19.197 秒；收據不含
+任何 secret 值。測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**，
+`delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 head 通過；文件追加後會在
+最終 head 再執行一次 exact selection。

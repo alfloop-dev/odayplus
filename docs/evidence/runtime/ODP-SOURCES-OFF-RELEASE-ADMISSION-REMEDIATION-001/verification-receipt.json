@@ -2,11 +2,11 @@
   "schema_version": 1,
   "task_id": "ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
   "title": "sources-off release admission 與 snapshot 需求解耦驗證收據",
-  "agent": "Claude2",
+  "agent": "Codex",
   "reviewer": "Codex2",
   "branch": "task/ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
-  "head_sha": "b1b3c6420278de69ae08a463c70123234d031b81",
-  "head_sha_note": "本收據量測的是實作 commit。其後只追加本 evidence 目錄的文件，未變更受測程式碼；task_finalize 的 canonical 收據綁定最終 head。",
+  "head_sha": "2eb194c113f8466cab5fc4081b4bcd8091198ca7",
+  "head_sha_note": "本收據量測的是 base advance 後的實作 code head；其後只追加本 evidence 目錄文件，未變更受測程式碼。task_verification 已於此 head 以 exact selection 通過；task_finalize 前會在最終 head 再產生 canonical 收據。",
   "secret_values_redacted": true,
   "runs": [
     {
@@ -14,35 +14,40 @@
       "command": "uv run --frozen pytest -q tests/release/test_build_release_handoff.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_dev_rollout.py",
       "exit_code": 0,
       "outcome": "passed",
-      "started_at": "2026-09-02T04:14:06Z",
-      "finished_at": "2026-09-02T04:14:29Z",
-      "duration_seconds": 23,
+      "head_sha": "2eb194c113f8466cab5fc4081b4bcd8091198ca7",
+      "started_at": "2026-09-02T04:38:39Z",
+      "finished_at": "2026-09-02T04:38:58Z",
+      "duration_seconds": 19.197,
       "selection": {
-        "tests/release/test_build_release_handoff.py": 64,
-        "tests/release/test_release_manifest.py": 52,
-        "tests/release/test_release_manifest_cli.py": 7,
-        "tests/release/test_runtime_admission.py": 41,
-        "tests/ops/test_deploy_workflow_contract.py": 63,
-        "tests/ops/test_dev_rollout.py": 11,
-        "total_collected": 238
-      }
+        "scope": "targeted",
+        "items": [
+          "tests/ops/test_deploy_workflow_contract.py",
+          "tests/ops/test_dev_rollout.py",
+          "tests/release/test_build_release_handoff.py",
+          "tests/release/test_release_manifest.py",
+          "tests/release/test_release_manifest_cli.py",
+          "tests/release/test_runtime_admission.py"
+        ],
+        "fingerprint": "feb59460090b3bd33854a0202fba7a56"
+      },
+      "runner": "pytest"
     },
     {
-      "purpose": "secret scan over the same tree",
+      "purpose": "secret scan over code head 2eb194c113f8466cab5fc4081b4bcd8091198ca7",
       "command": "uv run --frozen python delivery_toolchain/security/secret_scan.py",
       "exit_code": 0,
       "outcome": "passed",
       "result_line": "Secrets scan passed successfully. No violations found."
     },
     {
-      "purpose": "lint over the changed surfaces",
+      "purpose": "lint over the changed surfaces at code head 2eb194c113f8466cab5fc4081b4bcd8091198ca7",
       "command": "uv run --frozen ruff check delivery_toolchain/release/ tests/release/ tests/ops/",
       "exit_code": 0,
       "outcome": "passed",
       "result_line": "All checks passed!"
     },
     {
-      "purpose": "regression sweep over adjacent release and staging suites",
+      "purpose": "regression sweep over adjacent release and staging suites at code head 2eb194c113f8466cab5fc4081b4bcd8091198ca7",
       "command": "uv run --frozen pytest -q tests/release/ tests/ops/test_release_receipts.py tests/ops/test_ephemeral_staging_lifecycle.py",
       "exit_code": 0,
       "outcome": "passed"
@@ -60,6 +65,7 @@
     "sources_off_attestation with an enabled source in the inventory",
     "sources_off_attestation with a provider credential present",
     "sources_off_attestation with public egress allowed / egress_posture mismatch",
+    "sources_off_attestation with altered VPC/firewall egress evidence",
     "sources_off_attestation that does not audit all 16 sources",
     "sources_off_attestation whose verdict fields contradict its own inventory",
     "binding_digest bound to another candidate SHA",
@@ -74,6 +80,7 @@
     "deploy workflow with ODP_EXTERNAL_PROVIDER_MODE=live",
     "deploy workflow wiring a provider credential",
     "deploy workflow wiring a provider endpoint",
-    "deploy workflow declaring no provider mode at all"
+    "deploy workflow declaring no provider mode at all",
+    "deploy workflow missing Cloud Run VPC egress binding"
   ]
 }
