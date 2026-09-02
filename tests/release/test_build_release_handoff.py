@@ -27,13 +27,20 @@ from delivery_toolchain.release.build_release_handoff import (
 )
 from delivery_toolchain.release.release_manifest import (
     EXTERNAL_SOURCE_INVENTORY,
+    INITIAL_RELEASE_PROBE_COMMAND,
+    INITIAL_RELEASE_READBACK_KIND,
+    INITIAL_RELEASE_RECOVERY_METHOD,
+    INITIAL_RELEASE_TARGET_INVENTORY,
     build_release_manifest,
     build_sources_off_attestation,
     compute_data_contract_digest,
     compute_manifest_digest,
     compute_source_policy_digest,
+    extract_rollback_release_binding,
+    release_candidate_job_name,
     validate_manifest,
     validate_release_admission,
+    validate_rollback_manifest,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1493,3 +1500,302 @@ def test_an_enabled_source_never_gets_a_sources_off_attestation() -> None:
     assert "sources_off_attestation" not in manifest
     assert manifest["external_sources_expected_enabled"] == ["listing_raw_snapshot"]
     assert validate_release_admission(manifest) == []
+
+
+# --------------------------------------------------------------------------
+# ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: building the first release.
+#
+# `build_handoff` refuses a schema v2 manifest with no `rollback_release`, and
+# on the first release into a target there is none to bind -- so the build
+# phase could not write a handoff at all, and the target could never receive a
+# first deploy. These cover the one branch that resolves that: what it requires
+# before it opens, and everything it still refuses.
+# --------------------------------------------------------------------------
+
+
+def empty_target_readback(**overrides) -> dict:
+    readback = {
+        "kind": INITIAL_RELEASE_READBACK_KIND,
+        "target_environment": "dev",
+        "project": "odayplus",
+        "region": "asia-east1",
+        "probe_command": INITIAL_RELEASE_PROBE_COMMAND,
+        "targets": [
+            {
+                "component": component,
+                "resource_kind": resource_kind,
+                "resource_name": (
+                    release_candidate_job_name(f"oday-plus-{component}", SHA)
+                    if resource_kind == "cloud-run-job"
+                    else f"oday-plus-{component}"
+                ),
+                "exists": False,
+                "serving_traffic": False,
+            }
+            for component, resource_kind in INITIAL_RELEASE_TARGET_INVENTORY
+        ],
+    }
+    readback.update(overrides)
+    return readback
+
+
+def first_release(**overrides):
+    """A sources-off first release: no snapshot, no predecessor, a readback."""
+
+    release_sha = overrides.get("release_sha", SHA)
+    kwargs = {
+        "release_sha": release_sha,
+        "components": components(),
+        "sbom_refs": [ref("api", "5")],
+        "signature_refs": [ref("api", "6")],
+        "data_snapshot": None,
+        "initial_release_readback": empty_target_readback(),
+        "target_environment": "dev",
+        "created_at": CREATED_AT,
+        "created_by_workflow": (
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@"
+            + release_sha
+        ),
+    }
+    kwargs.update(overrides)
+    return build_handoff(**kwargs)
+
+
+def test_a_first_release_into_an_empty_target_writes_an_admissible_handoff() -> None:
+    """The deadlock: v2 requires a predecessor, and the first release has none."""
+
+    images, manifest = first_release()
+
+    assert sorted(images) == sorted(HANDOFF_COMPONENTS)
+    assert "rollback_release" not in manifest
+    assert validate_manifest(manifest, expected_candidate_sha=SHA) == []
+    assert validate_release_admission(manifest, environment="dev") == []
+
+    recovery = manifest["initial_release_recovery"]
+    assert recovery["target_environment"] == "dev"
+    assert recovery["recovery_method"] == INITIAL_RELEASE_RECOVERY_METHOD
+    assert recovery["rollback_target_available"] is False
+    assert recovery["prior_release_absent"] is True
+    assert {entry["component"] for entry in recovery["absence_readback"]["targets"]} == {
+        component for component, _kind in INITIAL_RELEASE_TARGET_INVENTORY
+    }
+
+
+def test_the_first_release_handoff_is_reproducible_for_the_same_release_sha() -> None:
+    """A lease is issued against manifest_digest; a re-run must reproduce it.
+
+    The readback carries no timestamp and no run id for exactly this reason: if
+    the target is still empty, reading it again yields the same bytes.
+    """
+
+    _, first = first_release()
+    _, second = first_release()
+
+    assert first["manifest_digest"] == second["manifest_digest"]
+    assert (
+        first["initial_release_recovery"]["binding_digest"]
+        == second["initial_release_recovery"]["binding_digest"]
+    )
+
+
+def test_the_first_release_manifest_becomes_the_next_release_rollback_target() -> None:
+    """The branch closes behind itself instead of standing open."""
+
+    _, first = first_release()
+
+    assert (
+        validate_rollback_manifest(
+            first,
+            current_candidate_sha="c" * 40,
+            current_release_id="odp-second-001",
+        )
+        == []
+    )
+    assert extract_rollback_release_binding(first)["candidate_sha"] == SHA
+
+
+@pytest.mark.parametrize("field", ["exists", "serving_traffic"])
+def test_a_target_that_already_holds_a_release_refuses_the_branch(field: str) -> None:
+    """This is the whole precondition, so it is not allowed to be approximate."""
+
+    readback = empty_target_readback()
+    readback["targets"][0][field] = True
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(initial_release_readback=readback)
+    assert any(field in error for error in excinfo.value.errors)
+
+
+def test_a_readback_that_skips_a_deploy_target_is_not_proof_of_an_empty_one() -> None:
+    readback = empty_target_readback()
+    readback["targets"] = [
+        entry for entry in readback["targets"] if entry["component"] != "scheduler"
+    ]
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(initial_release_readback=readback)
+    assert any("missing: scheduler" in error for error in excinfo.value.errors)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production", None])
+def test_staging_and_production_keep_the_rollback_requirement(environment) -> None:
+    """A bootstrap allowance for dev must not become a way into production."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(target_environment=environment)
+    assert any(
+        "initial-release recovery 只適用於" in error for error in excinfo.value.errors
+    )
+
+
+def test_an_enabled_source_may_not_bootstrap_through_this_branch() -> None:
+    """Ingested third-party data still owes a masked snapshot and a rollback."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(external_sources_expected_enabled=["weather_daily_snapshot"])
+    assert any(
+        "不得走 initial-release recovery" in error for error in excinfo.value.errors
+    )
+
+
+def test_a_rollback_manifest_and_a_readback_together_fail_closed() -> None:
+    """Two mutually exclusive stories about whether a predecessor exists.
+
+    Picking one here would let a stale `vars` fallback silently turn a real
+    rollback binding into a first-release claim, or the reverse.
+    """
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(rollback_release=valid_rollback(SHA))
+    assert any("不可同時指定" in error for error in excinfo.value.errors)
+
+
+def test_inline_json_is_not_accepted_as_a_target_readback() -> None:
+    """A readback is something a build did, not something an operator typed."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(
+            initial_release_readback=json.dumps(empty_target_readback()),
+        )
+    assert any("不接受 inline JSON" in error for error in excinfo.value.errors)
+
+
+def test_a_remote_readback_uri_is_rejected_by_its_own_name() -> None:
+    """`Path` would collapse `gs://` into a path nobody passed."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(
+            initial_release_readback="gs://odayplus-release/absence-readback.json",
+        )
+    assert any("是遠端 URI" in error for error in excinfo.value.errors)
+
+
+def test_a_missing_readback_file_fails_closed(tmp_path: Path) -> None:
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(initial_release_readback=tmp_path / "nope.json")
+    assert any("無法讀取 initial-release readback" in error for error in excinfo.value.errors)
+
+
+def test_a_declared_probe_command_does_not_open_the_branch() -> None:
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(
+            initial_release_readback=empty_target_readback(
+                probe_command="checked the console"
+            )
+        )
+    assert any("probe_command" in error for error in excinfo.value.errors)
+
+
+def test_a_hand_supplied_binding_digest_in_the_readback_is_refused() -> None:
+    """Nothing in the release path accepts a binding digest it did not compute."""
+
+    readback = empty_target_readback()
+    readback["binding_digest"] = "sha256:" + "0" * 64
+
+    with pytest.raises(HandoffError) as excinfo:
+        first_release(initial_release_readback=readback)
+    assert any("binding digest does not cover" in error for error in excinfo.value.errors)
+
+
+def test_the_missing_rollback_refusal_names_the_branch_that_replaces_it() -> None:
+    """A fail-closed message that does not name the way through invites a forgery."""
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(rollback_release=None)
+    assert any(
+        "--initial-release-readback" in error for error in excinfo.value.errors
+    )
+
+
+def test_the_cli_builds_a_first_release_handoff_from_a_readback_file(
+    tmp_path: Path,
+) -> None:
+    readback_file = tmp_path / "initial-release-absence-readback.json"
+    readback_file.write_text(
+        json.dumps(empty_target_readback()), encoding="utf-8"
+    )
+    images_output = tmp_path / "runtime-release-images.json"
+    manifest_output = tmp_path / "RELEASE_MANIFEST.json"
+
+    exit_code = main(
+        [
+            "--release-sha",
+            SHA,
+            *[f"--component={name}={components()[name]}" for name in HANDOFF_COMPONENTS],
+            f"--sbom-ref={ref('api', '5')}",
+            f"--signature-ref={ref('api', '6')}",
+            "--created-at",
+            CREATED_AT,
+            "--created-by-workflow",
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@" + SHA,
+            "--target-environment",
+            "dev",
+            "--initial-release-readback",
+            str(readback_file),
+            "--images-output",
+            str(images_output),
+            "--manifest-output",
+            str(manifest_output),
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads(manifest_output.read_text(encoding="utf-8"))
+    assert "rollback_release" not in manifest
+    assert manifest["initial_release_recovery"]["recovery_method"] == (
+        INITIAL_RELEASE_RECOVERY_METHOD
+    )
+    assert validate_release_admission(manifest, environment="dev") == []
+
+
+def test_the_cli_writes_nothing_when_the_target_is_not_empty(tmp_path: Path) -> None:
+    readback = empty_target_readback()
+    readback["targets"][2]["exists"] = True
+    readback_file = tmp_path / "readback.json"
+    readback_file.write_text(json.dumps(readback), encoding="utf-8")
+    images_output = tmp_path / "runtime-release-images.json"
+    manifest_output = tmp_path / "RELEASE_MANIFEST.json"
+
+    exit_code = main(
+        [
+            "--release-sha",
+            SHA,
+            *[f"--component={name}={components()[name]}" for name in HANDOFF_COMPONENTS],
+            f"--sbom-ref={ref('api', '5')}",
+            f"--signature-ref={ref('api', '6')}",
+            "--created-at",
+            CREATED_AT,
+            "--target-environment",
+            "dev",
+            "--initial-release-readback",
+            str(readback_file),
+            "--images-output",
+            str(images_output),
+            "--manifest-output",
+            str(manifest_output),
+        ]
+    )
+
+    assert exit_code == 1
+    assert not images_output.exists()
+    assert not manifest_output.exists()

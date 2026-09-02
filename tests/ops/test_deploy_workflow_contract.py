@@ -1510,3 +1510,186 @@ def test_no_manifest_coordinate_is_sourced_from_a_repository_variable() -> None:
             for key, value in (step.get("with") or {}).items():
                 if key in ("run-id",):
                     assert "vars." not in str(value), f"{job_id}:{key}"
+
+
+# --------------------------------------------------------------------------
+# ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: the first release into a target.
+#
+# Schema v2 requires every release to bind the previous approved release, which
+# the first release into a target cannot do. The branch that resolves it is
+# admissible only because the workflow *reads the target back* rather than
+# offering the claim as a dispatch input, and because it reads it again before
+# the lease is spent. These hold that wiring: what produces the claim, what is
+# not allowed to produce it, and where it is re-checked.
+# --------------------------------------------------------------------------
+
+_FIRST_RELEASE_DEPLOY_TARGETS = ("api", "web", "migration", "worker", "scheduler")
+
+
+def _step_names(job: dict) -> list[str]:
+    return [str(step.get("name", step.get("uses", ""))) for step in _job_steps(job)]
+
+
+def _step_index(job: dict, needle: str) -> int:
+    for index, name in enumerate(_step_names(job)):
+        if needle in name:
+            return index
+    raise AssertionError(f"no step matching {needle!r} in {_step_names(job)}")
+
+
+def test_the_first_release_claim_is_a_flag_and_never_its_own_evidence() -> None:
+    """An operator may say "this is the first deploy"; they may not say it is empty.
+
+    The dispatch input selects the branch. The evidence for it -- what is in the
+    target -- has no dispatch channel and no repository-variable fallback at
+    all, because a readback that can be handed in is a declaration.
+    """
+
+    workflow_text = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+    inputs = _dispatch_inputs()
+
+    assert inputs["initial_release_recovery"]["type"] == "boolean"
+    assert inputs["initial_release_recovery"]["required"] is False
+    assert inputs["initial_release_recovery"]["default"] is False
+
+    for forbidden in (
+        "--initial-release-binding-digest",
+        "--prior-release-absent",
+        "--rollback-target-available",
+        "vars.ODP_INITIAL_RELEASE",
+        "initial_release_readback:",
+        "absence_readback:",
+    ):
+        assert forbidden not in workflow_text, (
+            f"deploy-dev.yml must not offer {forbidden}: a first-release claim that "
+            "can be handed in is not a readback"
+        )
+
+
+def test_the_build_phase_reads_the_target_back_before_the_handoff_binds_it() -> None:
+    """The receipt has to exist, and be produced by this build, before it is bound."""
+
+    job = _release_jobs()["build"]
+    probe = _step_index(job, "讀回部署 target")
+    handoff = _step_index(job, "Write the build-once artifact handoff")
+    cloud_sdk = _step_index(job, "Set up Cloud SDK")
+
+    assert cloud_sdk < probe < handoff
+
+    probe_step = _job_steps(job)[probe]
+    assert "probe_release_target_absence.py" in probe_step["run"]
+    assert '--candidate-sha "${ODAY_RELEASE_SHA}"' in probe_step["run"]
+    for component in _FIRST_RELEASE_DEPLOY_TARGETS:
+        assert f'--target "{component}=' in probe_step["run"], (
+            f"the readback must cover the {component} deploy target; a partial "
+            "readback does not prove an empty environment"
+        )
+
+    handoff_step = _job_steps(job)[handoff]
+    assert "--initial-release-readback" in handoff_step["run"]
+    assert "--target-environment" in handoff_step["run"]
+
+
+def test_admission_re_reads_the_target_before_the_lease_is_consumed() -> None:
+    """Build-time truth is not deploy-time truth, and a spent lease is spent.
+
+    The re-read is unconditional on purpose: gating it on the dispatch input
+    would let a forged first-release manifest skip the only check it cannot
+    satisfy by simply not setting the input.
+    """
+
+    job = _release_jobs()["admission"]
+    reprobe = _step_index(job, "重讀部署 target")
+    lease = _step_index(job, "Validate supervisor release admission")
+    transport = _step_index(job, "Bind the transported manifest")
+
+    assert transport < reprobe < lease
+
+    step = _job_steps(job)[reprobe]
+    assert "if" not in step, (
+        "a conditional re-read is one a forged manifest can dispatch around"
+    )
+    assert "probe_release_target_absence.py" in step["run"]
+    assert "--manifest" in step["run"]
+    assert '--candidate-sha "${{ inputs.release_sha }}"' in step["run"]
+    for component in _FIRST_RELEASE_DEPLOY_TARGETS:
+        assert f'--target "{component}=' in step["run"]
+
+
+def test_the_first_release_evidence_leaves_the_runner() -> None:
+    """A refusal or an admission nobody can fetch afterwards is not auditable."""
+
+    build_uploads = [
+        step
+        for step in _job_steps(_release_jobs()["build"])
+        if "initial-release-absence-readback" in str(step.get("with", {}).get("name", ""))
+    ]
+    admission_uploads = [
+        step
+        for step in _job_steps(_release_jobs()["admission"])
+        if "initial-release-recovery-receipt" in str(step.get("with", {}).get("name", ""))
+    ]
+
+    assert len(build_uploads) == 1
+    assert len(admission_uploads) == 1
+    assert admission_uploads[0]["if"] == "always()"
+
+
+def test_the_first_release_branch_adds_no_second_admission_path() -> None:
+    """One workflow, one admission job, one lease check.
+
+    The deadlock could also have been "resolved" by a bootstrap workflow that
+    skips admission. That would remove the deadlock by removing the gate.
+    """
+
+    jobs = _release_jobs()
+    assert sorted(jobs) == [
+        "admission",
+        "build",
+        "deploy",
+        "release_phase",
+        "staging_closeout",
+    ]
+    assert len(list(WORKFLOW_DIR.glob("*deploy*.yml"))) == 1
+
+    lease_checks = [
+        step
+        for job in jobs.values()
+        for step in _job_steps(job)
+        if "check_runtime_admission.py" in str(step.get("run", ""))
+    ]
+    assert len(lease_checks) == 1
+
+
+def test_a_failed_first_deploy_does_not_claim_a_rollback_it_cannot_do() -> None:
+    """The failure path is where an operator learns whether the old version is back.
+
+    For a first release there is no old version, so the recovery is deleting the
+    candidate and holding zero traffic -- and the log has to say that, because
+    "restoring the recorded traffic split" would describe a rollback to a
+    version that has never existed.
+    """
+
+    deploy_script = (ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh").read_text(
+        encoding="utf-8"
+    )
+    traffic_helpers = (
+        ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "release_recovery_mode()" in traffic_helpers
+    assert "initial-release-cleanup" in traffic_helpers
+    assert "release_recovery_mode " in deploy_script
+    assert "There is no previous release to roll back to" in deploy_script
+    assert "cleanup_initial_release_candidates" in deploy_script
+    for candidate in (
+        '"${MIGRATION_CANDIDATE_JOB}"',
+        '"${WORKER_CANDIDATE_JOB}"',
+        '"${SCHEDULER_CANDIDATE_JOB}"',
+    ):
+        assert candidate in deploy_script
+    assert "delete_candidate_job" in traffic_helpers
+    assert "Error: one or more Cloud Run recovery actions failed." in deploy_script
+    # The pre-existing honest branch stays: an absent snapshot deletes the
+    # bootstrap candidate rather than restoring traffic that was never there.
+    assert "Deleting bootstrap candidate service" in traffic_helpers

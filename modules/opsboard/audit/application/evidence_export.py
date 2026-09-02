@@ -265,6 +265,22 @@ class AuditEvidenceExportService:
 def decision_card_from_mapping(payload: dict[str, Any]) -> DecisionCard:
     """Parse API payloads into a typed card while keeping route code thin."""
 
+    required_keys = (
+        "decision_id",
+        "decision_type",
+        "module",
+        "title",
+        "subject_ref",
+        "outcome",
+        "owner",
+        "decided_at",
+        "rationale",
+        "input_snapshot_id",
+    )
+    for key in required_keys:
+        if key not in payload:
+            raise AuditEvidenceExportError(f"decision card is missing required field '{key}'")
+
     card = DecisionCard(
         decision_id=str(payload["decision_id"]),
         decision_type=str(payload["decision_type"]),

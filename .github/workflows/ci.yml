@@ -90,6 +90,34 @@ jobs:
       - name: Enforce product and development code boundaries
         run: uv run python delivery_toolchain/governance/check_code_boundaries.py
 
+      # A bounded quality or confidence score that defaults to its maximum makes
+      # "nobody measured this" indistinguishable from "measured, and perfect".
+      # HeatZoneV3Input.confidence and .coverage_ratio are the sharpest case:
+      # check_support_and_abstention abstains below their thresholds, so the
+      # defaults put a zone with no coverage data permanently out of that gate's
+      # reach. Existing instances are listed with an owner in
+      # measurement_default_exemptions.json; new ones fail here.
+      - name: Refuse bounded scores that default to perfect
+        run: uv run python delivery_toolchain/governance/check_measurement_defaults.py
+
+      # ODP-SA-06 has no per-requirement acceptance criteria -- its Trigger and
+      # Acceptance columns are the same boilerplate seventy-one times -- so five
+      # of the fifteen verified gaps are simply "implemented three of five and
+      # stopped", with nothing written down to break. For requirements that
+      # enumerate a set, this holds the set: every satisfied member names a
+      # symbol that must resolve, and every absent one must say what is missing.
+      - name: Check set-valued requirements against their member lists
+        run: uv run python delivery_toolchain/governance/check_requirement_members.py
+
+      # A concept spanning a Python enum, a TypeScript contract and an API
+      # payload has three lifecycles and no owner, and forks silently. Evidence
+      # Level had four definitions; ODP-EVIDENCE-LEVEL-ALIGNMENT-001 aligned it
+      # once by hand and still missed three of them, because a sweep is not a
+      # standing constraint. This fails on a stale generated module, a diverging
+      # canonical TypeScript type, or a new definition of a governed vocabulary.
+      - name: Check governed vocabularies for drift and new forks
+        run: uv run python delivery_toolchain/governance/generate_vocabularies.py --check
+
       - name: Lint orchestrator code
         run: uv run ruff check .orchestrator delivery_toolchain scripts
 
@@ -180,6 +208,24 @@ jobs:
 
       - name: Test official real-estate outcomes on PostgreSQL 16
         run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
+
+      # `requires_live_env` was doing two jobs at once. Some of the tests behind
+      # it genuinely need a live multi-repo checkout (.orchestrator's sidecar
+      # coordination tests); the rest only need a PostgreSQL, which `pgserver`
+      # already provides as a project dependency with no root and no service
+      # container -- `make security` has been running database tests that way
+      # all along. Conflating the two meant ~79 database tests never ran
+      # anywhere, and that is how the assisted-listing schema validator sat
+      # broken from commit 549ce261 onwards: the test that would have reported
+      # it was excluded by the same marker expression.
+      #
+      # This step runs the database side. The live-environment tests stay out
+      # by path, and the one PostGIS-dependent test stays out by its own marker
+      # so the residual exclusion is one named test rather than a silent bulk.
+      - name: Test database contracts, migrations and schema gates
+        run: |
+          uv run pytest -m "requires_live_env and not requires_postgis" \
+            tests/contract tests/ops tests/integration
 
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
