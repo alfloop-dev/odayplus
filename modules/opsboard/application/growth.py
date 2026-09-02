@@ -136,14 +136,14 @@ def _judge_effectiveness(
     status: str,
     observed_lift: float | None,
     target_lift: float,
-    evidence_level: str,
+    evidence_level: str | None,
 ) -> str:
     """Classify effectiveness: PENDING | EFFECTIVE | INEFFECTIVE | INCONCLUSIVE."""
     if status not in _OUTCOME_STAGES or observed_lift is None:
         return "PENDING"
     if observed_lift <= 0:
         return "INEFFECTIVE"
-    if evidence_level == "low" or observed_lift < target_lift:
+    if evidence_level in ("low", "L0", "L1", "L2", None) or observed_lift < target_lift:
         return "INCONCLUSIVE"
     return "EFFECTIVE"
 
@@ -153,7 +153,7 @@ def _closeout_gate(action: dict[str, Any]) -> dict[str, Any]:
         status=action.get("status", "DRAFT"),
         observed_lift=action.get("observedLift"),
         target_lift=float(action.get("targetLift") or 0),
-        evidence_level=action.get("evidenceLevel", "medium"),
+        evidence_level=action.get("evidenceLevel"),
     )
     if outcome == "EFFECTIVE":
         return {
@@ -1140,7 +1140,7 @@ class GrowthService:
         outcome: str,
         required_action: str,
         observed_lift: float | None = None,
-        evidence_level: str = "medium",
+        evidence_level: str | Any | None = None,
         rationale: str = "",
         actor_role_id: str = "opsLead",
         actor_name: str = "Operator",
@@ -1167,8 +1167,10 @@ class GrowthService:
 
         if observed_lift is not None:
             action["observedLift"] = observed_lift
-        if evidence_level:
-            action["evidenceLevel"] = evidence_level
+        if evidence_level is not None:
+            action["evidenceLevel"] = (
+                evidence_level.value if hasattr(evidence_level, "value") else evidence_level
+            )
         if rationale:
             action["rationale"] = rationale
         action["growthOutcome"] = outcome

@@ -16,6 +16,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
+from shared.governance.vocabularies import EvidenceLevel
+
 from models.shared_ml.production_runtime import (
     ProductionExecutionConfigurationError,
     production_execution_required,
@@ -590,7 +592,7 @@ class PriceOpsService:
         actual_gross_margin: float,
         actor: str = "system",
         measurement_method: str = "before_after",
-        evidence_level: str = "medium",
+        evidence_level: EvidenceLevel | str | None = None,
         negative_impact_threshold: float = DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
         outcome_window: tuple[datetime, datetime] | None = None,
         generated_at: datetime | None = None,

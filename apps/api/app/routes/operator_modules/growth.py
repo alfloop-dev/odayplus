@@ -24,6 +24,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, s
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from apps.api.app.routes.operator_modules.live_service import resolve_service
+from shared.governance.vocabularies import EvidenceLevel
 from modules.opsboard.application.growth import (
     GrowthCloseoutGateError,
     GrowthConflict,
@@ -132,7 +133,7 @@ class OutcomePayload(BaseModel):
     outcome: str
     requiredAction: str
     observedLift: float | None = None
-    evidenceLevel: str = "medium"
+    evidenceLevel: EvidenceLevel | None = None
     rationale: str = ""
     actorRoleId: str | None = None
     actorName: str | None = None

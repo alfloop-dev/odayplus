@@ -53,6 +53,12 @@ export type FourLight = "GREEN" | "YELLOW" | "ORANGE" | "RED";
 
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
+/**
+ * Causal evidence ladder (ADR-0004 D3 / ODP-ML-05 §5).
+ * Absence is not a tier (use null for unrated/unassessed).
+ */
+export type EvidenceLevel = "L0" | "L1" | "L2" | "L3" | "L4" | "L5";
+
 /** The seven status-colour semantics (visual system §6.1). */
 export type StatusTone =
   | "green"
@@ -90,6 +96,15 @@ export const FOUR_LIGHTS: readonly FourLight[] = [
   "YELLOW",
   "ORANGE",
   "RED",
+];
+
+export const EVIDENCE_LEVELS: readonly EvidenceLevel[] = [
+  "L0",
+  "L1",
+  "L2",
+  "L3",
+  "L4",
+  "L5",
 ];
 
 /** Map a DataStatus to its display tone (component contracts §4.13). */

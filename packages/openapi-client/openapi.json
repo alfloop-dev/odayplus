@@ -2201,6 +2201,19 @@
         "title": "EvidenceGovernancePayload",
         "type": "object"
       },
+      "EvidenceLevel": {
+        "description": "Causal evidence ladder.\n\nADR-0004 D3: absence is not a tier. A value of ``None`` means the evidence was\nnever assessed, and it must stay distinguishable from ``L0``, which is a\nmeasurement -- anecdotal, but taken. No member of this enum may be used as a\ndefault for an unassessed claim.\n\nAssessability is orthogonal and travels alongside as a separate boolean; see\nmodules/adlift/domain/incrementality.py, where ``assessable`` is a field of its\nown rather than a level.\n\nAuthority: ADR-0004 / ODP-ML-05 §5.",
+        "enum": [
+          "L0",
+          "L1",
+          "L2",
+          "L3",
+          "L4",
+          "L5"
+        ],
+        "title": "EvidenceLevel",
+        "type": "string"
+      },
       "EvidencePackagePayload": {
         "additionalProperties": true,
         "description": "POST /operator/governance/evidence-package — export an Evidence Package.",
@@ -5415,9 +5428,14 @@
             "type": "number"
           },
           "evidence_level": {
-            "default": "medium",
-            "title": "Evidence Level",
-            "type": "string"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "generated_at": {
             "anyOf": [
@@ -8204,9 +8222,14 @@
             "title": "Actorroleid"
           },
           "evidenceLevel": {
-            "default": "medium",
-            "title": "Evidencelevel",
-            "type": "string"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "observedLift": {
             "anyOf": [

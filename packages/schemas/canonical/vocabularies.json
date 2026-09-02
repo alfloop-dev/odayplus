@@ -16,18 +16,7 @@
         {"name": "L5_POLICY_READY", "value": "L5", "comment": "replicated, policy ready"}
       ],
       "typescript_type": "EvidenceLevel",
-      "known_forks": [
-        {
-          "location": "packages/domain-types/src/frontend-contracts.ts",
-          "definition": "\"high\" | \"medium\" | \"low\" | \"insufficient\"",
-          "note": "InterventionTimelineContract and AdLiftReportCardContract, whose Python enums are both this ladder. No conversion exists anywhere in the tree, so the contract is stale rather than a deliberate narrowing. ODP-EVIDENCE-LEVEL-ALIGNMENT-001 aligned the Python enums and the canonical TS type and did not reach here."
-        },
-        {
-          "location": "apps/api/app/routes/priceops.py, apps/api/app/routes/operator_modules/growth.py",
-          "definition": "evidence_level: str = \"medium\"",
-          "note": "A free string with a default, which is also an ADR-0004 D3 violation: a request that says nothing about evidence produces a record claiming medium."
-        }
-      ]
+      "known_forks": []
     },
     {
       "name": "JobStatus",

@@ -15,6 +15,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+from shared.governance.vocabularies import EvidenceLevel
+
 from solver.pricing.constraints import (
     PRICING_POLICY_ID,
     PRICING_POLICY_KIND,
@@ -790,7 +792,7 @@ class PricingEffectEvaluation:
     outcome_window: tuple[datetime, datetime]
     label_maturity_time: datetime
     measurement_method: str
-    evidence_level: str
+    evidence_level: EvidenceLevel | str | None
     baseline_gross_margin: float
     expected_incremental_gross_margin: float
     actual_incremental_gross_margin: float
@@ -809,7 +811,11 @@ class PricingEffectEvaluation:
             ],
             "label_maturity_time": self.label_maturity_time.isoformat(),
             "measurement_method": self.measurement_method,
-            "evidence_level": self.evidence_level,
+            "evidence_level": (
+                self.evidence_level.value
+                if hasattr(self.evidence_level, "value")
+                else self.evidence_level
+            ),
             "baseline_gross_margin": self.baseline_gross_margin,
             "expected_incremental_gross_margin": self.expected_incremental_gross_margin,
             "actual_incremental_gross_margin": self.actual_incremental_gross_margin,
@@ -1092,7 +1098,7 @@ def evaluate_effect(
     outcome_window: tuple[datetime, datetime],
     label_maturity_time: datetime,
     measurement_method: str = "before_after",
-    evidence_level: str = "medium",
+    evidence_level: EvidenceLevel | str | None = None,
     negative_impact_threshold: float = DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
     generated_at: datetime | None = None,
     evaluation_id: str | None = None,

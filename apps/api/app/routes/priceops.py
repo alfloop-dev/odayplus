@@ -31,6 +31,7 @@ except ModuleNotFoundError:  # pragma: no cover
 else:
     from apps.api.app.routes._common import durable_store_required
     from models.priceops.binding import ElasticityInputError, resolve_elasticity
+    from shared.governance.vocabularies import EvidenceLevel
     from modules.priceops.application import (
         ApprovalBlockedError,
         MissingRollbackPlanError,
@@ -135,7 +136,7 @@ else:
         actual_gross_margin: float
         actor: str = Field(default="system", min_length=1)
         measurement_method: str = "before_after"
-        evidence_level: str = "medium"
+        evidence_level: EvidenceLevel | None = None
         negative_impact_threshold: float = 0.05
         outcome_window_start: str | None = None
         outcome_window_end: str | None = None

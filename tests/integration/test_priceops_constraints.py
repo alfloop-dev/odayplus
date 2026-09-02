@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from shared.governance.vocabularies import EvidenceLevel
 from modules.priceops import (
     PRICEOPS_SOLVER_VERSION,
     ApprovalBlockedError,
@@ -345,7 +346,8 @@ def test_negative_impact_recommends_rollback_and_moves_to_rollback() -> None:
     assert result.plan.status is PlanStatus.ROLLBACK
     # outcome output carries the required maturity / evidence fields (§5.1)
     assert result.evaluation.measurement_method
-    assert result.evaluation.evidence_level
+    # ADR-0004 D3: unrated evaluation has evidence_level=None
+    assert result.evaluation.evidence_level is None
 
 
 # -- rollback plan exists before execution (acceptance #4 / OR-007) -------

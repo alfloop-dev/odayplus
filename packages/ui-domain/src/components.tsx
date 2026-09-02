@@ -628,8 +628,18 @@ export function RootCauseEvidenceCard({ evidence, "data-testid": testId = "root-
 }
 
 export function InterventionTimeline({ timeline, "data-testid": testId = "intervention-timeline" }: InterventionTimelineProps) {
+  const level = timeline.evidenceLevel;
+  const tone =
+    level === "L4" || level === "L5"
+      ? "green"
+      : level === "L2" || level === "L3"
+        ? "yellow"
+        : level === "L0" || level === "L1"
+          ? "orange"
+          : "gray";
+  const badgeLabel = level ? `Evidence ${level}` : "Evidence Unrated";
   return (
-    <DomainCard title={timeline.interventionType} eyebrow={`Intervention ${timeline.interventionId} · ${entityLabel(timeline.store)}`} badge={<StatusBadge label={`Evidence ${timeline.evidenceLevel}`} tone={timeline.evidenceLevel === "high" ? "green" : timeline.evidenceLevel === "medium" ? "yellow" : "orange"} />} testId={testId}>
+    <DomainCard title={timeline.interventionType} eyebrow={`Intervention ${timeline.interventionId} · ${entityLabel(timeline.store)}`} badge={<StatusBadge label={badgeLabel} tone={tone} />} testId={testId}>
       <FieldGrid>
         <Field label="Eligibility" value={timeline.eligibilityStatus} />
         <Field label="Conflict" value={timeline.conflictStatus} />
