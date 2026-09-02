@@ -12,6 +12,14 @@ value from one of two sources, in priority order:
 If neither source is available the binding *fails closed* by raising
 :class:`ElasticityInputError`; callers surface this as HTTP 422 rather than
 silently fabricating a demand curve.
+
+Every resolved estimate also carries an **applicable price range** -- the window
+the elasticity is defensible over. For an estimated elasticity that window is the
+observed price support of the regression; outside it the demand curve is an
+extrapolation, not a fit. Client-supplied applicable bounds may only *narrow*
+that window (see :func:`_narrowed_support_range`); a payload can never widen it
+back out, because that would silently re-authorise the very extrapolation the
+range exists to flag.
 """
 
 from __future__ import annotations
@@ -47,6 +55,56 @@ def _usable_observations(
     ]
 
 
+def _reject_non_positive_bounds(
+    supplied_min: float | None, supplied_max: float | None
+) -> None:
+    for label, value in (
+        ("applicable_min_price", supplied_min),
+        ("applicable_max_price", supplied_max),
+    ):
+        if value is not None and value <= 0:
+            raise ElasticityInputError(
+                f"client-supplied {label} must be positive: {value}"
+            )
+    if supplied_min is not None and supplied_max is not None and supplied_min > supplied_max:
+        raise ElasticityInputError(
+            f"client-supplied applicable bounds invalid: min={supplied_min} > max={supplied_max}"
+        )
+
+
+def _narrowed_support_range(
+    *,
+    fitted_min: float | None,
+    fitted_max: float | None,
+    supplied_min: float | None,
+    supplied_max: float | None,
+) -> tuple[float | None, float | None]:
+    """Intersect the fitted support range with client-supplied applicable bounds.
+
+    The fitted range is the observed price support of the regression. A caller
+    may narrow it -- they may have a business reason to stay closer to today's
+    price -- but may never widen it: the estimator has no evidence outside the
+    prices it actually saw. The result is therefore the intersection, and a
+    request whose supplied window does not overlap the fitted one fails closed.
+    """
+    _reject_non_positive_bounds(supplied_min, supplied_max)
+
+    low = fitted_min
+    if supplied_min is not None:
+        low = supplied_min if low is None else max(low, supplied_min)
+    high = fitted_max
+    if supplied_max is not None:
+        high = supplied_max if high is None else min(high, supplied_max)
+
+    if low is not None and high is not None and low > high:
+        raise ElasticityInputError(
+            "client-supplied applicable bounds do not overlap the estimated support "
+            f"range: supplied=[{supplied_min}, {supplied_max}] "
+            f"estimated=[{fitted_min}, {fitted_max}]"
+        )
+    return low, high
+
+
 def resolve_elasticity(
     *,
     current_price: float,
@@ -73,6 +131,17 @@ def resolve_elasticity(
         )
         if horizon and estimate.horizon != horizon:
             estimate = replace(estimate, horizon=horizon)
+        applicable_min, applicable_max = _narrowed_support_range(
+            fitted_min=estimate.applicable_min_price,
+            fitted_max=estimate.applicable_max_price,
+            supplied_min=supplied_min_price,
+            supplied_max=supplied_max_price,
+        )
+        estimate = replace(
+            estimate,
+            applicable_min_price=applicable_min,
+            applicable_max_price=applicable_max,
+        )
         return estimate, _binding_metadata("estimated", estimate, len(usable))
 
     if supplied_value is not None:
@@ -80,14 +149,7 @@ def resolve_elasticity(
             raise ElasticityInputError(
                 "client-supplied elasticity requires applicable_min_price and applicable_max_price"
             )
-        if supplied_min_price <= 0 or supplied_max_price <= 0:
-            raise ElasticityInputError(
-                f"client-supplied applicable bounds must be positive: min={supplied_min_price}, max={supplied_max_price}"
-            )
-        if supplied_min_price > supplied_max_price:
-            raise ElasticityInputError(
-                f"client-supplied applicable bounds invalid: min={supplied_min_price} > max={supplied_max_price}"
-            )
+        _reject_non_positive_bounds(supplied_min_price, supplied_max_price)
         estimate = PriceElasticityEstimate(
             elasticity_value=supplied_value,
             confidence=(

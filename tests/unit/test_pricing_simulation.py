@@ -464,3 +464,89 @@ def test_oss_optimizer_production_execution_carries_applicable_range() -> None:
     assert result.recommended_simulation.applicable_min_price == 90.0
     assert result.recommended_simulation.applicable_max_price == 110.0
     assert result.recommended_simulation.is_extrapolated is False
+
+
+def test_plan_item_create_narrows_constraints_to_elasticity_support() -> None:
+    """Constraints may tighten the elasticity's range but must never widen it."""
+    item = PricingPlanItem.create(
+        store_id="store-1",
+        machine_type="washer-20kg",
+        constraints=PriceConstraints(
+            unit_cost=2.0,
+            current_price=4.0,
+            margin_floor_ratio=0.15,
+            max_increase_pct=0.5,
+            max_decrease_pct=0.5,
+            price_ladder_step=0.1,
+            applicable_min_price=1.0,
+            applicable_max_price=100.0,
+        ),
+        baseline_demand=1000.0,
+        elasticity=PriceElasticityEstimate(
+            elasticity_value=-1.5,
+            confidence=0.8,
+            applicable_min_price=3.9,
+            applicable_max_price=4.3,
+        ),
+    )
+    assert item.constraints.applicable_min_price == 3.9
+    assert item.constraints.applicable_max_price == 4.3
+    assert item.constraints.upper_bound == 4.3
+
+    breaches = [b.code for b in item.constraints.violations(4.5)]
+    assert "above_applicable_range" in breaches
+
+
+def test_plan_item_create_keeps_narrower_constraint_range() -> None:
+    item = PricingPlanItem.create(
+        store_id="store-1",
+        machine_type="washer-20kg",
+        constraints=PriceConstraints(
+            unit_cost=2.0,
+            current_price=4.0,
+            margin_floor_ratio=0.15,
+            max_increase_pct=0.5,
+            max_decrease_pct=0.5,
+            price_ladder_step=0.1,
+            applicable_min_price=4.0,
+            applicable_max_price=4.2,
+        ),
+        baseline_demand=1000.0,
+        elasticity=PriceElasticityEstimate(
+            elasticity_value=-1.5,
+            confidence=0.8,
+            applicable_min_price=3.9,
+            applicable_max_price=4.3,
+        ),
+    )
+    assert item.constraints.applicable_min_price == 4.0
+    assert item.constraints.applicable_max_price == 4.2
+
+
+def test_disjoint_constraint_and_elasticity_ranges_fail_closed() -> None:
+    """Non-overlapping windows invert on intersection, which validation rejects."""
+    item = PricingPlanItem.create(
+        store_id="store-1",
+        machine_type="washer-20kg",
+        constraints=PriceConstraints(
+            unit_cost=2.0,
+            current_price=4.0,
+            margin_floor_ratio=0.15,
+            max_increase_pct=0.5,
+            max_decrease_pct=0.5,
+            price_ladder_step=0.1,
+            applicable_min_price=10.0,
+            applicable_max_price=20.0,
+        ),
+        baseline_demand=1000.0,
+        elasticity=PriceElasticityEstimate(
+            elasticity_value=-1.5,
+            confidence=0.8,
+            applicable_min_price=3.9,
+            applicable_max_price=4.3,
+        ),
+    )
+    assert item.constraints.applicable_min_price == 10.0
+    assert item.constraints.applicable_max_price == 4.3
+    with pytest.raises(InvalidScenarioError, match="invalid applicable bounds"):
+        validate_pricing_scenario(item, 4.0)

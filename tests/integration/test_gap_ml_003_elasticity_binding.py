@@ -252,3 +252,111 @@ def test_optimizer_job_fails_closed_for_client_supplied_without_applicable_range
     )
     assert resp.status_code == 422, resp.text
     assert "applicable_min_price and applicable_max_price" in resp.json()["detail"]
+
+
+def test_payload_applicable_range_cannot_widen_estimated_support() -> None:
+    """A payload range wider than the fitted support must not re-authorise extrapolation.
+
+    Reviewer reproduction: observations spanning [2.0, 7.0] fit that range, but a
+    payload of [1.0, 100.0] used to win outright, so a candidate at 10.0 came back
+    interpolated and feasible. The effective range is the intersection.
+    """
+    client = _client()
+    resp = client.post(
+        "/priceops/plans",
+        json={
+            "tenant_id": "tenant-ml3",
+            "items": [
+                _plan_item(
+                    price_demand_observations=_loglog_observations(),
+                    applicable_min_price=1.0,
+                    applicable_max_price=100.0,
+                )
+            ],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    binding = body["elasticity_bindings"][0]
+    assert binding["elasticity_source"] == "estimated"
+    assert binding["applicable_min_price"] == 2.0
+    assert binding["applicable_max_price"] == 7.0
+
+    sim_resp = client.post(
+        f"/priceops/plans/{body['plan_id']}/simulate-scenario",
+        json={"candidate_prices": {body["items"][0]["item_id"]: 10.0}},
+    )
+    assert sim_resp.status_code == 200, sim_resp.text
+    sim_body = sim_resp.json()
+    assert sim_body["is_feasible"] is False
+    item_sim = sim_body["items"][0]
+    assert item_sim["candidate_simulation"]["is_extrapolated"] is True
+    assert "above_applicable_range" in [
+        v["code"] for v in item_sim["constraint_violations"]
+    ]
+
+
+def test_payload_applicable_range_may_narrow_estimated_support() -> None:
+    """Narrowing is the one direction a caller is allowed to move the range."""
+    client = _client()
+    resp = client.post(
+        "/priceops/plans",
+        json={
+            "tenant_id": "tenant-ml3",
+            "items": [
+                _plan_item(
+                    price_demand_observations=_loglog_observations(),
+                    applicable_min_price=3.0,
+                    applicable_max_price=5.0,
+                )
+            ],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    binding = resp.json()["elasticity_bindings"][0]
+    assert binding["elasticity_source"] == "estimated"
+    assert binding["applicable_min_price"] == 3.0
+    assert binding["applicable_max_price"] == 5.0
+
+
+def test_plan_fails_closed_when_payload_range_misses_estimated_support() -> None:
+    """A supplied window disjoint from the fitted support is a contradiction, not a widening."""
+    client = _client()
+    resp = client.post(
+        "/priceops/plans",
+        json={
+            "tenant_id": "tenant-ml3",
+            "items": [
+                _plan_item(
+                    price_demand_observations=_loglog_observations(),
+                    applicable_min_price=20.0,
+                    applicable_max_price=30.0,
+                )
+            ],
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "do not overlap the estimated support range" in resp.json()["detail"]
+
+
+def test_optimizer_job_payload_range_cannot_widen_estimated_support() -> None:
+    """The batch optimizer path resolves elasticity through the same binding."""
+    client = _client()
+    resp = client.post(
+        "/priceops/optimizer-jobs",
+        json={
+            "plans": [
+                {
+                    "tenant_id": "tenant-ml3",
+                    "items": [
+                        _plan_item(
+                            price_demand_observations=_loglog_observations(),
+                            applicable_min_price=1.0,
+                            applicable_max_price=100.0,
+                        )
+                    ],
+                }
+            ]
+        },
+    )
+    assert resp.status_code in (200, 201, 202), resp.text

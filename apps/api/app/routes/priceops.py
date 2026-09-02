@@ -703,8 +703,11 @@ else:
                 price_ladder_step=item.price_ladder_step,
                 min_price=item.min_price,
                 max_price=item.max_price,
-                applicable_min_price=item.applicable_min_price if item.applicable_min_price is not None else estimate.applicable_min_price,
-                applicable_max_price=item.applicable_max_price if item.applicable_max_price is not None else estimate.applicable_max_price,
+                # resolve_elasticity has already intersected any payload bounds
+                # with the fitted support range; taking the payload values here
+                # would let a caller widen the range back out.
+                applicable_min_price=estimate.applicable_min_price,
+                applicable_max_price=estimate.applicable_max_price,
             ),
             baseline_demand=item.baseline_demand,
             elasticity=estimate,

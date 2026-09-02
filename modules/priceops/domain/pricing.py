@@ -174,6 +174,35 @@ class PriceElasticityEstimate:
         }
 
 
+def _bounded_applicable_range(
+    constraints: PriceConstraints, elasticity: PriceElasticityEstimate
+) -> tuple[float | None, float | None]:
+    """Intersect the constraint applicable range with the elasticity's own range.
+
+    The elasticity estimate declares the price window it is defensible over.
+    Constraints may narrow that window further, but must never widen it: a
+    wider constraint range would let a candidate price sit outside the demand
+    curve's support while still reporting as interpolated and feasible. Where
+    the two windows are disjoint the intersection comes out inverted, which
+    ``validate_pricing_scenario`` and ``diagnose_infeasible`` already reject.
+    """
+    low = constraints.applicable_min_price
+    if elasticity.applicable_min_price is not None:
+        low = (
+            elasticity.applicable_min_price
+            if low is None
+            else max(low, elasticity.applicable_min_price)
+        )
+    high = constraints.applicable_max_price
+    if elasticity.applicable_max_price is not None:
+        high = (
+            elasticity.applicable_max_price
+            if high is None
+            else min(high, elasticity.applicable_max_price)
+        )
+    return low, high
+
+
 @dataclass(frozen=True)
 class PricingPlanItem:
     """A single store/machine line within a plan."""
@@ -198,25 +227,17 @@ class PricingPlanItem:
         source_snapshot_ids: tuple[str, ...] = (),
         item_id: str | None = None,
     ) -> PricingPlanItem:
+        applicable_min, applicable_max = _bounded_applicable_range(
+            constraints, elasticity
+        )
         if (
-            constraints.applicable_min_price is None
-            and elasticity.applicable_min_price is not None
-        ) or (
-            constraints.applicable_max_price is None
-            and elasticity.applicable_max_price is not None
+            applicable_min != constraints.applicable_min_price
+            or applicable_max != constraints.applicable_max_price
         ):
             constraints = replace(
                 constraints,
-                applicable_min_price=(
-                    constraints.applicable_min_price
-                    if constraints.applicable_min_price is not None
-                    else elasticity.applicable_min_price
-                ),
-                applicable_max_price=(
-                    constraints.applicable_max_price
-                    if constraints.applicable_max_price is not None
-                    else elasticity.applicable_max_price
-                ),
+                applicable_min_price=applicable_min,
+                applicable_max_price=applicable_max,
             )
         return cls(
             item_id=item_id or f"pricing-plan-item-{uuid4()}",
