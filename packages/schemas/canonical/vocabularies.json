@@ -41,18 +41,17 @@
         {"name": "CANCELLED", "value": "cancelled", "comment": "stopped before completion, deliberately"},
         {"name": "PARTIAL", "value": "partial", "comment": "some work completed and some did not; neither succeeded nor failed"}
       ],
-      "known_forks": [
-        {
-          "location": "apps/api/app/routes/listings.py",
-          "definition": "QUEUED / RUNNING / RETRYING / SUCCEEDED / FAILED / CANCELLED / DEAD_LETTER (uppercase)",
-          "note": "A second job-status vocabulary: different casing, two extra states, and also missing PARTIAL. RETRYING and DEAD_LETTER are queue mechanics rather than job outcomes, which is arguably a separate concept that should be named as one."
-        },
-        {
-          "location": "shared/jobs/queue.py",
-          "definition": "QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELLED (lowercase)",
-          "note": "The closest to canonical, missing only PARTIAL. Migrating it to the generated enum is the smaller of the two moves."
-        }
-      ]
+      "typescript_type": "JobStatus"
+    },
+    {
+      "name": "JobDeliveryState",
+      "authority": "ODP-FR-SHARED-001",
+      "docstring": "Infrastructure delivery state of a queued job.\n\nCarried alongside JobStatus rather than inside it, separating queue delivery\nmechanics (such as retries and dead-lettering) from the domain outcome of the\nwork itself (queued, running, succeeded, failed, cancelled, partial).",
+      "members": [
+        {"name": "RETRYING", "value": "retrying", "comment": "delivery attempt failed, queued for retry"},
+        {"name": "DEAD_LETTER", "value": "dead_letter", "comment": "retry budget exhausted or poison message, moved to DLQ"}
+      ],
+      "typescript_type": "JobDeliveryState"
     }
   ]
 }

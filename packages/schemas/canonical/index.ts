@@ -351,6 +351,12 @@ export interface Intervention {
 /** ADR-0004: single authority for evidence strength, per ODP-ML-05 §5. */
 export type EvidenceLevel = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5';
 
+/** ODP-FR-SHARED-001: terminal and in-flight states of a long-running job. */
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'partial';
+
+/** Infrastructure delivery state of a queued job (ODP-FR-SHARED-001). */
+export type JobDeliveryState = 'retrying' | 'dead_letter';
+
 export interface InterventionOutcome {
   outcome_id: string;
   intervention_id: string;

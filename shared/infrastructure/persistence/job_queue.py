@@ -15,6 +15,7 @@ from typing import Any
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.jobs.queue import (
     NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES,
+    JobDeliveryState,
     JobRecord,
     JobRequest,
     JobStatus,
@@ -470,12 +471,22 @@ class DurableJobQueue:
         if "lease_expires_at" in keys and row["lease_expires_at"] is not None:
             lease_val = datetime.fromisoformat(row["lease_expires_at"])
 
+        status_val = JobStatus(row["status"])
+        delivery_state: JobDeliveryState | None = None
+        if "delivery_state" in keys and row["delivery_state"]:
+            delivery_state = JobDeliveryState(row["delivery_state"])
+        elif attempts >= max_retries and status_val == JobStatus.FAILED:
+            delivery_state = JobDeliveryState.DEAD_LETTER
+        elif attempts > 0 and status_val in (JobStatus.RUNNING, JobStatus.QUEUED):
+            delivery_state = JobDeliveryState.RETRYING
+
         return JobRecord(
             job_type=row["job_type"],
             payload=json.loads(row["payload_json"]),
             correlation_id=row["correlation_id"],
             idempotency_key=row["idempotency_key"],
-            status=JobStatus(row["status"]),
+            status=status_val,
+            delivery_state=delivery_state,
             job_id=row["job_id"],
             created_at=datetime.fromisoformat(row["created_at"]),
             attempts=attempts,

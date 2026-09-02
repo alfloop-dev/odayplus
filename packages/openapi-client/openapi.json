@@ -4009,7 +4009,7 @@
             "type": "string"
           },
           "status": {
-            "$ref": "#/components/schemas/JobStatus"
+            "$ref": "#/components/schemas/JobReceiptStatus"
           },
           "version": {
             "title": "Version",
@@ -4027,7 +4027,7 @@
         "title": "JobReceipt",
         "type": "object"
       },
-      "JobStatus": {
+      "JobReceiptStatus": {
         "enum": [
           "QUEUED",
           "RUNNING",
@@ -4037,7 +4037,7 @@
           "CANCELLED",
           "DEAD_LETTER"
         ],
-        "title": "JobStatus",
+        "title": "JobReceiptStatus",
         "type": "string"
       },
       "ListingImportPayload": {

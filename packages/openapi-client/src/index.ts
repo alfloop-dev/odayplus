@@ -57,13 +57,15 @@ import type {
   SlaPauseRequest,
   SlaReceipt,
   JobReceipt,
+  JobReceiptStatus,
   PromotionDecisionReceipt,
   PromotionRequest,
   RetryRequest,
   ReviewDecisionRequest,
 } from "./generated/types";
 
-export type { ErrorEnvelope };
+export type { ErrorEnvelope, JobReceiptStatus };
+export type JobStatus = JobReceiptStatus;
 
 export type HealthResponse = {
   status: string;

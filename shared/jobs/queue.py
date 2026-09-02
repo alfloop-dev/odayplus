@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from enum import StrEnum
 from threading import RLock
 from typing import Any
 from uuid import uuid4
@@ -19,12 +18,7 @@ def is_non_executable_receipt_job_type(job_type: str) -> bool:
     return job_type.endswith(NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES)
 
 
-class JobStatus(StrEnum):
-    QUEUED = "queued"
-    RUNNING = "running"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+from shared.governance.vocabularies import JobDeliveryState, JobStatus
 
 
 class NonRetryableJobError(RuntimeError):
@@ -90,6 +84,7 @@ class JobRecord:
     correlation_id: str
     idempotency_key: str | None = None
     status: JobStatus = JobStatus.QUEUED
+    delivery_state: JobDeliveryState | None = None
     job_id: str = field(default_factory=lambda: str(uuid4()))
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     attempts: int = 0
@@ -107,6 +102,7 @@ class JobRecord:
             "job_id": self.job_id,
             "job_type": self.job_type,
             "status": self.status.value,
+            "delivery_state": self.delivery_state.value if self.delivery_state else None,
             "correlation_id": self.correlation_id,
             "idempotency_key": self.idempotency_key,
             "payload": self.payload,
@@ -197,7 +193,10 @@ class InMemoryJobQueue:
 
                     # Move to DLQ (failed status)
                     new_record = dataclasses.replace(
-                        record, status=JobStatus.FAILED, leased_until=None
+                        record,
+                        status=JobStatus.FAILED,
+                        delivery_state=JobDeliveryState.DEAD_LETTER,
+                        leased_until=None,
                     )
                     self._jobs[record.job_id] = new_record
                     continue
@@ -206,6 +205,7 @@ class InMemoryJobQueue:
                 new_record = dataclasses.replace(
                     record,
                     status=JobStatus.RUNNING,
+                    delivery_state=JobDeliveryState.RETRYING if record.attempts > 0 else None,
                     attempts=record.attempts + 1,
                     leased_until=leased_until,
                 )
@@ -228,7 +228,7 @@ class InMemoryJobQueue:
                 if record.status != JobStatus.RUNNING or current_token_str != token_str:
                     return False
             self._jobs[job_id] = dataclasses.replace(
-                record, status=JobStatus.SUCCEEDED, leased_until=None
+                record, status=JobStatus.SUCCEEDED, delivery_state=None, leased_until=None
             )
             return True
         return False
@@ -249,11 +249,17 @@ class InMemoryJobQueue:
                     return False
             if record.attempts < record.max_retries:
                 self._jobs[job_id] = dataclasses.replace(
-                    record, status=JobStatus.QUEUED, leased_until=None
+                    record,
+                    status=JobStatus.QUEUED,
+                    delivery_state=JobDeliveryState.RETRYING,
+                    leased_until=None,
                 )
             else:
                 self._jobs[job_id] = dataclasses.replace(
-                    record, status=JobStatus.FAILED, leased_until=None
+                    record,
+                    status=JobStatus.FAILED,
+                    delivery_state=JobDeliveryState.DEAD_LETTER,
+                    leased_until=None,
                 )
             return True
         return False
@@ -285,6 +291,7 @@ class InMemoryJobQueue:
                 correlation_id=record.correlation_id,
                 idempotency_key=record.idempotency_key,
                 status=JobStatus.QUEUED,
+                delivery_state=None,
                 job_id=record.job_id,
                 created_at=record.created_at,
                 fence_token=record.fence_token,
@@ -314,6 +321,7 @@ class InMemoryJobQueue:
                         correlation_id=record.correlation_id,
                         idempotency_key=record.idempotency_key,
                         status=JobStatus.RUNNING,
+                        delivery_state=JobDeliveryState.RETRYING if record.attempts > 0 else None,
                         job_id=record.job_id,
                         created_at=record.created_at,
                         fence_token=record.fence_token + 1,
@@ -333,6 +341,7 @@ class InMemoryJobQueue:
         status: JobStatus,
         payload: dict[str, Any] | None = None,
         *,
+        delivery_state: JobDeliveryState | None = None,
         expected_version: int | None = None,
         fence_token: int | None = None,
         error_message: str | None = None,
@@ -350,12 +359,17 @@ class InMemoryJobQueue:
                     f"Job fence token mismatch: expected {fence_token}, got {record.fence_token}"
                 )
 
+            resolved_delivery = delivery_state if delivery_state is not None else record.delivery_state
+            if status == JobStatus.SUCCEEDED:
+                resolved_delivery = None
+
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,
                 payload=payload if payload is not None else record.payload,
                 correlation_id=record.correlation_id,
                 idempotency_key=record.idempotency_key,
                 status=status,
+                delivery_state=resolved_delivery,
                 job_id=record.job_id,
                 created_at=record.created_at,
                 fence_token=record.fence_token,
@@ -385,6 +399,7 @@ class InMemoryJobQueue:
                 correlation_id=record.correlation_id,
                 idempotency_key=record.idempotency_key,
                 status=record.status,
+                delivery_state=record.delivery_state,
                 job_id=record.job_id,
                 created_at=record.created_at,
                 fence_token=record.fence_token,
@@ -396,3 +411,16 @@ class InMemoryJobQueue:
                 error_message=record.error_message,
             )
             return new_version
+
+
+__all__ = [
+    "InMemoryJobQueue",
+    "JobDeliveryState",
+    "JobRecord",
+    "JobRequest",
+    "JobStatus",
+    "NonRetryableJobError",
+    "check_job_feature_flag",
+    "is_non_executable_receipt_job_type",
+    "resolve_job_feature_flag_key",
+]

@@ -802,12 +802,12 @@ export type JobReceipt = {
   checkpoint: string;
   correlation_id: string;
   job_id: string;
-  status: JobStatus;
+  status: JobReceiptStatus;
   version: number;
 };
 
-/** JobStatus */
-export type JobStatus = "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "DEAD_LETTER";
+/** JobReceiptStatus */
+export type JobReceiptStatus = "QUEUED" | "RUNNING" | "RETRYING" | "SUCCEEDED" | "FAILED" | "CANCELLED" | "DEAD_LETTER";
 
 /** ListingImportPayload */
 export type ListingImportPayload = {

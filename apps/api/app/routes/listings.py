@@ -201,7 +201,7 @@ else:
         CANDIDATE_CREATING = "CANDIDATE_CREATING"
         SCORE_QUEUED = "SCORE_QUEUED"
 
-    class JobStatus(str, Enum):
+    class JobReceiptStatus(str, Enum):
         QUEUED = "QUEUED"
         RUNNING = "RUNNING"
         RETRYING = "RETRYING"
@@ -625,7 +625,7 @@ else:
 
     class JobReceipt(BaseModel):
         job_id: UuidString
-        status: JobStatus
+        status: JobReceiptStatus
         checkpoint: str
         attempt: int
         version: int
