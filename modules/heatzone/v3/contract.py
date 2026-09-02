@@ -113,10 +113,10 @@ class HeatZoneV3Input:
     domain_freshness: dict[str, str] = field(default_factory=dict)
     has_coverage_gaps: bool = False
     readiness_reasons: list[str] = field(default_factory=list)
-    coverage_ratio: float = 1.0
+    coverage_ratio: float | None = None
     is_quarantined: bool = False
     support_level: str = "supported"
-    confidence: float = 1.0
+    confidence: float | None = None
 
     # Spatial and Temporal coordinates
     centroid_lat: float | None = None

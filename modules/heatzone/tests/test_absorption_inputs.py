@@ -213,6 +213,8 @@ class TestRefusalRule1CoverageCompleteness:
                 poi_count=10,
                 own_store_count=1,
                 absorption=absorption,
+                coverage_ratio=1.0,
+                confidence=1.0,
             ),
             evaluated_at=EVALUATED_AT,
         )
@@ -401,6 +403,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             poi_count=10,
             own_store_count=1,
             absorption=absorption,
+            coverage_ratio=1.0,
+            confidence=1.0,
         )
         score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
         assert score_res.absorption_measured is False
@@ -432,6 +436,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             poi_count=10,
             own_store_count=1,
             absorption=absorption,
+            coverage_ratio=1.0,
+            confidence=1.0,
         )
         score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
         assert score_res.absorption_measured is False
@@ -463,6 +469,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             poi_count=10,
             own_store_count=1,
             absorption=absorption,
+            coverage_ratio=1.0,
+            confidence=1.0,
         )
         score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
         assert score_res.absorption_measured is True
@@ -495,6 +503,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             poi_count=10,
             own_store_count=2,
             absorption=absorption,
+            coverage_ratio=1.0,
+            confidence=1.0,
         )
         score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
         assert score_res.absorption_measured is False
@@ -644,6 +654,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             poi_count=10,
             own_store_count=2,
             absorption=absorption,
+            coverage_ratio=1.0,
+            confidence=1.0,
         )
         score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
         assert score_res.absorption_measured is True
@@ -724,6 +736,8 @@ class TestZoneAbsorptionAssemblyAndScoring:
             poi_count=10,
             own_store_count=2,
             absorption=absorption,
+            coverage_ratio=1.0,
+            confidence=1.0,
         )
         score_res = score_heatzone_v3_feature(zone, evaluated_at=EVALUATED_AT)
         assert score_res.absorption_measured is True

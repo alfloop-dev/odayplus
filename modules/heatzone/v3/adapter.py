@@ -274,17 +274,18 @@ def from_market_cell_profile(
         valid_domains = sum(1 for v in domain_cov.values() if str(v).lower() in ("complete", "partial", "fresh", "available"))
         cov_ratio = valid_domains / len(domain_cov)
     else:
-        cov_ratio = 1.0 if not has_gaps else 0.8
+        cov_ratio = None
         
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
     support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
 
-    # Confidence calculation
-    conf = 1.0
+    # Confidence calculation: derived only from observed signals; None when unmeasured
+    conf_values: list[float] = []
     if cell_obj.rent.confidence_pct is not None:
-        conf = min(conf, float(cell_obj.rent.confidence_pct) / 100.0)
+        conf_values.append(max(0.0, min(1.0, float(cell_obj.rent.confidence_pct) / 100.0)))
     if cell_obj.demographics.uncertainty_pct is not None:
-        conf = min(conf, max(0.0, 1.0 - float(cell_obj.demographics.uncertainty_pct) / 100.0))
+        conf_values.append(max(0.0, min(1.0, 1.0 - float(cell_obj.demographics.uncertainty_pct) / 100.0)))
+    conf = min(conf_values) if conf_values else None
 
     effective_absorption = absorption
     if (
@@ -514,18 +515,32 @@ def from_catchment_profile(
         valid_domains = sum(1 for v in domain_cov.values() if str(v).lower() in ("complete", "partial", "fresh", "available"))
         cov_ratio = valid_domains / len(domain_cov)
     else:
-        cov_ratio = 1.0 if not has_gaps else 0.8
+        cov_ratio = None
         
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
     support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
 
-    conf = 1.0
-    if prof_obj.demographics.status is not DomainStatus.available:
-        conf *= 0.8
-    if prof_obj.competitors.status is not DomainStatus.available:
-        conf *= 0.8
-    if prof_obj.rent.status is not DomainStatus.available:
-        conf *= 0.8
+    # Confidence calculation: derived only from observed signals; None when
+    # unmeasured. Domain availability is a presence flag, not a confidence
+    # measurement, so it may only discount a figure that was actually observed.
+    # Seeding 1.0 here would let a profile that measured no confidence at all
+    # reach scoring as fully trusted, putting the confidence abstention gate
+    # out of reach through this ingress exactly as it was through
+    # from_market_cell_profile.
+    conf_values: list[float] = []
+    if prof_obj.rent.confidence_pct is not None:
+        conf_values.append(max(0.0, min(1.0, float(prof_obj.rent.confidence_pct) / 100.0)))
+    if prof_obj.demographics.uncertainty_pct is not None:
+        conf_values.append(
+            max(0.0, min(1.0, 1.0 - float(prof_obj.demographics.uncertainty_pct) / 100.0))
+        )
+    if conf_values:
+        conf = min(conf_values)
+        for domain in (prof_obj.demographics, prof_obj.competitors, prof_obj.rent):
+            if domain.status is not DomainStatus.available:
+                conf *= 0.8
+    else:
+        conf = None
 
     effective_absorption = absorption
     if (
@@ -609,7 +624,7 @@ def from_legacy_feature_input(
     household_count_override: float | None = None,
     housing_units_override: float | None = None,
     overall_readiness: ReadinessLevel = ReadinessLevel.ready,
-    coverage_ratio: float = 1.0,
+    coverage_ratio: float | None = None,
     tenant_id: str = "default",
     absorption: AbsorptionResult | None = None,
     store_ids: Sequence[str] | set[str] | None = None,
@@ -636,7 +651,10 @@ def from_legacy_feature_input(
         median_listing_rent = float(data.get("median_listing_rent", 0.0))
         active_listing_count = int(data.get("active_listing_count", 0))
         existing_store_count = int(data.get("existing_store_count", 0))
-        confidence = float(data.get("average_confidence", 1.0))
+        confidence_raw = data.get("average_confidence", data.get("confidence"))
+        confidence = float(confidence_raw) if confidence_raw is not None else None
+        cov_raw = coverage_ratio if coverage_ratio is not None else data.get("coverage_ratio")
+        effective_coverage_ratio = float(cov_raw) if cov_raw is not None else None
         admin_city = str(data.get("admin_city", ""))
         admin_district = str(data.get("admin_district", ""))
         lat = float(data.get("cell_latitude", 0.0)) if data.get("cell_latitude") else None
@@ -651,6 +669,7 @@ def from_legacy_feature_input(
         active_listing_count = legacy.active_listing_count
         existing_store_count = legacy.existing_store_count
         confidence = legacy.average_confidence
+        effective_coverage_ratio = coverage_ratio
         admin_city = legacy.admin_city
         admin_district = legacy.admin_district
         lat = legacy.cell_latitude if legacy.cell_latitude != 0.0 else None
@@ -705,7 +724,7 @@ def from_legacy_feature_input(
         own_store_count=existing_store_count,
         own_store_machine_capacity=float(existing_store_count * 10),
         overall_readiness=overall_readiness,
-        coverage_ratio=coverage_ratio,
+        coverage_ratio=effective_coverage_ratio,
         confidence=confidence,
         centroid_lat=lat,
         centroid_lng=lng,
