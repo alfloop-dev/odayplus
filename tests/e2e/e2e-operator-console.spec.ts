@@ -77,7 +77,50 @@ test("ODP-OC-PREVIEW-001 design-preview-only smoke mounts iframe prototype and S
   ).toEqual([]);
 });
 
+test("ODP-STORE-OPS-FETCH-CANCELLATION-001 unmounting or navigating away from Store Ops aborts in-flight issues fetch without console errors", async ({
+  page,
+}) => {
+  const browserErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") {
+      browserErrors.push(message.text());
+    }
+  });
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+
+  await page.route("**/api/v1/operator/store-ops/issues*", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        stores: [],
+        issues: [],
+        evidence: [],
+        auditEvents: [],
+        fourLightSummary: [],
+        count: 0,
+      }),
+    });
+  });
+
+  await page.goto("/operator");
+  await page.getByRole("button", { name: /門市營運/ }).click();
+  await expect(
+    page.locator('[data-screen-label="Store Ops 門市營運"]'),
+  ).toBeVisible();
+
+  await page.goto("/operator?ws=govern");
+  await expect(page.getByTestId("governance-workspace")).toBeVisible();
+  await page.waitForTimeout(500);
+
+  expect(
+    browserErrors.filter((message) => !message.includes("404 (Not Found)")),
+  ).toEqual([]);
+});
+
 test("ODP-FIN-FE-003 command palette and task center are API-bound", async ({
+
   page,
 }) => {
   const taskRequests: string[] = [];
