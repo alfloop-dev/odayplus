@@ -5,7 +5,7 @@ admission 語意。
 
 - 任務狀態：實作完成，等待正式 review submission
 - Owner：Codex · Reviewer：Codex2
-- 量測 code head：`ac96f32435ceee205e4f4d8d722718f1901938f1`
+- 量測 code head：`40b38809ac9cc7c081765941f8aca8240633b827`
 - base advance：merge commit `181dc823bde876a2e4087002c2a3efb609b9c9f5`，包含 `origin/dev@4f28c2316af6`
 
 ## 1. 問題
@@ -133,17 +133,20 @@ attestation。
 |---|---|
 | `delivery_toolchain/release/release_manifest.py` | attestation schema、VPC/firewall contract evidence、binding digest、fail-closed 驗證、rollback binding、anti-downgrade |
 | `delivery_toolchain/release/build_release_handoff.py` | 從 deploy workflow 推導 posture 與 egress wiring、build 端 anti-downgrade、嚴格路徑保留 |
+| `delivery_toolchain/release/release_receipts.py` | 將 probe receipt 納入既有 literal artifact allowlist |
 | `delivery_toolchain/release/check_release_environment.py` | deploy environment 必須解析 VPC connector 與 egress，避免空值退回 public path |
 | `product_ops/deployment/deploy_cloud_run_waji.sh` | sources-off 強制 connector、`ALL_TRAFFIC`，並在 promotion 前執行 public-egress probe、寫入 secret-free receipt |
 | `.github/workflows/deploy-dev.yml` | `external_sources_enabled` input、`--external-source` 接線與 probe receipt allowlist |
 | `tests/release/test_release_manifest.py` | 20 個 focused 正／負向測試 |
 | `tests/release/test_build_release_handoff.py` | 12 個 focused 正／負向測試 |
 | `tests/ops/test_deploy_workflow_contract.py` | 斷言 posture 沒有 dispatch 管道 |
+| `tests/ops/test_release_receipts.py` | 驗證 probe receipt 與既有 upload allowlist 一致 |
 
 ## 7. 驗證
 
 見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
-在 code head `ac96f324` 以指定 focused selection 通過：exit 0、25.81 秒；收據不含
-任何 secret 值。測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**，
-`delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 code head 通過；probe gate、
-receipt wiring 與 shell syntax 亦已檢查。
+在 code head `40b38809` 以指定 focused selection 通過：exit 0、29.04 秒；收據不含
+任何 secret 值。測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**；同一
+code head 的 secret scan（14.72 秒）、ruff（0.10 秒）、release/staging regression
+sweep（22.53 秒）與 shell syntax（0.00 秒）皆 exit 0；probe gate 與 receipt wiring
+亦已檢查。
