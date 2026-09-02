@@ -14,10 +14,20 @@ from delivery_toolchain.release.migrate_gate_registry import (
     migrate_registry,
 )
 from delivery_toolchain.release.release_manifest import (
+    EXPECTED_EXTERNAL_SOURCE_COUNT,
+    EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS,
+    EXTERNAL_SOURCE_ENDPOINT_ENV_VARS,
+    EXTERNAL_SOURCE_INVENTORY,
+    SOURCES_OFF_EGRESS_POSTURE,
+    SOURCES_OFF_PROVIDER_MODE,
     build_release_manifest,
+    build_sources_off_attestation,
     compute_data_contract_digest,
     compute_manifest_digest,
+    compute_source_policy_digest,
+    compute_sources_off_binding_digest,
     extract_rollback_release_binding,
+    sources_off_posture_payload,
     validate_manifest,
     validate_release_admission,
     validate_rollback_manifest,
@@ -470,3 +480,325 @@ def test_extract_rollback_release_binding_retains_exact_identity() -> None:
     assert binding["manifest_digest"] == prev["manifest_digest"]
     assert binding["components"]["api"]["image"] == prev["components"]["api"]["image"]
     assert binding["data_snapshot"] == prev["data_snapshot"]
+
+
+# ---------------------------------------------------------------------------
+# Sources-off release admission (ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001)
+# ---------------------------------------------------------------------------
+#
+# "All external sources stay closed" is the standing posture of this product,
+# not a missing artifact. These tests pin both halves of that: a sources-off
+# release is admissible on bound posture evidence, and every way of weakening
+# that evidence -- an enabled source, a provider credential, open egress, a
+# borrowed binding, or using the posture to walk away from a snapshot binding
+# that already exists -- still fails closed.
+
+SOURCES_OFF_COMPONENTS = {
+    "api": {"image": "registry.example.invalid/odayplus/api@sha256:" + "a" * 64},
+    "web": {"image": "registry.example.invalid/odayplus/web@sha256:" + "9" * 64},
+}
+
+
+def clean_sources_inventory() -> list[dict]:
+    return [
+        {
+            "source_id": source_id,
+            "status": "disabled",
+            "credentials_present": False,
+            "public_egress": "denied",
+        }
+        for source_id in EXTERNAL_SOURCE_INVENTORY
+    ]
+
+
+def sources_off_rollback_release(current_sha: str = "1" * 40) -> dict:
+    """A previous release that was itself admitted with sources off."""
+
+    rollback = valid_rollback_release(current_sha)
+    rollback.pop("data_snapshot")
+    rollback["sources_off_attestation"] = {"binding_digest": "sha256:" + "d" * 64}
+    return rollback
+
+
+def sources_off_manifest(**overrides) -> dict:
+    candidate_sha = overrides.pop("candidate_sha", "1" * 40)
+    components = overrides.pop("components", copy.deepcopy(SOURCES_OFF_COMPONENTS))
+    inventory = overrides.pop("sources_inventory", clean_sources_inventory())
+    provider_mode = overrides.pop("provider_mode", SOURCES_OFF_PROVIDER_MODE)
+    binding_components = overrides.pop("binding_components", components)
+    binding_candidate_sha = overrides.pop("binding_candidate_sha", candidate_sha)
+    binding_source_policy_digest = overrides.pop(
+        "binding_source_policy_digest", compute_source_policy_digest(root=ROOT)
+    )
+    attestation = overrides.pop(
+        "sources_off_attestation",
+        build_sources_off_attestation(
+            candidate_sha=binding_candidate_sha,
+            components=binding_components,
+            source_policy_digest=binding_source_policy_digest,
+            provider_mode=provider_mode,
+            sources_inventory=inventory,
+        ),
+    )
+    manifest = build_release_manifest(
+        release_id=overrides.pop("release_id", "odp-test-sources-off"),
+        candidate_sha=candidate_sha,
+        components=components,
+        sbom_refs=overrides.pop(
+            "sbom_refs",
+            ["oci://registry.example.invalid/odayplus/sbom@sha256:" + "b" * 64],
+        ),
+        signature_refs=overrides.pop(
+            "signature_refs",
+            ["oci://registry.example.invalid/odayplus/api@sha256:" + "c" * 64],
+        ),
+        created_at=overrides.pop("created_at", "2026-08-26T00:00:00Z"),
+        created_by_workflow=overrides.pop(
+            "created_by_workflow",
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml",
+        ),
+        data_snapshot=overrides.pop("data_snapshot", None),
+        sources_off_attestation=attestation,
+        rollback_release=overrides.pop(
+            "rollback_release", sources_off_rollback_release(candidate_sha)
+        ),
+        release_status="ready",
+        root=ROOT,
+    )
+    manifest.update(overrides)
+    if overrides:
+        manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return manifest
+
+
+def test_canonical_source_inventory_matches_the_dev_rollout_audit() -> None:
+    """The schema-side inventory and the deployed audit must name one set."""
+
+    audit = json.loads(
+        (
+            ROOT
+            / "docs/evidence/runtime/ODP-DEV-ROLLOUT-001"
+            / "external-sources-provider-off-audit.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert EXPECTED_EXTERNAL_SOURCE_COUNT == 16
+    assert audit["total_sources_audited"] == EXPECTED_EXTERNAL_SOURCE_COUNT
+    assert {entry["source_id"] for entry in audit["sources_inventory"]} == set(
+        EXTERNAL_SOURCE_INVENTORY
+    )
+
+
+def test_credential_and_endpoint_env_vars_match_the_runtime_provider_registry() -> None:
+    """The restated env var names must not drift from the provider registry."""
+
+    from modules.external_data.connectors.provider_registry import provider_registry
+
+    registry_credentials: set[str] = set()
+    registry_endpoints: set[str] = set()
+    for provider in provider_registry():
+        for credential in provider.credentials:
+            registry_credentials.add(credential.env_var)
+        if provider.endpoint_env_var:
+            registry_endpoints.add(provider.endpoint_env_var)
+
+    restated_credentials = {
+        env_var for names in EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS.values() for env_var in names
+    }
+    restated_endpoints = {
+        env_var for names in EXTERNAL_SOURCE_ENDPOINT_ENV_VARS.values() for env_var in names
+    }
+    assert restated_credentials == registry_credentials
+    assert restated_endpoints == registry_endpoints
+
+
+def test_sources_off_release_is_admissible_without_a_masked_snapshot() -> None:
+    manifest = sources_off_manifest()
+
+    assert "data_snapshot" not in manifest
+    assert validate_manifest(manifest) == []
+    assert validate_release_admission(manifest) == []
+    assert manifest["sources_off_attestation"]["egress_posture"] == SOURCES_OFF_EGRESS_POSTURE
+    assert manifest["sources_off_attestation"]["total_sources_audited"] == 16
+
+
+def test_sources_off_release_without_any_data_plane_evidence_fails_closed() -> None:
+    manifest = sources_off_manifest()
+    manifest.pop("sources_off_attestation")
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    assert any("data_snapshot" in err for err in validate_manifest(manifest))
+    assert any(
+        "manifest.data_snapshot" in err for err in validate_release_admission(manifest)
+    )
+
+
+def test_sources_off_attestation_with_an_enabled_source_fails_closed() -> None:
+    inventory = clean_sources_inventory()
+    inventory[8]["status"] = "enabled"
+    manifest = sources_off_manifest(sources_inventory=inventory)
+
+    errors = validate_manifest(manifest)
+    assert any("status must be 'disabled'" in err for err in errors)
+
+
+def test_sources_off_attestation_with_a_provider_credential_fails_closed() -> None:
+    inventory = clean_sources_inventory()
+    inventory[11]["credentials_present"] = True
+    manifest = sources_off_manifest(sources_inventory=inventory)
+
+    errors = validate_manifest(manifest)
+    assert any("credentials_present must be False" in err for err in errors)
+
+
+def test_sources_off_attestation_with_open_public_egress_fails_closed() -> None:
+    inventory = clean_sources_inventory()
+    inventory[9]["public_egress"] = "allowed"
+    manifest = sources_off_manifest(sources_inventory=inventory)
+
+    errors = validate_manifest(manifest)
+    assert any("public_egress must be 'denied'" in err for err in errors)
+    assert any("egress_posture" in err for err in errors)
+
+
+def test_sources_off_attestation_that_skips_a_source_fails_closed() -> None:
+    inventory = [
+        entry for entry in clean_sources_inventory()
+        if entry["source_id"] != "listing_raw_snapshot"
+    ]
+    manifest = sources_off_manifest(sources_inventory=inventory)
+
+    errors = validate_manifest(manifest)
+    assert any("missing: listing_raw_snapshot" in err for err in errors)
+    assert any("total_sources_audited must be 16" in err for err in errors)
+
+
+def test_sources_off_attestation_claiming_clean_over_a_dirty_inventory_fails_closed() -> None:
+    """Re-sealing the digest cannot make the verdict fields outrank the audit."""
+
+    inventory = clean_sources_inventory()
+    inventory[3]["credentials_present"] = True
+    manifest = sources_off_manifest(sources_inventory=inventory)
+    attestation = manifest["sources_off_attestation"]
+    attestation["zero_credentials_present"] = True
+    attestation["binding_digest"] = compute_sources_off_binding_digest(
+        candidate_sha=manifest["candidate_sha"],
+        components=manifest["components"],
+        source_policy_digest=manifest["source_policy_digest"],
+        posture=sources_off_posture_payload(attestation),
+    )
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    errors = validate_manifest(manifest)
+    assert any(
+        "zero_credentials_present does not match its own sources_inventory" in err
+        for err in errors
+    )
+
+
+def test_sources_off_attestation_borrowed_from_another_candidate_fails_closed() -> None:
+    manifest = sources_off_manifest(binding_candidate_sha="7" * 40)
+
+    errors = validate_manifest(manifest)
+    assert any("binding_digest is not bound to this release" in err for err in errors)
+
+
+def test_sources_off_attestation_bound_to_other_images_fails_closed() -> None:
+    other_images = {
+        "api": {"image": "registry.example.invalid/odayplus/api@sha256:" + "4" * 64},
+        "web": {"image": "registry.example.invalid/odayplus/web@sha256:" + "5" * 64},
+    }
+    manifest = sources_off_manifest(binding_components=other_images)
+
+    errors = validate_manifest(manifest)
+    assert any("binding_digest is not bound to this release" in err for err in errors)
+
+
+def test_sources_off_attestation_bound_to_another_source_policy_fails_closed() -> None:
+    manifest = sources_off_manifest(binding_source_policy_digest="sha256:" + "6" * 64)
+
+    errors = validate_manifest(manifest)
+    assert any("binding_digest is not bound to this release" in err for err in errors)
+
+
+def test_enabled_sources_still_require_the_approved_masked_snapshot() -> None:
+    manifest = built_manifest(schema_version=2)
+    manifest.pop("data_snapshot")
+    manifest["external_sources_expected_enabled"] = ["listing_raw_snapshot"]
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    errors = validate_manifest(manifest)
+    assert any("missing required field: data_snapshot" in err for err in errors)
+    assert any(
+        "release admission with enabled external sources" in err
+        for err in validate_release_admission(manifest)
+    )
+
+
+def test_sources_off_attestation_on_a_release_with_enabled_sources_fails_closed() -> None:
+    manifest = sources_off_manifest()
+    manifest["external_sources_expected_enabled"] = ["poi_snapshot"]
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    errors = validate_manifest(manifest)
+    assert any(
+        "sources_off_attestation must not appear on a manifest" in err for err in errors
+    )
+
+
+def test_sources_off_attestation_may_not_sit_beside_a_data_snapshot() -> None:
+    manifest = sources_off_manifest(data_snapshot=valid_data_snapshot())
+
+    errors = validate_manifest(manifest)
+    assert any(
+        "may not override an existing snapshot binding" in err for err in errors
+    )
+
+
+def test_sources_off_attestation_may_not_replace_a_previous_snapshot_binding() -> None:
+    """Anti-downgrade: a snapshot-bound predecessor keeps the next release strict."""
+
+    manifest = sources_off_manifest(rollback_release=valid_rollback_release("1" * 40))
+
+    errors = validate_release_admission(manifest)
+    assert any(
+        "rollback_release still binds a data_snapshot" in err for err in errors
+    )
+
+
+def test_rollback_release_without_snapshot_or_attestation_fails_closed() -> None:
+    rollback = valid_rollback_release("1" * 40)
+    rollback.pop("data_snapshot")
+    manifest = sources_off_manifest(rollback_release=rollback)
+
+    errors = validate_manifest(manifest)
+    assert any(
+        "missing required data_snapshot pointer or sources_off_attestation" in err
+        for err in errors
+    )
+
+
+def test_rollback_release_sources_off_binding_must_be_a_digest() -> None:
+    rollback = sources_off_rollback_release("1" * 40)
+    rollback["sources_off_attestation"] = {"binding_digest": "not-a-digest"}
+    manifest = sources_off_manifest(rollback_release=rollback)
+
+    errors = validate_manifest(manifest)
+    assert any(
+        "sources_off_attestation.binding_digest must be a sha256" in err for err in errors
+    )
+
+
+def test_extract_rollback_binding_from_a_sources_off_release_carries_the_digest() -> None:
+    previous = sources_off_manifest(candidate_sha="2" * 40, release_id="odp-test-prev-off")
+    assert validate_release_admission(previous) == []
+
+    binding = extract_rollback_release_binding(previous)
+    assert "data_snapshot" not in binding
+    assert binding["sources_off_attestation"] == {
+        "binding_digest": previous["sources_off_attestation"]["binding_digest"]
+    }
+
+
+def test_a_sources_off_release_is_valid_rollback_evidence() -> None:
+    previous = sources_off_manifest(candidate_sha="2" * 40, release_id="odp-test-prev-off")
+    assert validate_rollback_manifest(previous, current_candidate_sha="1" * 40) == []

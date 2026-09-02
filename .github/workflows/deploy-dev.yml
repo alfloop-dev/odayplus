@@ -117,6 +117,11 @@ on:
         required: false
         default: ""
         type: string
+      external_sources_enabled:
+        description: "Comma-separated source ids this release expects to be enabled (build phase; empty means the standing sources-off posture, which is derived from the deployed provider configuration rather than supplied here). Any value here makes the approved masked snapshot mandatory."
+        required: false
+        default: ""
+        type: string
 
 # Deploys of one environment stay mutually exclusive. The phase is part of the
 # key so a long build does not hold the deploy lane for an already-built
@@ -477,6 +482,7 @@ jobs:
           DATA_SNAPSHOT_URI: ${{ inputs.data_snapshot_uri || vars.ODP_APPROVED_DATA_SNAPSHOT_URI }}
           DATA_SNAPSHOT_CONTENT_SHA: ${{ inputs.data_snapshot_content_sha || vars.ODP_APPROVED_DATA_SNAPSHOT_CONTENT_SHA256 }}
           ROLLBACK_MANIFEST: ${{ inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
+          EXTERNAL_SOURCES_ENABLED: ${{ inputs.external_sources_enabled }}
         run: |
           set -euo pipefail
           mkdir -p "${HANDOFF_DIR}"
@@ -504,6 +510,20 @@ jobs:
           if [ -n "${ROLLBACK_MANIFEST:-}" ]; then
             rollback_args+=(--rollback-manifest "${ROLLBACK_MANIFEST}")
           fi
+          # Empty is the standing posture, not a missing input: the build phase
+          # then derives the sources-off attestation from the provider
+          # configuration this workflow deploys at this exact release SHA. There
+          # is deliberately no way to hand it a posture or a binding digest.
+          source_args=()
+          if [ -n "${EXTERNAL_SOURCES_ENABLED:-}" ]; then
+            IFS=',' read -ra enabled_sources <<< "${EXTERNAL_SOURCES_ENABLED}"
+            for source_id in "${enabled_sources[@]}"; do
+              trimmed="$(printf '%s' "${source_id}" | tr -d '[:space:]')"
+              if [ -n "${trimmed}" ]; then
+                source_args+=(--external-source "${trimmed}")
+              fi
+            done
+          fi
           python3 delivery_toolchain/release/build_release_handoff.py \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --repository "${GITHUB_REPOSITORY}" \
@@ -514,6 +534,7 @@ jobs:
             "${refs[@]}" \
             "${snapshot_args[@]}" \
             "${rollback_args[@]}" \
+            "${source_args[@]}" \
             --images-output "${HANDOFF_DIR}/runtime-release-images.json" \
             --manifest-output "${HANDOFF_DIR}/RELEASE_MANIFEST.json" \
             --github-output "${GITHUB_OUTPUT}"

@@ -1091,6 +1091,38 @@ def test_workflow_dispatch_declares_masked_snapshot_and_rollback_inputs() -> Non
         assert inputs[name]["default"] == ""
 
 
+def test_the_build_phase_declares_expected_enabled_sources_but_never_the_posture() -> None:
+    """Sources-off is derived from what is deployed, not supplied by the dispatcher.
+
+    ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: an operator may declare
+    which sources this release expects to be *enabled* -- that is what makes the
+    approved masked snapshot mandatory. The sources-off posture itself, and the
+    digest binding it to this candidate, must have no dispatch channel at all;
+    otherwise the evidence would be whatever the dispatcher typed.
+    """
+
+    workflow_text = (WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8")
+    parsed = yaml.safe_load(workflow_text)
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    assert "external_sources_enabled" in inputs
+    assert inputs["external_sources_enabled"]["required"] is False
+    assert inputs["external_sources_enabled"]["default"] == ""
+
+    assert "--external-source" in workflow_text
+    for forbidden in (
+        "--sources-off-binding-digest",
+        "--sources-off-attestation",
+        "--sources-off-file",
+        "sources_off_binding_digest",
+        "ODP_SOURCES_OFF_ATTESTATION",
+    ):
+        assert forbidden not in workflow_text, (
+            f"deploy-dev.yml must not offer {forbidden}: a sources-off posture that "
+            "can be handed in is not evidence"
+        )
+
+
 def test_dispatch_input_descriptions_do_not_name_files_that_do_not_exist() -> None:
     """An example path is an instruction, and a wrong one sends operators nowhere.
 

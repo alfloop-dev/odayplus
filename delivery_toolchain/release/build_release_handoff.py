@@ -46,12 +46,21 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS,
+    EXTERNAL_SOURCE_ENDPOINT_ENV_VARS,
+    EXTERNAL_SOURCE_INVENTORY,
     IMAGE_DIGEST_PATTERN,
+    SOURCE_EGRESS_DENIED,
+    SOURCE_STATUS_DISABLED,
+    SOURCES_OFF_PROVIDER_MODE,
     build_release_manifest,
+    build_sources_off_attestation,
     compute_data_contract_digest,
+    compute_source_policy_digest,
     extract_rollback_release_binding,
     is_exact_sha,
     load_manifest,
+    sources_off_attestation_errors,
     validate_manifest,
     validate_release_admission,
     validate_rollback_manifest,
@@ -84,6 +93,81 @@ class HandoffError(Exception):
 def _parse_assignment(raw: str) -> tuple[str, str]:
     name, _, value = str(raw).partition("=")
     return name.strip(), value.strip()
+
+
+PROVIDER_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
+
+
+def _wired_env_value(workflow_text: str, name: str) -> str | None:
+    """回傳 workflow 實際接到 runtime 的 env 值；未接線時回傳 ``None``。
+
+    只認 YAML 的 ``NAME: value`` 形式，因此註解裡提到變數名稱不會被誤判成接線。
+    """
+
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}:[ \t]*(.*?)[ \t]*$", re.MULTILINE)
+    values = [match.group(1).strip().strip('"').strip("'") for match in pattern.finditer(workflow_text)]
+    wired = [value for value in values if value]
+    if not wired:
+        return None
+    return wired[0]
+
+
+def derive_sources_off_posture(
+    *,
+    workflow_path: Path,
+    enabled_sources: list[str] | None = None,
+) -> dict[str, Any]:
+    """從 release SHA 上的 deploy workflow 推導出實際的 data-plane posture。
+
+    sources-off 證據必須來自這個 release 真正部署的設定，不能由呼叫端填寫，
+    否則「來源全關」就只是一句宣告。因此這裡只讀 workflow：runtime 拿到的
+    ``ODP_EXTERNAL_PROVIDER_MODE``、有沒有接上 provider credential、有沒有接上
+    provider endpoint（等同放行 public egress）。
+
+    任何一項不符 disabled／零 credential／default-deny 的結果都會照實記錄，
+    由 :func:`sources_off_attestation_errors` fail closed；這裡不做修正。
+    """
+
+    try:
+        workflow_text = workflow_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HandoffError(
+            [
+                f"無法讀取 deploy workflow {workflow_path}：{exc}；"
+                "sources-off posture 必須由 release SHA 上的 workflow 推導，不接受手填。"
+            ]
+        ) from exc
+
+    provider_mode = _wired_env_value(workflow_text, PROVIDER_MODE_ENV_VAR)
+    if provider_mode is None:
+        raise HandoffError(
+            [
+                f"deploy workflow 沒有設定 {PROVIDER_MODE_ENV_VAR}；"
+                "無法推導 sources-off posture，因此不放行。"
+            ]
+        )
+
+    enabled = set(enabled_sources or [])
+    inventory: list[dict[str, Any]] = []
+    for source_id in EXTERNAL_SOURCE_INVENTORY:
+        credentialed = any(
+            _wired_env_value(workflow_text, env_var) is not None
+            for env_var in EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS.get(source_id, ())
+        )
+        egress_open = any(
+            _wired_env_value(workflow_text, env_var) is not None
+            for env_var in EXTERNAL_SOURCE_ENDPOINT_ENV_VARS.get(source_id, ())
+        )
+        disabled = provider_mode == SOURCES_OFF_PROVIDER_MODE and source_id not in enabled
+        inventory.append(
+            {
+                "source_id": source_id,
+                "status": SOURCE_STATUS_DISABLED if disabled else "enabled",
+                "credentials_present": credentialed,
+                "public_egress": "allowed" if egress_open else SOURCE_EGRESS_DENIED,
+            }
+        )
+    return {"provider_mode": provider_mode, "sources_inventory": inventory}
 
 
 def resolve_created_at(release_sha: str, root: Path = ROOT) -> str:
@@ -127,6 +211,7 @@ def build_handoff(
     external_sources_expected_enabled: list[str] | None = None,
     schema_version: int = 2,
     root: Path = ROOT,
+    workflow_path: Path | None = None,
 ) -> tuple[dict[str, str], dict[str, Any]]:
     """回傳 ``(image handoff, release manifest)``，或在任何缺口時 raise。"""
 
@@ -216,11 +301,80 @@ def build_handoff(
             else:
                 resolved_rollback_release = extract_rollback_release_binding(previous_manifest)
 
+    enabled_sources = [
+        str(source).strip()
+        for source in (external_sources_expected_enabled or [])
+        if str(source).strip()
+    ]
+
+    manifest_components: dict[str, dict[str, str]] = {}
+    if len(images) == len(HANDOFF_COMPONENTS):
+        manifest_components = {name: {"image": images[name]} for name in HANDOFF_COMPONENTS}
+        for shared, source in SHARED_COMPONENTS.items():
+            manifest_components[shared] = {
+                "image": images[source],
+                "shares_image_with": source,
+            }
+
+    sources_off_attestation: dict[str, Any] | None = None
     if schema_version >= 2:
-        if external_sources_expected_enabled and data_snapshot is None:
-            errors.append(
-                "缺少 masked data snapshot 參照；build 階段啟用外部資料來源時必須綁定本次核准的 masked snapshot。"
-            )
+        if enabled_sources:
+            # 啟用來源的 release 完全維持既有嚴格路徑：沒有本次核准的 masked
+            # snapshot 就不是「比較弱的 manifest」，而是不能放行的 manifest。
+            if data_snapshot is None:
+                errors.append(
+                    "缺少 masked data snapshot 參照；build 階段啟用外部資料來源時必須綁定本次核准的 masked snapshot。"
+                )
+        elif data_snapshot is None:
+            # sources-off release 沒有可綁定的 masked snapshot，改以本 release
+            # 真正部署設定推導出的 provider-off posture 作為 data-plane 證據。
+            # 這裡不接受任何手填 digest、placeholder 或 raw artifact。
+            if manifest_components:
+                try:
+                    posture = derive_sources_off_posture(
+                        workflow_path=(
+                            workflow_path
+                            if workflow_path is not None
+                            else root / DEFAULT_WORKFLOW_PATH
+                        ),
+                        enabled_sources=enabled_sources,
+                    )
+                except HandoffError as exc:
+                    errors.extend(exc.errors)
+                else:
+                    candidate = build_sources_off_attestation(
+                        candidate_sha=release_sha,
+                        components=manifest_components,
+                        source_policy_digest=compute_source_policy_digest(root=root),
+                        provider_mode=posture["provider_mode"],
+                        sources_inventory=posture["sources_inventory"],
+                    )
+                    posture_errors = sources_off_attestation_errors(
+                        candidate,
+                        candidate_sha=release_sha,
+                        components=manifest_components,
+                        source_policy_digest=compute_source_policy_digest(root=root),
+                    )
+                    if posture_errors:
+                        errors.extend(
+                            "sources-off posture 不符合放行條件：" + error
+                            for error in posture_errors
+                        )
+                    else:
+                        sources_off_attestation = candidate
+
+            # Anti-downgrade：上一個核准 release 已經綁定 masked snapshot 時，
+            # 這一個 release 不能靠宣告 sources-off 就把那個 binding 換掉。
+            if isinstance(resolved_rollback_release, dict) and any(
+                key in resolved_rollback_release
+                for key in ("data_snapshot", "snapshot_pointer", "snapshot")
+            ):
+                errors.append(
+                    "上一核准 release 已綁定 masked data snapshot；"
+                    "本次不得以 sources-off posture 取代既有 snapshot binding，"
+                    "請改為綁定本次核准的 masked snapshot。"
+                )
+
         if resolved_rollback_release is None:
             errors.append(
                 "缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。"
@@ -228,13 +382,6 @@ def build_handoff(
 
     if errors:
         raise HandoffError(errors)
-
-    manifest_components = {name: {"image": images[name]} for name in HANDOFF_COMPONENTS}
-    for shared, source in SHARED_COMPONENTS.items():
-        manifest_components[shared] = {
-            "image": images[source],
-            "shares_image_with": source,
-        }
 
     manifest = build_release_manifest(
         release_id=effective_release_id,
@@ -248,8 +395,9 @@ def build_handoff(
             or f"github://{repository}/{DEFAULT_WORKFLOW_PATH}@{release_sha}"
         ),
         data_snapshot=data_snapshot,
+        sources_off_attestation=sources_off_attestation,
         rollback_release=resolved_rollback_release,
-        external_sources_expected_enabled=external_sources_expected_enabled or [],
+        external_sources_expected_enabled=enabled_sources,
         release_status="ready",
         schema_version=schema_version,
         root=root,

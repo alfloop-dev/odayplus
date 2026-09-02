@@ -49,6 +49,89 @@ REQUIRED_FIELDS_V2 = REQUIRED_FIELDS_V1 + (
 REQUIRED_FIELDS = REQUIRED_FIELDS_V1
 SNAPSHOT_FIELDS = ("id", "uri", "content_sha256", "data_contract_digest", "masked")
 
+# ---------------------------------------------------------------------------
+# Sources-off data-plane posture
+# ---------------------------------------------------------------------------
+#
+# EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN §3/§9/§14 describe the standing
+# posture of this product: all sixteen data sources stay disabled, no provider
+# credential exists, and public egress stays default-deny until a per-source
+# activation receipt is approved.  A release in that posture has no masked
+# snapshot to bind because there is no ingested third-party data to mask -- but
+# "no snapshot" must not become "no evidence".  ``sources_off_attestation`` is
+# the data-plane evidence such a release carries instead, and it is only worth
+# anything because it is *derived and bound* rather than declared:
+#
+# * it enumerates every source in :data:`EXTERNAL_SOURCE_INVENTORY`, so it
+#   cannot be satisfied by a bare boolean or a short list;
+# * ``binding_digest`` covers this candidate SHA, these component image
+#   digests, and this source-policy digest, so an attestation cannot be lifted
+#   from another release, replayed after a rebuild, or kept across a policy
+#   change; and
+# * nothing in the release path accepts a hand-supplied ``binding_digest`` --
+#   the build phase computes it from the deployment posture it read at the
+#   release SHA.
+SOURCES_OFF_PROVIDER_MODE = "disabled"
+SOURCES_OFF_EGRESS_POSTURE = "default-deny"
+SOURCE_STATUS_DISABLED = "disabled"
+SOURCE_EGRESS_DENIED = "denied"
+
+#: The sixteen internal and external sources the rollout plan holds closed.
+#: This mirrors the ODP-DEV-ROLLOUT-001 provider-off audit inventory; it is the
+#: schema-side spelling of that same set, not a second source registry.
+EXTERNAL_SOURCE_INVENTORY = (
+    "store_master_snapshot",
+    "machine_master_snapshot",
+    "machine_cycle_event",
+    "machine_status_event",
+    "transaction_event",
+    "price_schedule_snapshot",
+    "maintenance_work_order_event",
+    "customer_service_case_event",
+    "poi_snapshot",
+    "geocode_result_snapshot",
+    "admin_boundary_snapshot",
+    "listing_raw_snapshot",
+    "competitor_store_snapshot",
+    "demographics_snapshot",
+    "weather_daily_snapshot",
+    "store_opening_authority_snapshot",
+)
+EXPECTED_EXTERNAL_SOURCE_COUNT = len(EXTERNAL_SOURCE_INVENTORY)
+
+#: Credential environment variables that would make a source *credentialed*.
+#: These mirror ``modules.external_data.connectors.provider_registry``; the
+#: release toolchain must not import the runtime provider registry, so the
+#: names are restated here and ``tests/release/test_release_manifest.py``
+#: asserts the two stay identical.
+EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS: dict[str, tuple[str, ...]] = {
+    "listing_raw_snapshot": ("ODP_LISTING_PROVIDER_API_KEY",),
+    "poi_snapshot": ("ODP_POI_PROVIDER_API_KEY",),
+    "geocode_result_snapshot": ("ODP_GEOCODE_PROVIDER_API_KEY",),
+    "admin_boundary_snapshot": ("ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",),
+    "competitor_store_snapshot": ("ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",),
+    "store_opening_authority_snapshot": ("ODP_STORE_OPENING_AUTHORITY_ATTESTATION",),
+}
+
+#: Endpoint environment variables that would grant a source public egress.
+EXTERNAL_SOURCE_ENDPOINT_ENV_VARS: dict[str, tuple[str, ...]] = {
+    "listing_raw_snapshot": ("ODP_LISTING_PROVIDER_FEED_URL",),
+    "poi_snapshot": ("ODP_POI_PROVIDER_URL",),
+    "geocode_result_snapshot": ("ODP_GEOCODE_PROVIDER_URL",),
+    "admin_boundary_snapshot": ("ODP_ADMIN_BOUNDARY_PROVIDER_URL",),
+}
+
+SOURCE_POSTURE_FIELDS = ("source_id", "status", "credentials_present", "public_egress")
+SOURCES_OFF_ATTESTATION_FIELDS = (
+    "provider_mode",
+    "egress_posture",
+    "total_sources_audited",
+    "all_sources_disabled",
+    "zero_credentials_present",
+    "sources_inventory",
+    "binding_digest",
+)
+
 
 def is_exact_sha(value: Any) -> bool:
     """Return whether *value* is a lowercase 40-character git SHA."""
@@ -128,6 +211,258 @@ def _snapshot_errors(snapshot: Any, *, label: str) -> list[str]:
     return errors
 
 
+def _component_image_map(components: Any) -> dict[str, str]:
+    """Return ``{component: image}`` for binding, ignoring shared-image metadata."""
+
+    images: dict[str, str] = {}
+    if not isinstance(components, dict):
+        return images
+    for name, component in components.items():
+        if isinstance(component, dict):
+            image = component.get("image")
+        else:
+            image = component
+        if isinstance(name, str) and isinstance(image, str):
+            images[name] = image
+    return images
+
+
+def sources_off_posture_payload(attestation: Any) -> dict[str, Any]:
+    """Return the posture subset that ``binding_digest`` commits to."""
+
+    if not isinstance(attestation, dict):
+        return {}
+    inventory = attestation.get("sources_inventory")
+    normalised_inventory: list[dict[str, Any]] = []
+    if isinstance(inventory, list):
+        for entry in inventory:
+            if not isinstance(entry, dict):
+                continue
+            normalised_inventory.append(
+                {field: entry.get(field) for field in SOURCE_POSTURE_FIELDS}
+            )
+        normalised_inventory.sort(key=lambda entry: str(entry.get("source_id")))
+    return {
+        "provider_mode": attestation.get("provider_mode"),
+        "egress_posture": attestation.get("egress_posture"),
+        "total_sources_audited": attestation.get("total_sources_audited"),
+        "all_sources_disabled": attestation.get("all_sources_disabled"),
+        "zero_credentials_present": attestation.get("zero_credentials_present"),
+        "sources_inventory": normalised_inventory,
+    }
+
+
+def compute_sources_off_binding_digest(
+    *,
+    candidate_sha: Any,
+    components: Any,
+    source_policy_digest: Any,
+    posture: dict[str, Any],
+) -> str:
+    """Bind a sources-off posture to one candidate, one image set, one policy.
+
+    Without this the attestation would be a free-floating claim: copyable to the
+    next candidate, still "valid" after the images were rebuilt, and unaffected
+    by a source-policy change.  Binding it to all three is what makes the
+    posture evidence about *this* release.
+    """
+
+    payload = {
+        "candidate_sha": candidate_sha,
+        "component_images": _component_image_map(components),
+        "source_policy_digest": source_policy_digest,
+        "external_sources_expected_enabled": [],
+        "posture": posture,
+    }
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def build_sources_off_attestation(
+    *,
+    candidate_sha: str,
+    components: dict[str, Any],
+    source_policy_digest: str,
+    provider_mode: str,
+    sources_inventory: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Seal an observed sources-off posture into a bound attestation.
+
+    The caller supplies what it *observed*; it does not get to supply the
+    verdict fields or the digest.  ``all_sources_disabled``,
+    ``zero_credentials_present`` and ``egress_posture`` are derived from the
+    inventory here, so an attestation cannot claim a clean posture over a dirty
+    inventory -- :func:`sources_off_attestation_errors` re-derives them and
+    rejects the manifest if they disagree.
+    """
+
+    inventory = [
+        {field: entry.get(field) for field in SOURCE_POSTURE_FIELDS}
+        for entry in sources_inventory
+    ]
+    inventory.sort(key=lambda entry: str(entry.get("source_id")))
+    attestation: dict[str, Any] = {
+        "provider_mode": provider_mode,
+        "egress_posture": _derived_egress_posture(inventory),
+        "total_sources_audited": len(inventory),
+        "all_sources_disabled": _derived_all_disabled(inventory),
+        "zero_credentials_present": _derived_zero_credentials(inventory),
+        "sources_inventory": inventory,
+    }
+    attestation["binding_digest"] = compute_sources_off_binding_digest(
+        candidate_sha=candidate_sha,
+        components=components,
+        source_policy_digest=source_policy_digest,
+        posture=sources_off_posture_payload(attestation),
+    )
+    return attestation
+
+
+def _derived_all_disabled(inventory: list[dict[str, Any]]) -> bool:
+    return bool(inventory) and all(
+        entry.get("status") == SOURCE_STATUS_DISABLED for entry in inventory
+    )
+
+
+def _derived_zero_credentials(inventory: list[dict[str, Any]]) -> bool:
+    return all(entry.get("credentials_present") is False for entry in inventory)
+
+
+def _derived_egress_posture(inventory: list[dict[str, Any]]) -> str:
+    if inventory and all(
+        entry.get("public_egress") == SOURCE_EGRESS_DENIED for entry in inventory
+    ):
+        return SOURCES_OFF_EGRESS_POSTURE
+    return "provider-egress-allowed"
+
+
+def sources_off_attestation_errors(
+    attestation: Any,
+    *,
+    candidate_sha: Any = None,
+    components: Any = None,
+    source_policy_digest: Any = None,
+    label: str = "manifest.sources_off_attestation",
+) -> list[str]:
+    """Return why *attestation* is not admissible sources-off data-plane evidence.
+
+    Every branch here is a fail-closed condition named by the rollout plan: a
+    provider mode that is not ``disabled``, a source that is not disabled, a
+    provider credential that exists, egress that is not default-deny, or a
+    binding that does not belong to this release.
+    """
+
+    if not isinstance(attestation, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in SOURCES_OFF_ATTESTATION_FIELDS:
+        if field not in attestation:
+            errors.append(f"{label} missing required field: {field}")
+
+    provider_mode = attestation.get("provider_mode")
+    if provider_mode != SOURCES_OFF_PROVIDER_MODE:
+        errors.append(
+            f"{label}.provider_mode must be {SOURCES_OFF_PROVIDER_MODE!r}; "
+            f"got {provider_mode!r}"
+        )
+
+    inventory = attestation.get("sources_inventory")
+    if not isinstance(inventory, list):
+        errors.append(f"{label}.sources_inventory must be a list")
+        inventory = []
+    else:
+        observed_ids: list[str] = []
+        for index, entry in enumerate(inventory):
+            entry_label = f"{label}.sources_inventory[{index}]"
+            if not isinstance(entry, dict):
+                errors.append(f"{entry_label} must be an object")
+                continue
+            source_id = entry.get("source_id")
+            if isinstance(source_id, str):
+                observed_ids.append(source_id)
+            else:
+                errors.append(f"{entry_label}.source_id must be a string")
+            if entry.get("status") != SOURCE_STATUS_DISABLED:
+                errors.append(
+                    f"{entry_label}.status must be {SOURCE_STATUS_DISABLED!r} for a "
+                    f"sources-off release; got {entry.get('status')!r}"
+                )
+            if entry.get("credentials_present") is not False:
+                errors.append(
+                    f"{entry_label}.credentials_present must be False; a sources-off "
+                    "release must carry no provider credential"
+                )
+            if entry.get("public_egress") != SOURCE_EGRESS_DENIED:
+                errors.append(
+                    f"{entry_label}.public_egress must be {SOURCE_EGRESS_DENIED!r}; "
+                    "a sources-off release must keep public egress default-deny"
+                )
+        missing = sorted(set(EXTERNAL_SOURCE_INVENTORY) - set(observed_ids))
+        unexpected = sorted(set(observed_ids) - set(EXTERNAL_SOURCE_INVENTORY))
+        duplicated = sorted({sid for sid in observed_ids if observed_ids.count(sid) > 1})
+        if missing:
+            errors.append(
+                f"{label}.sources_inventory does not audit every source; missing: "
+                + ", ".join(missing)
+            )
+        if unexpected:
+            errors.append(
+                f"{label}.sources_inventory audits sources that are not in the "
+                "canonical inventory: " + ", ".join(unexpected)
+            )
+        if duplicated:
+            errors.append(
+                f"{label}.sources_inventory repeats sources: " + ", ".join(duplicated)
+            )
+
+    normalised = sources_off_posture_payload(attestation)["sources_inventory"]
+    if attestation.get("total_sources_audited") != EXPECTED_EXTERNAL_SOURCE_COUNT:
+        errors.append(
+            f"{label}.total_sources_audited must be {EXPECTED_EXTERNAL_SOURCE_COUNT}; "
+            f"got {attestation.get('total_sources_audited')!r}"
+        )
+    if attestation.get("all_sources_disabled") is not _derived_all_disabled(normalised):
+        errors.append(
+            f"{label}.all_sources_disabled does not match its own sources_inventory"
+        )
+    if attestation.get("zero_credentials_present") is not _derived_zero_credentials(
+        normalised
+    ):
+        errors.append(
+            f"{label}.zero_credentials_present does not match its own sources_inventory"
+        )
+    derived_egress = _derived_egress_posture(normalised)
+    if attestation.get("egress_posture") != derived_egress:
+        errors.append(
+            f"{label}.egress_posture does not match its own sources_inventory"
+        )
+    elif derived_egress != SOURCES_OFF_EGRESS_POSTURE:
+        errors.append(
+            f"{label}.egress_posture must be {SOURCES_OFF_EGRESS_POSTURE!r} for a "
+            f"sources-off release; got {derived_egress!r}"
+        )
+
+    recorded_binding = attestation.get("binding_digest")
+    if not is_sha256_digest(recorded_binding):
+        errors.append(f"{label}.binding_digest must be a sha256:<64 lowercase hex> digest")
+    elif candidate_sha is not None or components is not None:
+        expected_binding = compute_sources_off_binding_digest(
+            candidate_sha=candidate_sha,
+            components=components,
+            source_policy_digest=source_policy_digest,
+            posture=sources_off_posture_payload(attestation),
+        )
+        if recorded_binding != expected_binding:
+            errors.append(
+                f"{label}.binding_digest is not bound to this release's candidate "
+                "SHA, component image digests, and source_policy_digest"
+            )
+    return errors
+
+
 def validate_manifest(
     manifest: Any,
     *,
@@ -161,14 +496,48 @@ def validate_manifest(
         if field not in manifest:
             errors.append(f"manifest missing required field: {field}")
 
+    # Schema v2 requires *data-plane evidence*, and there are exactly two kinds.
+    # A release that expects enabled external sources binds the approved masked
+    # snapshot; a sources-off release binds a derived provider-off posture. The
+    # two are mutually exclusive on purpose: carrying both is how a sources-off
+    # claim would be used to talk past a snapshot binding that already exists.
     sources_enabled = manifest.get("external_sources_expected_enabled")
-    if (
-        version == 2
-        and isinstance(sources_enabled, list)
-        and len(sources_enabled) > 0
-        and ("data_snapshot" not in manifest or manifest.get("data_snapshot") is None)
-    ):
-        errors.append("manifest missing required field: data_snapshot")
+    attestation = manifest.get("sources_off_attestation")
+    has_snapshot = manifest.get("data_snapshot") is not None
+    if version == 2:
+        if isinstance(sources_enabled, list) and sources_enabled:
+            if not has_snapshot:
+                errors.append(
+                    "manifest missing required field: data_snapshot; a release that "
+                    "expects enabled external sources must bind the approved masked "
+                    "snapshot"
+                )
+            if attestation is not None:
+                errors.append(
+                    "manifest.sources_off_attestation must not appear on a manifest "
+                    "whose external_sources_expected_enabled is non-empty"
+                )
+        elif has_snapshot and attestation is not None:
+            errors.append(
+                "manifest.sources_off_attestation must not accompany "
+                "manifest.data_snapshot; a sources-off posture may not override an "
+                "existing snapshot binding"
+            )
+        elif not has_snapshot and attestation is None:
+            errors.append(
+                "manifest missing required field: data_snapshot; a sources-off "
+                "release must instead bind manifest.sources_off_attestation"
+            )
+
+    if attestation is not None:
+        errors.extend(
+            sources_off_attestation_errors(
+                attestation,
+                candidate_sha=manifest.get("candidate_sha"),
+                components=manifest.get("components"),
+                source_policy_digest=manifest.get("source_policy_digest"),
+            )
+        )
 
     release_id = manifest.get("release_id")
     if not isinstance(release_id, str) or not RELEASE_ID_PATTERN.fullmatch(release_id):
@@ -320,11 +689,25 @@ def validate_manifest(
                     )
                 )
             else:
-                if not (
-                    rollback_release.get("sources_off") is True
-                    or rollback_release.get("external_sources_expected_enabled") == []
-                ):
-                    errors.append("manifest.rollback_release missing required data_snapshot pointer")
+                # A rollback target that ran sources-off has no snapshot pointer
+                # to carry forward, so it carries the binding digest of the
+                # posture it was admitted on instead. A bare "it was sources
+                # off" flag would be forgeable and is not accepted.
+                rb_attestation = rollback_release.get("sources_off_attestation")
+                if rb_attestation is None:
+                    errors.append(
+                        "manifest.rollback_release missing required data_snapshot "
+                        "pointer or sources_off_attestation binding"
+                    )
+                elif not isinstance(rb_attestation, dict):
+                    errors.append(
+                        "manifest.rollback_release.sources_off_attestation must be an object"
+                    )
+                elif not is_sha256_digest(rb_attestation.get("binding_digest")):
+                    errors.append(
+                        "manifest.rollback_release.sources_off_attestation.binding_digest "
+                        "must be a sha256:<64 lowercase hex> digest"
+                    )
 
     recorded_digest = manifest.get("manifest_digest")
     if not is_sha256_digest(recorded_digest):
@@ -380,11 +763,38 @@ def validate_release_admission(manifest: Any) -> list[str]:
         if not isinstance(refs, list) or not refs:
             errors.append(f"release admission requires non-empty manifest.{field}")
 
-    # If external sources are expected enabled, require data snapshot with masked=true
-    if manifest.get("external_sources_expected_enabled"):
+    # Staging and production admission require data-plane evidence bound to this
+    # release. Which evidence is required follows from the declared source
+    # posture, and neither branch is optional.
+    sources_enabled = manifest.get("external_sources_expected_enabled")
+    attestation = manifest.get("sources_off_attestation")
+    if isinstance(sources_enabled, list) and sources_enabled:
         if manifest.get("data_snapshot") is None:
             errors.append(
-                "release admission with enabled external sources requires manifest.data_snapshot with masked=true and verified content sha256"
+                "release admission with enabled external sources requires "
+                "manifest.data_snapshot with masked=true and verified content sha256"
+            )
+    elif manifest.get("data_snapshot") is None and attestation is None:
+        errors.append(
+            "release admission requires manifest.data_snapshot with masked=true and "
+            "verified content sha256, or manifest.sources_off_attestation bound to "
+            "this candidate for a sources-off release"
+        )
+
+    # Anti-downgrade. Once a release has been admitted on a masked snapshot, the
+    # next release cannot escape snapshot verification by declaring itself
+    # sources-off: the rollback binding still names the snapshot the previous
+    # release was admitted on, and a posture attestation does not supersede it.
+    rollback_release = manifest.get("rollback_release")
+    if attestation is not None and isinstance(rollback_release, dict):
+        if any(
+            key in rollback_release
+            for key in ("data_snapshot", "snapshot_pointer", "snapshot")
+        ):
+            errors.append(
+                "release admission refuses manifest.sources_off_attestation on a "
+                "release whose rollback_release still binds a data_snapshot; a "
+                "sources-off posture may not override an existing snapshot binding"
             )
     if manifest.get("rollback_release") is None:
         errors.append(
@@ -503,6 +913,7 @@ def build_release_manifest(
     created_at: str,
     created_by_workflow: str,
     data_snapshot: dict[str, Any] | None = None,
+    sources_off_attestation: dict[str, Any] | None = None,
     rollback_release: dict[str, Any] | None = None,
     external_sources_expected_enabled: list[str] | None = None,
     release_status: str | None = None,
@@ -532,6 +943,8 @@ def build_release_manifest(
     }
     if data_snapshot is not None:
         manifest["data_snapshot"] = data_snapshot
+    if sources_off_attestation is not None:
+        manifest["sources_off_attestation"] = sources_off_attestation
     if rollback_release is not None:
         manifest["rollback_release"] = rollback_release
     if release_status is not None:
@@ -572,11 +985,18 @@ def extract_rollback_release_binding(prev_manifest: dict[str, Any]) -> dict[str,
     }
     if isinstance(prev_snapshot, dict):
         binding["data_snapshot"] = copy.deepcopy(prev_snapshot)
-    elif not prev_manifest.get("external_sources_expected_enabled"):
-        binding["sources_off"] = True
-        binding["external_sources_expected_enabled"] = []
     else:
-        raise ValueError("Cannot extract rollback binding from manifest without data_snapshot")
+        prev_attestation = prev_manifest.get("sources_off_attestation")
+        if not isinstance(prev_attestation, dict):
+            raise ValueError(
+                "Cannot extract rollback binding from manifest without data_snapshot"
+            )
+        # Carry only the binding digest forward. The rollback pointer records
+        # *which* posture the previous release was admitted on; it is not a
+        # second place to re-state the posture itself.
+        binding["sources_off_attestation"] = {
+            "binding_digest": prev_attestation.get("binding_digest"),
+        }
 
     return binding
 
@@ -611,36 +1031,54 @@ def validate_rollback_manifest(
         )
 
     snap = prev_manifest.get("data_snapshot")
-    if prev_manifest.get("external_sources_expected_enabled"):
-        if not isinstance(snap, dict) or not snap:
+    if not isinstance(snap, dict) or not snap:
+        # A sources-off predecessor is legitimate rollback evidence, but only
+        # through the same bound attestation admission required of it. A legacy
+        # manifest that simply never had a snapshot is not.
+        if not isinstance(prev_manifest.get("sources_off_attestation"), dict):
             errors.append(
-                "rollback manifest missing required data_snapshot; "
-                "cannot use legacy or snapshot-less manifest as rollback evidence for enabled sources"
+                "rollback manifest missing required data_snapshot and "
+                "sources_off_attestation; cannot use a legacy or evidence-less "
+                "manifest as rollback evidence"
             )
     return errors
 
 
 __all__ = [
     "CURRENT_SCHEMA_VERSION",
+    "EXPECTED_EXTERNAL_SOURCE_COUNT",
+    "EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS",
+    "EXTERNAL_SOURCE_ENDPOINT_ENV_VARS",
+    "EXTERNAL_SOURCE_INVENTORY",
     "RELEASE_ID_PATTERN",
     "RELEASE_STATUSES",
     "REQUIRED_FIELDS",
     "REQUIRED_FIELDS_V1",
     "REQUIRED_FIELDS_V2",
     "SNAPSHOT_FIELDS",
+    "SOURCES_OFF_ATTESTATION_FIELDS",
+    "SOURCES_OFF_EGRESS_POSTURE",
+    "SOURCES_OFF_PROVIDER_MODE",
+    "SOURCE_EGRESS_DENIED",
+    "SOURCE_POSTURE_FIELDS",
+    "SOURCE_STATUS_DISABLED",
     "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
     "build_release_manifest",
+    "build_sources_off_attestation",
     "component_binding_errors",
     "compute_data_contract_digest",
     "compute_file_set_digest",
     "compute_manifest_digest",
     "compute_migration_digest",
     "compute_source_policy_digest",
+    "compute_sources_off_binding_digest",
     "extract_rollback_release_binding",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
+    "sources_off_attestation_errors",
+    "sources_off_posture_payload",
     "validate_manifest",
     "validate_release_admission",
     "validate_rollback_manifest",
