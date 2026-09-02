@@ -129,6 +129,7 @@ SOURCES_OFF_ATTESTATION_FIELDS = (
     "all_sources_disabled",
     "zero_credentials_present",
     "sources_inventory",
+    "egress_evidence",
     "binding_digest",
 )
 
