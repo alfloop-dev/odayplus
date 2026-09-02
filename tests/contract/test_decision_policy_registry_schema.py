@@ -195,7 +195,7 @@ class TestMigrationApplies:
 
 @live
 class TestSeededPolicies:
-    def test_every_tenant_gets_its_own_pair_of_rows(self, policy_db) -> None:
+    def test_every_tenant_gets_its_own_policy_rows(self, policy_db) -> None:
         with policy_db.connect() as conn:
             rows = conn.execute(
                 "SELECT tenant_id::text, policy_label, policy_version_id "
@@ -210,6 +210,7 @@ class TestSeededPolicies:
             assert labels == {
                 "four-light-policy-0.0.0-retrofit",
                 "four-light-policy-v1",
+                "model-performance-drift-policy-v1",
             }
             for label, version_id in entries:
                 assert version_id == f"{label}:{tenant}"
@@ -438,7 +439,7 @@ class TestFreshlyProvisionedRuntime:
             ).fetchone()[0]
         assert count == 0
 
-    def test_a_tenant_onboarded_after_the_migration_gets_the_same_pair(
+    def test_a_tenant_onboarded_after_the_migration_gets_the_same_seeded_policies(
         self, freshly_provisioned_db
     ) -> None:
         """`core.tenants` is written by the data plane at runtime, so this is
@@ -452,13 +453,14 @@ class TestFreshlyProvisionedRuntime:
             rows = conn.execute(
                 "SELECT policy_label, policy_version, rollback_policy_version "
                 "FROM workflow.decision_policies WHERE tenant_id = %s::uuid "
-                "ORDER BY effective_from",
+                "ORDER BY effective_from, policy_id, policy_version_id",
                 (TENANT_A,),
             ).fetchall()
 
         assert [(row[0], row[1]) for row in rows] == [
             ("four-light-policy-0.0.0-retrofit", "0.0.0-retrofit"),
             ("four-light-policy-v1", "1.0.0"),
+            ("model-performance-drift-policy-v1", "1.0.0"),
         ]
         # Ordering is load-bearing: v1's rollback target is a composite foreign
         # key onto the retrofit row, so seeding them the other way round would
@@ -488,6 +490,7 @@ class TestFreshlyProvisionedRuntime:
             assert version_ids == {
                 f"four-light-policy-0.0.0-retrofit:{tenant}",
                 f"four-light-policy-v1:{tenant}",
+                f"model-performance-drift-policy-v1:{tenant}",
             }
 
     def test_the_runtime_repository_resolves_the_seeded_policy(

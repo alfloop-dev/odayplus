@@ -923,9 +923,14 @@ export type ModelVersionPayload = {
 
 /** MonitorGuardrailPayload */
 export type MonitorGuardrailPayload = {
+  higher_is_better?: boolean | null;
+  max_degradation?: number | null;
+  max_relative_degradation?: number | null;
   max_value?: number | null;
   metric_name: string;
   min_value?: number | null;
+  warning_max_degradation?: number | null;
+  warning_max_relative_degradation?: number | null;
   warning_max_value?: number | null;
   warning_min_value?: number | null;
 };
@@ -1243,6 +1248,7 @@ export type ReleaseHoldPayload = {
 
 /** ReleaseMonitorPayload */
 export type ReleaseMonitorPayload = {
+  baseline_metrics?: Record<string, number> | null;
   evaluated_by?: string | null;
   guardrails: MonitorGuardrailPayload[];
   observed_metrics: Record<string, number>;
@@ -1468,9 +1474,14 @@ export type TaskAssignRequest = {
 
 /** ThresholdPayload */
 export type ThresholdPayload = {
+  higher_is_better?: boolean | null;
+  max_degradation?: number | null;
+  max_relative_degradation?: number | null;
   max_value?: number | null;
   metric_name: string;
   min_value?: number | null;
+  warning_max_degradation?: number | null;
+  warning_max_relative_degradation?: number | null;
   warning_max_value?: number | null;
   warning_min_value?: number | null;
 };

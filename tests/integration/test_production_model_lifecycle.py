@@ -28,6 +28,7 @@ from modules.learninghub import (
 )
 from pipelines.features import FeaturePipelineRunner
 from pipelines.training import TrainingPipelineResult, TrainingPipelineRunner
+from shared.governance import default_model_performance_drift_policy
 from shared.infrastructure.persistence import (
     DurableArtifactStore,
     DurableAuditLog,
@@ -98,6 +99,8 @@ def _feature_and_train(
     version: str,
     dataset_snapshot_id: str,
     segment_thresholds: tuple[SegmentMetricThreshold, ...] = (),
+    thresholds: tuple[MetricThreshold, ...] | None = None,
+    decision_policy=None,
 ) -> TrainingPipelineResult:
     feature = FeaturePipelineRunner(
         repository=service.repository,
@@ -117,7 +120,8 @@ def _feature_and_train(
         label_name="w4_revenue",
         feature_schema_version="store-machine-timeseries-view-v2",
         label_version="forecast-w4-revenue-v2",
-        thresholds=(
+        thresholds=thresholds
+        or (
             MetricThreshold("normalized_mae", max_value=0.05),
             MetricThreshold("p80_coverage", min_value=0.80),
         ),
@@ -126,7 +130,49 @@ def _feature_and_train(
         actor="Codex2",
         run_id=f"training-{version}",
         git_sha="abc1234",
+        decision_policy=decision_policy,
     )
+
+
+def test_training_pipeline_records_governed_policy_and_ignores_weaker_thresholds(db_path) -> None:
+    engine, service, artifacts = _build_durable(db_path)
+    try:
+        snapshot = service.register_dataset_snapshot(
+            _rows(),
+            dataset_snapshot_id="forecast-training-policy-governance",
+        )
+        policy = default_model_performance_drift_policy("tenant-modeling")
+        result = _feature_and_train(
+            service,
+            artifacts,
+            version="policy-governed",
+            dataset_snapshot_id=snapshot.dataset_snapshot_id,
+            thresholds=(
+                MetricThreshold(
+                    "normalized_mae",
+                    max_value=1.0,
+                    max_degradation=0.50,
+                ),
+                MetricThreshold(
+                    "p80_coverage",
+                    min_value=0.0,
+                    max_degradation=0.50,
+                ),
+            ),
+            decision_policy=policy,
+        )
+    finally:
+        engine.close()
+
+    assert result.accepted
+    assert result.validation_run.decision_policy_version_id == policy.policy_version_id
+    normalized_mae = next(
+        threshold
+        for threshold in result.validation_run.thresholds
+        if threshold.metric_name == "normalized_mae"
+    )
+    assert normalized_mae.max_value == 0.35
+    assert normalized_mae.max_degradation == 0.05
 
 
 def _card(result: TrainingPipelineResult) -> ModelCard:

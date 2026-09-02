@@ -72,6 +72,11 @@ class LearningHubReleaseWorker:
                 max_value=item.get("max_value"),
                 warning_min_value=item.get("warning_min_value"),
                 warning_max_value=item.get("warning_max_value"),
+                max_degradation=item.get("max_degradation"),
+                max_relative_degradation=item.get("max_relative_degradation"),
+                warning_max_degradation=item.get("warning_max_degradation"),
+                warning_max_relative_degradation=item.get("warning_max_relative_degradation"),
+                higher_is_better=item.get("higher_is_better"),
             )
             for item in payload.get("guardrails", ())
         )
@@ -79,6 +84,11 @@ class LearningHubReleaseWorker:
             release_id=str(payload["release_id"]),
             observed_metrics=dict(payload.get("observed_metrics", {})),
             guardrails=guardrails,
+            baseline_metrics=(
+                dict(payload["baseline_metrics"])
+                if payload.get("baseline_metrics") is not None
+                else None
+            ),
             evaluated_by=str(payload.get("evaluated_by", "release-monitor")),
             correlation_id=str(payload.get("correlation_id", "learninghub-monitor")),
         )

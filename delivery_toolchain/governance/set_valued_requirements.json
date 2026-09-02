@@ -202,8 +202,9 @@
         },
         {
           "name": "PERFORMANCE_DRIFT",
-          "status": "absent",
-          "note": "What exists is an absolute threshold, not drift. models/shared_ml/validation.py::MetricThreshold.evaluate takes only the observed value; baseline_metrics appears twenty times in the tree and is never compared against. AUC falling 0.92 to 0.80 against a 0.75 floor raises nothing."
+          "status": "satisfied",
+          "evidence": "models/shared_ml/validation.py::MetricThreshold.evaluate",
+          "note": "Performance drift compares observed metrics against baseline_metrics using absolute/relative degradation thresholds and governed decision policies."
         }
       ]
     }

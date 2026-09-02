@@ -4585,6 +4585,39 @@
       },
       "MonitorGuardrailPayload": {
         "properties": {
+          "higher_is_better": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Higher Is Better"
+          },
+          "max_degradation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Degradation"
+          },
+          "max_relative_degradation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Relative Degradation"
+          },
           "max_value": {
             "anyOf": [
               {
@@ -4611,6 +4644,28 @@
               }
             ],
             "title": "Min Value"
+          },
+          "warning_max_degradation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning Max Degradation"
+          },
+          "warning_max_relative_degradation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning Max Relative Degradation"
           },
           "warning_max_value": {
             "anyOf": [
@@ -6210,6 +6265,20 @@
       },
       "ReleaseMonitorPayload": {
         "properties": {
+          "baseline_metrics": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Metrics"
+          },
           "evaluated_by": {
             "anyOf": [
               {
@@ -7377,6 +7446,39 @@
       },
       "ThresholdPayload": {
         "properties": {
+          "higher_is_better": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Higher Is Better"
+          },
+          "max_degradation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Degradation"
+          },
+          "max_relative_degradation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Relative Degradation"
+          },
           "max_value": {
             "anyOf": [
               {
@@ -7403,6 +7505,28 @@
               }
             ],
             "title": "Min Value"
+          },
+          "warning_max_degradation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning Max Degradation"
+          },
+          "warning_max_relative_degradation": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning Max Relative Degradation"
           },
           "warning_max_value": {
             "anyOf": [

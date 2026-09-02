@@ -78,6 +78,21 @@ def test_one_version_in_force_per_policy_per_tenant() -> None:
     assert "WHERE effective_to IS NULL" in sql
 
 
+def test_model_performance_drift_policy_is_seeded_with_all_production_rows() -> None:
+    sql = _sql()
+
+    required = (
+        "'model_performance_drift'",
+        "CREATE OR REPLACE FUNCTION workflow.seed_model_performance_drift_policy(p_tenant_id UUID)",
+        "SELECT workflow.seed_model_performance_drift_policy(t.tenant_id) FROM core.tenants t;",
+        "CREATE TRIGGER trg_seed_model_performance_drift_policy",
+        '"metric_thresholds_by_model"',
+        '"max_degradation": 0.05',
+    )
+    for fragment in required:
+        assert fragment in sql
+
+
 def test_seeding_is_one_definition_shared_by_backfill_and_onboarding() -> None:
     """`core.tenants` rows are written by the data plane at runtime, strictly
     after `alembic upgrade head`. A migration-time backfill therefore covers

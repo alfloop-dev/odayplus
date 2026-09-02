@@ -32,6 +32,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0007",
         "0008",
         "0009",
+        "0010",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -90,6 +91,18 @@ def test_alert_precision_tracking_ddl_is_reachable_from_alembic_head() -> None:
         for asset in precision_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000016_alert_precision_tracking.sql"}
+
+
+def test_model_performance_policy_migration_is_reachable_from_alembic_head() -> None:
+    plan = build_migration_plan(environment="dev")
+    policy_step = next(step for step in plan.steps if step.revision == "0010")
+
+    assert policy_step.path.endswith("0010_model_performance_drift_policy.py")
+    assert {
+        asset.path
+        for asset in policy_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000014_decision_policy_registry.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
