@@ -821,6 +821,7 @@ jobs:
       ODP_PROD_DEPLOY_URL: ${{ vars.ODP_PROD_DEPLOY_URL }}
       ODP_PROD_API_URL: ${{ vars.ODP_PROD_API_URL }}
       MANIFEST_DIGEST: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
+      PUBLIC_EGRESS_PROBE_REPORT: .odp_data/deployment/public-egress-probe.json
       API_IMAGE: ${{ needs.build.outputs.api_image || inputs.api_image }}
       WEB_IMAGE: ${{ needs.build.outputs.web_image || inputs.web_image }}
       WORKER_IMAGE: ${{ needs.build.outputs.worker_image || inputs.worker_image }}
@@ -1113,6 +1114,7 @@ jobs:
             .odp_data/deployment/cloud-run-smoke.json
             .odp_data/deployment/cloud-run-migration-compatibility.json
             .odp_data/deployment/live-e2e-gate.json
+            .odp_data/deployment/public-egress-probe.json
             .odp_data/deployment/cloud-run-jobs/migration-validation.json
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json

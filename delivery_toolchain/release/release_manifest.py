@@ -146,6 +146,9 @@ SOURCES_OFF_EGRESS_EVIDENCE_FIELDS = (
     "firewall_egress",
     "workflow_vpc_binding",
     "deploy_entrypoint_vpc_binding",
+    "runtime_probe_wiring",
+    "runtime_probe",
+    "runtime_probe_receipt",
     "provider_credentials_runtime",
     "proof_source",
     "contract_digest",
@@ -154,6 +157,8 @@ SOURCES_OFF_EGRESS_EVIDENCE_KIND = "runtime-release-egress-contract"
 SOURCES_OFF_CLOUD_RUN_EGRESS = "ALL_TRAFFIC"
 SOURCES_OFF_FIREWALL_EGRESS = "default-deny"
 SOURCES_OFF_PROVIDER_CREDENTIALS = "absent"
+SOURCES_OFF_RUNTIME_PROBE = "public_egress_denied"
+SOURCES_OFF_RUNTIME_PROBE_RECEIPT = ".odp_data/deployment/public-egress-probe.json"
 
 # These are the checked-in contract inputs for the one Runtime Release path.
 # Their digest makes the otherwise secret-free posture receipt specific to the
@@ -163,6 +168,8 @@ SOURCES_OFF_EGRESS_CONTRACT_FILES = (
     "product_ops/deployment/deploy_cloud_run_waji.sh",
     "infra/terraform/cloud_run.tf",
     "infra/terraform/network.tf",
+    "product_ops/deployment/staging_lifecycle.py",
+    "product_ops/deployment/cloud_run_job_entrypoint.py",
 )
 
 
@@ -954,6 +961,7 @@ def build_sources_off_egress_evidence(
     *,
     workflow_vpc_binding: bool = True,
     deploy_entrypoint_vpc_binding: bool = True,
+    runtime_probe_wiring: bool = True,
     provider_credentials_runtime: str = SOURCES_OFF_PROVIDER_CREDENTIALS,
     root: Path = ROOT,
 ) -> dict[str, Any]:
@@ -979,6 +987,9 @@ def build_sources_off_egress_evidence(
         "deploy_entrypoint_vpc_binding": (
             "verified" if deploy_entrypoint_vpc_binding else "unbound"
         ),
+        "runtime_probe_wiring": "verified" if runtime_probe_wiring else "unbound",
+        "runtime_probe": SOURCES_OFF_RUNTIME_PROBE,
+        "runtime_probe_receipt": SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
         "provider_credentials_runtime": provider_credentials_runtime,
         "proof_source": list(SOURCES_OFF_EGRESS_CONTRACT_FILES),
         "contract_digest": compute_sources_off_egress_contract_digest(root=root),
@@ -1003,6 +1014,11 @@ def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
         errors.append("deploy workflow does not bind ODP_CLOUD_RUN_VPC_CONNECTOR")
     if "ODP_CLOUD_RUN_VPC_EGRESS:" not in workflow:
         errors.append("deploy workflow does not bind ODP_CLOUD_RUN_VPC_EGRESS")
+    if (
+        f"PUBLIC_EGRESS_PROBE_REPORT: {SOURCES_OFF_RUNTIME_PROBE_RECEIPT}"
+        not in workflow
+    ):
+        errors.append("deploy workflow does not retain the public egress probe receipt")
 
     deploy = paths["product_ops/deployment/deploy_cloud_run_waji.sh"].read_text(
         encoding="utf-8"
@@ -1013,6 +1029,33 @@ def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
         errors.append("deploy entrypoint does not pass the VPC egress mode to Cloud Run")
     if "sources-off deploy requires ALL_TRAFFIC VPC egress" not in deploy:
         errors.append("deploy entrypoint does not fail closed on non-ALL_TRAFFIC sources-off egress")
+
+    probe_wired = "public-egress-probe" in deploy
+    receipt_wired = "public-egress-probe.json" in deploy
+    if not probe_wired:
+        errors.append("deploy entrypoint does not execute the public egress deny probe")
+    if not receipt_wired:
+        errors.append("deploy entrypoint does not write the public egress probe receipt")
+    probe_call = "  run_public_egress_probe\n"
+    if probe_call not in deploy:
+        errors.append("deploy entrypoint does not call the public egress deny probe")
+    if probe_wired and "promote_service_traffic" in deploy and probe_call in deploy:
+        probe_pos = deploy.index(probe_call)
+        promote_pos = deploy.index("promote_service_traffic")
+        if probe_pos > promote_pos:
+            errors.append("public egress deny probe must run before service traffic promotion")
+
+    lifecycle = paths["product_ops/deployment/staging_lifecycle.py"].read_text(
+        encoding="utf-8"
+    )
+    if "public_egress_denied_probe" not in lifecycle:
+        errors.append("staging lifecycle does not retain the public egress deny probe stage")
+
+    probe_entrypoint = paths["product_ops/deployment/cloud_run_job_entrypoint.py"].read_text(
+        encoding="utf-8"
+    )
+    if "def run_public_egress_probe" not in probe_entrypoint:
+        errors.append("Cloud Run Job entrypoint does not expose the public egress deny probe")
 
     cloud_run = paths["infra/terraform/cloud_run.tf"].read_text(encoding="utf-8")
     if 'egress = "ALL_TRAFFIC"' not in cloud_run:
@@ -1211,6 +1254,8 @@ __all__ = [
     "SOURCES_OFF_CLOUD_RUN_EGRESS",
     "SOURCES_OFF_FIREWALL_EGRESS",
     "SOURCES_OFF_PROVIDER_CREDENTIALS",
+    "SOURCES_OFF_RUNTIME_PROBE",
+    "SOURCES_OFF_RUNTIME_PROBE_RECEIPT",
     "SOURCES_OFF_PROVIDER_MODE",
     "SOURCE_EGRESS_DENIED",
     "SOURCE_POSTURE_FIELDS",

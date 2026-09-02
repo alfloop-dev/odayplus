@@ -53,6 +53,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     SOURCE_EGRESS_DENIED,
     SOURCE_STATUS_DISABLED,
     SOURCES_OFF_PROVIDER_MODE,
+    SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
     _sources_off_egress_contract_errors,
     build_release_manifest,
     build_sources_off_attestation,
@@ -171,6 +172,12 @@ def derive_sources_off_posture(
             '"--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}"',
         )
     )
+    runtime_probe_wiring = (
+        _wired_env_value(workflow_text, "PUBLIC_EGRESS_PROBE_REPORT")
+        == SOURCES_OFF_RUNTIME_PROBE_RECEIPT
+        and "public-egress-probe" in deploy_entrypoint_text
+        and "public-egress-probe.json" in deploy_entrypoint_text
+    )
     contract_errors = _sources_off_egress_contract_errors(root=root)
     egress_contract_verified = (
         workflow_vpc_binding
@@ -213,6 +220,7 @@ def derive_sources_off_posture(
         "egress_evidence": build_sources_off_egress_evidence(
             workflow_vpc_binding=workflow_vpc_binding,
             deploy_entrypoint_vpc_binding=deploy_entrypoint_vpc_binding,
+            runtime_probe_wiring=runtime_probe_wiring,
             provider_credentials_runtime=provider_credentials_runtime,
             root=root,
         ),

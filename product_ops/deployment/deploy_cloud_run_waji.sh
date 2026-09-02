@@ -80,6 +80,11 @@ fi
 # default-deny claim. This guard runs before the first Cloud Run mutation.
 if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
   : "${ODP_CLOUD_RUN_VPC_CONNECTOR:?Error: sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR.}"
+  : "${MANIFEST_DIGEST:?Error: sources-off deploy requires MANIFEST_DIGEST.}"
+  if [[ ! "${MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "Error: sources-off deploy requires an immutable MANIFEST_DIGEST." >&2
+    exit 1
+  fi
   case "${ODP_CLOUD_RUN_VPC_EGRESS:-}" in
     all|all-traffic)
       ;;
@@ -135,6 +140,7 @@ MIGRATION_COMPAT_RETRY_BACKOFF="${MIGRATION_COMPAT_RETRY_BACKOFF:-2}"
 MIGRATION_COMPAT_RETRY_MAX_BACKOFF="${MIGRATION_COMPAT_RETRY_MAX_BACKOFF:-8}"
 MIGRATION_COMPAT_RETRY_DEADLINE="${MIGRATION_COMPAT_RETRY_DEADLINE:-120}"
 LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
+PUBLIC_EGRESS_PROBE_REPORT="${PUBLIC_EGRESS_PROBE_REPORT:-.odp_data/deployment/public-egress-probe.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source product_ops/deployment/cloud_run_release_traffic.sh
 
@@ -438,6 +444,94 @@ execute_job() {
   capture_job_proof "${kind}" "${job}"
 }
 
+write_public_egress_probe_receipt() {
+  local result="$1"
+  local reason="$2"
+  local actual_egress="$3"
+  local execution="$4"
+  mkdir -p "$(dirname "${PUBLIC_EGRESS_PROBE_REPORT}")"
+  python3 - "${PUBLIC_EGRESS_PROBE_REPORT}" "${result}" "${reason}" \
+    "${actual_egress}" "${execution}" <<'PY'
+import json
+import os
+import sys
+from datetime import UTC, datetime
+
+payload = {
+    "receipt_kind": "public_egress_probe",
+    "secret_values_redacted": True,
+    "candidate_sha": os.environ["ODAY_RELEASE_SHA"],
+    "manifest_digest": os.environ.get("MANIFEST_DIGEST", ""),
+    "job": os.environ["WORKER_CANDIDATE_JOB"],
+    "probe_url": "https://example.com/",
+    "expected": "denied",
+    "vpc_egress": sys.argv[4],
+    "result": sys.argv[2],
+    "reason": sys.argv[3],
+    "execution": sys.argv[5],
+    "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+}
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+    handle.write("\n")
+PY
+}
+
+run_public_egress_probe() {
+  local description actual_egress
+  echo "Proving sources-off public egress is denied from the candidate worker job..."
+  if ! description="$(gcloud run jobs describe "${WORKER_CANDIDATE_JOB}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json)"; then
+    write_public_egress_probe_receipt "failed" "job_readback_failed" "" "not_run"
+    return 1
+  fi
+  if ! actual_egress="$(printf '%s' "${description}" | python3 -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+paths = (
+    ("template", "template", "vpcAccess", "egress"),
+    ("template", "vpcAccess", "egress"),
+    ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
+    ("vpcAccess", "egress"),
+)
+for path in paths:
+    value = payload
+    try:
+        for key in path:
+            value = value[key]
+    except (KeyError, IndexError, TypeError):
+        continue
+    if isinstance(value, str):
+        print(value)
+        break
+')"; then
+    write_public_egress_probe_receipt "failed" "job_readback_invalid" "" "not_run"
+    return 1
+  fi
+  if [ "${actual_egress}" != "ALL_TRAFFIC" ]; then
+    write_public_egress_probe_receipt \
+      "failed" "vpc_egress_not_all_traffic" "${actual_egress}" "not_run"
+    return 1
+  fi
+  if ! gcloud run jobs execute "${WORKER_CANDIDATE_JOB}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --args="product_ops/deployment/cloud_run_job_entrypoint.py,public-egress-probe" \
+    --wait \
+    --quiet; then
+    write_public_egress_probe_receipt \
+      "failed" "public_canary_reachable_or_execution_failed" \
+      "${actual_egress}" "failed"
+    return 1
+  fi
+  write_public_egress_probe_receipt \
+    "passed" "public_canary_denied" "${actual_egress}" "succeeded"
+}
+
 echo "Recording the existing API/Web traffic before any runtime mutation..."
 capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"
 capture_service_traffic "${WEB_SERVICE}" "${WEB_TRAFFIC_SNAPSHOT}"
@@ -573,6 +667,10 @@ for job in "${SCHEDULER_CANDIDATE_JOB}" "${WORKER_CANDIDATE_JOB}"; do
     --role="roles/run.invoker" \
     --quiet
 done
+
+if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
+  run_public_egress_probe
+fi
 
 upsert_scheduler_trigger() {
   local trigger_name="$1"
