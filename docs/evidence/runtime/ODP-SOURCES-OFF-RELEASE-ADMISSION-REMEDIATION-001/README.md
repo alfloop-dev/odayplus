@@ -5,7 +5,7 @@ admission 語意。
 
 - 任務狀態：實作完成，等待正式 review submission
 - Owner：Codex · Reviewer：Codex2
-- 量測 code head：`ee5a79de3ff9e6089b08c8619423000a21eda761`
+- 量測 code head：`88e46a91b32c5bd7fdbe109eeb00b5d02c85cd27`
 - base advance：merge commit `181dc823bde876a2e4087002c2a3efb609b9c9f5`，包含 `origin/dev@4f28c2316af6`
 
 ## 1. 問題
@@ -134,7 +134,7 @@ attestation。
 ## 7. 驗證
 
 見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
-在 code head `ee5a79de` 以指定 focused selection 通過：exit 0、20.879 秒；收據不含
+在 code head `88e46a91` 以指定 focused selection 通過：exit 0、19.432 秒；收據不含
 任何 secret 值。測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**，
 `delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 code head 通過；文件追加後會在
 最終 head 再執行一次 exact selection。
