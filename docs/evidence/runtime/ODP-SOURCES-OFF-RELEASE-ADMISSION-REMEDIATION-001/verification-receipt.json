@@ -5,8 +5,8 @@
   "agent": "Codex",
   "reviewer": "Codex2",
   "branch": "task/ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
-  "head_sha": "2eb194c113f8466cab5fc4081b4bcd8091198ca7",
-  "head_sha_note": "本收據量測的是 base advance 後的實作 code head；其後只追加本 evidence 目錄文件，未變更受測程式碼。task_verification 已於此 head 以 exact selection 通過；task_finalize 前會在最終 head 再產生 canonical 收據。",
+  "head_sha": "ee5a79de3ff9e6089b08c8619423000a21eda761",
+  "head_sha_note": "本收據量測的是 base advance 後、加入 runtime egress guard 與 environment binding check 的實作 code head；其後只追加本 evidence 目錄文件，未變更受測程式碼。task_verification 已於此 head 以 exact selection 通過；task_finalize 前會在最終 head 再產生 canonical 收據。",
   "secret_values_redacted": true,
   "runs": [
     {
@@ -14,10 +14,10 @@
       "command": "uv run --frozen pytest -q tests/release/test_build_release_handoff.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_dev_rollout.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "2eb194c113f8466cab5fc4081b4bcd8091198ca7",
-      "started_at": "2026-09-02T04:38:39Z",
-      "finished_at": "2026-09-02T04:38:58Z",
-      "duration_seconds": 19.197,
+      "head_sha": "ee5a79de3ff9e6089b08c8619423000a21eda761",
+      "started_at": "2026-09-02T04:44:14Z",
+      "finished_at": "2026-09-02T04:44:35Z",
+      "duration_seconds": 20.879,
       "selection": {
         "scope": "targeted",
         "items": [
@@ -33,21 +33,21 @@
       "runner": "pytest"
     },
     {
-      "purpose": "secret scan over code head 2eb194c113f8466cab5fc4081b4bcd8091198ca7",
+      "purpose": "secret scan over code head ee5a79de3ff9e6089b08c8619423000a21eda761",
       "command": "uv run --frozen python delivery_toolchain/security/secret_scan.py",
       "exit_code": 0,
       "outcome": "passed",
       "result_line": "Secrets scan passed successfully. No violations found."
     },
     {
-      "purpose": "lint over the changed surfaces at code head 2eb194c113f8466cab5fc4081b4bcd8091198ca7",
+      "purpose": "lint over the changed surfaces at code head ee5a79de3ff9e6089b08c8619423000a21eda761",
       "command": "uv run --frozen ruff check delivery_toolchain/release/ tests/release/ tests/ops/",
       "exit_code": 0,
       "outcome": "passed",
       "result_line": "All checks passed!"
     },
     {
-      "purpose": "regression sweep over adjacent release and staging suites at code head 2eb194c113f8466cab5fc4081b4bcd8091198ca7",
+      "purpose": "regression sweep over adjacent release and staging suites at code head ee5a79de3ff9e6089b08c8619423000a21eda761",
       "command": "uv run --frozen pytest -q tests/release/ tests/ops/test_release_receipts.py tests/ops/test_ephemeral_staging_lifecycle.py",
       "exit_code": 0,
       "outcome": "passed"

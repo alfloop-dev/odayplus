@@ -5,7 +5,7 @@ admission 語意。
 
 - 任務狀態：實作完成，等待正式 review submission
 - Owner：Codex · Reviewer：Codex2
-- 量測 code head：`2eb194c113f8466cab5fc4081b4bcd8091198ca7`
+- 量測 code head：`ee5a79de3ff9e6089b08c8619423000a21eda761`
 - base advance：merge commit `181dc823bde876a2e4087002c2a3efb609b9c9f5`，包含 `origin/dev@4f28c2316af6`
 
 ## 1. 問題
@@ -124,6 +124,8 @@ attestation。
 |---|---|
 | `delivery_toolchain/release/release_manifest.py` | attestation schema、VPC/firewall contract evidence、binding digest、fail-closed 驗證、rollback binding、anti-downgrade |
 | `delivery_toolchain/release/build_release_handoff.py` | 從 deploy workflow 推導 posture 與 egress wiring、build 端 anti-downgrade、嚴格路徑保留 |
+| `delivery_toolchain/release/check_release_environment.py` | deploy environment 必須解析 VPC connector 與 egress，避免空值退回 public path |
+| `product_ops/deployment/deploy_cloud_run_waji.sh` | sources-off 在首次 Cloud Run mutation 前強制 connector 與 `ALL_TRAFFIC` |
 | `.github/workflows/deploy-dev.yml` | `external_sources_enabled` input 與 `--external-source` 接線 |
 | `tests/release/test_release_manifest.py` | 20 個 focused 正／負向測試 |
 | `tests/release/test_build_release_handoff.py` | 12 個 focused 正／負向測試 |
@@ -132,7 +134,7 @@ attestation。
 ## 7. 驗證
 
 見 [`verification-receipt.json`](verification-receipt.json)。canonical task receipt
-在 code head `2eb194c1` 以指定 focused selection 通過：exit 0、19.197 秒；收據不含
+在 code head `ee5a79de` 以指定 focused selection 通過：exit 0、20.879 秒；收據不含
 任何 secret 值。測試 fixture 只出現 GitHub Actions 的 `secrets.*` **參照字面**，
-`delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 head 通過；文件追加後會在
+`delivery_toolchain/security/secret_scan.py` 與 ruff 於同一 code head 通過；文件追加後會在
 最終 head 再執行一次 exact selection。
