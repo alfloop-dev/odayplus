@@ -156,6 +156,75 @@ def _require_declared_resource(
         )
 
 
+def _require_declared_dilution_zones(
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+) -> None:
+    """Refuse an OPEN option that names no catchment while the cap is set.
+
+    A blank ``dilution_zone_id`` is not "this opening dilutes nothing"; it is
+    "nobody said". Counting only the OPEN options that happen to carry a zone
+    leaves an unzoned opening free to land anywhere, so a plan can put three
+    openings into one catchment under a cap of two and still report DILUTION
+    as modelled -- the same shape of wrong answer the cap was added to remove,
+    now hidden behind a constraint that looks applied.
+    """
+    undeclared = sorted(
+        f"{entity_id}:{option.action.value}"
+        for entity_id, options in options_by_entity.items()
+        for option in options
+        if option.action is NetworkAction.OPEN and not option.dilution_zone_id
+    )
+    if undeclared:
+        raise ValueError(
+            f"max_open_per_dilution_zone is set but {len(undeclared)} OPEN "
+            "option(s) declare no dilution_zone_id: "
+            f"{', '.join(undeclared[:5])}{' ...' if len(undeclared) > 5 else ''}"
+        )
+    if not dilution_zones(options_by_entity):
+        raise ValueError(
+            "max_open_per_dilution_zone is set but no option offers an OPEN "
+            "action with a dilution_zone_id; the cap would constrain nothing"
+        )
+
+
+def dilution_zones(options_by_entity: dict[str, tuple[ActionOption, ...]]) -> set[str]:
+    return {
+        option.dilution_zone_id
+        for options in options_by_entity.values()
+        for option in options
+        if option.action is NetworkAction.OPEN and option.dilution_zone_id
+    }
+
+
+RESOURCE_CAPS: tuple[tuple[str, str], ...] = (
+    ("construction_days", "max_construction_days"),
+    ("equipment_units", "max_equipment_units"),
+    ("labour_headcount", "max_labour_headcount"),
+)
+
+
+def require_declared_constraint_inputs(
+    options_by_entity: dict[str, tuple[ActionOption, ...]],
+    constraints: NetPlanConstraints,
+) -> None:
+    """Refuse a constraint set whose per-option inputs some option omits.
+
+    Both solve paths validate through this one function: the SCIP model below
+    and the production CP-SAT model in ``modules.netplan.application.production``.
+    A rule enforced on one path and absent from the other is worse than no rule,
+    because the tests pass on the path nobody ships. Keeping the admission rules
+    in a single place is what stops the two from drifting apart again.
+    """
+    for attribute, cap_label in RESOURCE_CAPS:
+        if getattr(constraints, cap_label) is None:
+            continue
+        _require_declared_resource(options_by_entity, attribute, cap_label)
+    if constraints.min_coverage_delta is not None:
+        _require_declared_resource(options_by_entity, "coverage_delta", "min_coverage_delta")
+    if constraints.max_open_per_dilution_zone is not None:
+        _require_declared_dilution_zones(options_by_entity)
+
+
 def _candidate_from_selected(
     selected: list[ActionOption],
     constraints: NetPlanConstraints,
@@ -215,6 +284,8 @@ def _solve_network_plan_impl(
             diagnostics=tuple(diagnose_infeasible(options_by_entity, constraints)),
         )
 
+    require_declared_constraint_inputs(options_by_entity, constraints)
+
     # Initialize SCIP solver
     solver = _pywraplp().Solver.CreateSolver("SCIP")
     if not solver:
@@ -226,8 +297,8 @@ def _solve_network_plan_impl(
         )
         if not candidates:
             return NetworkPlanSolveResult(
-            modelled_constraint_classes=constraints.modelled_classes(),
-            unmodelled_constraint_classes=constraints.unmodelled_classes(),
+                modelled_constraint_classes=constraints.modelled_classes(),
+                unmodelled_constraint_classes=constraints.unmodelled_classes(),
                 solver_status=STATUS_INFEASIBLE,
                 objective_value=0.0,
                 selected_actions=(),
@@ -326,14 +397,10 @@ def _solve_network_plan_impl(
     # figure is refused rather than read as zero -- treating an undeclared cost
     # as no cost is how a plan comes back feasible while consuming a resource
     # nobody counted.
-    for attribute, cap, label in (
-        ("construction_days", constraints.max_construction_days, "max_construction_days"),
-        ("equipment_units", constraints.max_equipment_units, "max_equipment_units"),
-        ("labour_headcount", constraints.max_labour_headcount, "max_labour_headcount"),
-    ):
+    for attribute, cap_label in RESOURCE_CAPS:
+        cap = getattr(constraints, cap_label)
         if cap is None:
             continue
-        _require_declared_resource(options_by_entity, attribute, label)
         solver.Add(
             sum(
                 x[entity_id][j] * float(getattr(option, attribute))
@@ -345,7 +412,6 @@ def _solve_network_plan_impl(
 
     # 7. Coverage floor: the plan as a whole may not thin the network past this.
     if constraints.min_coverage_delta is not None:
-        _require_declared_resource(options_by_entity, "coverage_delta", "min_coverage_delta")
         solver.Add(
             sum(
                 x[entity_id][j] * float(option.coverage_delta)
@@ -363,18 +429,7 @@ def _solve_network_plan_impl(
     # demand. `ConstraintClass.DILUTION` records that this approximation, not
     # the full effect, is what was applied.
     if constraints.max_open_per_dilution_zone is not None:
-        zones = {
-            option.dilution_zone_id
-            for options in options_by_entity.values()
-            for option in options
-            if option.action is NetworkAction.OPEN and option.dilution_zone_id
-        }
-        if not zones:
-            raise ValueError(
-                "max_open_per_dilution_zone is set but no OPEN option declares a "
-                "dilution_zone_id; the cap would silently constrain nothing"
-            )
-        for zone in sorted(zones):
+        for zone in sorted(dilution_zones(options_by_entity)):
             solver.Add(
                 sum(
                     x[entity_id][j]
@@ -471,8 +526,8 @@ def _solve_network_plan_impl(
     ][:alternative_limit]
 
     return NetworkPlanSolveResult(
-            modelled_constraint_classes=constraints.modelled_classes(),
-            unmodelled_constraint_classes=constraints.unmodelled_classes(),
+        modelled_constraint_classes=constraints.modelled_classes(),
+        unmodelled_constraint_classes=constraints.unmodelled_classes(),
         solver_status=STATUS_OPTIMAL,
         objective_value=best_candidate.objective_value,
         selected_actions=best_candidate.actions,
@@ -703,11 +758,8 @@ def _is_feasible(candidate: NetworkPlanCandidate, constraints: NetPlanConstraint
     # Enumerated alternatives are offered to a human as plans they could adopt,
     # so they must clear the same resource caps as the optimum. An alternative
     # that breaches construction capacity is not an alternative.
-    for attribute, cap in (
-        ("construction_days", constraints.max_construction_days),
-        ("equipment_units", constraints.max_equipment_units),
-        ("labour_headcount", constraints.max_labour_headcount),
-    ):
+    for attribute, cap_label in RESOURCE_CAPS:
+        cap = getattr(constraints, cap_label)
         if cap is None:
             continue
         total = 0.0
@@ -727,10 +779,18 @@ def _is_feasible(candidate: NetworkPlanCandidate, constraints: NetPlanConstraint
         if total_coverage < constraints.min_coverage_delta:
             return False
     if constraints.max_open_per_dilution_zone is not None:
+        # An OPEN action with no declared catchment is not exempt from the cap;
+        # it is a plan whose dilution nobody measured, and it may not be handed
+        # to a reader as an alternative that cleared the cap.
+        if any(
+            action_option.action is NetworkAction.OPEN and not action_option.dilution_zone_id
+            for action_option in candidate.actions
+        ):
+            return False
         per_zone: Counter[str] = Counter(
             action_option.dilution_zone_id
             for action_option in candidate.actions
-            if action_option.action is NetworkAction.OPEN and action_option.dilution_zone_id
+            if action_option.action is NetworkAction.OPEN
         )
         if any(count > constraints.max_open_per_dilution_zone for count in per_zone.values()):
             return False

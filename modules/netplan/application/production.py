@@ -16,7 +16,13 @@ from solver.netplan import (
     STATUS_OPTIMAL,
     NetworkPlanSolveResult,
 )
-from solver.netplan.optimizer import diagnose_infeasible
+from solver.netplan.model import NetworkAction
+from solver.netplan.optimizer import (
+    RESOURCE_CAPS,
+    diagnose_infeasible,
+    dilution_zones,
+    require_declared_constraint_inputs,
+)
 from solver.netplan.robust import (
     STATUS_FAILED as ROBUST_FAILED,
 )
@@ -186,8 +192,23 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
     ):
         return _infeasible_primary(scenario)
 
+    # The production solve admits exactly what the reference solve admits. These
+    # rules previously lived only in `solver.netplan.optimizer`, so production --
+    # the only path that ships -- enforced none of them: a scenario capped at 50
+    # construction days came back with two 40-day openings and called itself
+    # optimal. Reusing the reference validator, rather than restating it here, is
+    # what keeps the two from diverging again.
+    try:
+        require_declared_constraint_inputs(scenario.options_by_entity, scenario.constraints)
+    except ValueError as exc:
+        raise NetPlanProductionExecutionError(str(exc)) from exc
+
     money_scale = 100
     risk_scale = 1_000_000
+    # CP-SAT takes integer coefficients, so resource figures are carried at a
+    # fixed scale. Three decimal places is finer than any of these quantities is
+    # actually measured to -- construction days, equipment units, headcount.
+    resource_scale = 1_000
     model = cp_model.CpModel()
     variables = {
         (entity_id, index): model.new_bool_var(f"action_{entity_id}_{index}")
@@ -232,6 +253,44 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
             )
             <= round(scenario.constraints.max_average_risk * entity_count * risk_scale)
         )
+    # Shared delivery resources: same shape as the budget, a fixed pool every
+    # selected option draws from.
+    for attribute, cap_label in RESOURCE_CAPS:
+        cap = getattr(scenario.constraints, cap_label)
+        if cap is None:
+            continue
+        model.add(
+            sum(
+                variables[(entity_id, index)]
+                * round(float(getattr(option, attribute)) * resource_scale)
+                for entity_id, options in scenario.options_by_entity.items()
+                for index, option in enumerate(options)
+            )
+            <= round(cap * resource_scale)
+        )
+    if scenario.constraints.min_coverage_delta is not None:
+        model.add(
+            sum(
+                variables[(entity_id, index)]
+                * round(float(option.coverage_delta) * resource_scale)
+                for entity_id, options in scenario.options_by_entity.items()
+                for index, option in enumerate(options)
+            )
+            >= round(scenario.constraints.min_coverage_delta * resource_scale)
+        )
+    if scenario.constraints.max_open_per_dilution_zone is not None:
+        # Every OPEN option carries a zone by the time we get here, so this
+        # count is over all of them, not just the ones that happened to declare.
+        for zone in sorted(dilution_zones(scenario.options_by_entity)):
+            model.add(
+                sum(
+                    variables[(entity_id, index)]
+                    for entity_id, options in scenario.options_by_entity.items()
+                    for index, option in enumerate(options)
+                    if option.action is NetworkAction.OPEN and option.dilution_zone_id == zone
+                )
+                <= scenario.constraints.max_open_per_dilution_zone
+            )
     for action, minimum in scenario.constraints.min_action_counts.items():
         model.add(
             sum(
@@ -290,6 +349,8 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
     ):
         bindings.append("min_expected_gross_margin")
     return NetworkPlanSolveResult(
+        modelled_constraint_classes=scenario.constraints.modelled_classes(),
+        unmodelled_constraint_classes=scenario.constraints.unmodelled_classes(),
         solver_status=(STATUS_OPTIMAL if status == cp_model.OPTIMAL else STATUS_FEASIBLE),
         objective_value=round(float(solver.objective_value) / money_scale, 4),
         selected_actions=selected,
@@ -305,6 +366,8 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
 
 def _infeasible_primary(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
     return NetworkPlanSolveResult(
+        modelled_constraint_classes=scenario.constraints.modelled_classes(),
+        unmodelled_constraint_classes=scenario.constraints.unmodelled_classes(),
         solver_status=STATUS_INFEASIBLE,
         objective_value=0.0,
         selected_actions=(),

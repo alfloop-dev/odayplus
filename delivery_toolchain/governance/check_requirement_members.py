@@ -135,8 +135,30 @@ def check(repo_root: Path, manifest_path: Path) -> tuple[list[Failure], dict[str
         if not members:
             failures.append(Failure(requirement, "-", "declares no members"))
             continue
+        # The count is the only thing that catches a member being deleted from
+        # the list: the list is self-consistent after the deletion, so nothing
+        # else in this file would notice. An optional count is therefore not a
+        # weaker check but an absent one -- omitting it is exactly the edit a
+        # shrinking requirement would make.
         declared_total = entry.get("member_count")
-        if declared_total is not None and declared_total != len(members):
+        if declared_total is None:
+            failures.append(
+                Failure(
+                    requirement,
+                    "-",
+                    f"declares no member_count; state it as {len(members)} so that "
+                    "dropping a member from the list is a detectable change",
+                )
+            )
+        elif isinstance(declared_total, bool) or not isinstance(declared_total, int):
+            failures.append(
+                Failure(
+                    requirement,
+                    "-",
+                    f"member_count must be an integer, got {declared_total!r}",
+                )
+            )
+        elif declared_total != len(members):
             failures.append(
                 Failure(
                     requirement,
