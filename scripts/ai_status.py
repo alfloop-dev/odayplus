@@ -894,6 +894,42 @@ def extra_actor_names() -> set[str]:
     }
 
 
+def is_dispatch_slot_config(agent: dict[str, Any] | None) -> bool:
+    """Return whether an agent entry represents a physical dispatch slot."""
+    return bool(
+        isinstance(agent, dict)
+        and (
+            str(agent.get("dispatch_slot_for") or "").strip()
+            or str(agent.get("dispatch_slot_for_pool") or "").strip()
+        )
+    )
+
+
+def resolve_dispatch_slot_info(name: str | None) -> tuple[bool, str | None, str | None]:
+    """Return (is_slot, dispatch_slot_for, dispatch_slot_for_pool) if name matches a dispatch slot."""
+    if not name:
+        return False, None, None
+    raw = str(name).strip()
+    agents = merged_orchestrator_config().get("agents")
+    if not isinstance(agents, dict):
+        return False, None, None
+    for agent_id, agent in agents.items():
+        if not isinstance(agent, dict) or not is_dispatch_slot_config(agent):
+            continue
+        declared = str(agent.get("display_name") or agent_id or "").strip()
+        slot_id = str(agent.get("slot_id") or agent_id or "").strip()
+        candidate_names = {
+            str(agent_id).casefold(),
+            declared.casefold(),
+            slot_id.casefold(),
+        }
+        if raw.casefold() in candidate_names:
+            target_agent = str(agent.get("dispatch_slot_for") or "").strip() or None
+            target_pool = str(agent.get("dispatch_slot_for_pool") or agent.get("account_pool") or "").strip() or None
+            return True, target_agent, target_pool
+    return False, None, None
+
+
 def configured_agent_names() -> set[str]:
     """Worker names the live Supervisor can dispatch.
 
@@ -902,13 +938,16 @@ def configured_agent_names() -> set[str]:
     Codex9 on this fleet — count as declared exactly as they do for dispatch.
     Names are taken as declared and are deliberately not passed through
     `canonical_agent_name`: this function is what teaches that function how the
-    fleet spells itself.
+    fleet spells itself. Physical dispatch slots are capacity resources, not
+    assignable actors, and are excluded here.
     """
     names: set[str] = set()
     agents = merged_orchestrator_config().get("agents")
     if isinstance(agents, dict):
         for agent_id, agent in agents.items():
             entry = agent if isinstance(agent, dict) else {}
+            if is_dispatch_slot_config(entry):
+                continue
             declared = str(entry.get("display_name") or agent_id or "").strip()
             if declared and actor_reference_problem(declared) is None:
                 names.add(declared)
@@ -953,6 +992,19 @@ def resolve_actor_reference(
             f"Invalid {field}: {problem}\n"
             f"  received: {preview!r}\n"
             "  Pass an agent name here and put the explanation in the message argument."
+        )
+
+    is_slot, target_agent, target_pool = resolve_dispatch_slot_info(canonical)
+    if is_slot:
+        hint = ""
+        if target_agent:
+            hint = f" Specify logical worker {target_agent!r} instead."
+        elif target_pool:
+            hint = f" Specify a logical worker from account pool {target_pool!r} instead."
+        else:
+            hint = " Specify a logical worker (such as 'Antigravity') instead."
+        raise SystemExit(
+            f"Invalid {field}: {canonical!r} is a dispatch slot capacity resource, not an assignable actor.{hint}"
         )
 
     registered = registered_agent_names()
