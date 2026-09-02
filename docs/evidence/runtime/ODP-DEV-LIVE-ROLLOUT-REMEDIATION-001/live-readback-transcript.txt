@@ -1,94 +1,62 @@
-=== ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 Live Readback / Build Reconciliation Transcript ===
-Captured at: 2026-09-02T12:10:18Z
-Worker: Codex2
-GCP Project: odayplus-runtime-20260825
-Region: asia-east1
+=== ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 hosted build/readback transcript ===
+Captured: 2026-09-02T14:42:42Z
+Worker: Codex
+Task: ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001
 
-[Command 1] git status --short --branch
-Output:
-## task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001...origin/task/ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 [ahead 123]
-Exit code: 0
+[1] Branch/base composition
+Command: git fetch origin dev && git merge --no-edit origin/dev
+Result: task branch contains merge parents a771a3f984a238bfbfd1a2a47021bd23754c1324 and c8f151afc44e2d71d1ffdb07d8fbf5dc237e5411, then a second normal base merge with origin/dev d858e1c3a75489b5ecae5f67920fb314289a93d9.
+Result: no merge conflict; origin/dev is an ancestor of the task HEAD after the second merge.
 
-[Command 2] git rev-parse origin/dev
-Output:
-38de35a7bac2d6c6f6d8d079ffaf16abf6163c29
-Exit code: 0
+[2] Product/build drift check
+Command: git diff --name-status c8f151afc44e2d71d1ffdb07d8fbf5dc237e5411 d858e1c3a75489b5ecae5f67920fb314289a93d9
+Result: product and build-input changes included apps/web/features/operator/DesignAlignedWorkspaces.tsx, its parity test, and tests/e2e/e2e-operator-console.spec.ts, plus supporting supervisor/test files.
+Decision: c8f artifacts were not reused; a new build-once run was mandatory.
 
-[Command 3] python3 delivery_toolchain/release/release_manifest.py --manifest docs/evidence/gates/RELEASE_MANIFEST.json
-Output:
-BLOCKED: release manifest docs/evidence/gates/RELEASE_MANIFEST.json is NOT admissible for deployment.
-Candidate SHA: ebc4fca5c2dd5871275aee39a18406dd67464f04
-Manifest digest: sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9
-Admission refused for 2 reasons:
-- missing sources-off attestation or masked data snapshot binding
-- missing rollback_release with verified candidate sha and components
-Exit code: 1
+[3] GitHub environment binding
+Command: gh api repos/alfloop-dev/odayplus/environments/dev-build/variables
+Result: required build variables resolved, including GCP project/region/repository, WIF service account/provider, Cloud Run service/job names, VPC connector, and `ODP_CLOUD_RUN_VPC_EGRESS=all-traffic`.
+Configuration update: `ODP_CLOUD_RUN_MIGRATION_JOB=oday-migration` was added to dev-build so the existing first-release recovery step could bind its migration target. No workflow or product file was changed.
 
-[Command 4] gh api repos/alfloop-dev/odayplus/environments/dev-build/variables and gh api repos/alfloop-dev/odayplus/environments/dev/variables
-Output:
-dev-build sources-off binding after configuration update:
-ODP_CLOUD_RUN_VPC_CONNECTOR projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc
-ODP_CLOUD_RUN_VPC_EGRESS all-traffic
-dev admission variables:
-ODP_RELEASE_LEASE_PUBLIC_KEY absent
-ODP_RELEASE_LEASE_STATE_URI absent
-ODP_PREVIOUS_RELEASE_MANIFEST_PATH absent
-Repository-scope release variables: absent
-Exit code: 0
+[4] Hosted build dispatch
+Command: gh workflow run deploy-dev.yml --repo alfloop-dev/odayplus --ref dev -f phase=build -f environment=dev -f release_sha=d858e1c3a75489b5ecae5f67920fb314289a93d9 -f task_id=ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 -f initial_release_recovery=true
+Run: https://github.com/alfloop-dev/odayplus/actions/runs/33642907363
+Result: exit 0; `Validate release phase inputs` success; `Build once and publish the immutable artifact handoff` success; deploy/admission/watch jobs skipped because this was build phase.
 
-[Command 5] gh run view 33627106252 -R alfloop-dev/odayplus --log-failed
-Output:
-Run 33627106252 (current candidate 38de35a7) failed closed at the build environment binding check:
-- missing ODP_CLOUD_RUN_VPC_CONNECTOR
-- missing ODP_CLOUD_RUN_VPC_EGRESS
-Exit code: 0
+[5] Hosted build receipts
+Run: 33642907363
+Artifacts:
+- release phase receipt: `release-phase-receipt-dev-build`, artifact id 9851558806
+- environment binding receipt: `release-environment-receipt-dev-build`, artifact id 9851570153
+- image handoff: `runtime-release-images-d858e1c3a75489b5ecae5f67920fb314289a93d9`, artifact id 9851902442
+- candidate manifest: `runtime-release-manifest-d858e1c3a75489b5ecae5f67920fb314289a93d9`, artifact id 9851903053
+- target absence: `initial-release-absence-readback-d858e1c3a75489b5ecae5f67920fb314289a93d9`, artifact id 9851903704
+Build result: success at 2026-09-02T14:42:42Z.
 
-[Command 6] gh run view 33627271466 -R alfloop-dev/odayplus
-Output:
-Run 33627271466: failure
-Head SHA: 38de35a7bac2d6c6f6d8d079ffaf16abf6163c29
-Validate release phase inputs: success
-Build once and publish the immutable artifact handoff: failure
-Failure step: Write the build-once artifact handoff
-Failure reason: 缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
-Artifacts: release-phase-receipt-dev-build, release-environment-receipt-dev-build
-No runtime-release-manifest or runtime-release-images artifact was uploaded.
-Exit code: 0
+[6] Manifest and image handoff readback
+Manifest: schema_version=2, release_id=odp-d858e1c3a754, candidate_sha=d858e1c3a75489b5ecae5f67920fb314289a93d9, release_status=ready.
+Manifest digest: sha256:3fc63dbb7578e425797b4d8f26f9e944202ac6e1cf84957cc5a0572e85bbc2cc.
+Image refs:
+- api: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2a911370f632ade121a672acfe4bd2c13910a22b862a7233c8941e6721320ea4
+- web: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:cab08fddad3ab3207e6c779bd9e0b973634c977cae11fbf028f07c996c2ecb6f
+- worker: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:ec34112db0ae2e2b070ef6a90b5657f01767973bf09141e14a5f1cb55ea2c5d4
+- scheduler: asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:398c02584abd33eb50b7fba0e191112bac367f3c1bb9cf6084eeb90de24507bc
+Supply-chain refs were resolved by hosted `gcloud artifacts` and verified by Cosign in the build step; the full signature and SBOM refs are in the JSON audit.
 
-[Command 7] hosted build log, Build/publish/sign/attest step
-Output (exact immutable refs):
-api image sha256:312a0356e06ce6cfbaaebba4886fe63cd07242dd6150d95e6fd2c3f6000031ef
-web image sha256:cc8d6bc09c9cc693bfc7223b764d535d5b8d1d3d8609b91dcf5c30467f3f74b9
-worker image sha256:54669b8e38fbd4193a7d2866f292fbedb22903eff6a9482e444151cce6c9c51c
-scheduler image sha256:f0b5d03e0f1ab9310682a0a9e08cc6bfd0e27ba254f6a26e226025feefe5c813
-Cosign and SBOM refs were each resolved by the hosted gcloud resolver; see audit JSON.
-Handoff failed after this step. No manifest digest was produced.
-Exit code: 0 for build/sign/attest step; overall run exit 1.
+[7] First-release target absence readback
+Command executed by hosted workflow: gcloud run services list --format=value(metadata.name); gcloud run jobs list --format=value(metadata.name)
+Project/region: odayplus-runtime-20260825 / asia-east1
+Result: all five target records had `exists=false` and `serving_traffic=false`:
+- api service oday-api
+- web service oday-web
+- migration job oday-migration-r-d858e1c3a754
+- worker job oday-worker-r-d858e1c3a754
+- scheduler job oday-scheduler-r-d858e1c3a754
 
-[Command 8] gcloud read-only live readback with available authenticated accounts
-Commands attempted:
-- gcloud run services list --project odayplus-runtime-20260825 --region asia-east1
-- gcloud run jobs list --project odayplus-runtime-20260825 --region asia-east1
-- gcloud scheduler jobs list --project odayplus-runtime-20260825 --location asia-east1
-- gcloud container clusters list --project odayplus-runtime-20260825
-- gcloud sql instances list --project odayplus-runtime-20260825
-- gcloud secrets list --project odayplus-runtime-20260825 (names only)
-- gcloud artifacts docker images describe for the four images and their .sig/.att refs
-Output:
-Available user accounts either required reauthentication in non-interactive execution or
-returned IAM PERMISSION_DENIED for the target project/repository. The service account
-oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com had a token but lacked
-run.services.list. No current resource state is asserted from these failed probes.
-Exit code: non-zero for each attempted readback.
+[8] Canonical admission state
+Command: jq '.release | {candidate_sha,manifest_digest,stage,environment,admission_target,decision}' /home/lupin/odayplus/docs/evidence/gates/RELEASE_GATE_REGISTRY.json
+Result: candidate_sha=ebc4fca5c2dd5871275aee39a18406dd67464f04; manifest_digest=sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9; stage=candidate-built; environment=dev; admission_target=dev; decision=no-go.
+The registry does not bind the hosted d858 manifest. No Supervisor lease was issued, signed, consumed, or replayed; no private signing key was available to this worker.
 
-[Command 9] sha256sum docs/evidence/runtime/ODP-DEV-ROLLOUT-001/*
-Output:
-All seven historical receipt hashes are recorded in live-runtime-reconciliation-audit.json
-and remain unchanged. The historical directory was not touched.
-Exit code: 0
-
-[Command 10] deployment mutation audit
-Output:
-No deploy phase, signed lease, Cloud Run mutation, Scheduler mutation, traffic switch,
-secret payload read, or deployment success receipt was performed or written.
-Exit code: 0
+[9] Commands intentionally not run
+No Runtime Release deploy dispatch was made. No Cloud Run service/job deployment, migration execution, worker/scheduler one-shot, traffic switch, authenticated smoke, provider credential read, provider activation, or public-egress probe was run. No historical ODP-DEV-ROLLOUT-001 file was changed.
