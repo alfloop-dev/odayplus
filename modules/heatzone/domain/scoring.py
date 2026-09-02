@@ -85,13 +85,20 @@ class HeatZoneFeatureInput:
             competitor_count=snapshot.competitor_count,
             active_listing_count=snapshot.active_listing_count,
             median_listing_rent=snapshot.median_listing_rent,
-            competitor_capacity=snapshot.competitor_capacity,
-            average_confidence=snapshot.average_confidence,
+            average_confidence=(
+                _bounded(snapshot.average_confidence)
+                if snapshot.average_confidence is not None
+                else None
+            ),
             source_snapshot_ids=snapshot.source_snapshot_ids,
             existing_store_count=existing_store_count,
             prior_opened_store_count=existing_store_count,
             realized_revenue_ratio=realized_revenue_ratio,
-            data_quality_score=data_quality_score,
+            data_quality_score=(
+                _bounded(data_quality_score)
+                if data_quality_score is not None
+                else None
+            ),
             admin_city=admin_city,
             admin_district=admin_district,
         )

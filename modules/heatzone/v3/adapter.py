@@ -279,12 +279,13 @@ def from_market_cell_profile(
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
     support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
 
-    # Confidence calculation
-    conf = 1.0
+    # Confidence calculation: derived only from observed signals; None when unmeasured
+    conf_values: list[float] = []
     if cell_obj.rent.confidence_pct is not None:
-        conf = min(conf, float(cell_obj.rent.confidence_pct) / 100.0)
+        conf_values.append(max(0.0, min(1.0, float(cell_obj.rent.confidence_pct) / 100.0)))
     if cell_obj.demographics.uncertainty_pct is not None:
-        conf = min(conf, max(0.0, 1.0 - float(cell_obj.demographics.uncertainty_pct) / 100.0))
+        conf_values.append(max(0.0, min(1.0, 1.0 - float(cell_obj.demographics.uncertainty_pct) / 100.0)))
+    conf = min(conf_values) if conf_values else None
 
     effective_absorption = absorption
     if (
@@ -609,7 +610,7 @@ def from_legacy_feature_input(
     household_count_override: float | None = None,
     housing_units_override: float | None = None,
     overall_readiness: ReadinessLevel = ReadinessLevel.ready,
-    coverage_ratio: float = 1.0,
+    coverage_ratio: float | None = None,
     tenant_id: str = "default",
     absorption: AbsorptionResult | None = None,
     store_ids: Sequence[str] | set[str] | None = None,
@@ -638,6 +639,8 @@ def from_legacy_feature_input(
         existing_store_count = int(data.get("existing_store_count", 0))
         confidence_raw = data.get("average_confidence", data.get("confidence"))
         confidence = float(confidence_raw) if confidence_raw is not None else None
+        cov_raw = coverage_ratio if coverage_ratio is not None else data.get("coverage_ratio")
+        effective_coverage_ratio = float(cov_raw) if cov_raw is not None else None
         admin_city = str(data.get("admin_city", ""))
         admin_district = str(data.get("admin_district", ""))
         lat = float(data.get("cell_latitude", 0.0)) if data.get("cell_latitude") else None
@@ -652,6 +655,7 @@ def from_legacy_feature_input(
         active_listing_count = legacy.active_listing_count
         existing_store_count = legacy.existing_store_count
         confidence = legacy.average_confidence
+        effective_coverage_ratio = coverage_ratio
         admin_city = legacy.admin_city
         admin_district = legacy.admin_district
         lat = legacy.cell_latitude if legacy.cell_latitude != 0.0 else None
@@ -706,7 +710,7 @@ def from_legacy_feature_input(
         own_store_count=existing_store_count,
         own_store_machine_capacity=float(existing_store_count * 10),
         overall_readiness=overall_readiness,
-        coverage_ratio=coverage_ratio,
+        coverage_ratio=effective_coverage_ratio,
         confidence=confidence,
         centroid_lat=lat,
         centroid_lng=lng,

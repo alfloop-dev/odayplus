@@ -97,6 +97,8 @@ def _sample_market_cell_profile(
     overall_readiness: ReadinessLevel = ReadinessLevel.ready,
     domain_coverage: dict[str, str] | None = None,
     has_gaps: bool = False,
+    rent_confidence_pct: float | None = 90.0,
+    demographics_uncertainty_pct: float | None = 5.0,
 ) -> MarketCellProfile:
     return MarketCellProfile(
         cell_id=f"cell:{h3_index}",
@@ -113,7 +115,7 @@ def _sample_market_cell_profile(
             total_population=total_population,
             household_count=household_count,
             daytime_population_ratio=daytime_ratio,
-            uncertainty_pct=5.0,
+            uncertainty_pct=demographics_uncertainty_pct,
         ),
         competitors=MarketCellCompetitors(
             total_competitors=active_competitors,
@@ -129,7 +131,7 @@ def _sample_market_cell_profile(
             median_rent_per_ping=median_rent,
             mean_rent_per_ping=median_rent + 100.0,
             sample_count=sample_count,
-            confidence_pct=90.0,
+            confidence_pct=rent_confidence_pct,
         ),
         mobility=MarketCellMobility(
             activity_population=total_population * 0.8,
@@ -657,17 +659,138 @@ def test_adapt_legacy_feature_input_bridge() -> None:
         admin_district="Neihu",
     )
 
-    v3_inp = from_legacy_feature_input(legacy, population_override=4500.0)
+    v3_inp = from_legacy_feature_input(
+        legacy,
+        population_override=4500.0,
+        coverage_ratio=1.0,
+    )
 
     assert v3_inp.h3_index == "884a1072b7fffff"
     assert v3_inp.population == 4500.0
     assert v3_inp.poi_count == 12
     assert v3_inp.county == "Taipei"
     assert v3_inp.district == "Neihu"
+    assert v3_inp.coverage_ratio == 1.0
+    assert v3_inp.confidence == 0.85
 
     res = score_heatzone_v3_feature(v3_inp)
     assert res.score is not None
     assert res.abstained is False
+
+
+def test_from_market_cell_profile_missing_confidence_abstains() -> None:
+    """When market cell profile has neither rent confidence nor demographics uncertainty, confidence is None and evaluation abstains."""
+    cell = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        rent_confidence_pct=None,
+        demographics_uncertainty_pct=None,
+    )
+
+    v3_inp = from_market_cell_profile(cell)
+    assert v3_inp.confidence is None
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+
+
+def test_from_market_cell_profile_confidence_from_single_and_multiple_signals() -> None:
+    """Validate confidence derivation when one or both observation signals are present."""
+    # Only rent confidence present (80%)
+    cell1 = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        rent_confidence_pct=80.0,
+        demographics_uncertainty_pct=None,
+    )
+    v3_inp1 = from_market_cell_profile(cell1)
+    assert v3_inp1.confidence == 0.80
+
+    # Only demographics uncertainty present (15% -> 85% confidence)
+    cell2 = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        rent_confidence_pct=None,
+        demographics_uncertainty_pct=15.0,
+    )
+    v3_inp2 = from_market_cell_profile(cell2)
+    assert v3_inp2.confidence == 0.85
+
+    # Both present: takes min (e.g., min(0.90, 0.80) == 0.80)
+    cell3 = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        rent_confidence_pct=90.0,
+        demographics_uncertainty_pct=20.0,
+    )
+    v3_inp3 = from_market_cell_profile(cell3)
+    assert v3_inp3.confidence == 0.80
+
+
+def test_from_legacy_feature_input_missing_coverage_ratio_abstains() -> None:
+    """A legacy feature with measured confidence but unmeasured coverage defaults to coverage_ratio=None and abstains with INSUFFICIENT_COVERAGE."""
+    legacy = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        h3_resolution=9,
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=0.90,
+    )
+
+    v3_inp = from_legacy_feature_input(legacy)
+    assert v3_inp.coverage_ratio is None
+    assert v3_inp.confidence == 0.90
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value in res.abstain_reasons
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value not in res.abstain_reasons
+
+
+def test_from_legacy_feature_input_missing_confidence_abstains() -> None:
+    """A legacy feature with explicit coverage but unmeasured confidence defaults to confidence=None and abstains with DATA_QUALITY_UNACCEPTABLE."""
+    legacy = HeatZoneFeatureInput(
+        h3_index="884a1072b7fffff",
+        h3_resolution=9,
+        poi_count=10,
+        competitor_count=2,
+        average_confidence=None,
+    )
+
+    v3_inp = from_legacy_feature_input(legacy, coverage_ratio=1.0)
+    assert v3_inp.coverage_ratio == 1.0
+    assert v3_inp.confidence is None
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value not in res.abstain_reasons
+
+
+def test_from_legacy_feature_input_all_missing_abstains_with_both_reasons() -> None:
+    """A legacy mapping with neither confidence nor coverage ratio produces both abstention reasons."""
+    data = {"h3_index": "884a1072b7fffff", "poi_count": 10}
+    v3_inp = from_legacy_feature_input(data)
+    assert v3_inp.coverage_ratio is None
+    assert v3_inp.confidence is None
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert AbstainReasonCode.INSUFFICIENT_COVERAGE.value in res.abstain_reasons
+    assert AbstainReasonCode.DATA_QUALITY_UNACCEPTABLE.value in res.abstain_reasons
+
+
+def test_from_legacy_feature_input_mapping_coverage_ratio() -> None:
+    """A legacy mapping can specify coverage_ratio in dict or via keyword argument."""
+    data = {"h3_index": "884a1072b7fffff", "average_confidence": 0.88, "coverage_ratio": 0.95}
+    v3_inp = from_legacy_feature_input(data)
+    assert v3_inp.coverage_ratio == 0.95
+    assert v3_inp.confidence == 0.88
+
+    res = score_heatzone_v3_feature(v3_inp)
+    assert res.abstained is False
+    assert res.score is not None
 
 
 def test_manifest_document_linkage() -> None:
