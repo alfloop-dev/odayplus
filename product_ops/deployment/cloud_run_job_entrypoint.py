@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import hashlib
 import json
 import logging
 import os
@@ -78,6 +79,30 @@ def _is_explicit_public_egress_denial(exc: BaseException) -> bool:
     return isinstance(cause, OSError) and cause.errno in PUBLIC_EGRESS_DENY_ERRNOS
 
 
+def _public_egress_receipt_content_digest(
+    *,
+    resolved_egress: str,
+    result: str,
+    reason: str,
+) -> str:
+    """Hash the receipt's semantic fields without importing build tooling."""
+
+    payload = {
+        "expected": "denied",
+        "reason": reason,
+        "receipt_kind": "public_egress_probe",
+        "result": result,
+        "vpc_egress": resolved_egress,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
 def _emit_public_egress_receipt(
     *,
     status: str,
@@ -92,9 +117,6 @@ def _emit_public_egress_receipt(
     turning a successful command exit into an unverified denial claim.
     """
 
-    from delivery_toolchain.release.release_manifest import (
-        compute_sources_off_probe_receipt_content_digest,
-    )
     from shared.runtime_config import get_release_identity
 
     result = "passed" if status == "succeeded" else "failed"
@@ -114,8 +136,8 @@ def _emit_public_egress_receipt(
         result=result,
         reason=reason,
         execution="succeeded" if status == "succeeded" else "failed",
-        receipt_content_digest=compute_sources_off_probe_receipt_content_digest(
-            resolved_cloud_run_egress=resolved_egress,
+        receipt_content_digest=_public_egress_receipt_content_digest(
+            resolved_egress=resolved_egress,
             result=result,
             reason=reason,
         ),
