@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import quote
@@ -15,7 +16,10 @@ from shared.infrastructure.persistence.assisted_listing_intake import (
     apply_upgrade_to_database,
 )
 from shared.infrastructure.persistence.factory import build_persistence
-from shared.infrastructure.persistence.postgresql import PostgresEngine
+from shared.infrastructure.persistence.postgresql import (
+    _REQUIRED_RELATIONS,
+    PostgresEngine,
+)
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -44,31 +48,70 @@ def _database_url(database) -> str:
     )
 
 
+# The relations this helper stands in for. `PostgresEngine` refuses to boot
+# unless every name in `_REQUIRED_RELATIONS` resolves; the ones under
+# `odp_runtime.` are created by `apply_upgrade_to_database`, and everything
+# else has to come from here. Naming the split explicitly lets
+# `_install_canonical_runtime` assert its own coverage instead of trusting that
+# whoever adds a required relation also remembers this file -- which is exactly
+# what did not happen for `workflow.decision_policies`, added to
+# `_REQUIRED_RELATIONS` by ODP-FORECAST-ALERT-POLICY-001 while this fixture
+# stayed as it was. Nothing caught it because the marker expression that this
+# branch splits kept these tests out of CI entirely.
+_INTAKE_MIGRATION_SCHEMA = "odp_runtime"
+
+_CANONICAL_STUB_DDL = """
+    CREATE SCHEMA IF NOT EXISTS core;
+    CREATE SCHEMA IF NOT EXISTS workflow;
+    CREATE TABLE IF NOT EXISTS core.tenants (
+        tenant_id UUID PRIMARY KEY,
+        tenant_name TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS core.brands (brand_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS core.address_locations (
+        address_id UUID PRIMARY KEY
+    );
+    CREATE TABLE IF NOT EXISTS core.stores (store_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS core.machines (machine_id UUID PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS core.transactions (
+        transaction_id UUID PRIMARY KEY
+    );
+    CREATE TABLE IF NOT EXISTS core.machine_cycles (cycle_id UUID PRIMARY KEY);
+    -- Boot only needs the relation to resolve; the columns the decision-policy
+    -- registry governs belong to its own tests, not to assisted-listing intake.
+    CREATE TABLE IF NOT EXISTS workflow.decision_policies (
+        policy_version_id VARCHAR(100) PRIMARY KEY
+    );
+"""
+
+_CANONICAL_STUB_RELATIONS = frozenset(
+    re.findall(
+        r"CREATE TABLE IF NOT EXISTS ([a-z_]+\.[a-z_]+)",
+        _CANONICAL_STUB_DDL,
+    )
+)
+
+
 def _install_canonical_runtime(database_url: str) -> None:
+    expected = {
+        relation
+        for relation in _REQUIRED_RELATIONS
+        if not relation.startswith(f"{_INTAKE_MIGRATION_SCHEMA}.")
+    }
+    uncovered = expected - _CANONICAL_STUB_RELATIONS
+    if uncovered:
+        raise AssertionError(
+            "PostgresEngine requires relations this fixture does not create: "
+            + ", ".join(sorted(uncovered))
+            + ". Add them to _CANONICAL_STUB_DDL."
+        )
+
     engine = PostgresEngine(database_url, validate_schema=False)
     try:
-        engine.execute(
-            """
-            CREATE SCHEMA IF NOT EXISTS core;
-            CREATE TABLE IF NOT EXISTS core.tenants (
-                tenant_id UUID PRIMARY KEY,
-                tenant_name TEXT NOT NULL,
-                status TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL
-            );
-            CREATE TABLE IF NOT EXISTS core.brands (brand_id UUID PRIMARY KEY);
-            CREATE TABLE IF NOT EXISTS core.address_locations (
-                address_id UUID PRIMARY KEY
-            );
-            CREATE TABLE IF NOT EXISTS core.stores (store_id UUID PRIMARY KEY);
-            CREATE TABLE IF NOT EXISTS core.machines (machine_id UUID PRIMARY KEY);
-            CREATE TABLE IF NOT EXISTS core.transactions (
-                transaction_id UUID PRIMARY KEY
-            );
-            CREATE TABLE IF NOT EXISTS core.machine_cycles (cycle_id UUID PRIMARY KEY);
-            """
-        )
+        engine.execute(_CANONICAL_STUB_DDL)
     finally:
         engine.close()
 
