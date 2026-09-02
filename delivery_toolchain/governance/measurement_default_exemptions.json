@@ -81,6 +81,11 @@
       "field": "shared/domain/models.py::DataSnapshot.quality_score",
       "owner": "UNASSIGNED",
       "reason": "A snapshot whose quality was never assessed is recorded as flawless, and downstream consumers resolve quality through this record."
+    },
+    {
+      "field": "modules/forecastops/domain/forecasting.py::ForecastOutput.data_quality_score",
+      "owner": "UNASSIGNED",
+      "reason": "Arrived with ODP-FORECAST-ALERT-POLICY-001 (fa01d4ba) while this check was being written, and the check refused it on its first contact with new code. Unlike the others it is read -- production_model.py:148 takes min() across observations -- which makes it worse, not better: forecasting.py:201 uses _first_present(..., default=1.0), so an observation deserialised without a quality field is scored perfect and then folded into that minimum. Needs its own fix deciding what a forecast should do when input quality is unknown; exempted here to record the date and the cause, not to settle it."
     }
   ]
 }
