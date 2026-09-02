@@ -6,10 +6,10 @@ rollback release 的語意缺口。
 
 - 任務狀態：修補完成，等待正式 review submission
 - Owner：Antigravity4 · Reviewer：Codex
-- 量測 code head：`579d6ceb2e88608381d7a2e0c0102aea8ed7e4b0`（本 branch 最後一個含
-  code 變更的 commit；其後只有 evidence commit，僅新增本目錄）
-- base：`origin/dev@38de35a7bac2d6c6f6d8d079ffaf16abf6163c29`，量測時
-  `git rev-list --count HEAD..origin/dev` = 0，未落後、無需 base advance merge
+- 量測 code head：`0253a5a682eb5f606d829c4462497dda3250126a`（本 branch 最後一個含
+  code 變更的 commit；其後只有 evidence commit，僅新增／更新本目錄）
+- base：`origin/dev@66412db403bcf5d500c7b614f61fa1b1c79025d2`，已完成 base advance merge
+  （`a96d5beb`）且經後續 anchor commits 補正。
 
 ## 1. 問題
 
@@ -101,7 +101,8 @@ absent 時是刪除 bootstrap candidate，不是還原流量。壞的是**它怎
 無論如何都印 `Deployment failed; restoring the recorded API/Web traffic split.`，
 而那正是 operator 讀 log 判斷「舊版本回來了沒」的那一刻。新增
 `release_recovery_mode()` 依實際捕捉到的 snapshot 決定訊息，沒有可回滾的既有版本
-時明講沒有。
+時明講沒有。同時在失敗訊息中依 recovery mode 區分 recovery actions 與 traffic
+restores，不暗示不存在的流量還原。
 
 ### 2.2 這條分支會自己關上
 
@@ -118,10 +119,12 @@ manifest，可以直接被第二個 release 當成 rollback target
 | `delivery_toolchain/release/probe_release_target_absence.py` | 新增。build 模式產生 target 讀回 receipt；admission 模式在 lease 消費前重驗 |
 | `delivery_toolchain/release/build_release_handoff.py` | 新增 `--initial-release-readback` 與 `--target-environment`；與 rollback manifest 互斥；只在讀回為空、target 合格、無啟用來源時採用 |
 | `.github/workflows/deploy-dev.yml` | 新增 `initial_release_recovery` boolean input；build 讀回並上傳 receipt；admission 無條件重讀並上傳 receipt |
-| `product_ops/deployment/deploy_cloud_run_waji.sh` | 失敗路徑依實際 snapshot 說明 recovery |
-| `product_ops/deployment/cloud_run_release_traffic.sh` | 新增 `release_recovery_mode()` |
+| `product_ops/deployment/deploy_cloud_run_waji.sh` | 失敗路徑依實際 snapshot 說明 recovery，並在 initial-release 模式回報 recovery action failure |
+| `product_ops/deployment/cloud_run_release_traffic.sh` | 新增 `release_recovery_mode()`、`cleanup_initial_release_candidates` 與 `delete_candidate_job` |
 | `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md` | 新增 §8.5 首次 release 的 recovery |
-| `docs/audits/code-boundary-inventory.csv` | 兩個新檔案的分類 |
+| `docs/audits/code-boundary-inventory.csv` | 新檔案與新測試的分類登錄 |
+| `tests/ops/test_first_release_recovery.py` | 新增候選 job 清理與刪除失敗 fail-closed 測試 |
+| `tests/release/test_probe_release_target_absence.py` | 新增 target 讀回 probe 測試 |
 
 沒有新增第二條 workflow、第二個 admission job，或第二次 lease 檢查——
 `test_the_first_release_branch_adds_no_second_admission_path` 就是在守這件事。
@@ -132,7 +135,7 @@ manifest，可以直接被第二個 release 當成 rollback target
 
 | 項目 | 結果 |
 | --- | --- |
-| `pytest tests/ops/test_first_release_recovery.py` | exit 0，3 tests |
+| `pytest tests/ops/test_first_release_recovery.py` | exit 0，4 tests |
 | `pytest tests/release/test_probe_release_target_absence.py` | exit 0，19 tests |
 | `pytest tests/release/test_release_manifest.py -k 'first_release or target_that_still_holds_a_release or partial_readback or declared_probe_command or field_the_binding_digest or enabled_source_keeps'` | exit 0，17 tests |
 | `pytest tests/release/test_build_release_handoff.py -k 'first_release or target or rollback_manifest_and_a_readback'` | exit 0，10 tests |

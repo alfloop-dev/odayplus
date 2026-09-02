@@ -5,12 +5,13 @@
   "agent": "Antigravity4",
   "reviewer": "Codex",
   "branch": "task/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
-  "head_sha": "adbab44a5b2c5886b15a081143a20054dd62c266",
-  "head_sha_note": "adbab44a5b2 是本 branch 最後一個 code/test/boundary inventory commit；本 evidence commit 僅更新本目錄收據。",
+  "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+  "head_sha_note": "0253a5a682eb 是本 branch 最後一個 code/test commit；本 evidence commit 僅更新本目錄收據與說明。",
   "base": {
     "ref": "origin/dev",
-    "sha": "38de35a7bac2d6c6f6d8d079ffaf16abf6163c29",
-    "behind_count": 0
+    "sha": "66412db403bcf5d500c7b614f61fa1b1c79025d2",
+    "behind_count": 0,
+    "note": "已完成 base advance merge (a96d5beb)，無未合併的 base commit。"
   },
   "secret_values_redacted": true,
   "runs": [
@@ -19,8 +20,8 @@
       "command": "python3 -m pytest -p no:warnings -q tests/ops/test_first_release_recovery.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "adbab44a5b2c5886b15a081143a20054dd62c266",
-      "test_count": 3,
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+      "test_count": 4,
       "runner": "pytest"
     },
     {
@@ -28,7 +29,7 @@
       "command": "python3 -m pytest -p no:warnings -q tests/release/test_probe_release_target_absence.py",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "adbab44a5b2c5886b15a081143a20054dd62c266",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
       "test_count": 19,
       "runner": "pytest"
     },
@@ -37,7 +38,7 @@
       "command": "python3 -m pytest -p no:warnings -q tests/release/test_release_manifest.py -k 'first_release or target_that_still_holds_a_release or partial_readback or declared_probe_command or field_the_binding_digest or enabled_source_keeps'",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "adbab44a5b2c5886b15a081143a20054dd62c266",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
       "test_count": 17,
       "runner": "pytest"
     },
@@ -46,7 +47,7 @@
       "command": "python3 -m pytest -p no:warnings -q tests/release/test_build_release_handoff.py -k 'first_release or target or rollback_manifest_and_a_readback'",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "adbab44a5b2c5886b15a081143a20054dd62c266",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
       "test_count": 10,
       "runner": "pytest"
     },
@@ -55,7 +56,7 @@
       "command": "python3 -m pytest -p no:warnings -q tests/ops/test_deploy_workflow_contract.py -k 'first_release or admission_re_reads_the_target or failed_first_deploy or build_phase_reads_the_target_back'",
       "exit_code": 0,
       "outcome": "passed",
-      "head_sha": "adbab44a5b2c5886b15a081143a20054dd62c266",
+      "head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
       "test_count": 6,
       "runner": "pytest"
     }
@@ -76,7 +77,7 @@
     "reason": "本機沒有 dev 環境 GCP 憑證；真實 Cloud Run readback 需由受治理 Runtime Release dispatch 提供。",
     "outcome": "not_run"
   },
-  "measured_at": "2026-09-02T13:24:00Z",
-  "code_head_sha": "adbab44a5b2c5886b15a081143a20054dd62c266",
-  "code_head_note": "focused verification 在 adbab44a5b2 上執行；本 evidence commit 不含 code、workflow 或測試變更。"
+  "measured_at": "2026-09-02T13:33:00Z",
+  "code_head_sha": "0253a5a682eb5f606d829c4462497dda3250126a",
+  "code_head_note": "focused verification 在 0253a5a682eb 上執行；本 evidence commit 不含 code、workflow 或測試變更。"
 }
