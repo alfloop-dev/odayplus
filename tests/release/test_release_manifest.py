@@ -662,8 +662,11 @@ def test_every_registry_credential_is_attributed_to_a_source_as_a_credential() -
 def test_every_registry_endpoint_is_attributed_to_a_source_as_an_endpoint() -> None:
     registry_credentials, registry_endpoints = _registry_env_vars()
     assert registry_endpoints, "provider registry declared no endpoints"
+    # A variable is one or the other. If that ever stops holding, the classifier
+    # needs a rule for the overlap rather than a silent winner.
+    assert not (registry_credentials & registry_endpoints)
 
-    for env_var in sorted(registry_endpoints - registry_credentials):
+    for env_var in sorted(registry_endpoints):
         owners = [
             source_id
             for source_id in EXTERNAL_SOURCE_INVENTORY
