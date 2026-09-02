@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
+  "title": "sources-off release admission 與 snapshot 需求解耦驗證收據",
+  "agent": "Claude2",
+  "reviewer": "Codex2",
+  "branch": "task/ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001",
+  "head_sha": "b1b3c6420278de69ae08a463c70123234d031b81",
+  "head_sha_note": "本收據量測的是實作 commit。其後只追加本 evidence 目錄的文件，未變更受測程式碼；task_finalize 的 canonical 收據綁定最終 head。",
+  "secret_values_redacted": true,
+  "runs": [
+    {
+      "purpose": "task verification selection",
+      "command": "uv run --frozen pytest -q tests/release/test_build_release_handoff.py tests/release/test_release_manifest.py tests/release/test_release_manifest_cli.py tests/release/test_runtime_admission.py tests/ops/test_deploy_workflow_contract.py tests/ops/test_dev_rollout.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "started_at": "2026-09-02T04:14:06Z",
+      "finished_at": "2026-09-02T04:14:29Z",
+      "duration_seconds": 23,
+      "selection": {
+        "tests/release/test_build_release_handoff.py": 64,
+        "tests/release/test_release_manifest.py": 52,
+        "tests/release/test_release_manifest_cli.py": 7,
+        "tests/release/test_runtime_admission.py": 41,
+        "tests/ops/test_deploy_workflow_contract.py": 63,
+        "tests/ops/test_dev_rollout.py": 11,
+        "total_collected": 238
+      }
+    },
+    {
+      "purpose": "secret scan over the same tree",
+      "command": "uv run --frozen python delivery_toolchain/security/secret_scan.py",
+      "exit_code": 0,
+      "outcome": "passed",
+      "result_line": "Secrets scan passed successfully. No violations found."
+    },
+    {
+      "purpose": "lint over the changed surfaces",
+      "command": "uv run --frozen ruff check delivery_toolchain/release/ tests/release/ tests/ops/",
+      "exit_code": 0,
+      "outcome": "passed",
+      "result_line": "All checks passed!"
+    },
+    {
+      "purpose": "regression sweep over adjacent release and staging suites",
+      "command": "uv run --frozen pytest -q tests/release/ tests/ops/test_release_receipts.py tests/ops/test_ephemeral_staging_lifecycle.py",
+      "exit_code": 0,
+      "outcome": "passed"
+    }
+  ],
+  "evidence_policy_conformance": {
+    "own_exit_code_preserved": true,
+    "no_pipe_without_pipefail": true,
+    "no_or_true_suffix": true,
+    "no_backgrounding": true,
+    "interrupted_runs_reported_as_interrupted": true,
+    "reruns_of_a_measured_head": "none"
+  },
+  "focused_negative_coverage": [
+    "sources_off_attestation with an enabled source in the inventory",
+    "sources_off_attestation with a provider credential present",
+    "sources_off_attestation with public egress allowed / egress_posture mismatch",
+    "sources_off_attestation that does not audit all 16 sources",
+    "sources_off_attestation whose verdict fields contradict its own inventory",
+    "binding_digest bound to another candidate SHA",
+    "binding_digest bound to other component image digests",
+    "binding_digest bound to another source_policy_digest",
+    "sources_off_attestation on a manifest with enabled external sources",
+    "sources_off_attestation sitting beside a data_snapshot",
+    "sources_off_attestation replacing a predecessor's data_snapshot binding",
+    "rollback_release with neither data_snapshot nor sources_off_attestation",
+    "rollback_release sources_off_attestation binding that is not a sha256 digest",
+    "enabled sources without the approved masked snapshot",
+    "deploy workflow with ODP_EXTERNAL_PROVIDER_MODE=live",
+    "deploy workflow wiring a provider credential",
+    "deploy workflow wiring a provider endpoint",
+    "deploy workflow declaring no provider mode at all"
+  ]
+}
