@@ -322,18 +322,95 @@ def test_force_rls_and_fail_closed_policy_on_every_tenant_table(intake_db) -> No
         assert polname is None, f"{table} should have no tenant_isolation policy"
 
 
+def _validator_body() -> str:
+    """The validator with its psql-only meta-commands stripped."""
+    return "\n".join(
+        line
+        for line in VALIDATOR_SQL.read_text(encoding="utf-8").splitlines()
+        if not line.strip().startswith("\\set")
+    )
+
+
 @live
 def test_schema_validator_script_passes(intake_db) -> None:
     # delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql RAISEs on any RLS gap,
     # missing tenant-qualified FK, or missing lineage constraint; a clean run is
     # the pass signal.
-    body = "\n".join(
-        line
-        for line in VALIDATOR_SQL.read_text(encoding="utf-8").splitlines()
-        if not line.strip().startswith("\\set")
-    )
     with intake_db.connect() as conn:
-        conn.execute(body)  # raises psycopg error if any DO block fails
+        conn.execute(_validator_body())  # raises psycopg error if any DO block fails
+
+
+# --------------------------------------------------------------------------- #
+# The validator must be able to fail.
+#
+# A clean run above is only evidence that the schema is compliant. It says
+# nothing about whether the validator would notice if the schema were not, and
+# a validator that cannot fail is indistinguishable from one that passes.
+#
+# This matters here more than usual. The constant above pointed at
+# ``scripts/validate_assisted_listing_intake_schema.sql`` for as long as commit
+# 549ce261 had moved the file to delivery_toolchain/governance/ -- so the test
+# raised FileNotFoundError rather than running, and nobody saw it because the
+# whole module is marked ``requires_live_env`` and CI's marker expression
+# excludes it. The gate that would have reported the breakage was the gate that
+# was broken.
+#
+# Each case below plants one specific violation and asserts the validator
+# refuses *for that reason*, not merely that something went wrong.
+# --------------------------------------------------------------------------- #
+
+
+def _assert_validator_rejects(conn, expected_code: str) -> str:
+    import psycopg
+
+    with pytest.raises(psycopg.errors.RaiseException) as excinfo:
+        conn.execute(_validator_body())
+    message = str(excinfo.value)
+    assert expected_code in message, f"expected {expected_code}, got: {message}"
+    return message
+
+
+@live
+def test_validator_rejects_a_tenant_table_without_forced_rls(intake_db) -> None:
+    """FORCE is what makes RLS apply to the table owner too.
+
+    Without it a superuser or owner connection reads across tenants while the
+    policy still shows as present, which is the failure this check exists for.
+    """
+    with intake_db.connect() as conn:
+        conn.execute("ALTER TABLE intake.intakes NO FORCE ROW LEVEL SECURITY")
+        message = _assert_validator_rejects(conn, "RLS_POLICY_INCOMPLETE")
+        assert "intakes" in message
+
+
+@live
+def test_validator_rejects_a_tenant_table_with_no_isolation_policy(intake_db) -> None:
+    """RLS enabled with no policy denies everything; RLS enabled with a dropped
+    policy is the same shape as RLS never configured, and the table is left
+    readable in whichever direction the remaining grants allow."""
+    with intake_db.connect() as conn:
+        conn.execute("DROP POLICY tenant_isolation ON intake.intakes")
+        message = _assert_validator_rejects(conn, "RLS_POLICY_INCOMPLETE")
+        assert "intakes" in message
+
+
+@live
+def test_validator_rejects_a_dropped_lineage_constraint(intake_db) -> None:
+    """The tenant-qualified lineage FKs are what stop a row pointing at another
+    tenant's row. Dropping one must be refused by name so an operator can tell
+    which link is gone."""
+    with intake_db.connect() as conn:
+        conn.execute(
+            "ALTER TABLE intake.intakes DROP CONSTRAINT fk_intake_resolved_listing_tenant"
+        )
+        with pytest.raises(Exception) as excinfo:
+            conn.execute(_validator_body())
+        message = str(excinfo.value)
+        assert "fk_intake_resolved_listing_tenant" in message, message
+        assert (
+            "LINEAGE_CONSTRAINT_MISSING" in message
+            or "TENANT_QUALIFIED_FK_MISSING" in message
+        ), message
 
 
 # --------------------------------------------------------------------------- #

@@ -181,6 +181,24 @@ jobs:
       - name: Test official real-estate outcomes on PostgreSQL 16
         run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
 
+      # `requires_live_env` was doing two jobs at once. Some of the tests behind
+      # it genuinely need a live multi-repo checkout (.orchestrator's sidecar
+      # coordination tests); the rest only need a PostgreSQL, which `pgserver`
+      # already provides as a project dependency with no root and no service
+      # container -- `make security` has been running database tests that way
+      # all along. Conflating the two meant ~79 database tests never ran
+      # anywhere, and that is how the assisted-listing schema validator sat
+      # broken from commit 549ce261 onwards: the test that would have reported
+      # it was excluded by the same marker expression.
+      #
+      # This step runs the database side. The live-environment tests stay out
+      # by path, and the one PostGIS-dependent test stays out by its own marker
+      # so the residual exclusion is one named test rather than a silent bulk.
+      - name: Test database contracts, migrations and schema gates
+        run: |
+          uv run pytest -m "requires_live_env and not requires_postgis" \
+            tests/contract tests/ops tests/integration
+
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
       # and any breaking change not listed in

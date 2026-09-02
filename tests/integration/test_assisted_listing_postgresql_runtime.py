@@ -143,6 +143,7 @@ def test_full_assisted_intake_stack_applies_and_validates(
     assert missing == []
 
 
+@pytest.mark.requires_postgis  # canonical baseline DDL declares CREATE EXTENSION postgis
 def test_full_stack_composes_after_canonical_migration_and_is_idempotent(
     intake_blank_db,
 ) -> None:
