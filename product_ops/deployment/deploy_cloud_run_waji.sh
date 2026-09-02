@@ -74,6 +74,27 @@ if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
   esac
 fi
 
+# A provider-off Runtime Release must route all traffic through the VPC.
+# `private-ranges-only` would leave public destinations on Cloud Run's direct
+# egress path, so accepting it here would turn an absent endpoint into a false
+# default-deny claim. This guard runs before the first Cloud Run mutation.
+if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
+  : "${ODP_CLOUD_RUN_VPC_CONNECTOR:?Error: sources-off deploy requires ODP_CLOUD_RUN_VPC_CONNECTOR.}"
+  : "${MANIFEST_DIGEST:?Error: sources-off deploy requires MANIFEST_DIGEST.}"
+  if [[ ! "${MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "Error: sources-off deploy requires an immutable MANIFEST_DIGEST." >&2
+    exit 1
+  fi
+  case "${ODP_CLOUD_RUN_VPC_EGRESS:-}" in
+    all|all-traffic)
+      ;;
+    *)
+      echo "Error: sources-off deploy requires ALL_TRAFFIC VPC egress; got '${ODP_CLOUD_RUN_VPC_EGRESS:-}'." >&2
+      exit 1
+      ;;
+  esac
+fi
+
 CLOUD_RUN_NETWORK_ARGS=()
 if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
   CLOUD_RUN_NETWORK_ARGS+=("--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}")
@@ -119,6 +140,7 @@ MIGRATION_COMPAT_RETRY_BACKOFF="${MIGRATION_COMPAT_RETRY_BACKOFF:-2}"
 MIGRATION_COMPAT_RETRY_MAX_BACKOFF="${MIGRATION_COMPAT_RETRY_MAX_BACKOFF:-8}"
 MIGRATION_COMPAT_RETRY_DEADLINE="${MIGRATION_COMPAT_RETRY_DEADLINE:-120}"
 LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
+PUBLIC_EGRESS_PROBE_REPORT="${PUBLIC_EGRESS_PROBE_REPORT:-.odp_data/deployment/public-egress-probe.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source product_ops/deployment/cloud_run_release_traffic.sh
 
@@ -141,6 +163,12 @@ release_job_name() {
 MIGRATION_CANDIDATE_JOB="$(release_job_name "${MIGRATION_JOB}")"
 WORKER_CANDIDATE_JOB="$(release_job_name "${WORKER_JOB}")"
 SCHEDULER_CANDIDATE_JOB="$(release_job_name "${SCHEDULER_JOB}")"
+# These values are forwarded to the probe container so the receipt observed in
+# Cloud Logging is bound to the exact admitted release and the job's resolved
+# network setting. The local evidence file is copied from that runtime receipt;
+# it is not a second, locally asserted probe result.
+export ODP_RELEASE_MANIFEST_DIGEST="${MANIFEST_DIGEST:-}"
+export ODP_CLOUD_RUN_JOB_NAME="${WORKER_CANDIDATE_JOB}"
 REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
 if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
@@ -249,6 +277,9 @@ keys = [
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
     "ODP_EXTERNAL_PROVIDER_MODE",
+    "ODP_CLOUD_RUN_VPC_EGRESS",
+    "ODP_RELEASE_MANIFEST_DIGEST",
+    "ODP_CLOUD_RUN_JOB_NAME",
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
@@ -422,6 +453,190 @@ execute_job() {
   capture_job_proof "${kind}" "${job}"
 }
 
+write_public_egress_probe_receipt() {
+  local result="$1"
+  local reason="$2"
+  local actual_egress="$3"
+  local execution="$4"
+  mkdir -p "$(dirname "${PUBLIC_EGRESS_PROBE_REPORT}")"
+  run_locked_python - "${PUBLIC_EGRESS_PROBE_REPORT}" "${result}" "${reason}" \
+    "${actual_egress}" "${execution}" <<'PY'
+import json
+import hashlib
+import os
+import sys
+from datetime import UTC, datetime
+
+core = {
+    "expected": "denied",
+    "reason": sys.argv[3],
+    "receipt_kind": "public_egress_probe",
+    "result": sys.argv[2],
+    "vpc_egress": sys.argv[4],
+}
+core_json = json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+receipt_digest = "sha256:" + hashlib.sha256(core_json.encode("utf-8")).hexdigest()
+payload = {
+    "schema_version": 1,
+    "receipt_kind": "public_egress_probe",
+    "secret_values_redacted": True,
+    "candidate_sha": os.environ["ODAY_RELEASE_SHA"],
+    "manifest_digest": os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
+    "job": os.environ["ODP_CLOUD_RUN_JOB_NAME"],
+    "probe_url": "https://example.com/",
+    "expected": "denied",
+    **core,
+    "receipt_content_digest": receipt_digest,
+    "execution": sys.argv[5],
+    "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+}
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
+    handle.write("\n")
+PY
+}
+
+capture_public_egress_probe_receipt() {
+  local expected_egress="$1"
+  local execution_file="${PUBLIC_EGRESS_PROBE_REPORT%.json}-execution.json"
+  local logs_file="${PUBLIC_EGRESS_PROBE_REPORT%.json}-logs.json"
+  local execution_name
+  if ! capture_latest_execution "${WORKER_CANDIDATE_JOB}" "${execution_file}"; then
+    echo "Error: unable to read back the public egress probe execution." >&2
+    return 1
+  fi
+  if ! execution_name="$(run_locked_python - "${execution_file}" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+name = payload.get("metadata", {}).get("name") or payload.get("name")
+if not isinstance(name, str) or not name.strip():
+    raise SystemExit("execution readback has no name")
+print(name)
+PY
+)"; then
+    echo "Error: public egress probe execution readback has no name." >&2
+    return 1
+  fi
+  if ! gcloud logging read \
+    "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${WORKER_CANDIDATE_JOB}\" AND labels.\"run.googleapis.com/execution_name\"=\"${execution_name##*/}\"" \
+    --project="${GCP_PROJECT}" \
+    --freshness=10m \
+    --limit=100 \
+    --format=json >"${logs_file}"; then
+    echo "Error: unable to read the public egress probe runtime receipt from Cloud Logging." >&2
+    return 1
+  fi
+  if ! run_locked_python - "${logs_file}" "${PUBLIC_EGRESS_PROBE_REPORT}" \
+    "${ODAY_RELEASE_SHA}" "${MANIFEST_DIGEST}" "${WORKER_CANDIDATE_JOB}" \
+    "${expected_egress}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from delivery_toolchain.release.release_manifest import validate_sources_off_probe_receipt
+
+
+def receipts(value):
+    if isinstance(value, dict):
+        if value.get("receipt_kind") == "public_egress_probe":
+            yield value
+        for child in value.values():
+            yield from receipts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from receipts(child)
+    elif isinstance(value, str):
+        for line in value.splitlines():
+            try:
+                child = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            yield from receipts(child)
+
+
+logs = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+observed = list(receipts(logs))
+if len(observed) != 1:
+    raise SystemExit(
+        f"expected exactly one public egress probe receipt for the execution; found {len(observed)}"
+    )
+receipt = observed[0]
+errors = validate_sources_off_probe_receipt(
+    receipt,
+    expected_candidate_sha=sys.argv[3],
+    expected_manifest_digest=sys.argv[4],
+    expected_egress=sys.argv[5],
+)
+if errors:
+    raise SystemExit("invalid public egress probe receipt: " + "; ".join(errors))
+Path(sys.argv[2]).write_text(
+    json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  then
+    echo "Error: public egress probe runtime receipt failed validation." >&2
+    return 1
+  fi
+}
+
+run_public_egress_probe() {
+  local description actual_egress
+  echo "Proving sources-off public egress is denied from the candidate worker job..."
+  rm -f "${PUBLIC_EGRESS_PROBE_REPORT}"
+  if ! description="$(gcloud run jobs describe "${WORKER_CANDIDATE_JOB}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json)"; then
+    write_public_egress_probe_receipt "failed" "job_readback_failed" "" "not_run"
+    return 1
+  fi
+  if ! actual_egress="$(printf '%s' "${description}" | run_locked_python -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+paths = (
+    ("template", "template", "vpcAccess", "egress"),
+    ("template", "vpcAccess", "egress"),
+    ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
+    ("vpcAccess", "egress"),
+)
+for path in paths:
+    value = payload
+    try:
+        for key in path:
+            value = value[key]
+    except (KeyError, IndexError, TypeError):
+        continue
+    if isinstance(value, str):
+        print(value)
+        break
+')"; then
+    write_public_egress_probe_receipt "failed" "job_readback_invalid" "" "not_run"
+    return 1
+  fi
+  if [ "${actual_egress}" != "ALL_TRAFFIC" ]; then
+    write_public_egress_probe_receipt \
+      "failed" "vpc_egress_not_all_traffic" "${actual_egress}" "not_run"
+    return 1
+  fi
+  if ! gcloud run jobs execute "${WORKER_CANDIDATE_JOB}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --args="product_ops/deployment/cloud_run_job_entrypoint.py,public-egress-probe" \
+    --wait \
+    --quiet; then
+    write_public_egress_probe_receipt \
+      "failed" "public_canary_reachable_or_execution_failed" \
+      "${actual_egress}" "failed"
+    return 1
+  fi
+  capture_public_egress_probe_receipt "${actual_egress}"
+}
+
 echo "Recording the existing API/Web traffic before any runtime mutation..."
 capture_service_traffic "${API_SERVICE}" "${API_TRAFFIC_SNAPSHOT}"
 capture_service_traffic "${WEB_SERVICE}" "${WEB_TRAFFIC_SNAPSHOT}"
@@ -557,6 +772,10 @@ for job in "${SCHEDULER_CANDIDATE_JOB}" "${WORKER_CANDIDATE_JOB}"; do
     --role="roles/run.invoker" \
     --quiet
 done
+
+if [ "${ODP_EXTERNAL_PROVIDER_MODE:-}" = "disabled" ]; then
+  run_public_egress_probe
+fi
 
 upsert_scheduler_trigger() {
   local trigger_name="$1"

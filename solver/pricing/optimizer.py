@@ -142,6 +142,13 @@ def diagnose_infeasible(constraints: PriceConstraints) -> list[str]:
     if constraints.min_price is not None and constraints.max_price is not None:
         if constraints.min_price > constraints.max_price + 1e-9:
             reasons.append("configured min price exceeds configured max price")
+    if constraints.applicable_min_price is not None and constraints.applicable_max_price is not None:
+        if constraints.applicable_min_price > constraints.applicable_max_price + 1e-9:
+            reasons.append("applicable min price exceeds applicable max price")
+    if constraints.applicable_min_price is not None and constraints.applicable_min_price > constraints.upper_bound + 1e-9:
+        reasons.append("elasticity applicable min price exceeds upper bound")
+    if constraints.applicable_max_price is not None and constraints.applicable_max_price < constraints.lower_bound - 1e-9:
+        reasons.append("elasticity applicable max price is below lower bound")
     if constraints.lower_bound > constraints.upper_bound + 1e-9 and not reasons:
         reasons.append("lower bound exceeds upper bound after applying all hard constraints")
     return reasons
@@ -162,6 +169,8 @@ def optimize_price(
         unit_cost=constraints.unit_cost,
         elasticity=elasticity,
         confidence=confidence,
+        applicable_min_price=constraints.applicable_min_price,
+        applicable_max_price=constraints.applicable_max_price,
     )
     baseline_gm = baseline_simulation.expected_gross_margin
     safe_prices = build_safe_action_set(constraints)
@@ -194,6 +203,8 @@ def optimize_price(
             unit_cost=constraints.unit_cost,
             elasticity=elasticity,
             confidence=confidence,
+            applicable_min_price=constraints.applicable_min_price,
+            applicable_max_price=constraints.applicable_max_price,
         )
         incremental = round(simulation.expected_gross_margin - baseline_gm, 4)
         candidates.append(

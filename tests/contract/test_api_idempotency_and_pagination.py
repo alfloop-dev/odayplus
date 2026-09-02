@@ -49,6 +49,8 @@ def _plan_body(plan_id: str = "PLAN-IDEM-1", *, tenant_id: str = "tenant-a") -> 
                 "current_price": 20.0,
                 "baseline_demand": 500.0,
                 "elasticity_value": -1.0,
+                "applicable_min_price": 15.0,
+                "applicable_max_price": 25.0,
                 "margin_floor_ratio": 0.2,
                 "max_increase_pct": 0.1,
             }

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import errno
 import json
+import urllib.error
 from dataclasses import replace
 from types import SimpleNamespace
+
+import pytest
 
 from modules.external_data.application.market_data_facade import (
     CUTOVER_MODE_LEGACY_ONLY,
@@ -148,6 +152,76 @@ def test_database_urls_normalize_sqlalchemy_and_psycopg_drivers() -> None:
         "postgresql+psycopg://user:pass@db/oday",
         "postgresql://user:pass@db/oday",
     )
+
+
+def test_public_egress_probe_fails_closed_on_timeout(monkeypatch, capsys) -> None:
+    def timeout(*_args, **_kwargs):
+        raise TimeoutError("probe timed out")
+
+    monkeypatch.setattr(entrypoint.urllib.request, "urlopen", timeout)
+
+    assert entrypoint.run_public_egress_probe() == entrypoint.EXIT_FAILED
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed"
+    assert receipt["reason"] == "public_probe_error_unclassified"
+
+
+def test_public_egress_probe_fails_closed_on_wrapped_timeout(monkeypatch, capsys) -> None:
+    def timeout(*_args, **_kwargs):
+        raise urllib.error.URLError(TimeoutError("probe timed out"))
+
+    monkeypatch.setattr(entrypoint.urllib.request, "urlopen", timeout)
+
+    assert entrypoint.run_public_egress_probe() == entrypoint.EXIT_FAILED
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed"
+    assert receipt["reason"] == "public_probe_error_unclassified"
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        OSError("network unavailable"),
+        urllib.error.URLError("temporary DNS failure"),
+    ],
+)
+def test_public_egress_probe_fails_closed_on_unclassified_network_failure(
+    monkeypatch, capsys, failure
+) -> None:
+    def unavailable(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(entrypoint.urllib.request, "urlopen", unavailable)
+
+    assert entrypoint.run_public_egress_probe() == entrypoint.EXIT_FAILED
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "failed"
+    assert receipt["reason"] == "public_probe_error_unclassified"
+
+
+def test_public_egress_probe_accepts_explicit_network_policy_denial(
+    monkeypatch, capsys
+) -> None:
+    def denied(*_args, **_kwargs):
+        raise urllib.error.URLError(OSError(errno.ENETUNREACH, "network unreachable"))
+
+    monkeypatch.setattr(entrypoint.urllib.request, "urlopen", denied)
+    monkeypatch.setenv("ODAY_RELEASE_SHA", "a" * 40)
+    monkeypatch.setenv("ODP_RELEASE_MANIFEST_DIGEST", "sha256:" + "b" * 64)
+    monkeypatch.setenv("ODP_CLOUD_RUN_JOB_NAME", "oday-worker-r-aaaaaaaaaaaa")
+    monkeypatch.setenv("ODP_CLOUD_RUN_VPC_EGRESS", "all-traffic")
+
+    assert entrypoint.run_public_egress_probe() == 0
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["status"] == "succeeded"
+    assert receipt["reason"] == "public_canary_denied"
+    assert receipt["denial_errno"] == errno.ENETUNREACH
+    assert receipt["candidate_sha"] == "a" * 40
+    assert receipt["manifest_digest"] == "sha256:" + "b" * 64
+    assert receipt["job"] == "oday-worker-r-aaaaaaaaaaaa"
+    assert receipt["vpc_egress"] == "ALL_TRAFFIC"
+    assert receipt["result"] == "passed"
+    assert receipt["execution"] == "succeeded"
 
 
 # --- ODP-DEPLOY-WORKER-JOB-EXECUTION-001 ------------------------------------

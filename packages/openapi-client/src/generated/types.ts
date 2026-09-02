@@ -1104,6 +1104,8 @@ export type PriceOpsOptimizerJobPayload = {
 
 /** PriceOpsPlanItemPayload */
 export type PriceOpsPlanItemPayload = {
+  applicable_max_price?: number | null;
+  applicable_min_price?: number | null;
   baseline_demand: number;
   confidence?: number | null;
   current_price: number;

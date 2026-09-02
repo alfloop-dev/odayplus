@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import errno
+import hashlib
 import json
 import logging
 import os
+import socket
 import sys
 import urllib.error
 import urllib.request
@@ -23,6 +26,20 @@ EXIT_FAILED = 1
 EXIT_CONTRACT_INVALID = 2
 EXIT_RETRY_QUEUED = 75
 PUBLIC_EGRESS_PROBE_URL = "https://example.com/"
+# Only kernel-level routing/permission denials are proof that the canary was
+# blocked by the VPC default-deny contract. Timeouts, DNS failures, and other
+# generic URL errors can equally mean a broken runner or a transient outage;
+# treating those as success would turn an unavailable probe into false evidence.
+PUBLIC_EGRESS_DENY_ERRNOS = frozenset(
+    {
+        errno.EACCES,
+        errno.EPERM,
+        errno.ENETDOWN,
+        errno.ENETUNREACH,
+        errno.EHOSTUNREACH,
+    }
+)
+_CLOUD_RUN_ALL_TRAFFIC_ALIASES = frozenset({"all", "all-traffic", "all_traffic"})
 
 
 def _now() -> str:
@@ -44,6 +61,88 @@ def _emit_receipt(kind: str, status: str, **details: Any) -> None:
         **details,
     }
     print(json.dumps(payload, sort_keys=True), flush=True)
+
+
+def _is_explicit_public_egress_denial(exc: BaseException) -> bool:
+    """Return whether *exc* is an explicit local network-policy denial.
+
+    ``urllib.error.URLError`` wraps the underlying ``OSError`` in ``reason``.
+    A socket timeout is deliberately not accepted: it says the canary could
+    not be classified, not that the firewall denied it.
+    """
+
+    cause: BaseException = exc
+    if isinstance(exc, urllib.error.URLError) and isinstance(exc.reason, BaseException):
+        cause = exc.reason
+    if isinstance(cause, socket.timeout) or isinstance(cause, TimeoutError):
+        return False
+    return isinstance(cause, OSError) and cause.errno in PUBLIC_EGRESS_DENY_ERRNOS
+
+
+def _public_egress_receipt_content_digest(
+    *,
+    resolved_egress: str,
+    result: str,
+    reason: str,
+) -> str:
+    """Hash the receipt's semantic fields without importing build tooling."""
+
+    payload = {
+        "expected": "denied",
+        "reason": reason,
+        "receipt_kind": "public_egress_probe",
+        "result": result,
+        "vpc_egress": resolved_egress,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _emit_public_egress_receipt(
+    *,
+    status: str,
+    reason: str,
+    **details: Any,
+) -> None:
+    """Emit the canonical, secret-free receipt consumed by Runtime Release.
+
+    The deploy entrypoint reads this exact JSON object back from Cloud Logging.
+    Keeping the candidate, admitted manifest, resolved egress, and semantic
+    content digest in the container receipt prevents a local deploy script from
+    turning a successful command exit into an unverified denial claim.
+    """
+
+    from shared.runtime_config import get_release_identity
+
+    result = "passed" if status == "succeeded" else "failed"
+    raw_egress = os.environ.get("ODP_CLOUD_RUN_VPC_EGRESS", "").strip()
+    resolved_egress = (
+        "ALL_TRAFFIC" if raw_egress.lower() in _CLOUD_RUN_ALL_TRAFFIC_ALIASES else raw_egress
+    )
+    _emit_receipt(
+        "public_egress_probe",
+        status,
+        candidate_sha=get_release_identity(),
+        manifest_digest=os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
+        job=(os.environ.get("CLOUD_RUN_JOB") or os.environ.get("ODP_CLOUD_RUN_JOB_NAME", "")),
+        probe_url=PUBLIC_EGRESS_PROBE_URL,
+        expected="denied",
+        vpc_egress=resolved_egress,
+        result=result,
+        reason=reason,
+        execution="succeeded" if status == "succeeded" else "failed",
+        receipt_content_digest=_public_egress_receipt_content_digest(
+            resolved_egress=resolved_egress,
+            result=result,
+            reason=reason,
+        ),
+        **details,
+    )
 
 
 def _database_urls(value: str) -> tuple[str, str]:
@@ -344,32 +443,35 @@ def run_public_egress_probe(*, timeout: float = 5.0) -> int:
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout):  # noqa: S310 - fixed deny canary
-            _emit_receipt(
-                "public_egress_probe",
-                "failed",
+            _emit_public_egress_receipt(
+                status="failed",
                 reason="public_canary_reachable",
-                probe_url=PUBLIC_EGRESS_PROBE_URL,
             )
             return EXIT_FAILED
     except urllib.error.HTTPError as exc:
         # HTTPError is a successful network connection, not a denied probe.
-        _emit_receipt(
-            "public_egress_probe",
-            "failed",
+        _emit_public_egress_receipt(
+            status="failed",
             reason="public_canary_reachable",
             http_status=exc.code,
-            probe_url=PUBLIC_EGRESS_PROBE_URL,
         )
         return EXIT_FAILED
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        _emit_receipt(
-            "public_egress_probe",
-            "succeeded",
-            reason="public_canary_denied",
+        if _is_explicit_public_egress_denial(exc):
+            cause = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+            _emit_public_egress_receipt(
+                status="succeeded",
+                reason="public_canary_denied",
+                error_class=type(exc).__name__,
+                denial_errno=getattr(cause, "errno", None),
+            )
+            return 0
+        _emit_public_egress_receipt(
+            status="failed",
+            reason="public_probe_error_unclassified",
             error_class=type(exc).__name__,
-            probe_url=PUBLIC_EGRESS_PROBE_URL,
         )
-        return 0
+        return EXIT_FAILED
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -72,6 +72,16 @@ on:
         required: false
         default: ""
         type: string
+      manifest_run_id:
+        description: "GitHub Actions run id of the build phase that published the candidate release manifest (deploy phase only; the deploy phase downloads that run's runtime-release-manifest-<release_sha> artifact)"
+        required: false
+        default: ""
+        type: string
+      manifest_digest:
+        description: "sha256:... digest of the candidate release manifest the Supervisor lease was issued against (deploy phase only; the downloaded artifact is admitted only if it hashes to this)"
+        required: false
+        default: ""
+        type: string
       api_image:
         description: "Immutable API image reference from the build phase (repo/service@sha256:...)"
         required: false
@@ -102,6 +112,11 @@ on:
         required: false
         default: ""
         type: string
+      data_snapshot_object_generation:
+        description: "Approved masked data snapshot GCS object generation (build phase; non-negative integer)"
+        required: false
+        default: ""
+        type: string
       data_snapshot_content_sha:
         description: "Approved masked data snapshot content SHA-256 (build phase; sha256:...)"
         required: false
@@ -117,6 +132,11 @@ on:
         required: false
         default: ""
         type: string
+      external_sources_enabled:
+        description: "Comma-separated source ids this release expects to be enabled (build phase; empty means the standing sources-off posture, which is derived from the deployed provider configuration rather than supplied here). Any value here makes the approved masked snapshot mandatory."
+        required: false
+        default: ""
+        type: string
 
 # Deploys of one environment stay mutually exclusive. The phase is part of the
 # key so a long build does not hold the deploy lane for an already-built
@@ -125,10 +145,14 @@ concurrency:
   group: runtime-release-${{ inputs.environment }}-${{ inputs.phase }}
   cancel-in-progress: false
 
+# `actions: read` is what lets the deploy phase download the build phase's
+# manifest artifact across dispatches. It is read-only and repository-scoped:
+# it grants no ability to publish, delete, or re-run anything.
 permissions:
   contents: read
   packages: write
   id-token: write
+  actions: read
 
 # ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001: receipt staging is workspace-relative
 # because the alternative did not compile.
@@ -198,6 +222,8 @@ jobs:
           WEB_IMAGE_INPUT: ${{ inputs.web_image }}
           WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
           SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+          MANIFEST_RUN_ID_INPUT: ${{ inputs.manifest_run_id }}
+          MANIFEST_DIGEST_INPUT: ${{ inputs.manifest_digest }}
         run: |
           set -euo pipefail
           if [ -n "${RELEASE_LEASE}" ]; then
@@ -215,6 +241,8 @@ jobs:
             --worker-image "${WORKER_IMAGE_INPUT}" \
             --scheduler-image "${SCHEDULER_IMAGE_INPUT}" \
             --lease-supplied "${lease_supplied}" \
+            --manifest-run-id "${MANIFEST_RUN_ID_INPUT}" \
+            --manifest-digest "${MANIFEST_DIGEST_INPUT}" \
             --receipt "${RELEASE_RECEIPT_DIR}/release-phase-receipt.json"
 
       - name: Publish release phase receipt
@@ -255,6 +283,8 @@ jobs:
       WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
       WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
       SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+      ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
       IMAGE_TAG: release-${{ inputs.release_sha }}
       # `generate_sbom.py` writes here by default; it is the CycloneDX document
@@ -290,6 +320,8 @@ jobs:
           ODP_CLOUD_RUN_WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
           ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
           ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+          ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
         run: |
           set -euo pipefail
           python3 delivery_toolchain/release/check_release_environment.py \
@@ -475,8 +507,12 @@ jobs:
           DATA_SNAPSHOT_FILE: ${{ inputs.data_snapshot_file || vars.ODP_APPROVED_DATA_SNAPSHOT_FILE }}
           DATA_SNAPSHOT_ID: ${{ inputs.data_snapshot_id || vars.ODP_APPROVED_DATA_SNAPSHOT_ID }}
           DATA_SNAPSHOT_URI: ${{ inputs.data_snapshot_uri || vars.ODP_APPROVED_DATA_SNAPSHOT_URI }}
+          DATA_SNAPSHOT_OBJECT_GENERATION: ${{ inputs.data_snapshot_object_generation || vars.ODP_APPROVED_DATA_SNAPSHOT_OBJECT_GENERATION }}
           DATA_SNAPSHOT_CONTENT_SHA: ${{ inputs.data_snapshot_content_sha || vars.ODP_APPROVED_DATA_SNAPSHOT_CONTENT_SHA256 }}
           ROLLBACK_MANIFEST: ${{ inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
+          EXTERNAL_SOURCES_ENABLED: ${{ inputs.external_sources_enabled }}
+          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+          ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
         run: |
           set -euo pipefail
           mkdir -p "${HANDOFF_DIR}"
@@ -497,12 +533,29 @@ jobs:
           if [ -n "${DATA_SNAPSHOT_URI:-}" ]; then
             snapshot_args+=(--data-snapshot-uri "${DATA_SNAPSHOT_URI}")
           fi
+          if [ -n "${DATA_SNAPSHOT_OBJECT_GENERATION:-}" ]; then
+            snapshot_args+=(--data-snapshot-object-generation "${DATA_SNAPSHOT_OBJECT_GENERATION}")
+          fi
           if [ -n "${DATA_SNAPSHOT_CONTENT_SHA:-}" ]; then
             snapshot_args+=(--data-snapshot-content-sha256 "${DATA_SNAPSHOT_CONTENT_SHA}")
           fi
           rollback_args=()
           if [ -n "${ROLLBACK_MANIFEST:-}" ]; then
             rollback_args+=(--rollback-manifest "${ROLLBACK_MANIFEST}")
+          fi
+          # Empty is the standing posture, not a missing input: the build phase
+          # then derives the sources-off attestation from the provider
+          # configuration this workflow deploys at this exact release SHA. There
+          # is deliberately no way to hand it a posture or a binding digest.
+          source_args=()
+          if [ -n "${EXTERNAL_SOURCES_ENABLED:-}" ]; then
+            IFS=',' read -ra enabled_sources <<< "${EXTERNAL_SOURCES_ENABLED}"
+            for source_id in "${enabled_sources[@]}"; do
+              trimmed="$(printf '%s' "${source_id}" | tr -d '[:space:]')"
+              if [ -n "${trimmed}" ]; then
+                source_args+=(--external-source "${trimmed}")
+              fi
+            done
           fi
           python3 delivery_toolchain/release/build_release_handoff.py \
             --release-sha "${ODAY_RELEASE_SHA}" \
@@ -514,6 +567,7 @@ jobs:
             "${refs[@]}" \
             "${snapshot_args[@]}" \
             "${rollback_args[@]}" \
+            "${source_args[@]}" \
             --images-output "${HANDOFF_DIR}/runtime-release-images.json" \
             --manifest-output "${HANDOFF_DIR}/RELEASE_MANIFEST.json" \
             --github-output "${GITHUB_OUTPUT}"
@@ -597,6 +651,52 @@ jobs:
             fi
           done
 
+      # ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: transport the exact
+      # manifest, do not re-read a committed one.
+      #
+      # build and deploy are separate dispatches, so this checkout carries only
+      # the manifest committed at the release SHA -- never the one this
+      # release's build actually produced. Admission defaulted to that committed
+      # file, which meant a build's sources-off attestation, its component
+      # digests, and its `manifest_digest` were never what got verified: the
+      # only way to change what admission saw was to commit a different manifest
+      # onto the release SHA, which the release SHA being immutable forbids.
+      #
+      # The candidate manifest is therefore taken from the build run that
+      # produced it. `manifest_run_id` names that run and `manifest_digest`
+      # names the digest the Supervisor lease was issued against, both required
+      # by the phase gate. Neither is trusted alone -- the downloaded bytes are
+      # admitted only if they hash to `manifest_digest` and record this exact
+      # candidate SHA, so pointing `manifest_run_id` at some other build's
+      # artifact fails closed rather than substituting its manifest.
+      - name: Download the candidate release manifest from its build run
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-release-manifest-${{ inputs.release_sha }}
+          run-id: ${{ inputs.manifest_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ env.RELEASE_RECEIPT_DIR }}/admitted-manifest
+
+      - name: Bind the transported manifest to the digest the lease names
+        env:
+          MANIFEST_DIGEST_INPUT: ${{ inputs.manifest_digest }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          MANIFEST_RUN_ID_INPUT: ${{ inputs.manifest_run_id }}
+        run: |
+          set -euo pipefail
+          manifest_file="${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json"
+          if [ ! -f "${manifest_file}" ]; then
+            echo "Error: build run ${MANIFEST_RUN_ID_INPUT} published no candidate release manifest for ${RELEASE_SHA}." >&2
+            exit 1
+          fi
+          # Structure-only: this step proves the transport, not the release
+          # verdict. Admission below decides whether the manifest is deployable.
+          python3 delivery_toolchain/release/release_manifest.py \
+            --manifest "${manifest_file}" \
+            --expected-sha "${RELEASE_SHA}" \
+            --expected-digest "${MANIFEST_DIGEST_INPUT}" \
+            --structure-only
+
       # `release_phase` is unbound and can no longer speak for OIDC, so each
       # bound job proves its own variables resolved before it authenticates.
       - name: 確認 admission 階段已綁定 environment 且變數齊備
@@ -666,6 +766,7 @@ jobs:
           WEB_IMAGE_INPUT: ${{ inputs.web_image }}
           WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
           SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+          MANIFEST_DIGEST_INPUT: ${{ inputs.manifest_digest }}
         run: |
           set -euo pipefail
           umask 077
@@ -681,6 +782,9 @@ jobs:
             --component-image "scheduler=${SCHEDULER_IMAGE_INPUT}" \
             --lease-file "${RUNNER_TEMP}/release-lease.json" \
             --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
+            --manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json" \
+            --manifest-digest "${MANIFEST_DIGEST_INPUT}" \
+            --require-manifest-digest \
             --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
 
       - name: Extract admitted manifest digest
@@ -800,6 +904,7 @@ jobs:
       ODP_PROD_DEPLOY_URL: ${{ vars.ODP_PROD_DEPLOY_URL }}
       ODP_PROD_API_URL: ${{ vars.ODP_PROD_API_URL }}
       MANIFEST_DIGEST: ${{ needs.build.outputs.manifest_digest || needs.admission.outputs.manifest_digest }}
+      PUBLIC_EGRESS_PROBE_REPORT: .odp_data/deployment/public-egress-probe.json
       API_IMAGE: ${{ needs.build.outputs.api_image || inputs.api_image }}
       WEB_IMAGE: ${{ needs.build.outputs.web_image || inputs.web_image }}
       WORKER_IMAGE: ${{ needs.build.outputs.worker_image || inputs.worker_image }}
@@ -848,6 +953,8 @@ jobs:
           ODP_CLOUD_RUN_MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
           ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
           ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+          ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
         run: |
           set -euo pipefail
           python3 delivery_toolchain/release/check_release_environment.py \
@@ -1090,6 +1197,7 @@ jobs:
             .odp_data/deployment/cloud-run-smoke.json
             .odp_data/deployment/cloud-run-migration-compatibility.json
             .odp_data/deployment/live-e2e-gate.json
+            .odp_data/deployment/public-egress-probe.json
             .odp_data/deployment/cloud-run-jobs/migration-validation.json
             .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
             .odp_data/deployment/cloud-run-jobs/worker-validation.json
