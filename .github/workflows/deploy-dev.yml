@@ -72,6 +72,16 @@ on:
         required: false
         default: ""
         type: string
+      manifest_run_id:
+        description: "GitHub Actions run id of the build phase that published the candidate release manifest (deploy phase only; the deploy phase downloads that run's runtime-release-manifest-<release_sha> artifact)"
+        required: false
+        default: ""
+        type: string
+      manifest_digest:
+        description: "sha256:... digest of the candidate release manifest the Supervisor lease was issued against (deploy phase only; the downloaded artifact is admitted only if it hashes to this)"
+        required: false
+        default: ""
+        type: string
       api_image:
         description: "Immutable API image reference from the build phase (repo/service@sha256:...)"
         required: false
@@ -135,10 +145,14 @@ concurrency:
   group: runtime-release-${{ inputs.environment }}-${{ inputs.phase }}
   cancel-in-progress: false
 
+# `actions: read` is what lets the deploy phase download the build phase's
+# manifest artifact across dispatches. It is read-only and repository-scoped:
+# it grants no ability to publish, delete, or re-run anything.
 permissions:
   contents: read
   packages: write
   id-token: write
+  actions: read
 
 # ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001: receipt staging is workspace-relative
 # because the alternative did not compile.
@@ -208,6 +222,8 @@ jobs:
           WEB_IMAGE_INPUT: ${{ inputs.web_image }}
           WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
           SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+          MANIFEST_RUN_ID_INPUT: ${{ inputs.manifest_run_id }}
+          MANIFEST_DIGEST_INPUT: ${{ inputs.manifest_digest }}
         run: |
           set -euo pipefail
           if [ -n "${RELEASE_LEASE}" ]; then
@@ -225,6 +241,8 @@ jobs:
             --worker-image "${WORKER_IMAGE_INPUT}" \
             --scheduler-image "${SCHEDULER_IMAGE_INPUT}" \
             --lease-supplied "${lease_supplied}" \
+            --manifest-run-id "${MANIFEST_RUN_ID_INPUT}" \
+            --manifest-digest "${MANIFEST_DIGEST_INPUT}" \
             --receipt "${RELEASE_RECEIPT_DIR}/release-phase-receipt.json"
 
       - name: Publish release phase receipt
@@ -633,6 +651,52 @@ jobs:
             fi
           done
 
+      # ODP-SOURCES-OFF-RELEASE-ADMISSION-REMEDIATION-001: transport the exact
+      # manifest, do not re-read a committed one.
+      #
+      # build and deploy are separate dispatches, so this checkout carries only
+      # the manifest committed at the release SHA -- never the one this
+      # release's build actually produced. Admission defaulted to that committed
+      # file, which meant a build's sources-off attestation, its component
+      # digests, and its `manifest_digest` were never what got verified: the
+      # only way to change what admission saw was to commit a different manifest
+      # onto the release SHA, which the release SHA being immutable forbids.
+      #
+      # The candidate manifest is therefore taken from the build run that
+      # produced it. `manifest_run_id` names that run and `manifest_digest`
+      # names the digest the Supervisor lease was issued against, both required
+      # by the phase gate. Neither is trusted alone -- the downloaded bytes are
+      # admitted only if they hash to `manifest_digest` and record this exact
+      # candidate SHA, so pointing `manifest_run_id` at some other build's
+      # artifact fails closed rather than substituting its manifest.
+      - name: Download the candidate release manifest from its build run
+        uses: actions/download-artifact@v4
+        with:
+          name: runtime-release-manifest-${{ inputs.release_sha }}
+          run-id: ${{ inputs.manifest_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ env.RELEASE_RECEIPT_DIR }}/admitted-manifest
+
+      - name: Bind the transported manifest to the digest the lease names
+        env:
+          MANIFEST_DIGEST_INPUT: ${{ inputs.manifest_digest }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          MANIFEST_RUN_ID_INPUT: ${{ inputs.manifest_run_id }}
+        run: |
+          set -euo pipefail
+          manifest_file="${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json"
+          if [ ! -f "${manifest_file}" ]; then
+            echo "Error: build run ${MANIFEST_RUN_ID_INPUT} published no candidate release manifest for ${RELEASE_SHA}." >&2
+            exit 1
+          fi
+          # Structure-only: this step proves the transport, not the release
+          # verdict. Admission below decides whether the manifest is deployable.
+          python3 delivery_toolchain/release/release_manifest.py \
+            --manifest "${manifest_file}" \
+            --expected-sha "${RELEASE_SHA}" \
+            --expected-digest "${MANIFEST_DIGEST_INPUT}" \
+            --structure-only
+
       # `release_phase` is unbound and can no longer speak for OIDC, so each
       # bound job proves its own variables resolved before it authenticates.
       - name: 確認 admission 階段已綁定 environment 且變數齊備
@@ -702,6 +766,7 @@ jobs:
           WEB_IMAGE_INPUT: ${{ inputs.web_image }}
           WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
           SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+          MANIFEST_DIGEST_INPUT: ${{ inputs.manifest_digest }}
         run: |
           set -euo pipefail
           umask 077
@@ -717,6 +782,9 @@ jobs:
             --component-image "scheduler=${SCHEDULER_IMAGE_INPUT}" \
             --lease-file "${RUNNER_TEMP}/release-lease.json" \
             --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
+            --manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json" \
+            --manifest-digest "${MANIFEST_DIGEST_INPUT}" \
+            --require-manifest-digest \
             --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
 
       - name: Extract admitted manifest digest
