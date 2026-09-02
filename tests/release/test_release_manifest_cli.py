@@ -66,6 +66,7 @@ def ready_manifest(tmp_path: Path) -> Path:
     manifest["data_snapshot"] = {
         "id": "snap-ready-001",
         "uri": "gs://odayplus-snapshots/masked/snap-ready-001.tar.gz",
+        "object_generation": 123,
         "content_sha256": "sha256:" + "d" * 64,
         "data_contract_digest": manifest["data_contract_digest"],
         "masked": True,
@@ -81,6 +82,7 @@ def ready_manifest(tmp_path: Path) -> Path:
         "data_snapshot": {
             "id": "snap-prev-001",
             "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+            "object_generation": 122,
             "content_sha256": "sha256:" + "2" * 64,
             "data_contract_digest": manifest["data_contract_digest"],
             "masked": True,

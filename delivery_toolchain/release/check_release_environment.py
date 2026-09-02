@@ -78,6 +78,8 @@ REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
         "ODP_CLOUD_RUN_WEB_SERVICE",
         "ODP_CLOUD_RUN_WORKER_JOB",
         "ODP_CLOUD_RUN_SCHEDULER_JOB",
+        "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "ODP_CLOUD_RUN_VPC_EGRESS",
     ),
     # admission 不部署也不 build，它只需要能讀共用 lease 狀態並驗章。
     "admission": (
@@ -199,6 +201,16 @@ def build_receipt(
             f"缺少 {len(missing)} 個必要變數；此階段不得繼續執行。"
         )
 
+    # The egress mode is a non-secret runtime fact. Recording its resolved
+    # value lets the build handoff bind sources-off evidence to what GitHub
+    # actually injected, while all credentials and identity values remain
+    # presence-only.
+    resolved_non_secret_values = {}
+    if "ODP_CLOUD_RUN_VPC_EGRESS" in values:
+        resolved_non_secret_values["ODP_CLOUD_RUN_VPC_EGRESS"] = (
+            values.get("ODP_CLOUD_RUN_VPC_EGRESS") or ""
+        ).strip()
+
     return {
         "receipt_kind": RECEIPT_KIND,
         "schema_version": 1,
@@ -216,6 +228,7 @@ def build_receipt(
         "blockers_zh_tw": list(errors),
         "summary_zh_tw": summary,
         "secret_values_redacted": True,
+        "resolved_non_secret_values": resolved_non_secret_values,
     }
 
 

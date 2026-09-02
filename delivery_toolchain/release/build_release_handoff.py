@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -52,6 +53,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     IMAGE_DIGEST_PATTERN,
     SOURCE_EGRESS_DENIED,
     SOURCE_STATUS_DISABLED,
+    SOURCES_OFF_CLOUD_RUN_EGRESS,
     SOURCES_OFF_PROVIDER_MODE,
     SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
     _sources_off_egress_contract_errors,
@@ -119,6 +121,7 @@ def derive_sources_off_posture(
     *,
     workflow_path: Path,
     enabled_sources: list[str] | None = None,
+    resolved_egress: str | None = None,
     root: Path = ROOT,
 ) -> dict[str, Any]:
     """從 release SHA 上的 deploy workflow 推導出實際的 data-plane posture。
@@ -127,10 +130,12 @@ def derive_sources_off_posture(
     否則「來源全關」就只是一句宣告。因此這裡只讀 workflow：runtime 拿到的
     ``ODP_EXTERNAL_PROVIDER_MODE``、有沒有接上 provider credential、有沒有接上
     provider endpoint（等同放行 public egress），以及 Runtime Release 是否保留
-    Cloud Run VPC connector/egress binding。
+    Cloud Run VPC connector/egress binding。resolved egress 則來自同一 build job
+    已解析、且由 environment precheck 留下 receipt 的非 secret runtime value。
 
     任何一項不符 disabled／零 credential／default-deny 的結果都會照實記錄，
-    由 :func:`sources_off_attestation_errors` fail closed；這裡不做修正。
+    由 :func:`sources_off_attestation_errors` fail closed；這裡不做修正，也不以
+    workflow 文字猜測缺失的 runtime egress。
     """
 
     try:
@@ -178,10 +183,21 @@ def derive_sources_off_posture(
         and "public-egress-probe" in deploy_entrypoint_text
         and "public-egress-probe.json" in deploy_entrypoint_text
     )
+    raw_resolved_egress = (
+        resolved_egress
+        if resolved_egress is not None
+        else os.environ.get("ODP_CLOUD_RUN_VPC_EGRESS", "")
+    ).strip()
+    resolved_cloud_run_egress = {
+        "all": SOURCES_OFF_CLOUD_RUN_EGRESS,
+        "all-traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
+        "all_traffic": SOURCES_OFF_CLOUD_RUN_EGRESS,
+    }.get(raw_resolved_egress.lower(), raw_resolved_egress or "unresolved")
     contract_errors = _sources_off_egress_contract_errors(root=root)
     egress_contract_verified = (
         workflow_vpc_binding
         and deploy_entrypoint_vpc_binding
+        and resolved_cloud_run_egress == SOURCES_OFF_CLOUD_RUN_EGRESS
         and not contract_errors
     )
     inventory: list[dict[str, Any]] = []
@@ -221,6 +237,7 @@ def derive_sources_off_posture(
             workflow_vpc_binding=workflow_vpc_binding,
             deploy_entrypoint_vpc_binding=deploy_entrypoint_vpc_binding,
             runtime_probe_wiring=runtime_probe_wiring,
+            resolved_cloud_run_egress=resolved_cloud_run_egress,
             provider_credentials_runtime=provider_credentials_runtime,
             root=root,
         ),
@@ -501,6 +518,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repository", default="alfloop-dev/odayplus")
     parser.add_argument("--data-snapshot-id", default=None)
     parser.add_argument("--data-snapshot-uri", default=None)
+    parser.add_argument("--data-snapshot-object-generation", default=None)
     parser.add_argument("--data-snapshot-sha256", default=None)
     parser.add_argument("--data-snapshot-content-sha256", default=None)
     parser.add_argument("--data-snapshot-contract-digest", default=None)
@@ -544,6 +562,7 @@ def main(argv: list[str] | None = None) -> int:
     inline_snapshot_fields = {
         "--data-snapshot-id": args.data_snapshot_id,
         "--data-snapshot-uri": args.data_snapshot_uri,
+        "--data-snapshot-object-generation": args.data_snapshot_object_generation,
         "--data-snapshot-sha256": args.data_snapshot_sha256,
         "--data-snapshot-content-sha256": args.data_snapshot_content_sha256,
     }
@@ -599,6 +618,12 @@ def main(argv: list[str] | None = None) -> int:
         data_snapshot = {
             "id": (args.data_snapshot_id or "").strip(),
             "uri": (args.data_snapshot_uri or "").strip(),
+            "object_generation": (
+                int(args.data_snapshot_object_generation)
+                if args.data_snapshot_object_generation
+                and re.fullmatch(r"[0-9]+", args.data_snapshot_object_generation)
+                else args.data_snapshot_object_generation
+            ),
             "content_sha256": raw_content_sha,
             "data_contract_digest": contract_digest,
             "masked": not args.data_snapshot_unmasked,

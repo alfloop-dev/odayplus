@@ -102,6 +102,11 @@ on:
         required: false
         default: ""
         type: string
+      data_snapshot_object_generation:
+        description: "Approved masked data snapshot GCS object generation (build phase; non-negative integer)"
+        required: false
+        default: ""
+        type: string
       data_snapshot_content_sha:
         description: "Approved masked data snapshot content SHA-256 (build phase; sha256:...)"
         required: false
@@ -260,6 +265,8 @@ jobs:
       WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
       WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
       SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+      ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+      ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
       IMAGE_TAG: release-${{ inputs.release_sha }}
       # `generate_sbom.py` writes here by default; it is the CycloneDX document
@@ -295,6 +302,8 @@ jobs:
           ODP_CLOUD_RUN_WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
           ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
           ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+          ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
         run: |
           set -euo pipefail
           python3 delivery_toolchain/release/check_release_environment.py \
@@ -480,9 +489,12 @@ jobs:
           DATA_SNAPSHOT_FILE: ${{ inputs.data_snapshot_file || vars.ODP_APPROVED_DATA_SNAPSHOT_FILE }}
           DATA_SNAPSHOT_ID: ${{ inputs.data_snapshot_id || vars.ODP_APPROVED_DATA_SNAPSHOT_ID }}
           DATA_SNAPSHOT_URI: ${{ inputs.data_snapshot_uri || vars.ODP_APPROVED_DATA_SNAPSHOT_URI }}
+          DATA_SNAPSHOT_OBJECT_GENERATION: ${{ inputs.data_snapshot_object_generation || vars.ODP_APPROVED_DATA_SNAPSHOT_OBJECT_GENERATION }}
           DATA_SNAPSHOT_CONTENT_SHA: ${{ inputs.data_snapshot_content_sha || vars.ODP_APPROVED_DATA_SNAPSHOT_CONTENT_SHA256 }}
           ROLLBACK_MANIFEST: ${{ inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
           EXTERNAL_SOURCES_ENABLED: ${{ inputs.external_sources_enabled }}
+          ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
+          ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
         run: |
           set -euo pipefail
           mkdir -p "${HANDOFF_DIR}"
@@ -502,6 +514,9 @@ jobs:
           fi
           if [ -n "${DATA_SNAPSHOT_URI:-}" ]; then
             snapshot_args+=(--data-snapshot-uri "${DATA_SNAPSHOT_URI}")
+          fi
+          if [ -n "${DATA_SNAPSHOT_OBJECT_GENERATION:-}" ]; then
+            snapshot_args+=(--data-snapshot-object-generation "${DATA_SNAPSHOT_OBJECT_GENERATION}")
           fi
           if [ -n "${DATA_SNAPSHOT_CONTENT_SHA:-}" ]; then
             snapshot_args+=(--data-snapshot-content-sha256 "${DATA_SNAPSHOT_CONTENT_SHA}")

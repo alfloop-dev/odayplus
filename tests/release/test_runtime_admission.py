@@ -55,6 +55,7 @@ def build_manifest(candidate_sha: str = SHA) -> dict:
         "data_snapshot": {
             "id": "snap-test-001",
             "uri": "gs://odayplus-snapshots/masked/snap-test-001.tar.gz",
+            "object_generation": 123,
             "content_sha256": "sha256:" + "d" * 64,
             "data_contract_digest": "sha256:" + "b" * 64,
             "masked": True,
@@ -70,6 +71,7 @@ def build_manifest(candidate_sha: str = SHA) -> dict:
             "data_snapshot": {
                 "id": "snap-prev-001",
                 "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+                "object_generation": 122,
                 "content_sha256": "sha256:" + "f" * 64,
                 "data_contract_digest": "sha256:" + "b" * 64,
                 "masked": True,

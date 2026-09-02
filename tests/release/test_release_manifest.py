@@ -18,19 +18,24 @@ from delivery_toolchain.release.release_manifest import (
     EXTERNAL_SOURCE_CREDENTIAL_ENV_VARS,
     EXTERNAL_SOURCE_ENDPOINT_ENV_VARS,
     EXTERNAL_SOURCE_INVENTORY,
+    SOURCES_OFF_CLOUD_RUN_EGRESS,
     SOURCES_OFF_EGRESS_POSTURE,
     SOURCES_OFF_PROVIDER_MODE,
+    SOURCES_OFF_RUNTIME_PROBE_REASON,
+    SOURCES_OFF_RUNTIME_PROBE_RESULT,
     build_release_manifest,
     build_sources_off_attestation,
     compute_data_contract_digest,
     compute_manifest_digest,
     compute_source_policy_digest,
     compute_sources_off_binding_digest,
+    compute_sources_off_probe_receipt_content_digest,
     extract_rollback_release_binding,
     sources_off_posture_payload,
     validate_manifest,
     validate_release_admission,
     validate_rollback_manifest,
+    validate_sources_off_probe_receipt,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +55,7 @@ def valid_data_snapshot(contract_digest: str | None = None) -> dict:
     return {
         "id": "snap-test-001",
         "uri": "gs://odayplus-snapshots/masked/snap-test-001.tar.gz",
+        "object_generation": 123,
         "content_sha256": "sha256:" + "d" * 64,
         "data_contract_digest": contract_digest or compute_data_contract_digest(root=ROOT),
         "masked": True,
@@ -69,6 +75,7 @@ def valid_rollback_release(current_sha: str = "1" * 40) -> dict:
         "data_snapshot": {
             "id": "snap-prev-001",
             "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+            "object_generation": 122,
             "content_sha256": "sha256:" + "b" * 64,
             "data_contract_digest": "sha256:" + "c" * 64,
             "masked": True,
@@ -352,6 +359,28 @@ def test_data_snapshot_invalid_sha256_fails_closed() -> None:
     manifest = built_manifest(data_snapshot=snap)
     errors = validate_manifest(manifest)
     assert any("content_sha256 must be a sha256:" in err for err in errors)
+
+
+def test_data_snapshot_missing_object_generation_fails_closed() -> None:
+    snap = valid_data_snapshot()
+    snap.pop("object_generation")
+    manifest = built_manifest(data_snapshot=snap)
+
+    errors = validate_manifest(manifest)
+    assert any(
+        "data_snapshot missing required field: object_generation" in err
+        for err in errors
+    )
+
+
+@pytest.mark.parametrize("generation", [-1, True, 1.5, "generation-1"])
+def test_data_snapshot_invalid_object_generation_fails_closed(generation) -> None:
+    snap = valid_data_snapshot()
+    snap["object_generation"] = generation
+    manifest = built_manifest(data_snapshot=snap)
+
+    errors = validate_manifest(manifest)
+    assert any("object_generation must be a non-negative integer" in err for err in errors)
 
 
 def test_data_snapshot_contract_digest_mismatch_fails_closed() -> None:
@@ -645,6 +674,78 @@ def test_sources_off_attestation_requires_the_checked_in_egress_contract() -> No
 
     errors = validate_manifest(manifest)
     assert any("egress_evidence.firewall_egress" in err for err in errors)
+
+
+def test_sources_off_attestation_binds_resolved_egress_and_probe_receipt_digest() -> None:
+    manifest = sources_off_manifest()
+    evidence = manifest["sources_off_attestation"]["egress_evidence"]
+    evidence["resolved_cloud_run_egress"] = "PRIVATE_RANGES_ONLY"
+    manifest["sources_off_attestation"]["binding_digest"] = compute_sources_off_binding_digest(
+        candidate_sha=manifest["candidate_sha"],
+        components=manifest["components"],
+        source_policy_digest=manifest["source_policy_digest"],
+        posture=sources_off_posture_payload(manifest["sources_off_attestation"]),
+    )
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    errors = validate_manifest(manifest)
+    assert any("egress_evidence.resolved_cloud_run_egress" in err for err in errors)
+
+    manifest = sources_off_manifest()
+    manifest["sources_off_attestation"]["egress_evidence"][
+        "runtime_probe_receipt_content_digest"
+    ] = "sha256:" + "0" * 64
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    errors = validate_manifest(manifest)
+    assert any(
+        "egress_evidence.runtime_probe_receipt_content_digest" in err
+        for err in errors
+    )
+
+
+def _valid_sources_off_probe_receipt() -> dict:
+    receipt = {
+        "schema_version": 1,
+        "receipt_kind": "public_egress_probe",
+        "secret_values_redacted": True,
+        "candidate_sha": "1" * 40,
+        "manifest_digest": "sha256:" + "2" * 64,
+        "job": "oday-worker-r-111111111111",
+        "probe_url": "https://example.com/",
+        "expected": "denied",
+        "vpc_egress": SOURCES_OFF_CLOUD_RUN_EGRESS,
+        "result": SOURCES_OFF_RUNTIME_PROBE_RESULT,
+        "reason": SOURCES_OFF_RUNTIME_PROBE_REASON,
+        "execution": "succeeded",
+        "recorded_at": "2026-09-02T00:00:00Z",
+    }
+    receipt["receipt_content_digest"] = compute_sources_off_probe_receipt_content_digest()
+    return receipt
+
+
+def test_sources_off_probe_receipt_binds_actual_content_and_release_identity() -> None:
+    receipt = _valid_sources_off_probe_receipt()
+    assert validate_sources_off_probe_receipt(
+        receipt,
+        expected_candidate_sha=receipt["candidate_sha"],
+        expected_manifest_digest=receipt["manifest_digest"],
+        expected_egress=SOURCES_OFF_CLOUD_RUN_EGRESS,
+    ) == []
+
+    tampered = copy.deepcopy(receipt)
+    tampered["vpc_egress"] = "PRIVATE_RANGES_ONLY"
+    assert validate_sources_off_probe_receipt(
+        tampered,
+        expected_candidate_sha=receipt["candidate_sha"],
+        expected_manifest_digest=receipt["manifest_digest"],
+    )
+
+    tampered = copy.deepcopy(receipt)
+    tampered["receipt_content_digest"] = "sha256:" + "0" * 64
+    assert any(
+        "receipt_content_digest" in error
+        for error in validate_sources_off_probe_receipt(tampered)
+    )
 
 
 def test_sources_off_attestation_with_an_enabled_source_fails_closed() -> None:

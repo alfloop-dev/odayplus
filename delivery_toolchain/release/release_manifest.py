@@ -47,7 +47,14 @@ REQUIRED_FIELDS_V2 = REQUIRED_FIELDS_V1 + (
 )
 
 REQUIRED_FIELDS = REQUIRED_FIELDS_V1
-SNAPSHOT_FIELDS = ("id", "uri", "content_sha256", "data_contract_digest", "masked")
+SNAPSHOT_FIELDS = (
+    "id",
+    "uri",
+    "object_generation",
+    "content_sha256",
+    "data_contract_digest",
+    "masked",
+)
 
 # ---------------------------------------------------------------------------
 # Sources-off data-plane posture
@@ -149,6 +156,8 @@ SOURCES_OFF_EGRESS_EVIDENCE_FIELDS = (
     "runtime_probe_wiring",
     "runtime_probe",
     "runtime_probe_receipt",
+    "resolved_cloud_run_egress",
+    "runtime_probe_receipt_content_digest",
     "provider_credentials_runtime",
     "proof_source",
     "contract_digest",
@@ -159,6 +168,8 @@ SOURCES_OFF_FIREWALL_EGRESS = "default-deny"
 SOURCES_OFF_PROVIDER_CREDENTIALS = "absent"
 SOURCES_OFF_RUNTIME_PROBE = "public_egress_denied"
 SOURCES_OFF_RUNTIME_PROBE_RECEIPT = ".odp_data/deployment/public-egress-probe.json"
+SOURCES_OFF_RUNTIME_PROBE_RESULT = "passed"
+SOURCES_OFF_RUNTIME_PROBE_REASON = "public_canary_denied"
 
 # These are the checked-in contract inputs for the one Runtime Release path.
 # Their digest makes the otherwise secret-free posture receipt specific to the
@@ -234,6 +245,17 @@ def _snapshot_errors(snapshot: Any, *, label: str) -> list[str]:
         not isinstance(snapshot["uri"], str) or not snapshot["uri"].strip()
     ):
         errors.append(f"{label}.uri must be a non-empty string")
+    if "object_generation" in snapshot:
+        generation = snapshot["object_generation"]
+        valid_generation = (
+            isinstance(generation, int)
+            and not isinstance(generation, bool)
+            and generation >= 0
+        ) or (
+            isinstance(generation, str) and bool(re.fullmatch(r"[0-9]+", generation))
+        )
+        if not valid_generation:
+            errors.append(f"{label}.object_generation must be a non-negative integer")
     if "content_sha256" in snapshot and not is_sha256_digest(
         snapshot["content_sha256"]
     ):
@@ -510,6 +532,18 @@ def sources_off_attestation_errors(
                 f"{label}.egress_evidence.{field} is not the checked-in Runtime "
                 "Release egress contract"
             )
+    if evidence.get("resolved_cloud_run_egress") != evidence.get("cloud_run_egress"):
+        errors.append(
+            f"{label}.egress_evidence.resolved_cloud_run_egress must match the "
+            "resolved Cloud Run egress bound by the workflow"
+        )
+    if evidence.get("runtime_probe_receipt_content_digest") != compute_sources_off_probe_receipt_content_digest(
+        resolved_cloud_run_egress=evidence.get("resolved_cloud_run_egress"),
+    ):
+        errors.append(
+            f"{label}.egress_evidence.runtime_probe_receipt_content_digest must "
+            "bind the expected probe receipt content"
+        )
     errors.extend(_sources_off_egress_contract_errors())
 
     recorded_binding = attestation.get("binding_digest")
@@ -962,6 +996,7 @@ def build_sources_off_egress_evidence(
     workflow_vpc_binding: bool = True,
     deploy_entrypoint_vpc_binding: bool = True,
     runtime_probe_wiring: bool = True,
+    resolved_cloud_run_egress: str = SOURCES_OFF_CLOUD_RUN_EGRESS,
     provider_credentials_runtime: str = SOURCES_OFF_PROVIDER_CREDENTIALS,
     root: Path = ROOT,
 ) -> dict[str, Any]:
@@ -973,6 +1008,10 @@ def build_sources_off_egress_evidence(
     free-form override.
     """
 
+    resolved_egress = str(resolved_cloud_run_egress).strip()
+    receipt_digest = compute_sources_off_probe_receipt_content_digest(
+        resolved_cloud_run_egress=resolved_egress,
+    )
     return {
         "kind": SOURCES_OFF_EGRESS_EVIDENCE_KIND,
         "cloud_run_egress": (
@@ -990,10 +1029,131 @@ def build_sources_off_egress_evidence(
         "runtime_probe_wiring": "verified" if runtime_probe_wiring else "unbound",
         "runtime_probe": SOURCES_OFF_RUNTIME_PROBE,
         "runtime_probe_receipt": SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
+        "resolved_cloud_run_egress": resolved_egress,
+        "runtime_probe_receipt_content_digest": receipt_digest,
         "provider_credentials_runtime": provider_credentials_runtime,
         "proof_source": list(SOURCES_OFF_EGRESS_CONTRACT_FILES),
         "contract_digest": compute_sources_off_egress_contract_digest(root=root),
     }
+
+
+def compute_sources_off_probe_receipt_content_digest(
+    *,
+    resolved_cloud_run_egress: str = SOURCES_OFF_CLOUD_RUN_EGRESS,
+    result: str = SOURCES_OFF_RUNTIME_PROBE_RESULT,
+    reason: str = SOURCES_OFF_RUNTIME_PROBE_REASON,
+) -> str:
+    """Hash the semantic, secret-free fields emitted by the live probe.
+
+    Execution names and timestamps are intentionally excluded because they are
+    run-scoped. The digest still binds the result, denial reason, and the
+    egress value actually read back from the candidate job.
+    """
+
+    payload = {
+        "expected": "denied",
+        "reason": reason,
+        "receipt_kind": "public_egress_probe",
+        "result": result,
+        "vpc_egress": resolved_cloud_run_egress,
+    }
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def validate_sources_off_probe_receipt(
+    receipt: Any,
+    *,
+    expected_candidate_sha: Any = None,
+    expected_manifest_digest: Any = None,
+    expected_egress: str = SOURCES_OFF_CLOUD_RUN_EGRESS,
+) -> list[str]:
+    """Validate the secret-free receipt emitted by the live egress probe.
+
+    The manifest carries the expected semantic digest because the probe runs
+    after admission.  This verifier checks the *actual* candidate-job
+    readback and receipt body before the deployment can remain successful;
+    timestamps and Cloud Run execution names are deliberately not part of the
+    semantic digest because they are run-scoped.
+    """
+
+    label = "sources-off egress probe receipt"
+    if not isinstance(receipt, dict):
+        return [f"{label} must be an object"]
+
+    required = (
+        "schema_version",
+        "receipt_kind",
+        "secret_values_redacted",
+        "candidate_sha",
+        "manifest_digest",
+        "job",
+        "probe_url",
+        "expected",
+        "vpc_egress",
+        "result",
+        "reason",
+        "execution",
+        "recorded_at",
+        "receipt_content_digest",
+    )
+    errors = [f"{label} missing required field: {field}" for field in required if field not in receipt]
+
+    if receipt.get("schema_version") != 1:
+        errors.append(f"{label}.schema_version must be 1")
+    if receipt.get("receipt_kind") != "public_egress_probe":
+        errors.append(f"{label}.receipt_kind must be 'public_egress_probe'")
+    if receipt.get("secret_values_redacted") is not True:
+        errors.append(f"{label}.secret_values_redacted must be True")
+
+    candidate_sha = receipt.get("candidate_sha")
+    if not is_exact_sha(candidate_sha):
+        errors.append(f"{label}.candidate_sha must be an exact 40-character lowercase git SHA")
+    if expected_candidate_sha is not None and candidate_sha != expected_candidate_sha:
+        errors.append(f"{label}.candidate_sha does not match the deployed candidate SHA")
+
+    manifest_digest = receipt.get("manifest_digest")
+    if not is_sha256_digest(manifest_digest):
+        errors.append(f"{label}.manifest_digest must be a sha256:<64 lowercase hex> digest")
+    if expected_manifest_digest is not None and manifest_digest != expected_manifest_digest:
+        errors.append(f"{label}.manifest_digest does not match the admitted manifest digest")
+
+    if not isinstance(receipt.get("job"), str) or not receipt["job"].strip():
+        errors.append(f"{label}.job must be a non-empty string")
+    if receipt.get("probe_url") != "https://example.com/":
+        errors.append(f"{label}.probe_url must be the fixed public deny canary")
+    if receipt.get("expected") != "denied":
+        errors.append(f"{label}.expected must be 'denied'")
+    if receipt.get("vpc_egress") != expected_egress:
+        errors.append(
+            f"{label}.vpc_egress must be {expected_egress!r}; "
+            f"got {receipt.get('vpc_egress')!r}"
+        )
+    if receipt.get("result") != SOURCES_OFF_RUNTIME_PROBE_RESULT:
+        errors.append(f"{label}.result must be {SOURCES_OFF_RUNTIME_PROBE_RESULT!r}")
+    if receipt.get("reason") != SOURCES_OFF_RUNTIME_PROBE_REASON:
+        errors.append(f"{label}.reason must be {SOURCES_OFF_RUNTIME_PROBE_REASON!r}")
+    if receipt.get("execution") != "succeeded":
+        errors.append(f"{label}.execution must be 'succeeded'")
+    if not is_valid_timestamp(receipt.get("recorded_at")):
+        errors.append(f"{label}.recorded_at must be an RFC3339 timestamp with timezone")
+
+    recorded_content_digest = receipt.get("receipt_content_digest")
+    if not is_sha256_digest(recorded_content_digest):
+        errors.append(
+            f"{label}.receipt_content_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    else:
+        expected_content_digest = compute_sources_off_probe_receipt_content_digest(
+            resolved_cloud_run_egress=receipt.get("vpc_egress"),
+            result=receipt.get("result"),
+            reason=receipt.get("reason"),
+        )
+        if recorded_content_digest != expected_content_digest:
+            errors.append(
+                f"{label}.receipt_content_digest does not match the receipt's semantic content"
+            )
+    return errors
 
 
 def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
@@ -1256,6 +1416,8 @@ __all__ = [
     "SOURCES_OFF_PROVIDER_CREDENTIALS",
     "SOURCES_OFF_RUNTIME_PROBE",
     "SOURCES_OFF_RUNTIME_PROBE_RECEIPT",
+    "SOURCES_OFF_RUNTIME_PROBE_RESULT",
+    "SOURCES_OFF_RUNTIME_PROBE_REASON",
     "SOURCES_OFF_PROVIDER_MODE",
     "SOURCE_EGRESS_DENIED",
     "SOURCE_POSTURE_FIELDS",
@@ -1272,6 +1434,7 @@ __all__ = [
     "compute_migration_digest",
     "compute_source_policy_digest",
     "compute_sources_off_egress_contract_digest",
+    "compute_sources_off_probe_receipt_content_digest",
     "compute_sources_off_binding_digest",
     "extract_rollback_release_binding",
     "is_exact_sha",
@@ -1279,6 +1442,7 @@ __all__ = [
     "load_manifest",
     "sources_off_attestation_errors",
     "sources_off_posture_payload",
+    "validate_sources_off_probe_receipt",
     "validate_manifest",
     "validate_release_admission",
     "validate_rollback_manifest",

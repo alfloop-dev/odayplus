@@ -62,6 +62,7 @@ def valid_snapshot() -> dict:
     return {
         "id": "snap-handoff-001",
         "uri": "gs://odayplus-snapshots/masked/snap-handoff-001.tar.gz",
+        "object_generation": 123,
         "content_sha256": "sha256:" + "7" * 64,
         "data_contract_digest": compute_data_contract_digest(root=ROOT),
         "masked": True,
@@ -81,6 +82,7 @@ def valid_rollback_summary(candidate_sha: str) -> dict:
         "data_snapshot": {
             "id": "snap-older-001",
             "uri": "gs://odayplus-snapshots/masked/snap-older-001.tar.gz",
+            "object_generation": 122,
             "content_sha256": "sha256:" + "c" * 64,
             "data_contract_digest": compute_data_contract_digest(root=ROOT),
             "masked": True,
@@ -109,6 +111,7 @@ def valid_rollback(current_sha: str = SHA, release_id: str = "odp-prev-001") -> 
         data_snapshot={
             "id": "snap-prev-001",
             "uri": "gs://odayplus-snapshots/masked/snap-prev-001.tar.gz",
+            "object_generation": 121,
             "content_sha256": "sha256:" + "c" * 64,
             "data_contract_digest": compute_data_contract_digest(root=ROOT),
             "masked": True,
@@ -252,6 +255,8 @@ def _snapshot_and_rollback_args(tmp_path: Path) -> list[str]:
         snap["id"],
         "--data-snapshot-uri",
         snap["uri"],
+        "--data-snapshot-object-generation",
+        str(snap["object_generation"]),
         "--data-snapshot-sha256",
         snap["content_sha256"],
         "--rollback-manifest",
@@ -266,6 +271,8 @@ def _snapshot_args_only() -> list[str]:
         snap["id"],
         "--data-snapshot-uri",
         snap["uri"],
+        "--data-snapshot-object-generation",
+        str(snap["object_generation"]),
         "--data-snapshot-sha256",
         snap["content_sha256"],
     ]
@@ -419,6 +426,8 @@ def test_rollback_manifest_cli_option(tmp_path: Path) -> None:
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -447,6 +456,8 @@ def test_rollback_release_file_option(tmp_path: Path) -> None:
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-release-file",
@@ -476,6 +487,8 @@ def test_rollback_manifest_legacy_v1_fails_closed_no_synthetic_snapshot(tmp_path
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -503,6 +516,8 @@ def test_rollback_manifest_forged_digest_fails_closed(tmp_path: Path) -> None:
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -530,6 +545,8 @@ def test_rollback_manifest_tampered_fields_fails_closed(tmp_path: Path) -> None:
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -556,6 +573,8 @@ def test_rollback_manifest_same_candidate_sha_fails_closed(tmp_path: Path) -> No
         "snap-current-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-current-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -801,6 +820,8 @@ def test_bare_hex_content_sha_is_normalised_not_rejected(tmp_path: Path) -> None
         "snap-hex-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-hex-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-content-sha256",
         raw_hex,
         "--rollback-manifest",
@@ -827,6 +848,8 @@ def test_unmasked_data_snapshot_fails_closed(tmp_path: Path) -> None:
         "snap-unmasked-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/unmasked/snap-unmasked-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--data-snapshot-unmasked",
@@ -854,6 +877,8 @@ def test_data_snapshot_contract_digest_mismatch_fails_closed(tmp_path: Path) -> 
         "snap-mismatch-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-mismatch-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--data-snapshot-contract-digest",
@@ -881,6 +906,8 @@ def test_rollback_manifest_inline_json_string(tmp_path: Path) -> None:
         "snap-inline-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-inline-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -911,6 +938,8 @@ def test_rollback_manifest_missing_component_fails_closed(tmp_path: Path) -> Non
         "snap-broken-001",
         "--data-snapshot-uri",
         "gs://odayplus-snapshots/masked/snap-broken-001.tar.gz",
+        "--data-snapshot-object-generation",
+        "123",
         "--data-snapshot-sha256",
         "sha256:" + "f" * 64,
         "--rollback-manifest",
@@ -954,6 +983,7 @@ def _prev_manifest_file(tmp_path: Path, name: str = "PREV_RELEASE_MANIFEST.json"
     [
         ("--data-snapshot-id", "snap-dispatch-approved"),
         ("--data-snapshot-uri", "gs://odayplus-snapshots/masked/snap-dispatch.tar.gz"),
+        ("--data-snapshot-object-generation", "123"),
         ("--data-snapshot-sha256", "sha256:" + "d" * 64),
         ("--data-snapshot-content-sha256", "sha256:" + "d" * 64),
         ("--data-snapshot-contract-digest", "sha256:" + "e" * 64),
@@ -1069,6 +1099,8 @@ def test_either_snapshot_channel_alone_still_succeeds(tmp_path: Path) -> None:
         snap["id"],
         "--data-snapshot-uri",
         snap["uri"],
+        "--data-snapshot-object-generation",
+        str(snap["object_generation"]),
         "--data-snapshot-content-sha256",
         snap["content_sha256"],
         "--rollback-manifest",
@@ -1157,6 +1189,13 @@ def test_a_remote_rollback_uri_is_rejected_by_its_own_name(
 # tests exercise the derivation itself: what it reads, and what it refuses.
 
 WORKFLOW_PATH = ROOT / ".github/workflows/deploy-dev.yml"
+
+
+@pytest.fixture(autouse=True)
+def resolved_sources_off_egress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Model the build environment's non-secret VPC egress resolution."""
+
+    monkeypatch.setenv("ODP_CLOUD_RUN_VPC_EGRESS", "ALL_TRAFFIC")
 
 
 def sources_off_workflow(**wired: str) -> str:
@@ -1264,6 +1303,17 @@ def test_the_committed_deploy_workflow_derives_a_clean_sources_off_posture() -> 
     assert all(
         entry["public_egress"] == "denied" for entry in posture["sources_inventory"]
     )
+
+
+def test_sources_off_build_refuses_unresolved_runtime_egress(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("ODP_CLOUD_RUN_VPC_EGRESS")
+
+    with pytest.raises(HandoffError) as excinfo:
+        handoff(data_snapshot=None, rollback_release=sources_off_rollback())
+
+    assert any("resolved_cloud_run_egress" in error for error in excinfo.value.errors)
 
 
 def test_a_live_provider_mode_is_recorded_as_enabled_not_smoothed_over(

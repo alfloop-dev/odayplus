@@ -163,6 +163,12 @@ release_job_name() {
 MIGRATION_CANDIDATE_JOB="$(release_job_name "${MIGRATION_JOB}")"
 WORKER_CANDIDATE_JOB="$(release_job_name "${WORKER_JOB}")"
 SCHEDULER_CANDIDATE_JOB="$(release_job_name "${SCHEDULER_JOB}")"
+# These values are forwarded to the probe container so the receipt observed in
+# Cloud Logging is bound to the exact admitted release and the job's resolved
+# network setting. The local evidence file is copied from that runtime receipt;
+# it is not a second, locally asserted probe result.
+export ODP_RELEASE_MANIFEST_DIGEST="${MANIFEST_DIGEST:-}"
+export ODP_CLOUD_RUN_JOB_NAME="${WORKER_CANDIDATE_JOB}"
 REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
 if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
@@ -271,6 +277,9 @@ keys = [
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
     "ODP_EXTERNAL_PROVIDER_MODE",
+    "ODP_CLOUD_RUN_VPC_EGRESS",
+    "ODP_RELEASE_MANIFEST_DIGEST",
+    "ODP_CLOUD_RUN_JOB_NAME",
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
@@ -453,23 +462,33 @@ write_public_egress_probe_receipt() {
   python3 - "${PUBLIC_EGRESS_PROBE_REPORT}" "${result}" "${reason}" \
     "${actual_egress}" "${execution}" <<'PY'
 import json
+import hashlib
 import os
 import sys
 from datetime import UTC, datetime
 
+core = {
+    "expected": "denied",
+    "reason": sys.argv[3],
+    "receipt_kind": "public_egress_probe",
+    "result": sys.argv[2],
+    "vpc_egress": sys.argv[4],
+}
+core_json = json.dumps(core, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+receipt_digest = "sha256:" + hashlib.sha256(core_json.encode("utf-8")).hexdigest()
 payload = {
+    "schema_version": 1,
     "receipt_kind": "public_egress_probe",
     "secret_values_redacted": True,
     "candidate_sha": os.environ["ODAY_RELEASE_SHA"],
-    "manifest_digest": os.environ.get("MANIFEST_DIGEST", ""),
-    "job": os.environ["WORKER_CANDIDATE_JOB"],
+    "manifest_digest": os.environ.get("ODP_RELEASE_MANIFEST_DIGEST", ""),
+    "job": os.environ["ODP_CLOUD_RUN_JOB_NAME"],
     "probe_url": "https://example.com/",
     "expected": "denied",
-    "vpc_egress": sys.argv[4],
-    "result": sys.argv[2],
-    "reason": sys.argv[3],
+    **core,
+    "receipt_content_digest": receipt_digest,
     "execution": sys.argv[5],
-    "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+    "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
 }
 with open(sys.argv[1], "w", encoding="utf-8") as handle:
     json.dump(payload, handle, ensure_ascii=False, sort_keys=True)
@@ -477,9 +496,96 @@ with open(sys.argv[1], "w", encoding="utf-8") as handle:
 PY
 }
 
+capture_public_egress_probe_receipt() {
+  local expected_egress="$1"
+  local execution_file="${PUBLIC_EGRESS_PROBE_REPORT%.json}-execution.json"
+  local logs_file="${PUBLIC_EGRESS_PROBE_REPORT%.json}-logs.json"
+  local execution_name
+  if ! capture_latest_execution "${WORKER_CANDIDATE_JOB}" "${execution_file}"; then
+    echo "Error: unable to read back the public egress probe execution." >&2
+    return 1
+  fi
+  if ! execution_name="$(python3 - "${execution_file}" <<'PY'
+import json
+import sys
+
+payload = json.load(open(sys.argv[1], encoding="utf-8"))
+name = payload.get("metadata", {}).get("name") or payload.get("name")
+if not isinstance(name, str) or not name.strip():
+    raise SystemExit("execution readback has no name")
+print(name)
+PY
+)"; then
+    echo "Error: public egress probe execution readback has no name." >&2
+    return 1
+  fi
+  if ! gcloud logging read \
+    "resource.type=\"cloud_run_job\" AND resource.labels.job_name=\"${WORKER_CANDIDATE_JOB}\" AND labels.\"run.googleapis.com/execution_name\"=\"${execution_name##*/}\"" \
+    --project="${GCP_PROJECT}" \
+    --freshness=10m \
+    --limit=100 \
+    --format=json >"${logs_file}"; then
+    echo "Error: unable to read the public egress probe runtime receipt from Cloud Logging." >&2
+    return 1
+  fi
+  if ! run_locked_python - "${logs_file}" "${PUBLIC_EGRESS_PROBE_REPORT}" \
+    "${ODAY_RELEASE_SHA}" "${MANIFEST_DIGEST}" "${WORKER_CANDIDATE_JOB}" \
+    "${expected_egress}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from delivery_toolchain.release.release_manifest import validate_sources_off_probe_receipt
+
+
+def receipts(value):
+    if isinstance(value, dict):
+        if value.get("receipt_kind") == "public_egress_probe":
+            yield value
+        for child in value.values():
+            yield from receipts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from receipts(child)
+    elif isinstance(value, str):
+        for line in value.splitlines():
+            try:
+                child = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            yield from receipts(child)
+
+
+logs = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+observed = list(receipts(logs))
+if len(observed) != 1:
+    raise SystemExit(
+        f"expected exactly one public egress probe receipt for the execution; found {len(observed)}"
+    )
+receipt = observed[0]
+errors = validate_sources_off_probe_receipt(
+    receipt,
+    expected_candidate_sha=sys.argv[3],
+    expected_manifest_digest=sys.argv[4],
+    expected_egress=sys.argv[5],
+)
+if errors:
+    raise SystemExit("invalid public egress probe receipt: " + "; ".join(errors))
+Path(sys.argv[2]).write_text(
+    json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+  then
+    echo "Error: public egress probe runtime receipt failed validation." >&2
+    return 1
+  fi
+}
+
 run_public_egress_probe() {
   local description actual_egress
   echo "Proving sources-off public egress is denied from the candidate worker job..."
+  rm -f "${PUBLIC_EGRESS_PROBE_REPORT}"
   if ! description="$(gcloud run jobs describe "${WORKER_CANDIDATE_JOB}" \
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
@@ -528,8 +634,7 @@ for path in paths:
       "${actual_egress}" "failed"
     return 1
   fi
-  write_public_egress_probe_receipt \
-    "passed" "public_canary_denied" "${actual_egress}" "succeeded"
+  capture_public_egress_probe_receipt "${actual_egress}"
 }
 
 echo "Recording the existing API/Web traffic before any runtime mutation..."

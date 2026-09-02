@@ -47,6 +47,8 @@ admission 語意。
     "runtime_probe_wiring": "verified",
     "runtime_probe": "public_egress_denied",
     "runtime_probe_receipt": ".odp_data/deployment/public-egress-probe.json",
+    "resolved_cloud_run_egress": "ALL_TRAFFIC",
+    "runtime_probe_receipt_content_digest": "sha256:<semantic receipt content>",
     "provider_credentials_runtime": "absent",
     "proof_source": [".github/workflows/deploy-dev.yml",
                      "product_ops/deployment/deploy_cloud_run_waji.sh",
@@ -70,9 +72,10 @@ admission 語意。
 3. **推導而非填寫**：build 階段從該 release SHA 上的 deploy workflow 讀出實際部署
    的 provider 設定（`ODP_EXTERNAL_PROVIDER_MODE`、有無接上 provider credential、
    有無接上 provider endpoint），並讀取同一 Runtime Release 的 VPC connector/
-   egress wiring；再封裝 Cloud Run `ALL_TRAFFIC`、Terraform default-deny firewall
-   與 promotion 前 public-egress deny probe、secret-free runtime receipt 及 contract
-   digest 證據。CLI、dispatch input 與 repository vars **都沒有**可以
+   egress wiring，並把 build environment 實際解析到的
+   `ODP_CLOUD_RUN_VPC_EGRESS` 綁進證據；再封裝 Cloud Run `ALL_TRAFFIC`、Terraform
+   default-deny firewall 與 promotion 前 public-egress deny probe、secret-free runtime
+   receipt content digest 及 contract digest 證據。CLI、dispatch input 與 repository vars **都沒有**可以
    傳入 posture 或 binding digest 的管道。
 
 ## 3. Fail-closed 條件
@@ -88,6 +91,8 @@ admission 語意。
 | deploy entrypoint 未在 promotion 前執行 public-egress deny probe | 拒絕 |
 | probe 未確認候選 worker job 為 `ALL_TRAFFIC` | 拒絕 |
 | public-egress probe receipt 未保留或 wiring 未綁定 | 拒絕 |
+| resolved egress 不是 `ALL_TRAFFIC`，或 receipt content digest 不符 | 拒絕 |
+| probe timeout、DNS/未知網路錯誤被當成 deny | 拒絕（只接受明確 network-policy errno） |
 | Cloud Run IaC 不是 `ALL_TRAFFIC` 或 Terraform firewall contract 失效 | 拒絕 |
 | egress evidence 缺欄位、credential runtime 非 absent、或 contract digest 不符 | 拒絕 |
 | inventory 未涵蓋全部 16 個來源 | 拒絕 |
@@ -107,7 +112,7 @@ posture attestation 不能取代它。
 
 `external_sources_expected_enabled` 非空時，行為與修改前完全一致：
 
-- 必須綁定本次核准的 masked snapshot（`masked=true`、`content_sha256`、
+- 必須綁定本次核准的 masked snapshot（`masked=true`、`object_generation`、`content_sha256`、
   `data_contract_digest` 與 manifest 的 `data_contract_digest` 一致）；
 - rollback manifest 的 object generation、content SHA 與 contract digest 驗證不變；
 - 這條路徑上不接受 `sources_off_attestation`。

@@ -982,6 +982,18 @@ def test_deploy_job_passes_optional_vpc_config_through_environment() -> None:
     assert deploy_env["ODP_CLOUD_RUN_VPC_EGRESS"] == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
 
 
+def test_sources_off_probe_persists_and_validates_the_runtime_receipt() -> None:
+    """A successful probe must be the observed container receipt, not a local claim."""
+    script = _deploy_script_text()
+
+    assert "capture_public_egress_probe_receipt" in script
+    assert "gcloud logging read" in script
+    assert "validate_sources_off_probe_receipt" in script
+    assert script.index("capture_public_egress_probe_receipt") < script.index(
+        "upsert_scheduler_trigger"
+    )
+
+
 def test_production_bluegreen_verification_gated_on_production_environment() -> None:
     """Production blue-green verification runs in deploy job when environment is production."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
@@ -1083,6 +1095,7 @@ def test_workflow_dispatch_declares_masked_snapshot_and_rollback_inputs() -> Non
     expected_inputs = {
         "data_snapshot_id",
         "data_snapshot_uri",
+        "data_snapshot_object_generation",
         "data_snapshot_content_sha",
         "data_snapshot_file",
         "rollback_manifest",
