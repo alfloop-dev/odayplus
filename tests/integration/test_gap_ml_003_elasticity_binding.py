@@ -203,3 +203,52 @@ def test_optimizer_job_estimates_from_observations() -> None:
     )
     assert resp.status_code == 202, resp.text
     assert resp.json()["hard_constraint_violation_count"] == 0
+
+
+def test_plan_fails_closed_for_client_supplied_without_applicable_range() -> None:
+    client = _client()
+    resp = client.post(
+        "/priceops/plans",
+        json={
+            "tenant_id": "tenant-ml3",
+            "items": [_plan_item(elasticity_value=-1.2)],
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "applicable_min_price and applicable_max_price" in resp.json()["detail"]
+
+
+def test_plan_fails_closed_for_client_supplied_with_invalid_applicable_range() -> None:
+    client = _client()
+    resp = client.post(
+        "/priceops/plans",
+        json={
+            "tenant_id": "tenant-ml3",
+            "items": [
+                _plan_item(
+                    elasticity_value=-1.2,
+                    applicable_min_price=10.0,
+                    applicable_max_price=5.0,
+                )
+            ],
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "invalid" in resp.json()["detail"].lower()
+
+
+def test_optimizer_job_fails_closed_for_client_supplied_without_applicable_range() -> None:
+    client = _client()
+    resp = client.post(
+        "/priceops/optimizer-jobs",
+        json={
+            "plans": [
+                {
+                    "tenant_id": "tenant-ml3",
+                    "items": [_plan_item(elasticity_value=-1.2)],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert "applicable_min_price and applicable_max_price" in resp.json()["detail"]

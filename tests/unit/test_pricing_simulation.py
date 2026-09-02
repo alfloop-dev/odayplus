@@ -378,3 +378,89 @@ def test_scenario_simulation_with_applicable_range_violation() -> None:
     assert any(
         v.code == "above_applicable_range" for v in sim.items[0].constraint_violations
     )
+
+
+def test_oss_optimizer_simulate_threads_applicable_range_and_detects_extrapolation() -> None:
+    from modules.priceops.infrastructure.oss_optimizer import _simulate
+
+    item = PricingPlanItem.create(
+        item_id="item-oss-extrap",
+        store_id="store-1",
+        machine_type="washer",
+        constraints=PriceConstraints(
+            unit_cost=50.0,
+            current_price=100.0,
+            price_ladder_step=5.0,
+            applicable_min_price=90.0,
+            applicable_max_price=110.0,
+        ),
+        baseline_demand=100.0,
+        elasticity=PriceElasticityEstimate(
+            elasticity_value=-1.2,
+            confidence=0.8,
+            applicable_min_price=90.0,
+            applicable_max_price=110.0,
+        ),
+    )
+
+    # Within applicable range
+    sim_in = _simulate(item, 100.0)
+    assert sim_in.is_extrapolated is False
+    assert sim_in.applicable_min_price == 90.0
+    assert sim_in.applicable_max_price == 110.0
+
+    # Outside applicable range - above
+    sim_above = _simulate(item, 120.0)
+    assert sim_above.is_extrapolated is True
+    assert sim_above.applicable_min_price == 90.0
+    assert sim_above.applicable_max_price == 110.0
+
+    # Outside applicable range - below
+    sim_below = _simulate(item, 80.0)
+    assert sim_below.is_extrapolated is True
+    assert sim_below.applicable_min_price == 90.0
+    assert sim_below.applicable_max_price == 110.0
+
+
+def test_oss_optimizer_production_execution_carries_applicable_range() -> None:
+    from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
+
+    item = PricingPlanItem.create(
+        item_id="item-oss-prod",
+        store_id="store-1",
+        machine_type="washer",
+        constraints=PriceConstraints(
+            unit_cost=50.0,
+            current_price=100.0,
+            price_ladder_step=5.0,
+            max_increase_pct=0.10,
+            max_decrease_pct=0.10,
+            applicable_min_price=90.0,
+            applicable_max_price=110.0,
+        ),
+        baseline_demand=100.0,
+        elasticity=PriceElasticityEstimate(
+            elasticity_value=-1.2,
+            confidence=0.8,
+            applicable_min_price=90.0,
+            applicable_max_price=110.0,
+        ),
+        source_snapshot_ids=("snap-1",),
+    )
+    plan = PricingPlan.create(
+        tenant_id="tenant-test",
+        items=(item,),
+        correlation_id="corr-test",
+    )
+
+    optimizer = PriceOpsProductionOptimizer()
+    execution = optimizer.optimize(plan)
+
+    assert len(execution.results) == 1
+    _item, result = execution.results[0]
+    assert result.baseline_simulation.applicable_min_price == 90.0
+    assert result.baseline_simulation.applicable_max_price == 110.0
+    assert result.baseline_simulation.is_extrapolated is False
+    assert result.recommended_simulation.applicable_min_price == 90.0
+    assert result.recommended_simulation.applicable_max_price == 110.0
+    assert result.recommended_simulation.is_extrapolated is False

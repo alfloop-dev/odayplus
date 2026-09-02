@@ -34,6 +34,8 @@ def test_priceops_comparison_api_blocks_infeasible_approval() -> None:
                             "current_price": 5.0,
                             "baseline_demand": 500.0,
                             "elasticity_value": -1.0,
+                            "applicable_min_price": 4.0,
+                            "applicable_max_price": 6.0,
                             "margin_floor_ratio": 0.2,
                             "max_increase_pct": 0.1,
                         }

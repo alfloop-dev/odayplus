@@ -76,6 +76,18 @@ def resolve_elasticity(
         return estimate, _binding_metadata("estimated", estimate, len(usable))
 
     if supplied_value is not None:
+        if supplied_min_price is None or supplied_max_price is None:
+            raise ElasticityInputError(
+                "client-supplied elasticity requires applicable_min_price and applicable_max_price"
+            )
+        if supplied_min_price <= 0 or supplied_max_price <= 0:
+            raise ElasticityInputError(
+                f"client-supplied applicable bounds must be positive: min={supplied_min_price}, max={supplied_max_price}"
+            )
+        if supplied_min_price > supplied_max_price:
+            raise ElasticityInputError(
+                f"client-supplied applicable bounds invalid: min={supplied_min_price} > max={supplied_max_price}"
+            )
         estimate = PriceElasticityEstimate(
             elasticity_value=supplied_value,
             confidence=(
