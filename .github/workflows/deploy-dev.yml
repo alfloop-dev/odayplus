@@ -132,6 +132,11 @@ on:
         required: false
         default: ""
         type: string
+      initial_release_recovery:
+        description: "Set only for the first release into a target that holds no approved release (build phase). The build reads the target back and refuses unless every Cloud Run service and job is absent; recovery for such a release is deleting the candidate and holding zero traffic, never a rollback."
+        required: false
+        default: false
+        type: boolean
       external_sources_enabled:
         description: "Comma-separated source ids this release expects to be enabled (build phase; empty means the standing sources-off posture, which is derived from the deployed provider configuration rather than supplied here). Any value here makes the approved masked snapshot mandatory."
         required: false
@@ -378,6 +383,40 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      # ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: schema v2 requires every release
+      # to bind the previous approved release, and the first release into a
+      # target has none -- which left that target unable to receive its first
+      # deploy at all. This reads the target back and writes the receipt the
+      # handoff binds instead of a rollback release.
+      #
+      # It refuses unless *every* deploy target is absent, and a `gcloud`
+      # failure is refused too: not finding a service and not being able to look
+      # are different facts, and reading the second as the first is how a broken
+      # credential would admit a fake first release. A target that already holds
+      # a release fails here rather than producing a manifest that claims one.
+      #
+      # `ODP_CLOUD_RUN_MIGRATION_JOB` is read here rather than added to the
+      # build-scope binding gate: only this branch needs the migration job's
+      # name, so an environment that does not bind it fails this step -- and
+      # only this step -- instead of every build.
+      - name: 讀回部署 target 以確認沒有既有已核准 release
+        if: ${{ inputs.initial_release_recovery }}
+        env:
+          MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${HANDOFF_DIR}"
+          python3 delivery_toolchain/release/probe_release_target_absence.py \
+            --environment "${{ inputs.environment }}" \
+            --project "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --target "api=${API_SERVICE}" \
+            --target "web=${WEB_SERVICE}" \
+            --target "migration=${MIGRATION_JOB}" \
+            --target "worker=${WORKER_JOB}" \
+            --target "scheduler=${SCHEDULER_JOB}" \
+            --output "${HANDOFF_DIR}/initial-release-absence-readback.json"
+
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
@@ -510,6 +549,7 @@ jobs:
           DATA_SNAPSHOT_OBJECT_GENERATION: ${{ inputs.data_snapshot_object_generation || vars.ODP_APPROVED_DATA_SNAPSHOT_OBJECT_GENERATION }}
           DATA_SNAPSHOT_CONTENT_SHA: ${{ inputs.data_snapshot_content_sha || vars.ODP_APPROVED_DATA_SNAPSHOT_CONTENT_SHA256 }}
           ROLLBACK_MANIFEST: ${{ inputs.rollback_manifest || vars.ODP_PREVIOUS_RELEASE_MANIFEST_PATH }}
+          INITIAL_RELEASE_RECOVERY: ${{ inputs.initial_release_recovery }}
           EXTERNAL_SOURCES_ENABLED: ${{ inputs.external_sources_enabled }}
           ODP_CLOUD_RUN_VPC_CONNECTOR: ${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}
           ODP_CLOUD_RUN_VPC_EGRESS: ${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}
@@ -543,6 +583,13 @@ jobs:
           if [ -n "${ROLLBACK_MANIFEST:-}" ]; then
             rollback_args+=(--rollback-manifest "${ROLLBACK_MANIFEST}")
           fi
+          # The readback receipt, not a flag, is what admits a first release.
+          # Passing both channels is refused by the builder rather than resolved
+          # here: an operator who has a previous approved release to bind has no
+          # first-release claim to make.
+          if [ "${INITIAL_RELEASE_RECOVERY:-false}" = "true" ]; then
+            rollback_args+=(--initial-release-readback "${HANDOFF_DIR}/initial-release-absence-readback.json")
+          fi
           # Empty is the standing posture, not a missing input: the build phase
           # then derives the sources-off attestation from the provider
           # configuration this workflow deploys at this exact release SHA. There
@@ -560,6 +607,7 @@ jobs:
           python3 delivery_toolchain/release/build_release_handoff.py \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --repository "${GITHUB_REPOSITORY}" \
+            --target-environment "${{ inputs.environment }}" \
             --component "api=${API_IMAGE}" \
             --component "web=${WEB_IMAGE}" \
             --component "worker=${WORKER_IMAGE}" \
@@ -584,6 +632,14 @@ jobs:
         with:
           name: runtime-release-manifest-${{ inputs.release_sha }}
           path: .odp_data/release/runtime-release-handoff/RELEASE_MANIFEST.json
+          if-no-files-found: error
+
+      - name: Publish initial-release target absence readback
+        if: ${{ inputs.initial_release_recovery }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: initial-release-absence-readback-${{ inputs.release_sha }}
+          path: .odp_data/release/runtime-release-handoff/initial-release-absence-readback.json
           if-no-files-found: error
 
   # Deploy authority. This runs only in the deploy phase, and only after a build
@@ -743,6 +799,52 @@ jobs:
 
       - name: Set up Cloud SDK for durable lease admission
         uses: google-github-actions/setup-gcloud@v2
+
+      # ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: re-read the target before the
+      # lease is consumed.
+      #
+      # A first-release admission is granted against one observation -- "this
+      # target holds no approved release" -- made in a different dispatch, on a
+      # different runner. That observation is the only part of the branch that
+      # cannot be re-derived from the release SHA's tree, so it is the only part
+      # worth forging, and build-time truth is not deploy-time truth. Reading
+      # the target again here is what makes the claim checkable: a manifest that
+      # claims an empty target, against a target that now holds a release, fails
+      # before the lease is spent rather than deploying as a first release.
+      #
+      # Deliberately unconditional. Gating it on the dispatch input would let a
+      # forged manifest skip the check by simply not setting the input; the
+      # script no-ops for the ordinary manifests that bind a rollback release.
+      - name: 重讀部署 target 以重驗 initial-release recovery
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+          WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+          MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
+          WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+          SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/probe_release_target_absence.py \
+            --environment "${{ inputs.environment }}" \
+            --project "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --target "api=${API_SERVICE}" \
+            --target "web=${WEB_SERVICE}" \
+            --target "migration=${MIGRATION_JOB}" \
+            --target "worker=${WORKER_JOB}" \
+            --target "scheduler=${SCHEDULER_JOB}" \
+            --manifest "${RELEASE_RECEIPT_DIR}/admitted-manifest/RELEASE_MANIFEST.json" \
+            --receipt "${RELEASE_RECEIPT_DIR}/initial-release-recovery-receipt.json"
+
+      - name: Publish initial-release recovery verification receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: initial-release-recovery-receipt-${{ inputs.environment }}
+          path: .odp_data/release/initial-release-recovery-receipt.json
+          if-no-files-found: ignore
 
       # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
       # Ed25519 verification key and is deliberately a var, not a secret: it

@@ -103,6 +103,26 @@ restore_service_traffic() {
     --quiet
 }
 
+# Which recovery this release can actually perform, read from what was captured
+# before any runtime mutation rather than from what the operator expected.
+#
+# ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: a first release into an empty target
+# has no previous version, so "rolling back" would name a version that does not
+# exist. `restore_service_traffic` has always done the right thing here -- it
+# deletes the bootstrap candidate -- but the failure path announced a traffic
+# restore either way, which is the one moment an operator reads the log to learn
+# whether the old version is back.
+release_recovery_mode() {
+  local api_snapshot="$1"
+  local web_snapshot="$2"
+  if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${api_snapshot}")" = "true" ] \
+    || [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${web_snapshot}")" = "true" ]; then
+    printf 'rollback'
+    return
+  fi
+  printf 'initial-release-cleanup'
+}
+
 rollback_release_traffic() {
   local api_service="$1"
   local api_snapshot="$2"

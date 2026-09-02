@@ -234,7 +234,12 @@ handle_deployment_exit() {
   if [ "${status}" -ne 0 ] \
     && [ "${ROLLBACK_ARMED}" = "true" ] \
     && [ "${DEPLOYMENT_COMMITTED}" != "true" ]; then
-    echo "Deployment failed; restoring the recorded API/Web traffic split." >&2
+    if [ "$(release_recovery_mode "${API_TRAFFIC_SNAPSHOT}" "${WEB_TRAFFIC_SNAPSHOT}")" = "initial-release-cleanup" ]; then
+      echo "Deployment failed on the first release into this target." >&2
+      echo "There is no previous release to roll back to; recovery is deleting the candidate and holding zero traffic." >&2
+    else
+      echo "Deployment failed; restoring the recorded API/Web traffic split." >&2
+    fi
     rollback_release_traffic \
       "${API_SERVICE}" \
       "${API_TRAFFIC_SNAPSHOT}" \
