@@ -72,3 +72,57 @@ def test_priceops_comparison_api_blocks_infeasible_approval() -> None:
 
     assert approval.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
     assert "cannot be approved" in approval.json()["detail"]
+
+
+def test_priceops_runtime_error_does_not_leak_raw_message(monkeypatch) -> None:
+    correlation_id = "corr-priceops-err-test"
+    client = TestClient(
+        create_app(),
+        headers={**PRICEOPS_HEADERS, "x-correlation-id": correlation_id},
+    )
+    plan_id = "api-price-plan-error-test"
+
+    optimizer = client.post(
+        "/priceops/optimizer-jobs",
+        json={
+            "optimized_at": "2026-06-28T03:00:00Z",
+            "plans": [
+                {
+                    "tenant_id": "oday-tw",
+                    "plan_id": plan_id,
+                    "items": [
+                        {
+                            "item_id": "api-price-item-1",
+                            "store_id": "api-store-1",
+                            "machine_type": "washer-20kg",
+                            "unit_cost": 10.0,
+                            "current_price": 5.0,
+                            "baseline_demand": 500.0,
+                            "elasticity_value": -1.0,
+                            "applicable_min_price": 4.0,
+                            "applicable_max_price": 6.0,
+                            "margin_floor_ratio": 0.2,
+                            "max_increase_pct": 0.1,
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert optimizer.status_code == status.HTTP_202_ACCEPTED
+
+    from modules.priceops.application import PriceOpsService
+
+    def _broken_submit(self, *args, **kwargs):
+        raise RuntimeError("secret_internal_pricing_cluster_leak=192.168.1.100")
+
+    monkeypatch.setattr(PriceOpsService, "submit_for_approval", _broken_submit)
+
+    response = client.post(
+        f"/priceops/plans/{plan_id}/submit",
+        json={"actor": "pricing-manager", "reason": "test runtime error handling"},
+    )
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "secret_internal_pricing_cluster_leak" not in response.text
+    assert correlation_id in response.text
+    assert "PriceOps plan transition failed" in response.json()["detail"]

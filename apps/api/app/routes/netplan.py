@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,6 +24,8 @@ else:
     )
     from modules.netplan.infrastructure import InMemoryNetPlanRepository
     from solver.netplan import ManagementApprovalReceiptVerifier, NetPlanConstraints
+
+    logger = logging.getLogger("oday-api.netplan")
 
 
     class NetPlanScenarioPayload(BaseModel):
@@ -347,10 +350,22 @@ else:
             result = action()
         except NetPlanNotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except (NetPlanApprovalError, RuntimeError, ValueError) as exc:
+        except (NetPlanApprovalError, ValueError) as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=str(exc),
+            ) from exc
+        except RuntimeError as exc:
+            correlation_id = getattr(request.state, "correlation_id", None) or "unknown"
+            logger.exception(
+                "Unexpected runtime error during NetPlan operation (scenario_id=%s, correlation_id=%s): %s",
+                scenario_id,
+                correlation_id,
+                exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"NetPlan execution failed; correlation_id={correlation_id}",
             ) from exc
         event_id = _record_audit(
             audit_log,
