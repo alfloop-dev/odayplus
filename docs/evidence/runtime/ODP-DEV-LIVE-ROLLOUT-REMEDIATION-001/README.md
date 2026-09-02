@@ -1,109 +1,140 @@
-# ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001 — 以真實 artifact 完成 dev live rollout 並取代 false-done 前提
+# ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001
 
-- Task ID: `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`
-- Phase: `Wave 3 - Dev Live Rollout Remediation`
-- Owner: `Antigravity3`
-- Reviewer: `Claude`
-- 產出日期: 2026-09-01
-- 結論: **Fail-Closed 停步。已完成真實 hosted build 產出 4 個全新 exact-digest signed images；發現 build handoff 工具鏈 Schema v2 缺陷並依驗收條件 10 fail closed，不擴大修 code；已完成 GCP 現場 readback 審計並明確推翻歷史假收據。**
+## 結論
 
----
+**Fail-closed，尚未部署。** 本輪以最新 `origin/dev` 的 exact SHA
+`38de35a7bac2d6c6f6d8d079ffaf16abf6163c29` 重跑唯一 `Runtime Release` build
+phase。Hosted run `33627271466` 實際 build、push、Cosign sign、SBOM attest 了
+四個 immutable images，但在產生 release handoff 時因缺少上一個可 admission 的
+rollback manifest 而停止。
 
-## 1. 任務背景與驗收範圍
+因此本 evidence **不宣稱 release manifest、signed Supervisor lease、Cloud Run
+deploy、live smoke 或成功收據已存在**。四個 image 的 refs 只作為 hosted build
+run 的真實產物紀錄，不可在沒有 handoff manifest 與 lease 時直接部署。
 
-本任務旨在重用唯一 Runtime Release deploy phase，在 `odayplus-runtime-20260825` 實際部署 data platform、ODay Plus API/Web、migration/worker/scheduler；只接受 GCP live readback 與 hosted workflow receipts，不修改歷史假收據。
+## 1. Candidate 與 authoritative manifest
 
-依據 Task Brief 驗收條件與全系統部署原則：
-1. **權威 Manifest 驗證**：檢查最新 manifest 之 candidate SHA、image digests、SBOM、Cosign 與 registry 參照。
-2. **Candidate 漂移重新 Build-Once**：若 candidate 到 `origin/dev` 之間含 product 或 build input 變更，必須建立新 release 並重新 build once，不得沿用舊 digest。
-3. **單一管線與簽章 Lease**：以 signed Supervisor lease 只執行既有 Runtime Release deploy phase，不得建立第二套 workflow。
-4. **現場 Readback 驗證**：檢查 GKE data platform、Cloud Run services（`oday-api`、`oday-web`）、Cloud Run jobs（`oday-migration`、`oday-worker`、`oday-scheduler`）與 Cloud Scheduler triggers。
-5. **端點網址政策**：dev Web 只使用 Cloud Run 自動產生網址，不建立 DNS 或自訂網域憑證。
-6. **缺陷處理原則（驗收條件 10）**：若 workflow 或部署程式有缺陷則 fail closed 並另建獨立 remediation task，不得在 rollout task 內擴大修 code。
-7. **歷史收據處理**：歷史 `ODP-DEV-ROLLOUT-001` 收據保持不變，由新 evidence 明確標示已被 live reconciliation 推翻。
+| 項目 | 結果 |
+|---|---|
+| 最新 `origin/dev` | `38de35a7bac2d6c6f6d8d079ffaf16abf6163c29` |
+| repository manifest candidate | `ebc4fca5c2dd5871275aee39a18406dd67464f04` |
+| repository manifest | `schema_version: 1`, `release_status: ready`, digest `sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9` |
+| manifest admission | **拒絕**：缺 `sources_off_attestation`／snapshot binding，且缺 `rollback_release` |
+| candidate drift | **是**；不能沿用 `ebc4fca5` 的 images 或 manifest |
 
----
+最新 manifest 的 immutable image syntax 與 canonical digest 可解析，但它不是目前
+candidate 的 manifest，也不是可供 Schema v2 handoff 使用的上一個 release。這裡沒有
+改寫 `docs/evidence/gates/RELEASE_MANIFEST.json`。
 
-## 2. Candidate 漂移與 Hosted Build-Once 執行
+## 2. Hosted build-once receipt
 
-### 2.1 Candidate 漂移分析
+唯一入口是 `.github/workflows/deploy-dev.yml` 的 `Runtime Release`，沒有新增
+workflow 或 deployment path。
 
-- Repo 內權威 manifest（`docs/evidence/gates/RELEASE_MANIFEST.json`）綁定之 candidate 為 `ebc4fca5c2dd5871275aee39a18406dd67464f04`。
-- 目前 `origin/dev` HEAD 為 `ae03490480e5a1313d3fdb992172c9b5793053e2`（落差 251 個 commits）。
-- 產品程式碼 diff：`apps/` 異動 43 個檔案（新增 9,337 行，包含本機 password-first auth、login throttling、operator console、forecastops 與 model routes）。
-- 依驗收條件 2，不能沿用舊 candidate `ebc4fca5` 的舊 digests，必須對最新 `origin/dev` SHA `ae03490480e5` 重新執行 build-once。
+| 欄位 | 值 |
+|---|---|
+| run | [33627271466](https://github.com/alfloop-dev/odayplus/actions/runs/33627271466) |
+| phase / environment | `build` / `dev-build` |
+| release SHA | `38de35a7bac2d6c6f6d8d079ffaf16abf6163c29` |
+| result | `failure`，停在 `Write the build-once artifact handoff` |
+| steps before failure | phase validation、environment binding、secret scan、SAST、SBOM、locked dependencies、E2E deployment health/backup/restore/rollback proof、WIF、Cloud SDK、Cosign、四 image build/push/sign/attest |
+| uploaded artifacts | 僅 `release-phase-receipt-dev-build` 與 `release-environment-receipt-dev-build`；沒有 candidate manifest 或 image handoff artifact |
 
-### 2.2 Hosted Build Phase 執行結果
+Hosted run 實際解析到的四個 image、signature、SBOM refs 如下。這些 refs 來自同一
+run 的 build log；後續 handoff failure 代表它們尚未形成可 admission 的 release。
 
-透過 GitHub Actions 觸發唯一的 Runtime Release workflow（Run ID: [33509435127](https://github.com/alfloop-dev/odayplus/actions/runs/33509435127)），參數為：
-- `phase`: `build`
-- `environment`: `dev`（綁定 `dev-build` environment）
-- `release_sha`: `ae03490480e5a1313d3fdb992172c9b5793053e2`
-- `task_id`: `ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001`
-
-**通過項目：**
-- Checkout exact release SHA `ae03490480e5`
-- Environment binding 與 9 個 build vars 驗證（`check_release_environment.py`）
-- Secret scan、Python SAST scan、CycloneDX SBOM generation
-- Locked project dependencies sync（`uv sync --frozen`）
-- E2E deployment health, backup, restore, and rollback proof（`verify_deployment_health_backup_rollback.py`）
-- WIF 雲端身份驗證與 Cloud SDK setup
-- 4 個 container images 成功建置並推播至 Artifact Registry，且通過 Cosign keyless 簽章與 CycloneDX SBOM 認證：
-
-| Component | Exact Image Digest | Signature Reference | SBOM Reference |
+| component | image digest | Cosign signature ref | SBOM attestation ref |
 |---|---|---|---|
-| **api** | `oday-api@sha256:0d23643eb58ad161b2a9ebcdf1f30aa329f70603a4db30f92f39a682abe33730` | `oday-api@sha256:5db3089a0616c2a24dc81585cae29bfff5cd64c728d004f2ade1428f18f8bc7f` | `oday-api@sha256:c707428bcd9d2d66f204f54f4a768ee3701547dfe96a6d21a8d43af2bf185780` |
-| **web** | `oday-web@sha256:a00ad85a4fa3bd89a27e6066074bb3c3425ccaf8c72bc9bac061473aaff708f2` | `oday-web@sha256:4f84d23f7fbae75c760fca0b57f048de2b60d7a0e8628cb0a9b44c00f7c57407` | `oday-web@sha256:00f56581d986806d9a6197309f2c96a43d8081629f1ebe5eccaf51e37e066530` |
-| **worker** | `oday-worker@sha256:6dc92f01d67b224f4583b26355d2c395cebe6fe12b08c6adb138a8afb54bc503` | `oday-worker@sha256:81959a34c4a06911615bc9a1f2a9aa91f190353580689f9f7d9317000aa495e0` | `oday-worker@sha256:0a68d983dc08f12d1101bf8226662e8b51b8a20f9407587d656b3fd11f916109` |
-| **scheduler** | `oday-scheduler@sha256:1bf9c45898e2446aeae39c7717e2c6c0920fce5a0845cf9cdf6142d8d8f81b41` | `oday-scheduler@sha256:94a7be2a3bf4dc4213865f6278e8971fb0837573cb2f5f4e54fac5ff3e43272e` | `oday-scheduler@sha256:518bea61190c2ded1d77a5daee84f188b7dca3168dafc23ac9dd93035957f462` |
+| api | `oday-api@sha256:312a0356e06ce6cfbaaebba4886fe63cd07242dd6150d95e6fd2c3f6000031ef` | `oday-api@sha256:60092fd70555d0c505ae1ee1bb99d2fef0679934d427a66f311189e388358f42` | `oday-api@sha256:203f33a37f2002280f439fa7ed866527564770f2f72cf22de9f4be6964d06a6e` |
+| web | `oday-web@sha256:cc8d6bc09c9cc693bfc7223b764d535d5b8d1d3d8609b91dcf5c30467f3f74b9` | `oday-web@sha256:ddb4ac99d20b3f0a63a8c99c56c9a65c7104fec2fbe91230b524a78aa4327d11` | `oday-web@sha256:1530edcec3a7beb154f9bab8c1c3d09edd2612333a10c4e4b2627dfcf0f13592` |
+| worker | `oday-worker@sha256:54669b8e38fbd4193a7d2866f292fbedb22903eff6a9482e444151cce6c9c51c` | `oday-worker@sha256:e808c125ba6130219eb372ba2b0f28f7c3a2209a346322c10e5e33ff950f85cf` | `oday-worker@sha256:9e60ed0cee4d65a3b77a3bf02059f791586986fc06866540c5da9fd61895f937` |
+| scheduler | `oday-scheduler@sha256:f0b5d03e0f1ab9310682a0a9e08cc6bfd0e27ba254f6a26e226025feefe5c813` | `oday-scheduler@sha256:cf62721d4eaa7d01e160b5ff71a49feacd8803609e74846478a723ab2e17b44d` | `oday-scheduler@sha256:d0e89ef16e1e4f7538612b6980604de6ced00d33c23f32ed9912b002a0c97900` |
 
-### 2.3 發現工具鏈缺陷並 Fail Closed
+The four refs were resolved by the hosted build's `gcloud artifacts` resolver before
+handoff. A local post-run re-read was attempted with the available gcloud accounts but
+was denied `artifactregistry.repositories.get`; that denial is recorded rather than
+converted into a local success claim.
 
-在 `Write the build-once artifact handoff` 步驟中，`build_release_handoff.py` 退出 code 1：
+## 3. Current blockers
+
+### 3.1 No admissible rollback baseline
+
+`build_release_handoff.py` correctly refused the sources-off build with:
+
 ```text
-build-once artifact handoff 無法產生：
-- 缺少 masked data snapshot 參照；build 階段必須綁定本次核准的 masked snapshot。
-- 缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
+缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
 ```
 
-**根本原因分析：**
-1. `delivery_toolchain/release/build_release_handoff.py` 預設使用 Schema Version 2，嚴格要求 `data_snapshot` 與 `rollback_release` 參照。
-2. 然而呼叫端 `.github/workflows/deploy-dev.yml` 的 `Write the build-once artifact handoff` 步驟僅傳入 image/sbom/signature 參照，未傳入 snapshot/rollback 參數，且 `build_release_handoff.py` CLI 未暴露 `--schema-version 1` 選項。
-3. 依據驗收條件 10：*「若 workflow 或部署程式有缺陷則 fail closed 並另建獨立 remediation task，不得在 rollout task 內擴大修 code」*，且 `.github/workflows/` 與 `delivery_toolchain/release/` 皆為本 rollout 任務之 forbidden paths，因此本任務**嚴格守門、fail closed 停步**，不私自修改 workflow 或 toolchain code。
+The only repository manifest is Schema v1 and the manifest validator reports that it
+cannot be admitted because it has neither sources-off evidence nor `rollback_release`.
+The current build environment has no `ODP_PREVIOUS_RELEASE_MANIFEST_PATH` variable, and
+no valid previous Schema v2 manifest was found in the task-scoped repository evidence.
+This task does not manufacture a predecessor manifest or retrofit an approval claim onto
+the historical file.
 
----
+### 3.2 No dev admission lease configuration
 
-## 3. GCP 現場 Runtime 讀取與審計（Readback Audit）
+`gh api repos/alfloop-dev/odayplus/environments/dev/variables` confirms that `dev` has
+no `ODP_RELEASE_LEASE_PUBLIC_KEY` or `ODP_RELEASE_LEASE_STATE_URI`; repository variables
+also provide neither. The worker shell has no `ODP_RELEASE_LEASE_PRIVATE_KEY`, and the
+available gcloud identities cannot read or administer the target project's release state.
+Consequently no Supervisor-issued lease can be minted or admitted here.
 
-本次透過 `gcloud` 與 `kubectl` 進行即時現場唯讀查核，結果如下：
+### 3.3 GCP readback authority unavailable
 
-| 資源類別 | 資源名稱 / 位置 | 現況 | 說明 |
-|---|---|---|---|
-| **GKE Cluster** | `oday-emgi-gke` (`asia-east1-a`) | **RUNNING** | 1 node（`e2-standard-2`），K8s v1.35.7 |
-| **GKE Workloads** | `oday-emgi/deployment.apps/oday-emgi-daemon`<br>`oday-emgi/deployment.apps/oday-emgi-webserver` | **1/1 READY** | Data platform 已部署完成（`DPF-EMGI-LIVE-ROLLOUT-001` done），第三方來源 disabled，default-deny egress 生效 |
-| **Cloud Run Services** | `oday-mlflow`<br>`oday-staging-mlflow` | **READY** | 僅 MLflow tracking server 存在；`oday-api` 與 `oday-web` 尚未部署 |
-| **Cloud Run Jobs** | 無 | **0 個** | `oday-migration`、`oday-worker`、`oday-scheduler` 尚未部署 |
-| **Cloud Scheduler** | 無 | **0 個** | `oday-worker-trigger`、`oday-scheduler-trigger` 尚未部署 |
-| **Cloud SQL** | `oday-dev-sql`<br>`oday-staging-sql` | **RUNNABLE** | PostgreSQL 16 執行中 |
-| **Artifact Registry** | `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev` | **READY** | 包含候選版本 `ebc4fca5` 與全新建置之 `ae034904` exact-digest signed images |
-| **Secret Manager** | `oday-dev-web-oidc-client-secret`<br>`oday-plus-dev-api-database-url-pg16`<br>`oday-plus-dev-auth-principal-map`<br>`oday-plus-dev-mlflow-backend-uri`<br>`oday-plus-dev-web-session-secret` | **READY** | 5 個 dev secrets 容器存在且 version 啟用（僅讀取 metadata 名稱，未讀取 secret payload） |
+The current worker attempted read-only Cloud Run, Cloud Run Jobs, Cloud Scheduler, GKE,
+Cloud SQL, Secret Manager, and Artifact Registry probes. The available identities either
+required reauthentication or returned IAM `PERMISSION_DENIED`; no deployment command was
+run. The last successful readback already present in the preceding reconciliation audit
+showed only the EMGI data-platform workloads and MLflow services, with API/Web/jobs/
+Scheduler absent. It is retained as historical pre-deploy evidence, not relabeled as a
+new post-deploy receipt.
 
----
+## 4. Sources-off and endpoint policy
 
-## 4. 歷史收據審查
+The build run received the configured `dev-build` VPC connector and `all-traffic` value.
+The missing build environment variables observed in run `33627106252` were corrected in
+the GitHub `dev-build` environment:
 
-- 歷史 `docs/evidence/runtime/ODP-DEV-ROLLOUT-001/` 收據文件**保持原始位元組不變**，未被修改、移動或刪除。
-- 依據 `docs/evidence/runtime/ODP-LIVE-RUNTIME-EVIDENCE-RECONCILE-001/live-runtime-reconciliation-audit.json` 與本審計報告，該歷史收據中宣稱的 Cloud Run services/jobs 執行、fake repeated-nibble digests（`sha256:1111...`）及 `.odp_data/deployment/` 報告皆已被現場 readback 確實驗證為無效。
+```text
+ODP_CLOUD_RUN_VPC_CONNECTOR=projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc
+ODP_CLOUD_RUN_VPC_EGRESS=all-traffic
+```
 
----
+This is configuration readiness only. Since deploy never ran, there is no runtime
+public-egress probe receipt, authenticated API/Web smoke, Cloud Run revision, job
+execution, or 16-source live readback to claim. The dev Web URL policy remains
+Cloud-Run-generated only; no DNS, custom domain, or certificate was created.
 
-## 5. 解阻與後續步驟（Unblock Requirements）
+## 5. Historical receipt protection
 
-1. **建立獨立 Toolchain Remediation Task**：
-   - 修訂 `delivery_toolchain/release/build_release_handoff.py` 與 `.github/workflows/deploy-dev.yml`，使 Schema v1 / v2 manifest 產出與 snapshot / rollback 參數傳遞一致。
-2. **重新執行 Runtime Release Build Phase**：
-   - 產生 `ae03490480e5a1313d3fdb992172c9b5793053e2`（或最新 dev tip）之 byte-exact `RELEASE_MANIFEST.json` 與 `runtime-release-images.json`。
-3. **Supervisor 簽發 Release Lease**：
-   - 依據產出之 `manifest_digest` 簽發 Supervisor Ed25519 lease 並寫入 GCS CAS state。
-4. **執行 Deploy Phase 並完成 Live Readback**：
-   - 透過 hosted workflow 部署 `oday-api`、`oday-web`、`oday-migration`、`oday-worker`、`oday-scheduler`，取得真實 Cloud Run URLs 與執行收據。
+No file under `docs/evidence/runtime/ODP-DEV-ROLLOUT-001/` was edited, moved, or deleted.
+The pre-existing file hashes at this audit are:
+
+```text
+fc9cfc042068d56e00dbd88a3e6f27e3f550c0cba7aa11b09989660aa864b477  README.md
+a35d1e15a04e887cf4eb83ca4db9faa0a69ab9f5416a386e26190864ecf61a70  data-platform-dev-deployment.json
+25add1cce139170c260cc1793f726c450549bffb1c4d6af572f4d151ca8072  dev-integration-readback.json
+223b35cb0a2da874c50172bf2561f378034cd7b73622441e85134fd4026e621a  dev-rollout-manifest-binding.json
+72cd51e8dcdf7ef77e3fcd4c0e68fed09b371c4189b06eac26465c52e6985f75  external-sources-provider-off-audit.json
+2ac6638467ccf4b260df1bed51fddee59d579e6c43edb6ec21fa86dc40775e26  odayplus-dev-deployment.json
+5b1e41015c9291e2fe6dda26de681f456a90672a325aa7e9ce868e9e96e09449  release-receipts-index.json
+```
+
+The new audit explicitly marks those historical receipts as superseded by live
+reconciliation evidence; it does not alter their bytes.
+
+## 6. Resolution requirements
+
+1. Provide a real previous approved release manifest, or complete the separately governed
+   release-baseline/bootstrap remediation; do not construct one from placeholder data.
+2. Configure the dev environment's `ODP_RELEASE_LEASE_STATE_URI` and
+   `ODP_RELEASE_LEASE_PUBLIC_KEY` against an existing Supervisor-owned durable CAS store.
+3. Have the Supervisor issue a lease bound to the newly generated manifest digest.
+4. Dispatch the existing Runtime Release `deploy` phase with that lease and all four exact
+   image refs, then collect hosted receipts and authorized GCP readback.
+5. Only after deployment, record Cloud Run URLs/revisions, one-shot executions,
+   authenticated smoke, provider-off/default-deny egress, and exact manifest binding.
+
+Until these requirements are satisfied, the release remains **NO-GO** and no deployment
+success receipt may be emitted.

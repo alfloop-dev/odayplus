@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Verification script for ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001.
 
-Validates:
+Validates the fail-closed evidence produced by the latest owner run:
 1. Evidence files existence and schema structure.
-2. Candidate drift detection integrity between authoritative manifest and origin/dev.
-3. Hosted build phase run results (run 33509435127) and artifact digests format.
-4. Fail-closed defect diagnosis consistency with Acceptance Criterion 10.
-5. GCP live readback structure consistency.
+2. Candidate drift detection integrity between the repository manifest and origin/dev.
+3. Hosted build phase run 33627271466 and exact artifact digest syntax.
+4. Rollback, lease-authority, and GCP-readback blockers are recorded without success claims.
+5. Historical receipt immutability is represented by seven hashes.
 """
 
 from __future__ import annotations
@@ -25,6 +25,8 @@ TRANSCRIPT_TXT = EVIDENCE_DIR / "live-readback-transcript.txt"
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+EXPECTED_CURRENT_CANDIDATE = "38de35a7bac2d6c6f6d8d079ffaf16abf6163c29"
+EXPECTED_BUILD_RUN_ID = 33627271466
 
 
 def verify_evidence_bundle() -> list[str]:
@@ -78,6 +80,26 @@ def verify_evidence_bundle() -> list[str]:
     if audit.get("historical_receipts_modified") is not False:
         errors.append("historical_receipts_modified must be false")
 
+    candidate_reconciliation = audit.get("candidate_reconciliation", {})
+    if candidate_reconciliation.get("origin_dev_head_sha") != EXPECTED_CURRENT_CANDIDATE:
+        errors.append("origin_dev_head_sha does not match the current owner-run candidate")
+    if candidate_reconciliation.get("drift_status") != "diverged":
+        errors.append("candidate drift must be recorded as diverged")
+
+    build_exec = audit.get("hosted_build_execution", {})
+    if build_exec.get("run_id") != EXPECTED_BUILD_RUN_ID:
+        errors.append(f"hosted build run must be {EXPECTED_BUILD_RUN_ID}")
+    if build_exec.get("release_sha") != EXPECTED_CURRENT_CANDIDATE:
+        errors.append("hosted build release_sha does not match current candidate")
+    if build_exec.get("result") != "failure":
+        errors.append("hosted build result must remain failure")
+    if build_exec.get("failed_step") != "Write the build-once artifact handoff":
+        errors.append("hosted build failure step must remain the handoff step")
+    if build_exec.get("handoff_manifest_published") is not False:
+        errors.append("handoff_manifest_published must be false")
+    if build_exec.get("image_handoff_published") is not False:
+        errors.append("image_handoff_published must be false")
+
     # Check candidate reconciliation
     cand_rec = audit.get("candidate_reconciliation", {})
     if not SHA_PATTERN.fullmatch(cand_rec.get("authoritative_manifest_candidate_sha", "")):
@@ -86,7 +108,6 @@ def verify_evidence_bundle() -> list[str]:
         errors.append("origin_dev_head_sha is not a valid 40-char SHA")
 
     # Check build execution images
-    build_exec = audit.get("hosted_build_execution", {})
     published_images = build_exec.get("published_images", {})
     for comp in ["api", "web", "worker", "scheduler"]:
         ref = published_images.get(comp, "")
@@ -105,6 +126,25 @@ def verify_evidence_bundle() -> list[str]:
     findings = audit.get("reconciliation_findings", [])
     if len(findings) < 4:
         errors.append(f"Expected at least 4 reconciliation findings, got {len(findings)}")
+
+    authorization = audit.get("authorization_state", {})
+    for field in (
+        "supervisor_lease_issued",
+        "private_signing_key_available_to_worker",
+        "admission_possible",
+    ):
+        if authorization.get(field) is not False:
+            errors.append(f"authorization_state.{field} must be false")
+    if not isinstance(audit.get("historical_receipts_sha256"), dict) or len(
+        audit["historical_receipts_sha256"]
+    ) != 7:
+        errors.append("historical_receipts_sha256 must contain all seven historical receipts")
+
+    live_state = audit.get("live_gcp_runtime_state", {})
+    if live_state.get("current_readback_result") != "blocked_by_gcp_authority":
+        errors.append("current GCP readback must record the authority blocker")
+    if live_state.get("deployment_commands_run") is not False:
+        errors.append("deployment_commands_run must be false")
 
     return errors
 
