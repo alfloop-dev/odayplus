@@ -43,7 +43,6 @@ REQUIRED_FIELDS_V1 = (
 )
 
 REQUIRED_FIELDS_V2 = REQUIRED_FIELDS_V1 + (
-    "data_snapshot",
     "rollback_release",
 )
 
@@ -161,6 +160,15 @@ def validate_manifest(
     for field in required_fields:
         if field not in manifest:
             errors.append(f"manifest missing required field: {field}")
+
+    sources_enabled = manifest.get("external_sources_expected_enabled")
+    if (
+        version == 2
+        and isinstance(sources_enabled, list)
+        and len(sources_enabled) > 0
+        and ("data_snapshot" not in manifest or manifest.get("data_snapshot") is None)
+    ):
+        errors.append("manifest missing required field: data_snapshot")
 
     release_id = manifest.get("release_id")
     if not isinstance(release_id, str) or not RELEASE_ID_PATTERN.fullmatch(release_id):
@@ -304,15 +312,19 @@ def validate_manifest(
                 ),
                 None,
             )
-            if snapshot_key is None:
-                errors.append("manifest.rollback_release missing required data_snapshot pointer")
-            else:
+            if snapshot_key is not None:
                 errors.extend(
                     _snapshot_errors(
                         rollback_release[snapshot_key],
                         label="manifest.rollback_release.data_snapshot",
                     )
                 )
+            else:
+                if not (
+                    rollback_release.get("sources_off") is True
+                    or rollback_release.get("external_sources_expected_enabled") == []
+                ):
+                    errors.append("manifest.rollback_release missing required data_snapshot pointer")
 
     recorded_digest = manifest.get("manifest_digest")
     if not is_sha256_digest(recorded_digest):
@@ -368,11 +380,12 @@ def validate_release_admission(manifest: Any) -> list[str]:
         if not isinstance(refs, list) or not refs:
             errors.append(f"release admission requires non-empty manifest.{field}")
 
-    # Staging and production admission require data snapshot and rollback release bindings (fail closed)
-    if manifest.get("data_snapshot") is None:
-        errors.append(
-            "release admission requires manifest.data_snapshot with masked=true and verified content sha256"
-        )
+    # If external sources are expected enabled, require data snapshot with masked=true
+    if manifest.get("external_sources_expected_enabled"):
+        if manifest.get("data_snapshot") is None:
+            errors.append(
+                "release admission with enabled external sources requires manifest.data_snapshot with masked=true and verified content sha256"
+            )
     if manifest.get("rollback_release") is None:
         errors.append(
             "release admission requires manifest.rollback_release with verified candidate sha and components"
@@ -551,16 +564,21 @@ def extract_rollback_release_binding(prev_manifest: dict[str, Any]) -> dict[str,
         or prev_manifest.get("snapshot_pointer")
         or prev_manifest.get("snapshot")
     )
-    if not isinstance(prev_snapshot, dict):
-        raise ValueError("Cannot extract rollback binding from manifest without data_snapshot")
-
-    return {
+    binding: dict[str, Any] = {
         "release_id": prev_manifest["release_id"],
         "candidate_sha": prev_manifest["candidate_sha"],
         "manifest_digest": prev_manifest["manifest_digest"],
         "components": rb_components,
-        "data_snapshot": copy.deepcopy(prev_snapshot),
     }
+    if isinstance(prev_snapshot, dict):
+        binding["data_snapshot"] = copy.deepcopy(prev_snapshot)
+    elif not prev_manifest.get("external_sources_expected_enabled"):
+        binding["sources_off"] = True
+        binding["external_sources_expected_enabled"] = []
+    else:
+        raise ValueError("Cannot extract rollback binding from manifest without data_snapshot")
+
+    return binding
 
 
 def validate_rollback_manifest(
@@ -593,11 +611,12 @@ def validate_rollback_manifest(
         )
 
     snap = prev_manifest.get("data_snapshot")
-    if not isinstance(snap, dict) or not snap:
-        errors.append(
-            "rollback manifest missing required data_snapshot; "
-            "cannot use legacy or snapshot-less manifest as rollback evidence"
-        )
+    if prev_manifest.get("external_sources_expected_enabled"):
+        if not isinstance(snap, dict) or not snap:
+            errors.append(
+                "rollback manifest missing required data_snapshot; "
+                "cannot use legacy or snapshot-less manifest as rollback evidence for enabled sources"
+            )
     return errors
 
 

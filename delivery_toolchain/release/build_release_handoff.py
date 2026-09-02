@@ -217,9 +217,9 @@ def build_handoff(
                 resolved_rollback_release = extract_rollback_release_binding(previous_manifest)
 
     if schema_version >= 2:
-        if data_snapshot is None:
+        if external_sources_expected_enabled and data_snapshot is None:
             errors.append(
-                "缺少 masked data snapshot 參照；build 階段必須綁定本次核准的 masked snapshot。"
+                "缺少 masked data snapshot 參照；build 階段啟用外部資料來源時必須綁定本次核准的 masked snapshot。"
             )
         if resolved_rollback_release is None:
             errors.append(
@@ -316,6 +316,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional GITHUB_OUTPUT file to receive manifest_digest and release_id.",
     )
+    parser.add_argument(
+        "--external-source",
+        action="append",
+        default=[],
+        dest="external_sources_expected_enabled",
+        help="External source expected to be enabled (default: none, sources-off).",
+    )
     args = parser.parse_args(argv)
 
     components = dict(_parse_assignment(raw) for raw in args.component)
@@ -405,6 +412,7 @@ def main(argv: list[str] | None = None) -> int:
             created_at=args.created_at,
             created_by_workflow=args.created_by_workflow,
             repository=args.repository,
+            external_sources_expected_enabled=args.external_sources_expected_enabled,
         )
     except HandoffError as exc:
         print("build-once artifact handoff 無法產生：", file=sys.stderr)
