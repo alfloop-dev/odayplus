@@ -16,11 +16,18 @@ from delivery_toolchain.release.migrate_gate_registry import (
 from delivery_toolchain.release.release_manifest import (
     EXPECTED_EXTERNAL_SOURCE_COUNT,
     EXTERNAL_SOURCE_INVENTORY,
+    INITIAL_RELEASE_PROBE_COMMAND,
+    INITIAL_RELEASE_READBACK_KIND,
+    INITIAL_RELEASE_RECOVERY_ACTIONS,
+    INITIAL_RELEASE_RECOVERY_KIND,
+    INITIAL_RELEASE_RECOVERY_METHOD,
+    INITIAL_RELEASE_TARGET_INVENTORY,
     SOURCES_OFF_CLOUD_RUN_EGRESS,
     SOURCES_OFF_EGRESS_POSTURE,
     SOURCES_OFF_PROVIDER_MODE,
     SOURCES_OFF_RUNTIME_PROBE_REASON,
     SOURCES_OFF_RUNTIME_PROBE_RESULT,
+    build_initial_release_recovery,
     build_release_manifest,
     build_sources_off_attestation,
     classify_source_env_var,
@@ -31,6 +38,7 @@ from delivery_toolchain.release.release_manifest import (
     compute_sources_off_probe_receipt_content_digest,
     env_var_belongs_to_source,
     extract_rollback_release_binding,
+    initial_release_recovery_errors,
     sources_off_posture_payload,
     validate_manifest,
     validate_release_admission,
@@ -979,3 +987,375 @@ def test_extract_rollback_binding_from_a_sources_off_release_carries_the_digest(
 def test_a_sources_off_release_is_valid_rollback_evidence() -> None:
     previous = sources_off_manifest(candidate_sha="2" * 40, release_id="odp-test-prev-off")
     assert validate_rollback_manifest(previous, current_candidate_sha="1" * 40) == []
+
+
+# --------------------------------------------------------------------------
+# ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001: the first release into a target.
+#
+# Schema v2 requires every release to bind the previous approved release. On the
+# first release into a target that requirement is unsatisfiable, and the three
+# obvious ways out are all worse than the deadlock: fabricate a rollback
+# manifest, relax the rule for every release, or add a second admission path.
+#
+# `initial_release_recovery` is the one narrow alternative, and these hold the
+# properties that make it admissible rather than merely permissive: it is
+# granted only against a *read back* empty target, it is bound to one candidate
+# and one environment, it states that no rollback target exists instead of
+# implying one, and it is unavailable to every other release.
+# --------------------------------------------------------------------------
+
+FIRST_RELEASE_SHA = "1" * 40
+FIRST_RELEASE_COMPONENTS = {
+    "api": {"image": "registry.example.invalid/odayplus/api@sha256:" + "1" * 64},
+    "web": {"image": "registry.example.invalid/odayplus/web@sha256:" + "2" * 64},
+    "worker": {"image": "registry.example.invalid/odayplus/worker@sha256:" + "3" * 64},
+    "scheduler": {
+        "image": "registry.example.invalid/odayplus/scheduler@sha256:" + "4" * 64
+    },
+}
+
+
+def empty_target_readback(**overrides) -> dict:
+    readback = {
+        "kind": INITIAL_RELEASE_READBACK_KIND,
+        "target_environment": "dev",
+        "project": "odayplus",
+        "region": "asia-east1",
+        "probe_command": INITIAL_RELEASE_PROBE_COMMAND,
+        "targets": [
+            {
+                "component": component,
+                "resource_kind": resource_kind,
+                "resource_name": f"oday-plus-{component}",
+                "exists": False,
+                "serving_traffic": False,
+            }
+            for component, resource_kind in INITIAL_RELEASE_TARGET_INVENTORY
+        ],
+    }
+    readback.update(overrides)
+    return readback
+
+
+def first_release_recovery(
+    *,
+    candidate_sha: str = FIRST_RELEASE_SHA,
+    components: dict | None = None,
+    target_environment: str = "dev",
+    readback: dict | None = None,
+) -> dict:
+    return build_initial_release_recovery(
+        candidate_sha=candidate_sha,
+        components=components if components is not None else FIRST_RELEASE_COMPONENTS,
+        target_environment=target_environment,
+        absence_readback=readback if readback is not None else empty_target_readback(),
+    )
+
+
+def first_release_manifest(
+    *,
+    candidate_sha: str = FIRST_RELEASE_SHA,
+    recovery: dict | None = None,
+    **manifest_overrides,
+) -> dict:
+    """A sources-off first release: posture evidence, no snapshot, no rollback."""
+
+    components = FIRST_RELEASE_COMPONENTS
+    manifest = build_release_manifest(
+        release_id="odp-first-001",
+        candidate_sha=candidate_sha,
+        components=components,
+        sbom_refs=["registry.example.invalid/odayplus/api@sha256:" + "5" * 64],
+        signature_refs=["registry.example.invalid/odayplus/api@sha256:" + "6" * 64],
+        created_at="2026-08-26T12:00:00+00:00",
+        created_by_workflow=(
+            "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@"
+            + candidate_sha
+        ),
+        sources_off_attestation=build_sources_off_attestation(
+            candidate_sha=candidate_sha,
+            components=components,
+            source_policy_digest=compute_source_policy_digest(root=ROOT),
+            provider_mode=SOURCES_OFF_PROVIDER_MODE,
+            sources_inventory=[
+                {
+                    "source_id": source_id,
+                    "status": "disabled",
+                    "credentials_present": False,
+                    "public_egress": "denied",
+                }
+                for source_id in EXTERNAL_SOURCE_INVENTORY
+            ],
+        ),
+        initial_release_recovery=(
+            recovery
+            if recovery is not None
+            else first_release_recovery(candidate_sha=candidate_sha)
+        ),
+        release_status="ready",
+        root=ROOT,
+    )
+    if manifest_overrides:
+        manifest.update(manifest_overrides)
+        manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return manifest
+
+
+def reseal(manifest: dict) -> dict:
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return manifest
+
+
+def test_a_read_back_empty_target_admits_a_release_with_no_predecessor() -> None:
+    """The deadlock this branch exists to break: v2 with nothing to bind."""
+
+    manifest = first_release_manifest()
+
+    assert "rollback_release" not in manifest
+    assert validate_manifest(manifest) == []
+    assert validate_release_admission(manifest, environment="dev") == []
+
+
+def test_a_first_release_states_that_no_rollback_target_exists() -> None:
+    """Recovery is named, not implied.
+
+    An operator reading this manifest during a failed first deploy must not be
+    able to read it as an offer to roll back: there is nothing to roll back to,
+    and the recorded recovery is deleting the candidate and holding zero
+    traffic.
+    """
+
+    recovery = first_release_manifest()["initial_release_recovery"]
+
+    assert recovery["kind"] == INITIAL_RELEASE_RECOVERY_KIND
+    assert recovery["rollback_target_available"] is False
+    assert recovery["recovery_method"] == INITIAL_RELEASE_RECOVERY_METHOD
+    assert recovery["recovery_method"] == "delete-candidate-zero-traffic"
+    assert recovery["recovery_actions"] == list(INITIAL_RELEASE_RECOVERY_ACTIONS)
+    assert "hold-zero-traffic" in recovery["recovery_actions"]
+
+
+def test_a_first_release_admission_may_not_be_replayed_against_another_target() -> None:
+    """The readback was of one environment; the admission travels no further."""
+
+    manifest = first_release_manifest()
+
+    assert validate_release_admission(manifest, environment="dev") == []
+    for environment in ("staging", "production"):
+        errors = validate_release_admission(manifest, environment=environment)
+        assert any("target_environment" in error for error in errors), (
+            f"a dev first-release admission must not admit {environment}"
+        )
+
+
+@pytest.mark.parametrize("environment", ["staging", "production", "prod", ""])
+def test_only_dev_bootstraps_through_the_first_release_branch(environment: str) -> None:
+    """Staging is created per release and production is promoted into.
+
+    Neither reaches a first deploy without an approved predecessor to bind, so
+    neither has any use for this branch -- and letting them carry it would turn
+    a bootstrap allowance into a way to deploy to production with no rollback.
+    """
+
+    recovery = first_release_recovery(target_environment=environment)
+    errors = initial_release_recovery_errors(
+        recovery,
+        candidate_sha=FIRST_RELEASE_SHA,
+        components=FIRST_RELEASE_COMPONENTS,
+    )
+
+    assert any("target_environment" in error for error in errors)
+
+
+def test_a_manifest_may_not_carry_both_a_rollback_and_a_first_release_claim() -> None:
+    """They are alternatives. A release with a predecessor binds it."""
+
+    manifest = first_release_manifest()
+    manifest["rollback_release"] = valid_rollback_release(FIRST_RELEASE_SHA)
+    reseal(manifest)
+
+    errors = validate_manifest(manifest)
+    assert any("must not accompany" in error for error in errors)
+    assert any(
+        "both" in error
+        for error in validate_release_admission(manifest, environment="dev")
+    )
+
+
+def test_a_first_release_admission_lifted_onto_another_candidate_fails_closed() -> None:
+    """The most useful forgery in the pipeline, if it were copyable.
+
+    "This environment holds no approved release" is true exactly once per
+    environment. An unbound record of it would admit every later release
+    without a rollback binding, so the digest covers the candidate SHA.
+    """
+
+    stolen = first_release_recovery(candidate_sha=FIRST_RELEASE_SHA)
+    manifest = first_release_manifest(candidate_sha="7" * 40, recovery=stolen)
+
+    errors = validate_manifest(manifest)
+    assert any("binding_digest is not bound" in error for error in errors)
+
+
+def test_a_first_release_admission_does_not_survive_a_rebuild() -> None:
+    """Rebuilt images are different artifacts, so the binding must not carry."""
+
+    manifest = first_release_manifest()
+    manifest["components"] = {
+        name: {"image": component["image"].replace("1" * 64, "9" * 64)}
+        for name, component in FIRST_RELEASE_COMPONENTS.items()
+    }
+    reseal(manifest)
+
+    assert any(
+        "binding_digest is not bound" in error for error in validate_manifest(manifest)
+    )
+
+
+@pytest.mark.parametrize("field", ["exists", "serving_traffic"])
+def test_a_target_that_still_holds_a_release_is_not_a_first_release(field: str) -> None:
+    """The readback is the whole basis of the branch, so it must be empty."""
+
+    readback = empty_target_readback()
+    readback["targets"][0][field] = True
+    recovery = first_release_recovery(readback=readback)
+
+    errors = initial_release_recovery_errors(
+        recovery,
+        candidate_sha=FIRST_RELEASE_SHA,
+        components=FIRST_RELEASE_COMPONENTS,
+    )
+    assert any(field in error for error in errors)
+    assert any("prior_release_absent" in error for error in errors)
+
+
+def test_a_partial_readback_does_not_prove_an_empty_environment() -> None:
+    """Checking two services says nothing about the jobs beside them."""
+
+    readback = empty_target_readback()
+    readback["targets"] = [
+        entry for entry in readback["targets"] if entry["component"] != "migration"
+    ]
+    recovery = first_release_recovery(readback=readback)
+
+    errors = initial_release_recovery_errors(
+        recovery,
+        candidate_sha=FIRST_RELEASE_SHA,
+        components=FIRST_RELEASE_COMPONENTS,
+    )
+    assert any("missing: migration" in error for error in errors)
+
+
+def test_the_record_may_not_redefine_what_recovery_a_first_release_can_do() -> None:
+    """A manifest that could name its own recovery could name a rollback."""
+
+    for mutation in (
+        {"recovery_method": "rollback-to-previous-release"},
+        {"recovery_actions": ["rollback-service-traffic"]},
+        {"rollback_target_available": True},
+    ):
+        recovery = first_release_recovery()
+        recovery.update(mutation)
+        errors = initial_release_recovery_errors(
+            recovery,
+            candidate_sha=FIRST_RELEASE_SHA,
+            components=FIRST_RELEASE_COMPONENTS,
+        )
+        assert errors, f"{mutation} must not be accepted"
+        assert any(key in error for key in mutation for error in errors)
+
+
+def test_prior_release_absent_must_agree_with_its_own_readback() -> None:
+    """A verdict field that can disagree with its evidence is not evidence."""
+
+    readback = empty_target_readback()
+    readback["targets"][0]["exists"] = True
+    recovery = first_release_recovery(readback=readback)
+    recovery["prior_release_absent"] = True
+
+    errors = initial_release_recovery_errors(
+        recovery,
+        candidate_sha=FIRST_RELEASE_SHA,
+        components=FIRST_RELEASE_COMPONENTS,
+    )
+    assert any("does not match its own absence_readback" in error for error in errors)
+
+
+def test_a_declared_probe_command_is_not_a_readback() -> None:
+    """`probe_command` is a contract with one implementation, not free text."""
+
+    readback = empty_target_readback(probe_command="looked at the console, it was empty")
+    recovery = first_release_recovery(readback=readback)
+
+    errors = initial_release_recovery_errors(
+        recovery,
+        candidate_sha=FIRST_RELEASE_SHA,
+        components=FIRST_RELEASE_COMPONENTS,
+    )
+    assert any("probe_command" in error for error in errors)
+
+
+def test_a_field_the_binding_digest_does_not_cover_is_refused() -> None:
+    """Otherwise the readback would be a place to smuggle unbound claims."""
+
+    readback = empty_target_readback()
+    readback["binding_digest"] = "sha256:" + "0" * 64
+    # Sealed *with* the extra field present, so a digest mismatch is not what
+    # this test is measuring: the field is refused for being uncovered.
+    recovery = first_release_recovery(readback=readback)
+
+    errors = initial_release_recovery_errors(
+        recovery,
+        candidate_sha=FIRST_RELEASE_SHA,
+        components=FIRST_RELEASE_COMPONENTS,
+    )
+    assert any("binding digest does not cover" in error for error in errors)
+
+
+def test_an_enabled_source_keeps_the_rollback_and_snapshot_requirements() -> None:
+    """A release that ingests third-party data does not bootstrap this way."""
+
+    manifest = first_release_manifest()
+    manifest["external_sources_expected_enabled"] = ["weather_daily_snapshot"]
+    reseal(manifest)
+
+    errors = validate_manifest(manifest)
+    assert any(
+        "external_sources_expected_enabled is non-empty" in error for error in errors
+    )
+
+
+def test_a_v1_manifest_carries_no_first_release_admission() -> None:
+    """The bound record is a v2 construct; v1 has nothing to check it against."""
+
+    manifest = first_release_manifest()
+    manifest["schema_version"] = 1
+    reseal(manifest)
+
+    assert any(
+        "requires schema_version 2" in error for error in validate_manifest(manifest)
+    )
+
+
+def test_a_second_release_binds_the_first_one_as_its_rollback_target() -> None:
+    """The branch opens once and closes behind itself.
+
+    The first release is an ordinary approved release afterwards, so the second
+    release binds it the usual way -- which is what keeps this a bootstrap
+    rather than a standing exemption.
+    """
+
+    first = first_release_manifest()
+
+    assert (
+        validate_rollback_manifest(
+            first,
+            current_candidate_sha="8" * 40,
+            current_release_id="odp-second-001",
+        )
+        == []
+    )
+    binding = extract_rollback_release_binding(first)
+    assert binding["candidate_sha"] == FIRST_RELEASE_SHA
+    assert binding["manifest_digest"] == first["manifest_digest"]
+    assert "initial_release_recovery" not in binding
