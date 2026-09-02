@@ -5,7 +5,8 @@ admission 語意。
 
 - 任務狀態：實作完成，等待正式 review submission
 - Owner：Claude2 · Reviewer：Codex2（第二次 reopen 後由 Codex 移交）
-- 量測 code head：`f7a1c7143764f2b1823373b113c4e8d5abc58b2a`
+- 量測 code head：`2d111ee3a777adf8cc3a6292a19ff61a521ee863`（本 branch 最後一個含
+  code 變更的 commit；其後只有一個 evidence commit，僅更新本目錄的兩個檔案）
 - base advance：merge commit `9f59424740fd606f47041a2df23d21c76ab12faa`，包含 `origin/dev@a5d85428597ff196973105ca68ca7e042dd804e1`
 
 ## 1. 問題
@@ -158,6 +159,51 @@ posture attestation 不能取代它。
 sources-off release 若已有 masked snapshot，也維持既有 snapshot 路徑，不會改寫成
 attestation。
 
+## 4.1 build→deploy 的 manifest 傳遞（第三次 reopen 的修正）
+
+前一版把 candidate release manifest 留在 build 階段的 artifact 裡就結束了。deploy
+階段沒有取回它，`check_runtime_admission.py` 也沒有收到 `--manifest`，於是它退回
+預設值 `docs/evidence/gates/RELEASE_MANIFEST.json`——**deploy checkout 內 committed
+的那一份**。
+
+這條路徑上的斷鏈很具體：`build` 與 `deploy` 是兩次分開的 dispatch（`admission` 的
+條件是 `needs.build.result == 'skipped'`），所以 deploy 的 checkout 永遠只有 release
+SHA 上 committed 的 manifest，不可能是這次 build 產出的那一份。結果是 build 剛推導
+出來的 sources-off attestation、component image digests 與 `manifest_digest` 全部
+**不會被 admission 驗到**；要改變 admission 看到的內容，只能在一個已經不可變的
+release SHA 上 commit 另一份 manifest。acceptance 因此實際上做不完。
+
+修法是把 manifest 當成 artifact 傳遞，而不是當成兩邊共用的 checkout 檔案：
+
+| 環節 | 內容 |
+|---|---|
+| dispatch input `manifest_run_id` | 產出這份 manifest 的 build phase workflow run id |
+| dispatch input `manifest_digest` | Supervisor lease 當初簽發時綁定的 `sha256:...` |
+| `permissions` | 多一個 `actions: read`——跨 run 讀 artifact 所需，且只有讀 |
+| admission 的 download 步驟 | `actions/download-artifact@v4` 以 `run-id` 取回 `runtime-release-manifest-<release_sha>`，名稱與 build 階段 upload 的完全相同 |
+| admission 的 binding 步驟 | 用 `release_manifest.py --structure-only --expected-sha --expected-digest` 證明取回的 bytes 雜湊等於 lease 指名的 digest，且記的是這個 candidate SHA |
+| admission 本身 | `--manifest <下載路徑> --manifest-digest <input> --require-manifest-digest` |
+
+兩個座標都不被單獨信任。`manifest_run_id` 只決定去哪裡拿，拿回來的東西要通過
+digest 與 candidate SHA 比對才算數；把它指向別的 build，取回的 manifest 雖然自身
+結構完全自洽，仍會因為 digest 不符而 fail closed，且 lease 不會被消費。
+`--require-manifest-digest` 則是關掉退路的那一道：沒有它，少傳 digest 會讓 admission
+安靜地接受路徑解析到的任何 manifest，也就是這次要移除的 committed-file fallback。
+
+`check_release_phase.py` 把這兩個座標納入既有的入場形狀檢查：deploy 缺任一個、
+或形狀不對（run id 非正整數、digest 非 `sha256:<64 位小寫十六進位>`）一律拒絕；
+build 階段**收到**任一個也拒絕——build 是產生 manifest 的一方，接受既有座標等同讓
+一次 dispatch 宣稱自己即將 build 的產出已經被授權。收據新增 `manifest_handoff`
+欄位記錄 run id 與 digest；兩者都是稽核值，不是 secret。
+
+admission 收據也新增 `manifest_transport`，記錄實際讀取的 manifest 路徑、被要求
+比對的 digest，以及 digest binding 是否為強制。沒有這一段，稽核無法分辨一次
+admission 驗的是傳遞過來的 artifact 還是退回了 committed 檔案。
+
+座標一律來自 dispatch input，不接受 `vars.*` fallback：repository variable 在 build
+與消費它的 deploy 之間是可以被改的，讓 manifest 的選擇取決於 lease 簽發後才編輯的
+設定，等於把綁定重新打開。這一點也被測試釘住。
+
 ## 5. Single-path 保證
 
 - 沒有新增 workflow：仍是 `.github/workflows/deploy-dev.yml` 一個 Runtime Release。
@@ -166,9 +212,13 @@ attestation。
   `ODP-DEV-ROLLOUT-001` 的 provider-off 稽核報告與 runtime provider registry
   雙向比對，避免與現有清單漂移。
 - 沒有新增 deployment entrypoint：只改既有 build handoff 與 manifest verifier。
-- workflow 只多一個 `external_sources_enabled` dispatch input，用途是宣告
-  「本次預期**啟用**哪些來源」（因而讓 masked snapshot 成為必要）；
-  sources-off 本身沒有輸入管道。
+- workflow 多三個 dispatch input，都不是新的授權管道：
+  `external_sources_enabled` 宣告「本次預期**啟用**哪些來源」（因而讓 masked
+  snapshot 成為必要）；`manifest_run_id` 與 `manifest_digest` 指名要取回哪一份
+  已經存在的 build artifact，而不是描述它的內容。sources-off posture 本身仍然
+  沒有任何輸入管道。
+- 沒有新增 artifact store：manifest 走的是 build 階段既有的
+  `runtime-release-manifest-<sha>` upload，deploy 只是把它取回來。
 
 ## 6. 變更檔案
 
@@ -179,34 +229,41 @@ attestation。
 | `delivery_toolchain/release/release_receipts.py` | 將 probe receipt 納入既有 literal artifact allowlist |
 | `delivery_toolchain/release/check_release_environment.py` | deploy environment 必須解析 VPC connector 與 egress，避免空值退回 public path |
 | `product_ops/deployment/deploy_cloud_run_waji.sh` | sources-off 強制 connector、`ALL_TRAFFIC`，並在 promotion 前執行 public-egress probe、寫入 secret-free receipt；probe 相關的 python 一律走 `run_locked_python` |
-| `.github/workflows/deploy-dev.yml` | `external_sources_enabled` input、`--external-source` 接線與 probe receipt allowlist |
+| `.github/workflows/deploy-dev.yml` | `external_sources_enabled` input、`--external-source` 接線與 probe receipt allowlist；新增 `manifest_run_id`／`manifest_digest` input、`actions: read`、manifest artifact download 與 digest binding 步驟（§4.1） |
+| `delivery_toolchain/release/check_release_phase.py` | deploy 必須指名 manifest run id 與 digest，build 收到即拒；收據新增 `manifest_handoff`（§4.1） |
+| `delivery_toolchain/release/check_runtime_admission.py` | `--manifest-digest`／`--require-manifest-digest`，把傳遞過來的 manifest 綁到 lease 指名的 digest；收據新增 `manifest_transport`（§4.1） |
+| `tests/release/test_release_phase_precheck.py` | 12 個 focused 正／負向測試：manifest 座標的缺漏、形狀與階段歸屬 |
 | `tests/release/test_release_manifest.py` | 20 個 focused 正／負向測試；registry 對照改為證明形狀判斷與 runtime registry 等價且歸屬唯一 |
 | `tests/release/test_build_release_handoff.py` | 12 個 focused 正／負向測試 |
-| `tests/ops/test_deploy_workflow_contract.py` | 斷言 posture 沒有 dispatch 管道 |
+| `tests/ops/test_deploy_workflow_contract.py` | 斷言 posture 沒有 dispatch 管道；6 個 focused 測試釘住 manifest artifact 的受控傳遞與 admission binding（§4.1） |
+| `tests/release/test_runtime_admission.py` | 既有 fixture 補 `object_generation`；6 個 focused 正／負向測試：digest 相符放行、他次 build 的 manifest 被拒且 lease 未消費、竄改 bytes 被拒、缺 digest 拒絕執行、digest 形狀錯誤在觸碰 lease state 前被拒、收據記錄實際讀取路徑 |
 | `tests/ops/test_cloud_run_live_deployment.py` | resolver 改釘「一份實作」而非 caller 數；補 sources-off deploy 的 VPC/manifest fixture；把 `python3 -c` 一併關上 |
 | `tests/ops/test_cloud_run_job_entrypoint.py` | probe 只接受明確 network-policy errno 的 focused 測試 |
 | `product_ops/deployment/cloud_run_job_entrypoint.py` | `public-egress-probe` 子命令與 secret-free runtime receipt |
 | `tests/release/test_release_environment_precheck.py` | deploy environment 必須解析 VPC connector/egress |
-| `tests/release/test_release_manifest_cli.py`、`tests/release/test_runtime_admission.py` | 既有 fixture 補上 `object_generation` |
+| `tests/release/test_release_manifest_cli.py` | 既有 fixture 補上 `object_generation` |
 | `docs/evidence/runtime/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001/verify_build_handoff_wiring.py` | 前一個 task 的 evidence 驗證腳本：`object_generation` 成為必要欄位後，fixture 必須跟著補，否則該腳本會失敗 |
 
 ## 7. 驗證
 
 見 [`verification-receipt.json`](verification-receipt.json)。全部在 code head
-`f7a1c714` 量測，收據不含任何 secret 值。
-
-第二次 reviewer reopen 指出的 9 個 product CI failure 已逐一量測為綠：
+`2d111ee3` 量測，收據不含任何 secret 值。
 
 | 量測 | exit | 秒 |
 |---|---|---|
-| task 指定 focused selection（255 tests） | 0 | 12.27 |
-| `tests/architecture/test_external_data_boundary.py`（原本紅 6 個） | 0 | 58.45 |
-| `tests/ops/test_cloud_run_live_deployment.py`（原本紅 3 個） | 0 | 51.09 |
-| runtime probe／receipt focused tests | 0 | 5.16 |
-| CI orchestrator job 測試範圍 | 0 | 29.41 |
-| `check_code_boundaries.py` | 0 | 6.60 |
-| ruff（orchestrator 與 product 兩個 job 的範圍） | 0 | 0.11／0.09 |
+| task 指定 focused selection（271 tests） | 0 | 13.59 |
+| `tests/release/test_release_phase_precheck.py`（36 tests，含新契約） | 0 | 4.69 |
+| `tests/architecture/test_external_data_boundary.py`（reopen #2 原本紅 6 個） | 0 | 59.07 |
+| `tests/ops/test_cloud_run_live_deployment.py`（reopen #2 原本紅 3 個） | 0 | 51.37 |
+| runtime probe／receipt focused tests | 0 | 5.23 |
+| CI orchestrator job 測試範圍 | 0 | 29.32 |
+| `check_code_boundaries.py` | 0 | 6.80 |
+| ruff（orchestrator 與 product 兩個 job 的範圍） | 0 | 0.07／0.10 |
 | `bash -n` deploy entrypoint | 0 | 0.01 |
+
+本輪 product-scope ruff 的第一次量測（在 `75181a31`）是 exit 1：新測試的一行
+assertion 帶了沒有 placeholder 的 f-string prefix（F541）。修正後另立 commit
+`2d111ee3`，上表是在 `2d111ee3` 的結果——不是同一個 head 的重跑。
 
 **本機沒有跑完的**：完整 product suite（`pytest ... tests modules apps shared
 models -n auto`）在這台機器上 25 分鐘只跑到 8%，估計要數小時，因此中止；依
