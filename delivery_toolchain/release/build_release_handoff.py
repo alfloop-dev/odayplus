@@ -49,12 +49,14 @@ if str(ROOT) not in sys.path:
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
     EXTERNAL_SOURCE_INVENTORY,
     IMAGE_DIGEST_PATTERN,
+    INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS,
     SOURCE_EGRESS_DENIED,
     SOURCE_STATUS_DISABLED,
     SOURCES_OFF_CLOUD_RUN_EGRESS,
     SOURCES_OFF_PROVIDER_MODE,
     SOURCES_OFF_RUNTIME_PROBE_RECEIPT,
     _sources_off_egress_contract_errors,
+    build_initial_release_recovery,
     build_release_manifest,
     build_sources_off_attestation,
     build_sources_off_egress_evidence,
@@ -63,6 +65,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     compute_source_policy_digest,
     env_var_belongs_to_source,
     extract_rollback_release_binding,
+    initial_release_recovery_errors,
     is_exact_sha,
     load_manifest,
     sources_off_attestation_errors,
@@ -310,6 +313,8 @@ def build_handoff(
     data_snapshot: dict[str, Any] | None = None,
     rollback_manifest: dict[str, Any] | str | Path | None = None,
     rollback_release: dict[str, Any] | str | Path | None = None,
+    initial_release_readback: dict[str, Any] | str | Path | None = None,
+    target_environment: str | None = None,
     release_id: str | None = None,
     created_at: str | None = None,
     created_by_workflow: str | None = None,
@@ -422,6 +427,88 @@ def build_handoff(
                 "shares_image_with": source,
             }
 
+    # The one branch that admits a release with no predecessor to bind. It is
+    # available only against a *read back* empty deploy target, only for the
+    # environments the toolchain bootstraps this way, and only for a release
+    # that expects no enabled external source. Everything else keeps the
+    # unchanged rollback binding requirement.
+    initial_recovery: dict[str, Any] | None = None
+    if initial_release_readback is not None:
+        if rollback_source is not None:
+            errors.append(
+                "initial_release_readback 與 rollback manifest（CLI: "
+                "--initial-release-readback 與 --rollback-manifest／"
+                "--rollback-release-file）不可同時指定；有上一核准 release 可綁就綁它，"
+                "這裡不會替你選一條"
+            )
+        readback: dict[str, Any] | None = None
+        if isinstance(initial_release_readback, dict):
+            readback = initial_release_readback
+        elif isinstance(initial_release_readback, (str, Path)):
+            raw_str = str(initial_release_readback).strip()
+            if REMOTE_URI_PATTERN.match(raw_str):
+                errors.append(
+                    f"{raw_str} 是遠端 URI，不是本機路徑；initial-release readback 只接受 "
+                    "build workspace 內、由 probe_release_target_absence.py 寫出的檔案。"
+                )
+            elif raw_str.startswith("{") and raw_str.endswith("}"):
+                errors.append(
+                    "initial-release readback 不接受 inline JSON；它必須是這次 build "
+                    "真的對 target 讀回後寫下的 receipt 檔案，不是手打的一段宣告。"
+                )
+            else:
+                try:
+                    readback = json.loads(Path(raw_str).read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError) as exc:
+                    errors.append(f"無法讀取 initial-release readback {raw_str}：{exc}")
+            if readback is not None and not isinstance(readback, dict):
+                errors.append("initial-release readback 必須是 JSON object。")
+                readback = None
+        else:
+            errors.append("initial-release readback 必須是 readback dict 或檔案路徑。")
+
+        eligible = True
+        if schema_version < 2:
+            eligible = False
+            errors.append(
+                "initial-release recovery 需要 schema v2；v1 manifest 沒有可綁定的 "
+                "initial-release admission。"
+            )
+        if target_environment not in INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS:
+            eligible = False
+            errors.append(
+                "initial-release recovery 只適用於 "
+                f"{list(INITIAL_RELEASE_ELIGIBLE_ENVIRONMENTS)}，"
+                f"不是 {target_environment!r}；staging 與 production 仍必須綁定上一核准 "
+                "release。"
+            )
+        if enabled_sources:
+            eligible = False
+            errors.append(
+                "啟用外部資料來源的 release 不得走 initial-release recovery；"
+                "它必須綁定本次核准的 masked snapshot 與上一核准 release。"
+            )
+        if readback is not None and manifest_components and eligible:
+            candidate_recovery = build_initial_release_recovery(
+                candidate_sha=release_sha,
+                components=manifest_components,
+                target_environment=target_environment,
+                absence_readback=readback,
+            )
+            recovery_errors = initial_release_recovery_errors(
+                candidate_recovery,
+                candidate_sha=release_sha,
+                components=manifest_components,
+                environment=target_environment,
+            )
+            if recovery_errors:
+                errors.extend(
+                    "initial-release recovery 不符合放行條件：" + error
+                    for error in recovery_errors
+                )
+            else:
+                initial_recovery = candidate_recovery
+
     sources_off_attestation: dict[str, Any] | None = None
     if schema_version >= 2:
         if enabled_sources:
@@ -483,9 +570,11 @@ def build_handoff(
                     "請改為綁定本次核准的 masked snapshot。"
                 )
 
-        if resolved_rollback_release is None:
+        if resolved_rollback_release is None and initial_recovery is None:
             errors.append(
                 "缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。"
+                "若這是該 target 的首次部署，請改以 --initial-release-readback 提供對 target "
+                "的讀回證據；那條分支不接受手填 rollback binding。"
             )
 
     if errors:
@@ -505,6 +594,7 @@ def build_handoff(
         data_snapshot=data_snapshot,
         sources_off_attestation=sources_off_attestation,
         rollback_release=resolved_rollback_release,
+        initial_release_recovery=initial_recovery,
         external_sources_expected_enabled=enabled_sources,
         release_status="ready",
         schema_version=schema_version,
@@ -514,7 +604,11 @@ def build_handoff(
     # 自我驗證：不把一份自己都驗不過的 manifest 交給 admission。
     self_check = validate_manifest(manifest, expected_candidate_sha=release_sha)
     self_check.extend(
-        error for error in validate_release_admission(manifest) if error not in self_check
+        error
+        for error in validate_release_admission(
+            manifest, environment=target_environment
+        )
+        if error not in self_check
     )
     if self_check:
         raise HandoffError(
@@ -565,6 +659,24 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--rollback-release-file", type=Path, default=None)
+    parser.add_argument(
+        "--initial-release-readback",
+        type=Path,
+        default=None,
+        help=(
+            "Absence readback receipt written by probe_release_target_absence.py "
+            "for a target that holds no approved release. Mutually exclusive with "
+            "the rollback manifest options."
+        ),
+    )
+    parser.add_argument(
+        "--target-environment",
+        default=None,
+        help=(
+            "Environment this release is built for. Required by, and only used "
+            "by, the initial-release recovery admission."
+        ),
+    )
     parser.add_argument("--images-output", type=Path, required=True)
     parser.add_argument("--manifest-output", type=Path, required=True)
     parser.add_argument(
@@ -672,6 +784,8 @@ def main(argv: list[str] | None = None) -> int:
             # substitution that build_handoff refuses for the snapshot.
             rollback_manifest=args.rollback_manifest,
             rollback_release=args.rollback_release_file,
+            initial_release_readback=args.initial_release_readback,
+            target_environment=args.target_environment,
             release_id=args.release_id,
             created_at=args.created_at,
             created_by_workflow=args.created_by_workflow,
