@@ -1,0 +1,92 @@
+{
+  "_comment": "Bounded quality/confidence scores that default to their maximum, predating check_measurement_defaults.py. Every entry is a place where 'nobody supplied this' currently reads as 'measured, and perfect'. Each needs an owner and a reason; the reason should say what actually happens downstream, not that it is pre-existing. Removing an entry means the field no longer assumes perfect data. New violations are refused rather than exempted by default.",
+  "_severity_note": "The two HeatZoneV3Input entries are the sharpest: check_support_and_abstention abstains when confidence < 0.25 or coverage_ratio < 0.50, so these defaults make that gate unreachable for a zone whose coverage was never measured. They should be fixed before the rest.",
+  "exemptions": [
+    {
+      "field": "modules/heatzone/v3/contract.py::HeatZoneV3Input.coverage_ratio",
+      "owner": "Antigravity6",
+      "reason": "check_support_and_abstention abstains below 0.50. A zone built without a coverage figure defaults to 1.0 and can never reach the abstention gate that exists to fail closed outside platform support. Highest-severity entry in this file."
+    },
+    {
+      "field": "modules/heatzone/v3/contract.py::HeatZoneV3Input.confidence",
+      "owner": "Antigravity6",
+      "reason": "check_support_and_abstention abstains below 0.25, and the composite score multiplies by confidence. An unmeasured zone scores as a fully trusted one."
+    },
+    {
+      "field": "modules/forecastops/domain/forecasting.py::StoreDayObservation.data_quality_score",
+      "owner": "Antigravity2",
+      "reason": "A store-day whose quality score never arrives is weighted as flawless. The identical field was written into the heat zone absorption module during the FR verification work and removed in review (fb75a142) for exactly this reason; this one is still live."
+    },
+    {
+      "field": "modules/heatzone/domain/scoring.py::HeatZoneFeatureInput.average_confidence",
+      "owner": "Antigravity6",
+      "reason": "v2 heat zone scoring multiplies confidence into the composite and suppresses below a floor; the default hides missing confidence from both."
+    },
+    {
+      "field": "modules/heatzone/domain/scoring.py::HeatZoneFeatureInput.data_quality_score",
+      "owner": "Antigravity6",
+      "reason": "Same shape as the v3 entry above; carried into the v2 scoring path."
+    },
+    {
+      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.average_confidence",
+      "owner": "Antigravity5",
+      "reason": "A candidate site with no confidence data is scored as a fully evidenced one, and the score feeds an expansion decision."
+    },
+    {
+      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.data_quality_score",
+      "owner": "Antigravity5",
+      "reason": "Same shape; a site scored from partial data is indistinguishable from one scored from complete data."
+    },
+    {
+      "field": "modules/learninghub/domain/dataset_snapshot.py::ModelReadyRecord.data_quality_score",
+      "owner": "Codex2",
+      "reason": "Records entering a training snapshot without a quality score are treated as clean. Related to ODP-FR-LH-004: the blocked-feature gate is also unreachable through the API, so neither check stops a low-quality record reaching training."
+    },
+    {
+      "field": "modules/learninghub/domain/dataset_snapshot.py::ModelReadyRecord.confidence",
+      "owner": "Codex2",
+      "reason": "Same record, same effect on the confidence dimension."
+    },
+    {
+      "field": "modules/avm/domain/valuation.py::ValuationInput.quality_score",
+      "owner": "Antigravity4",
+      "reason": "A valuation built from incomplete inputs claims the same input quality as one built from complete inputs, and the valuation card is shown to a buyer."
+    },
+    {
+      "field": "shared/domain/models.py::Poi.confidence",
+      "owner": "Claude2",
+      "reason": "Shared canonical model. A POI whose provider gave no confidence is treated as certain, and POI counts feed heat zone demand."
+    },
+    {
+      "field": "shared/domain/models.py::CompetitorStore.confidence",
+      "owner": "Claude2",
+      "reason": "Shared canonical model. Competitor capacity with no confidence is treated as certain, and it feeds the competition gap term."
+    },
+    {
+      "field": "shared/domain/models.py::Listing.confidence",
+      "owner": "Claude2",
+      "reason": "Shared canonical model. Relates to ODP-BR-LST-001: the promotion path was substituting a confidence literal until PR #1091; the dataclass default is the same assumption one layer down."
+    },
+    {
+      "field": "shared/domain/models.py::Prediction.confidence",
+      "owner": "Claude2",
+      "reason": "A prediction stored without a confidence figure claims perfect confidence. This is the one most likely to reach an operator's screen unqualified."
+    },
+    {
+      "field": "shared/domain/models.py::HeatZoneScore.confidence",
+      "owner": "Claude2",
+      "reason": "The persisted score record; same assumption as the input types above, retained after scoring."
+    },
+    {
+      "field": "shared/domain/models.py::DataSnapshot.quality_score",
+      "owner": "Claude2",
+      "reason": "A snapshot whose quality was never assessed is recorded as flawless, and downstream consumers resolve quality through this record."
+    },
+    {
+      "field": "modules/forecastops/domain/forecasting.py::ForecastOutput.data_quality_score",
+      "owner": "Antigravity2",
+      "reason": "Arrived with ODP-FORECAST-ALERT-POLICY-001 (fa01d4ba) while this check was being written, and the check refused it on its first contact with new code. Unlike the others it is read -- production_model.py:148 takes min() across observations -- which makes it worse, not better: forecasting.py:201 uses _first_present(..., default=1.0), so an observation deserialised without a quality field is scored perfect and then folded into that minimum. Needs its own fix deciding what a forecast should do when input quality is unknown; exempted here to record the date and the cause, not to settle it."
+    }
+  ],
+  "_owner_note": "Owners are grouped by module so fields that have to be decided together are not split. shared/domain/models.py holds six canonical models (Poi, CompetitorStore, Listing, Prediction, HeatZoneScore, DataSnapshot) and goes to one owner for that reason: whatever absence means for a Listing's confidence it should mean for a Prediction's, and deciding them separately is how the next vocabulary fork starts. The two heatzone entries are the ones to fix first -- they are what put check_support_and_abstention out of reach for a zone with no coverage data."
+}

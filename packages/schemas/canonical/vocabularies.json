@@ -1,0 +1,58 @@
+{
+  "_comment": "Cross-layer vocabularies with a single owner. A concept that appears in a Python domain enum, a TypeScript wire contract and an API payload has three lifecycles and no owner, and forks silently -- each fork is locally reasonable and nothing detects that the same concept now has two definitions. These are generated into shared/governance/vocabularies.py and checked against packages/schemas/canonical/index.ts, and check_vocabularies.py refuses a second definition elsewhere in the tree.",
+  "_generated_python": "shared/governance/vocabularies.py",
+  "_canonical_typescript": "packages/schemas/canonical/index.ts",
+  "vocabularies": [
+    {
+      "name": "EvidenceLevel",
+      "authority": "ADR-0004 / ODP-ML-05 §5",
+      "docstring": "Causal evidence ladder.\n\nADR-0004 D3: absence is not a tier. A value of ``None`` means the evidence was\nnever assessed, and it must stay distinguishable from ``L0``, which is a\nmeasurement -- anecdotal, but taken. No member of this enum may be used as a\ndefault for an unassessed claim.\n\nAssessability is orthogonal and travels alongside as a separate boolean; see\nmodules/adlift/domain/incrementality.py, where ``assessable`` is a field of its\nown rather than a level.",
+      "members": [
+        {"name": "L0_ANECDOTAL", "value": "L0", "comment": "anecdotal: treatment observed, nothing to compare against"},
+        {"name": "L1_BEFORE_AFTER", "value": "L1", "comment": "before/after, no control group"},
+        {"name": "L2_MATCHED_DESCRIPTIVE", "value": "L2", "comment": "matched control but pre-trend/balance not clean"},
+        {"name": "L3_DID_VALIDATED", "value": "L3", "comment": "control + pre-trend + balance checks pass"},
+        {"name": "L4_RANDOMIZED", "value": "L4", "comment": "experimental / near-random"},
+        {"name": "L5_POLICY_READY", "value": "L5", "comment": "replicated, policy ready"}
+      ],
+      "typescript_type": "EvidenceLevel",
+      "known_forks": [
+        {
+          "location": "packages/domain-types/src/frontend-contracts.ts",
+          "definition": "\"high\" | \"medium\" | \"low\" | \"insufficient\"",
+          "note": "InterventionTimelineContract and AdLiftReportCardContract, whose Python enums are both this ladder. No conversion exists anywhere in the tree, so the contract is stale rather than a deliberate narrowing. ODP-EVIDENCE-LEVEL-ALIGNMENT-001 aligned the Python enums and the canonical TS type and did not reach here."
+        },
+        {
+          "location": "apps/api/app/routes/priceops.py, apps/api/app/routes/operator_modules/growth.py",
+          "definition": "evidence_level: str = \"medium\"",
+          "note": "A free string with a default, which is also an ADR-0004 D3 violation: a request that says nothing about evidence produces a record claiming medium."
+        }
+      ]
+    },
+    {
+      "name": "JobStatus",
+      "authority": "ODP-FR-SHARED-001",
+      "docstring": "Terminal and in-flight states of a long-running job.\n\nPARTIAL is the state a job reaches when some of its work succeeded and some did\nnot. Without it such a job has to be recorded as either succeeded or failed,\nand both are wrong in a way the caller cannot see.",
+      "members": [
+        {"name": "QUEUED", "value": "queued", "comment": "accepted, not yet started"},
+        {"name": "RUNNING", "value": "running", "comment": "in flight"},
+        {"name": "SUCCEEDED", "value": "succeeded", "comment": "all work completed"},
+        {"name": "FAILED", "value": "failed", "comment": "no work completed"},
+        {"name": "CANCELLED", "value": "cancelled", "comment": "stopped before completion, deliberately"},
+        {"name": "PARTIAL", "value": "partial", "comment": "some work completed and some did not; neither succeeded nor failed"}
+      ],
+      "known_forks": [
+        {
+          "location": "apps/api/app/routes/listings.py",
+          "definition": "QUEUED / RUNNING / RETRYING / SUCCEEDED / FAILED / CANCELLED / DEAD_LETTER (uppercase)",
+          "note": "A second job-status vocabulary: different casing, two extra states, and also missing PARTIAL. RETRYING and DEAD_LETTER are queue mechanics rather than job outcomes, which is arguably a separate concept that should be named as one."
+        },
+        {
+          "location": "shared/jobs/queue.py",
+          "definition": "QUEUED / RUNNING / SUCCEEDED / FAILED / CANCELLED (lowercase)",
+          "note": "The closest to canonical, missing only PARTIAL. Migrating it to the generated enum is the smaller of the two moves."
+        }
+      ]
+    }
+  ]
+}

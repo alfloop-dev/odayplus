@@ -34,6 +34,8 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
+from shared.governance.vocabularies import EvidenceLevel
+
 POLICY_VERSION = "intervention-lifecycle-policy-v1"
 FEATURE_VERSION = "intervention-feature-v1"
 MEASUREMENT_METHOD_DEFAULT = "panel_did"
@@ -131,17 +133,10 @@ class EvaluationMethod(StrEnum):
     RCT = "RCT"
 
 
-class EvidenceLevel(StrEnum):
-    """Evidence Level ladder (ODP-ML-05 §5)."""
-
-    L0_ANECDOTAL = "L0"
-    L1_BEFORE_AFTER = "L1"
-    L2_MATCHED_DESCRIPTIVE = "L2"
-    L3_DID_VALIDATED = "L3"
-    L4_RANDOMIZED = "L4"
-    L5_POLICY_READY = "L5"
-
-
+# Re-exported from the generated vocabulary so existing imports of
+# `modules.intervention.domain.lifecycle.EvidenceLevel` keep working. It was
+# previously declared here and again, identically, in
+# modules/adlift/domain/incrementality.py.
 _EVIDENCE_RANK: dict[EvidenceLevel, int] = {
     EvidenceLevel.L0_ANECDOTAL: 0,
     EvidenceLevel.L1_BEFORE_AFTER: 1,

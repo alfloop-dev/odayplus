@@ -113,6 +113,56 @@ def _install_pgcrypto_stub(pgserver_module) -> None:
         )
 
 
+def _install_uuid_ossp_stub(pgserver_module) -> None:
+    """Provide ``uuid_generate_v4()`` offline, and nothing else.
+
+    ``infra/db/migrations/000001_baseline_canonical_schema.sql`` and its
+    successors declare ``CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`` and then
+    use ``uuid_generate_v4()`` as a column default. The bundled ``pgserver``
+    build ships no contrib extensions, so those migrations could not apply here
+    at all -- which is why ``tests/integration/test_assisted_listing_postgresql_runtime.py``
+    was the one file in the live-marked set that could not run even locally.
+
+    ``uuid_generate_v4()`` and the core ``gen_random_uuid()`` both return a
+    random version-4 UUID, so aliasing one to the other preserves the semantics
+    exactly rather than approximating them.
+
+    The stub deliberately defines *only* v4. uuid-ossp also offers v1 (time and
+    MAC derived), v3 and v5 (name derived) -- none of which a random generator
+    can stand in for. Leaving them undefined means any future use fails with
+    "function does not exist" rather than silently returning a random UUID where
+    a deterministic one was meant. No migration uses them today; this keeps that
+    true by construction.
+    """
+    from pathlib import Path
+
+    install_root = Path(pgserver_module.__file__).resolve().parent / "pginstall"
+    ext_dir = install_root / "share" / "postgresql" / "extension"
+    if not ext_dir.is_dir():  # pragma: no cover - defensive
+        return
+    control = ext_dir / "uuid-ossp.control"
+    if not control.exists():
+        control.write_text(
+            "comment = 'uuid-ossp stub (v4 only, aliased to core gen_random_uuid)'\n"
+            "default_version = '1.1'\n"
+            "relocatable = true\n",
+            encoding="utf-8",
+        )
+    body = ext_dir / "uuid-ossp--1.1.sql"
+    if not body.exists():
+        body.write_text(
+            "-- uuid-ossp stub: version 4 only.\n"
+            "-- gen_random_uuid() is core in PostgreSQL 13+ and returns a v4 UUID,\n"
+            "-- so this alias is exact. v1/v3/v5 are intentionally absent: a random\n"
+            "-- generator cannot stand in for time- or name-derived UUIDs, and a\n"
+            "-- missing function is a louder failure than a wrong value.\n"
+            "CREATE FUNCTION uuid_generate_v4() RETURNS uuid\n"
+            "    AS 'SELECT gen_random_uuid()'\n"
+            "    LANGUAGE SQL VOLATILE;\n",
+            encoding="utf-8",
+        )
+
+
 @dataclass
 class IntakePgServer:
     """A running PostgreSQL 16 admin endpoint that can mint scratch databases."""
@@ -168,6 +218,7 @@ def intake_pg_server():
     import tempfile
 
     _install_pgcrypto_stub(pgserver)
+    _install_uuid_ossp_stub(pgserver)
     data_dir = tempfile.mkdtemp(prefix="intake-pg16-")
     server = pgserver.get_server(data_dir)
     host = re.search(r"host=([^&]+)", server.get_uri()).group(1)
