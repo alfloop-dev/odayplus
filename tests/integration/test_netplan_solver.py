@@ -1905,3 +1905,40 @@ def test_partial_update_scenario_preserves_omitted_stores() -> None:
     assert "store-002" in updated.options_by_entity
     assert "cand-new-99" in updated.options_by_entity
 
+
+def test_netplan_api_runtime_error_does_not_leak_raw_message(monkeypatch) -> None:
+    repository = InMemoryNetPlanRepository()
+    service = NetPlanService(repository=repository)
+    scenario = service.create_scenario(
+        tenant_id="tenant-1",
+        scenario_name="runtime-err-test",
+        planning_horizon="2026Q3",
+        existing_stores=_stores(),
+        candidate_sites=_sites(),
+        constraints=_constraints(),
+        correlation_id="corr-netplan-err-test",
+    )
+
+    correlation_id = "corr-netplan-err-test"
+    app = create_app(netplan_repository=repository)
+    client = TestClient(
+        app,
+        headers={**auth_headers(Role.EXECUTIVE), "X-Correlation-ID": correlation_id},
+    )
+
+    def _broken_solve(self, *args, **kwargs):
+        raise RuntimeError("secret_ortools_internal_pointer_0xdeadbeef_path=/root/secret")
+
+    monkeypatch.setattr(NetPlanService, "solve", _broken_solve)
+
+    response = client.post(
+        f"/api/v1/netplan/scenarios/{scenario.scenario_id}/solve",
+        json={"actor": "planner", "reason": "test solve error handling"},
+    )
+
+    assert response.status_code == 500
+    assert "secret_ortools_internal_pointer" not in response.text
+    assert correlation_id in response.text
+    assert "NetPlan execution failed" in response.json()["detail"]
+
+
