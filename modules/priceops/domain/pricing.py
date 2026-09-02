@@ -15,13 +15,24 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from solver.pricing.constraints import PRICING_POLICY_VERSION, ConstraintViolation, PriceConstraints
+from solver.pricing.constraints import (
+    PRICING_POLICY_ID,
+    PRICING_POLICY_KIND,
+    PRICING_POLICY_SEMVER,
+    PRICING_POLICY_VERSION,
+    ConstraintViolation,
+    PriceConstraints,
+    default_pricing_policy,
+)
 from solver.pricing.demand import SimulationResult, simulate_price
 from solver.pricing.optimizer import SOLVER_VERSION, OptimizationResult, optimize_price
 
 PRICEOPS_MODEL_VERSION = "priceops-elasticity-baseline-v1"
 PRICEOPS_FEATURE_VERSION = "pricing-action-view-v1"
 PRICEOPS_POLICY_VERSION = PRICING_POLICY_VERSION
+PRICEOPS_POLICY_ID = PRICING_POLICY_ID
+PRICEOPS_POLICY_KIND = PRICING_POLICY_KIND
+PRICEOPS_POLICY_SEMVER = PRICING_POLICY_SEMVER
 PRICEOPS_SOLVER_VERSION = SOLVER_VERSION
 
 # Default rollback trigger: a realised gross-margin loss of 5% or worse versus
@@ -116,6 +127,8 @@ class PriceElasticityEstimate:
 
     elasticity_value: float
     confidence: float
+    applicable_min_price: float | None = None
+    applicable_max_price: float | None = None
     horizon: str = "4week"
     model_version: str = PRICEOPS_MODEL_VERSION
     feature_version: str = PRICEOPS_FEATURE_VERSION
@@ -142,6 +155,8 @@ class PriceElasticityEstimate:
         return cls(
             elasticity_value=fit.elasticity,
             confidence=fit.confidence,
+            applicable_min_price=fit.applicable_min_price,
+            applicable_max_price=fit.applicable_max_price,
             horizon=horizon,
             prediction_origin_time=prediction_origin_time or datetime.now(UTC),
         )
@@ -150,11 +165,42 @@ class PriceElasticityEstimate:
         return {
             "elasticity_value": self.elasticity_value,
             "confidence": self.confidence,
+            "applicable_min_price": self.applicable_min_price,
+            "applicable_max_price": self.applicable_max_price,
             "horizon": self.horizon,
             "model_version": self.model_version,
             "feature_version": self.feature_version,
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
         }
+
+
+def _bounded_applicable_range(
+    constraints: PriceConstraints, elasticity: PriceElasticityEstimate
+) -> tuple[float | None, float | None]:
+    """Intersect the constraint applicable range with the elasticity's own range.
+
+    The elasticity estimate declares the price window it is defensible over.
+    Constraints may narrow that window further, but must never widen it: a
+    wider constraint range would let a candidate price sit outside the demand
+    curve's support while still reporting as interpolated and feasible. Where
+    the two windows are disjoint the intersection comes out inverted, which
+    ``validate_pricing_scenario`` and ``diagnose_infeasible`` already reject.
+    """
+    low = constraints.applicable_min_price
+    if elasticity.applicable_min_price is not None:
+        low = (
+            elasticity.applicable_min_price
+            if low is None
+            else max(low, elasticity.applicable_min_price)
+        )
+    high = constraints.applicable_max_price
+    if elasticity.applicable_max_price is not None:
+        high = (
+            elasticity.applicable_max_price
+            if high is None
+            else min(high, elasticity.applicable_max_price)
+        )
+    return low, high
 
 
 @dataclass(frozen=True)
@@ -181,6 +227,18 @@ class PricingPlanItem:
         source_snapshot_ids: tuple[str, ...] = (),
         item_id: str | None = None,
     ) -> PricingPlanItem:
+        applicable_min, applicable_max = _bounded_applicable_range(
+            constraints, elasticity
+        )
+        if (
+            applicable_min != constraints.applicable_min_price
+            or applicable_max != constraints.applicable_max_price
+        ):
+            constraints = replace(
+                constraints,
+                applicable_min_price=applicable_min,
+                applicable_max_price=applicable_max,
+            )
         return cls(
             item_id=item_id or f"pricing-plan-item-{uuid4()}",
             store_id=store_id,
@@ -431,6 +489,14 @@ def validate_pricing_scenario(
     if c.min_price is not None and c.max_price is not None and c.min_price > c.max_price:
         raise InvalidScenarioError(
             f"invalid bounds: min_price {c.min_price} > max_price {c.max_price}"
+        )
+    if (
+        c.applicable_min_price is not None
+        and c.applicable_max_price is not None
+        and c.applicable_min_price > c.applicable_max_price
+    ):
+        raise InvalidScenarioError(
+            f"invalid applicable bounds: applicable_min_price {c.applicable_min_price} > applicable_max_price {c.applicable_max_price}"
         )
     if not (0.0 <= c.margin_floor_ratio <= 1.0):
         raise InvalidScenarioError(
@@ -905,6 +971,8 @@ def simulate_item(item: PricingPlanItem) -> SimulationResult:
         unit_cost=item.constraints.unit_cost,
         elasticity=item.elasticity.elasticity_value,
         confidence=item.elasticity.confidence,
+        applicable_min_price=item.constraints.applicable_min_price,
+        applicable_max_price=item.constraints.applicable_max_price,
     )
 
 
@@ -939,6 +1007,8 @@ def simulate_candidate_scenario(
             unit_cost=item.constraints.unit_cost,
             elasticity=item.elasticity.elasticity_value,
             confidence=item.elasticity.confidence,
+            applicable_min_price=item.constraints.applicable_min_price,
+            applicable_max_price=item.constraints.applicable_max_price,
         )
 
         demand_change = round(candidate_sim.demand.p50 - baseline_sim.demand.p50, 4)
@@ -1083,6 +1153,9 @@ __all__ = [
     "DEFAULT_STOP_CONDITIONS",
     "PRICEOPS_FEATURE_VERSION",
     "PRICEOPS_MODEL_VERSION",
+    "PRICEOPS_POLICY_ID",
+    "PRICEOPS_POLICY_KIND",
+    "PRICEOPS_POLICY_SEMVER",
     "PRICEOPS_POLICY_VERSION",
     "PRICEOPS_SOLVER_VERSION",
     "VALID_TRANSITIONS",
@@ -1113,6 +1186,7 @@ __all__ = [
     "build_observation_window",
     "build_rollback_plan",
     "count_hard_violations",
+    "default_pricing_policy",
     "evaluate_effect",
     "optimize_item",
     "recommended_price_violations",

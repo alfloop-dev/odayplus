@@ -5538,6 +5538,28 @@
       },
       "PriceOpsPlanItemPayload": {
         "properties": {
+          "applicable_max_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicable Max Price"
+          },
+          "applicable_min_price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applicable Min Price"
+          },
           "baseline_demand": {
             "title": "Baseline Demand",
             "type": "number"
