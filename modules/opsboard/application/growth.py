@@ -143,7 +143,7 @@ def _judge_effectiveness(
         return "PENDING"
     if observed_lift <= 0:
         return "INEFFECTIVE"
-    if evidence_level in ("low", "L0", "L1", "L2", None) or observed_lift < target_lift:
+    if evidence_level in ("L0", "L1", "L2", None) or observed_lift < target_lift:
         return "INCONCLUSIVE"
     return "EFFECTIVE"
 
@@ -284,7 +284,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 2.0,
         "observedLift": 2.6,
-        "evidenceLevel": "high",
+        "evidenceLevel": "L3",
         "rationale": "對照組配對通過 pre-trend 檢定；調價後晚餐營收顯著高於基準。",
         "rollbackPlan": "回復價目表 pb-2026.06.19，30 分鐘內生效，觀察 48 小時。",
         "growthOutcome": None,
@@ -309,7 +309,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 3.0,
         "observedLift": -1.4,
-        "evidenceLevel": "medium",
+        "evidenceLevel": "L2",
         "rationale": "下調外送費後訂單量未提升，宵夜營收較基準下滑。",
         "rollbackPlan": "回復外送費結構 fs-2026.06.17，先 canary 12 小時再全量。",
         "growthOutcome": None,
@@ -333,7 +333,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 1.5,
         "observedLift": 0.6,
-        "evidenceLevel": "low",
+        "evidenceLevel": "L1",
         "rationale": "觀察期營收微幅上升但未達標，對照組樣本不足以判定因果。",
         "rollbackPlan": "回復加價包設定 cfg-2026.06.24；維持既有午餐主力價。",
         "growthOutcome": None,
@@ -357,7 +357,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 2.5,
         "observedLift": None,
-        "evidenceLevel": "medium",
+        "evidenceLevel": None,
         "rationale": "活動執行中，觀察窗尚未成熟，暫無成效判定。",
         "rollbackPlan": "停用加點推薦模組設定 cfg-2026.07.05。",
         "growthOutcome": None,
@@ -381,7 +381,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 2.0,
         "observedLift": None,
-        "evidenceLevel": "low",
+        "evidenceLevel": None,
         "rationale": "草稿：待補齊對照組與 pre-trend 檢定後送審。",
         "rollbackPlan": "草稿階段無執行，無需 rollback。",
         "growthOutcome": None,
@@ -564,7 +564,7 @@ class GrowthService:
                 a.get("status", "DRAFT"),
                 a.get("observedLift"),
                 float(a.get("targetLift") or 0),
-                a.get("evidenceLevel", "medium"),
+                a.get("evidenceLevel"),
             )
             == "EFFECTIVE"
         )
@@ -657,7 +657,7 @@ class GrowthService:
             "budget": budget,
             "targetLift": target_lift,
             "observedLift": None,
-            "evidenceLevel": "low",
+            "evidenceLevel": None,
             "rationale": rationale,
             "rollbackPlan": rollback_plan,
             "growthOutcome": None,

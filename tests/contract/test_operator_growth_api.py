@@ -357,3 +357,45 @@ def test_create_action_without_role_is_denied() -> None:
         },
     )
     assert resp.status_code in (401, 403), resp.text
+
+
+def test_growth_action_evidence_level_canonical_alignment() -> None:
+    client = _client()
+    # 1. Newly created draft has unrated evidenceLevel (None), not "low" or "medium"
+    draft = _create_draft(client, kind="offpeak", name="evidence-test-campaign")
+    fetched = client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()
+    assert fetched["evidenceLevel"] is None
+
+    # 2. Transition through lifecycle to OUTCOME_READY
+    approval = client.post(
+        f"{BASE}/actions/{draft['id']}/submit", json={}, headers=_headers()
+    ).json()["approval"]
+    client.post(
+        f"{BASE}/approvals/{approval['id']}/decision",
+        json={"decision": "approved"},
+        headers=_headers(),
+    )
+    for target in ("SCHEDULED", "RUNNING", "OBSERVING", "OUTCOME_READY"):
+        client.post(
+            f"{BASE}/actions/{draft['id']}/transition",
+            json={"targetStatus": target},
+            headers=_headers(),
+        )
+
+    # 3. Write outcome with canonical EvidenceLevel (e.g. L3)
+    resp = client.post(
+        f"{BASE}/actions/{draft['id']}/outcome",
+        json={
+            "outcome": "EFFECTIVE",
+            "requiredAction": "CLOSE",
+            "observedLift": 2.5,
+            "evidenceLevel": "L3",
+        },
+        headers=_headers(),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "CLOSED"
+
+    fetched_closed = client.get(f"{BASE}/actions/{draft['id']}", headers=WRITE_HEADERS).json()
+    assert fetched_closed["evidenceLevel"] == "L3"
+

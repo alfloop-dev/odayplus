@@ -1004,7 +1004,11 @@ function GrowthActionDetail({
   const gate = closeoutGate(currentItem);
   const stepIndex = STATUS_STEP[status] ?? 0;
   const evidenceRisk =
-    item.evidenceLevel === "low" ? "證據信心低，需補強對照組" : `證據信心 ${item.evidenceLevel}`;
+    item.evidenceLevel === null
+      ? "未評級"
+      : item.evidenceLevel === "L0" || item.evidenceLevel === "L1" || item.evidenceLevel === "L2"
+        ? `證據等級 ${item.evidenceLevel}（低於因果門檻 L3，需補強對照組）`
+        : `證據等級 ${item.evidenceLevel}`;
 
   return (
     <aside className={g.detailPanel} data-testid="growth-item-detail" aria-label={`${item.name} 詳情`}>
