@@ -715,7 +715,11 @@ else:
         address_repository: Any = None,
         correction_repository: Any = None,
     ) -> APIRouter:
-        from apps.api.oday_api.security.dependencies import build_engine, principal_from_headers, require_permission
+        from apps.api.oday_api.security.dependencies import (
+            build_engine,
+            principal_from_headers,
+            require_permission,
+        )
         from shared.auth import Action, Role
         from shared.infrastructure.persistence.repositories import (
             InMemoryAddressLocationRepository,
@@ -865,26 +869,26 @@ else:
                     audit_log=audit,
                     correction_repo=corr_repo,
                 )
-            except KeyError:
+            except KeyError as e:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Address {address_id} not found",
-                )
-            except PermissionError:
+                ) from e
+            except PermissionError as e:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="TENANT_SCOPE_DENIED: Cross-tenant modification forbidden",
-                )
+                ) from e
             except StaleRevisionError as e:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=str(e),
-                )
+                ) from e
             except InvalidCorrectionError as e:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(e),
-                )
+                ) from e
 
             return {
                 "correction_id": correction.correction_id,
@@ -987,22 +991,22 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=str(e),
-                )
-            except PermissionError:
+                ) from e
+            except PermissionError as e:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="TENANT_SCOPE_DENIED: Cross-tenant modification forbidden",
-                )
+                ) from e
             except StaleRevisionError as e:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=str(e),
-                )
+                ) from e
             except (InvalidCorrectionError, ValueError) as e:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(e),
-                )
+                ) from e
 
             return {
                 "correction_id": updated_correction.correction_id,

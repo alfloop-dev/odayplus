@@ -9,15 +9,14 @@ Acceptance Criteria:
 
 from __future__ import annotations
 
-import json
 from uuid import uuid4
+
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from apps.api.app.routes.listings import create_listings_router
 from shared.audit.events import InMemoryAuditLog
-from shared.auth import Action, Principal, Role
 from shared.domain.models import AddressLocation
 from shared.infrastructure.persistence.repositories import (
     InMemoryAddressLocationRepository,

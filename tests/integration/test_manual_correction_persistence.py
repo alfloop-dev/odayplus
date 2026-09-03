@@ -7,10 +7,8 @@ Tests:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from uuid import uuid4
-import pytest
 
 from shared.domain.models import AddressLocation
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
