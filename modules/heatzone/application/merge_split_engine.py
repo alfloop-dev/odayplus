@@ -578,7 +578,7 @@ def evaluate_merge_split(
                 model_version=model_version,
                 policy_version_id=policy.policy_version_id,
                 reasons=(
-                    f"absorption_correlation_over_{stats.paired_periods}_shared_periods",
+                    f"demand_correlation_over_{stats.paired_periods}_shared_periods",
                     "demand_continuous_across_boundary",
                     "counterfactual_ndcg_outperformance",
                     "cannibalization_variance_reduced_under_joint_model",
@@ -629,7 +629,7 @@ def _merge_refusal(
             f"{stats.paired_periods} < {min_paired_periods}"
         )
     if stats.correlation_rho is None:
-        return "correlation_unmeasurable_on_observed_absorption"
+        return "demand_correlation_unmeasurable_over_shared_periods"
     if stats.correlation_rho < min_rho:
         return f"correlation_below_threshold: {stats.correlation_rho:.4f} < {min_rho:.4f}"
     if stats.disconnect_index is None:

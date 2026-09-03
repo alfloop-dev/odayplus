@@ -275,12 +275,6 @@ class InMemoryDecisionPolicyRepository:
                 return version
         return None
 
-    def get_by_version(self, policy_version_id: str) -> DecisionPolicy | None:
-        return self.find_version(policy_version_id)
-
-    def find_by_version_id(self, policy_version_id: str) -> DecisionPolicy | None:
-        return self.find_version(policy_version_id)
-
     def _in_force(self, policy_id: str, tenant_id: str) -> DecisionPolicy | None:
         for version in self._versions:
             if (
