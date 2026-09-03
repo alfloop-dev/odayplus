@@ -9,7 +9,6 @@ import pytest
 from modules.netplan import (
     ActionOption,
     ConstraintClass,
-    ConstraintDisclosureAcknowledgement,
     FixedManagementApprovalReceiptVerifier,
     InMemoryNetPlanRepository,
     ManagementApprovalReceipt,
@@ -17,7 +16,6 @@ from modules.netplan import (
     NetPlanConstraintDisclosureError,
     NetPlanProductionExecutor,
     NetPlanScenario,
-    NetPlanScenarioStatus,
     NetPlanService,
     NetworkAction,
     compute_solver_problem_hash,
@@ -296,8 +294,14 @@ def test_e2e_production_solve_to_operator_projection_and_durable_approval_receip
         "LEASE",
         "SEQUENCING",
     }
-    assert primary_scenario["modelled_constraint_classes"] == primary_scenario["modelledConstraintClasses"]
-    assert primary_scenario["unmodelled_constraint_classes"] == primary_scenario["unmodelledConstraintClasses"]
+    assert (
+        primary_scenario["modelled_constraint_classes"]
+        == primary_scenario["modelledConstraintClasses"]
+    )
+    assert (
+        primary_scenario["unmodelled_constraint_classes"]
+        == primary_scenario["unmodelledConstraintClasses"]
+    )
 
     # Step 4: Operator scenario selection
     select_res = rebalance_service.select_scenario(
@@ -326,9 +330,14 @@ def test_e2e_production_solve_to_operator_projection_and_durable_approval_receip
     approval = submit_res["governApproval"]
     assert approval["id"].startswith("APR-NET-")
     assert approval["modelledConstraintClasses"] == primary_scenario["modelledConstraintClasses"]
-    assert approval["unmodelledConstraintClasses"] == primary_scenario["unmodelledConstraintClasses"]
+    assert (
+        approval["unmodelledConstraintClasses"] == primary_scenario["unmodelledConstraintClasses"]
+    )
     assert set(approval["acknowledgedConstraintClasses"]) == {"LEASE", "SEQUENCING"}
-    assert approval["acknowledgementReason"] == "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。"
+    assert (
+        approval["acknowledgementReason"]
+        == "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。"
+    )
 
     # Step 6: Record NetPlan disclosure acknowledgement receipt
     _attach_verifier(service, scenario, solve, receipt_id="receipt-e2e-001")

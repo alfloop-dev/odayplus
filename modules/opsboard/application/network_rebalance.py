@@ -265,9 +265,7 @@ class NetworkRebalanceService:
                 "governApprovals": [],
             }
         )
-        self._idempotency_cache = _copy(
-            (initial_state or {}).get("idempotencyCache", {})
-        )
+        self._idempotency_cache = _copy((initial_state or {}).get("idempotencyCache", {}))
         self._state.pop("idempotencyCache", None)
         self._govern_approval_writer = govern_approval_writer
         if self._require_canonical:
@@ -316,7 +314,9 @@ class NetworkRebalanceService:
             "metadata": {
                 "serviceVersion": "operator-network-rebalance-r4",
                 "canonicalPackage": None if self._require_canonical else "r4-20260707-package-6",
-                "canonicalZipSha256": None if self._require_canonical else "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+                "canonicalZipSha256": None
+                if self._require_canonical
+                else "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
                 "screenLabels": ["Network 展店與店網", "Network 低效重配", "Govern 治理稽核"],
                 "avm": self._canonical_avm_metadata(),
                 "netPlan": self._canonical_netplan_metadata(),
@@ -325,7 +325,9 @@ class NetworkRebalanceService:
             "auditEvents": _copy(self._state["auditEvents"]),
             "counts": {
                 "stores": len(self._state["stores"]),
-                "pendingApprovals": sum(1 for store in self._state["stores"] if store.get("status") == "pendingapproval"),
+                "pendingApprovals": sum(
+                    1 for store in self._state["stores"] if store.get("status") == "pendingapproval"
+                ),
             },
             "correlationId": correlation_id,
         }
@@ -370,9 +372,7 @@ class NetworkRebalanceService:
                 "id": case.case_id,
                 "status": case.status.value,
                 "requestedAt": case.created_at.isoformat(),
-                "sourceSnapshotIds": list(
-                    case.valuation_input.source_snapshot_ids
-                ),
+                "sourceSnapshotIds": list(case.valuation_input.source_snapshot_ids),
                 "retryable": True,
             }
             store["runtimeState"] = None
@@ -384,9 +384,7 @@ class NetworkRebalanceService:
                 correlation_id=correlation_id,
                 metadata={
                     "avmRequestId": case.case_id,
-                    "sourceSnapshotIds": list(
-                        case.valuation_input.source_snapshot_ids
-                    ),
+                    "sourceSnapshotIds": list(case.valuation_input.source_snapshot_ids),
                 },
             )
             result = {
@@ -416,7 +414,11 @@ class NetworkRebalanceService:
             correlation_id=correlation_id,
             metadata={"avmRequestId": store["avmRequestId"], **_AVM_MODEL},
         )
-        result = {"store": _copy(self._view_store(store)), "auditEvent": audit, "correlationId": correlation_id}
+        result = {
+            "store": _copy(self._view_store(store)),
+            "auditEvent": audit,
+            "correlationId": correlation_id,
+        }
         if idempotency_key:
             self._idempotency_cache[cache_key] = _copy(result)
         return result
@@ -540,7 +542,11 @@ class NetworkRebalanceService:
             correlation_id=correlation_id,
             metadata={"evidenceId": evidence_id, "p50": store["avm"]["p50"], **_AVM_MODEL},
         )
-        result = {"store": _copy(self._view_store(store)), "auditEvent": audit, "correlationId": correlation_id}
+        result = {
+            "store": _copy(self._view_store(store)),
+            "auditEvent": audit,
+            "correlationId": correlation_id,
+        }
         if idempotency_key:
             self._idempotency_cache[cache_key] = _copy(result)
         return result
@@ -569,15 +575,10 @@ class NetworkRebalanceService:
         if self._require_canonical:
             scenario_ids = list(store.get("canonicalNetPlanScenarioIds", []))
             scenarios = [
-                self._netplan_repository.get_scenario(scenario_id)
-                for scenario_id in scenario_ids
+                self._netplan_repository.get_scenario(scenario_id) for scenario_id in scenario_ids
             ]
             scenario = next(
-                (
-                    item
-                    for item in scenarios
-                    if item is not None and item.status.value == "draft"
-                ),
+                (item for item in scenarios if item is not None and item.status.value == "draft"),
                 None,
             )
             if scenario is None:
@@ -596,7 +597,9 @@ class NetworkRebalanceService:
             )
             result_payload = solve.result.to_dict()
             is_stale = solve.is_stale(scenario)
-            is_infeasible = result_payload.get("infeasible", False) or (result_payload.get("solver_status") == "infeasible")
+            is_infeasible = result_payload.get("infeasible", False) or (
+                result_payload.get("solver_status") == "infeasible"
+            )
             diagnostics = result_payload.get("diagnostics", [])
             if (
                 "modelled_constraint_classes" not in result_payload
@@ -749,7 +752,11 @@ class NetworkRebalanceService:
             correlation_id=correlation_id,
             metadata={"evidenceId": evidence_id, "scenarioCount": len(scenarios), **_NETPLAN_MODEL},
         )
-        result = {"store": _copy(self._view_store(store)), "auditEvent": audit, "correlationId": correlation_id}
+        result = {
+            "store": _copy(self._view_store(store)),
+            "auditEvent": audit,
+            "correlationId": correlation_id,
+        }
         if idempotency_key:
             self._idempotency_cache[cache_key] = _copy(result)
         return result
@@ -770,7 +777,9 @@ class NetworkRebalanceService:
 
         store = self._store(store_id)
         if store["status"] != "netplanreview":
-            raise NetworkRebalanceConflict(f"{store_id} must be in NetPlan review before scenario selection")
+            raise NetworkRebalanceConflict(
+                f"{store_id} must be in NetPlan review before scenario selection"
+            )
         scenario = self._scenario(store, scenario_id)
         evidence_id = _evidence_id("EV-SEL")
         for item in store.get("netPlanScenarios", []):
@@ -817,7 +826,11 @@ class NetworkRebalanceService:
                 ),
             },
         )
-        result = {"store": _copy(self._view_store(store)), "auditEvent": audit, "correlationId": correlation_id}
+        result = {
+            "store": _copy(self._view_store(store)),
+            "auditEvent": audit,
+            "correlationId": correlation_id,
+        }
         if idempotency_key:
             self._idempotency_cache[cache_key] = _copy(result)
         return result
@@ -831,7 +844,7 @@ class NetworkRebalanceService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
-        acknowledged_classes: Sequence[ConstraintClass | str] | None = None,
+        acknowledged_classes: list[str] | tuple[str, ...] | None = None,
         acknowledgement_reason: str | None = None,
         approval_receipt_id: str | None = None,
     ) -> dict[str, Any]:
@@ -845,15 +858,25 @@ class NetworkRebalanceService:
 
         store = self._store(store_id)
         if store["status"] != "netplanreview":
-            raise NetworkRebalanceConflict(f"{store_id} must be in NetPlan review before submission")
+            raise NetworkRebalanceConflict(
+                f"{store_id} must be in NetPlan review before submission"
+            )
         if not store.get("selectedScenarioId"):
             raise NetworkRebalancePolicyError("selected scenario is required before submission")
 
         scenario = self._scenario(store, str(store["selectedScenarioId"]))
 
         # ODP-FR-NET-002: Evaluate constraint disclosure policy
-        modelled = list(scenario.get("modelledConstraintClasses") or scenario.get("modelled_constraint_classes") or ["CAPITAL"])
-        unmodelled = list(scenario.get("unmodelledConstraintClasses") or scenario.get("unmodelled_constraint_classes") or [])
+        modelled = list(
+            scenario.get("modelledConstraintClasses")
+            or scenario.get("modelled_constraint_classes")
+            or ["CAPITAL"]
+        )
+        unmodelled = list(
+            scenario.get("unmodelledConstraintClasses")
+            or scenario.get("unmodelled_constraint_classes")
+            or []
+        )
         unmodelled_str = [str(c) for c in unmodelled]
         blocked = [c for c in unmodelled_str if c not in ("LEASE", "SEQUENCING")]
 
@@ -864,7 +887,13 @@ class NetworkRebalanceService:
             )
 
         ack_classes = list(
-            [str(c) for c in (acknowledged_classes or [c for c in unmodelled_str if c in ("LEASE", "SEQUENCING")])]
+            [
+                str(c)
+                for c in (
+                    acknowledged_classes
+                    or [c for c in unmodelled_str if c in ("LEASE", "SEQUENCING")]
+                )
+            ]
         )
 
         approval_id = store.get("relatedApprovalId") or f"APR-NET-{store_id}"
@@ -915,7 +944,9 @@ class NetworkRebalanceService:
         store["relatedApprovalId"] = approval_id
         store["approvalStatus"] = "pending"
         store["relocationExecuted"] = False
-        store["executionBoundary"] = "Govern approval was created; relocation remains unexecuted until a later approved execution plan."
+        store["executionBoundary"] = (
+            "Govern approval was created; relocation remains unexecuted until a later approved execution plan."
+        )
         audit = self._audit(
             action="rebalance.review.submitted",
             target_id=store_id,
@@ -961,8 +992,7 @@ class NetworkRebalanceService:
     def _refresh_canonical_stores(self) -> None:
         self._require_canonical_dependencies()
         existing = {
-            str(row.get("storeId") or row.get("id")): row
-            for row in self._state.get("stores", [])
+            str(row.get("storeId") or row.get("id")): row for row in self._state.get("stores", [])
         }
         cases = self._avm_repository.list_cases()
         scenarios = [
@@ -978,9 +1008,7 @@ class NetworkRebalanceService:
                 None,
             )
             linked_scenarios = [
-                scenario
-                for scenario in scenarios
-                if store_id in scenario.options_by_entity
+                scenario for scenario in scenarios if store_id in scenario.options_by_entity
             ]
             base = {
                 "id": store_id,

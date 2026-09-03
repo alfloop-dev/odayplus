@@ -108,8 +108,14 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
             "LEASE",
             "SEQUENCING",
         }
-        assert scenario_item["modelled_constraint_classes"] == scenario_item["modelledConstraintClasses"]
-        assert scenario_item["unmodelled_constraint_classes"] == scenario_item["unmodelledConstraintClasses"]
+        assert (
+            scenario_item["modelled_constraint_classes"]
+            == scenario_item["modelledConstraintClasses"]
+        )
+        assert (
+            scenario_item["unmodelled_constraint_classes"]
+            == scenario_item["unmodelledConstraintClasses"]
+        )
 
     selected = client.post(
         "/api/v1/operator/network-rebalance/stores/RB-801/scenarios/move/select",
