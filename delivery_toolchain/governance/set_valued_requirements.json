@@ -418,6 +418,51 @@
           }
         }
       ]
+    },
+    {
+      "id": "ODP-FR-FCT-004",
+      "statement": "系統必須提供成長階段、轉折機率、異常證據與根因候選。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "TRAJECTORY_CLASS",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.trajectory_class",
+          "note": "ForecastOutput carries trajectory_class ('growing', 'mature', 'declining', 'plateau') per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "TURNING_POINT_PROBABILITY",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.turning_point_probability",
+          "note": "ForecastOutput carries turning_point_probability per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ANOMALY_EVIDENCE",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::Alert.evidence_json",
+          "note": "Alert carries structured anomaly evidence in evidence_json per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ROOT_CAUSE_CANDIDATE",
+          "status": "absent",
+          "note": "No automated root-cause deduction producer exists in the current production tree. Keep the schema field explicitly marked RESERVED (unproduced), with designated Owner (ForecastOps / Platform Ops) and Target Milestone (Wave 5+). Do not synthesize a fake producer.",
+          "disposition": {
+            "state": "IMPLEMENTATION_READY",
+            "assigned_to": "ForecastOps / Platform Ops",
+            "target_phase": "Wave 5+",
+            "rationale": "Full-tree lineage trace confirms no automated root-cause producer exists. The compatible WorkOrder, presentation, and database contracts are explicitly marked RESERVED (unproduced), and the real producer work is assigned to ForecastOps / Platform Ops for Wave 5+; do not manufacture a fake heuristic producer."
+          }
+        }
+      ]
     }
   ],
   "_governance_policy": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md"

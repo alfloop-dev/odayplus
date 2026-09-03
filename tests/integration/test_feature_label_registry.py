@@ -35,6 +35,8 @@ def _rows() -> list[dict[str, object]]:
             "entity_id": "store-001",
             "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
             "prediction_origin_time": PREDICTION_TIME.isoformat(),
+            "data_quality_score": 0.98,
+            "confidence": 0.95,
             "labels": {"w4_revenue": 410_000},
             "label_maturity_time": SNAPSHOT_TIME.isoformat(),
             "features": {
@@ -212,6 +214,8 @@ def test_dataset_snapshot_binding_validation() -> None:
             "entity_id": "store-001",
             "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
             "prediction_origin_time": PREDICTION_TIME.isoformat(),
+            "data_quality_score": 0.98,
+            "confidence": 0.95,
             "labels": {"w4_revenue": 410_000, "unregistered_label": 10},
             "features": {
                 "geo.population_resident_500m": 1200,
