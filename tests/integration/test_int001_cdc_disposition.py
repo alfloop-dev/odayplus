@@ -11,7 +11,6 @@ Acceptance checks:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -24,8 +23,6 @@ from delivery_toolchain.governance.check_requirement_members import (
     resolve,
 )
 from modules.external_data.connectors.provider_registry import (
-    ExternalProviderMode,
-    PROVIDER_REGISTRY,
     provider_registry,
 )
 from modules.integration.domain.contracts import load_index
