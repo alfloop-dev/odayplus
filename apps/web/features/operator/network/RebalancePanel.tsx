@@ -45,6 +45,8 @@ const lightTone: Record<string, string> = {
  * the server will refuse is worse than offering none.
  */
 function classifyDisclosure(scenario: {
+  modelledConstraintClasses?: unknown[] | null;
+  modelled_constraint_classes?: unknown[] | null;
   unmodelledConstraintClasses?: unknown[] | null;
   unmodelled_constraint_classes?: unknown[] | null;
   blockedConstraintClasses?: unknown[] | null;
@@ -59,10 +61,18 @@ function classifyDisclosure(scenario: {
   const rawUnmodelled =
     scenario?.unmodelledConstraintClasses ?? scenario?.unmodelled_constraint_classes ?? [];
   const unmodelled = Array.from(new Set(rawUnmodelled.map((item) => String(item))));
+  const rawModelled =
+    scenario?.modelledConstraintClasses ?? scenario?.modelled_constraint_classes ?? [];
   // A scenario that declared nothing has not said it bound everything. Its
   // empty unmodelled set is an absence, not a measurement, so it is never
   // rendered as "fully modelled".
-  if (scenario?.disclosureUndeclared) {
+  //
+  // The server reaches the same conclusion and sends `disclosureUndeclared`,
+  // but the console does not need the flag to arrive to stay closed: a payload
+  // naming no modelled and no unmodelled class is undisclosed on its face, and
+  // an older API, a dropped field or a surface that never classified would
+  // otherwise turn that silence into an enabled submit button here.
+  if (scenario?.disclosureUndeclared || (rawModelled.length === 0 && unmodelled.length === 0)) {
     return { blocked: [], acknowledgeable: [], unmodelled, undeclared: true };
   }
   const rawBlocked = scenario?.blockedConstraintClasses;

@@ -905,8 +905,7 @@ class NetworkRebalanceService:
         # point-in-time, never a literal here: the two lists move on a
         # governance clock, and a copy in this module would keep approving on
         # rules the registry had already retired.
-        modelled = self._declared_constraint_classes(scenario, "modelled")
-        unmodelled = self._declared_constraint_classes(scenario, "unmodelled")
+        modelled, unmodelled = self._declared_disclosure(scenario)
         policy = self._require_disclosure_policy()
         evaluation = evaluate_disclosure(policy, unmodelled_classes=unmodelled)
 
@@ -1071,12 +1070,17 @@ class NetworkRebalanceService:
     def _declared_constraint_classes(scenario: dict[str, Any], kind: str) -> list[str]:
         """The classes this scenario row says the solve did / did not bind.
 
-        Absence is a refusal rather than an empty list. A row that declares
-        nothing has not disclosed that it bound everything -- it has failed to
-        disclose anything, and reading its missing unmodelled set as "nothing is
+        A missing key is a refusal rather than an empty list. A row that carries
+        no unmodelled set has not disclosed that it bound everything -- it has
+        failed to disclose anything, and reading a missing set as "nothing is
         unmodelled" is the fail-open the CP-SAT production path already shipped
         once (see the 2026-09-02 correction in
         docs/design/ODP_NETPLAN_CONSTRAINT_CLASSES_2026-09-01.md).
+
+        Present-but-empty is not decidable one half at a time: an empty
+        unmodelled set is a real disclosure next to a populated modelled set,
+        and an absence next to an empty one. That judgement needs both halves,
+        so it lives in `_declared_disclosure` rather than here.
         """
         for key in (f"{kind}ConstraintClasses", f"{kind}_constraint_classes"):
             if key in scenario and scenario[key] is not None:
@@ -1086,6 +1090,33 @@ class NetworkRebalanceService:
             f"{kind} constraint classes; refusing to submit a plan whose constraint "
             "disclosure is unknown"
         )
+
+    @classmethod
+    def _declared_disclosure(cls, scenario: dict[str, Any]) -> tuple[list[str], list[str]]:
+        """Both halves of this scenario's constraint disclosure, or a refusal.
+
+        Read as a pair because the remaining fail-open lives in the pair rather
+        than in either half. A row carrying ``[]`` for both halves has named no
+        class it bound and no class it left unbound: it has disclosed nothing.
+        Taken one key at a time both lists look well-formed, and the empty
+        unmodelled set then reads as "the solve bound everything" -- the
+        strongest possible claim, inferred from a row that made no claim at all.
+
+        This is the same refusal ``NetPlanService._require_disclosed_classes``
+        already makes over the solve record. It is restated here because the
+        Operator submit path is a second entrance to the same Govern approval
+        and does not go through that check: a gate only one entrance passes
+        through is not a gate.
+        """
+        modelled = cls._declared_constraint_classes(scenario, "modelled")
+        unmodelled = cls._declared_constraint_classes(scenario, "unmodelled")
+        if not modelled and not unmodelled:
+            raise NetworkRebalancePolicyError(
+                f"selected scenario {scenario.get('id') or scenario.get('name')!r} declares "
+                "neither modelled nor unmodelled constraint classes; an undisclosed solve "
+                "cannot be submitted for approval"
+            )
+        return modelled, unmodelled
 
     def _require_disclosure_policy(self) -> DecisionPolicy:
         """Resolve the disclosure policy in force for this tenant, or refuse.
@@ -1224,9 +1255,15 @@ class NetworkRebalanceService:
         every unmodelled class is reported as blocking: an unresolvable policy is
         indistinguishable from no policy, and the console must not offer a
         signature the server will refuse.
+
+        The disclosure is read through `_declared_disclosure`, so a scenario the
+        submit gate would refuse as undisclosed is reported `disclosureUndeclared`
+        here too. The console and the gate have to agree about which scenarios
+        are unverifiable; a read path that classified them as fully modelled
+        would put a live submit button on a plan the server rejects.
         """
         try:
-            unmodelled = self._declared_constraint_classes(scenario, "unmodelled")
+            _modelled, unmodelled = self._declared_disclosure(scenario)
         except NetworkRebalancePolicyError:
             return {
                 "blockedConstraintClasses": [],
