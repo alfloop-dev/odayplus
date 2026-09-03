@@ -35,8 +35,25 @@ class DatasetSnapshotError(ValueError):
     pass
 
 
+class DatasetQualityAdmissionError(DatasetSnapshotError):
+    pass
+
+
 class PointInTimeViolation(DatasetSnapshotError):
     pass
+
+
+@dataclass(frozen=True)
+class QualityAdmissionIssue:
+    entity_id: str
+    missing_fields: tuple[str, ...]
+    row_index: int | None = None
+    view_name: str | None = None
+
+    @property
+    def message(self) -> str:
+        fields = ", ".join(self.missing_fields)
+        return f"record '{self.entity_id}' missing quality fields: {fields}"
 
 
 @dataclass(frozen=True)
@@ -55,8 +72,8 @@ class ModelReadyRecord:
     feature_snapshot_time: datetime
     prediction_origin_time: datetime
     source_snapshot_ids: tuple[str, ...] = ()
-    data_quality_score: float = 1.0
-    confidence: float = 1.0
+    data_quality_score: float | None = None
+    confidence: float | None = None
     is_training_eligible: bool = True
     is_scoring_eligible: bool = True
     exclusion_reason: str = ""
@@ -99,6 +116,12 @@ def _parse_datetime(value: Any, *, field_name: str) -> datetime:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
     return parsed
+
+
+def _parse_float_or_none(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return float(value)
 
 
 def _tuple_of_strings(value: Any) -> tuple[str, ...]:
@@ -145,8 +168,8 @@ def model_ready_record_from_mapping(row: Mapping[str, Any]) -> ModelReadyRecord:
             row["prediction_origin_time"], field_name="prediction_origin_time"
         ),
         source_snapshot_ids=source_snapshot_ids,
-        data_quality_score=float(row.get("data_quality_score", 1.0)),
-        confidence=float(row.get("confidence", 1.0)),
+        data_quality_score=_parse_float_or_none(row.get("data_quality_score")),
+        confidence=_parse_float_or_none(row.get("confidence")),
         is_training_eligible=bool(row.get("is_training_eligible", True)),
         is_scoring_eligible=bool(row.get("is_scoring_eligible", True)),
         exclusion_reason=str(row.get("exclusion_reason") or ""),
@@ -163,6 +186,32 @@ def model_ready_record_from_mapping(row: Mapping[str, Any]) -> ModelReadyRecord:
             else None
         ),
     )
+
+
+def validate_quality_admission(
+    records: Iterable[ModelReadyRecord | Mapping[str, Any]],
+) -> tuple[QualityAdmissionIssue, ...]:
+    issues: list[QualityAdmissionIssue] = []
+    checked_records = tuple(
+        row if isinstance(row, ModelReadyRecord) else model_ready_record_from_mapping(row)
+        for row in records
+    )
+    for row_index, record in enumerate(checked_records):
+        missing: list[str] = []
+        if record.data_quality_score is None:
+            missing.append("data_quality_score")
+        if record.confidence is None:
+            missing.append("confidence")
+        if missing:
+            issues.append(
+                QualityAdmissionIssue(
+                    entity_id=record.entity_id,
+                    missing_fields=tuple(missing),
+                    row_index=row_index,
+                    view_name=record.view_name,
+                )
+            )
+    return tuple(issues)
 
 
 def validate_point_in_time(
@@ -293,6 +342,11 @@ def build_dataset_snapshot(
     if not records:
         raise DatasetSnapshotError("dataset snapshot requires at least one record")
 
+    quality_issues = validate_quality_admission(records)
+    if quality_issues:
+        detail = "; ".join(issue.message for issue in quality_issues)
+        raise DatasetQualityAdmissionError(f"dataset snapshot admission rejected: {detail}")
+
     issues = validate_point_in_time(records)
     if issues:
         detail = "; ".join(issue.message for issue in issues)
@@ -337,13 +391,16 @@ def _stable_snapshot_id(records: Sequence[ModelReadyRecord]) -> str:
 
 
 __all__ = [
+    "DatasetQualityAdmissionError",
     "DatasetSnapshot",
     "DatasetSnapshotError",
     "DqTriageRecord",
     "ModelReadyRecord",
     "PointInTimeIssue",
     "PointInTimeViolation",
+    "QualityAdmissionIssue",
     "build_dataset_snapshot",
     "model_ready_record_from_mapping",
     "validate_point_in_time",
+    "validate_quality_admission",
 ]

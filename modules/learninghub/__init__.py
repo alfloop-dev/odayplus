@@ -18,6 +18,7 @@ from modules.learninghub.application import (
     evaluate_guardrails,
 )
 from modules.learninghub.domain import (
+    DatasetQualityAdmissionError,
     DatasetSnapshot,
     DatasetSnapshotError,
     FeatureLineageEvent,
@@ -32,6 +33,7 @@ from modules.learninghub.domain import (
     MonitoringSignalType,
     PointInTimeIssue,
     PointInTimeViolation,
+    QualityAdmissionIssue,
     RetrainingRequest,
     active_features_for_model,
     build_dataset_snapshot,
@@ -40,6 +42,7 @@ from modules.learninghub.domain import (
     has_blocked_features,
     model_ready_record_from_mapping,
     validate_point_in_time,
+    validate_quality_admission,
 )
 from modules.learninghub.infrastructure import (
     EvidentlyDriftMonitor,
@@ -64,6 +67,7 @@ __all__ = [
     "DEFAULT_RELEASE_LEASE_SECONDS",
     "AliasReconciliationReceipt",
     "BacktestReceipt",
+    "DatasetQualityAdmissionError",
     "DatasetSnapshot",
     "DatasetSnapshotError",
     "EvidentlyDriftMonitor",
@@ -89,6 +93,7 @@ __all__ = [
     "MonitoringSignalType",
     "PointInTimeIssue",
     "PointInTimeViolation",
+    "QualityAdmissionIssue",
     "RecommendedAction",
     "ReleaseMonitorAssessment",
     "ReleaseSagaState",
@@ -103,6 +108,7 @@ __all__ = [
     "run_learninghub_release_monitor",
     "run_learninghub_prediction_drift",
     "validate_point_in_time",
+    "validate_quality_admission",
     # Feature Registry
     "FeatureLineageEvent",
     "FeatureRegistry",
