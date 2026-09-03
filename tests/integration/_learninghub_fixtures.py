@@ -9,6 +9,7 @@ approver who is not the requester.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from models.shared_ml import (
@@ -112,6 +113,7 @@ def model_card(
 
 
 from shared.governance import default_model_performance_drift_policy
+from shared.governance.decision_policy import DecisionPolicy
 
 
 def prepare_candidate(
@@ -119,8 +121,9 @@ def prepare_candidate(
     version: str,
     *,
     model_name: str = DEFAULT_MODEL_NAME,
+    decision_policy: DecisionPolicy | None = None,
 ) -> ModelVersion:
-    policy = default_model_performance_drift_policy()
+    policy = decision_policy or default_model_performance_drift_policy()
     snapshot = service.register_dataset_snapshot(
         dataset_rows(), dataset_snapshot_id=f"{model_name}-training-{version}"
     )
@@ -177,6 +180,7 @@ def prepare_candidate(
         validation_run=validation,
     )
 
+
 __all__ = [
     "DEFAULT_MODEL_NAME",
     "PREDICTION_TIME",
@@ -184,5 +188,31 @@ __all__ = [
     "dataset_rows",
     "model_card",
     "model_version",
+    "model_performance_policy_for_model",
     "prepare_candidate",
 ]
+
+
+def model_performance_policy_for_model(model_name: str) -> DecisionPolicy:
+    """Return the governed fixture policy with explicit rows for ``model_name``.
+
+    Production policy rows are intentionally explicit and fail closed for
+    unknown model names. PostgreSQL lifecycle tests use a UUID-suffixed name
+    to isolate concurrent runs, so the fixture copies the canonical forecast
+    rows into that explicitly requested test model instead of weakening the
+    production policy resolver.
+    """
+    policy = default_model_performance_drift_policy()
+    by_model = policy.parameters.get("metric_thresholds_by_model")
+    if not isinstance(by_model, dict):
+        raise ValueError("model performance policy fixture requires model threshold rows")
+    if model_name in by_model:
+        return policy
+    canonical = by_model.get(DEFAULT_MODEL_NAME)
+    if not isinstance(canonical, dict):
+        raise ValueError(f"missing canonical threshold rows for {DEFAULT_MODEL_NAME}")
+    expanded = dict(by_model)
+    expanded[model_name] = {metric_name: dict(config) for metric_name, config in canonical.items()}
+    parameters = dict(policy.parameters)
+    parameters["metric_thresholds_by_model"] = expanded
+    return replace(policy, parameters=parameters)
