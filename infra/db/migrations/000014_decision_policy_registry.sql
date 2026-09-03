@@ -308,7 +308,8 @@ AS $seed_model_performance_drift_policy$
         'ValidationRun',
         'Bind production model validation and baseline drift to versioned release gates',
         NULL,
-        '{"metric_thresholds_by_model": {
+        '{"prediction_drift": {"drift_share_threshold": 0.5},
+          "metric_thresholds_by_model": {
           "forecast_revenue_interval": {
             "normalized_mae": {"max_value": 0.35, "max_degradation": 0.05, "higher_is_better": false},
             "p80_coverage": {"min_value": 0.65, "max_degradation": 0.05, "higher_is_better": true}
@@ -334,7 +335,7 @@ AS $seed_model_performance_drift_policy$
             "observed_event_rate": {"min_value": 0.02, "higher_is_better": true}
           }
         }}'::jsonb,
-        ARRAY['metrics', 'baseline_metrics']
+        ARRAY['metrics', 'baseline_metrics', 'prediction_outputs']
     )
     ON CONFLICT (policy_version_id) DO NOTHING;
 $seed_model_performance_drift_policy$;

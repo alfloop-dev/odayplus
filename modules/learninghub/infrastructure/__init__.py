@@ -3,6 +3,7 @@
 from modules.learninghub.infrastructure.evidently_monitor import (
     EvidentlyDriftMonitor,
     EvidentlyDriftResult,
+    prediction_drift_threshold_from_policy,
 )
 from modules.learninghub.infrastructure.mlflow_adapter import MlflowRegistryAdapter
 from modules.learninghub.infrastructure.repositories import (
@@ -24,4 +25,5 @@ __all__ = [
     "MlflowRegistryAdapter",
     "ModelReleaseSaga",
     "ReleaseSagaState",
+    "prediction_drift_threshold_from_policy",
 ]

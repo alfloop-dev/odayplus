@@ -10,6 +10,7 @@ from modules.learninghub.application import (
     ReleaseMonitorAssessment,
     ReleaseType,
 )
+from modules.learninghub.domain import MonitoringEvaluation
 
 
 @dataclass
@@ -93,6 +94,31 @@ class LearningHubReleaseWorker:
             correlation_id=str(payload.get("correlation_id", "learninghub-monitor")),
         )
 
+    def run_prediction_drift(self, payload: dict[str, Any]) -> MonitoringEvaluation:
+        """Production worker entry for prediction-output drift monitoring."""
+
+        policy = payload.get("decision_policy") or payload.get("policy")
+        if policy is None:
+            raise ValueError("prediction drift worker requires decision_policy")
+        return self.service.monitor_prediction_drift(
+            model_name=str(payload["model_name"]),
+            model_version=str(payload["model_version"]),
+            reference_rows=tuple(payload.get("reference_rows", ())),
+            current_rows=tuple(payload.get("current_rows", ())),
+            reference_snapshot_id=str(payload["reference_snapshot_id"]),
+            current_snapshot_id=str(payload["current_snapshot_id"]),
+            cohort_key=str(payload["cohort_key"]),
+            prediction_columns=tuple(payload.get("prediction_columns", ())),
+            output_types=(
+                dict(payload["output_types"])
+                if payload.get("output_types") is not None
+                else None
+            ),
+            policy=policy,
+            requested_by=str(payload.get("requested_by", "system")),
+            reason=(str(payload["reason"]) if payload.get("reason") is not None else None),
+        )
+
 
 def run_learninghub_release(
     payload: dict[str, Any], *, service: LearningHubService
@@ -106,6 +132,12 @@ def run_learninghub_release_monitor(
     return LearningHubReleaseWorker(service=service).run_monitor(payload)
 
 
+def run_learninghub_prediction_drift(
+    payload: dict[str, Any], *, service: LearningHubService
+) -> MonitoringEvaluation:
+    return LearningHubReleaseWorker(service=service).run_prediction_drift(payload)
+
+
 def run_learninghub_release_recovery(
     payload: dict[str, Any], *, service: LearningHubService
 ) -> tuple[Any, ...]:
@@ -117,4 +149,5 @@ __all__ = [
     "run_learninghub_release",
     "run_learninghub_release_recovery",
     "run_learninghub_release_monitor",
+    "run_learninghub_prediction_drift",
 ]

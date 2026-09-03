@@ -92,11 +92,16 @@ jobs:
 
       # A bounded quality or confidence score that defaults to its maximum makes
       # "nobody measured this" indistinguishable from "measured, and perfect".
-      # HeatZoneV3Input.confidence and .coverage_ratio are the sharpest case:
-      # check_support_and_abstention abstains below their thresholds, so the
-      # defaults put a zone with no coverage data permanently out of that gate's
-      # reach. Existing instances are listed with an owner in
-      # measurement_default_exemptions.json; new ones fail here.
+      # The score does not travel through one layer, so neither does the check:
+      # it reads dataclass and Pydantic defaults, row-mapper fallbacks such as
+      # record.get("confidence", 1.0), SQL column defaults, dbt coalesce and
+      # constant projections, OpenAPI schema defaults and TypeScript ?? 1.
+      # Fixing one layer and leaving the next is the ordinary failure -- heat
+      # zone's input types were correctly made optional while the result mapper
+      # kept restoring 1.0. Existing instances are listed in
+      # measurement_default_exemptions.json with an owner, a reason and an
+      # expiry date; new ones fail here, and so does an entry past its date or
+      # an entry whose field was fixed without deleting it in the same commit.
       - name: Refuse bounded scores that default to perfect
         run: uv run python delivery_toolchain/governance/check_measurement_defaults.py
 
