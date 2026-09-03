@@ -11,11 +11,33 @@ from models.shared_ml import (
     production_model_execution_required,
     require_live_inputs,
 )
-from modules.heatzone.infrastructure import HeatZoneResultStore
+from modules.heatzone.application.merge_split_engine import (
+    CandidateCellFeature,
+    MergeSplitReadinessInput,
+    evaluate_merge_split,
+)
+from modules.heatzone.domain.composition import (
+    CompositionKind,
+    CompositionValidationError,
+    HeatZoneCompositionRecord,
+    ZoneLineage,
+    generate_merged_zone_id,
+)
+from modules.heatzone.infrastructure import (
+    HeatZoneCompositionRepository,
+    HeatZoneResultStore,
+    InMemoryHeatZoneCompositionRepository,
+)
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.governance import (
+    DecisionPolicyRepository,
+    InMemoryDecisionPolicyRepository,
+    default_heatzone_merge_policy,
+    resolve_policy,
+)
 
 try:
-    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
@@ -29,10 +51,32 @@ else:
         idempotency_key: str | None = None
 
 
+    class HeatZoneOverridePayload(BaseModel):
+        decided_by: str = Field(min_length=1)
+        override_reason: str = Field(min_length=1)
+        decision_policy_version_id: str | None = None
+        new_kind: str | None = None
+        member_cell_ids: list[str] | None = None
+        parent_zone_id: str | None = None
+
+
+    class HeatZoneRollbackPayload(BaseModel):
+        revert_reason: str | None = None
+
+
+    class HeatZoneMergeSplitEvaluatePayload(BaseModel):
+        cells: list[dict[str, Any]] = Field(default_factory=list)
+        readiness: dict[str, Any] = Field(default_factory=dict)
+        policy_version_id: str | None = None
+
+
     def create_heatzone_router(
         *,
         store: HeatZoneResultStore | None = None,
+        composition_repository: HeatZoneCompositionRepository | None = None,
+        policy_repository: DecisionPolicyRepository | None = None,
         heatzone_store_for_tenant: Any | None = None,
+        composition_repository_for_tenant: Any | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
         model_runtime: ProductionModelRuntime | None = None,
@@ -44,6 +88,8 @@ else:
 
         router = APIRouter(prefix="/heatzones", tags=["heatzones"])
         result_store = store or HeatZoneResultStore()
+        comp_repo = composition_repository or InMemoryHeatZoneCompositionRepository()
+        pol_repo = policy_repository or InMemoryDecisionPolicyRepository()
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
         production_model_required = (
@@ -70,6 +116,21 @@ else:
                     )
                     return type(result_store)(TenantScopedDocumentStore(base_store, tid))
             return result_store
+
+        def comp_repo_for_request(request: Request) -> Any:
+            tid = resolve_tenant_id(request)
+            if composition_repository_for_tenant is not None:
+                scoped = composition_repository_for_tenant(tid)
+                if scoped is not None:
+                    return scoped
+            if hasattr(comp_repo, "_store"):
+                base_store = getattr(comp_repo._store, "_store", comp_repo._store)
+                if hasattr(base_store, "get") and hasattr(base_store, "put"):
+                    from shared.infrastructure.persistence.operator_domains import (
+                        TenantScopedDocumentStore,
+                    )
+                    return type(comp_repo)(TenantScopedDocumentStore(base_store, tid))
+            return comp_repo
 
         @router.get("", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def list_heatzones(request: Request, limit: int = 100) -> dict[str, Any]:
@@ -169,6 +230,278 @@ else:
                 payload["model_binding"] = executed_binding.to_audit_metadata()
             return payload
 
+        @router.post(
+            "/merge-split/evaluate",
+            dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))],
+        )
+        def evaluate_heatzone_merge_split(
+            body: HeatZoneMergeSplitEvaluatePayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            policy = None
+            if body.policy_version_id:
+                policy = pol_repo.get_by_version(body.policy_version_id)
+            if policy is None:
+                try:
+                    policy = resolve_policy(
+                        pol_repo,
+                        policy_kind="heatzone_merge",
+                        tenant_id=tid,
+                    )
+                except Exception:
+                    policy = default_heatzone_merge_policy(tid)
+
+            r_data = body.readiness or {}
+            readiness_input = MergeSplitReadinessInput(
+                observation_days=int(r_data.get("observation_days", 0)),
+                mature_labels_count=int(r_data.get("mature_labels_count", 0)),
+                active_store_count=int(r_data.get("active_store_count", 0)),
+                adjacent_pairs_count=int(r_data.get("adjacent_pairs_count", 0)),
+                metro_clusters_count=int(r_data.get("metro_clusters_count", 0)),
+                spatial_contiguity_ratio=float(r_data.get("spatial_contiguity_ratio", 0.0)),
+                absorption_ratio_cv=(
+                    float(r_data["absorption_ratio_cv"])
+                    if r_data.get("absorption_ratio_cv") is not None
+                    else None
+                ),
+                drift_psi=(
+                    float(r_data["drift_psi"])
+                    if r_data.get("drift_psi") is not None
+                    else None
+                ),
+                wasserstein_distance=(
+                    float(r_data["wasserstein_distance"])
+                    if r_data.get("wasserstein_distance") is not None
+                    else None
+                ),
+                is_synthetic=bool(r_data.get("is_synthetic", False)),
+                governed_disabled=bool(r_data.get("governed_disabled", False)),
+                source_snapshot_id=str(r_data.get("source_snapshot_id", "")),
+            )
+
+            candidate_cells: list[CandidateCellFeature] = []
+            for c in body.cells:
+                candidate_cells.append(
+                    CandidateCellFeature(
+                        cell_id=str(c.get("cell_id", "")),
+                        h3_index=str(c.get("h3_index", "")),
+                        tenant_id=tid,
+                        admin_city=str(c.get("admin_city", "")),
+                        admin_district=str(c.get("admin_district", "")),
+                        population=float(c.get("population", 0.0)),
+                        poi_count=int(c.get("poi_count", 0)),
+                        own_store_count=int(c.get("own_store_count", 0)),
+                        competitor_count=int(c.get("competitor_count", 0)),
+                        median_rent_per_ping=float(c.get("median_rent_per_ping", 0.0)),
+                        unmet_demand=float(c.get("unmet_demand", 0.0)),
+                        absorbed_demand=float(c.get("absorbed_demand", 0.0)),
+                        realized_revenue=float(c.get("realized_revenue", 0.0)),
+                        has_natural_barrier=bool(c.get("has_natural_barrier", False)),
+                        barrier_description=str(c.get("barrier_description", "")),
+                        adjacent_cell_ids=tuple(str(x) for x in c.get("adjacent_cell_ids", [])),
+                    )
+                )
+
+            evaluation = evaluate_merge_split(
+                candidate_cells,
+                readiness_input=readiness_input,
+                policy=policy,
+            )
+
+            active_audit_log.record(
+                AuditEvent(
+                    event_type="heatzone.composition.evaluated.v1",
+                    actor="system",
+                    action="evaluate",
+                    resource="heatzone/merge-split",
+                    outcome="abstained" if evaluation.abstained else "proposed",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "abstained": evaluation.abstained,
+                        "abstain_reasons": list(evaluation.abstain_reasons),
+                        "proposal_count": len(evaluation.proposals),
+                        "policy_version_id": policy.policy_version_id,
+                    },
+                )
+            )
+            return evaluation.to_dict()
+
+        @router.get(
+            "/compositions",
+            dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))],
+        )
+        def list_compositions(
+            request: Request,
+            active_only: bool = Query(default=True),
+        ) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+            records = active_comp_repo.list_compositions(tid, active_only=active_only)
+            return {
+                "items": [r.to_dict() for r in records],
+                "count": len(records),
+            }
+
+        @router.get(
+            "/zones/{zone_id}/composition",
+            dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))],
+        )
+        def get_zone_composition(zone_id: str, request: Request) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+            records = active_comp_repo.get_composition(zone_id, tid)
+            if not records:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No composition records found for zone '{zone_id}' in tenant '{tid}'",
+                )
+            active_records = [r for r in records if r.is_active]
+            return {
+                "zone_id": zone_id,
+                "tenant_id": tid,
+                "composition_kind": records[0].composition_kind.value,
+                "parent_zone_id": records[0].parent_zone_id,
+                "member_cell_ids": [r.member_cell_id for r in (active_records or records)],
+                "is_active": len(active_records) > 0,
+                "records": [r.to_dict() for r in records],
+            }
+
+        @router.get(
+            "/zones/{zone_id}/lineage",
+            dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))],
+        )
+        def get_zone_lineage(zone_id: str, request: Request) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+            lineage = active_comp_repo.get_lineage(zone_id, tid)
+            if lineage is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No lineage found for zone '{zone_id}' in tenant '{tid}'",
+                )
+            return lineage.to_dict()
+
+        @router.post(
+            "/zones/{zone_id}/override",
+            dependencies=[Depends(require_permission("heatzone", Action.OVERRIDE, engine=authz_engine))],
+        )
+        def override_zone_composition(
+            zone_id: str,
+            body: HeatZoneOverridePayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            if body.decided_by == "system":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Human override must specify operator identity in 'decided_by' (not 'system')",
+                )
+            if not body.override_reason or not body.override_reason.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Human override requires a non-empty 'override_reason'",
+                )
+
+            policy_version = body.decision_policy_version_id or f"heatzone-merge-v1:{tid}"
+            active_comp_repo = comp_repo_for_request(request)
+
+            new_kind = None
+            if body.new_kind:
+                try:
+                    new_kind = CompositionKind(body.new_kind)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Invalid composition_kind '{body.new_kind}'",
+                    ) from exc
+
+            try:
+                updated = active_comp_repo.override_composition(
+                    zone_id=zone_id,
+                    tenant_id=tid,
+                    decided_by=body.decided_by,
+                    override_reason=body.override_reason,
+                    decision_policy_version_id=policy_version,
+                    new_kind=new_kind,
+                    new_cells=body.member_cell_ids,
+                    parent_zone_id=body.parent_zone_id,
+                )
+            except CompositionValidationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
+            active_audit_log.record(
+                AuditEvent(
+                    event_type="heatzone.composition.overridden.v1",
+                    actor=body.decided_by,
+                    action="override",
+                    resource=f"heatzone/zones/{zone_id}",
+                    outcome="success",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "zone_id": zone_id,
+                        "override_reason": body.override_reason,
+                        "decided_by": body.decided_by,
+                        "decision_policy_version_id": policy_version,
+                        "updated_cell_count": len(updated),
+                    },
+                )
+            )
+
+            return {
+                "zone_id": zone_id,
+                "status": "overridden",
+                "decided_by": body.decided_by,
+                "override_reason": body.override_reason,
+                "records": [r.to_dict() for r in updated],
+            }
+
+        @router.post(
+            "/zones/{zone_id}/rollback",
+            dependencies=[Depends(require_permission("heatzone", Action.ROLLBACK, engine=authz_engine))],
+        )
+        def rollback_zone_composition(
+            zone_id: str,
+            body: HeatZoneRollbackPayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+
+            try:
+                reverted = active_comp_repo.revert_composition(zone_id, tid)
+            except CompositionValidationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
+            active_audit_log.record(
+                AuditEvent(
+                    event_type="heatzone.composition.reverted.v1",
+                    actor="operator",
+                    action="rollback",
+                    resource=f"heatzone/zones/{zone_id}",
+                    outcome="success",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "zone_id": zone_id,
+                        "revert_reason": body.revert_reason,
+                        "reverted_count": len(reverted),
+                    },
+                )
+            )
+
+            return {
+                "zone_id": zone_id,
+                "status": "reverted",
+                "revert_reason": body.revert_reason,
+                "reverted_records": [r.to_dict() for r in reverted],
+            }
+
         @router.get("/snapshots/{snapshot_id}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def snapshot(snapshot_id: str, request: Request) -> dict[str, Any] | None:
             active_store = store_for_request(request)
@@ -188,4 +521,11 @@ else:
         return router
 
 
-    __all__ = ["HeatZoneResultStore", "HeatZoneScoreJobPayload", "create_heatzone_router"]
+    __all__ = [
+        "HeatZoneMergeSplitEvaluatePayload",
+        "HeatZoneOverridePayload",
+        "HeatZoneResultStore",
+        "HeatZoneRollbackPayload",
+        "HeatZoneScoreJobPayload",
+        "create_heatzone_router",
+    ]

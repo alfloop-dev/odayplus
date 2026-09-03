@@ -26,6 +26,7 @@ from typing import Any
 from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
 from shared.governance import (
     InMemoryDecisionPolicyRepository,
+    default_heatzone_merge_policy,
     default_model_performance_drift_policy,
 )
 
@@ -57,8 +58,9 @@ class PersistenceBundle:
     intervention_repository: Any
     intervention_label_registry: Any
     ingestion_run_store: Any
-    # Expansion decision-flow stores (ODP-FLOW-002): HeatZone ranking, listing
-    # dedup + candidate inbox, SiteScore decisions, and realized sites.
+    # Expansion decision-flow stores (ODP-FLOW-002, ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001):
+    # HeatZone ranking, composition lineage/override, listing dedup + candidate inbox,
+    # SiteScore decisions, and realized sites.
     heatzone_store: Any
     listing_repository: Any
     sitescore_decision_store: Any
@@ -71,6 +73,7 @@ class PersistenceBundle:
     machine_repository: Any
     transaction_repository: Any
     machine_cycle_repository: Any
+    heatzone_composition_repository: Any = None
     external_fetch_state_store: Any = None
     notification_repository: Any = None
     outbox_repository: Any = None
@@ -111,6 +114,9 @@ class PersistenceBundle:
 
     def heatzone_store_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("heatzone_store", tenant_id)
+
+    def heatzone_composition_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        return self._scoped_repository("heatzone_composition_repository", tenant_id)
 
     def _scoped_repository(self, attribute: str, tenant_id: str) -> Any | None:
         if not tenant_id or not tenant_id.strip():
@@ -154,6 +160,7 @@ def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
             for policy in (
                 default_forecast_alert_policy(tenant_id),
                 default_model_performance_drift_policy(tenant_id),
+                default_heatzone_merge_policy(tenant_id),
             )
         ]
     )
@@ -168,7 +175,10 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     )
     from modules.external_data.workers.scheduled_fetch import InMemoryExternalFetchStateStore
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
-    from modules.heatzone.infrastructure import HeatZoneResultStore
+    from modules.heatzone.infrastructure import (
+        HeatZoneResultStore,
+        InMemoryHeatZoneCompositionRepository,
+    )
     from modules.intervention.infrastructure.repositories import (
         InMemoryInterventionRepository,
         InMemoryLabelRegistry,
@@ -226,6 +236,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         intervention_label_registry=InMemoryLabelRegistry(),
         ingestion_run_store=InMemoryIngestionRunStore(),
         heatzone_store=HeatZoneResultStore(),
+        heatzone_composition_repository=InMemoryHeatZoneCompositionRepository(),
         listing_repository=InMemoryListingRepository(),
         sitescore_decision_store=InMemoryDecisionStore(),
         sitescore_realized_store=InMemoryRealizedSiteStore(),
@@ -269,6 +280,7 @@ def _durable_bundle(
         DurableBrandRepository,
         DurableDecisionStore,
         DurableForecastOpsRepository,
+        DurableHeatZoneCompositionRepository,
         DurableHeatZoneResultStore,
         DurableInterventionRepository,
         DurableLabelRegistry,
@@ -326,6 +338,7 @@ def _durable_bundle(
         intervention_label_registry=DurableLabelRegistry(store),
         ingestion_run_store=DurableIngestionRunStore(store),
         heatzone_store=DurableHeatZoneResultStore(store),
+        heatzone_composition_repository=DurableHeatZoneCompositionRepository(store),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),
@@ -379,6 +392,7 @@ def _postgres_bundle(
         DurableBrandRepository,
         DurableDecisionStore,
         DurableForecastOpsRepository,
+        DurableHeatZoneCompositionRepository,
         DurableHeatZoneResultStore,
         DurableInterventionRepository,
         DurableLabelRegistry,
@@ -446,6 +460,7 @@ def _postgres_bundle(
         intervention_label_registry=DurableLabelRegistry(store),
         ingestion_run_store=DurableIngestionRunStore(store),
         heatzone_store=DurableHeatZoneResultStore(store),
+        heatzone_composition_repository=DurableHeatZoneCompositionRepository(store),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),

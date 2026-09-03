@@ -1,5 +1,13 @@
-"""HeatZone domain scoring primitives."""
-
+from modules.heatzone.domain.composition import (
+    COMPOSITION_MODEL_VERSION,
+    CompositionKind,
+    CompositionValidationError,
+    HeatZoneCompositionRecord,
+    ZONE_ID_REGEX,
+    ZoneLineage,
+    generate_merged_zone_id,
+    validate_composition_record,
+)
 from modules.heatzone.domain.scoring import (
     HEATZONE_FEATURE_VERSION,
     HEATZONE_MODEL_VERSION,
@@ -13,13 +21,21 @@ from modules.heatzone.domain.scoring import (
 )
 
 __all__ = [
+    "COMPOSITION_MODEL_VERSION",
+    "CompositionKind",
+    "CompositionValidationError",
     "HEATZONE_FEATURE_VERSION",
     "HEATZONE_MODEL_VERSION",
+    "HeatZoneCompositionRecord",
     "HeatZoneFeatureInput",
     "HeatZoneScoreResult",
     "HeatZoneScoringWeights",
     "HeatZoneState",
+    "ZONE_ID_REGEX",
+    "ZoneLineage",
+    "generate_merged_zone_id",
     "score_heatzones",
     "score_heatzones_from_model_predictions",
     "to_heatzone_model_row",
+    "validate_composition_record",
 ]

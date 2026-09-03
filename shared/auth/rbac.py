@@ -102,7 +102,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.EXPANSION_USER: frozenset(
         _grant("operator_console", Action.VIEW)
-        | _grant("heatzone", Action.VIEW, Action.CREATE)
+        | _grant("heatzone", Action.VIEW, Action.CREATE, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("listing", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE)
     ),
@@ -153,7 +153,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.EXECUTIVE: frozenset(
         _grant("operator_console", Action.VIEW)
         | _grant("netplan", Action.VIEW, Action.APPROVE, Action.CREATE, Action.EXECUTE)
-        | _grant("heatzone", Action.VIEW, Action.APPROVE)
+        | _grant("heatzone", Action.VIEW, Action.APPROVE, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("sitescore", Action.VIEW, Action.APPROVE)
         | _grant("audit", Action.VIEW)
     ),

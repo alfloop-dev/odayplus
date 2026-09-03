@@ -16,6 +16,15 @@ from shared.governance.decision_policy import (
     PolicySupersedeError,
     resolve_policy,
 )
+from shared.governance.heatzone_merge import (
+    DEFAULT_HEATZONE_MERGE_PARAMETERS,
+    HEATZONE_MERGE_POLICY_DEFAULT_TENANT,
+    HEATZONE_MERGE_POLICY_ID,
+    HEATZONE_MERGE_POLICY_KIND,
+    HEATZONE_MERGE_POLICY_LABEL,
+    HEATZONE_MERGE_POLICY_VERSION,
+    default_heatzone_merge_policy,
+)
 from shared.governance.model_performance import (
     MODEL_PERFORMANCE_DRIFT_POLICY_ID,
     MODEL_PERFORMANCE_DRIFT_POLICY_KIND,
@@ -33,6 +42,13 @@ __all__ = [
     "PolicyIdentityError",
     "PolicyResolutionError",
     "PolicySupersedeError",
+    "DEFAULT_HEATZONE_MERGE_PARAMETERS",
+    "HEATZONE_MERGE_POLICY_DEFAULT_TENANT",
+    "HEATZONE_MERGE_POLICY_ID",
+    "HEATZONE_MERGE_POLICY_KIND",
+    "HEATZONE_MERGE_POLICY_LABEL",
+    "HEATZONE_MERGE_POLICY_VERSION",
+    "default_heatzone_merge_policy",
     "MODEL_PERFORMANCE_DRIFT_POLICY_ID",
     "MODEL_PERFORMANCE_DRIFT_POLICY_KIND",
     "MODEL_PERFORMANCE_DRIFT_POLICY_LABEL",

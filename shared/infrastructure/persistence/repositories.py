@@ -27,6 +27,7 @@ from models.shared_ml.model_card import ModelCard
 from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersion
 from models.shared_ml.validation import ValidationRun
 from modules.adlift.domain.incrementality import IncrementalityReport
+from datetime import UTC, datetime
 from modules.avm.domain import DataRoom, NormalizedMargin, ValuationCase, ValuationReport
 from modules.forecastops.domain.feedback import ForecastFeedback
 from modules.forecastops.domain.forecasting import (
@@ -34,6 +35,13 @@ from modules.forecastops.domain.forecasting import (
     ForecastOutput,
     ForecastSeries,
     InterventionHandoff,
+)
+from modules.heatzone.domain.composition import (
+    CompositionKind,
+    CompositionValidationError,
+    HeatZoneCompositionRecord,
+    ZoneLineage,
+    validate_composition_record,
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
@@ -2051,6 +2059,169 @@ class DurableHeatZoneResultStore:
         return self._store.get(self._JOBS, snapshot_id)
 
 
+class DurableHeatZoneCompositionRepository:
+    """Durable mirror of HeatZoneCompositionRepository (ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001)."""
+
+    _COMPOSITIONS = "heatzone.compositions"
+
+    def __init__(self, store: SqliteDocumentStore) -> None:
+        self._store = store
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
+    def save_composition(self, record: HeatZoneCompositionRecord) -> HeatZoneCompositionRecord:
+        validate_composition_record(record)
+        if record.is_active:
+            existing_active = self.get_active_for_cell(record.member_cell_id, record.tenant_id)
+            if existing_active is not None and existing_active.composition_id != record.composition_id:
+                raise CompositionValidationError(
+                    f"cell '{record.member_cell_id}' is already an active member of zone '{existing_active.zone_id}'"
+                )
+        self._store.put(
+            f"{self._COMPOSITIONS}:{record.tenant_id}",
+            record.composition_id,
+            record,
+            group_key=record.zone_id,
+        )
+        return record
+
+    def save_composition_batch(
+        self, records: Sequence[HeatZoneCompositionRecord]
+    ) -> list[HeatZoneCompositionRecord]:
+        saved: list[HeatZoneCompositionRecord] = []
+        for record in records:
+            saved.append(self.save_composition(record))
+        return saved
+
+    def get_composition(self, zone_id: str, tenant_id: str) -> list[HeatZoneCompositionRecord]:
+        records: list[HeatZoneCompositionRecord] = self._store.list_by_group(
+            f"{self._COMPOSITIONS}:{tenant_id}", zone_id
+        )
+        return records
+
+    def get_active_for_cell(
+        self, cell_id: str, tenant_id: str
+    ) -> HeatZoneCompositionRecord | None:
+        all_records: list[HeatZoneCompositionRecord] = self._store.list_all(
+            f"{self._COMPOSITIONS}:{tenant_id}"
+        )
+        for r in all_records:
+            if r.member_cell_id == cell_id and r.is_active:
+                return r
+        return None
+
+    def list_compositions(
+        self, tenant_id: str, active_only: bool = True
+    ) -> list[HeatZoneCompositionRecord]:
+        records: list[HeatZoneCompositionRecord] = self._store.list_all(
+            f"{self._COMPOSITIONS}:{tenant_id}"
+        )
+        if active_only:
+            return [r for r in records if r.is_active]
+        return records
+
+    def revert_composition(
+        self, zone_id: str, tenant_id: str, reverted_at: datetime | None = None
+    ) -> list[HeatZoneCompositionRecord]:
+        now = reverted_at or datetime.now(UTC)
+        records = self.get_composition(zone_id, tenant_id)
+        active = [r for r in records if r.is_active]
+        if not active:
+            raise CompositionValidationError(f"no active composition found for zone '{zone_id}'")
+
+        reverted: list[HeatZoneCompositionRecord] = []
+        for r in active:
+            updated = HeatZoneCompositionRecord(
+                composition_id=r.composition_id,
+                zone_id=r.zone_id,
+                tenant_id=r.tenant_id,
+                member_cell_id=r.member_cell_id,
+                composition_kind=r.composition_kind,
+                parent_zone_id=r.parent_zone_id,
+                decided_by=r.decided_by,
+                decided_at=r.decided_at,
+                decision_policy_version_id=r.decision_policy_version_id,
+                override_reason=r.override_reason,
+                reverted_at=now,
+                created_at=r.created_at,
+            )
+            self._store.put(
+                f"{self._COMPOSITIONS}:{tenant_id}",
+                updated.composition_id,
+                updated,
+                group_key=updated.zone_id,
+            )
+            reverted.append(updated)
+        return reverted
+
+    def override_composition(
+        self,
+        zone_id: str,
+        tenant_id: str,
+        decided_by: str,
+        override_reason: str,
+        decision_policy_version_id: str,
+        new_kind: CompositionKind | None = None,
+        new_cells: Sequence[str] | None = None,
+        parent_zone_id: str | None = None,
+    ) -> list[HeatZoneCompositionRecord]:
+        now = datetime.now(UTC)
+        records = self.get_composition(zone_id, tenant_id)
+        active = [r for r in records if r.is_active]
+        if not active:
+            raise CompositionValidationError(f"no active composition found for zone '{zone_id}' to override")
+
+        self.revert_composition(zone_id, tenant_id, reverted_at=now)
+
+        effective_kind = new_kind or active[0].composition_kind
+        effective_cells = new_cells or [r.member_cell_id for r in active]
+        effective_parent = parent_zone_id if parent_zone_id is not None else active[0].parent_zone_id
+
+        created: list[HeatZoneCompositionRecord] = []
+        for cell_id in effective_cells:
+            record = HeatZoneCompositionRecord(
+                zone_id=zone_id,
+                tenant_id=tenant_id,
+                member_cell_id=cell_id,
+                composition_kind=effective_kind,
+                parent_zone_id=effective_parent,
+                decided_by=decided_by,
+                decided_at=now,
+                decision_policy_version_id=decision_policy_version_id,
+                override_reason=override_reason,
+                reverted_at=None,
+            )
+            created.append(self.save_composition(record))
+        return created
+
+    def get_lineage(self, zone_id: str, tenant_id: str) -> ZoneLineage | None:
+        records = self.get_composition(zone_id, tenant_id)
+        if not records:
+            return None
+
+        sorted_records = sorted(records, key=lambda r: r.decided_at, reverse=True)
+        active_records = [r for r in sorted_records if r.is_active]
+        latest_record = active_records[0] if active_records else sorted_records[0]
+        member_cells = tuple(sorted({r.member_cell_id for r in (active_records or sorted_records)}))
+
+        return ZoneLineage(
+            zone_id=zone_id,
+            tenant_id=tenant_id,
+            composition_kind=latest_record.composition_kind,
+            member_cell_ids=member_cells,
+            parent_zone_id=latest_record.parent_zone_id,
+            decided_by=latest_record.decided_by,
+            decided_at=latest_record.decided_at,
+            decision_policy_version_id=latest_record.decision_policy_version_id,
+            override_reason=latest_record.override_reason,
+            reverted_at=latest_record.reverted_at,
+            is_active=len(active_records) > 0,
+            records=tuple(sorted_records),
+        )
+
+
 class DurableListingRepository:
     """Durable mirror of ``InMemoryListingRepository`` (ODP-FLOW-002).
 
@@ -2171,6 +2342,7 @@ __all__ = [
     "DurableArtifactStore",
     "DurableDecisionStore",
     "DurableForecastOpsRepository",
+    "DurableHeatZoneCompositionRepository",
     "DurableHeatZoneResultStore",
     "DurableInterventionRepository",
     "DurableLabelRegistry",

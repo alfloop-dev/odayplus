@@ -267,6 +267,9 @@ else:
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
         heatzone_store_for_tenant = bundle.heatzone_store_for_tenant if bundle.is_durable else None
+        heatzone_composition_repo_for_tenant = (
+            bundle.heatzone_composition_repository_for_tenant if bundle.is_durable else None
+        )
         ingestion_run_store_for_tenant = (
             bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
         )
@@ -1292,7 +1295,10 @@ else:
             api,
             create_heatzone_router(
                 store=heatzone_store,
+                composition_repository=getattr(bundle, "heatzone_composition_repository", None),
+                policy_repository=forecastops_policy_repository or getattr(bundle, "forecastops_policy_repository", None),
                 heatzone_store_for_tenant=heatzone_store_for_tenant,
+                composition_repository_for_tenant=heatzone_composition_repo_for_tenant,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,
