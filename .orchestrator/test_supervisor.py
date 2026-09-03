@@ -6398,6 +6398,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         expired_claim = {
             "claimed_by": "Codex",
             "generation": 7,
+            "run_id": "helper-run-1",
             "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
         }
         dispatched_task = {
@@ -6437,8 +6438,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             "reviewer": "Gemini",
             "depends_on": [],
         }
-        if current_claim is not None:
-            task["helper_execution_lease"] = current_claim
+        task["helper_execution_lease"] = current_claim if current_claim is not None else expired_claim
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -6480,11 +6480,121 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
             mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
             mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
             mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             supervisor.poll_workers(config, state)
         return terminate_worker_pid
+
+    def test_helper_claim_binds_to_launched_run_without_replacing_roles(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "HELPER-BIND-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "original_owner": "Claude",
+                "generation": 11,
+                "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            },
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="helper",
+            task_id=task["id"],
+            reason=supervisor.REASON_HELPER_CLAIM,
+            metadata={"task": deepcopy(task)},
+        )
+        status = {"tasks": [deepcopy(task)]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+        ):
+            self.assertTrue(supervisor.bind_helper_execution_claim(config, request, "helper-run-11"))
+
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["run_id"], "helper-run-11")
+        self.assertEqual(request.metadata["task"]["helper_execution_lease"]["run_id"], "helper-run-11")
+        self.assertEqual(status["tasks"][0]["owner"], "Claude")
+        self.assertEqual(status["tasks"][0]["reviewer"], "Gemini")
+        commit.assert_called_once()
+
+    def test_helper_run_mismatch_is_reclaimed_without_grace_deferral(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        current_claim = {
+            "claimed_by": "Codex",
+            "generation": 7,
+            "run_id": "replacement-run-1",
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        config, state, status = self._helper_lease_fixture(current_claim=current_claim)
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        worker = state["workers"]["helper-run-1"]
+        self.assertEqual(worker["status"], "superseded")
+        self.assertNotIn("supersede_deferred_since", worker)
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["run_id"], "replacement-run-1")
+        terminate_worker_pid.assert_called_once_with(4321)
+
+    def test_terminal_helper_worker_releases_its_bound_claim(self) -> None:
+        config, state, status = self._helper_lease_fixture()
+        state["workers"]["helper-run-1"]["status"] = "completed"
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        self.assertNotIn("helper_execution_lease", status["tasks"][0])
+        self.assertEqual(state["workers"]["helper-run-1"]["status"], "completed")
+        terminate_worker_pid.assert_not_called()
+
+    def test_helper_claim_renews_across_two_hours_of_fresh_heartbeats(self) -> None:
+        config, state, status = self._helper_lease_fixture()
+        lifecycle = supervisor.worker_lifecycle
+        worker = state["workers"]["helper-run-1"]
+        start = datetime.now(UTC).replace(microsecond=0)
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            lifecycle._sync_supervisor_scope()
+            task_map = supervisor.task_index_from_status(config, status)
+            for offset_minutes in range(0, 121, 3):
+                now = start + timedelta(minutes=offset_minutes)
+                worker["last_heartbeat_at"] = now.isoformat().replace("+00:00", "Z")
+                worker["lease_expires_at"] = (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+                status["tasks"][0]["helper_execution_lease"]["lease_expires_at"] = (
+                    now - timedelta(seconds=1)
+                ).isoformat().replace("+00:00", "Z")
+                disposition, changed = lifecycle._reconcile_helper_claim(
+                    config,
+                    worker,
+                    task_map,
+                    now=now,
+                    alive=True,
+                    runner_reports_failure=False,
+                )
+                self.assertEqual(disposition, "valid")
+                self.assertTrue(changed)
+
+        final_expiry = datetime.fromisoformat(
+            status["tasks"][0]["helper_execution_lease"]["lease_expires_at"].replace("Z", "+00:00")
+        )
+        self.assertGreater(final_expiry, start + timedelta(hours=2))
 
     def test_expired_helper_claim_does_not_kill_live_worker_with_fresh_heartbeat(self) -> None:
         config, state, status = self._helper_lease_fixture()
@@ -6494,9 +6604,16 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         worker = state["workers"]["helper-run-1"]
         self.assertEqual(worker["status"], "running")
         self.assertNotIn("supersede_deferred_since", worker)
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["run_id"], "helper-run-1")
+        self.assertGreater(
+            datetime.fromisoformat(
+                status["tasks"][0]["helper_execution_lease"]["lease_expires_at"].replace("Z", "+00:00")
+            ),
+            datetime.now(UTC) + timedelta(minutes=20),
+        )
         terminate_worker_pid.assert_not_called()
 
-    def test_expired_helper_claim_accepts_fresh_process_activity_without_heartbeat(self) -> None:
+    def test_expired_helper_claim_with_stale_heartbeat_is_superseded(self) -> None:
         config, state, status = self._helper_lease_fixture(
             fresh_heartbeat=False,
             fresh_process_activity=True,
@@ -6504,14 +6621,15 @@ class PollWorkersRecoveryTests(unittest.TestCase):
 
         terminate_worker_pid = self._poll_helper_worker(config, state, status)
 
-        self.assertEqual(state["workers"]["helper-run-1"]["status"], "running")
-        terminate_worker_pid.assert_not_called()
+        self.assertEqual(state["workers"]["helper-run-1"]["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(4321)
 
     def test_expired_same_generation_claim_retained_on_task_does_not_kill_live_worker(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)
         current_claim = {
             "claimed_by": "Codex",
             "generation": 7,
+            "run_id": "helper-run-1",
             "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
         }
         config, state, status = self._helper_lease_fixture(current_claim=current_claim)
