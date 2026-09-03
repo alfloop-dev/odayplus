@@ -10,6 +10,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
+from modules.heatzone.application.absorption_outcome_recorder import (
+    AbsorptionOutcomeConflictError,
+)
 from modules.heatzone.application.merge_split_evidence import (
     AbsorptionOutcomeRecord,
     CellOutcomeSeries,
@@ -65,6 +68,33 @@ class InMemoryMergeSplitEvidenceRepository:
     ) -> None:
         for outcome in outcomes:
             self.record_outcome(tenant_id, outcome)
+
+    def append_absorption_outcome(
+        self, tenant_id: str, outcome: AbsorptionOutcomeRecord
+    ) -> AbsorptionOutcomeRecord:
+        """`AbsorptionOutcomeWriter` surface over the same append-only history.
+
+        Re-recording a period is a no-op when the stored row agrees and a
+        refusal when it does not, matching the durable writer and the relation's
+        append-only trigger; a fixture that quietly grew a second row for one
+        period would let a test build a history production cannot.
+        """
+        for existing in self._outcomes.get(tenant_id, []):
+            if (
+                existing.cell_id == outcome.cell_id
+                and existing.period == outcome.period
+                and existing.barrier_side == outcome.barrier_side
+            ):
+                if existing != outcome:
+                    raise AbsorptionOutcomeConflictError(
+                        f"cell {outcome.cell_id} already holds a different recorded outcome "
+                        f"for {outcome.period_start.isoformat()}.."
+                        f"{outcome.period_end.isoformat()} (side={outcome.barrier_side}); "
+                        "HZ-004 history is append-only"
+                    )
+                return existing
+        self.record_outcome(tenant_id, outcome)
+        return outcome
 
     def link_adjacent(self, tenant_id: str, left: str, right: str) -> None:
         if left == right:

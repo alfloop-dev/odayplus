@@ -26,6 +26,7 @@ from typing import Any
 from shared.audit.worm import AuditWormSink, build_audit_worm_sink_from_env
 from shared.governance import (
     InMemoryDecisionPolicyRepository,
+    default_heatzone_absorption_policy,
     default_heatzone_merge_policy,
     default_model_performance_drift_policy,
 )
@@ -75,6 +76,7 @@ class PersistenceBundle:
     machine_cycle_repository: Any
     heatzone_composition_repository: Any = None
     heatzone_evidence_repository: Any = None
+    heatzone_absorption_outcome_writer: Any = None
     external_fetch_state_store: Any = None
     notification_repository: Any = None
     outbox_repository: Any = None
@@ -118,6 +120,12 @@ class PersistenceBundle:
 
     def heatzone_composition_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("heatzone_composition_repository", tenant_id)
+
+    def heatzone_absorption_outcome_writer_for_tenant(self, tenant_id: str) -> Any | None:
+        # Like the reader, the writer takes tenant_id on every call and touches
+        # relations that are not document-store backed, so one writer per engine
+        # is correct and a scoped wrapper would only hide the tenant argument.
+        return self.heatzone_absorption_outcome_writer
 
     def heatzone_evidence_repository_for_tenant(self, tenant_id: str) -> Any | None:
         # The evidence reader already takes tenant_id on every call and reads
@@ -172,6 +180,7 @@ def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
                 default_forecast_alert_policy(tenant_id),
                 default_model_performance_drift_policy(tenant_id),
                 default_heatzone_merge_policy(tenant_id),
+                default_heatzone_absorption_policy(tenant_id),
                 # One registry, keyed by policy_kind. NetPlan approval refuses
                 # outright when its kind does not resolve, so a bundle that
                 # seeds the other kinds and not this one would leave every
@@ -228,6 +237,11 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from shared.jobs.queue import InMemoryJobQueue
     from shared.workflow.sitescore import InMemoryDecisionStore, InMemoryRealizedSiteStore
 
+    # One object serves as both the evidence reader and the outcome writer here;
+    # the durable bundle keeps them apart, but in memory a second instance would
+    # simply be a second, empty history.
+    _memory_heatzone_evidence = InMemoryMergeSplitEvidenceRepository()
+
     mem_identity_store = InMemoryIdentityStore()
     mem_session_service = SessionService(
         repository=InMemorySessionRepository(),
@@ -254,7 +268,8 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         ingestion_run_store=InMemoryIngestionRunStore(),
         heatzone_store=HeatZoneResultStore(),
         heatzone_composition_repository=InMemoryHeatZoneCompositionRepository(),
-        heatzone_evidence_repository=InMemoryMergeSplitEvidenceRepository(),
+        heatzone_evidence_repository=_memory_heatzone_evidence,
+        heatzone_absorption_outcome_writer=_memory_heatzone_evidence,
         listing_repository=InMemoryListingRepository(),
         sitescore_decision_store=InMemoryDecisionStore(),
         sitescore_realized_store=InMemoryRealizedSiteStore(),
@@ -306,6 +321,7 @@ def _durable_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
+        DurableAbsorptionOutcomeWriter,
         DurableMergeSplitEvidenceRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
@@ -359,6 +375,7 @@ def _durable_bundle(
         heatzone_store=DurableHeatZoneResultStore(store),
         heatzone_composition_repository=DurableHeatZoneCompositionRepository(engine),
         heatzone_evidence_repository=DurableMergeSplitEvidenceRepository(engine),
+        heatzone_absorption_outcome_writer=DurableAbsorptionOutcomeWriter(engine),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),
@@ -420,6 +437,7 @@ def _postgres_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
+        DurableAbsorptionOutcomeWriter,
         DurableMergeSplitEvidenceRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
@@ -483,6 +501,7 @@ def _postgres_bundle(
         heatzone_store=DurableHeatZoneResultStore(store),
         heatzone_composition_repository=DurableHeatZoneCompositionRepository(engine),
         heatzone_evidence_repository=DurableMergeSplitEvidenceRepository(engine),
+        heatzone_absorption_outcome_writer=DurableAbsorptionOutcomeWriter(engine),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),

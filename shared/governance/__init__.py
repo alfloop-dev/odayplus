@@ -16,6 +16,15 @@ from shared.governance.decision_policy import (
     PolicySupersedeError,
     resolve_policy,
 )
+from shared.governance.heatzone_absorption import (
+    DEFAULT_HEATZONE_ABSORPTION_PARAMETERS,
+    HEATZONE_ABSORPTION_POLICY_DEFAULT_TENANT,
+    HEATZONE_ABSORPTION_POLICY_ID,
+    HEATZONE_ABSORPTION_POLICY_KIND,
+    HEATZONE_ABSORPTION_POLICY_LABEL,
+    HEATZONE_ABSORPTION_POLICY_VERSION,
+    default_heatzone_absorption_policy,
+)
 from shared.governance.heatzone_merge import (
     DEFAULT_HEATZONE_MERGE_PARAMETERS,
     HEATZONE_MERGE_POLICY_DEFAULT_TENANT,
@@ -56,6 +65,13 @@ __all__ = [
     "PolicyIdentityError",
     "PolicyResolutionError",
     "PolicySupersedeError",
+    "DEFAULT_HEATZONE_ABSORPTION_PARAMETERS",
+    "HEATZONE_ABSORPTION_POLICY_DEFAULT_TENANT",
+    "HEATZONE_ABSORPTION_POLICY_ID",
+    "HEATZONE_ABSORPTION_POLICY_KIND",
+    "HEATZONE_ABSORPTION_POLICY_LABEL",
+    "HEATZONE_ABSORPTION_POLICY_VERSION",
+    "default_heatzone_absorption_policy",
     "DEFAULT_HEATZONE_MERGE_PARAMETERS",
     "HEATZONE_MERGE_POLICY_DEFAULT_TENANT",
     "HEATZONE_MERGE_POLICY_ID",

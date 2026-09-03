@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from models.shared_ml import (
@@ -11,6 +11,15 @@ from models.shared_ml import (
     ScoringInputUnavailableError,
     production_model_execution_required,
     require_live_inputs,
+)
+from modules.heatzone.application.absorption_inputs import (
+    AbsorptionInputError,
+    assemble_zone_absorption,
+)
+from modules.heatzone.application.absorption_outcome_recorder import (
+    AbsorptionOutcomeConflictError,
+    AbsorptionOutcomeWriteError,
+    record_absorption_outcome,
 )
 from modules.heatzone.application.merge_split_engine import (
     MergeSplitPolicyError,
@@ -33,6 +42,8 @@ from modules.heatzone.infrastructure import (
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.governance import (
+    HEATZONE_ABSORPTION_POLICY_KIND,
+    HEATZONE_MERGE_POLICY_KIND,
     DecisionPolicyRepository,
     InMemoryDecisionPolicyRepository,
     resolve_policy,
@@ -104,6 +115,32 @@ else:
         reason: str = Field(min_length=1)
 
 
+    class HeatZoneAbsorptionOutcomePayload(BaseModel):
+        """One cell-period of HZ-004 absorption, to be measured and recorded.
+
+        The body carries *inputs*, not results. `absorbed_demand`,
+        `absorption_ratio`, `absorbing_store_count` and `under_realized` are
+        computed here from the published `oday.store-daily-performance.v1` and
+        `oday.operational-start-observation.v1` rows, and the basis snapshot ids
+        are lifted from each row's `raw_contract_fingerprint`. A caller cannot
+        state what a zone absorbed, because merge/split is judged against this
+        history and a caller who could write the evidence could decide the
+        merge.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+        cell_id: str = Field(min_length=1)
+        period_start: str = Field(min_length=1)
+        period_end: str = Field(min_length=1)
+        original_demand: float = Field(gt=0.0)
+        store_ids: list[str] = Field(min_length=1)
+        performances: list[dict[str, Any]] = Field(min_length=1)
+        operational_starts: list[dict[str, Any]] = Field(min_length=1)
+        barrier_side: str | None = None
+        barrier_description: str = ""
+
+
     def create_heatzone_router(
         *,
         store: HeatZoneResultStore | None = None,
@@ -113,6 +150,8 @@ else:
         composition_repository_for_tenant: Any | None = None,
         evidence_repository: MergeSplitEvidenceRepository | None = None,
         evidence_repository_for_tenant: Any | None = None,
+        absorption_outcome_writer: Any | None = None,
+        absorption_outcome_writer_for_tenant: Any | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
         model_runtime: ProductionModelRuntime | None = None,
@@ -173,6 +212,76 @@ else:
             if evidence_repository_for_tenant is not None:
                 return evidence_repository_for_tenant(tid)
             return evidence_repository
+
+        def absorption_writer_for_request(request: Request) -> Any:
+            tid = resolve_tenant_id(request)
+            if absorption_outcome_writer_for_tenant is not None:
+                return absorption_outcome_writer_for_tenant(tid)
+            return absorption_outcome_writer
+
+        def resolve_merge_policy(
+            tenant_id: str, explicit_version_id: str | None, at: datetime
+        ) -> Any:
+            """The governed heatzone_merge policy this decision runs under.
+
+            Naming a version explicitly selects one, it does not exempt it: the
+            named row still has to be a `heatzone_merge` policy, belong to this
+            tenant, and be in force now. Without those checks a caller could
+            point the engine at any policy row it could name -- a retired
+            version whose thresholds it prefers, or a policy of another kind
+            whose parameters happen to parse -- which is the substitution
+            `resolve_policy` refuses to make on the implicit path.
+            """
+            if not explicit_version_id:
+                try:
+                    return resolve_policy(
+                        pol_repo,
+                        policy_kind=HEATZONE_MERGE_POLICY_KIND,
+                        tenant_id=tenant_id,
+                        at=at,
+                    )
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"failed to resolve governed {HEATZONE_MERGE_POLICY_KIND} policy "
+                            f"for tenant '{tenant_id}': {exc}"
+                        ),
+                    ) from exc
+
+            # `find_version` is on the DecisionPolicyRepository protocol, so
+            # both the in-memory and SQL registries answer it directly.
+            policy = pol_repo.find_version(explicit_version_id)
+            if policy is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"decision policy version '{explicit_version_id}' not found",
+                )
+            if policy.tenant_id != tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"decision policy version '{explicit_version_id}' does not belong "
+                        f"to tenant '{tenant_id}'"
+                    ),
+                )
+            if policy.policy_kind != HEATZONE_MERGE_POLICY_KIND:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"decision policy version '{explicit_version_id}' is of kind "
+                        f"'{policy.policy_kind}', not '{HEATZONE_MERGE_POLICY_KIND}'"
+                    ),
+                )
+            if not policy.covers(at):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"decision policy version '{explicit_version_id}' is not in force at "
+                        f"{at.isoformat()}"
+                    ),
+                )
+            return policy
 
         def operator_actor(request: Request) -> str:
             """Identity of the authenticated operator behind this request.
@@ -303,34 +412,7 @@ else:
             request: Request,
         ) -> dict[str, Any]:
             tid = resolve_tenant_id(request)
-            policy = None
-            if body.policy_version_id:
-                # `find_version` is on the DecisionPolicyRepository protocol, so
-                # both the in-memory and SQL registries answer it directly.
-                policy = pol_repo.find_version(body.policy_version_id)
-                if policy is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail=f"decision policy version '{body.policy_version_id}' not found",
-                    )
-                if policy.tenant_id != tid:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail=f"decision policy version '{body.policy_version_id}' does not belong to tenant '{tid}'",
-                    )
-            else:
-                try:
-                    policy = resolve_policy(
-                        pol_repo,
-                        policy_kind="heatzone_merge",
-                        tenant_id=tid,
-                        at=datetime.now(UTC),
-                    )
-                except Exception as exc:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail=f"failed to resolve governed heatzone_merge policy for tenant '{tid}': {exc}",
-                    ) from exc
+            policy = resolve_merge_policy(tid, body.policy_version_id, datetime.now(UTC))
 
             active_comp_repo = comp_repo_for_request(request)
             existing_zones: list[ExistingZoneComposition] = []
@@ -640,7 +722,14 @@ else:
                     detail="Human override requires a non-empty 'override_reason'",
                 )
 
-            policy_version = body.decision_policy_version_id or f"heatzone-merge-v1:{tid}"
+            # Spelling `heatzone-merge-v1:<tenant>` here would put a policy
+            # version id on a governance row without ever asking the registry
+            # whether that version exists or is in force. The composition's
+            # foreign key would catch it eventually, but only at write time,
+            # after the override had already been decided (ODP-SD-AMD-001 3.3).
+            policy_version = resolve_merge_policy(
+                tid, body.decision_policy_version_id, datetime.now(UTC)
+            ).policy_version_id
             active_comp_repo = comp_repo_for_request(request)
 
             new_kind = None
@@ -741,6 +830,160 @@ else:
                 "reverted_records": [r.to_dict() for r in reverted],
             }
 
+        @router.post(
+            "/absorption/outcomes",
+            dependencies=[
+                Depends(
+                    require_permission("heatzone_absorption", Action.CREATE, engine=authz_engine)
+                )
+            ],
+        )
+        def record_heatzone_absorption_outcome(
+            body: HeatZoneAbsorptionOutcomePayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            """Measure one cell-period of HZ-004 absorption and append it to evidence.
+
+            This is the production entry that fills
+            `expansion.heatzone_absorption_outcomes`. Without it the relation
+            merge/split reads is one nothing writes, so `evaluate` would abstain
+            on empty evidence forever and the only histories that ever existed
+            would be the ones tests put in the fixture by hand.
+
+            It is deliberately not on the merge/split surface: it carries its
+            own `heatzone_absorption` permission, which the roles that approve
+            compositions are not granted.
+            """
+            tid = resolve_tenant_id(request)
+            writer = absorption_writer_for_request(request)
+            if writer is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "HZ004_OUTCOME_WRITER_UNAVAILABLE",
+                        "message": "no HZ-004 absorption outcome writer is configured",
+                    },
+                )
+
+            try:
+                period_start = date.fromisoformat(body.period_start)
+                period_end = date.fromisoformat(body.period_end)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"period bounds must be ISO dates: {exc}",
+                ) from exc
+
+            try:
+                policy = resolve_policy(
+                    pol_repo,
+                    policy_kind=HEATZONE_ABSORPTION_POLICY_KIND,
+                    tenant_id=tid,
+                    at=datetime.now(UTC),
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"failed to resolve governed {HEATZONE_ABSORPTION_POLICY_KIND} policy "
+                        f"for tenant '{tid}': {exc}"
+                    ),
+                ) from exc
+
+            try:
+                result = assemble_zone_absorption(
+                    store_ids=list(body.store_ids),
+                    performances=body.performances,
+                    operational_starts=body.operational_starts,
+                    original_demand=body.original_demand,
+                    policy=policy,
+                    as_of=period_end,
+                    observation_window_start=period_start,
+                    observation_window_end=period_end,
+                )
+            except AbsorptionInputError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "HZ004_INPUT_REFUSED", "message": str(exc)},
+                ) from exc
+
+            if result is None:
+                # `assemble_zone_absorption` fails closed on incomplete
+                # coverage. Recording a partial period would put a number in the
+                # history that looks measured and is not, and every later merge
+                # would inherit it.
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "HZ004_NOT_MEASURABLE",
+                        "message": (
+                            f"absorption for cell '{body.cell_id}' over "
+                            f"{body.period_start}..{body.period_end} is not measurable from the "
+                            "supplied rows; coverage must be complete and traceable"
+                        ),
+                    },
+                )
+
+            try:
+                recorded = record_absorption_outcome(
+                    writer,
+                    tenant_id=tid,
+                    cell_id=body.cell_id,
+                    period_start=period_start,
+                    period_end=period_end,
+                    result=result,
+                    policy=policy,
+                    barrier_side=body.barrier_side,
+                    barrier_description=body.barrier_description,
+                )
+            except AbsorptionOutcomeConflictError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={"code": "HZ004_OUTCOME_CONFLICT", "message": str(exc)},
+                ) from exc
+            except AbsorptionOutcomeWriteError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "HZ004_OUTCOME_REFUSED", "message": str(exc)},
+                ) from exc
+
+            active_audit_log.record(
+                AuditEvent(
+                    event_type="heatzone.absorption.outcome.recorded.v1",
+                    actor="system",
+                    action="record_outcome",
+                    resource=f"heatzone/absorption/{body.cell_id}",
+                    outcome="recorded",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "cell_id": recorded.cell_id,
+                        "period_start": recorded.period_start.isoformat(),
+                        "period_end": recorded.period_end.isoformat(),
+                        "barrier_side": recorded.barrier_side,
+                        "absorption_ratio": recorded.absorption_ratio,
+                        "absorbing_store_count": recorded.absorbing_store_count,
+                        "basis_source_ids": list(recorded.basis_source_ids),
+                        "absorption_policy_version_id": recorded.absorption_policy_version_id,
+                    },
+                )
+            )
+            return {
+                "cell_id": recorded.cell_id,
+                "period_start": recorded.period_start.isoformat(),
+                "period_end": recorded.period_end.isoformat(),
+                "original_demand": recorded.original_demand,
+                "absorbed_demand": recorded.absorbed_demand,
+                "remaining_demand": recorded.remaining_demand,
+                "absorption_ratio": recorded.absorption_ratio,
+                "absorbing_store_count": recorded.absorbing_store_count,
+                "under_realized": recorded.under_realized,
+                "barrier_side": recorded.barrier_side,
+                "barrier_description": recorded.barrier_description,
+                "basis_source_ids": list(recorded.basis_source_ids),
+                "basis_at": recorded.basis_at.isoformat(),
+                "absorption_policy_version_id": recorded.absorption_policy_version_id,
+            }
+
         @router.get("/snapshots/{snapshot_id}", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def snapshot(snapshot_id: str, request: Request) -> dict[str, Any] | None:
             active_store = store_for_request(request)
@@ -761,6 +1004,7 @@ else:
 
 
     __all__ = [
+        "HeatZoneAbsorptionOutcomePayload",
         "HeatZoneMergeSplitEvaluatePayload",
         "HeatZoneOverridePayload",
         "HeatZoneResultStore",

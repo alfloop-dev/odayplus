@@ -84,6 +84,11 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         _grant("integration", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("data_quality", Action.VIEW, Action.UPDATE, Action.OVERRIDE)
         | _grant("data", Action.APPROVE)
+        # Recording HZ-004 absorption outcomes is a pipeline write, and it is
+        # deliberately not granted to the roles that decide merges and splits:
+        # merge/split is judged against this history, so whoever can approve a
+        # composition must not be able to write the evidence for it.
+        | _grant("heatzone_absorption", Action.VIEW, Action.CREATE)
         | _grant("audit", Action.VIEW)
     ),
     Role.MODEL_OWNER: frozenset(

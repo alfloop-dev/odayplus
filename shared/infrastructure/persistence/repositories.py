@@ -41,6 +41,10 @@ from modules.heatzone.application.merge_split_evidence import (
     AbsorptionOutcomeRecord,
     CellOutcomeSeries,
 )
+from modules.heatzone.application.absorption_outcome_recorder import (
+    AbsorptionOutcomeConflictError,
+    AbsorptionOutcomeWriteError,
+)
 from modules.heatzone.domain.composition import (
     COMPOSITION_MODEL_VERSION,
     CompositionKind,
@@ -2732,6 +2736,127 @@ class DurableMergeSplitEvidenceRepository:
             if left in observed and right in observed:
                 edges.add((left, right) if left <= right else (right, left))
         return sorted(edges)
+
+
+class DurableAbsorptionOutcomeWriter:
+    """Append-only durable sink for computed HZ-004 outcomes (ODP-FR-HZ-006).
+
+    A separate class from `DurableMergeSplitEvidenceRepository` on purpose. The
+    reader is what the merge/split request path resolves, so keeping the INSERT
+    off that object means no route that evaluates or approves a composition has
+    a writer for the evidence it is judged against, even by accident.
+
+    Re-recording a period is a no-op when the stored row agrees and a refusal
+    when it does not. A pipeline re-run should be safe; a pipeline that now
+    computes a different number for a period a merge was already decided on is
+    a finding, not something to overwrite -- PostgreSQL would reject the UPDATE
+    anyway, and refusing here says why rather than surfacing a trigger error.
+    """
+
+    #: Compared field-by-field on replay. `outcome_id` and `created_at` are
+    #: excluded: they identify the write, not the measurement.
+    _MEASURED_FIELDS = (
+        "original_demand",
+        "absorbed_demand",
+        "remaining_demand",
+        "absorption_ratio",
+        "absorbing_store_count",
+        "under_realized",
+        "barrier_description",
+        "absorption_policy_version_id",
+        "basis_source_ids",
+    )
+
+    def __init__(self, engine_or_store: Any) -> None:
+        # Share the reader's engine resolution and its SQLite bootstrap, so the
+        # writer cannot end up pointed at a relation the reader does not see.
+        self._reader = DurableMergeSplitEvidenceRepository(engine_or_store)
+        self._engine = self._reader._engine
+        self._is_postgres = self._reader._is_postgres
+
+    @property
+    def table_outcomes(self) -> str:
+        return self._reader.table_outcomes
+
+    def _find_existing(
+        self, tenant_id: str, outcome: AbsorptionOutcomeRecord
+    ) -> AbsorptionOutcomeRecord | None:
+        side_clause = (
+            "barrier_side IS NULL" if outcome.barrier_side is None else "barrier_side = ?"
+        )
+        params: tuple[Any, ...] = (
+            tenant_id,
+            outcome.cell_id,
+            outcome.period_start.isoformat(),
+            outcome.period_end.isoformat(),
+        )
+        if outcome.barrier_side is not None:
+            params = (*params, outcome.barrier_side)
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? AND geo_cell_id = ? "
+            f"AND period_start = ? AND period_end = ? AND {side_clause}",
+            params,
+        )
+        if not row:
+            return None
+        return self._reader._row_to_outcome(row)
+
+    def append_absorption_outcome(
+        self, tenant_id: str, outcome: AbsorptionOutcomeRecord
+    ) -> AbsorptionOutcomeRecord:
+        if not outcome.basis_source_ids:
+            raise AbsorptionOutcomeWriteError(
+                f"absorption outcome for cell {outcome.cell_id} carries no basis snapshot ids; "
+                "HZ-004 outcomes must be traceable to their source"
+            )
+
+        existing = self._find_existing(tenant_id, outcome)
+        if existing is not None:
+            differing = [
+                field
+                for field in self._MEASURED_FIELDS
+                if getattr(existing, field) != getattr(outcome, field)
+            ]
+            if differing:
+                raise AbsorptionOutcomeConflictError(
+                    f"cell {outcome.cell_id} already holds a different recorded outcome for "
+                    f"{outcome.period_start.isoformat()}..{outcome.period_end.isoformat()} "
+                    f"(side={outcome.barrier_side}); differing: {sorted(differing)}. HZ-004 "
+                    "history is append-only, so a recomputation that disagrees is a finding, "
+                    "not an update"
+                )
+            return existing
+
+        self._engine.execute(
+            f"""
+            INSERT INTO {self.table_outcomes} (
+                outcome_id, tenant_id, geo_cell_id, period_start, period_end,
+                original_demand, absorbed_demand, remaining_demand, absorption_ratio,
+                absorbing_store_count, under_realized, barrier_side, barrier_description,
+                basis_source_ids, basis_at, absorption_policy_version_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(uuid4()),
+                tenant_id,
+                outcome.cell_id,
+                outcome.period_start.isoformat(),
+                outcome.period_end.isoformat(),
+                outcome.original_demand,
+                outcome.absorbed_demand,
+                outcome.remaining_demand,
+                outcome.absorption_ratio,
+                outcome.absorbing_store_count,
+                outcome.under_realized,
+                outcome.barrier_side,
+                outcome.barrier_description,
+                json.dumps(list(outcome.basis_source_ids)),
+                outcome.basis_at.isoformat(),
+                outcome.absorption_policy_version_id,
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        return outcome
 
 
 class DurableListingRepository:

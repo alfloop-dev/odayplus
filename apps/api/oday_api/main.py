@@ -274,6 +274,9 @@ else:
         heatzone_evidence_repo_for_tenant = (
             bundle.heatzone_evidence_repository_for_tenant if bundle.is_durable else None
         )
+        heatzone_absorption_writer_for_tenant = (
+            bundle.heatzone_absorption_outcome_writer_for_tenant if bundle.is_durable else None
+        )
         ingestion_run_store_for_tenant = (
             bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
         )
@@ -1314,6 +1317,10 @@ else:
                 composition_repository_for_tenant=heatzone_composition_repo_for_tenant,
                 evidence_repository=getattr(bundle, "heatzone_evidence_repository", None),
                 evidence_repository_for_tenant=heatzone_evidence_repo_for_tenant,
+                absorption_outcome_writer=getattr(
+                    bundle, "heatzone_absorption_outcome_writer", None
+                ),
+                absorption_outcome_writer_for_tenant=heatzone_absorption_writer_for_tenant,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,

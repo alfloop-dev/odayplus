@@ -187,12 +187,54 @@ $seed_heatzone_merge_policy$;
 
 SELECT workflow.seed_heatzone_merge_policy(t.tenant_id) FROM core.tenants t;
 
+-- The absorption policy is the one that *measured* the outcomes merge/split is
+-- judged against, so it is a separate governed version from the merge policy:
+-- a threshold change in how absorption is measured must be readable in the
+-- audit trail without being mistaken for a change in how merges are decided.
+-- `heatzone_absorption_outcomes.absorption_policy_version_id` has a foreign key
+-- into this registry, so without this seed the HZ-004 writer cannot insert.
+CREATE OR REPLACE FUNCTION workflow.seed_heatzone_absorption_policy(p_tenant_id UUID)
+RETURNS void
+LANGUAGE sql
+AS $seed_heatzone_absorption_policy$
+    INSERT INTO workflow.decision_policies (
+        policy_version_id, policy_label, policy_id, policy_version, policy_kind,
+        tenant_id, effective_from, effective_to,
+        owner_role, approved_by, approved_at,
+        input_contract, output_contract, change_reason,
+        rollback_policy_version, parameters, declared_inputs
+    )
+    VALUES (
+        'heatzone-absorption-v1:' || p_tenant_id::text,
+        'heatzone-absorption-v1',
+        'heatzone-absorption',
+        '1.0.0',
+        'heatzone_absorption',
+        p_tenant_id,
+        '2026-09-01 00:00:00+00',
+        NULL,
+        'expansion_owner',
+        'architecture_review',
+        '2026-09-01 00:00:00+00',
+        'StoreDailyPerformance',
+        'HeatZoneAbsorptionOutcome',
+        '熱區需求吸收實績量測政策導入，作為 merge／split 的證據來源',
+        NULL,
+        '{"min_observation_days": 180, "under_realized_ratio": 0.35, "allow_declared_start": false, "allow_low_confidence_start": false, "allow_unknown_confidence_start": false}'::jsonb,
+        ARRAY['store_daily_performance', 'operational_start_observation', 'absorbed_demand']
+    )
+    ON CONFLICT (policy_version_id) DO NOTHING;
+$seed_heatzone_absorption_policy$;
+
+SELECT workflow.seed_heatzone_absorption_policy(t.tenant_id) FROM core.tenants t;
+
 CREATE OR REPLACE FUNCTION workflow.on_tenant_insert_seed_heatzone_merge_policy()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $on_tenant_insert_seed_heatzone_merge_policy$
 BEGIN
     PERFORM workflow.seed_heatzone_merge_policy(NEW.tenant_id);
+    PERFORM workflow.seed_heatzone_absorption_policy(NEW.tenant_id);
     RETURN NEW;
 END $on_tenant_insert_seed_heatzone_merge_policy$;
 
