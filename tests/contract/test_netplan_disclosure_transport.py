@@ -16,7 +16,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
-from modules.netplan.application.planning import NetPlanService
 from modules.netplan.domain.planning import NetPlanScenario
 from modules.netplan.infrastructure.repositories import InMemoryNetPlanRepository
 from modules.opsboard.application.network_rebalance import (
