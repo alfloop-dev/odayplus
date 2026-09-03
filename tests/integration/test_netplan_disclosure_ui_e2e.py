@@ -35,6 +35,9 @@ from shared.governance import (
     InMemoryDecisionPolicyRepository,
     default_netplan_disclosure_policy,
 )
+from shared.infrastructure.persistence import DurableNetPlanRepository
+from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+from shared.infrastructure.persistence.engine import SqliteEngine
 from solver.netplan import NetPlanConstraints
 
 TENANT_ID = "tenant-e2e-disclosure"
@@ -326,30 +329,31 @@ def test_e2e_production_solve_to_operator_projection_and_durable_approval_receip
     }
 
     scenarios = solve_res["store"]["netPlanScenarios"]
-    assert len(scenarios) >= 1
+    assert len(scenarios) >= 2, "the production solve must expose a primary and an alternative"
     primary_scenario = scenarios[0]
 
     # Verify partition contract in OpsBoard projection
-    assert set(primary_scenario["modelledConstraintClasses"]) == {
-        "CAPITAL",
-        "CONSTRUCTION",
-        "EQUIPMENT",
-        "LABOUR",
-        "COVERAGE",
-        "DILUTION",
-    }
-    assert set(primary_scenario["unmodelledConstraintClasses"]) == {
-        "LEASE",
-        "SEQUENCING",
-    }
-    assert (
-        primary_scenario["modelled_constraint_classes"]
-        == primary_scenario["modelledConstraintClasses"]
-    )
-    assert (
-        primary_scenario["unmodelled_constraint_classes"]
-        == primary_scenario["unmodelledConstraintClasses"]
-    )
+    for projected_scenario in scenarios:
+        assert set(projected_scenario["modelledConstraintClasses"]) == {
+            "CAPITAL",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+        }
+        assert set(projected_scenario["unmodelledConstraintClasses"]) == {
+            "LEASE",
+            "SEQUENCING",
+        }
+        assert (
+            projected_scenario["modelled_constraint_classes"]
+            == projected_scenario["modelledConstraintClasses"]
+        )
+        assert (
+            projected_scenario["unmodelled_constraint_classes"]
+            == projected_scenario["unmodelledConstraintClasses"]
+        )
 
     # Step 3: the projection also carries the submit gate's own classification,
     # resolved from the registered policy. The console renders this rather than
@@ -380,12 +384,6 @@ def test_e2e_production_solve_to_operator_projection_and_durable_approval_receip
     # whole flow.
     verifier = _attach_verifier(service, scenario, solve, receipt_id=RECEIPT_ID)
     rebalance_service.netplan_approval_verifier = verifier
-    service.submit_for_approval(
-        scenario.scenario_id,
-        actor=APPROVAL_PRINCIPAL,
-        reason="submitted for network planning approval",
-        occurred_at=MOMENT,
-    )
 
     # Step 6: Operator submit review. The acknowledgement is produced by this one
     # call -- a submission that reached Govern without a durable receipt behind
@@ -702,7 +700,7 @@ def test_e2e_operator_submission_refuses_unsigned_or_unauthorised_acknowledgemen
     projected_scenario["unmodelled_constraint_classes"] = []
     with pytest.raises(NetworkRebalancePolicyError) as exc_nothing:
         _submit(acknowledged_classes=["LEASE"])
-    assert "no acknowledgeable constraint class" in str(exc_nothing.value)
+    assert "omits required constraint classes" in str(exc_nothing.value)
 
     # None of the refusals advanced the store or left a partial receipt behind.
     assert rebalance_service._store("STORE-101")["status"] == "netplanreview"
@@ -874,6 +872,63 @@ def test_e2e_undisclosed_scenario_cannot_be_submitted_by_naming_acknowledgements
     assert service._state["governApprovals"] == []
 
 
+def test_e2e_operator_submit_does_not_trust_a_partial_projected_disclosure() -> None:
+    """A forged ``CAPITAL``/empty projection cannot bypass required classes.
+
+    The Operator aggregate stores a projection for the console. It must not be
+    able to turn a canonical solve that left LEASE/SEQUENCING unmodelled into a
+    clean Govern submission by replacing the row's two disclosure lists.
+    """
+    scenario, repo, _netplan_service, rebalance_service, engine = _canonical_surface(
+        "SCENARIO-E2E-PROJECTED-DISCLOSURE-001",
+        _fully_modelled_constraints(),
+    )
+    try:
+        rebalance_service.solve_netplan(
+            store_id="STORE-101",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-projected-disclosure-solve",
+            correlation_id="corr-projected-disclosure-solve",
+        )
+        rebalance_service.select_scenario(
+            store_id="STORE-101",
+            scenario_id=scenario.scenario_id,
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-projected-disclosure-select",
+            correlation_id="corr-projected-disclosure-select",
+        )
+        projected = rebalance_service._store("STORE-101")["netPlanScenarios"][0]
+        projected["modelledConstraintClasses"] = ["CAPITAL"]
+        projected["modelled_constraint_classes"] = ["CAPITAL"]
+        projected["unmodelledConstraintClasses"] = []
+        projected["unmodelled_constraint_classes"] = []
+
+        snapshot_row = rebalance_service.snapshot(selected_store_id="STORE-101")["stores"][0][
+            "netPlanScenarios"
+        ][0]
+        assert snapshot_row["disclosureUndeclared"] is True
+        assert snapshot_row["modelledConstraintClasses"] == []
+        assert snapshot_row["unmodelledConstraintClasses"] == []
+
+        with pytest.raises(NetworkRebalancePolicyError) as exc_info:
+            rebalance_service.submit_review(
+                store_id="STORE-101",
+                reason="attempt to submit a tampered disclosure",
+                actor_role_id="expansionManager",
+                actor_name="王若寧",
+                idempotency_key="idem-projected-disclosure-submit",
+                correlation_id="corr-projected-disclosure-submit",
+            )
+        assert "omits required constraint classes" in str(exc_info.value)
+        assert repo.get_scenario(scenario.scenario_id).status.value == "solved"
+        assert rebalance_service._state["governApprovals"] == []
+    finally:
+        if engine is not None:
+            engine.close()
+
+
 def _mount_operator_api(service: NetworkRebalanceService) -> TestClient:
     """The real Operator route module over `service`.
 
@@ -902,8 +957,15 @@ def _mount_operator_api(service: NetworkRebalanceService) -> TestClient:
 def _canonical_surface(
     scenario_id: str,
     constraints: NetPlanConstraints,
-) -> tuple[NetPlanScenario, InMemoryNetPlanRepository, NetPlanService, NetworkRebalanceService]:
-    repo = InMemoryNetPlanRepository()
+    *,
+    database_path: Path | None = None,
+) -> tuple[NetPlanScenario, Any, NetPlanService, NetworkRebalanceService, Any | None]:
+    engine = SqliteEngine(database_path) if database_path is not None else None
+    repo = (
+        DurableNetPlanRepository(SqliteDocumentStore(engine))
+        if engine is not None
+        else InMemoryNetPlanRepository()
+    )
     policy_repo = InMemoryDecisionPolicyRepository(
         [default_netplan_disclosure_policy(tenant_id=TENANT_ID)]
     )
@@ -915,6 +977,7 @@ def _canonical_surface(
         repository=repo,
         policy_repository=policy_repo,
         production_executor=executor,
+        runtime_mode="production" if engine is not None else None,
     )
     rebalance_service = NetworkRebalanceService(
         netplan_repository=repo,
@@ -923,9 +986,10 @@ def _canonical_surface(
         avm_repository=_FakeAvmRepo(),
         tenant_id=TENANT_ID,
         require_canonical=True,
+        runtime_mode="production" if engine is not None else None,
     )
     rebalance_service._store("STORE-101")["status"] = "avmready"
-    return scenario, repo, service, rebalance_service
+    return scenario, repo, service, rebalance_service, engine
 
 
 DISCLOSURE_CONTRACT_FIXTURE = (
@@ -977,7 +1041,7 @@ def test_e2e_http_disclosure_payload_matches_the_console_test_fixture() -> None:
     Regenerate by running this module as a script:
         uv run --frozen python -m tests.integration.test_netplan_disclosure_ui_e2e
     """
-    _scenario, _repo, _netplan_service, rebalance_service = _canonical_surface(
+    _scenario, _repo, _netplan_service, rebalance_service, engine = _canonical_surface(
         "SCENARIO-E2E-HTTP-001",
         _fully_modelled_constraints(),
     )
@@ -997,9 +1061,13 @@ def test_e2e_http_disclosure_payload_matches_the_console_test_fixture() -> None:
         f"{DISCLOSURE_CONTRACT_FIXTURE.name}, so update that fixture and the UI "
         "test that reads it in the same change"
     )
+    if engine is not None:
+        engine.close()
 
 
-def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt() -> None:
+def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt(
+    tmp_path: Path,
+) -> None:
     """CP-SAT solve → FastAPI → the payload the console renders → durable receipt.
 
     The other success test in this module talks to `NetworkRebalanceService`
@@ -1010,9 +1078,10 @@ def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt(
     that the signature the last HTTP call produced exists as a sealed receipt in
     the NetPlan repository -- not as a field on the response that returned it.
     """
-    scenario, repo, netplan_service, rebalance_service = _canonical_surface(
+    scenario, repo, netplan_service, rebalance_service, engine = _canonical_surface(
         "SCENARIO-E2E-HTTP-001",
         _fully_modelled_constraints(),
+        database_path=tmp_path / "netplan-disclosure-operator-e2e.sqlite3",
     )
     client = _mount_operator_api(rebalance_service)
 
@@ -1026,7 +1095,7 @@ def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt(
     assert solved_store["status"] == "netplanreview"
 
     scenarios = solved_store["netPlanScenarios"]
-    assert scenarios, "the solve must project at least the primary scenario"
+    assert len(scenarios) >= 2, "the production solve must expose a primary and an alternative"
     primary = scenarios[0]
 
     # The six caps the production formulation can bind, and the two it
@@ -1065,17 +1134,14 @@ def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt(
     assert select_response.status_code == 200, select_response.text
     assert select_response.json()["store"]["selectedScenarioId"] == primary["id"]
 
-    # The management approval authority both services sign against.
+    # The management approval authority both services sign against. The
+    # acknowledgement and the lifecycle transition below are both initiated by
+    # the Operator HTTP submit boundary; there is no direct NetPlan submission
+    # hiding behind this E2E.
     solve = repo.get_solve(scenario.scenario_id)
     assert solve is not None
     verifier = _attach_verifier(netplan_service, scenario, solve, receipt_id=RECEIPT_ID)
     rebalance_service.netplan_approval_verifier = verifier
-    netplan_service.submit_for_approval(
-        scenario.scenario_id,
-        actor=APPROVAL_PRINCIPAL,
-        reason="submitted for network planning approval",
-        occurred_at=MOMENT,
-    )
 
     ack_reason = "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。"
     submit_response = client.post(
@@ -1094,6 +1160,7 @@ def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt(
     assert submit_response.status_code == 200, submit_response.text
     body = submit_response.json()
     assert body["store"]["status"] == "pendingapproval"
+    assert repo.get_scenario(scenario.scenario_id).status.value == "pending_approval"
 
     approval = body["governApproval"]
     assert set(approval["acknowledgedConstraintClasses"]) == {"LEASE", "SEQUENCING"}
@@ -1130,6 +1197,20 @@ def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt(
     assert decision.disclosure_acknowledgement_id == ack.acknowledgement_id
     assert decision.authentic_approval_verified is True
 
+    # The acknowledgement is durable across a new repository object, not merely
+    # present in the service's process-local state.
+    assert engine is not None
+    engine.close()
+    reopened_engine = SqliteEngine(tmp_path / "netplan-disclosure-operator-e2e.sqlite3")
+    try:
+        reopened_repo = DurableNetPlanRepository(SqliteDocumentStore(reopened_engine))
+        reopened_ack = reopened_repo.list_disclosure_acknowledgements(scenario.scenario_id)
+        assert len(reopened_ack) == 1
+        assert reopened_ack[0].receipt_hash == reopened_ack[0].compute_receipt_hash()
+        assert reopened_repo.get_scenario(scenario.scenario_id).status.value == "approved"
+    finally:
+        reopened_engine.close()
+
 
 def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared() -> None:
     """The HTTP boundary reports and refuses a doubly-empty disclosure.
@@ -1139,7 +1220,7 @@ def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared()
     refuse it. A surface that only did the first would be relying on the console
     to enforce a governance rule.
     """
-    scenario, _repo, _netplan_service, rebalance_service = _canonical_surface(
+    scenario, _repo, _netplan_service, rebalance_service, engine = _canonical_surface(
         "SCENARIO-E2E-HTTP-UNDISCLOSED-001",
         _fully_modelled_constraints(),
     )
@@ -1198,6 +1279,8 @@ def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared()
         client.get("/api/v1/operator/network-rebalance").json()["stores"][0]["status"]
         == "netplanreview"
     )
+    if engine is not None:
+        engine.close()
 
 
 def _write_disclosure_contract_fixture() -> None:
@@ -1208,7 +1291,7 @@ def _write_disclosure_contract_fixture() -> None:
     that had just changed underneath it, which is the one thing this fixture
     exists to make impossible.
     """
-    _scenario, _repo, _netplan_service, rebalance_service = _canonical_surface(
+    _scenario, _repo, _netplan_service, rebalance_service, engine = _canonical_surface(
         "SCENARIO-E2E-HTTP-001",
         _fully_modelled_constraints(),
     )
@@ -1225,6 +1308,8 @@ def _write_disclosure_contract_fixture() -> None:
         encoding="utf-8",
     )
     print(f"wrote {DISCLOSURE_CONTRACT_FIXTURE}")
+    if engine is not None:
+        engine.close()
 
 
 if __name__ == "__main__":

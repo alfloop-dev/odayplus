@@ -54,6 +54,9 @@ from modules.netplan.domain import (
     ApprovalRecord as NetPlanApprovalRecord,
 )
 from modules.netplan.domain import (
+    ConstraintDisclosureAcknowledgement as NetPlanConstraintDisclosureAcknowledgement,
+)
+from modules.netplan.domain import (
     ExecutionRecord as NetPlanExecutionRecord,
 )
 from modules.netplan.domain import (
@@ -65,6 +68,7 @@ from modules.netplan.domain import (
 from modules.netplan.domain import (
     ScenarioSolveRecord as NetPlanScenarioSolveRecord,
 )
+from modules.netplan.infrastructure.repositories import ImmutableRecordError
 from modules.priceops.domain.pricing import (
     ApprovalRecord,
     InterventionTreatmentHandoff,
@@ -1023,6 +1027,7 @@ class DurableNetPlanRepository:
 
     _SCENARIOS = "netplan.scenarios"
     _SOLVES = "netplan.solves"
+    _DISCLOSURE_ACKNOWLEDGEMENTS = "netplan.disclosure_acknowledgements"
     _APPROVALS = "netplan.approvals"
     _EXECUTIONS = "netplan.executions"
     _OUTCOMES = "netplan.outcomes"
@@ -1046,6 +1051,46 @@ class DurableNetPlanRepository:
 
     def get_solve(self, scenario_id: str) -> NetPlanScenarioSolveRecord | None:
         return self._store.get(self._SOLVES, scenario_id)
+
+    def save_disclosure_acknowledgement(
+        self,
+        acknowledgement: NetPlanConstraintDisclosureAcknowledgement,
+    ) -> NetPlanConstraintDisclosureAcknowledgement:
+        """Persist one sealed disclosure receipt without permitting rewrites."""
+        if not acknowledgement.integrity_verified:
+            raise ImmutableRecordError(
+                f"acknowledgement {acknowledgement.acknowledgement_id} does not match "
+                "its own content hash; refusing to store an unverifiable receipt"
+            )
+        with self._store.engine.lock:
+            existing = self._store.get(
+                self._DISCLOSURE_ACKNOWLEDGEMENTS,
+                acknowledgement.acknowledgement_id,
+            )
+            if existing is not None:
+                raise ImmutableRecordError(
+                    f"acknowledgement {acknowledgement.acknowledgement_id} already exists "
+                    "and is immutable; issue a new acknowledgement instead of rewriting it"
+                )
+            self._store.put(
+                self._DISCLOSURE_ACKNOWLEDGEMENTS,
+                acknowledgement.acknowledgement_id,
+                acknowledgement,
+                group_key=acknowledgement.scenario_id,
+            )
+        return acknowledgement
+
+    def get_disclosure_acknowledgement(
+        self,
+        acknowledgement_id: str,
+    ) -> NetPlanConstraintDisclosureAcknowledgement | None:
+        return self._store.get(self._DISCLOSURE_ACKNOWLEDGEMENTS, acknowledgement_id)
+
+    def list_disclosure_acknowledgements(
+        self,
+        scenario_id: str,
+    ) -> list[NetPlanConstraintDisclosureAcknowledgement]:
+        return self._store.list_by_group(self._DISCLOSURE_ACKNOWLEDGEMENTS, scenario_id)
 
     def save_approval(self, approval: NetPlanApprovalRecord) -> NetPlanApprovalRecord:
         self._store.put(

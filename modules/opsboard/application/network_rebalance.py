@@ -23,9 +23,11 @@ from typing import Any
 
 from modules.avm.application.valuation import AVMError, AVMService
 from modules.netplan.application.planning import (
+    NetPlanApprovalError,
     NetPlanConstraintDisclosureError,
     NetPlanService,
 )
+from modules.netplan.domain import InvalidNetPlanTransitionError, NetPlanScenarioStatus
 from shared.governance.decision_policy import (
     DecisionPolicy,
     DecisionPolicyRepository,
@@ -39,6 +41,7 @@ from shared.governance.netplan_disclosure import (
     authorized_roles,
     evaluate_disclosure,
 )
+from solver.netplan import ConstraintClass
 
 
 class NetworkRebalanceError(RuntimeError):
@@ -905,7 +908,13 @@ class NetworkRebalanceService:
         # point-in-time, never a literal here: the two lists move on a
         # governance clock, and a copy in this module would keep approving on
         # rules the registry had already retired.
-        modelled, unmodelled = self._declared_disclosure(scenario)
+        canonical_scenario = None
+        if self._require_canonical:
+            canonical_scenario, _solve, modelled, unmodelled = (
+                self._canonical_disclosure_for_row(store, scenario, require_solved=True)
+            )
+        else:
+            modelled, unmodelled = self._declared_disclosure(scenario)
         policy = self._require_disclosure_policy()
         evaluation = evaluate_disclosure(policy, unmodelled_classes=unmodelled)
 
@@ -942,6 +951,24 @@ class NetworkRebalanceService:
                 approval_receipt_id=approval_receipt_id,
             )
             ack_classes = [str(item) for item in acknowledgement.acknowledged_classes]
+
+        # The Operator request is the production submission boundary. Do not
+        # create a Govern approval while the canonical scenario is still merely
+        # SOLVED: a later NetPlan decision must observe the same lifecycle state
+        # that the Operator response claims to have submitted. The acknowledgement
+        # above is intentionally written first, so every failed submission still
+        # leaves no partial signature behind.
+        if canonical_scenario is not None:
+            try:
+                self._canonical_netplan_service().submit_for_approval(
+                    canonical_scenario.scenario_id,
+                    actor=actor_name or actor_role_id,
+                    reason=reason,
+                )
+            except (InvalidNetPlanTransitionError, NetPlanApprovalError) as exc:
+                raise NetworkRebalancePolicyError(
+                    f"canonical NetPlan scenario could not be submitted for approval: {exc}"
+                ) from exc
 
         approval_id = store.get("relatedApprovalId") or f"APR-NET-{store_id}"
         approval = {
@@ -1118,6 +1145,220 @@ class NetworkRebalanceService:
             )
         return modelled, unmodelled
 
+    @staticmethod
+    def _normalise_constraint_classes(values: Any, *, source: str) -> list[str]:
+        """Read class names without allowing an invalid or ambiguous partition."""
+        if isinstance(values, (str, bytes)) or not isinstance(values, (list, tuple)):
+            raise NetworkRebalancePolicyError(
+                f"{source} constraint classes must be a sequence"
+            )
+        normalised: list[str] = []
+        for value in values:
+            raw = value.value if isinstance(value, ConstraintClass) else str(value).strip().upper()
+            try:
+                constraint_class = ConstraintClass(raw)
+            except ValueError as exc:
+                raise NetworkRebalancePolicyError(
+                    f"{source} contains unknown constraint class {raw!r}"
+                ) from exc
+            name = constraint_class.value
+            if name in normalised:
+                raise NetworkRebalancePolicyError(
+                    f"{source} repeats constraint class {name}"
+                )
+            normalised.append(name)
+        return normalised
+
+    @classmethod
+    def _validate_constraint_partition(
+        cls,
+        modelled: Any,
+        unmodelled: Any,
+        *,
+        source: str,
+    ) -> tuple[list[str], list[str]]:
+        """Require a complete, disjoint partition of ODP-FR-NET-002 classes."""
+        modelled_names = cls._normalise_constraint_classes(
+            modelled, source=f"{source} modelled"
+        )
+        unmodelled_names = cls._normalise_constraint_classes(
+            unmodelled, source=f"{source} unmodelled"
+        )
+        modelled_set = set(modelled_names)
+        unmodelled_set = set(unmodelled_names)
+        overlap = sorted(modelled_set & unmodelled_set)
+        all_classes = {constraint_class.value for constraint_class in ConstraintClass}
+        missing = sorted(all_classes - modelled_set - unmodelled_set)
+        if overlap:
+            raise NetworkRebalancePolicyError(
+                f"{source} disclosure has overlap between modelled and unmodelled: {overlap}"
+            )
+        if not modelled_names and not unmodelled_names:
+            raise NetworkRebalancePolicyError(
+                f"{source} declares neither modelled nor unmodelled constraint classes; "
+                "an undisclosed solve cannot be submitted for approval"
+            )
+        if missing:
+            raise NetworkRebalancePolicyError(
+                f"{source} disclosure omits required constraint classes: {missing}"
+            )
+        return modelled_names, unmodelled_names
+
+    @classmethod
+    def _row_constraint_partition(
+        cls, scenario: dict[str, Any], *, source: str
+    ) -> tuple[list[str], list[str]]:
+        """Require both transport spellings and ensure they cannot diverge."""
+        values: dict[str, list[str]] = {}
+        for kind in ("modelled", "unmodelled"):
+            camel = f"{kind}ConstraintClasses"
+            snake = f"{kind}_constraint_classes"
+            if camel not in scenario or scenario[camel] is None:
+                raise NetworkRebalancePolicyError(f"{source} is missing {camel}")
+            if snake not in scenario or scenario[snake] is None:
+                raise NetworkRebalancePolicyError(f"{source} is missing {snake}")
+            camel_values = cls._normalise_constraint_classes(
+                scenario[camel], source=f"{source}.{camel}"
+            )
+            snake_values = cls._normalise_constraint_classes(
+                scenario[snake], source=f"{source}.{snake}"
+            )
+            if camel_values != snake_values:
+                raise NetworkRebalancePolicyError(
+                    f"{source} has divergent {camel} and {snake} values"
+                )
+            values[kind] = camel_values
+        return cls._validate_constraint_partition(
+            values["modelled"], values["unmodelled"], source=source
+        )
+
+    def _canonical_disclosure_for_row(
+        self,
+        store: dict[str, Any],
+        row: dict[str, Any],
+        *,
+        require_solved: bool = False,
+    ) -> tuple[Any, Any, list[str], list[str]]:
+        """Bind one Operator row to the durable scenario and solve it represents.
+
+        Projection rows are a convenience for the console, not an authority. In
+        particular, an operator-domain document can be stale or corrupted while
+        the canonical NetPlan repository remains correct. Submission therefore
+        validates the selected row against the canonical solve and constraints,
+        including alternatives, before policy evaluation or acknowledgement.
+        """
+        if self._netplan_repository is None:
+            raise NetworkRebalancePolicyError(
+                "canonical NetPlan repository is unavailable; disclosure cannot be verified"
+            )
+        canonical_id = str((store.get("netPlanJob") or {}).get("id") or "").strip()
+        if not canonical_id:
+            raise NetworkRebalancePolicyError(
+                "no canonical NetPlan solve is recorded for this store"
+            )
+        canonical_scenario = self._netplan_repository.get_scenario(canonical_id)
+        solve = self._netplan_repository.get_solve(canonical_id)
+        if canonical_scenario is None or solve is None:
+            raise NetworkRebalancePolicyError(
+                f"canonical NetPlan scenario {canonical_id} has no durable solve record"
+            )
+        if canonical_scenario.scenario_id != solve.scenario_id:
+            raise NetworkRebalancePolicyError(
+                f"canonical NetPlan solve {canonical_id} is bound to a different scenario"
+            )
+        if canonical_scenario.tenant_id != self._tenant_id:
+            raise NetworkRebalancePolicyError(
+                f"canonical NetPlan scenario {canonical_id} is outside the active tenant"
+            )
+        if require_solved and canonical_scenario.status is not NetPlanScenarioStatus.SOLVED:
+            raise NetworkRebalancePolicyError(
+                f"canonical NetPlan scenario {canonical_id} must be SOLVED before Operator submission; "
+                f"it is {canonical_scenario.status.value}"
+            )
+        if solve.is_stale(canonical_scenario):
+            raise NetworkRebalancePolicyError(
+                f"canonical NetPlan solve {canonical_id} is stale and cannot be submitted"
+            )
+
+        expected_modelled, expected_unmodelled = self._validate_constraint_partition(
+            canonical_scenario.constraints.modelled_classes(),
+            canonical_scenario.constraints.unmodelled_classes(),
+            source=f"canonical scenario {canonical_id}",
+        )
+        actual_modelled, actual_unmodelled = self._validate_constraint_partition(
+            getattr(solve.result, "modelled_constraint_classes", None),
+            getattr(solve.result, "unmodelled_constraint_classes", None),
+            source=f"canonical solve {canonical_id}",
+        )
+        if (actual_modelled, actual_unmodelled) != (
+            expected_modelled,
+            expected_unmodelled,
+        ):
+            raise NetworkRebalancePolicyError(
+                f"canonical solve {canonical_id} disclosure does not match its constraints"
+            )
+
+        row_id = str(row.get("id") or "").strip()
+        expected_row_modelled = actual_modelled
+        expected_row_unmodelled = actual_unmodelled
+        if row_id != canonical_id:
+            prefix = f"{canonical_id}:alternative:"
+            if not row_id.startswith(prefix):
+                raise NetworkRebalancePolicyError(
+                    f"selected Operator scenario {row_id!r} is not part of canonical solve {canonical_id}"
+                )
+            raw_index = row_id[len(prefix) :]
+            if not raw_index.isdigit() or int(raw_index) < 1:
+                raise NetworkRebalancePolicyError(
+                    f"selected Operator alternative {row_id!r} has an invalid index"
+                )
+            index = int(raw_index) - 1
+            alternatives = getattr(solve.result, "alternatives", ())
+            if index >= len(alternatives):
+                raise NetworkRebalancePolicyError(
+                    f"selected Operator alternative {row_id!r} is absent from canonical solve {canonical_id}"
+                )
+            alternative = alternatives[index]
+            expected_row_modelled, expected_row_unmodelled = (
+                self._validate_constraint_partition(
+                    getattr(alternative, "modelled_constraint_classes", None),
+                    getattr(alternative, "unmodelled_constraint_classes", None),
+                    source=f"canonical solve {canonical_id} alternative {index + 1}",
+                )
+            )
+            if (expected_row_modelled, expected_row_unmodelled) != (
+                actual_modelled,
+                actual_unmodelled,
+            ):
+                raise NetworkRebalancePolicyError(
+                    f"canonical solve {canonical_id} alternative {index + 1} has a divergent disclosure"
+                )
+
+        row_modelled, row_unmodelled = self._row_constraint_partition(
+            row, source=f"Operator scenario {row_id or '<missing>'}"
+        )
+        if (row_modelled, row_unmodelled) != (
+            expected_row_modelled,
+            expected_row_unmodelled,
+        ):
+            raise NetworkRebalancePolicyError(
+                f"Operator scenario {row_id!r} disclosure does not match canonical solve {canonical_id}"
+            )
+        return canonical_scenario, solve, expected_row_modelled, expected_row_unmodelled
+
+    def _canonical_netplan_service(self) -> NetPlanService:
+        if self._netplan_repository is None:
+            raise NetworkRebalancePolicyError(
+                "canonical NetPlan repository is unavailable"
+            )
+        return NetPlanService(
+            repository=self._netplan_repository,
+            production_executor=self._netplan_production_executor,
+            approval_verifier=self.netplan_approval_verifier,
+            policy_repository=self._netplan_policy_repository,
+            runtime_mode=self._runtime_mode,
+        )
+
     def _require_disclosure_policy(self) -> DecisionPolicy:
         """Resolve the disclosure policy in force for this tenant, or refuse.
 
@@ -1214,13 +1455,7 @@ class NetworkRebalanceService:
             raise NetworkRebalancePolicyError(
                 "no NetPlan solve is recorded for this store; nothing can be acknowledged"
             )
-        service = NetPlanService(
-            repository=self._netplan_repository,
-            production_executor=self._netplan_production_executor,
-            approval_verifier=self.netplan_approval_verifier,
-            policy_repository=self._netplan_policy_repository,
-            runtime_mode=self._runtime_mode,
-        )
+        service = self._canonical_netplan_service()
         try:
             return service.acknowledge_unmodelled_constraints(
                 scenario_id=scenario_id,
@@ -1246,7 +1481,11 @@ class NetworkRebalanceService:
             return None
 
     def _disclosure_view(
-        self, scenario: dict[str, Any], policy: DecisionPolicy | None
+        self,
+        scenario: dict[str, Any],
+        policy: DecisionPolicy | None,
+        *,
+        store: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """How the submit gate would classify this scenario, for the UI to render.
 
@@ -1262,27 +1501,73 @@ class NetworkRebalanceService:
         are unverifiable; a read path that classified them as fully modelled
         would put a live submit button on a plan the server rejects.
         """
-        try:
-            _modelled, unmodelled = self._declared_disclosure(scenario)
-        except NetworkRebalancePolicyError:
-            return {
-                "blockedConstraintClasses": [],
-                "acknowledgeableConstraintClasses": [],
-                "disclosurePolicyVersionId": None,
-                "disclosureUndeclared": True,
-            }
+        if self._require_canonical:
+            try:
+                if store is None:
+                    raise NetworkRebalancePolicyError(
+                        "canonical disclosure view has no owning store"
+                    )
+                _canonical, _solve, modelled, unmodelled = (
+                    self._canonical_disclosure_for_row(store, scenario)
+                )
+            except NetworkRebalancePolicyError:
+                # A projection row that cannot be reconciled with the canonical
+                # solve is rendered as entirely unverifiable. Keeping even a
+                # forged partial modelled list here would invite the operator to
+                # read that subset as an authoritative verification claim.
+                return {
+                    "modelledConstraintClasses": [],
+                    "unmodelledConstraintClasses": [],
+                    "modelled_constraint_classes": [],
+                    "unmodelled_constraint_classes": [],
+                    "blockedConstraintClasses": [],
+                    "acknowledgeableConstraintClasses": [],
+                    "disclosurePolicyVersionId": None,
+                    "disclosureUndeclared": True,
+                }
+        else:
+            try:
+                modelled, unmodelled = self._declared_disclosure(scenario)
+            except NetworkRebalancePolicyError:
+                return {
+                    "blockedConstraintClasses": [],
+                    "acknowledgeableConstraintClasses": [],
+                    "disclosurePolicyVersionId": None,
+                    "disclosureUndeclared": True,
+                }
+
         try:
             if policy is None:
                 raise NetPlanDisclosurePolicyError("no netplan disclosure policy resolved")
             evaluation = evaluate_disclosure(policy, unmodelled_classes=unmodelled)
         except NetPlanDisclosurePolicyError:
             return {
+                **(
+                    {
+                        "modelledConstraintClasses": modelled,
+                        "unmodelledConstraintClasses": unmodelled,
+                        "modelled_constraint_classes": modelled,
+                        "unmodelled_constraint_classes": unmodelled,
+                    }
+                    if self._require_canonical
+                    else {}
+                ),
                 "blockedConstraintClasses": list(unmodelled),
                 "acknowledgeableConstraintClasses": [],
                 "disclosurePolicyVersionId": None,
                 "disclosureUndeclared": False,
             }
         return {
+            **(
+                {
+                    "modelledConstraintClasses": modelled,
+                    "unmodelledConstraintClasses": unmodelled,
+                    "modelled_constraint_classes": modelled,
+                    "unmodelled_constraint_classes": unmodelled,
+                }
+                if self._require_canonical
+                else {}
+            ),
             "blockedConstraintClasses": list(evaluation.blocking),
             "acknowledgeableConstraintClasses": list(evaluation.acknowledgeable),
             "disclosurePolicyVersionId": evaluation.policy_version_id,
@@ -1396,7 +1681,7 @@ class NetworkRebalanceService:
             scenarios.append(
                 {
                     **_copy(scenario),
-                    **self._disclosure_view(scenario, policy),
+                    **self._disclosure_view(scenario, policy, store=store),
                     "selected": scenario.get("id") == store.get("selectedScenarioId"),
                 }
             )

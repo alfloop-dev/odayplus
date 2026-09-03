@@ -12,7 +12,10 @@ from models.shared_ml.production_runtime import (
     ProductionExecutionConfigurationError,
     production_execution_required,
 )
-from modules.netplan.application.production import NetPlanProductionExecutor
+from modules.netplan.application.production import (
+    NETPLAN_PRODUCTION_SOLVER_VERSION,
+    NetPlanProductionExecutor,
+)
 from modules.netplan.domain.planning import (
     VALID_TRANSITIONS,
     ApprovalRecord,
@@ -708,6 +711,11 @@ class NetPlanService:
                 "solve result declares neither modelled nor unmodelled constraint "
                 "classes; an undisclosed solve cannot be approved"
             )
+        if set(declared_modelled) & set(declared_unmodelled):
+            raise NetPlanConstraintDisclosureError(
+                "solve result constraint disclosure overlaps modelled and unmodelled "
+                "constraint classes; an ambiguous solve cannot be approved"
+            )
         expected_unmodelled = set(scenario.constraints.unmodelled_classes())
         if set(declared_unmodelled) != expected_unmodelled:
             raise NetPlanConstraintDisclosureError(
@@ -715,6 +723,14 @@ class NetPlanService:
                 f"constraints: declared unmodelled "
                 f"{sorted(item.value for item in declared_unmodelled)}, "
                 f"constraints imply {sorted(item.value for item in expected_unmodelled)}"
+            )
+        expected_modelled = set(scenario.constraints.modelled_classes())
+        if set(declared_modelled) != expected_modelled:
+            raise NetPlanConstraintDisclosureError(
+                "solve result modelled constraint disclosure does not match the "
+                "scenario constraints: declared modelled "
+                f"{sorted(item.value for item in declared_modelled)}, "
+                f"constraints imply {sorted(item.value for item in expected_modelled)}"
             )
         return declared_unmodelled
 
@@ -824,11 +840,28 @@ class NetPlanService:
             raise NetPlanApprovalError(
                 "authoritative management approval verifier is not configured"
             )
+        validation_kwargs: dict[str, Any] = {
+            "alternative_limit": solve.alternative_limit,
+        }
+        if solve.execution_metadata.get("mode") == "production_oss":
+            authoritative = (
+                (solve.execution_metadata.get("engines") or {}).get("authoritative")
+                or {}
+            )
+            if authoritative.get("contract_version") != NETPLAN_PRODUCTION_SOLVER_VERSION:
+                raise NetPlanApprovalError(
+                    "persisted production solve has an unrecognised authoritative "
+                    "solver contract"
+                )
+            validation_kwargs = {
+                "alternative_limit": None,
+                "expected_solver_version": NETPLAN_PRODUCTION_SOLVER_VERSION,
+            }
         solve_violations = validate_network_plan_solve_result(
             options_by_entity=scenario.options_by_entity,
             constraints=scenario.constraints,
             solve_result=solve.result,
-            alternative_limit=solve.alternative_limit,
+            **validation_kwargs,
         )
         if solve_violations:
             raise NetPlanApprovalError(
