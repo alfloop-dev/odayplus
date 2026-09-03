@@ -180,15 +180,24 @@ def _build_verifier(
     *,
     receipt_id: str = RECEIPT_ID,
     principal_role: str = AUTHORISED_ROLE,
+    selected_candidate_id: str | None = None,
 ) -> FixedManagementApprovalReceiptVerifier:
+    candidate_id = selected_candidate_id or scenario.scenario_id
+    if candidate_id == scenario.scenario_id:
+        selected_actions = tuple(solve.result.selected_actions)
+    else:
+        prefix = f"{scenario.scenario_id}:alternative:"
+        assert candidate_id.startswith(prefix)
+        index = int(candidate_id[len(prefix) :]) - 1
+        selected_actions = tuple(solve.result.alternatives[index].actions)
     actions_by_entity = {
-        action.entity_id: action.action for action in solve.result.selected_actions
+        action.entity_id: action.action for action in selected_actions
     }
     source_snapshot_ids = tuple(
         sorted(
             {
                 snapshot_id
-                for action in solve.result.selected_actions
+                for action in selected_actions
                 for snapshot_id in action.source_snapshot_ids
             }
         )
@@ -247,6 +256,7 @@ def _attach_verifier(
     *,
     receipt_id: str = RECEIPT_ID,
     principal_role: str = AUTHORISED_ROLE,
+    selected_candidate_id: str | None = None,
 ) -> FixedManagementApprovalReceiptVerifier:
     """Install the management approval authority the way composition does.
 
@@ -256,7 +266,11 @@ def _attach_verifier(
     receipt for that to mean anything.
     """
     verifier = _build_verifier(
-        scenario, solve, receipt_id=receipt_id, principal_role=principal_role
+        scenario,
+        solve,
+        receipt_id=receipt_id,
+        principal_role=principal_role,
+        selected_candidate_id=selected_candidate_id,
     )
     service.approval_verifier = verifier
     return verifier
@@ -1210,6 +1224,114 @@ def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt(
         assert reopened_repo.get_scenario(scenario.scenario_id).status.value == "approved"
     finally:
         reopened_engine.close()
+
+
+def test_e2e_selected_alternative_uses_one_approval_subject_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """An alternative row must keep its actions through acknowledgement and approval.
+
+    Primary and alternative candidates share one solver problem hash. The
+    selected candidate id, action signature, management receipt and durable
+    ApprovalRecord therefore all have to agree, or a receipt for one row can be
+    presented as approval for another.
+    """
+    scenario, repo, netplan_service, rebalance_service, engine = _canonical_surface(
+        "SCENARIO-E2E-HTTP-ALTERNATIVE-001",
+        _fully_modelled_constraints(),
+        database_path=tmp_path / "netplan-disclosure-alternative-e2e.sqlite3",
+    )
+    assert engine is not None
+    try:
+        client = _mount_operator_api(rebalance_service)
+        solved = client.post(
+            "/api/v1/operator/network-rebalance/stores/STORE-101/netplan/solve",
+            headers={"Idempotency-Key": "idem-http-alternative-solve"},
+            json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+        )
+        assert solved.status_code == 200, solved.text
+        rows = solved.json()["store"]["netPlanScenarios"]
+        assert len(rows) >= 2
+        alternative = rows[1]
+
+        selected = client.post(
+            f"/api/v1/operator/network-rebalance/stores/STORE-101/scenarios/{alternative['id']}/select",
+            headers={"Idempotency-Key": "idem-http-alternative-select"},
+            json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+        )
+        assert selected.status_code == 200, selected.text
+        assert selected.json()["store"]["selectedScenarioId"] == alternative["id"]
+
+        solve = repo.get_solve(scenario.scenario_id)
+        assert solve is not None
+        verifier = _attach_verifier(
+            netplan_service,
+            scenario,
+            solve,
+            receipt_id="receipt-e2e-alternative",
+            selected_candidate_id=alternative["id"],
+        )
+        rebalance_service.netplan_approval_verifier = verifier
+
+        acknowledgement_reason = "替代方案的租約與時序暴露已由具權限網路規劃主管確認。"
+        submitted = client.post(
+            "/api/v1/operator/network-rebalance/stores/STORE-101/submit-review",
+            headers={"Idempotency-Key": "idem-http-alternative-submit"},
+            json={
+                "actorRoleId": "expansionManager",
+                "actorName": "王若寧",
+                "reason": "替代方案已由 Operator 提交 Govern 審核",
+                "acknowledgedClasses": ["LEASE", "SEQUENCING"],
+                "acknowledgementReason": acknowledgement_reason,
+                "acknowledgementActorId": APPROVAL_PRINCIPAL,
+                "approvalReceiptId": "receipt-e2e-alternative",
+            },
+        )
+        assert submitted.status_code == 200, submitted.text
+        body = submitted.json()
+        approval_payload = body["governApproval"]
+        assert body["store"]["selectedScenarioId"] == alternative["id"]
+        assert approval_payload["selectedCandidateId"] == alternative["id"]
+        assert approval_payload["selectedActions"] == alternative["actions"]
+
+        stored_acknowledgements = repo.list_disclosure_acknowledgements(scenario.scenario_id)
+        assert len(stored_acknowledgements) == 1
+        acknowledgement = stored_acknowledgements[0]
+        assert acknowledgement.selected_candidate_id == alternative["id"]
+        assert approval_payload["disclosureAcknowledgementId"] == acknowledgement.acknowledgement_id
+        assert approval_payload["disclosureBaselineContentHash"] == (
+            acknowledgement.selected_baseline_content_hash
+        )
+
+        decision = netplan_service.decide(
+            scenario.scenario_id,
+            actor_id=APPROVAL_PRINCIPAL,
+            reason="替代方案的 actions、disclosure 與管理簽核一致。",
+            approval_receipt_id="receipt-e2e-alternative",
+            decided_at=MOMENT,
+        )
+        assert decision.selected_candidate_id == alternative["id"]
+        assert decision.selected_action_signature == tuple(
+            sorted(
+                (action["entity_id"], action["action"])
+                for action in alternative["actions"]
+            )
+        )
+        assert decision.selected_baseline_content_hash == (
+            acknowledgement.selected_baseline_content_hash
+        )
+        assert decision.authentic_approval_verified is True
+
+        execution = netplan_service.execute(
+            scenario.scenario_id,
+            executed_by="alternative-executor",
+            executed_at=MOMENT,
+        )
+        assert tuple(
+            sorted((action.entity_id, action.action.value) for action in execution.actions)
+        ) == decision.selected_action_signature
+    finally:
+        engine.close()
 
 
 def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared() -> None:

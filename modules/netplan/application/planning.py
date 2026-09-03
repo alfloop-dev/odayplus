@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -87,6 +87,28 @@ class ScenarioBuildRequest:
     candidate_sites: Sequence[CandidateSiteInput | Mapping[str, Any]] = ()
     scenario_id: str | None = None
     correlation_id: str = "netplan-correlation"
+
+
+@dataclass(frozen=True)
+class _ApprovalSubject:
+    """One canonical candidate that can be submitted and approved.
+
+    A solve contains a primary candidate plus alternatives. Their disclosure
+    classes are usually identical, but their actions and baseline hashes are
+    not. Keeping the selected candidate as one value prevents the approval
+    path from mixing the Operator row with the primary solve by accident.
+    """
+
+    candidate_id: str
+    actions: tuple[ActionOption, ...]
+    modelled_constraint_classes: tuple[ConstraintClass, ...]
+    unmodelled_constraint_classes: tuple[ConstraintClass, ...]
+
+    @property
+    def action_signature(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            sorted((action.entity_id, action.action.value) for action in self.actions)
+        )
 
 
 class NetPlanService:
@@ -218,6 +240,7 @@ class NetPlanService:
             planning_horizon=planning_horizon or scenario.planning_horizon,
             constraints=updated_constraints,
             options_by_entity=updated_options,
+            selected_candidate_id=None,
         )
         return self.repository.save_scenario(updated)
 
@@ -231,6 +254,9 @@ class NetPlanService:
         alternative_limit: int = 3,
     ) -> ScenarioSolveRecord:
         scenario = self._require_scenario(scenario_id)
+        # A new solve invalidates any candidate selected from the previous
+        # result. Approval must explicitly bind to a candidate from this solve.
+        scenario = replace(scenario, selected_candidate_id=None)
         now = solved_at or datetime.now(UTC)
         execution_metadata: dict[str, Any] = {}
         if self.production_required:
@@ -286,6 +312,7 @@ class NetPlanService:
         actor: str = "system",
         reason: str = "submitted for network planning approval",
         occurred_at: datetime | None = None,
+        selected_candidate_id: str | None = None,
     ) -> NetPlanScenario:
         scenario = self._require_scenario(scenario_id)
         solve = self.repository.get_solve(scenario_id)
@@ -293,8 +320,19 @@ class NetPlanService:
             raise NetPlanApprovalError(
                 "stale solve result cannot be submitted for approval: scenario parameters have changed since last solve"
             )
+        selected_id = scenario.selected_candidate_id
+        if solve is not None:
+            selected_id = self._selected_approval_subject(
+                scenario,
+                solve,
+                selected_candidate_id=selected_candidate_id,
+            ).candidate_id
+        elif selected_candidate_id is not None:
+            raise NetPlanApprovalError(
+                "a selected NetPlan candidate cannot be submitted without a solve"
+            )
         return self._advance(
-            scenario,
+            replace(scenario, selected_candidate_id=selected_id),
             NetPlanScenarioStatus.PENDING_APPROVAL,
             actor=actor,
             reason=reason,
@@ -310,6 +348,7 @@ class NetPlanService:
         acknowledged_classes: Sequence[ConstraintClass | str],
         approval_receipt_id: str,
         acknowledged_at: datetime | None = None,
+        selected_candidate_id: str | None = None,
     ) -> ConstraintDisclosureAcknowledgement:
         """Record a named authority accepting named unmodelled-constraint exposure.
 
@@ -343,11 +382,17 @@ class NetPlanService:
                 "stale solve result cannot be acknowledged: scenario parameters "
                 "have changed since last solve"
             )
+        subject = self._selected_approval_subject(
+            scenario,
+            solve,
+            selected_candidate_id=selected_candidate_id,
+        )
         now = acknowledged_at or datetime.now(UTC)
         verification = self._verify_authoritative_solve(
             scenario,
             solve,
             approval_receipt_id=approval_receipt_id,
+            selected_candidate_id=subject.candidate_id,
         )
         assert verification.receipt is not None
         if actor_id != verification.receipt.principal_id:
@@ -362,7 +407,11 @@ class NetPlanService:
                 f"unmodelled constraint classes under policy {policy.policy_version_id}"
             )
 
-        disclosed = self._require_disclosed_classes(scenario, solve)
+        disclosed = self._require_disclosed_classes(
+            scenario,
+            solve,
+            selected_candidate_id=subject.candidate_id,
+        )
         evaluation = evaluate_disclosure(
             policy,
             unmodelled_classes=[item.value for item in disclosed],
@@ -399,7 +448,17 @@ class NetPlanService:
             model_version=solve.model_version,
             approval_receipt_id=verification.receipt.receipt_id,
             acknowledged_at=now,
+            selected_candidate_id=subject.candidate_id,
+            selected_action_signature=subject.action_signature,
+            selected_baseline_content_hash=verification.receipt.baseline_content_hash,
         ).sealed()
+        # Keep a direct service caller on the same subject even when the later
+        # submit call does not repeat the candidate id. The acknowledgement is
+        # already bound to this candidate; dropping the selection here would
+        # make the next lifecycle step silently fall back to the primary.
+        self.repository.save_scenario(
+            replace(scenario, selected_candidate_id=subject.candidate_id)
+        )
         return self.repository.save_disclosure_acknowledgement(acknowledgement)
 
     def decide(
@@ -443,16 +502,21 @@ class NetPlanService:
         disclosure_policy_version = ""
         disclosure_acknowledgement_id = ""
         solver_problem_hash = ""
+        selected_candidate_id = ""
+        selected_action_signature: tuple[tuple[str, str], ...] = ()
+        selected_baseline_content_hash = ""
         if normalized == "approved":
             solve = self._require_solve(scenario_id)
             if solve.is_stale(scenario):
                 raise NetPlanApprovalError(
                     "stale solve result cannot be approved: scenario parameters have changed since last solve"
                 )
+            subject = self._selected_approval_subject(scenario, solve)
             verification = self._verify_authoritative_solve(
                 scenario,
                 solve,
                 approval_receipt_id=approval_receipt_id,
+                selected_candidate_id=subject.candidate_id,
             )
             assert verification.receipt is not None
             if actor_id != verification.receipt.principal_id:
@@ -468,11 +532,16 @@ class NetPlanService:
             policy, acknowledgement = self._enforce_constraint_disclosure(
                 scenario,
                 solve,
+                selected_candidate_id=subject.candidate_id,
                 at=now,
             )
-            modelled_classes = tuple(solve.result.modelled_constraint_classes)
-            unmodelled_classes = tuple(solve.result.unmodelled_constraint_classes)
+            modelled_classes = subject.modelled_constraint_classes
+            unmodelled_classes = subject.unmodelled_constraint_classes
             solver_problem_hash = solve.problem_hash
+            selected_candidate_id = subject.candidate_id
+            selected_action_signature = subject.action_signature
+            assert verification.receipt is not None
+            selected_baseline_content_hash = verification.receipt.baseline_content_hash
             disclosure_policy_version_id = policy.policy_version_id
             disclosure_policy_label = policy.policy_label
             disclosure_policy_version = policy.policy_version
@@ -501,6 +570,9 @@ class NetPlanService:
             disclosure_policy_version=disclosure_policy_version,
             disclosure_acknowledgement_id=disclosure_acknowledgement_id,
             solver_problem_hash=solver_problem_hash,
+            selected_candidate_id=selected_candidate_id,
+            selected_action_signature=selected_action_signature,
+            selected_baseline_content_hash=selected_baseline_content_hash,
         )
         transitioned = scenario.transition(
             target_status,
@@ -521,18 +593,28 @@ class NetPlanService:
     ) -> ExecutionRecord:
         scenario = self._require_scenario(scenario_id)
         solve = self._require_solve(scenario_id)
+        subject = self._selected_approval_subject(scenario, solve)
         approval = self._require_authentic_approval(scenario_id)
         assert approval.authority_receipt is not None
         verification = self._verify_authoritative_solve(
             scenario,
             solve,
             approval_receipt_id=approval.authority_receipt.receipt_id,
+            selected_candidate_id=subject.candidate_id,
         )
         assert verification.receipt is not None
         if (
             approval.actor_id != verification.receipt.principal_id
             or approval.authority_receipt.receipt_hash
             != verification.receipt.receipt_hash
+            or (
+                approval.selected_action_signature
+                and approval.selected_action_signature != subject.action_signature
+            )
+            or (
+                approval.selected_candidate_id
+                and approval.selected_candidate_id != subject.candidate_id
+            )
         ):
             raise NetPlanApprovalError(
                 "persisted approval does not match authoritative management readback"
@@ -548,7 +630,7 @@ class NetPlanService:
             ExecutionRecord(
                 execution_id=f"netplan-execution-{uuid4()}",
                 scenario_id=scenario_id,
-                actions=solve.result.selected_actions,
+                actions=subject.actions,
                 executed_by=executed_by,
                 executed_at=now,
             )
@@ -683,8 +765,57 @@ class NetPlanService:
         )
 
     @staticmethod
+    def _selected_approval_subject(
+        scenario: NetPlanScenario,
+        solve: ScenarioSolveRecord,
+        *,
+        selected_candidate_id: str | None = None,
+    ) -> _ApprovalSubject:
+        """Resolve the primary or alternative named by the approval subject."""
+        candidate_id = str(
+            selected_candidate_id or scenario.selected_candidate_id or scenario.scenario_id
+        ).strip()
+        if candidate_id == scenario.scenario_id:
+            result = solve.result
+            return _ApprovalSubject(
+                candidate_id=candidate_id,
+                actions=tuple(result.selected_actions),
+                modelled_constraint_classes=tuple(result.modelled_constraint_classes),
+                unmodelled_constraint_classes=tuple(result.unmodelled_constraint_classes),
+            )
+
+        prefix = f"{scenario.scenario_id}:alternative:"
+        if not candidate_id.startswith(prefix):
+            raise NetPlanApprovalError(
+                f"selected NetPlan candidate {candidate_id!r} is not part of "
+                f"solve {scenario.scenario_id}"
+            )
+        raw_index = candidate_id[len(prefix) :]
+        if not raw_index.isdigit() or int(raw_index) < 1:
+            raise NetPlanApprovalError(
+                f"selected NetPlan candidate {candidate_id!r} has an invalid index"
+            )
+        index = int(raw_index) - 1
+        alternatives = tuple(solve.result.alternatives)
+        if index >= len(alternatives):
+            raise NetPlanApprovalError(
+                f"selected NetPlan candidate {candidate_id!r} is absent from "
+                f"solve {scenario.scenario_id}"
+            )
+        candidate = alternatives[index]
+        return _ApprovalSubject(
+            candidate_id=candidate_id,
+            actions=tuple(candidate.actions),
+            modelled_constraint_classes=tuple(candidate.modelled_constraint_classes),
+            unmodelled_constraint_classes=tuple(candidate.unmodelled_constraint_classes),
+        )
+
     def _require_disclosed_classes(
-        scenario: NetPlanScenario, solve: ScenarioSolveRecord
+        self,
+        scenario: NetPlanScenario,
+        solve: ScenarioSolveRecord,
+        *,
+        selected_candidate_id: str | None = None,
     ) -> tuple[ConstraintClass, ...]:
         """The classes this solve declared it did not bind, or a refusal.
 
@@ -704,8 +835,13 @@ class NetPlanService:
         since the solve, so the two must agree; if they do not, the declaration
         is wrong and cannot be the basis of an approval.
         """
-        declared_modelled = tuple(solve.result.modelled_constraint_classes)
-        declared_unmodelled = tuple(solve.result.unmodelled_constraint_classes)
+        subject = self._selected_approval_subject(
+            scenario,
+            solve,
+            selected_candidate_id=selected_candidate_id,
+        )
+        declared_modelled = subject.modelled_constraint_classes
+        declared_unmodelled = subject.unmodelled_constraint_classes
         if not declared_modelled and not declared_unmodelled:
             raise NetPlanConstraintDisclosureError(
                 "solve result declares neither modelled nor unmodelled constraint "
@@ -739,6 +875,7 @@ class NetPlanService:
         scenario: NetPlanScenario,
         solve: ScenarioSolveRecord,
         *,
+        selected_candidate_id: str | None = None,
         at: datetime,
     ) -> tuple[DecisionPolicy, ConstraintDisclosureAcknowledgement | None]:
         """Refuse the approval, or return the policy and the signature permitting it.
@@ -755,7 +892,16 @@ class NetPlanService:
         covers it.
         """
         policy = self._require_disclosure_policy(scenario, at=at)
-        disclosed = self._require_disclosed_classes(scenario, solve)
+        subject = self._selected_approval_subject(
+            scenario,
+            solve,
+            selected_candidate_id=selected_candidate_id,
+        )
+        disclosed = self._require_disclosed_classes(
+            scenario,
+            solve,
+            selected_candidate_id=subject.candidate_id,
+        )
         evaluation = evaluate_disclosure(
             policy,
             unmodelled_classes=[item.value for item in disclosed],
@@ -776,6 +922,7 @@ class NetPlanService:
             classes=required_signature,
             solver_problem_hash=solve.problem_hash,
             policy_version_id=policy.policy_version_id,
+            selected_action_signature=subject.action_signature,
         )
         if acknowledgement is None:
             raise NetPlanConstraintDisclosureError(
@@ -793,6 +940,7 @@ class NetPlanService:
         classes: Sequence[ConstraintClass],
         solver_problem_hash: str,
         policy_version_id: str,
+        selected_action_signature: Sequence[tuple[str, str]],
     ) -> ConstraintDisclosureAcknowledgement | None:
         """The most recent signature that still answers for this exact solve.
 
@@ -807,6 +955,7 @@ class NetPlanService:
                 classes=classes,
                 solver_problem_hash=solver_problem_hash,
                 policy_version_id=policy_version_id,
+                selected_action_signature=selected_action_signature,
             )
         ]
         if not candidates:
@@ -835,6 +984,7 @@ class NetPlanService:
         solve: ScenarioSolveRecord,
         *,
         approval_receipt_id: str,
+        selected_candidate_id: str | None = None,
     ) -> ManagementApprovalVerification:
         if self.approval_verifier is None:
             raise NetPlanApprovalError(
@@ -869,14 +1019,19 @@ class NetPlanService:
                 + ",".join(solve_violations)
             )
 
+        subject = self._selected_approval_subject(
+            scenario,
+            solve,
+            selected_candidate_id=selected_candidate_id,
+        )
         actions_by_entity = {
-            action.entity_id: action.action for action in solve.result.selected_actions
+            action.entity_id: action.action for action in subject.actions
         }
         source_snapshot_ids = tuple(
             sorted(
                 {
                     snapshot_id
-                    for action in solve.result.selected_actions
+                    for action in subject.actions
                     for snapshot_id in action.source_snapshot_ids
                 }
             )

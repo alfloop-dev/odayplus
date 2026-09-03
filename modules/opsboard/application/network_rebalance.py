@@ -909,6 +909,7 @@ class NetworkRebalanceService:
         # governance clock, and a copy in this module would keep approving on
         # rules the registry had already retired.
         canonical_scenario = None
+        selected_candidate_id = str(scenario.get("id") or "").strip() or None
         if self._require_canonical:
             canonical_scenario, _solve, modelled, unmodelled = (
                 self._canonical_disclosure_for_row(store, scenario, require_solved=True)
@@ -949,6 +950,7 @@ class NetworkRebalanceService:
                 acknowledgement_reason=acknowledgement_reason,
                 acknowledgement_actor_id=acknowledgement_actor_id,
                 approval_receipt_id=approval_receipt_id,
+                selected_candidate_id=selected_candidate_id,
             )
             ack_classes = [str(item) for item in acknowledgement.acknowledged_classes]
 
@@ -964,6 +966,7 @@ class NetworkRebalanceService:
                     canonical_scenario.scenario_id,
                     actor=actor_name or actor_role_id,
                     reason=reason,
+                    selected_candidate_id=selected_candidate_id,
                 )
             except (InvalidNetPlanTransitionError, NetPlanApprovalError) as exc:
                 raise NetworkRebalancePolicyError(
@@ -993,6 +996,8 @@ class NetworkRebalanceService:
             "requestedByRoleId": actor_role_id,
             "requestedBy": actor_name or "Expansion Manager",
             "requiredRoleIds": ["opsLead", "auditPm"],
+            "selectedCandidateId": selected_candidate_id,
+            "selectedActions": _copy(scenario.get("actions", [])),
             "modelledConstraintClasses": modelled,
             "unmodelledConstraintClasses": unmodelled,
             "blockedConstraintClasses": list(evaluation.blocking),
@@ -1018,6 +1023,11 @@ class NetworkRebalanceService:
             ),
             "disclosureSolverProblemHash": (
                 acknowledgement.solver_problem_hash if acknowledgement is not None else None
+            ),
+            "disclosureBaselineContentHash": (
+                acknowledgement.selected_baseline_content_hash
+                if acknowledgement is not None
+                else None
             ),
             "evidenceIds": [
                 str(store.get("avm", {}).get("evidenceId", "")),
@@ -1394,6 +1404,7 @@ class NetworkRebalanceService:
         acknowledgement_reason: str | None,
         acknowledgement_actor_id: str | None,
         approval_receipt_id: str | None,
+        selected_candidate_id: str | None,
     ) -> Any:
         """Sign for this solve's acknowledgeable exposure, or refuse to submit.
 
@@ -1463,6 +1474,7 @@ class NetworkRebalanceService:
                 reason=cleaned_reason,
                 acknowledged_classes=named,
                 approval_receipt_id=receipt_id,
+                selected_candidate_id=selected_candidate_id,
             )
         except NetPlanConstraintDisclosureError as exc:
             raise NetworkRebalancePolicyError(str(exc)) from exc
