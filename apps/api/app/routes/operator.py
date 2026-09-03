@@ -203,6 +203,7 @@ def create_operator_router(
     # as the single wiring point.
     # ------------------------------------------------------------------
     from apps.api.app.routes.operator_modules.approvals import create_approvals_sub_router
+    from apps.api.app.routes.operator_modules.comments import create_comments_sub_router
     from apps.api.app.routes.operator_modules.evidence import create_evidence_sub_router
     from apps.api.app.routes.operator_modules.growth import create_growth_sub_router
     from apps.api.app.routes.operator_modules.issues import create_issues_sub_router
@@ -220,11 +221,13 @@ def create_operator_router(
     )
     from apps.api.app.routes.operator_modules.seed import create_seed_sub_router
     from apps.api.app.routes.operator_modules.shell import create_shell_sub_router
+    from modules.opsboard.application.comments import CommentsService
     from modules.opsboard.application.network_listings import NetworkListingService
     from modules.opsboard.application.network_rebalance import NetworkRebalanceService
     from modules.opsboard.application.network_reviews import NetworkReviewService
     from modules.opsboard.application.network_scoring import NetworkScoringService
     from modules.opsboard.application.shell import ShellService
+    from shared.infrastructure.persistence.operator_comments import DurableCommentRepository
     from shared.infrastructure.persistence.operator_network_listings import (
         DurableAssistedIntakeRepository,
     )
@@ -242,6 +245,14 @@ def create_operator_router(
         tenant_id=None if effective_require_live_data else OPERATOR_TENANT_ID,
         engine=authz_engine,
     )
+
+    def comments_service_for(store: Any | None) -> CommentsService:
+        if store is None:
+            return CommentsService(audit_log=active_audit_log)
+        return CommentsService(
+            repository=DurableCommentRepository(getattr(store, "engine", None)),
+            audit_log=active_audit_log,
+        )
 
     def authorize_franchisee_store(
         request: Request,
@@ -525,6 +536,14 @@ def create_operator_router(
                     return unavailable
 
             document_store = _UnavailableOperatorDomainStore()
+
+        router.include_router(
+            create_comments_sub_router(
+                comments_service_for(document_store),
+                require_view_permission_fn=operator_view_guard,
+                require_write_permission_fn=operator_write_guard,
+            )
+        )
 
         from apps.api.app.routes.operator_modules.governance import (
             create_governance_sub_router,
@@ -982,6 +1001,14 @@ def create_operator_router(
                     DurableShellRepository(document_store) if document_store is not None else None
                 ),
             ),
+        )
+    )
+
+    router.include_router(
+        create_comments_sub_router(
+            comments_service_for(document_store),
+            require_view_permission_fn=operator_view_guard,
+            require_write_permission_fn=operator_write_guard,
         )
     )
 
