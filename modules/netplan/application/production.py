@@ -61,6 +61,8 @@ class NetPlanProductionExecutor:
         *,
         alternative_limit: int,
     ) -> NetPlanProductionExecution:
+        if alternative_limit < 0:
+            raise ValueError("alternative_limit must be non-negative")
         source_snapshot_ids = sorted(
             {
                 snapshot_id
