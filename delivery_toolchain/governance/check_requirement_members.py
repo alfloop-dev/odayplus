@@ -82,32 +82,19 @@ VALID_DISPOSITION_STATES = frozenset({
 })
 
 VALID_TRANSITIONS: dict[str, frozenset[str]] = {
-    "OPEN": frozenset({"OPEN", "BLOCKED_BY_EVIDENCE", "DECIDED", "IMPLEMENTATION_READY", "VERIFIED"}),
+    "OPEN": frozenset({"OPEN", "BLOCKED_BY_EVIDENCE", "DECIDED", "IMPLEMENTATION_READY"}),
     "BLOCKED_BY_EVIDENCE": frozenset({"BLOCKED_BY_EVIDENCE", "OPEN", "DECIDED", "IMPLEMENTATION_READY"}),
-    "DECIDED": frozenset({"DECIDED", "IMPLEMENTATION_READY", "OPEN", "BLOCKED_BY_EVIDENCE"}),
-    "IMPLEMENTATION_READY": frozenset({"IMPLEMENTATION_READY", "VERIFIED", "BLOCKED_BY_EVIDENCE", "DECIDED", "OPEN"}),
+    "DECIDED": frozenset({"DECIDED", "IMPLEMENTATION_READY", "OPEN"}),
+    "IMPLEMENTATION_READY": frozenset({"IMPLEMENTATION_READY", "VERIFIED", "BLOCKED_BY_EVIDENCE", "OPEN"}),
     "VERIFIED": frozenset({"VERIFIED", "OPEN", "BLOCKED_BY_EVIDENCE"}),
 }
 
-AI_AGENT_PATTERN = re.compile(
-    r"^(claude|antigravity|gemini|codex|copilot|gpt|chatgpt|llm|ai|agent|bot|autoworker|orchestrator)[\d_\-\s]*$",
+AI_NAME_PATTERN = re.compile(
+    r"\b(antigravity|claude|gemini|codex|copilot|gpt|chatgpt|llm|autoworker|orchestrator|bot|agent|ai)\d*\b",
     re.IGNORECASE,
 )
 
-KNOWN_AI_PREFIXES = ("ai:", "ai/", "agent:", "bot:", "llm:", "gpt:")
-KNOWN_AI_KEYWORDS = {
-    "claude", "claude2", "claude3",
-    "antigravity", "antigravity2", "antigravity3", "antigravity4",
-    "antigravity5", "antigravity6", "antigravity7",
-    "gemini", "gemini2", "gemini3",
-    "codex", "codex2",
-    "copilot",
-}
-
-HUMAN_AUTHORITY_KEYWORDS = {
-    "human", "board", "lead", "officer", "committee", "ops", "director", "head",
-    "architect", "chair", "owner", "team", "governance", "manager", "principal",
-}
+KNOWN_AI_PREFIXES = ("ai:", "ai/", "ai-", "agent:", "agent/", "bot:", "bot/", "llm:", "gpt:")
 
 
 def is_ai_decider(decider: str) -> bool:
@@ -117,21 +104,55 @@ def is_ai_decider(decider: str) -> bool:
     cleaned = decider.strip().lower()
     if not cleaned:
         return True
-    if AI_AGENT_PATTERN.match(cleaned):
-        return True
     if any(cleaned.startswith(p) for p in KNOWN_AI_PREFIXES):
         return True
-    tokens = [t for t in re.split(r"[\s/,_\-]+", cleaned) if t]
-    ai_role_words = {"ai", "agent", "bot", "llm", "model", "autoworker", "orchestrator", "gpt", "chatgpt"}
-    if any(t in KNOWN_AI_KEYWORDS for t in tokens):
-        if not any(k in tokens for k in HUMAN_AUTHORITY_KEYWORDS):
-            return True
-    if set(tokens) <= ai_role_words:
+    if AI_NAME_PATTERN.search(cleaned):
         return True
-    if any(phrase in cleaned for phrase in ("ai agent", "auto worker", "llm agent", "ai model", "ai decider", "virtual agent")):
-        if not any(k in tokens for k in HUMAN_AUTHORITY_KEYWORDS):
-            return True
     return False
+
+
+def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
+    """Return why reference is not a valid formal decision ref, or None when valid.
+
+    A formal decision reference must be one of:
+    1. A resolvable repo doc path, e.g. 'docs/.../file.md' or 'docs/.../file.md#anchor'
+    2. A valid URL starting with 'http://', 'https://', or 'github://'
+    3. A formal PR or RFC reference, e.g. 'PR #123' or 'RFC-123'
+    """
+    if not isinstance(reference, str) or not reference.strip():
+        return "formal_decision_ref must be a non-empty string"
+    ref = reference.strip()
+
+    # Check URL
+    if ref.startswith(("http://", "https://", "github://")):
+        if len(ref) < 10 or "." not in ref:
+            return f"invalid URL reference: {reference!r}"
+        return None
+
+    # Check formal PR / RFC ref
+    if re.match(r"^(PR\s*#?\d+|RFC-\d+|GH-\d+)$", ref, re.IGNORECASE):
+        return None
+
+    # Check repo-relative doc path
+    raw_path, _, _ = ref.partition("#")
+    raw_path = raw_path.strip()
+
+    valid_doc_extensions = (".md", ".rst", ".json", ".txt", ".adoc")
+    is_doc_path = (
+        raw_path.startswith(("docs/", ".orchestrator/", "delivery_toolchain/"))
+        or any(raw_path.endswith(ext) for ext in valid_doc_extensions)
+        or "/" in raw_path
+    )
+    if not is_doc_path:
+        return f"formal_decision_ref {reference!r} is not a valid document path, URL, or PR/RFC reference"
+
+    path = repo_root / raw_path
+    if not path.is_file():
+        if (REPO_ROOT / raw_path).is_file():
+            return None
+        return f"formal_decision_ref target file does not exist: {raw_path!r}"
+
+    return None
 
 
 def check_expiry(expiry_val: Any, reference_date: date | None = None) -> tuple[bool, str | None]:
@@ -231,6 +252,7 @@ def validate_disposition_schema(
     status: str,
     disposition: Any,
     reference_date: date | None = None,
+    repo_root: Path = REPO_ROOT,
 ) -> list[Failure]:
     """Validate structured disposition object for schema, fields, and policy gates."""
     failures: list[Failure] = []
@@ -379,6 +401,17 @@ def validate_disposition_schema(
                 )
             )
         else:
+            # Validate formal decision reference
+            ref_err = resolve_decision_ref(repo_root, str(decision_ref))
+            if ref_err:
+                failures.append(
+                    Failure(
+                        requirement,
+                        member_name,
+                        f"invalid formal_decision_ref: {ref_err}",
+                    )
+                )
+
             # AI decider check
             if is_ai_decider(str(decider)):
                 failures.append(
@@ -441,12 +474,21 @@ def validate_disposition_schema(
 
     elif state == "OPEN":
         rationale = disposition.get("rationale") or disposition.get("note")
+        assigned_to = disposition.get("assigned_to") or disposition.get("owner")
+        next_review_date = disposition.get("next_review_date") or disposition.get("review_date")
+
+        missing_open: list[str] = []
         if not rationale or not str(rationale).strip():
+            missing_open.append("rationale")
+        if (not assigned_to or not str(assigned_to).strip()) and (not next_review_date or not str(next_review_date).strip()):
+            missing_open.append("assigned_to or next_review_date")
+
+        if missing_open:
             failures.append(
                 Failure(
                     requirement,
                     member_name,
-                    "OPEN disposition missing 'rationale' / 'note'",
+                    f"OPEN disposition missing required field(s): {', '.join(missing_open)}",
                 )
             )
 
@@ -534,7 +576,7 @@ def check(
 
                 if disposition is not None:
                     disp_failures = validate_disposition_schema(
-                        requirement, name, status, disposition, reference_date
+                        requirement, name, status, disposition, reference_date, repo_root=repo_root
                     )
                     failures.extend(disp_failures)
                     disp_state = disposition.get("state", "VERIFIED")
@@ -557,7 +599,7 @@ def check(
 
                 # Validate disposition block
                 disp_failures = validate_disposition_schema(
-                    requirement, name, status, disposition, reference_date
+                    requirement, name, status, disposition, reference_date, repo_root=repo_root
                 )
                 failures.extend(disp_failures)
                 if isinstance(disposition, dict):
