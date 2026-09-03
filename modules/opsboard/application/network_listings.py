@@ -298,6 +298,7 @@ def _seed_state() -> dict[str, Any]:
         "listings": [
             {
                 "id": "L-2024",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2024",
                 "heatZoneId": "HZ-01",
@@ -321,6 +322,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2025",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-BROKER",
                 "sourceListingId": "broker-2025",
                 "heatZoneId": "HZ-02",
@@ -340,6 +342,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2029",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2029",
                 "heatZoneId": "HZ-02",
@@ -364,6 +367,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2030",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2030",
                 "heatZoneId": "HZ-01",
@@ -382,6 +386,7 @@ def _seed_state() -> dict[str, Any]:
                 "sourceUrl": "https://example.invalid/listings/L-2030",
             },
         ],
+
         "candidates": [],
         "siteReviews": [],
         "auditEvents": [],

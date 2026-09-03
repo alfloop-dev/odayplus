@@ -63,6 +63,8 @@ from shared.auth import (
     Principal,
     ResourceDescriptor,
     Role,
+    TenantAccessWaiver,
+    check_tenant_isolation,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -257,6 +259,15 @@ def cutover_state(env: Mapping[str, str] | None = None) -> dict[str, Any]:
     }
 
 
+_GLOBAL_FOUNDATION_RESOURCE_TYPES = frozenset({
+    "platform_foundation_config",
+    "store_reference",
+    "store_coverage",
+    "store_performance",
+    "operational_start",
+})
+
+
 class MarketDataFacade:
     """Application facade providing unified, authorized read access to EMGI data platform products.
 
@@ -311,16 +322,15 @@ class MarketDataFacade:
         tenant_id: str | None = None,
         principal: Principal | None = None,
         classification: DataClassification = DataClassification.CONFIDENTIAL,
+        waiver: TenantAccessWaiver | None = None,
     ) -> str | None:
         """Enforce odayplus product authorization and tenant isolation rules.
 
         Returns:
             The effective tenant_id to be forwarded to downstream client queries.
         """
-        effective_tenant_id = tenant_id or (principal.tenant_id if principal is not None else None)
-
         if not self._enforce_auth and principal is None:
-            return effective_tenant_id
+            return tenant_id
 
         if principal is None:
             raise MarketDataAuthorizationError(
@@ -335,7 +345,7 @@ class MarketDataFacade:
             resource=ResourceDescriptor(
                 type=resource_type,
                 resource_id=resource_id,
-                tenant_id=effective_tenant_id,
+                tenant_id=tenant_id,
                 data_classification=classification,
             ),
         )
@@ -350,25 +360,35 @@ class MarketDataFacade:
                 details={"subject_id": principal.subject_id, "resource_type": resource_type},
             )
 
-        # 1. Tenant Isolation Check:
-        # Default effective_tenant_id to principal.tenant_id if not explicitly provided.
-        # If an explicit tenant_id is provided and differs from principal.tenant_id,
-        # require PLATFORM_ADMIN role.
-        if effective_tenant_id and principal.tenant_id and principal.tenant_id != effective_tenant_id:
-            if not principal.has_role(Role.PLATFORM_ADMIN):
-                decision = Decision.deny(
-                    f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
-                    policy_id="tenant_isolation",
-                )
+        # 1. Tenant Isolation using the shared fail-closed guard
+        is_foundation = resource_type in _GLOBAL_FOUNDATION_RESOURCE_TYPES
+        tenant_decision = None
+        if not (is_foundation and tenant_id is None):
+            tenant_decision = check_tenant_isolation(
+                principal=principal,
+                resource_tenant_id=tenant_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                waiver=waiver,
+            )
+            if not tenant_decision.allowed:
                 if hasattr(self._auth_engine, "audit_log"):
-                    self._auth_engine.audit_log.record(build_security_event(access, decision))
+                    self._auth_engine.audit_log.record(
+                        build_security_event(access, tenant_decision)
+                    )
+                code = (
+                    "missing_tenant"
+                    if "missing" in tenant_decision.reason.lower()
+                    else "cross_tenant_access_denied"
+                )
                 raise MarketDataAuthorizationError(
-                    f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
-                    code="cross_tenant_access_denied",
+                    tenant_decision.reason,
+                    code=code,
                     details={
                         "principal_tenant_id": principal.tenant_id,
-                        "resource_tenant_id": effective_tenant_id,
+                        "resource_tenant_id": tenant_id,
                         "resource_id": resource_id,
+                        "policy_id": tenant_decision.policy_id,
                     },
                 )
 
@@ -403,11 +423,18 @@ class MarketDataFacade:
             )
 
         # 4. Audit recording for authorized reads
-        decision = Decision.allow("authorized")
-        if requires_audit(Action.VIEW, classification) and hasattr(self._auth_engine, "audit_log"):
+        decision = (
+            tenant_decision
+            if (tenant_decision and "cross_tenant_waiver" in tenant_decision.obligations)
+            else Decision.allow("authorized")
+        )
+        should_audit = (
+            tenant_decision and "cross_tenant_waiver" in tenant_decision.obligations
+        ) or requires_audit(Action.VIEW, classification)
+        if should_audit and hasattr(self._auth_engine, "audit_log"):
             self._auth_engine.audit_log.record(build_security_event(access, decision))
 
-        return effective_tenant_id
+        return tenant_id
 
     # -----------------------------------------------------------------------
     # Product Reads: Site Market Context (emgi.site-market-context.v1)
@@ -421,9 +448,16 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> SiteMarketContext:
         """Authorized read of a single SiteMarketContext for a site."""
-        effective_tenant_id = self._authorize_read("site_market_context", site_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "site_market_context",
+            site_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_site_market_context(
                 site_id,
@@ -447,9 +481,16 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> SiteMarketContextDocument:
         """Authorized read of a complete SiteMarketContextDocument."""
-        effective_tenant_id = self._authorize_read("site_market_context_document", document_id or site_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "site_market_context_document",
+            document_id or site_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_site_market_context_document(
                 document_id=document_id,
@@ -477,9 +518,16 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> MarketCellProfile:
         """Authorized read of a single MarketCellProfile for an H3 cell."""
-        effective_tenant_id = self._authorize_read("market_cell_profile", cell_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "market_cell_profile",
+            cell_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_market_cell_profile(
                 cell_id,
@@ -503,9 +551,16 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> MarketCellProfileDocument:
         """Authorized read of a complete MarketCellProfileDocument."""
-        effective_tenant_id = self._authorize_read("market_cell_profile_document", document_id or cell_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "market_cell_profile_document",
+            document_id or cell_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_market_cell_profile_document(
                 document_id=document_id,
@@ -533,9 +588,16 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> CatchmentProfile:
         """Authorized read of a single CatchmentProfile."""
-        effective_tenant_id = self._authorize_read("catchment_profile", catchment_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "catchment_profile",
+            catchment_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_catchment_profile(
                 catchment_id,
@@ -559,9 +621,16 @@ class MarketDataFacade:
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> CatchmentProfileDocument:
         """Authorized read of a complete CatchmentProfileDocument."""
-        effective_tenant_id = self._authorize_read("catchment_profile_document", document_id or catchment_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "catchment_profile_document",
+            document_id or catchment_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_catchment_profile_document(
                 document_id=document_id,
@@ -587,9 +656,16 @@ class MarketDataFacade:
         *,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> PropertyEntity:
         """Authorized read of a canonical real estate property entity."""
-        effective_tenant_id = self._authorize_read("property_entity", property_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "property_entity",
+            property_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_property_entity(property_id, tenant_id=effective_tenant_id)
         except DataPlatformDocumentNotFoundError as err:
@@ -605,9 +681,16 @@ class MarketDataFacade:
         *,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> PropertyListingObservation:
         """Authorized read of a property listing observation."""
-        effective_tenant_id = self._authorize_read("listing_observation", listing_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "listing_observation",
+            listing_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_listing_observation(listing_id, tenant_id=effective_tenant_id)
         except DataPlatformDocumentNotFoundError as err:
@@ -625,9 +708,16 @@ class MarketDataFacade:
         listing_id: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
+        waiver: TenantAccessWaiver | None = None,
     ) -> PropertyObservationDocument:
         """Authorized read of a complete PropertyObservationDocument."""
-        effective_tenant_id = self._authorize_read("property_observation_document", document_id or property_id or listing_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read(
+            "property_observation_document",
+            document_id or property_id or listing_id,
+            tenant_id=tenant_id,
+            principal=principal,
+            waiver=waiver,
+        )
         try:
             return self._client.get_property_observation_document(
                 document_id=document_id,
@@ -641,6 +731,7 @@ class MarketDataFacade:
             raise MarketDataValidationError(f"Invalid property observation document schema: {err}", details=err.details) from err
         except DataPlatformClientError as err:
             raise MarketDataFacadeError(f"Data platform client error: {err}", details=err.details) from err
+
 
     # -----------------------------------------------------------------------
     # Foundation Reads: Platform Configuration & Store Performance

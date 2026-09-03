@@ -19,6 +19,8 @@ from shared.auth import (
     Principal,
     ResourceDescriptor,
     Role,
+    TenantAccessWaiver,
+    check_tenant_isolation,
 )
 
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -73,6 +75,7 @@ def authorize_intake_action(
     operator_role_id: str | None = None,
     audit_log: Any = None,
     correlation_id: str | None = None,
+    waiver: TenantAccessWaiver | None = None,
 ) -> None:
     """Enforce deny-by-default assisted intake authorization and segregation."""
     def map_action_to_enum(action_str: str) -> Action:
@@ -94,7 +97,7 @@ def authorize_intake_action(
         }
         return mapping.get(action_str, Action.UPDATE)
 
-    def _raise_and_audit(status_code: int, detail: str) -> None:
+    def _raise_and_audit(status_code: int, detail: str, *, decision: Decision | None = None) -> None:
         if audit_log is not None:
             resource_id = None
             res_type = "listing"
@@ -109,7 +112,7 @@ def authorize_intake_action(
             desc = ResourceDescriptor(
                 type=res_type,
                 resource_id=resource_id,
-                tenant_id=tenant_id or principal.tenant_id,
+                tenant_id=tenant_id,
             )
             access = AccessRequest(
                 principal=principal,
@@ -120,11 +123,11 @@ def authorize_intake_action(
                     attributes={"correlation_id": correlation_id or "unknown"}
                 ),
             )
-            decision = Decision.deny(
+            dec = decision or Decision.deny(
                 reason=detail,
                 policy_id="intake_authorization",
             )
-            event = build_security_event(access, decision)
+            event = build_security_event(access, dec)
             audit_log.record(event)
         raise HTTPException(status_code=status_code, detail=detail)
 
@@ -132,11 +135,60 @@ def authorize_intake_action(
     if not principal.authenticated:
         _raise_and_audit(status_code=401, detail="AUTHENTICATION_REQUIRED")
 
-    # 2. Tenant Isolation
-    if resource is not None:
-        resource_tenant = _resource_scope_value(resource, ("tenant_id", "tenantId"))
-        if resource_tenant and principal.tenant_id != resource_tenant:
-            _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED")
+    # 2. Tenant Isolation (shared fail-closed guard)
+    resource_tenant = (
+        _resource_scope_value(resource, ("tenant_id", "tenantId"))
+        if resource is not None
+        else None
+    )
+    has_target_resource_id = bool(
+        resource and (resource.get("id") or resource.get("listingId") or resource.get("listing_id"))
+    )
+    target_tenant = (
+        resource_tenant
+        if (resource_tenant or has_target_resource_id)
+        else (principal.tenant_id if principal else None)
+    )
+    effective_waiver = waiver or (
+        resource.get("waiver")
+        if isinstance(resource, dict) and isinstance(resource.get("waiver"), TenantAccessWaiver)
+        else None
+    )
+    res_type = "intake" if (resource and ("url" in resource or "parsedFields" in resource)) else "listing"
+    res_id = (
+        (resource.get("id") or resource.get("listingId") or resource.get("listing_id"))
+        if resource
+        else None
+    )
+
+    tenant_decision = check_tenant_isolation(
+        principal=principal,
+        resource_tenant_id=target_tenant,
+        resource_type=res_type,
+        resource_id=res_id,
+        waiver=effective_waiver,
+    )
+    if not tenant_decision.allowed:
+        _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED", decision=tenant_decision)
+    elif "cross_tenant_waiver" in tenant_decision.obligations and audit_log is not None:
+        access = AccessRequest(
+            principal=principal,
+            action=map_action_to_enum(action),
+            resource=ResourceDescriptor(
+                type=res_type,
+                resource_id=res_id,
+                tenant_id=target_tenant,
+            ),
+            environment=Environment(
+                source_ip=None,
+                attributes={"correlation_id": correlation_id or "unknown"},
+            ),
+        )
+        audit_log.record(build_security_event(access, tenant_decision))
+
+
+
+
 
     # 3. Brand/Region/Area/HeatZone scope
     if resource is not None:

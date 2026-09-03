@@ -36,6 +36,13 @@ from .rbac import (
     permissions_for,
     rbac_allows,
 )
+from .tenant import (
+    POLICY_ID_TENANT_ISOLATION,
+    TenantAccessWaiver,
+    TenantAuthorizationError,
+    check_tenant_isolation,
+    tenant_isolation_policy,
+)
 
 __all__ = [
     "ANONYMOUS",
@@ -50,6 +57,7 @@ __all__ = [
     "Environment",
     "FeatureFlag",
     "FeatureFlagRegistry",
+    "POLICY_ID_TENANT_ISOLATION",
     "Permission",
     "Principal",
     "ROLE_PERMISSIONS",
@@ -58,9 +66,14 @@ __all__ = [
     "RiskLevel",
     "Role",
     "Scope",
+    "TenantAccessWaiver",
+    "TenantAuthorizationError",
+    "check_tenant_isolation",
     "default_registry",
     "evaluate_abac",
     "high_risk_flag_key",
     "permissions_for",
     "rbac_allows",
+    "tenant_isolation_policy",
 ]
+

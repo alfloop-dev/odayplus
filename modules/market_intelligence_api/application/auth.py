@@ -21,6 +21,8 @@ from shared.auth import (
     Principal,
     ResourceDescriptor,
     Role,
+    TenantAccessWaiver,
+    check_tenant_isolation,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -87,16 +89,15 @@ def authorize_market_intelligence(
     auth_engine: AuthorizationEngine | None = None,
     classification: DataClassification = DataClassification.CONFIDENTIAL,
     enforce_auth: bool = True,
+    waiver: TenantAccessWaiver | None = None,
 ) -> str | None:
     """Enforce ODayPlus product authorization, tenant isolation, and RBAC rules.
 
     Returns:
         The verified effective tenant_id for downstream data access.
     """
-    effective_tenant_id = tenant_id or (principal.tenant_id if principal is not None else None)
-
     if not enforce_auth and principal is None:
-        return effective_tenant_id
+        return tenant_id
 
     if principal is None:
         raise MarketIntelligenceAuthorizationError(
@@ -111,7 +112,7 @@ def authorize_market_intelligence(
         resource=ResourceDescriptor(
             type=resource_type,
             resource_id=resource_id,
-            tenant_id=effective_tenant_id,
+            tenant_id=tenant_id,
             data_classification=classification,
         ),
     )
@@ -128,24 +129,32 @@ def authorize_market_intelligence(
             details={"subject_id": principal.subject_id, "resource_type": resource_type},
         )
 
-    # 1. Tenant Isolation
-    if effective_tenant_id and principal.tenant_id and principal.tenant_id != effective_tenant_id:
-        if not principal.has_role(Role.PLATFORM_ADMIN):
-            decision = Decision.deny(
-                f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
-                policy_id="tenant_isolation",
-            )
-            if hasattr(engine, "audit_log") and engine.audit_log:
-                engine.audit_log.record(build_security_event(access, decision))
-            raise MarketIntelligenceAuthorizationError(
-                f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
-                code="cross_tenant_access_denied",
-                details={
-                    "principal_tenant_id": principal.tenant_id,
-                    "resource_tenant_id": effective_tenant_id,
-                    "resource_id": resource_id,
-                },
-            )
+    # 1. Tenant Isolation using the shared fail-closed guard
+    tenant_decision = check_tenant_isolation(
+        principal=principal,
+        resource_tenant_id=tenant_id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        waiver=waiver,
+    )
+    if not tenant_decision.allowed:
+        if hasattr(engine, "audit_log") and engine.audit_log:
+            engine.audit_log.record(build_security_event(access, tenant_decision))
+        code = (
+            "missing_tenant"
+            if "missing" in tenant_decision.reason.lower()
+            else "cross_tenant_access_denied"
+        )
+        raise MarketIntelligenceAuthorizationError(
+            tenant_decision.reason,
+            code=code,
+            details={
+                "principal_tenant_id": principal.tenant_id,
+                "resource_tenant_id": tenant_id,
+                "resource_id": resource_id,
+                "policy_id": tenant_decision.policy_id,
+            },
+        )
 
     # 2. RBAC: Caller must hold at least one role permitted for Market Intelligence
     has_allowed_role = any(role in ALLOWED_MARKET_INTELLIGENCE_ROLES for role in principal.roles)
@@ -181,11 +190,13 @@ def authorize_market_intelligence(
         )
 
     # 4. Audit recording for authorized access
-    decision = Decision.allow("authorized")
-    if requires_audit(action, classification) and hasattr(engine, "audit_log") and engine.audit_log:
+    decision = tenant_decision if "cross_tenant_waiver" in tenant_decision.obligations else Decision.allow("authorized")
+    should_audit = "cross_tenant_waiver" in tenant_decision.obligations or requires_audit(action, classification)
+    if should_audit and hasattr(engine, "audit_log") and engine.audit_log:
         engine.audit_log.record(build_security_event(access, decision))
 
-    return effective_tenant_id
+    return tenant_id
+
 
 
 __all__ = [
