@@ -110,6 +110,7 @@ def default_model_performance_drift_policy(
         tenant_id=normalized_tenant_id,
         effective_from=datetime(2026, 9, 1, tzinfo=UTC),
         parameters={
+            "prediction_drift": {"drift_share_threshold": 0.5},
             "metric_thresholds_by_model": {
                 model_name: {
                     metric_name: dict(config)
@@ -118,7 +119,7 @@ def default_model_performance_drift_policy(
                 for model_name, metric_configs in MODEL_PERFORMANCE_METRIC_THRESHOLDS.items()
             }
         },
-        declared_inputs=("metrics", "baseline_metrics"),
+        declared_inputs=("metrics", "baseline_metrics", "prediction_outputs"),
         change_reason="Bind production model validation and baseline drift to versioned release gates",
         approved_by="architecture_owner",
         owner_role="model-risk-owner",
