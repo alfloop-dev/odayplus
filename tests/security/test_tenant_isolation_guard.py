@@ -39,9 +39,6 @@ from shared.auth import (
     TenantAccessWaiver,
     TenantAccessWaiverRegistry,
     check_tenant_isolation,
-    default_waiver_registry,
-    register_authorized_waiver_signer,
-    unregister_authorized_waiver_signer,
 )
 from shared.auth.engine import AuthorizationEngine
 

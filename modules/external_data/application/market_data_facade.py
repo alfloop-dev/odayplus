@@ -54,8 +54,9 @@ from packages.oday_data_product_contracts_client.models.site_market_context impo
     PeriodGrain,
     SiteMarketContext,
 )
-from shared.audit.policy import build_security_event, requires_audit
+from shared.audit.policy import build_security_event
 from shared.auth import (
+    ANONYMOUS,
     AccessRequest,
     Action,
     DataClassification,

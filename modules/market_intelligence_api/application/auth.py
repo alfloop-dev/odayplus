@@ -12,7 +12,7 @@ from typing import Any
 from modules.market_intelligence_api.domain.contracts import (
     ALLOWED_MARKET_INTELLIGENCE_ROLES,
 )
-from shared.audit.policy import build_security_event, requires_audit
+from shared.audit.policy import build_security_event
 from shared.auth import (
     AccessRequest,
     Action,
