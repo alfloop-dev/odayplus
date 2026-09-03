@@ -207,6 +207,48 @@
           "note": "Performance drift compares observed metrics against baseline_metrics using absolute/relative degradation thresholds and governed decision policies."
         }
       ]
+    },
+    {
+      "id": "ODP-FR-AVM-001",
+      "statement": "估值必須組合 GM_TTM、GM_FWD、折舊、資產、租約與正常化。",
+      "member_count": 6,
+      "members": [
+        {
+          "name": "GM_TTM",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.gm_ttm",
+          "note": "Trailing-twelve-month gross margin enters normalize_margin at a 0.45 weight."
+        },
+        {
+          "name": "GM_FWD",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.forecast_gm_next_12m",
+          "note": "Forward twelve-month gross margin enters normalize_margin at a 0.55 weight."
+        },
+        {
+          "name": "DEPRECIATION",
+          "status": "absent",
+          "note": "No depreciation reaches the valuation path. The only depreciation in the tree is modules/site_economics/domain/simulator.py:325-357, where it is a tax shield on a greenfield store's projected cash flow -- a different quantity, on a different clock, for a different consumer -- and modules/avm does not import it. The contract, the AVM-specific verdict and its reasoning are in docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md; the executable spec is modules/avm/tests/test_avm_depreciation_contract.py."
+        },
+        {
+          "name": "ASSET",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.asset_book_value",
+          "note": "Asset book value and equipment_fair_value form the asset lens in value_store. Which of the two carries equipment, and whether it is already net of age, is the ambiguity section C-1 of the depreciation contract resolves."
+        },
+        {
+          "name": "LEASE",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.lease_liability",
+          "note": "Lease liability is subtracted in the asset lens and published in its evidence block."
+        },
+        {
+          "name": "NORMALIZATION",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::normalize_margin",
+          "note": "Weighted TTM/forward blend with a named quality discount and recorded adjustment_reasons."
+        }
+      ]
     }
   ]
 }

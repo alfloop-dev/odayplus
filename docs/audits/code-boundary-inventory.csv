@@ -368,6 +368,7 @@ modules/avm/domain/valuation.py,product_system,product_required,true,,engineerin
 modules/avm/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/infrastructure/lifelines_survival.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/avm/tests/test_avm_depreciation_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/avm/tests/test_avm_production_execution.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/avm/tests/test_deal_outcome_and_calibration.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/avm/tests/test_lifelines_liquidity_survival.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
