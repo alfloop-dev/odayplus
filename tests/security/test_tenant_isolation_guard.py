@@ -37,7 +37,11 @@ from shared.auth import (
     Role,
     Scope,
     TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
     check_tenant_isolation,
+    default_waiver_registry,
+    register_authorized_waiver_signer,
+    unregister_authorized_waiver_signer,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -654,3 +658,276 @@ def test_intake_authorization_tenant_guard_matrix(
     assert waiver_events[0].outcome == "allow"
     assert waiver_events[0].actor == "admin-alpha-001"
     assert waiver_events[0].resource == "listing/L-102"
+
+
+def test_untrusted_signer_waiver_is_rejected_fail_closed(
+    admin_alpha: Principal,
+    sample_site_context_payload: dict[str, Any],
+) -> None:
+    """Attacker-crafted waivers with unauthorized signers are rejected fail-closed across all entry points."""
+    forged_waiver = TenantAccessWaiver(
+        waiver_id="FORGED-001",
+        principal_id="admin-alpha-001",
+        target_tenant_id=TENANT_BETA,
+        approved_by="attacker",
+        reason="Malicious cross-tenant bypass attempt",
+        expires_at=FUTURE,
+    )
+
+    # 1. Pure guard denies forged signer
+    decision = check_tenant_isolation(
+        admin_alpha,
+        TENANT_BETA,
+        waiver=forged_waiver,
+        on=NOW,
+    )
+    assert not decision.allowed
+    assert "unsigned/unauthorized" in decision.reason or "invalid" in decision.reason
+
+    # 2. Market intelligence entry point denies forged signer
+    audit_log = InMemoryAuditLog()
+    engine = AuthorizationEngine(audit_log=audit_log)
+    with pytest.raises(MarketIntelligenceAuthorizationError) as exc_info:
+        authorize_market_intelligence(
+            "site_market_context",
+            "site-beta-001",
+            tenant_id=TENANT_BETA,
+            principal=admin_alpha,
+            auth_engine=engine,
+            waiver=forged_waiver,
+        )
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
+    # 3. Market data facade denies forged signer
+    import copy
+
+    transport = InMemoryDataPlatformTransport()
+    doc_beta = copy.deepcopy(sample_site_context_payload)
+    doc_beta["document_id"] = "smc-beta-001"
+    doc_beta["tenant_id"] = TENANT_BETA
+    doc_beta["contexts"][0]["identity"]["site_id"] = "site-beta-001"
+    transport.store_document("emgi.site-market-context.v1", "smc-beta-001", doc_beta)
+
+    client = DataPlatformClient(transport=transport)
+    facade_audit_log = InMemoryAuditLog()
+    facade_engine = AuthorizationEngine(audit_log=facade_audit_log)
+    facade = MarketDataFacade(client=client, auth_engine=facade_engine, enforce_auth=True)
+
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-beta-001",
+            period_key="2026-08",
+            tenant_id=TENANT_BETA,
+            principal=admin_alpha,
+            waiver=forged_waiver,
+        )
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
+
+def test_dynamic_signer_registration_and_registry_lookup(
+    admin_alpha: Principal,
+) -> None:
+    """Waiver registry supports string ID resolution and dynamic authorized signers."""
+    custom_signer = "custom_sec_lead_99"
+    registry = TenantAccessWaiverRegistry()
+
+    waiver = TenantAccessWaiver(
+        waiver_id="WAIVER-REG-99",
+        principal_id="admin-alpha-001",
+        target_tenant_id=TENANT_BETA,
+        approved_by=custom_signer,
+        reason="Registered waiver test",
+        expires_at=FUTURE,
+    )
+    registry.register(waiver)
+
+    # Before signer authorization: fails
+    dec_unauthorized = check_tenant_isolation(
+        admin_alpha,
+        TENANT_BETA,
+        waiver="WAIVER-REG-99",
+        waiver_registry=registry,
+        on=NOW,
+    )
+    assert not dec_unauthorized.allowed
+
+    # Authorize signer in custom registry
+    registry.register_signer(custom_signer)
+    dec_authorized = check_tenant_isolation(
+        admin_alpha,
+        TENANT_BETA,
+        waiver="WAIVER-REG-99",
+        waiver_registry=registry,
+        on=NOW,
+    )
+    assert dec_authorized.allowed
+
+    # Unregister signer: fails closed
+    registry.unregister_signer(custom_signer)
+    dec_revoked = check_tenant_isolation(
+        admin_alpha,
+        TENANT_BETA,
+        waiver="WAIVER-REG-99",
+        waiver_registry=registry,
+        on=NOW,
+    )
+    assert not dec_revoked.allowed
+
+
+def test_market_intelligence_resource_envelope_tenant_and_missing_envelope_deny(
+    user_alpha: Principal,
+) -> None:
+    """Market intelligence derives tenant from target resource envelope and rejects missing/cross envelope tenants."""
+    audit_log = InMemoryAuditLog()
+    engine = AuthorizationEngine(audit_log=audit_log)
+
+    # 1. Resource envelope with matching tenant: allow
+    valid_envelope = {"tenant_id": TENANT_ALPHA, "document_id": "doc-001"}
+    tenant_out = authorize_market_intelligence(
+        "site_market_context",
+        "doc-001",
+        resource_envelope=valid_envelope,
+        principal=user_alpha,
+        auth_engine=engine,
+    )
+    assert tenant_out == TENANT_ALPHA
+
+    # 2. Resource envelope with foreign tenant: cross-tenant access denied even if caller passes tenant_id=TENANT_ALPHA
+    foreign_envelope = {"tenant_id": TENANT_BETA, "document_id": "doc-beta"}
+    with pytest.raises(MarketIntelligenceAuthorizationError) as exc_info:
+        authorize_market_intelligence(
+            "site_market_context",
+            "doc-beta",
+            tenant_id=TENANT_ALPHA,  # caller claims alpha
+            resource_envelope=foreign_envelope,  # target envelope is beta
+            principal=user_alpha,
+            auth_engine=engine,
+        )
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
+    # 3. Resource envelope with missing/empty tenant: fail closed
+    missing_envelope = {"document_id": "doc-missing"}
+    with pytest.raises(MarketIntelligenceAuthorizationError) as exc_info:
+        authorize_market_intelligence(
+            "site_market_context",
+            "doc-missing",
+            resource_envelope=missing_envelope,
+            principal=user_alpha,
+            auth_engine=engine,
+        )
+    assert exc_info.value.code == "missing_tenant"
+
+
+def test_market_data_facade_missing_payload_envelope_failclosed(
+    user_alpha: Principal,
+    sample_site_context_payload: dict[str, Any],
+) -> None:
+    """MarketDataFacade fails closed on payloads missing envelope tenant or mismatched tenant."""
+    import copy
+    from collections.abc import Mapping
+
+    # 1. Payload explicitly lacking tenant_id
+    doc_no_tenant = copy.deepcopy(sample_site_context_payload)
+    doc_no_tenant.pop("tenant_id", None)
+    doc_no_tenant["tenant_id"] = None
+    doc_no_tenant["contexts"][0]["identity"]["site_id"] = "site-no-tenant"
+
+    class _MissingTenantTransport:
+        def fetch_document(self, *args: Any, **kwargs: Any) -> Mapping[str, Any]:
+            return doc_no_tenant
+
+    client = DataPlatformClient(transport=_MissingTenantTransport())
+    audit_log = InMemoryAuditLog()
+    auth_engine = AuthorizationEngine(audit_log=audit_log)
+    facade = MarketDataFacade(client=client, auth_engine=auth_engine, enforce_auth=True)
+
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-no-tenant",
+            period_key="2026-08",
+            tenant_id=TENANT_ALPHA,
+            principal=user_alpha,
+        )
+    assert exc_info.value.code == "missing_tenant"
+
+    # 2. Payload returned from platform has different tenant (mismatched envelope)
+    doc_beta = copy.deepcopy(sample_site_context_payload)
+    doc_beta["tenant_id"] = TENANT_BETA
+    doc_beta["contexts"][0]["identity"]["site_id"] = "site-beta"
+
+    class _BetaTransport:
+        def fetch_document(self, *args: Any, **kwargs: Any) -> Mapping[str, Any]:
+            return doc_beta
+
+    client_beta = DataPlatformClient(transport=_BetaTransport())
+    facade_beta = MarketDataFacade(client=client_beta, auth_engine=auth_engine, enforce_auth=True)
+
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade_beta.get_site_market_context(
+            "site-beta",
+            period_key="2026-08",
+            tenant_id=TENANT_ALPHA,
+            principal=user_alpha,
+        )
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
+
+def test_immutable_audit_on_all_successful_allow_paths(
+    user_alpha: Principal,
+    sample_site_context_payload: dict[str, Any],
+) -> None:
+    """All successful allow paths in market intelligence, facade, and intake write immutable audit events."""
+    import copy
+
+    # 1. Market intelligence plain same-tenant VIEW
+    mi_audit_log = InMemoryAuditLog()
+    mi_engine = AuthorizationEngine(audit_log=mi_audit_log)
+    authorize_market_intelligence(
+        "site_market_context",
+        "site-001",
+        tenant_id=TENANT_ALPHA,
+        principal=user_alpha,
+        auth_engine=mi_engine,
+    )
+    mi_events = mi_audit_log.list_events()
+    assert len(mi_events) == 1
+    assert mi_events[0].outcome == "allow"
+    assert mi_events[0].actor == "user-alpha-001"
+
+    # 2. Market data facade plain same-tenant VIEW
+    transport = InMemoryDataPlatformTransport()
+    doc_alpha = copy.deepcopy(sample_site_context_payload)
+    doc_alpha["tenant_id"] = TENANT_ALPHA
+    doc_alpha["contexts"][0]["identity"]["site_id"] = "site-001"
+    transport.store_document("emgi.site-market-context.v1", "smc-001", doc_alpha)
+
+    client = DataPlatformClient(transport=transport)
+    facade_audit_log = InMemoryAuditLog()
+    facade_engine = AuthorizationEngine(audit_log=facade_audit_log)
+    facade = MarketDataFacade(client=client, auth_engine=facade_engine, enforce_auth=True)
+
+    ctx = facade.get_site_market_context(
+        "site-001",
+        period_key="2026-08",
+        tenant_id=TENANT_ALPHA,
+        principal=user_alpha,
+    )
+    assert ctx.identity.site_id == "site-001"
+    facade_events = facade_audit_log.list_events()
+    assert len(facade_events) == 1
+    assert facade_events[0].outcome == "allow"
+    assert facade_events[0].actor == "user-alpha-001"
+
+    # 3. Intake authorization plain same-tenant VIEW
+    intake_audit_log = InMemoryAuditLog()
+    authorize_intake_action(
+        user_alpha,
+        "view",
+        resource={"id": "L-101", "tenantId": TENANT_ALPHA, "owner": "user-alpha-001"},
+        audit_log=intake_audit_log,
+        correlation_id="corr-plain-view",
+    )
+    intake_events = intake_audit_log.list_events()
+    assert len(intake_events) == 1
+    assert intake_events[0].outcome == "allow"
+    assert intake_events[0].actor == "user-alpha-001"

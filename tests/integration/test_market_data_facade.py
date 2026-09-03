@@ -385,6 +385,7 @@ def sample_property_observation_payload() -> dict[str, Any]:
             }
         ],
         "status_histories": [],
+        "metadata": {"tenant_id": "tenant-alpha"},
     }
 
 
@@ -1080,6 +1081,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
     prop_beta_payload = {
         "created_at": "2026-08-14T00:00:00Z",
         "contract_id": "emgi.property-observation.v1",
+        "metadata": {"tenant_id": "tenant-beta"},
         "tenant_id": "tenant-beta",
         "properties": [
             {
@@ -1110,6 +1112,7 @@ def test_t1_t2_two_tenant_isolation_and_default_scoping(
 
     prop_alpha_payload = {
         **sample_property_observation_payload,
+        "metadata": {"tenant_id": "tenant-alpha"},
         "tenant_id": "tenant-alpha",
     }
 

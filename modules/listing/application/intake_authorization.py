@@ -175,21 +175,6 @@ def authorize_intake_action(
     )
     if not tenant_decision.allowed:
         _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED", decision=tenant_decision)
-    elif "cross_tenant_waiver" in tenant_decision.obligations and audit_log is not None:
-        access = AccessRequest(
-            principal=principal,
-            action=map_action_to_enum(action),
-            resource=ResourceDescriptor(
-                type=res_type,
-                resource_id=res_id,
-                tenant_id=target_tenant,
-            ),
-            environment=Environment(
-                source_ip=None,
-                attributes={"correlation_id": correlation_id or "unknown"},
-            ),
-        )
-        audit_log.record(build_security_event(access, tenant_decision))
 
 
 
@@ -364,6 +349,30 @@ def authorize_intake_action(
     else:
         # Default deny-by-default for unknown actions
         _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
+    # Mandatory immutable audit recording for all authorized intake actions
+    if audit_log is not None:
+        action_enum = map_action_to_enum(action)
+        desc = ResourceDescriptor(
+            type=res_type,
+            resource_id=res_id,
+            tenant_id=target_tenant,
+        )
+        access = AccessRequest(
+            principal=principal,
+            action=action_enum,
+            resource=desc,
+            environment=Environment(
+                source_ip=None,
+                attributes={"correlation_id": correlation_id or "unknown"},
+            ),
+        )
+        decision = (
+            tenant_decision
+            if "cross_tenant_waiver" in tenant_decision.obligations
+            else Decision.allow("authorized")
+        )
+        audit_log.record(build_security_event(access, decision))
 
 
 
