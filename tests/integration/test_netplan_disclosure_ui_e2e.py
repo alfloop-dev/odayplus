@@ -5,6 +5,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from apps.api.app.routes.operator_modules.network_rebalance import (
+    create_network_rebalance_sub_router,
+)
 
 from modules.netplan import (
     ActionOption,
@@ -44,12 +50,31 @@ class _FakeAvmCase:
         self.case_id = case_id
 
 
+class _FakeAvmReport:
+    def __init__(self, case_id: str) -> None:
+        self.case_id = case_id
+        self.model_version = "avm-rebalance-income-market-v1.0.0"
+        self.feature_version = "avm-features-v1.0.0"
+
+
 class _FakeAvmRepo:
     def __init__(self, cases: list[_FakeAvmCase] | None = None) -> None:
         self._cases = cases or [_FakeAvmCase("STORE-101")]
 
     def list_cases(self) -> list[Any]:
         return self._cases
+
+    def latest_report(self, case_id: str) -> Any:
+        """The canonical snapshot path reads model provenance off the AVM case.
+
+        Present so the GET route can be exercised at all; the disclosure claims
+        under test are about the NetPlan half of the payload, and this side is
+        only required to be well-formed.
+        """
+        return next(
+            (_FakeAvmReport(case.case_id) for case in self._cases if case.case_id == case_id),
+            None,
+        )
 
 
 def _options() -> dict[str, tuple[ActionOption, ...]]:
@@ -734,3 +759,368 @@ def test_e2e_acknowledgement_requires_authorized_role_and_non_empty_reason() -> 
             acknowledged_at=MOMENT,
         )
     assert "cannot acknowledge CAPITAL under policy" in str(exc_modelled.value)
+
+
+def _undisclosed_rebalance_service() -> NetworkRebalanceService:
+    """A fixture-mode Operator surface whose selected scenario disclosed nothing.
+
+    Built by emptying both halves of a seeded scenario's disclosure rather than
+    by deleting the keys. Deleting them was already refused; carrying them as
+    two empty lists is the shape that passed, because each half read as
+    well-formed on its own.
+    """
+    policy_repo = InMemoryDecisionPolicyRepository(
+        [default_netplan_disclosure_policy(tenant_id=TENANT_ID)]
+    )
+    service = NetworkRebalanceService(
+        netplan_policy_repository=policy_repo,
+        tenant_id=TENANT_ID,
+    )
+    def _actor(step: str) -> dict[str, str]:
+        return {
+            "actor_role_id": "expansionManager",
+            "actor_name": "王若寧",
+            "idempotency_key": f"idem-undisclosed-{step}",
+            "correlation_id": f"corr-undisclosed-{step}",
+        }
+
+    service.request_avm(store_id="RB-801", **_actor("avm-request"))
+    service.complete_avm(store_id="RB-801", **_actor("avm-complete"))
+    service.solve_netplan(store_id="RB-801", **_actor("solve"))
+    service.select_scenario(store_id="RB-801", scenario_id="move", **_actor("select"))
+
+    store = service._store("RB-801")
+    scenarios = store["netPlanScenarios"]
+    assert scenarios, "solved fixture store must carry scenarios to empty"
+    for scenario in scenarios:
+        for key in (
+            "modelledConstraintClasses",
+            "modelled_constraint_classes",
+            "unmodelledConstraintClasses",
+            "unmodelled_constraint_classes",
+        ):
+            scenario[key] = []
+    assert store["selectedScenarioId"] == "move"
+    return service
+
+
+def test_e2e_empty_disclosure_sets_are_undeclared_not_fully_modelled() -> None:
+    """A scenario declaring `[]` for both halves is undisclosed, not clean.
+
+    The two assertions are one claim seen from both sides of the boundary: the
+    projection the console renders and the gate the submission passes through
+    must classify this scenario the same way. When they disagreed, the console
+    drew a live submit button over a plan whose ODP-FR-NET-002 standing nothing
+    had established.
+    """
+    service = _undisclosed_rebalance_service()
+
+    snapshot = service.snapshot(selected_store_id="RB-801")
+    store = next(row for row in snapshot["stores"] if row["id"] == "RB-801")
+    projected = store["netPlanScenarios"]
+    assert projected, "snapshot must still project the scenarios"
+    for scenario in projected:
+        # Not "nothing is blocked". The classification could not be made, and
+        # the console reads this flag rather than inferring health from the two
+        # empty lists next to it.
+        assert scenario["disclosureUndeclared"] is True, scenario["id"]
+        assert scenario["blockedConstraintClasses"] == []
+        assert scenario["acknowledgeableConstraintClasses"] == []
+        assert scenario["disclosurePolicyVersionId"] is None
+
+    with pytest.raises(NetworkRebalancePolicyError) as exc:
+        service.submit_review(
+            store_id="RB-801",
+            reason="submit an undisclosed plan",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-undisclosed-submit",
+            correlation_id="corr-undisclosed-submit",
+        )
+    assert "neither modelled nor unmodelled" in str(exc.value)
+
+    # The refusal has to be the absence of an approval, not an approval carrying
+    # a refusal note. Govern reads this list.
+    assert service.snapshot(selected_store_id="RB-801")["stores"][0]["status"] == "netplanreview"
+    assert service._state["governApprovals"] == []
+
+
+def test_e2e_undisclosed_scenario_cannot_be_submitted_by_naming_acknowledgements() -> None:
+    """Naming classes to acknowledge does not repair a missing disclosure.
+
+    The acknowledgement path is the one route by which an unmodelled class
+    reaches Govern, so it is the route worth checking against a plan that never
+    said which classes those are: a signature against an undisclosed solve names
+    an exposure nobody can locate afterwards.
+    """
+    service = _undisclosed_rebalance_service()
+
+    with pytest.raises(NetworkRebalancePolicyError) as exc:
+        service.submit_review(
+            store_id="RB-801",
+            reason="submit an undisclosed plan with a signature attached",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-undisclosed-ack",
+            correlation_id="corr-undisclosed-ack",
+            acknowledged_classes=["LEASE", "SEQUENCING"],
+            acknowledgement_reason="租約與時序風險由商務處承擔",
+            acknowledgement_actor_id=APPROVAL_PRINCIPAL,
+            approval_receipt_id=RECEIPT_ID,
+        )
+    assert "neither modelled nor unmodelled" in str(exc.value)
+    assert service._state["governApprovals"] == []
+
+
+def _mount_operator_api(service: NetworkRebalanceService) -> TestClient:
+    """The real Operator route module over `service`.
+
+    Composed here rather than through `create_app` because the app-level
+    composition builds a fixture-mode surface, and the claim under test is
+    about the production CP-SAT one. Everything between the HTTP boundary and
+    the service is the shipped code: the same router factory, the same request
+    payload validation, the same response models, the same exception mapping.
+    Permission dependencies are stubbed because authorisation is a different
+    boundary with its own tests -- what must not be stubbed is the disclosure
+    contract, which is exactly what these response models carry.
+    """
+    app = FastAPI()
+    app.include_router(
+        create_network_rebalance_sub_router(
+            service,
+            require_view_permission_fn=lambda: None,
+            require_write_permission_fn=lambda: None,
+            allow_reset=False,
+        ),
+        prefix="/api/v1/operator",
+    )
+    return TestClient(app)
+
+
+def _canonical_surface(
+    scenario_id: str,
+    constraints: NetPlanConstraints,
+) -> tuple[NetPlanScenario, InMemoryNetPlanRepository, NetPlanService, NetworkRebalanceService]:
+    repo = InMemoryNetPlanRepository()
+    policy_repo = InMemoryDecisionPolicyRepository(
+        [default_netplan_disclosure_policy(tenant_id=TENANT_ID)]
+    )
+    scenario = _build_scenario(scenario_id=scenario_id, constraints=constraints)
+    repo.save_scenario(scenario)
+
+    executor = NetPlanProductionExecutor()
+    service = NetPlanService(
+        repository=repo,
+        policy_repository=policy_repo,
+        production_executor=executor,
+    )
+    rebalance_service = NetworkRebalanceService(
+        netplan_repository=repo,
+        netplan_production_executor=executor,
+        netplan_policy_repository=policy_repo,
+        avm_repository=_FakeAvmRepo(),
+        tenant_id=TENANT_ID,
+        require_canonical=True,
+    )
+    rebalance_service._store("STORE-101")["status"] = "avmready"
+    return scenario, repo, service, rebalance_service
+
+
+def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt() -> None:
+    """CP-SAT solve → FastAPI → the payload the console renders → durable receipt.
+
+    The other success test in this module talks to `NetworkRebalanceService`
+    directly, which leaves the HTTP boundary unverified: the response models are
+    where the disclosure contract is actually declared, and a field the console
+    reads could be dropped there without any service-level test noticing. This
+    walks the same production solve through the shipped routes and then checks
+    that the signature the last HTTP call produced exists as a sealed receipt in
+    the NetPlan repository -- not as a field on the response that returned it.
+    """
+    scenario, repo, netplan_service, rebalance_service = _canonical_surface(
+        "SCENARIO-E2E-HTTP-001",
+        _fully_modelled_constraints(),
+    )
+    client = _mount_operator_api(rebalance_service)
+
+    solve_response = client.post(
+        "/api/v1/operator/network-rebalance/stores/STORE-101/netplan/solve",
+        headers={"Idempotency-Key": "idem-http-solve", "X-Correlation-Id": "corr-http-solve"},
+        json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+    )
+    assert solve_response.status_code == 200, solve_response.text
+    solved_store = solve_response.json()["store"]
+    assert solved_store["status"] == "netplanreview"
+
+    scenarios = solved_store["netPlanScenarios"]
+    assert scenarios, "the solve must project at least the primary scenario"
+    primary = scenarios[0]
+
+    # The six caps the production formulation can bind, and the two it
+    # structurally cannot. Asserted over the wire because this partition is the
+    # whole content of the disclosure: the console has no other source for it.
+    assert set(primary["modelledConstraintClasses"]) == {
+        "CAPITAL",
+        "CONSTRUCTION",
+        "EQUIPMENT",
+        "LABOUR",
+        "COVERAGE",
+        "DILUTION",
+    }
+    assert set(primary["unmodelledConstraintClasses"]) == {"LEASE", "SEQUENCING"}
+    assert primary["disclosureUndeclared"] is False
+    assert primary["blockedConstraintClasses"] == []
+    assert set(primary["acknowledgeableConstraintClasses"]) == {"LEASE", "SEQUENCING"}
+    assert primary["disclosurePolicyVersionId"] == (
+        default_netplan_disclosure_policy(tenant_id=TENANT_ID).policy_version_id
+    )
+
+    # Every alternative carries its own disclosure. An operator comparing plans
+    # reads these rows side by side, and an alternative that arrived without a
+    # classification would be the one that looked clean.
+    for alternative in scenarios[1:]:
+        assert alternative["disclosureUndeclared"] is False
+        assert set(alternative["modelledConstraintClasses"]) | set(
+            alternative["unmodelledConstraintClasses"]
+        )
+
+    select_response = client.post(
+        f"/api/v1/operator/network-rebalance/stores/STORE-101/scenarios/{primary['id']}/select",
+        headers={"Idempotency-Key": "idem-http-select", "X-Correlation-Id": "corr-http-select"},
+        json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+    )
+    assert select_response.status_code == 200, select_response.text
+    assert select_response.json()["store"]["selectedScenarioId"] == primary["id"]
+
+    # The management approval authority both services sign against.
+    solve = repo.get_solve(scenario.scenario_id)
+    assert solve is not None
+    verifier = _attach_verifier(netplan_service, scenario, solve, receipt_id=RECEIPT_ID)
+    rebalance_service.netplan_approval_verifier = verifier
+    netplan_service.submit_for_approval(
+        scenario.scenario_id,
+        actor=APPROVAL_PRINCIPAL,
+        reason="submitted for network planning approval",
+        occurred_at=MOMENT,
+    )
+
+    ack_reason = "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。"
+    submit_response = client.post(
+        "/api/v1/operator/network-rebalance/stores/STORE-101/submit-review",
+        headers={"Idempotency-Key": "idem-http-submit", "X-Correlation-Id": "corr-http-submit"},
+        json={
+            "actorRoleId": "expansionManager",
+            "actorName": "王若寧",
+            "reason": "Move scenario verified with CP-SAT and submitted for Govern review",
+            "acknowledgedClasses": ["LEASE", "SEQUENCING"],
+            "acknowledgementReason": ack_reason,
+            "acknowledgementActorId": APPROVAL_PRINCIPAL,
+            "approvalReceiptId": RECEIPT_ID,
+        },
+    )
+    assert submit_response.status_code == 200, submit_response.text
+    body = submit_response.json()
+    assert body["store"]["status"] == "pendingapproval"
+
+    approval = body["governApproval"]
+    assert set(approval["acknowledgedConstraintClasses"]) == {"LEASE", "SEQUENCING"}
+    assert approval["acknowledgementReason"] == ack_reason
+    # Authority is the role the verified receipt carried, not the `actorRoleId`
+    # this request supplied.
+    assert approval["disclosureAcknowledgedByRole"] == AUTHORISED_ROLE
+    assert approval["disclosureAcknowledgedBy"] == APPROVAL_PRINCIPAL
+    assert approval["disclosureApprovalReceiptId"] == RECEIPT_ID
+    assert approval["disclosureSolverProblemHash"] == solve.problem_hash
+
+    # The durable half. The HTTP response naming an acknowledgement id is not
+    # evidence that one was stored; this is.
+    stored = repo.list_disclosure_acknowledgements(scenario.scenario_id)
+    assert len(stored) == 1
+    ack = stored[0]
+    assert ack.acknowledgement_id == approval["disclosureAcknowledgementId"]
+    assert ack.solver_problem_hash == solve.problem_hash
+    assert ack.actor_role == AUTHORISED_ROLE
+    assert ack.reason == ack_reason
+    assert set(ack.acknowledged_classes) == {ConstraintClass.LEASE, ConstraintClass.SEQUENCING}
+    assert ack.integrity_verified is True
+    assert ack.receipt_hash == ack.compute_receipt_hash()
+
+    decision = netplan_service.decide(
+        scenario_id=scenario.scenario_id,
+        decision="approved",
+        reason="治理中心核准：六項硬限制經 CP-SAT 驗證，LEASE 與 SEQUENCING 由具權限角色具名簽核。",
+        actor_id=APPROVAL_PRINCIPAL,
+        approval_receipt_id=RECEIPT_ID,
+        decided_at=MOMENT,
+    )
+    assert decision.decision == "approved"
+    assert decision.disclosure_acknowledgement_id == ack.acknowledgement_id
+    assert decision.authentic_approval_verified is True
+
+
+def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared() -> None:
+    """The HTTP boundary reports and refuses a doubly-empty disclosure.
+
+    Both halves matter and they are the same fact: the snapshot the console
+    fetches has to mark the scenario unverifiable, and the submit route has to
+    refuse it. A surface that only did the first would be relying on the console
+    to enforce a governance rule.
+    """
+    scenario, _repo, _netplan_service, rebalance_service = _canonical_surface(
+        "SCENARIO-E2E-HTTP-UNDISCLOSED-001",
+        _fully_modelled_constraints(),
+    )
+    client = _mount_operator_api(rebalance_service)
+
+    solve_response = client.post(
+        "/api/v1/operator/network-rebalance/stores/STORE-101/netplan/solve",
+        headers={"Idempotency-Key": "idem-http-undisclosed-solve"},
+        json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+    )
+    assert solve_response.status_code == 200, solve_response.text
+    scenario_id = solve_response.json()["store"]["netPlanScenarios"][0]["id"]
+
+    select_response = client.post(
+        f"/api/v1/operator/network-rebalance/stores/STORE-101/scenarios/{scenario_id}/select",
+        headers={"Idempotency-Key": "idem-http-undisclosed-select"},
+        json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+    )
+    assert select_response.status_code == 200, select_response.text
+
+    # Strip the disclosure the solve produced, leaving both halves present and
+    # empty -- the shape a solver that reported nothing would send.
+    for row in rebalance_service._store("STORE-101")["netPlanScenarios"]:
+        for key in (
+            "modelledConstraintClasses",
+            "modelled_constraint_classes",
+            "unmodelledConstraintClasses",
+            "unmodelled_constraint_classes",
+        ):
+            row[key] = []
+
+    snapshot = client.get(
+        "/api/v1/operator/network-rebalance?selectedStoreId=STORE-101",
+    )
+    assert snapshot.status_code == 200, snapshot.text
+    projected = snapshot.json()["stores"][0]["netPlanScenarios"]
+    assert projected
+    for row in projected:
+        assert row["disclosureUndeclared"] is True, row["id"]
+        assert row["blockedConstraintClasses"] == []
+        assert row["acknowledgeableConstraintClasses"] == []
+
+    refused = client.post(
+        "/api/v1/operator/network-rebalance/stores/STORE-101/submit-review",
+        headers={"Idempotency-Key": "idem-http-undisclosed-submit"},
+        json={
+            "actorRoleId": "expansionManager",
+            "actorName": "王若寧",
+            "reason": "submit an undisclosed plan over HTTP",
+        },
+    )
+    assert refused.status_code == 422, refused.text
+    assert "neither modelled nor unmodelled" in refused.json()["detail"]
+    assert rebalance_service._state["governApprovals"] == []
+    assert client.get("/api/v1/operator/network-rebalance").json()["stores"][0][
+        "status"
+    ] == "netplanreview"
