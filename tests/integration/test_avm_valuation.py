@@ -432,3 +432,97 @@ def test_avm_api_does_not_create_a_card_without_quality_score(
     reports = client.get(f"/avm/cases/{case_id}/reports")
     assert reports.status_code == 200
     assert reports.json()["count"] == 0
+
+
+def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path) -> None:
+    from modules.avm.domain import ValuationCase, ValuationInput, normalize_margin, value_store
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.repositories import DurableAVMRepository
+
+    # 1. Direct legacy input with quality_score=1.0 and quality_score_status='legacy_unknown'
+    legacy_input = ValuationInput(
+        store_id="store-legacy-1",
+        gm_ttm=1_000_000,
+        forecast_gm_next_12m=1_000_000,
+        asset_book_value=500_000,
+        equipment_fair_value=100_000,
+        quality_score=1.0,
+        quality_score_status="legacy_unknown",
+    )
+    legacy_case = ValuationCase.create(
+        legacy_input,
+        created_by="legacy-system",
+        correlation_id="corr-legacy-1",
+    )
+    margin = normalize_margin(legacy_case)
+    assert margin.confidence == "low"
+    assert "legacy_quality_unknown_discount" in margin.adjustment_reasons
+    assert margin.normalized_gm == pytest.approx(1_000_000 * 0.92, abs=1)
+
+    report = value_store(legacy_case, margin)
+    assert report.confidence == "low"
+
+    # In contrast, explicit measured score of 1.0 receives high confidence
+    measured_input = ValuationInput(
+        store_id="store-measured-1",
+        gm_ttm=1_000_000,
+        forecast_gm_next_12m=1_000_000,
+        asset_book_value=500_000,
+        equipment_fair_value=100_000,
+        quality_score=1.0,
+        quality_score_status="measured",
+    )
+    measured_case = ValuationCase.create(
+        measured_input,
+        created_by="modern-system",
+        correlation_id="corr-measured-1",
+    )
+    measured_margin = normalize_margin(measured_case)
+    assert measured_margin.confidence == "high"
+    assert "legacy_quality_unknown_discount" not in measured_margin.adjustment_reasons
+
+    # 2. Durable repository migrations for legacy cases without quality_score_status attribute
+    db_path = tmp_path / "legacy-repo.sqlite3"
+    engine = SqliteEngine(db_path)
+    store = SqliteDocumentStore(engine)
+    repo = DurableAVMRepository(store)
+
+    # Simulate an opaque legacy pickled case without quality_score_status
+    raw_legacy_input = ValuationInput(
+        store_id="store-legacy-durable",
+        gm_ttm=800_000,
+        forecast_gm_next_12m=800_000,
+        asset_book_value=400_000,
+        equipment_fair_value=50_000,
+        quality_score=1.0,
+        quality_score_status=None,
+    )
+    raw_case = ValuationCase.create(
+        raw_legacy_input,
+        created_by="legacy-user",
+        correlation_id="corr-legacy-durable",
+        case_id="case-legacy-durable-1",
+    )
+    # Store directly into document store as pickled blob
+    store.put(DurableAVMRepository._CASES, raw_case.case_id, raw_case)
+
+    # Retrieve through DurableAVMRepository
+    retrieved_case = repo.get_case("case-legacy-durable-1")
+    assert retrieved_case is not None
+    assert retrieved_case.valuation_input.quality_score == 1.0
+    assert retrieved_case.valuation_input.quality_score_status == "legacy_unknown"
+
+    all_cases = repo.list_cases()
+    assert len(all_cases) == 1
+    assert all_cases[0].valuation_input.quality_score_status == "legacy_unknown"
+
+    # Value the retrieved legacy case via AVMService
+    service = AVMService(repository=repo)
+    valued_report = service.value(
+        "case-legacy-durable-1", actor="worker-1", correlation_id="corr-val-1"
+    )
+    assert valued_report.confidence == "low"
+    assert "legacy_quality_unknown_discount" in valued_report.normalized_margin.adjustment_reasons
+    engine.close()
+

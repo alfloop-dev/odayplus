@@ -18,7 +18,7 @@ No valuation report or valuation card is persisted on that path.
 | Domain case | `modules/avm/domain/valuation.py::ValuationInput.to_dict` | Emits `quality_score: null` so absence remains observable |
 | Service boundary | `modules/avm/application/valuation.py::AVMService.normalize` | Rejects before changing case state or writing a margin |
 | Domain consumers | `normalize_margin`, `value_store`, `build_model_valuation_report` | Reject missing quality before deriving confidence or a report |
-| Durable case | `shared/infrastructure/persistence/repositories.py::DurableAVMRepository` | Pickle persistence preserves `None` without coercion |
+| Durable case | `shared/infrastructure/persistence/repositories.py::DurableAVMRepository` | Pickle persistence preserves `None` without coercion; legacy cases without status are disposed as `legacy_unknown` |
 | PostgreSQL | `infra/db/migrations/000018_avm_quality_score_nullable.sql` and Alembic `0012` | Drops `NOT NULL` and `DEFAULT`; old rows retain values and receive `legacy_unknown` status |
 | SQLite | `infra/db/migrations/000018_avm_quality_score_nullable_sqlite.sql` | Rebuilds the table with nullable score; copies old values unchanged and preserves status on restart |
 | API contract | `packages/openapi-client/openapi.json` | `quality_score` is `number | null` with no default and is not required |
@@ -30,24 +30,28 @@ No valuation report or valuation card is persisted on that path.
 The forward migration does not update historical `quality_score = 1.00` rows to
 `NULL`: the old schema cannot distinguish measured perfect quality from an
 omitted score. Existing rows keep their value and are marked
-`quality_score_status = 'legacy_unknown'`. New writers can explicitly use
-`measured` or `unmeasured`; a missing status remains conservative rather than
-being treated as a perfect measurement.
+`quality_score_status = 'legacy_unknown'`. New writers (such as `LineageManifest.to_audit_snapshot_row()`)
+explicitly emit `measured` or `unmeasured` status. In `DurableAVMRepository`, legacy
+pickled cases lacking an explicit status marker are migrated on retrieval to
+`quality_score_status = 'legacy_unknown'`. When valued, legacy cases with `legacy_unknown`
+status receive a named `legacy_quality_unknown_discount` and conservative `low` confidence
+rather than being treated as a perfect measurement.
 
 ## Search boundary
 
 The task-scoped search covered `modules/avm`, `apps/api/app/routes/avm.py`,
 `infra/db/migrations`, `packages/openapi-client`, `shared/infrastructure/persistence`,
-and tests. The AVM quality paths no longer contain `quality_score`/`data_quality_score`
-fallbacks to `1.0`; the remaining `1.0` values in the searched tree belong to
-unrelated bounded defaults or historical migrations. The governance checker
-was run to ensure the AVM dataclass exemption is no longer live.
+`shared/infrastructure/persistence/model_ready.py`, and tests. The AVM quality paths
+no longer contain `quality_score`/`data_quality_score` fallbacks to `1.0`; the remaining
+`1.0` values in the searched tree belong to unrelated bounded defaults or historical
+migrations. The governance checker was run to ensure the AVM dataclass exemption is no
+longer live.
 
 ## Verification
 
 - `pytest -q modules/avm/tests/test_deal_outcome_and_calibration.py tests/integration/test_avm_valuation.py tests/integration/test_avm_deal_outcome.py tests/integration/test_operator_canonical_wiring.py tests/ops/test_avm_quality_nullable_migration.py` — passed.
 - `pytest -q tests/ops/test_avm_quality_nullable_migration.py tests/contract/test_openapi_artifact_and_client.py -k 'avm_quality or generated_client_matches_the_artifact or artifact_is_checked_in_and_matches_the_live_app'` — passed.
-- `python delivery_toolchain/governance/check_measurement_defaults.py` — passed; 10 remaining exemptions are unrelated to AVM.
+- `python delivery_toolchain/governance/check_measurement_defaults.py` — passed: 36 known (dataclass 10, mapper 8, sql 18), 36 exempted with an owner; next expiry 2026-10-31.
 
 The repository's default CPython 3.14 environment cannot install the pinned
 `pgserver==0.1.4` wheel. Verification used the available CPython 3.12

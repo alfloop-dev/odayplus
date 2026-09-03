@@ -27,7 +27,13 @@ from models.shared_ml.model_card import ModelCard
 from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersion
 from models.shared_ml.validation import ValidationRun
 from modules.adlift.domain.incrementality import IncrementalityReport
-from modules.avm.domain import DataRoom, NormalizedMargin, ValuationCase, ValuationReport
+from modules.avm.domain import (
+    DataRoom,
+    NormalizedMargin,
+    ValuationCase,
+    ValuationInput,
+    ValuationReport,
+)
 from modules.forecastops.domain.feedback import ForecastFeedback
 from modules.forecastops.domain.forecasting import (
     Alert,
@@ -201,15 +207,53 @@ class DurableAVMRepository:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @staticmethod
+    def _migrate_legacy_case(case: ValuationCase | None) -> ValuationCase | None:
+        if case is None:
+            return None
+        inp = case.valuation_input
+        status = getattr(inp, "quality_score_status", None)
+        if status is None:
+            legacy_status = "unmeasured" if inp.quality_score is None else "legacy_unknown"
+            new_input = ValuationInput(
+                store_id=inp.store_id,
+                gm_ttm=inp.gm_ttm,
+                forecast_gm_next_12m=inp.forecast_gm_next_12m,
+                asset_book_value=inp.asset_book_value,
+                equipment_fair_value=inp.equipment_fair_value,
+                lease_liability=inp.lease_liability,
+                working_capital=inp.working_capital,
+                comparable_multiples=inp.comparable_multiples,
+                liquidity_discount=inp.liquidity_discount,
+                quality_score=inp.quality_score,
+                quality_score_status=legacy_status,
+                source_snapshot_ids=inp.source_snapshot_ids,
+                prediction_origin_time=inp.prediction_origin_time,
+            )
+            return ValuationCase(
+                case_id=case.case_id,
+                store_id=case.store_id,
+                status=case.status,
+                valuation_input=new_input,
+                created_by=case.created_by,
+                created_at=case.created_at,
+                status_history=case.status_history,
+            )
+        return case
+
     def save_case(self, case: ValuationCase) -> ValuationCase:
         self._store.put(self._CASES, case.case_id, case)
         return case
 
     def get_case(self, case_id: str) -> ValuationCase | None:
-        return self._store.get(self._CASES, case_id)
+        return self._migrate_legacy_case(self._store.get(self._CASES, case_id))
 
     def list_cases(self) -> list[ValuationCase]:
-        return self._store.list_all(self._CASES)
+        return [
+            c
+            for item in self._store.list_all(self._CASES)
+            if (c := self._migrate_legacy_case(item)) is not None
+        ]
 
     def save_margin(self, margin: NormalizedMargin) -> NormalizedMargin:
         self._store.put(self._MARGINS, margin.case_id, margin)

@@ -37,11 +37,31 @@ class ValuationInput:
     comparable_multiples: tuple[float, ...] = ()
     liquidity_discount: float = 0.1
     quality_score: float | None = None
+    quality_score_status: str | None = None
     source_snapshot_ids: tuple[str, ...] = ()
     prediction_origin_time: datetime = field(default_factory=lambda: datetime.now(UTC))
 
+    @property
+    def effective_quality_score_status(self) -> str:
+        status = getattr(self, "quality_score_status", None)
+        if status is not None:
+            return status
+        if self.quality_score is None:
+            return "unmeasured"
+        return "legacy_unknown"
+
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> ValuationInput:
+        quality_score = _optional_bounded(
+            data.get("quality_score", data.get("data_quality_score"))
+        )
+        explicit_status = data.get("quality_score_status")
+        if explicit_status:
+            quality_score_status = str(explicit_status)
+        elif quality_score is None:
+            quality_score_status = "unmeasured"
+        else:
+            quality_score_status = "measured"
         return cls(
             store_id=str(data["store_id"]),
             gm_ttm=float(data.get("gm_ttm", data.get("gross_margin_ttm", 0.0))),
@@ -58,9 +78,8 @@ class ValuationInput:
             liquidity_discount=_bounded(
                 data.get("liquidity_discount", 0.1), minimum=0.0, maximum=0.5
             ),
-            quality_score=_optional_bounded(
-                data.get("quality_score", data.get("data_quality_score"))
-            ),
+            quality_score=quality_score,
+            quality_score_status=quality_score_status,
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
             prediction_origin_time=_parse_datetime(
                 data.get("prediction_origin_time") or datetime.now(UTC)
@@ -79,6 +98,7 @@ class ValuationInput:
             "comparable_multiples": list(self.comparable_multiples),
             "liquidity_discount": self.liquidity_discount,
             "quality_score": self.quality_score,
+            "quality_score_status": self.effective_quality_score_status,
             "source_snapshot_ids": list(self.source_snapshot_ids),
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
             "feature_version": AVM_FEATURE_VERSION,
@@ -352,11 +372,19 @@ def build_valuation_view(data: Mapping[str, Any]) -> ValuationInput:
 def normalize_margin(case: ValuationCase) -> NormalizedMargin:
     item = case.valuation_input
     quality_score = _require_quality_score(item.quality_score)
+    status = item.effective_quality_score_status
     normalized = round((item.gm_ttm * 0.45) + (item.forecast_gm_next_12m * 0.55), 2)
     reasons = ["weighted_ttm_and_forecast_gm"]
-    if quality_score < 0.8:
+    if status == "legacy_unknown":
+        normalized = round(normalized * 0.92, 2)
+        reasons.append("legacy_quality_unknown_discount")
+        confidence = "low"
+    elif quality_score < 0.8:
         normalized = round(normalized * 0.92, 2)
         reasons.append("quality_discount")
+        confidence = _confidence(quality_score)
+    else:
+        confidence = _confidence(quality_score)
     return NormalizedMargin(
         case_id=case.case_id,
         store_id=case.store_id,
@@ -364,7 +392,7 @@ def normalize_margin(case: ValuationCase) -> NormalizedMargin:
         gm_fwd=item.forecast_gm_next_12m,
         normalized_gm=normalized,
         adjustment_reasons=tuple(reasons),
-        confidence=_confidence(quality_score),
+        confidence=confidence,
     )
 
 
