@@ -318,6 +318,16 @@ export type SiteReview = {
   reason?: string;
 };
 
+export type ConstraintClass =
+  | "CAPITAL"
+  | "LEASE"
+  | "CONSTRUCTION"
+  | "EQUIPMENT"
+  | "LABOUR"
+  | "COVERAGE"
+  | "DILUTION"
+  | "SEQUENCING";
+
 export type NetPlanDiagnostic = {
   violated_constraint: string;
   affected_stores: string[];
@@ -353,6 +363,10 @@ export type NetPlanScenarioDetail = {
   policyVersion?: string;
   binding_constraints?: string[];
   bindingConstraints?: string[];
+  modelledConstraintClasses?: ConstraintClass[];
+  unmodelledConstraintClasses?: ConstraintClass[];
+  modelled_constraint_classes?: ConstraintClass[];
+  unmodelled_constraint_classes?: ConstraintClass[];
   actions?: any[];
   selected_actions?: any[];
   dependencies?: any[];

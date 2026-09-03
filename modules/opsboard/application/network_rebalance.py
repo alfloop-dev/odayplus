@@ -104,6 +104,16 @@ def _evidence_id(prefix: str = "EV-RB") -> str:
 
 
 def _seed_scenarios() -> list[dict[str, Any]]:
+    default_modelled = ["CAPITAL"]
+    default_unmodelled = [
+        "LEASE",
+        "CONSTRUCTION",
+        "EQUIPMENT",
+        "LABOUR",
+        "COVERAGE",
+        "DILUTION",
+        "SEQUENCING",
+    ]
     return [
         {
             "id": "keep",
@@ -120,6 +130,11 @@ def _seed_scenarios() -> list[dict[str, Any]]:
             "isStale": False,
             "isInfeasible": False,
             "diagnostics": [],
+            "bindingConstraints": ["max_budget"],
+            "modelledConstraintClasses": list(default_modelled),
+            "unmodelledConstraintClasses": list(default_unmodelled),
+            "modelled_constraint_classes": list(default_modelled),
+            "unmodelled_constraint_classes": list(default_unmodelled),
             "rationale": "保留原址但需重新配置設備、在地行銷與 90 天營運觀察。",
         },
         {
@@ -137,6 +152,11 @@ def _seed_scenarios() -> list[dict[str, Any]]:
             "isStale": False,
             "isInfeasible": False,
             "diagnostics": [],
+            "bindingConstraints": ["max_budget"],
+            "modelledConstraintClasses": list(default_modelled),
+            "unmodelledConstraintClasses": list(default_unmodelled),
+            "modelled_constraint_classes": list(default_modelled),
+            "unmodelled_constraint_classes": list(default_unmodelled),
             "rationale": "Move 方案在需求缺口與租金帶權衡下最高分，但仍需 Govern 雙簽核。",
         },
         {
@@ -154,6 +174,11 @@ def _seed_scenarios() -> list[dict[str, Any]]:
             "isStale": False,
             "isInfeasible": False,
             "diagnostics": [],
+            "bindingConstraints": [],
+            "modelledConstraintClasses": list(default_modelled),
+            "unmodelledConstraintClasses": list(default_unmodelled),
+            "modelled_constraint_classes": list(default_modelled),
+            "unmodelled_constraint_classes": list(default_unmodelled),
             "rationale": "止損風險最低，但會留下商圈需求缺口與設備調度成本。",
         },
     ]
@@ -571,6 +596,8 @@ class NetworkRebalanceService:
             is_stale = solve.is_stale(scenario)
             is_infeasible = result_payload.get("infeasible", False) or (result_payload.get("solver_status") == "infeasible")
             diagnostics = result_payload.get("diagnostics", [])
+            modelled_classes = list(result_payload.get("modelled_constraint_classes", []))
+            unmodelled_classes = list(result_payload.get("unmodelled_constraint_classes", []))
             plan_rows = [
                 {
                     "id": scenario.scenario_id,
@@ -582,6 +609,10 @@ class NetworkRebalanceService:
                     "capacityDelta": result_payload["capacity_delta"],
                     "actions": result_payload["selected_actions"],
                     "bindingConstraints": result_payload["binding_constraints"],
+                    "modelledConstraintClasses": modelled_classes,
+                    "unmodelledConstraintClasses": unmodelled_classes,
+                    "modelled_constraint_classes": modelled_classes,
+                    "unmodelled_constraint_classes": unmodelled_classes,
                     "isSystemRecommendation": True,
                     "selected": False,
                     "solverStatus": result_payload["solver_status"],
@@ -596,6 +627,12 @@ class NetworkRebalanceService:
                 result_payload.get("alternatives", []),
                 start=1,
             ):
+                alt_modelled = list(
+                    alternative.get("modelled_constraint_classes", modelled_classes)
+                )
+                alt_unmodelled = list(
+                    alternative.get("unmodelled_constraint_classes", unmodelled_classes)
+                )
                 plan_rows.append(
                     {
                         "id": f"{scenario.scenario_id}:alternative:{index}",
@@ -607,6 +644,10 @@ class NetworkRebalanceService:
                         "capacityDelta": alternative["capacity_delta"],
                         "actions": alternative["actions"],
                         "bindingConstraints": alternative["binding_constraints"],
+                        "modelledConstraintClasses": alt_modelled,
+                        "unmodelledConstraintClasses": alt_unmodelled,
+                        "modelled_constraint_classes": alt_modelled,
+                        "unmodelled_constraint_classes": alt_unmodelled,
                         "isSystemRecommendation": False,
                         "selected": False,
                         "solverStatus": result_payload["solver_status"],

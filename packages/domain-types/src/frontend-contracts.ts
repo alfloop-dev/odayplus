@@ -243,6 +243,16 @@ export type ValuationRangeChartContract = {
   dataQuality?: DataQuality;
 };
 
+export type ConstraintClass =
+  | "CAPITAL"
+  | "LEASE"
+  | "CONSTRUCTION"
+  | "EQUIPMENT"
+  | "LABOUR"
+  | "COVERAGE"
+  | "DILUTION"
+  | "SEQUENCING";
+
 export type NetPlanAction = "OPEN" | "KEEP" | "IMPROVE" | "MOVE" | "EXIT" | "HOLD";
 
 export type InfeasibilityDiagnosis = {
@@ -261,6 +271,10 @@ export type NetPlanScenarioCardContract = {
   expectedGrossMargin: Interval;
   risk: RiskLevel;
   bindingConstraints: string[];
+  modelledConstraintClasses?: ConstraintClass[];
+  unmodelledConstraintClasses?: ConstraintClass[];
+  modelled_constraint_classes?: ConstraintClass[];
+  unmodelled_constraint_classes?: ConstraintClass[];
   solverStatus: JobStatus;
   alternativePlanAvailable: boolean;
   approvalStatus: DecisionStatus;

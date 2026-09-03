@@ -63,6 +63,8 @@ class NetworkPlanCandidate:
     capacity_delta: int
     action_counts: dict[NetworkAction, int]
     binding_constraints: tuple[str, ...]
+    modelled_constraint_classes: tuple[ConstraintClass, ...] = ()
+    unmodelled_constraint_classes: tuple[ConstraintClass, ...] = ()
 
     @property
     def action_signature(self) -> tuple[tuple[str, str], ...]:
@@ -78,6 +80,8 @@ class NetworkPlanCandidate:
             "capacity_delta": self.capacity_delta,
             "action_counts": {k.value: v for k, v in self.action_counts.items()},
             "binding_constraints": list(self.binding_constraints),
+            "modelled_constraint_classes": [c.value for c in self.modelled_constraint_classes],
+            "unmodelled_constraint_classes": [c.value for c in self.unmodelled_constraint_classes],
         }
 
 
@@ -213,6 +217,8 @@ def _candidate_from_selected(
             counts=counts,
             constraints=constraints,
         ),
+        modelled_constraint_classes=constraints.modelled_classes(),
+        unmodelled_constraint_classes=constraints.unmodelled_classes(),
     )
 
 
@@ -699,6 +705,8 @@ def _candidate(
             counts=counts,
             constraints=constraints,
         ),
+        modelled_constraint_classes=constraints.modelled_classes(),
+        unmodelled_constraint_classes=constraints.unmodelled_classes(),
     )
 
 
@@ -857,6 +865,8 @@ def _candidate_fields_match(
         and actual.capacity_delta == expected.capacity_delta
         and actual.action_counts == expected.action_counts
         and actual.binding_constraints == expected.binding_constraints
+        and actual.modelled_constraint_classes == expected.modelled_constraint_classes
+        and actual.unmodelled_constraint_classes == expected.unmodelled_constraint_classes
     )
 
 

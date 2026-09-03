@@ -391,6 +391,16 @@ export interface ValuationRun {
   report_uri: string;
 }
 
+export type ConstraintClass =
+  | 'CAPITAL'
+  | 'LEASE'
+  | 'CONSTRUCTION'
+  | 'EQUIPMENT'
+  | 'LABOUR'
+  | 'COVERAGE'
+  | 'DILUTION'
+  | 'SEQUENCING';
+
 export interface NetworkPlan {
   network_plan_id: string;
   planning_period_start: string;
@@ -399,6 +409,8 @@ export interface NetworkPlan {
   objective_value: number;
   solver_status: string;
   constraint_summary_json: Record<string, any>;
+  modelled_constraint_classes?: ConstraintClass[];
+  unmodelled_constraint_classes?: ConstraintClass[];
   created_at: string;
 }
 

@@ -235,6 +235,16 @@ export type HeatZoneScore = {
   [key: string]: unknown;
 };
 
+export type ConstraintClass =
+  | "CAPITAL"
+  | "LEASE"
+  | "CONSTRUCTION"
+  | "EQUIPMENT"
+  | "LABOUR"
+  | "COVERAGE"
+  | "DILUTION"
+  | "SEQUENCING";
+
 /**
  * A NetPlan scenario as served by `GET /netplan/scenarios` (the list/compare
  * endpoint). Mirrors `NetPlanScenario.to_dict()` in
@@ -250,6 +260,29 @@ export type NetPlanScenarioSummary = {
   solver_version?: string;
   model_version?: string;
   correlation_id?: string;
+  modelled_constraint_classes?: ConstraintClass[];
+  unmodelled_constraint_classes?: ConstraintClass[];
+  [key: string]: unknown;
+};
+
+export type NetPlanScenarioDetail = {
+  id: string;
+  name?: string;
+  score?: number;
+  expectedGrossMargin?: number;
+  investmentTwd?: number;
+  risk?: number;
+  capacityDelta?: number;
+  bindingConstraints?: string[];
+  modelledConstraintClasses?: ConstraintClass[];
+  unmodelledConstraintClasses?: ConstraintClass[];
+  modelled_constraint_classes?: ConstraintClass[];
+  unmodelled_constraint_classes?: ConstraintClass[];
+  solverStatus?: string;
+  solverVersion?: string;
+  isSystemRecommendation?: boolean;
+  isStale?: boolean;
+  isInfeasible?: boolean;
   [key: string]: unknown;
 };
 
