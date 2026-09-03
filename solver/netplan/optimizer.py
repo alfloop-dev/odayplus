@@ -63,8 +63,13 @@ class NetworkPlanCandidate:
     capacity_delta: int
     action_counts: dict[NetworkAction, int]
     binding_constraints: tuple[str, ...]
-    modelled_constraint_classes: tuple[ConstraintClass, ...] = ()
-    unmodelled_constraint_classes: tuple[ConstraintClass, ...] = ()
+    # No default: a candidate that does not say which of ODP-FR-NET-002's eight
+    # classes bound it must not be constructible. An empty tuple default would
+    # let a new construction site disclose nothing and still serialize a plan
+    # whose two class arrays are present and well-typed, which reads downstream
+    # as "verified against nothing" rather than as a missing declaration.
+    modelled_constraint_classes: tuple[ConstraintClass, ...]
+    unmodelled_constraint_classes: tuple[ConstraintClass, ...]
 
     @property
     def action_signature(self) -> tuple[tuple[str, str], ...]:
