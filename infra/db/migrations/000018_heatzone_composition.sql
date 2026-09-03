@@ -3,8 +3,15 @@
 -- Implements append-only storage for heat-zone composition, lineage tracking,
 -- operator human override, and soft rollback.
 
+-- The canonical baseline creates these schemas, but some supported upgrade
+-- paths stamp the baseline to avoid extensions that are unavailable in the
+-- target PostgreSQL instance. This migration owns tables in both, so it must
+-- also make their containing schemas available on that path.
+CREATE SCHEMA IF NOT EXISTS expansion;
+CREATE SCHEMA IF NOT EXISTS geo;
+
 CREATE TABLE IF NOT EXISTS expansion.heatzone_composition (
-    composition_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    composition_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     zone_id             VARCHAR(100) NOT NULL,   -- Merged zone identifier, format 'MZ-{hash16}'
     tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id),
     member_cell_id      UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id),
@@ -95,7 +102,7 @@ CREATE TRIGGER trg_heatzone_composition_append_only
 
 -- Proposals table for Operator preview and approval workflow
 CREATE TABLE IF NOT EXISTS expansion.heatzone_proposals (
-    proposal_id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    proposal_id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     zone_id                         VARCHAR(100) NOT NULL,
     tenant_id                       UUID NOT NULL REFERENCES core.tenants(tenant_id),
     composition_kind                VARCHAR(50) NOT NULL,
@@ -191,7 +198,7 @@ CREATE TRIGGER trg_seed_heatzone_merge_policy
 -- ---------------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS geo.h3_cell_adjacency (
-    adjacency_id    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    adjacency_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     cell_id         UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id),
     neighbor_cell_id UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id),
     k_ring          INTEGER NOT NULL DEFAULT 1,
@@ -208,7 +215,7 @@ CREATE INDEX IF NOT EXISTS idx_h3_adjacency_cell
     ON geo.h3_cell_adjacency (cell_id);
 
 CREATE TABLE IF NOT EXISTS expansion.heatzone_absorption_outcomes (
-    outcome_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    outcome_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id),
     geo_cell_id         UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id),
     period_start        DATE NOT NULL,

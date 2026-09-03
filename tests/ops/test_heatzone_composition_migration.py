@@ -20,7 +20,7 @@ def test_heatzone_composition_table_schema_and_constraints() -> None:
     sql = _sql()
 
     assert "CREATE TABLE IF NOT EXISTS expansion.heatzone_composition" in sql
-    assert "composition_id      UUID PRIMARY KEY DEFAULT uuid_generate_v4()" in sql
+    assert "composition_id      UUID PRIMARY KEY DEFAULT gen_random_uuid()" in sql
     assert "zone_id             VARCHAR(100) NOT NULL" in sql
     assert "tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id)" in sql
     assert "member_cell_id      UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id)" in sql
@@ -34,7 +34,7 @@ def test_heatzone_composition_table_schema_and_constraints() -> None:
 
     # Proposals table
     assert "CREATE TABLE IF NOT EXISTS expansion.heatzone_proposals" in sql
-    assert "proposal_id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4()" in sql
+    assert "proposal_id                     UUID PRIMARY KEY DEFAULT gen_random_uuid()" in sql
     assert "CONSTRAINT chk_proposal_status CHECK" in sql
 
     # Constraints
