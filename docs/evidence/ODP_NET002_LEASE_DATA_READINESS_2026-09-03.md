@@ -3,11 +3,11 @@
 - 日期：2026-09-03
 - 任務：`ODP-NET002-LEASE-DATA-READINESS-001`
 - 階段：ODP Remediation · W0 Evidence（第 0 批：資料源確認）
-- 基準：`origin/dev` @ `8479567d`
+- 基準：`origin/dev` @ `c1371572`
 - 需求依據：`ODP-FR-NET-002`（系統必須考量資本、租約、施工、設備、人力、覆蓋、稀釋與時序硬限制）
 - 狀態：`BLOCKED_BY_EVIDENCE`
-- 審查者：Codex
-- 負責人：Antigravity5
+- 審查者：Codex2
+- 負責人：Codex
 - 關聯文件：
   - [修正計畫](../plans/ODP_REMEDIATION_PLAN_2026-09-03.md)（第 0 批、第 6 批）
   - [待裁決事項](../plans/ODP_OPEN_DECISIONS_2026-09-03.md)（第 12 項）
@@ -26,9 +26,11 @@
 1. **候選新址 (Candidate Sites / `OPEN`)**：
    - **Schema / Intake 結構能力**：關聯資料庫 `expansion.listings` 具備 `available_from: DATE`（起租日，選填）與 `rent_amount: NUMERIC(12,2)`；`assisted_intake` 與 `xlsx_import` 具備解析與欄位對齊之資料結構。
    - **生產者與新鮮度真實狀態 (Production Producer & Freshness Reality)**：
-     1. **外部租屋網站（591 / 樂屋網 / 好房網 / 永慶房產）**：因網站服務條款 (ToS) 明確禁止伺服器端自動抓取（見 `modules/external_data/security/assisted_listing_retrieval.py`），全樹僅支援操作員單筆人工輔助進件 (`assisted_intake`)，**完全沒有自動化定期爬蟲生產者與排程**。
-     2. **批次合作夥伴 Feed (`listing.partner_feed`)**：在 `modules/external_data/connectors/provider_registry.py` 中為未配置狀態（需商業簽約授權之端點與金鑰，目前尚未簽約，非 live-required）。
-     3. **試算表 XLSX 匯入**：`modules/external_data/application/xlsx_import.py` 透過呼叫端注入之 `IntakeWriter` 寫入，全樹無任何生產管線將其寫入 `expansion.listings`。
+     1. **外部租屋網站（591 / 樂屋網 / 好房網）**：
+        - 依 `modules/external_data/application/assisted_intake.py:224-250` 之 `SOURCE_REGISTRY` 來源註冊表：`SRC-591`（591 租屋）與 `SRC-RAKUYA`（樂屋網）因服務條款未授權伺服器擷取標記為 `ASSISTED_ENTRY_ONLY`；`SRC-HOUSEFUN`（好房網）因需合作帳號存取且本流程不索取帳密標記為 `AUTH_REQUIRED`；永慶房產等未列於 registry 之來源則為 `POLICY_UNKNOWN` 並依 fail-closed 拒絕伺服器擷取。
+        - 搭配 `modules/external_data/security/assisted_listing_retrieval.py:19-22, 587-594`（僅 `APPROVED_RETRIEVAL` 允許伺服器擷取），全系統對此類外部網站僅支援操作員單筆人工輔助進件 (`assisted_intake`)，**完全沒有自動化定期爬蟲生產者與排程**。
+     2. **批次合作夥伴 Feed (`listing.partner_feed`)**：在 `modules/external_data/connectors/provider_registry.py:166-176, 188-208` 中為未配置狀態（需商業簽約授權之端點與金鑰，目前尚未簽約，非 live-required）。
+     3. **試算表 XLSX 匯入**：`modules/external_data/application/xlsx_import.py:9-10, 804-815` 透過呼叫端注入之 `IntakeWriter` 寫入，全樹無任何生產管線將其寫入 `expansion.listings`。
      4. **結論**：生產環境目前**完全缺乏具備定期新鮮度（Freshness）保證之自動化 Feed 生產者**。
    - **欄位完全缺乏**：全系統完全缺乏簽約檔期截止日 (`available_to` / `signing_deadline`)、租約期限約束 (`lease_term_years`)、免租裝潢期 (`fitout_grace_days`)、押金期數與房東簽約可行性評估。
    - **領域模型斷鏈**：在 NetPlan 領域層中，`CandidateSiteInput` 與 `ActionOption` 均未引入任何租約檔期或簽約約束欄位。
@@ -52,7 +54,7 @@ NetPlan 規劃實體包含「既有門市 (`existing_store`)」與「候選新�
 
 | 動作選項 (`ActionOption`) | 規劃實體類型 | 租約相關欄位需求 | 現有資料層實體與欄位 | 欄位 Lineage 與 Production Producer 真實狀態 | 擁有者 (Owner) | 資料新鮮度 (Freshness) | 資料就緒狀態 |
 |---|---|---|---|---|---|---|---|
-| **`OPEN`** | `candidate_site` | 1. 起租可得日 (`available_from`)<br>2. 簽約檔期截止日 (`available_to` / `signing_deadline`)<br>3. 租期條件 (`lease_term_years`, 押金, 免租裝潢期) | `expansion.listings.available_from` (DATE, Nullable)<br>`expansion.listings.rent_amount` (NUMERIC)<br>*(僅 Schema DDL 與 DTO 定義)* | **Schema/DTO 能力**：`assisted_intake` 與 `xlsx_import` 有欄位對齊。<br>**生產者查證事實**：<br>1. 591/樂屋/好房/永慶：條款禁止爬蟲（`assisted_listing_retrieval.py`），僅人工單筆進件，無排程爬蟲。<br>2. `listing.partner_feed`：在 `provider_registry.py` 未簽約／未設定。<br>3. XLSX：`xlsx_import.py` 呼叫端 writer 無寫入 `expansion.listings` 證據。 | ExpansionOps / External Data Platform | **無自動新鮮度保證**（僅人工單筆進件或偶發上傳，非定期自動更新） | **結構有定義但無自動化生產管線與新鮮度保證，且領域層完全斷鏈**：`available_from` 缺乏生產者排程；簽約截止日與租期條件**完全不存在**。 |
+| **`OPEN`** | `candidate_site` | 1. 起租可得日 (`available_from`)<br>2. 簽約檔期截止日 (`available_to` / `signing_deadline`)<br>3. 租期條件 (`lease_term_years`, 押金, 免租裝潢期) | `expansion.listings.available_from` (DATE, Nullable)<br>`expansion.listings.rent_amount` (NUMERIC)<br>*(僅 Schema DDL 與 DTO 定義)* | **Schema/DTO 能力**：`assisted_intake` 與 `xlsx_import` 有欄位對齊。<br>**生產者查證事實**：<br>1. 外部租屋網站（591/樂屋為 `ASSISTED_ENTRY_ONLY`、好房為 `AUTH_REQUIRED`、永慶未列於 registry 為 `POLICY_UNKNOWN`）：受策略與安全閘門限制（`assisted_intake.py:224-250`、`assisted_listing_retrieval.py:19-22`），僅人工單筆進件，無排程爬蟲。<br>2. `listing.partner_feed`：在 `provider_registry.py:166-176, 188-208` 未簽約／未設定。<br>3. XLSX：`xlsx_import.py:9-10, 804-815` 呼叫端 writer 無寫入 `expansion.listings` 證據。 | ExpansionOps / External Data Platform | **無自動新鮮度保證**（僅人工單筆進件或偶發上傳，非定期自動更新） | **結構有定義但無自動化生產管線與新鮮度保證，且領域層完全斷鏈**：`available_from` 缺乏生產者排程；簽約截止日與租期條件**完全不存在**。 |
 | **`KEEP`** | `existing_store` | 1. 租約到期日 (`lease_expiry_date`)<br>2. 續約可行性 (`renewal_option_flag`, 房東意願)<br>3. 租金調幅 (`rent_escalation_rate`) | **無** (`core.stores` 僅有 `opened_on`, `closed_on`, `effective_to`) | 無生產資料源；`modules/netplan/domain/planning.py::build_scenario_options` 無租約欄位輸入 | Store Ops / Real Estate Finance | N/A（無資料表） | **完全不存在 (`MISSING`)**：系統無門市合約檔，無法驗證門市在規劃期內是否租約到期或可否續約。 |
 | **`IMPROVE`** | `existing_store` | 1. 剩餘租期 (`remaining_lease_months`)<br>2. 裝修許可 (`alteration_permitted`)<br>3. 投資回收期對比租期 | **無** (`ExistingStoreInput` 僅有 `improve_cost`, `improve_risk`) | 無生產資料源；`modules/netplan/domain/planning.py::ExistingStoreInput` 手動填入 `improve_cost` | Store Ops / Engineering | N/A（無資料表） | **完全不存在 (`MISSING`)**：無法檢查改裝投資金額是否能在剩餘租期內完成攤提與回收。 |
 | **`MOVE`** | `existing_store` → `candidate_site` (雙側實體) | 1. 既有店提早解約金 (`termination_cost`)<br>2. 既有店復原費用 (`restoration_cost`)<br>3. 新址起租日與重疊檔期視窗 (`overlap_window_days`) | **無** (`ExistingStoreInput` 僅有單一粗估 `move_cost`, `move_risk`) | 無生產資料源；全樹無舊店解約違約金與新店起租時間視窗雙側比對邏輯 | ExpansionOps / Store Ops / Finance | N/A（無資料表） | **完全不存在 (`MISSING`)**：無法計算搬遷時新舊店交接租金重疊與舊約終止違約金。 |
@@ -124,11 +126,18 @@ ActionOption(
 
 ### 1. 外部資料供應商註冊與抓取安全策略 (External Provider Registry & Retrieval Security)
 
+- **`modules/external_data/application/assisted_intake.py`**：
+  - 行 224–250 (`SOURCE_REGISTRY`)：明確定義外部租屋來源之存取政策：
+    - `SRC-591` (591 租屋)：`policy="ASSISTED_ENTRY_ONLY"`，因服務條款未授權伺服器擷取，保留 URL 並由人工補錄必要欄位。
+    - `SRC-RAKUYA` (樂屋網)：`policy="ASSISTED_ENTRY_ONLY"`，因服務條款未授權伺服器擷取，保留 URL 並由人工補錄必要欄位。
+    - `SRC-HOUSEFUN` (好房網)：`policy="AUTH_REQUIRED"`，因物件頁需經核准之合作帳號存取，系統不索取帳密或 cookie，改由人工補錄。
+    - `SRC-AGGREGATOR`：`policy="SOURCE_BLOCKED"`。
+    - 現行 registry 未列入永慶房產等其他站點，任何未註冊主機依 `resolve_source_policy` 判定為 `POLICY_UNKNOWN`，依 fail-closed 原則拒絕伺服器擷取。
+- **`modules/external_data/security/assisted_listing_retrieval.py`**：
+  - 行 19–22 與行 587–594 (`RetrievalSecurityGate._preflight_policy`)：`ALLOWED_RETRIEVAL_POLICIES = frozenset({"APPROVED_RETRIEVAL"})`，僅允許模擬測試來源等核准來源進行伺服器端抓取，其餘政策均回傳 `ODP-INTAKE-RETRIEVAL-POLICY-BLOCKED` 失敗，強制所有未授權／需認證／未註冊來源只能透過人工單筆進件 (`assisted_intake`)，全系統完全沒有自動化爬蟲腳本或定時抓取排程。
 - **`modules/external_data/connectors/provider_registry.py`**：
   - 行 166–176：註解明確指出 `listing.partner_feed` **非生產必要提供者 (`REQUIRED_PRODUCTION_PROVIDER_IDS` 刻意排除)**，因為該批次 Feed 需要簽署授權資料合作協議並配置真實端點與憑證，但目前商業合作夥伴並不存在。
   - 行 188–208：`listing.partner_feed` 定義了 `ODP_LISTING_PROVIDER_API_KEY` 與 `ODP_LISTING_PROVIDER_FEED_URL`，但生產環境中無人配置，處於 unconfigured 狀態。
-- **`modules/external_data/security/assisted_listing_retrieval.py`**：
-  - 行 19–23 與行 981：`591`、`rakuya` (樂屋網)、`housefun` (好房網)、`yungching` (永慶) 因網站條款明文禁止伺服器端抓取 (`forbid server retrieval`)，僅能由人工單筆透過 `assisted_intake` 進行輔助審查與手動欄位登錄。全系統完全沒有自動化爬蟲腳本或定時抓取排程。
 - **`modules/external_data/application/xlsx_import.py`**：
   - 行 9–10 與行 804–815：XLSX 匯入模組僅透過呼叫端注入之抽象回呼 `IntakeWriter` 進行寫入，全樹中無任何 adapter 或 pipeline 將匯入之試算表資料自動寫入 `expansion.listings`。
 
@@ -305,13 +314,14 @@ disposition_record:
   member: "LEASE"
   current_status: "BLOCKED_BY_EVIDENCE"
   previous_status: "absent (manifest index only)"
-  decider: "Architecture & Data Governance Board (Codex / Antigravity5)"
+  decider: "Architecture & Data Governance Board (Codex / Codex2)"
   decision_date: "2026-09-03"
   scope: "NetPlan Solver (pywraplp & CP-SAT), NetPlan Domain, Operator UI & OpsBoard"
   rationale: |
     查證確認生產系統無門市合約檔 (core.stores 無 lease 到期日、解約金、續約權)，
-    候選新址雖有 expansion.listings Schema 定義，但外部來源 (591/樂屋/好房/永慶) 
-    受 ToS 限制僅為人工單筆輔助進件，partner_feed 未簽約設定，無任何自動化生產管線與新鮮度保證，
+    候選新址雖有 expansion.listings Schema 定義，但外部來源受策略與安全閘門限制
+    (591/樂屋為 ASSISTED_ENTRY_ONLY、好房為 AUTH_REQUIRED、永慶未列入為 POLICY_UNKNOWN，
+    僅能人工單筆輔助進件)，partner_feed 未簽約設定，無任何自動化生產管線與新鮮度保證，
     且簽約截止日與租期條件完全缺失。
     若在無資料情況下強行實作限制，只能依賴常數或將 None 當作 0.0，
     將製造裝飾性限制並導致誤將關店視為零成本之重大決策風險。
@@ -334,7 +344,7 @@ disposition_record:
 
 ```bash
 # 驗證 NetPlan 硬限制、生產限制與需求治理檢查
-.venv/bin/python -m pytest -q \
+uv run --frozen --python 3.12 pytest -q \
   tests/integration/test_netplan_hard_constraints.py \
   tests/integration/test_netplan_production_constraints.py \
   delivery_toolchain/governance/test_check_requirement_members.py \
@@ -342,7 +352,7 @@ disposition_record:
   delivery_toolchain/governance/test_generate_vocabularies.py
 ```
 
-- 執行結果：`136 passed`（包含合併最新 `origin/dev` @ `8479567d` 之全數跨層治理與量測預設檢查）
+- 執行結果：`161 passed`（包含合併最新 `origin/dev` @ `c1371572` 之全數跨層治理與量測預設檢查）
 - 單元測試套件：`572 passed in tests/unit/`
 - Delivery Toolchain 套件：`253 passed in delivery_toolchain/`
 - 驗證確認：
