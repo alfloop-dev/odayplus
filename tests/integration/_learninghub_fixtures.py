@@ -111,12 +111,16 @@ def model_card(
     )
 
 
+from shared.governance import default_model_performance_drift_policy
+
+
 def prepare_candidate(
     service: LearningHubService,
     version: str,
     *,
     model_name: str = DEFAULT_MODEL_NAME,
 ) -> ModelVersion:
+    policy = default_model_performance_drift_policy()
     snapshot = service.register_dataset_snapshot(
         dataset_rows(), dataset_snapshot_id=f"{model_name}-training-{version}"
     )
@@ -124,11 +128,12 @@ def prepare_candidate(
         model_name=model_name,
         model_version=version,
         dataset_snapshot_id=snapshot.dataset_snapshot_id,
-        metrics={"w4_smape": 0.11, "p80_coverage": 0.82},
-        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78},
+        metrics={"w4_smape": 0.11, "p80_coverage": 0.82, "normalized_mae": 0.11},
+        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78, "normalized_mae": 0.15},
         thresholds=(
             MetricThreshold("w4_smape", max_value=0.12, warning_max_value=0.115),
             MetricThreshold("p80_coverage", min_value=0.80, warning_min_value=0.81),
+            MetricThreshold("normalized_mae", max_value=0.35),
         ),
         segment_metrics=(
             SegmentMetric(
@@ -139,8 +144,24 @@ def prepare_candidate(
             ),
         ),
         calibration_summary={"p80_coverage": 0.82},
+        decision_policy=policy,
     )
     assert validation.passed
+    service.evaluate_backtest(
+        model_name=model_name,
+        model_version=version,
+        dataset_snapshot_id=snapshot.dataset_snapshot_id,
+        code_version="abc1234",
+        metrics={"w4_smape": 0.11, "p80_coverage": 0.82, "normalized_mae": 0.11},
+        baseline_metrics={"w4_smape": 0.15, "p80_coverage": 0.78, "normalized_mae": 0.15},
+        thresholds=(
+            MetricThreshold("w4_smape", max_value=0.12, warning_max_value=0.115),
+            MetricThreshold("p80_coverage", min_value=0.80, warning_min_value=0.81),
+            MetricThreshold("normalized_mae", max_value=0.35),
+        ),
+        decision_policy=policy,
+        calibration_summary={"p80_coverage": 0.82},
+    )
     return service.register_model_version(
         model_version=model_version(
             version,

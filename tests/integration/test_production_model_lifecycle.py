@@ -102,6 +102,7 @@ def _feature_and_train(
     thresholds: tuple[MetricThreshold, ...] | None = None,
     decision_policy=None,
 ) -> TrainingPipelineResult:
+    policy = decision_policy or default_model_performance_drift_policy("tenant-modeling")
     feature = FeaturePipelineRunner(
         repository=service.repository,
         artifact_store=artifacts,
@@ -130,7 +131,7 @@ def _feature_and_train(
         actor="Codex2",
         run_id=f"training-{version}",
         git_sha="abc1234",
-        decision_policy=decision_policy,
+        decision_policy=policy,
     )
 
 

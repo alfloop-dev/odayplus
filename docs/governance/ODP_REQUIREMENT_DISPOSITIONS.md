@@ -140,10 +140,11 @@ stateDiagram-v2
 ### 4.3 `ODP-FR-LH-003`：LearningHub 發布模式
 
 #### 成員：`BACKTEST`（回測發布閘）
-- **處置狀態**：`OPEN`
+- **處置狀態**：`VERIFIED`
+- **Formal Decision Ref**: `docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-lh-003-backtest`
 - **負責人 (Assigned To)**: `ML Platform Lead`
-- **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: `models/shared_ml/backtest.py` 具備滾動回測功能，但未與 LearningHub 發布閘流程對接；列為 Batch 6 評估項目。
+- **理由 (Rationale)**: `BacktestReceipt` 已作為版本化 release admission gate 接入 LearningHub 發布流程（FULL 與 CANARY），綁定 model version、dataset snapshot、code version (git SHA) 與 DecisionPolicy 閾值。
+
 
 ---
 

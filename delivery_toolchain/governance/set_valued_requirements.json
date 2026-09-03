@@ -134,13 +134,11 @@
         },
         {
           "name": "BACKTEST",
-          "status": "absent",
-          "note": "run_rolling_backtest exists in models/shared_ml/backtest.py and is used by the training pipeline, but modules/learninghub references it nowhere. It is not a release mode, so a release cannot be gated on a backtest result.",
+          "status": "satisfied",
+          "evidence": "models/shared_ml/backtest.py::BacktestReceipt",
+          "note": "Backtest is connected as a versioned release admission gate for FULL and CANARY releases, binding model version, dataset snapshot, code version (git SHA), and DecisionPolicy thresholds.",
           "disposition": {
-            "state": "OPEN",
-            "assigned_to": "ML Platform Lead",
-            "next_review_date": "2026-10-01",
-            "rationale": "Rolling backtest exists in training pipeline but is not connected as a LearningHub release gate (Batch 6)."
+            "state": "VERIFIED"
           }
         }
       ]
