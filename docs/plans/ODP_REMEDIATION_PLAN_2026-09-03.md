@@ -277,7 +277,7 @@ Evidently 已經在用（`modules/learninghub/infrastructure/evidently_monitor.p
 - **`NET-002` 時序限制** —— 已有產品／技術決定不在目前模型實作；但若原需求仍是 `MUST`，仍需正式 amendment 或 waiver 才能關閉。重啟條件：有需要排期的規劃週期*且*per-period 產能資料存在
 - **`NET-002` 稀釋的完整配對形式** —— 已有決定保留每區上限近似；若原需求要求完整配對效果，同樣需正式 amendment／風險接受。重啟條件是配對係數的品質與不確定性足以支撐最佳化
 - **`root_cause` 的實作** —— 建議標記或刪除
-- **merge queue 批次** —— 已裁決不做；結案紀錄仍須指向正式決策與適用期限
+- **merge queue 批次** —— **更正（2026-09-03）：這一項不屬於本節。** 本節其餘各項都有一個先於本輪的產品／技術決定，只缺正式形式；merge queue 批次沒有。`ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 查證後確認「已裁決不做」轉述自一個刻意保留調高路徑的組態預設值，狀態應為 `BLOCKED_BY_EVIDENCE`，已阻擋至 Human/Ops。見 [處置查證](../evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md)
 - **`SHARED-008` 與四條 NFR** —— `BLOCKED_BY_EVIDENCE`；指定環境、證據 owner、命令／查詢、門檻與下次檢查日期，不以空白結案
 
 ---
