@@ -248,15 +248,15 @@ else:
             tid = resolve_tenant_id(request)
             policy = None
             if body.policy_version_id:
-                if hasattr(pol_repo, "versions"):
+                if hasattr(pol_repo, "find_version"):
+                    policy = pol_repo.find_version(body.policy_version_id)
+                elif hasattr(pol_repo, "get_by_version"):
+                    policy = pol_repo.get_by_version(body.policy_version_id)
+                elif hasattr(pol_repo, "versions"):
                     for v in pol_repo.versions:
                         if v.policy_version_id == body.policy_version_id:
                             policy = v
                             break
-                elif hasattr(pol_repo, "get_by_version"):
-                    policy = pol_repo.get_by_version(body.policy_version_id)
-                elif hasattr(pol_repo, "find_version"):
-                    policy = pol_repo.find_version(body.policy_version_id)
 
                 if policy is None:
                     raise HTTPException(
@@ -366,6 +366,7 @@ else:
                         "abstain_reasons": list(evaluation.abstain_reasons),
                         "proposal_count": len(evaluation.proposals),
                         "policy_version_id": policy.policy_version_id,
+                        "source_snapshot_id": readiness_input.source_snapshot_id,
                     },
                 )
             )

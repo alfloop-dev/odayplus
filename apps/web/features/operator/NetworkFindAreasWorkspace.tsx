@@ -41,6 +41,12 @@ import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
 import { RebalancePanel } from "./network/RebalancePanel";
 import {
+  HeatZoneMergeSplitPanel,
+  type HeatZoneProposal,
+  type ProposalPreviewData,
+} from "./network/HeatZoneMergeSplitPanel";
+import { buildHeatZoneCompositionClient } from "./network/heatZoneCompositionClient";
+import {
   buildNetworkTabHref,
   parseNetworkTabIndex,
 } from "./network/networkUrlState";
@@ -152,6 +158,7 @@ const networkTabs = [
   "比較 / Compare",
   "審核 / Review",
   "低效重配 / Rebalance",
+  "空間治理 / Merge & Split",
 ] as const;
 
 const EMPTY_CANDIDATES: Candidate[] = [];
@@ -218,6 +225,7 @@ export function resolveNetworkTabGateState({
   bindingLoadStates,
   fixturesAllowed,
   networkLoadState,
+  proposalsLoadState,
   rebalanceLoadState,
   reviewsLoadState,
   scoringLoadState,
@@ -226,6 +234,7 @@ export function resolveNetworkTabGateState({
   bindingLoadStates: readonly OperatorDataAvailability[];
   fixturesAllowed: boolean;
   networkLoadState: OperatorDataAvailability;
+  proposalsLoadState?: OperatorDataAvailability;
   rebalanceLoadState: OperatorDataAvailability;
   reviewsLoadState: OperatorDataAvailability;
   scoringLoadState: OperatorDataAvailability;
@@ -245,6 +254,9 @@ export function resolveNetworkTabGateState({
   }
   if (activeTab === 6) {
     return resolveNetworkDataUnavailableState([rebalanceLoadState]);
+  }
+  if (activeTab === 7) {
+    return proposalsLoadState ? resolveNetworkDataUnavailableState([proposalsLoadState]) : null;
   }
   return null;
 }
@@ -603,6 +615,91 @@ export function NetworkFindAreasWorkspace({
   );
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const [proposals, setProposals] = useState<HeatZoneProposal[]>([]);
+  const [proposalsLoadState, setProposalsLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
+  const [proposalsApiError, setProposalsApiError] = useState<string | null>(null);
+
+  const compositionClient = useMemo(
+    () => buildHeatZoneCompositionClient(activeRoleId),
+    [activeRoleId],
+  );
+
+  const reloadProposals = useCallback(async () => {
+    try {
+      const items = await compositionClient.fetchProposals();
+      if (items.length > 0 || !fixturesAllowed) {
+        setProposals(items);
+        setProposalsLoadState("ready");
+      } else {
+        setProposals([]);
+        setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
+      }
+      setProposalsApiError(null);
+    } catch {
+      setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
+      setProposalsApiError("Failed to load merge/split proposals");
+    }
+  }, [compositionClient, fixturesAllowed]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const items = await compositionClient.fetchProposals();
+        if (!cancelled) {
+          if (items.length > 0 || !fixturesAllowed) {
+            setProposals(items);
+            setProposalsLoadState("ready");
+          } else {
+            setProposals([]);
+            setProposalsLoadState(fixturesAllowed ? "fixture" : "empty");
+          }
+          setProposalsApiError(null);
+        }
+      } catch {
+        if (!cancelled) {
+          setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
+          setProposalsApiError("Failed to load merge/split proposals");
+        }
+      }
+    }
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [compositionClient, fixturesAllowed]);
+
+  const handleApproveProposal = useCallback(
+    async (proposalId: string, decidedBy: string, notes?: string) => {
+      const ok = await compositionClient.approveProposal(proposalId, decidedBy, notes);
+      if (!ok) {
+        throw new Error("Failed to approve proposal");
+      }
+      await reloadProposals();
+    },
+    [compositionClient, reloadProposals],
+  );
+
+  const handleRejectProposal = useCallback(
+    async (proposalId: string, rejectedBy: string, reason: string) => {
+      const ok = await compositionClient.rejectProposal(proposalId, rejectedBy, reason);
+      if (!ok) {
+        throw new Error("Failed to reject proposal");
+      }
+      await reloadProposals();
+    },
+    [compositionClient, reloadProposals],
+  );
+
+  const handlePreviewProposal = useCallback(
+    async (proposalId: string): Promise<ProposalPreviewData | null> => {
+      return await compositionClient.previewProposal(proposalId);
+    },
+    [compositionClient],
+  );
 
   const changeActiveTab = useCallback((tabIndex: number) => {
     setTabOverride({ from: urlTab, requested: tabIndex });
@@ -1201,6 +1298,7 @@ export function NetworkFindAreasWorkspace({
     bindingLoadStates,
     fixturesAllowed,
     networkLoadState,
+    proposalsLoadState,
     rebalanceLoadState,
     reviewsLoadState,
     scoringLoadState,
@@ -1210,7 +1308,9 @@ export function NetworkFindAreasWorkspace({
       ? networkApiError
       : activeTab === 6
         ? rebalanceApiError
-        : null;
+        : activeTab === 7
+          ? proposalsApiError
+          : null;
 
   const listingRadarPanel = (
     <ListingRadarPanel
@@ -1342,6 +1442,15 @@ export function NetworkFindAreasWorkspace({
             onSolveNetPlan={(storeId) => postRebalanceAction(storeId, "solve-netplan")}
             onSubmitReview={(storeId) => postRebalanceAction(storeId, "submit-review")}
             rows={viewModel.rebalanceQueue}
+          />
+        ) : activeTab === 7 ? (
+          <HeatZoneMergeSplitPanel
+            activeRoleId={activeRoleId}
+            isLoading={proposalsLoadState === "loading"}
+            onApproveProposal={handleApproveProposal}
+            onPreviewProposal={handlePreviewProposal}
+            onRejectProposal={handleRejectProposal}
+            proposals={proposals}
           />
         ) : (
           <FindAreasPanel

@@ -376,3 +376,205 @@ def test_heatzone_merge_split_evaluate_fails_closed_on_invalid_policy() -> None:
     assert response.status_code == 422
     assert "not found" in response.json()["detail"]
 
+
+def test_heatzone_sql_policy_version_resolution_and_durable_proposal_uuid_flow(tmp_path) -> None:
+    import uuid
+    from datetime import date
+    from shared.governance import DecisionPolicy
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
+    from shared.infrastructure.persistence.repositories import DurableHeatZoneCompositionRepository
+
+    db_path = tmp_path / "sql_test.sqlite3"
+    engine = SqliteEngine(db_path)
+    engine.execute("ATTACH DATABASE ':memory:' AS workflow")
+    engine.execute("ATTACH DATABASE ':memory:' AS expansion")
+    engine.execute(
+        """
+        CREATE TABLE IF NOT EXISTS workflow.decision_policies (
+            policy_version_id TEXT PRIMARY KEY,
+            policy_label TEXT NOT NULL,
+            policy_id TEXT NOT NULL,
+            policy_version TEXT NOT NULL,
+            policy_kind TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            effective_from TEXT NOT NULL,
+            effective_to TEXT,
+            change_reason TEXT,
+            rollback_policy_version TEXT,
+            parameters TEXT NOT NULL,
+            declared_inputs TEXT NOT NULL,
+            approved_by TEXT,
+            owner_role TEXT
+        )
+        """
+    )
+    engine.execute(
+        """
+        CREATE TABLE IF NOT EXISTS expansion.heatzone_composition (
+            composition_id TEXT PRIMARY KEY,
+            zone_id TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            member_cell_id TEXT NOT NULL,
+            composition_kind TEXT NOT NULL,
+            parent_zone_id TEXT,
+            decided_by TEXT NOT NULL,
+            decided_at TEXT NOT NULL,
+            decision_policy_version_id TEXT NOT NULL,
+            model_version TEXT NOT NULL,
+            override_reason TEXT,
+            reverted_at TEXT,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    engine.execute(
+        """
+        CREATE TABLE IF NOT EXISTS expansion.heatzone_proposals (
+            proposal_id TEXT PRIMARY KEY,
+            zone_id TEXT NOT NULL,
+            tenant_id TEXT NOT NULL,
+            composition_kind TEXT NOT NULL,
+            member_cell_ids TEXT NOT NULL,
+            parent_zone_id TEXT,
+            ndcg_gain REAL NOT NULL,
+            cannibalization_variance_reduction REAL NOT NULL,
+            correlation_rho REAL NOT NULL,
+            disconnect_index REAL NOT NULL,
+            split_density_ratio REAL,
+            confidence REAL NOT NULL,
+            model_version TEXT NOT NULL,
+            policy_version_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            reasons TEXT NOT NULL,
+            warnings TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            approved_by TEXT,
+            approved_at TEXT,
+            rejection_reason TEXT
+        )
+        """
+    )
+
+    policy_ver_id = f"heatzone-merge-v1:{TENANT_ID}"
+    policy_repo = SqlDecisionPolicyRepository(engine)
+    # Insert policy into SQL
+    engine.execute(
+        """
+        INSERT INTO workflow.decision_policies
+        (policy_version_id, policy_label, policy_id, policy_version, policy_kind, tenant_id, effective_from, parameters, declared_inputs)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            policy_ver_id,
+            "heatzone-merge-v1",
+            "heatzone-merge",
+            "1.0.0",
+            "heatzone_merge",
+            TENANT_ID,
+            "2026-01-01T00:00:00+00:00",
+            '{"min_observation_days": 180, "min_mature_labels": 200, "min_active_stores": 50, "min_adjacent_pairs": 30, "min_metro_clusters": 2, "min_spatial_contiguity": 0.80, "max_absorption_cv": 0.15, "max_drift_psi": 0.10, "max_wasserstein": 0.05}',
+            '["store_daily_performance", "operational_start_observation"]',
+        ),
+    )
+
+    found_pol = policy_repo.find_version(policy_ver_id)
+    assert found_pol is not None
+    assert found_pol.policy_version_id == policy_ver_id
+
+    doc_store = SqliteDocumentStore(engine)
+    durable_comp_repo = DurableHeatZoneCompositionRepository(doc_store)
+
+    bundle = build_persistence(mode="memory")
+    bundle = type(bundle)(
+        **{
+            **bundle.__dict__,
+            "heatzone_composition_repository": durable_comp_repo,
+            "forecastops_policy_repository": policy_repo,
+        }
+    )
+    client = TestClient(create_app(persistence=bundle))
+
+    payload = {
+        "cells": [
+            {
+                "cell_id": "aaaaaaaa-1111-2222-3333-444455556666",
+                "h3_index": "8928308280fffff",
+                "admin_city": "Taipei",
+                "admin_district": "Daan",
+                "population": 12000.0,
+                "poi_count": 45,
+                "unmet_demand": 150.0,
+                "absorbed_demand": 120.0,
+                "realized_revenue": 850000.0,
+                "adjacent_cell_ids": ["bbbbbbbb-1111-2222-3333-444455556666"],
+            },
+            {
+                "cell_id": "bbbbbbbb-1111-2222-3333-444455556666",
+                "h3_index": "8928308281fffff",
+                "admin_city": "Taipei",
+                "admin_district": "Daan",
+                "population": 11500.0,
+                "poi_count": 42,
+                "unmet_demand": 145.0,
+                "absorbed_demand": 115.0,
+                "realized_revenue": 820000.0,
+                "adjacent_cell_ids": ["aaaaaaaa-1111-2222-3333-444455556666"],
+            },
+        ],
+        "readiness": {
+            "observation_days": 190,
+            "mature_labels_count": 250,
+            "active_store_count": 60,
+            "adjacent_pairs_count": 35,
+            "metro_clusters_count": 2,
+            "spatial_contiguity_ratio": 0.85,
+            "absorption_ratio_cv": 0.10,
+            "drift_psi": 0.05,
+            "wasserstein_distance": 0.02,
+            "source_snapshot_id": "snap-durable-prod-2026",
+        },
+        "policy_version_id": policy_ver_id,
+    }
+
+    eval_res = client.post(
+        "/api/v1/heatzones/merge-split/evaluate",
+        json=payload,
+        headers=HEATZONE_HEADERS,
+    )
+    assert eval_res.status_code == 200
+    eval_body = eval_res.json()
+    assert eval_body["abstained"] is False
+    assert len(eval_body["proposals"]) >= 1
+
+    prop = eval_body["proposals"][0]
+    prop_id = prop["proposal_id"]
+    # Verify proposal_id is valid UUID string without prefix
+    uuid_obj = uuid.UUID(prop_id)
+    assert str(uuid_obj) == prop_id
+
+    # Verify durable proposal save & retrieval
+    saved_prop = durable_comp_repo.get_proposal(prop_id, TENANT_ID)
+    assert saved_prop is not None
+    assert saved_prop.proposal_id == prop_id
+    assert any("source_snapshot:snap-durable-prod-2026" in r for r in saved_prop.reasons)
+
+    # Approve proposal in durable repo
+    app_res = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{prop_id}/approve",
+        json={"decided_by": "operator@odayplus.com", "notes": "Approved durable proposal"},
+        headers=HEATZONE_HEADERS,
+    )
+    assert app_res.status_code == 200
+    app_body = app_res.json()
+    assert app_body["proposal"]["status"] == "APPROVED"
+    assert len(app_body["created_compositions"]) == 2
+
+    # Verify audit event carries snapshot ID
+    events = bundle.audit_log.list_events()
+    eval_events = [e for e in events if e.event_type == "heatzone.composition.evaluated.v1"]
+    assert len(eval_events) >= 1
+    assert eval_events[-1].metadata.get("source_snapshot_id") == "snap-durable-prod-2026"
+
+

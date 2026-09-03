@@ -168,6 +168,9 @@ class DecisionPolicyRepository(Protocol):
     ) -> DecisionPolicy | None:
         """The version in force for this kind and tenant at `at`, or None."""
 
+    def find_version(self, policy_version_id: str) -> DecisionPolicy | None:
+        """Find a specific policy version by its primary key, or None."""
+
 
 def resolve_policy(
     repository: DecisionPolicyRepository,
@@ -265,6 +268,18 @@ class InMemoryDecisionPolicyRepository:
         # single policy_id; across policy_ids of the same kind, the most
         # recently started one governs.
         return max(matches, key=lambda version: version.effective_from)
+
+    def find_version(self, policy_version_id: str) -> DecisionPolicy | None:
+        for version in self._versions:
+            if version.policy_version_id == policy_version_id:
+                return version
+        return None
+
+    def get_by_version(self, policy_version_id: str) -> DecisionPolicy | None:
+        return self.find_version(policy_version_id)
+
+    def find_by_version_id(self, policy_version_id: str) -> DecisionPolicy | None:
+        return self.find_version(policy_version_id)
 
     def _in_force(self, policy_id: str, tenant_id: str) -> DecisionPolicy | None:
         for version in self._versions:

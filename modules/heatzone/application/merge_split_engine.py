@@ -342,7 +342,7 @@ def evaluate_merge_split(
                     confidence = min(1.0, max(0.0, (rho + (1.0 - disconnect)) / 2.0))
                     proposals.append(
                         MergeSplitProposal(
-                            proposal_id=f"prop-merge-{uuid4()}",
+                            proposal_id=str(uuid4()),
                             zone_id=zone_id,
                             tenant_id=policy.tenant_id,
                             composition_kind=CompositionKind.MERGED,
@@ -359,6 +359,7 @@ def evaluate_merge_split(
                                 "adjacent_high_demand_correlation",
                                 "continuous_spatial_absorption",
                                 "counterfactual_ndcg_outperformance",
+                                f"source_snapshot:{readiness_input.source_snapshot_id}",
                             ),
                         )
                     )
@@ -371,8 +372,14 @@ def evaluate_merge_split(
                 parent_zid = f"MZ-{cell.h3_index[:16].lower().rjust(16, '0')}"
                 if cell.child_partition_cell_ids and len(cell.child_partition_cell_ids) >= 2:
                     partitions = cell.child_partition_cell_ids
+                elif cell.adjacent_cell_ids and len(cell.adjacent_cell_ids) >= 1:
+                    # Partition actual constituent member cells
+                    all_cells = (cell.cell_id, *cell.adjacent_cell_ids)
+                    mid = max(1, len(all_cells) // 2)
+                    partitions = (all_cells[:mid], all_cells[mid:])
                 else:
-                    partitions = ((f"{cell.cell_id}-part-a",), (f"{cell.cell_id}-part-b",))
+                    # Atomic cell without real sub-cell partitions cannot be split into synthetic IDs
+                    continue
 
                 ndcg_gain = round(min(0.15, 0.04 + 0.01 * (density_ratio - min_split_ratio)), 4)
                 var_reduction = round(min(0.40, 0.20 + 0.02 * (density_ratio - min_split_ratio)), 4)
@@ -382,7 +389,7 @@ def evaluate_merge_split(
                     child_zone_id = generate_merged_zone_id(part_cells)
                     proposals.append(
                         MergeSplitProposal(
-                            proposal_id=f"prop-split-{uuid4()}",
+                            proposal_id=str(uuid4()),
                             zone_id=child_zone_id,
                             tenant_id=policy.tenant_id,
                             composition_kind=CompositionKind.SPLIT_CHILD,
@@ -401,6 +408,7 @@ def evaluate_merge_split(
                                 f"density_ratio_exceeds_threshold_{density_ratio:.1f}",
                                 f"barrier: {cell.barrier_description or 'geographic_split'}",
                                 f"child_partition_{idx}_of_{len(partitions)}",
+                                f"source_snapshot:{readiness_input.source_snapshot_id}",
                             ),
                         )
                     )
@@ -425,6 +433,8 @@ def _compute_activity_correlation(c1: CandidateCellFeature, c2: CandidateCellFea
         c1.unmet_demand,
         c1.population / 1000.0,
         float(c1.poi_count),
+        float(c1.own_store_count),
+        float(c1.competitor_count),
     ]
     v2 = [
         c2.absorbed_demand,
@@ -432,6 +442,8 @@ def _compute_activity_correlation(c1: CandidateCellFeature, c2: CandidateCellFea
         c2.unmet_demand,
         c2.population / 1000.0,
         float(c2.poi_count),
+        float(c2.own_store_count),
+        float(c2.competitor_count),
     ]
 
     mean1 = sum(v1) / len(v1)

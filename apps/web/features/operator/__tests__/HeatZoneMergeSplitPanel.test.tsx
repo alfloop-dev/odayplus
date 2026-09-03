@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HeatZoneMergeSplitPanel, type HeatZoneProposal } from "../network/HeatZoneMergeSplitPanel";
 
 const sampleProposal: HeatZoneProposal = {
-  proposal_id: "prop-merge-101",
+  proposal_id: "11111111-2222-3333-4444-555555555555",
   zone_id: "MZ-0123456789abcdef",
   tenant_id: "tenant-a",
   composition_kind: "MERGED",
@@ -30,7 +30,7 @@ describe("HeatZoneMergeSplitPanel", () => {
   });
 
   it("renders empty state when no proposals exist", () => {
-    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-lead" proposals={[]} />);
+    render(<HeatZoneMergeSplitPanel activeRoleId="expansion-manager" proposals={[]} />);
     expect(screen.getByTestId("empty-proposals")).toBeInTheDocument();
   });
 
@@ -50,7 +50,7 @@ describe("HeatZoneMergeSplitPanel", () => {
 
     render(
       <HeatZoneMergeSplitPanel
-        activeRoleId="expansion-lead"
+        activeRoleId="expansion-manager"
         proposals={[sampleProposal]}
         onPreviewProposal={onPreview}
       />
@@ -64,7 +64,7 @@ describe("HeatZoneMergeSplitPanel", () => {
     fireEvent.click(previewBtn);
 
     await waitFor(() => {
-      expect(onPreview).toHaveBeenCalledWith("prop-merge-101");
+      expect(onPreview).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555");
     });
     expect(await screen.findByTestId("preview-box")).toBeInTheDocument();
   });
@@ -74,7 +74,7 @@ describe("HeatZoneMergeSplitPanel", () => {
 
     render(
       <HeatZoneMergeSplitPanel
-        activeRoleId="expansion-lead"
+        activeRoleId="expansion-manager"
         proposals={[sampleProposal]}
         onApproveProposal={onApprove}
       />
@@ -89,7 +89,7 @@ describe("HeatZoneMergeSplitPanel", () => {
     fireEvent.click(confirmApproveBtn);
 
     await waitFor(() => {
-      expect(onApprove).toHaveBeenCalledWith("prop-merge-101", "expansion-lead", undefined);
+      expect(onApprove).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555", "expansion-manager", undefined);
     });
   });
 
@@ -98,7 +98,7 @@ describe("HeatZoneMergeSplitPanel", () => {
 
     render(
       <HeatZoneMergeSplitPanel
-        activeRoleId="expansion-lead"
+        activeRoleId="expansion-manager"
         proposals={[sampleProposal]}
         onRejectProposal={onReject}
       />
@@ -119,7 +119,7 @@ describe("HeatZoneMergeSplitPanel", () => {
     fireEvent.click(confirmRejectBtn);
 
     await waitFor(() => {
-      expect(onReject).toHaveBeenCalledWith("prop-merge-101", "expansion-lead", "商圈邊界待確認");
+      expect(onReject).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555", "expansion-manager", "商圈邊界待確認");
     });
   });
 });

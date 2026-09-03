@@ -57,20 +57,69 @@ class SqlDecisionPolicyRepository:
             effective_from=_parse_datetime(row["effective_from"]),
             effective_to=(
                 _parse_datetime(row["effective_to"])
-                if row.get("effective_to") is not None
+                if row["effective_to"] is not None
                 else None
             ),
             parameters=_parse_parameters(row["parameters"]),
             declared_inputs=_parse_declared_inputs(row["declared_inputs"]),
-            change_reason=str(row.get("change_reason") or ""),
+            change_reason=str(row["change_reason"] or ""),
             rollback_policy_version=(
                 str(row["rollback_policy_version"])
-                if row.get("rollback_policy_version") is not None
+                if row["rollback_policy_version"] is not None
                 else None
             ),
-            approved_by=str(row.get("approved_by") or ""),
-            owner_role=str(row.get("owner_role") or ""),
+            approved_by=str(row["approved_by"] or ""),
+            owner_role=str(row["owner_role"] or ""),
         )
+
+    def find_version(self, policy_version_id: str) -> DecisionPolicy | None:
+        normalized = str(policy_version_id or "").strip()
+        if not normalized:
+            return None
+        row = self._engine.query_one(
+            """
+            SELECT policy_version_id, policy_label, policy_id, policy_version,
+                   policy_kind, tenant_id, effective_from, effective_to,
+                   change_reason, rollback_policy_version, parameters,
+                   declared_inputs, approved_by, owner_role
+            FROM workflow.decision_policies
+            WHERE policy_version_id = ?
+            LIMIT 1
+            """,
+            (normalized,),
+        )
+        if row is None:
+            return None
+        return DecisionPolicy(
+            policy_version_id=str(row["policy_version_id"]),
+            policy_label=str(row["policy_label"]),
+            policy_id=str(row["policy_id"]),
+            policy_version=str(row["policy_version"]),
+            policy_kind=str(row["policy_kind"]),
+            tenant_id=str(row["tenant_id"]),
+            effective_from=_parse_datetime(row["effective_from"]),
+            effective_to=(
+                _parse_datetime(row["effective_to"])
+                if row["effective_to"] is not None
+                else None
+            ),
+            parameters=_parse_parameters(row["parameters"]),
+            declared_inputs=_parse_declared_inputs(row["declared_inputs"]),
+            change_reason=str(row["change_reason"] or ""),
+            rollback_policy_version=(
+                str(row["rollback_policy_version"])
+                if row["rollback_policy_version"] is not None
+                else None
+            ),
+            approved_by=str(row["approved_by"] or ""),
+            owner_role=str(row["owner_role"] or ""),
+        )
+
+    def get_by_version(self, policy_version_id: str) -> DecisionPolicy | None:
+        return self.find_version(policy_version_id)
+
+    def find_by_version_id(self, policy_version_id: str) -> DecisionPolicy | None:
+        return self.find_version(policy_version_id)
 
 
 def _parse_datetime(value: Any) -> datetime:
