@@ -36,14 +36,14 @@
 |---|---|---|
 | 1 | `grep -rn -i "merge.?queue\|合併佇列" docs/ delivery_toolchain/ .github/` | 僅組態、runbook、CI workflow 與計畫文件；**無決策紀錄** |
 | 2 | `git log --oneline -S "merge queue 批次" --all` | 單一 commit `6a456aaa`（見 §3.3） |
-| 3 | `git log -- docs/runbooks/dev-merge-queue.md .github/branch-protection/policy.json` | 3 位作者，皆為 AI（見 §3.1） |
+| 3 | `git log -- docs/runbooks/dev-merge-queue.md .github/branch-protection/policy.json` | 3 位作者：`Claude`、`CodexCoordinator`（AI）與 `bjoe734`（人類）。**建立佇列與批次組態的兩筆皆為 AI**；人類的 6 筆全在 2026-07-15，早於佇列上線一個月，內容為 merge gate（見 §3.1、§2 第 5 列） |
 | 4 | `grep -rln "Architecture Board" docs/ delivery_toolchain/` | 僅出現在引用它的 3 個檔案本身；**無獨立會議或裁決紀錄** |
 | 5 | `git log --format='%an' \| sort \| uniq -c` 交叉比對佇列相關 commit | 人類作者（`ajoe734`／`bjoe734`）最後一次觸及合併閘為 2026-07-15，**早於佇列上線 2026-08-19**，且內容為 merge gate 而非批次 |
 | 6 | `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` 第 19 項與 `set_valued_requirements.json` 對照 | merge queue 批次**不是** `ODP-FR-*` 集合型需求成員，manifest 內無對應條目 |
 
 ---
 
-## 3. 三個痕跡，以及為什麼都不是裁決
+## 3. 逐項查證：痕跡是什麼，以及為什麼都不是裁決
 
 ### 3.1 組態預設值 —— 是可調參數，不是裁決
 
@@ -156,8 +156,10 @@ merge queue 批次**不是** `ODP-SA-06` 的集合型需求成員。manifest 的
 
 ```bash
 # 全部在 python 3.12 下執行（cp314 無 pgserver wheel）
-uv run --frozen --python 3.12 pytest -m "not requires_live_env" delivery_toolchain -q
-# 全綠；其中 test_check_requirement_members.py 55 passed
+uv run --frozen --python 3.12 pytest -m "not requires_live_env" delivery_toolchain
+# 178 passed（CI orchestrator job 對 delivery_toolchain 的同一組測試）
+# 其中 test_check_requirement_members.py 41 -> 55 passed
+# 新增 14 筆：10 筆負向（新閘必須擋下的形狀）、2 筆正向（描述缺席的 note 必須繼續通過）、2 筆 helper
 
 uv run --frozen --python 3.12 ruff check delivery_toolchain scripts
 # All checks passed!
