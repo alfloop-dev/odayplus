@@ -62,34 +62,6 @@
       "expires": "2026-12-31"
     },
     {
-      "field": "modules/learninghub/domain/dataset_snapshot.py::ModelReadyRecord.data_quality_score",
-      "layer": "dataclass",
-      "owner": "Codex2",
-      "reason": "Records entering a training snapshot without a quality score are treated as clean. Related to ODP-FR-LH-004: the blocked-feature gate is also unreachable through the API, so neither check stops a low-quality record reaching training.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/learninghub/domain/dataset_snapshot.py::ModelReadyRecord.confidence",
-      "layer": "dataclass",
-      "owner": "Codex2",
-      "reason": "Same record, same effect on the confidence dimension.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/learninghub/domain/dataset_snapshot.py::model_ready_record_from_mapping.data_quality_score",
-      "layer": "mapper",
-      "owner": "Codex2",
-      "reason": "The row mapper restores 1.0 for a row the view left null, so snapshot admission never sees the absence it would have to refuse. This is the second of the four points on the lineage the batch has to accept together: source, view, mapper, admission.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/learninghub/domain/dataset_snapshot.py::model_ready_record_from_mapping.confidence",
-      "layer": "mapper",
-      "owner": "Codex2",
-      "reason": "Same mapper, confidence dimension. This one compounds: a dirty batch admitted here is carried by every number the trained model produces afterwards, with no way back to the record that caused it.",
-      "expires": "2026-12-31"
-    },
-    {
       "field": "shared/domain/models.py::Poi.confidence",
       "layer": "dataclass",
       "owner": "Claude2",
