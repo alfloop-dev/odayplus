@@ -1,7 +1,7 @@
 # 五個結構性成因：處理結果
 
 - 日期：2026-09-01
-- 狀態：**已合併**（PR #1133，2026-09-02）。後續五張相依 task 亦已全數合併（#1138–#1142）。
+- 狀態：PR #1133 的實作與後續五張相依 task 已合併（#1138–#1142）；**這是 merge 狀態，不是所有風險已關閉的宣告**。NetPlan 人類決策邊界與跨層 nullable 缺口見下文。
 - 來源：[FR 查證報告](ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md) 的五個成因
 - 相關：[閘的清查](ODP_GATE_SWEEP_2026-09-01.md)、[NetPlan 限制類別](../design/ODP_NETPLAN_CONSTRAINT_CLASSES_2026-09-01.md)
 
@@ -9,13 +9,15 @@
 
 ## 一句話
 
-四道新的 CI 閘、七十九條原本從不執行的測試被開起來、一個真的會擋住錯誤展店計畫的求解器限制——**而每一道新閘都附帶一個「它會失敗」的證明**，因為修成因四的時候不證明這件事，就是在修正裡重犯它。
+四道 CI 控制進入執行路徑、78 筆原先未被 CI selector 收到的資料庫測試被納入、一組會擋住錯誤展店計畫的 solver/service 限制——但這些仍是**局部控制**，不是每一批 remediation 的端到端保證。尤其 NetPlan constraint disclosure 尚未到 Operator UI／approval，measurement lint 也不掃 Pydantic、SQL、OpenAPI 或 TS。
 
 ---
 
 ## 逐項
 
-### 一、閘的清查 → `a96276aa`
+以下改用文件基準 `6b893fd3` 的可達合併歷史：PR #1133 merge `c8f151af`，五個主要 component commit 為 `b6074827`、`9c78040c`、`75b5c771`、`1c54954c`、`e6be0faf`。舊稿的 `a96276aa`、`17c8bb5e`、`64f7fb11`、`a6b32615`、`b8a04e9c` 雖仍可由本機 object database 解析，卻不是 `6b893fd3` 的 ancestor，不能當穩定 merged-history permalink。
+
+### 一、閘的清查 → `b6074827`
 
 清查 13 道閘。失效有**三種形狀**，不是一種：
 
@@ -29,11 +31,11 @@
 
 > 得到的規則比原本想的精確：不是「每道閘都要有負向測試」（它已經有了），而是**負向測試必須用生產環境建構輸入的方式建構輸入**。手工組裝的測試恰好繞過了讓閘失效的那段接線。
 
-處理：`requires_live_env` 混了「真的需要 live 環境」與「只是需要一個 PostgreSQL」。79 條屬於後者，而 `pgserver` 一直是專案依賴。修好斷掉的 `VALIDATOR_SQL` 路徑（`549ce261` 搬檔案沒改常數）、補 `uuid-ossp` stub、加 CI 步驟。租戶隔離驗證器**第一次真的執行，通過**——我先前預測它會紅，錯了。
+處理：`requires_live_env` 混了「真的需要 live 環境」與「只是需要一個 PostgreSQL」。在歷史清查 SHA 上，CI selector 收到 83 筆，其中 78 筆是本次重新分類後新啟用，另 5 筆本來就在該 selector；不能把 83 或所有 marker 數都寫成「新啟用」。`pgserver` 一直是專案依賴。修好斷掉的 `VALIDATOR_SQL` 路徑（`549ce261` 搬檔案沒改常數）、補 `uuid-ossp` stub、加 CI 步驟。租戶隔離驗證器**第一次真的執行，通過**——我先前預測它會紅，錯了。
 
-不能造假的部分沒造假：PostGIS 無法 stub，那一條改標 `requires_postgis`，殘餘排除從「隱性 79 條」變成「顯性 1 條具名測試」。
+不能造假的部分沒造假：PostGIS 無法 stub，那一條改標 `requires_postgis`，殘餘排除從「隱性 78 筆新啟用缺口」變成「顯性 1 條具名測試」。
 
-### 二、NET-002 → `17c8bb5e`
+### 二、NET-002 → `9c78040c`
 
 八類硬限制只有資本進了求解模型。問題不是少七類，是**少七類而它宣稱可行**——回傳計畫、狀態報最佳、binding constraints 列得整齊。
 
@@ -41,14 +43,16 @@
 
 - **施工／設備／人力**跟資本同形（共用資源池）→ 建模
 - **覆蓋**是總量下限 → 建模
-- **稀釋**真實形式是配對交互，線性模型表達不了 → 只取「每商圈開店數上限」，並記錄這是近似
+- **稀釋**真實形式是配對交互，現行 MIP／CP-SAT formulation 沒有配對變數；雖可線性化或在 CP-SAT 建模，本次因係數品質與複雜度採「每商圈開店數上限」近似，並明記不是完整效應
 - **租約／時序**需要模型沒有的維度 → **不建模，且結果明講**
 
 結構性的部分是 `modelled_constraint_classes` / `unmodelled_constraint_classes`。加限制縮小落差；**說出剩下的落差**才是讓剩餘落差不被讀成合規的東西。
 
+合併後複查發現 disclosure 目前只到 solver result／solve record：`modules/opsboard/application/network_rebalance.py` 投影 `plan_rows` 時丟掉兩欄，`RebalancePanel.tsx` 不顯示，approval 也沒有對 unmodelled required class 阻擋或要求 acknowledgement。因此 NET-002 的 solver 修正成立，但「人會知道」尚未閉環；這是待修缺口，不是已完成證據。
+
 未宣告的成本被拒絕而非讀成零——`None` 是「沒給」，`0.0` 是「量過、不消耗」。
 
-### 三、不得有預設值的 lint → `64f7fb11`
+### 三、不得有預設值的 lint → `75b5c771`
 
 先量規模再選規則。廣義版本（量測欄位不得有預設值）在這棵樹上噴 **311 個**，大多合法（`srid = 4326`、`limit = 100`、`horizon_days = 28`）。**那種噪音量的閘一週內就會被加全域豁免，然後什麼都不守**——正好是這整條工作在講的失效模式。
 
@@ -58,9 +62,11 @@
 
 16 個記在 `measurement_default_exemptions.json`，每筆要有 owner 與理由，缺一個就直接拒絕——沒有署名的豁免就是讓債務回到看不見的狀態。理由寫的是「下游實際會發生什麼」，不是「既有問題」。
 
+這個結果只適用於 checker 的掃描域：指定 Python roots、dataclass、annotation 恰為 `float`、constant default 恰為 `1.0`。它不會抓 Pydantic default、`.get(..., 1.0)`、dbt `coalesce`、DB `DEFAULT 1.00`、OpenAPI 或 TS，所以「16 個全為真」不能推成「全樹只有 16 個」。後續 nullable remediation 必須另做跨層 lineage 與契約測試。
+
 > 我自己在 heatzone 吸收模組寫過同一個缺陷（`data_quality_score: float = 1.0`，宣告後從未讀取，審查者於 `fb75a142` 移除）。我腦子裡裝著這個 pattern 還是做了——**這就是要機械檢查而不是 review checklist 的論據**。
 
-### 四、列舉型需求的機器可讀清單 → `a6b32615`
+### 四、列舉型需求的機器可讀清單 → `1c54954c`
 
 十五條落差裡有五條是同一個故事：需求列了 N 項，實作做了 M 項。**沒有一條違反白紙黑字，因為沒有白紙黑字**——`ODP-SA-06` 的 Trigger／Acceptance 是 71 次重複的樣板。
 
@@ -68,9 +74,11 @@
 
 檢查三件事，不多：證據參照必須解析得到（實作被改名或刪除會在這裡失敗，而不是無聲退回缺口）；缺席必須有註記；`member_count` 守住清單本身（否則刪掉一個成員就能讓需求「通過」）。
 
+`check_requirement_members` 自己明載它**不驗證 implementation 正確**，且狀態只有 `satisfied`／`absent`。symbol 存在不等於 production path 有效，`absent` note 也不能把原始 `MUST` 改成 decided-not-doing；後者需要正式 amendment 或具期限 waiver/risk acceptance。
+
 種了 6 條需求、32 個成員、23 個有可解析證據、9 個缺口寫下來。
 
-### 五、Evidence Level 與 Job Status 納入 codegen → `b8a04e9c`
+### 五、Evidence Level 與 Job Status 納入 codegen → `e6be0faf`
 
 Evidence Level 有四套定義。關鍵事實是**這件事已經被修過一次**——`ODP-EVIDENCE-LEVEL-ALIGNMENT-001` 對齊了 Python enum 與 canonical TS type，**仍然漏了三處**，因為對齊是一次性人工掃描，不是持續生效的約束。再掃一次只會買到同樣長度的時間。
 
@@ -96,7 +104,7 @@ Check governed vocabularies for drift and new forks
 Test database contracts, migrations and schema gates
 ```
 
-**每一道都有自己的負向測試**：13 條（measurement defaults）、13 條（requirement members）、11 條（vocabularies）、3 條（schema validator 的 RLS／policy／constraint 違規）。
+三個 governance 測試檔在文件基準收集數是 13（measurement defaults）、16（requirement members）、13（vocabularies）；這是**整檔測試數**，不是每一條都能稱為負向案例。schema validator 另有 3 個 RLS／policy／constraint 違規案例。負向案例證明 checker 能紅，production-entry 測試才證明真實接線會把錯誤送進 checker。
 
 ---
 
@@ -117,15 +125,13 @@ ForecastOutput.data_quality_score = 1.0
 
 這是這五項工作裡最能說明問題的一件事——**機制在上線的第一天就攔到了一個人類流程剛剛放過去的東西**。
 
-## 待討論
+## 合併後仍需處理
 
 1. **`tenant_isolation` 要不要真的成為一道閘。** 若要，`ResourceDescriptor` 的 tenant 必須來自被存取的資源而非 principal，且它的 `None` 處理應與五個兄弟軸一致（拒絕，而非棄權）。若不要就刪掉——一道結構上不可能觸發的子句留著，只會讓下一個讀 code 的人以為這一層有把關。
-2. **時序限制要不要進 NetPlan 模型。** 需要期別索引、per-period 資源上限、先後次序。是模型擴充不是補一條限制。
-3. **稀釋的完整配對形式是否值得。** 需要二次項線性化或改用 CP-SAT。目前的每商圈上限是刻意的近似。
-4. ~~17 筆豁免的 owner~~ —— **已指派並部分修正**。合併後 heatzone 四筆與 forecastops 兩筆已實際修掉，剩 11 筆待處理，見修正計畫。
-5. **兩個 job status enum 的收斂路徑。** `RETRYING`／`DEAD_LETTER` 是佇列機制而非任務結果，可能該獨立命名成另一個概念。
-
-第 4 項只需要指派；其餘四項需要判斷。
+2. **NetPlan disclosure 到人。** 把 modelled/unmodelled classes 穿過 OpsBoard transport 與 TS types，在 UI 顯示，並由 policy 決定阻擋或具名 acknowledgement；補 production solve → Operator → approval E2E。
+3. **時序與完整稀釋的正式 disposition。** 技術方向已決，但若原始 `MUST` 未改，必須補 requirement amendment 或含 owner／期限／reopen trigger 的 waiver。
+4. **量測缺席的非 dataclass 層。** Pydantic、mapping fallback、dbt、PostgreSQL/SQLite、OpenAPI/TS、舊資料與 UI 尚不受現有 lint 完整保護。
+5. **原始規格追溯。** repo 內若只有 `ODP-SA-06`／`ODP-FR-AVM-001` 的轉錄，需補來源版本／位置／hash；未補前不得把轉錄等同 canonical source。
 
 ---
 
@@ -163,12 +169,27 @@ Codex2 在 review 時退回三條，第一條打中要害——限制加在生�
 
 ---
 
-## 驗證
+## 可重現的驗證收據
 
-- 既有 109 條 netplan 測試不受影響（新欄位全有預設值）；283 條 netplan 消費端全綠
-- 52 條 governance 測試（含四道新閘各自的負向證明）
-- 181 條 adlift／intervention／governance／architecture 全綠
-- 79 條原本從不執行的資料庫測試現在跑，全綠
-- `ruff check` 在 modules／shared／delivery_toolchain／solver／apps／tests 全綠
-- boundary check 1045 檔通過（base 推進後）
-- 完整 product 套件與 `origin/dev` baseline **失敗差集為空**：兩邊同樣 12 條紅，全部是本機缺 SBOM／NOTICE 產物與 release-gate SHA 狀態的環境性失敗，CI 會跑 `make` 產生
+數字必須綁 SHA 與 selector；後續新增測試會改變收集數，不應覆寫歷史事實。
+
+| 基準 | 命令／selector | 可重現結果 | 限制 |
+|---|---|---:|---|
+| 歷史清查 object `a96276aa` | `pytest --collect-only -q tests/contract tests/ops tests/integration -m "requires_live_env and not requires_postgis"` | 83 selected | 其中 78 筆為新啟用、5 筆原已在 selector；不是 83 筆都新啟用 |
+| 同上 | `pytest --collect-only -q tests -m requires_live_env` | 101 marked；另有 1 筆 `requires_postgis` | 歷史 object 非 merged-history permalink，只用來重現當時計數 |
+| 文件基準 `6b893fd3` | 同一 CI selector | 87 selected | 後續合併新增 4 筆，不能回寫成初次 remediation 成果 |
+| task head（文件修正） | `pytest --collect-only -q` 指定兩個 NetPlan 檔與三個 governance 檔 | 15 + 9 + 13 + 16 + 13 = 66 | 收集數，不等於 66 個負向案例 |
+| task head（文件修正） | `pytest -q` 同五檔 | 66 passed | 覆蓋 solver/service 與 governance；不覆蓋 NetPlan Operator/UI/approval 缺口 |
+
+五檔的完整命令：
+
+```bash
+.venv/bin/python -m pytest -q \
+  tests/integration/test_netplan_hard_constraints.py \
+  tests/integration/test_netplan_production_constraints.py \
+  delivery_toolchain/governance/test_check_measurement_defaults.py \
+  delivery_toolchain/governance/test_check_requirement_members.py \
+  delivery_toolchain/governance/test_generate_vocabularies.py
+```
+
+合併歷史驗證可用 `git merge-base --is-ancestor <sha> 6b893fd3`：`c8f151af` 與上述五個 component SHA 都回傳 0。其餘較大的 suite、ruff、boundary 與 baseline-diff 若要作 release evidence，必須附 CI run URL／artifact、精確 SHA、selector、通過／失敗數及環境限制；本文件不再保留無法由現有內容重現的裸數字。
