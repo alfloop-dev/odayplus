@@ -92,7 +92,7 @@
 ```bash
 uv run --python 3.12 pytest tests/contract/test_root_cause_contract_disposition.py -v
 ```
-- 結果：`7 passed`（Python contract compatibility、reserved markers、no fake ForecastOps producer、governance `IMPLEMENTATION_READY` disposition）
+- 結果：`7 passed in 0.18s`（Python contract compatibility、reserved markers、no fake ForecastOps producer、governance `IMPLEMENTATION_READY` disposition）
 
 ### 5.2 資料庫遷移計畫與回滾規劃測試
 ```bash
@@ -111,7 +111,7 @@ uv run --python 3.12 pytest -q \
 ```bash
 uv run --python 3.12 pytest delivery_toolchain/governance/test_check_requirement_members.py -v
 ```
-- 結果：`41 passed in 0.70s`
+- 結果：`41 passed in 0.34s`
 
 ### 5.5 官方 PostgreSQL Alembic head smoke
 ```bash
