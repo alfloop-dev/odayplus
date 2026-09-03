@@ -531,6 +531,53 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
     engine.close()
 
 
+def test_value_downgrades_persisted_high_confidence_legacy_margin() -> None:
+    from modules.avm.domain import NormalizedMargin, ValuationInput
+
+    service = AVMService()
+    case = service.create_case(
+        ValuationInput(
+            store_id="store-legacy-persisted-margin",
+            gm_ttm=1_000_000,
+            forecast_gm_next_12m=1_000_000,
+            asset_book_value=500_000,
+            equipment_fair_value=100_000,
+            quality_score=1.0,
+            quality_score_status="legacy_unknown",
+        ),
+        created_by="legacy-system",
+        correlation_id="corr-legacy-persisted-margin",
+    )
+    service.repository.save_margin(
+        NormalizedMargin(
+            case_id=case.case_id,
+            store_id=case.store_id,
+            gm_ttm=1_000_000,
+            gm_fwd=1_000_000,
+            normalized_gm=1_000_000,
+            adjustment_reasons=("weighted_ttm_and_forecast_gm",),
+            confidence="high",
+        )
+    )
+
+    report = service.value(
+        case.case_id,
+        actor="valuation-worker",
+        correlation_id="corr-legacy-persisted-value",
+    )
+
+    assert report.confidence == "low"
+    assert report.quality_score_status == "legacy_unknown"
+    assert report.quality_disposition == "legacy_unknown_downgraded"
+    assert report.normalized_margin.confidence == "low"
+    assert report.normalized_margin.normalized_gm == pytest.approx(920_000, abs=1)
+    assert "legacy_quality_unknown_discount" in report.normalized_margin.adjustment_reasons
+    persisted_margin = service.repository.get_margin(case.case_id)
+    assert persisted_margin is not None
+    assert persisted_margin.confidence == "low"
+    assert persisted_margin.normalized_gm == pytest.approx(920_000, abs=1)
+
+
 def test_legacy_report_and_dataroom_are_downgraded_on_every_read_path(tmp_path) -> None:
     from modules.avm.domain import (
         ApprovalDecision,

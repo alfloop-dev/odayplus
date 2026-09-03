@@ -39,9 +39,9 @@ pickled cases lacking an explicit status marker are migrated on retrieval to
 case. When valued, legacy cases with `legacy_unknown` status receive a named
 `legacy_quality_unknown_discount` and conservative `low` confidence even when a
 high-confidence margin was already persisted; the service saves that downgraded
-margin before entering the formula or approved production executor. This prevents
-the existing-margin fast path from bypassing the legacy disposition. Historical
-reports and data rooms are also migrated
+margin before entering the formula or approved production executor, and marks the
+report before returning it. This prevents the existing-margin fast path from
+bypassing the legacy disposition. Historical reports and data rooms are also migrated
 on read: their prices remain available for audit, but the report and valuation card are
 marked `legacy_unknown_downgraded`, all exposed confidence is `low`, and any old finance
 approval is retained only under `legacy_finance_approval`. New finance approval, data-room
@@ -60,8 +60,11 @@ longer live.
 
 ## Verification
 
-- `pytest -q modules/avm/tests/test_deal_outcome_and_calibration.py tests/integration/test_avm_valuation.py tests/integration/test_avm_deal_outcome.py tests/integration/test_operator_canonical_wiring.py tests/ops/test_avm_quality_nullable_migration.py` — passed, including `test_legacy_report_and_dataroom_are_downgraded_on_every_read_path`.
-- `pytest -q tests/integration/test_avm_valuation.py -k 'persisted_legacy_margin'` — passed, including the persisted-margin value-entry regression.
+- `uv run pytest -q modules/avm/tests/test_deal_outcome_and_calibration.py tests/integration/test_avm_valuation.py tests/integration/test_avm_deal_outcome.py tests/integration/test_operator_canonical_wiring.py tests/ops/test_avm_quality_nullable_migration.py` — passed, including `test_legacy_report_and_dataroom_are_downgraded_on_every_read_path` and `test_persisted_legacy_margin_is_downgraded_before_valuation`.
+- `uv run pytest -q tests/integration/test_avm_valuation.py -k 'persisted_legacy_margin'` — passed, including the durable persisted-margin value-entry regression.
+- `uv run pytest -q modules/avm/tests/test_avm_production_execution.py` — passed.
+- `uv run ruff check modules/avm/application/valuation.py modules/avm/domain/__init__.py modules/avm/domain/valuation.py tests/integration/test_avm_valuation.py tests/integration/test_model_ready_materialization.py` — passed.
+- `git diff --check` — passed.
 - `pytest -q tests/ops/test_avm_quality_nullable_migration.py tests/contract/test_openapi_artifact_and_client.py -k 'avm_quality or generated_client_matches_the_artifact or artifact_is_checked_in_and_matches_the_live_app'` — passed.
 - `uv run python delivery_toolchain/governance/check_measurement_defaults.py` — passed: 23 known (dataclass 10, mapper 8, sql 5), 23 exempted with an owner; next expiry 2026-10-31.
 

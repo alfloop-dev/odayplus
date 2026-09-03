@@ -15,6 +15,7 @@ from modules.avm.application.calibration import (
 )
 from modules.avm.application.production import AVMProductionExecutor
 from modules.avm.domain import (
+    LEGACY_UNKNOWN_QUALITY_STATUS,
     QUALITY_SCORE_REQUIRED_MESSAGE,
     ApprovalDecision,
     DataRoom,
@@ -139,6 +140,8 @@ class AVMService:
             report = executor.execute(valuing, margin)
         else:
             report = value_store(valuing, margin)
+        if case.valuation_input.effective_quality_score_status == LEGACY_UNKNOWN_QUALITY_STATUS:
+            report = report.with_legacy_quality_disposition()
         self.repository.save_case(valuing)
         report = self.repository.save_report(report)
         self.repository.save_case(
