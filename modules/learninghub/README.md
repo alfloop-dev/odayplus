@@ -11,6 +11,24 @@ Implemented surfaces:
 - Durable release saga with restart recovery plus in-memory, SQLite, and
   PostgreSQL repository implementations.
 
+## Prediction-output drift
+
+`LearningHubService.monitor_prediction_drift()` is the production entry for
+prediction drift. It compares only the explicitly declared
+`prediction_columns` (each recorded as `numeric` or `categorical`) for one
+`model_name:model_version` and one `cohort_key`. Both the reference and current
+population must name distinct immutable snapshot IDs; rows carrying model or
+cohort metadata that disagree with the request are rejected.
+
+The threshold is read from the versioned `DecisionPolicy`'s
+`prediction_drift.drift_share_threshold`; there is no prediction-drift default
+in the production entry. The durable monitoring evaluation records the
+reference/current snapshot IDs, model version, cohort, output schema, Evidently
+report, policy version, and audit event. A detected drift creates an explicit
+retraining request for human-governed follow-up; it never changes a model
+alias automatically. The implementation uses the installed Evidently
+`DataDriftPreset` over the output-only frame.
+
 Release gates enforced by `LearningHubService`:
 
 - Dataset snapshot must exist and remain reproducible by ID.
