@@ -515,7 +515,7 @@ def _factors(
     payback_p50_months: float,
     comparable_store_count: int,
     confidence: float,
-    feature: SiteScoreFeatureInput | None = None,
+    feature: SiteScoreFeatureInput,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     positives: list[str] = []
     negatives: list[str] = []
@@ -539,11 +539,10 @@ def _factors(
         negatives.append("no_comparable_evidence")
     if confidence < GO_MIN_CONFIDENCE:
         negatives.append("low_confidence")
-    if feature is not None:
-        if feature.average_confidence is None:
-            negatives.append("missing_source_confidence")
-        if feature.data_quality_score is None:
-            negatives.append("missing_data_quality_score")
+    if feature.average_confidence is None:
+        negatives.append("missing_source_confidence")
+    if feature.data_quality_score is None:
+        negatives.append("missing_data_quality_score")
     return tuple(positives), tuple(negatives)
 
 
