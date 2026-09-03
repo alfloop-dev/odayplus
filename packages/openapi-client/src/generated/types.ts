@@ -281,6 +281,19 @@ export type ConflictError = {
   retryable: boolean;
 };
 
+/** The hard-constraint classes a network plan must honour (ODP-FR-NET-002).
+
+The solver does not model all of them. That is not by itself a defect --
+a plan built without a construction-capacity figure cannot honour one --
+but reporting such a plan as simply "feasible" is, because "feasible under
+the constraints we modelled" and "feasible under all eight" are different
+claims that read identically.
+
+``NetPlanConstraints.modelled_classes`` and the matching field on the solve
+result keep those two apart, so a reader can tell which question the answer
+is an answer to. */
+export type ConstraintClass = "CAPITAL" | "LEASE" | "CONSTRUCTION" | "EQUIPMENT" | "LABOUR" | "COVERAGE" | "DILUTION" | "SEQUENCING";
+
 /** CorrectionReceipt */
 export type CorrectionReceipt = {
   audit_event_id: string;
@@ -1023,6 +1036,58 @@ export type NetworkListingMergePayload = {
   targetListingId: string;
 };
 
+/** NetworkRebalanceCounts */
+export type NetworkRebalanceCounts = {
+  pendingApprovals?: number;
+  stores?: number;
+};
+
+/** NetworkRebalanceMetadata */
+export type NetworkRebalanceMetadata = {
+  avm?: Record<string, unknown> | null;
+  canonicalPackage?: string | null;
+  canonicalZipSha256?: string | null;
+  netPlan?: Record<string, unknown> | null;
+  screenLabels?: string[];
+  serviceVersion?: string | null;
+};
+
+/** NetworkRebalanceModels */
+export type NetworkRebalanceModels = {
+  avm?: Record<string, unknown> | null;
+  netPlan?: Record<string, unknown> | null;
+};
+
+/** NetworkRebalanceMutationResponse */
+export type NetworkRebalanceMutationResponse = {
+  auditEvent?: Record<string, unknown> | null;
+  correlationId?: string | null;
+  store: RebalanceStore;
+};
+
+/** NetworkRebalanceReviewResponse */
+export type NetworkRebalanceReviewResponse = {
+  approval?: Record<string, unknown> | null;
+  auditEvent?: Record<string, unknown> | null;
+  correlationId?: string | null;
+  store: RebalanceStore;
+};
+
+/** NetworkRebalanceSnapshotResponse */
+export type NetworkRebalanceSnapshotResponse = {
+  auditEvents?: Record<string, unknown>[];
+  correlationId?: string | null;
+  counts?: NetworkRebalanceCounts;
+  governApprovals?: Record<string, unknown>[];
+  metadata?: NetworkRebalanceMetadata | Record<string, unknown> | null;
+  models?: NetworkRebalanceModels | Record<string, unknown> | null;
+  selectedScenario?: RebalanceScenario | null;
+  selectedStore?: RebalanceStore | null;
+  selectedStoreId?: string | null;
+  source?: string | null;
+  stores: RebalanceStore[];
+};
+
 /** NetworkScoringActorPayload */
 export type NetworkScoringActorPayload = {
   actorName?: string | null;
@@ -1229,6 +1294,84 @@ export type RebalanceActorPayload = {
   actorRoleId?: string;
   reason?: string | null;
   simulateUnavailable?: boolean;
+};
+
+/** RebalanceScenario */
+export type RebalanceScenario = {
+  actions?: unknown[] | null;
+  bindingConstraints?: string[];
+  capacityDelta?: number | null;
+  diagnostics?: unknown[];
+  evidenceIds?: string[];
+  expectedGrossMargin?: number | null;
+  id: string;
+  inv?: string | null;
+  investmentTwd?: number | null;
+  isInfeasible?: boolean;
+  isStale?: boolean;
+  isSystemRecommendation?: boolean;
+  modelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  name: string;
+  payback?: string | null;
+  rationale?: string | null;
+  risk?: number | string | null;
+  roi?: string | null;
+  roiPct?: number | null;
+  score?: number | null;
+  selected?: boolean;
+  solverStatus?: string | null;
+  solverVersion?: string | null;
+  time?: string | null;
+  unmodelledConstraintClasses: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
+};
+
+/** RebalanceStore */
+export type RebalanceStore = {
+  approvalStatus?: string | null;
+  avm?: Record<string, unknown> | null;
+  avmConf?: string | null;
+  avmEvidenceId?: string | null;
+  avmJob?: Record<string, unknown> | null;
+  avmModelVersion?: string | null;
+  avmP10?: number | null;
+  avmP50?: number | null;
+  avmP90?: number | null;
+  avmRequestId?: string | null;
+  avmReserve?: string | null;
+  avmSnapshotId?: string | null;
+  canonicalAvmCaseId?: string | null;
+  canonicalNetPlanScenarioIds?: string[] | null;
+  evidence?: Record<string, unknown>[] | null;
+  executionBoundary?: string | null;
+  healthNote?: string | null;
+  id: string;
+  lightHistory?: string[] | null;
+  monthlyRevenueLabel?: string | null;
+  monthlyRevenueTwd?: number | null;
+  netPlanJob?: Record<string, unknown> | null;
+  netPlanModelVersion?: string | null;
+  netPlanOptionId?: string | null;
+  netPlanScenarios?: RebalanceScenario[];
+  netPlanSnapshotId?: string | null;
+  ownerName?: string | null;
+  ownerRoleId?: string | null;
+  relatedApprovalId?: string | null;
+  relocationExecuted?: boolean | null;
+  runtimeState?: Record<string, unknown> | null;
+  selectedScenarioEvidenceId?: string | null;
+  selectedScenarioId?: string | null;
+  selectedScenarioOwner?: Record<string, unknown> | null;
+  sourceIssueId?: string | null;
+  status: string;
+  statusLabel?: string | null;
+  storeId: string;
+  storeName: string;
+  summary?: string | null;
+  trend?: number[] | null;
+  utilizationLabel?: string | null;
+  utilizationPct?: number | null;
 };
 
 /** RebalanceSubmitPayload */

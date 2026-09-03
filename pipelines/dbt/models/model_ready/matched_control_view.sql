@@ -13,8 +13,11 @@ select
     {{ var('feature_snapshot_time', 'current_timestamp') }}::timestamptz as feature_snapshot_time,
     {{ var('prediction_origin_time', 'current_timestamp') }}::timestamptz as prediction_origin_time,
     array['core.stores'] as source_snapshot_ids,
-    1.0 as data_quality_score,
-    1.0 as confidence,
+    case
+        when treated_store_id is not null and control_store_id is not null then 1.0
+        else 0.0
+    end as data_quality_score,
+    null::numeric as confidence,
     true as is_training_eligible,
     true as is_scoring_eligible,
     '' as exclusion_reason,

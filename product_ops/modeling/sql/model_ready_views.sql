@@ -616,8 +616,10 @@ SELECT
             THEN 1.0
         ELSE 0.0
     END::double precision AS data_quality_score,
-    least(coalesce(geocode_confidence, 0.0), 1.0)::double precision
-        AS confidence,
+    CASE
+        WHEN geocode_confidence IS NOT NULL THEN least(geocode_confidence, 1.0)::double precision
+        ELSE NULL
+    END AS confidence,
     (
         opened_on IS NOT NULL
         AND target_format_code IS NOT NULL
@@ -1098,8 +1100,10 @@ SELECT
             THEN 1.0
         ELSE 0.0
     END::double precision AS data_quality_score,
-    least(coalesce(average_geocode_confidence, 0.0), 1.0)::double precision
-        AS confidence,
+    CASE
+        WHEN average_geocode_confidence IS NOT NULL THEN least(average_geocode_confidence, 1.0)::double precision
+        ELSE NULL
+    END AS confidence,
     (
         h3_index IS NOT NULL
         AND cell_latitude IS NOT NULL
