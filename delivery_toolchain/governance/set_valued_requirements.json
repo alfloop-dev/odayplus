@@ -1,6 +1,61 @@
 {
   "_comment": "Requirements that enumerate a set of members. ODP-SA-06 has no per-requirement acceptance criteria -- its Trigger and Acceptance columns are the same boilerplate seventy-one times -- so nothing said whether the eighth constraint class or the fifth release mode was required. This file is the narrow substitute: for requirements that list N things, the N things are written down, each satisfied member names where it lives, and each absent member says so. Adding a requirement here is cheap; leaving a gap unwritten is what the check refuses.",
   "_seeded_from": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md, cause 02",
+  "_source_provenance": {
+    "recorded_at": "2026-09-03",
+    "observed_ref": "75d25f653aa12c21a3f9627f29af2ed4def73153",
+    "policy": "Repo transcriptions and amendments are not canonical sources. A canonical record requires a version, exact location, and SHA-256 of the source bytes; unavailable authority remains BLOCKED_BY_EVIDENCE.",
+    "evidence": "docs/evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md",
+    "records": {
+      "ODP-SA-06": {
+        "status": "BLOCKED_BY_EVIDENCE",
+        "canonical_source": {
+          "document_id": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+          "version": null,
+          "location": null,
+          "content_sha256": null,
+          "lookup": [
+            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/design/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md"
+          ],
+          "blocked_reason": "Neither expected path exists at the pinned ref; the repository amendment only declares amends and does not contain the original artifact."
+        },
+        "repo_transcription": {
+          "path": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md",
+          "revision": "75d25f653aa12c21a3f9627f29af2ed4def73153",
+          "content_sha256": "a7783faeb11617bb928144ae599d76877f4be6a06140f5f29820495232a9f242",
+          "scope": "Cause 02 and Appendix A summarize ODP-SA-06 but are repo evidence, not the canonical specification."
+        },
+        "evidence_owner": "Product Lead",
+        "next_check_date": "2026-09-10",
+        "recheck": "Obtain the original artifact or immutable source ref from Product/source custodian, then record version, exact location, and SHA-256."
+      },
+      "ODP-FR-AVM-001": {
+        "status": "BLOCKED_BY_EVIDENCE",
+        "canonical_source": {
+          "document_id": "ODP-FR-AVM-001",
+          "version": null,
+          "location": null,
+          "content_sha256": null,
+          "expected_location": "ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md AVM-001 row (inferred, not verified)",
+          "lookup": [
+            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/ODP-SA-06_FUNCTIONAL_REQUIREMENTS_SPECIFICATION.md",
+            "github://alfloop-dev/odayplus@75d25f653aa12c21a3f9627f29af2ed4def73153/docs/evidence/ODP-FR-AVM-001.md"
+          ],
+          "blocked_reason": "No standalone requirement artifact or source row with verifiable version, location, and bytes was found; the repo contains only an AVM-001 summary in the verification report."
+        },
+        "repo_transcription": {
+          "path": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md",
+          "revision": "75d25f653aa12c21a3f9627f29af2ed4def73153",
+          "content_sha256": "a7783faeb11617bb928144ae599d76877f4be6a06140f5f29820495232a9f242",
+          "scope": "Appendix A AVM-001 row summarizes GM_TTM, GM_FWD, depreciation, asset, lease, and normalization; it is not the full FR text."
+        },
+        "evidence_owner": "Product Lead",
+        "next_check_date": "2026-09-10",
+        "recheck": "Confirm whether AVM-001 belongs to the original ODP-SA-06 artifact or a separate canonical AVM document, then hash the retrieved source bytes."
+      }
+    }
+  },
   "requirements": [
     {
       "id": "ODP-FR-NET-002",
