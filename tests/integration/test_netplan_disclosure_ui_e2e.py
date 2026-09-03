@@ -145,14 +145,13 @@ def _build_scenario(
     )
 
 
-def _attach_verifier(
-    service: NetPlanService,
+def _build_verifier(
     scenario: NetPlanScenario,
     solve: Any,
     *,
     receipt_id: str = RECEIPT_ID,
     principal_role: str = AUTHORISED_ROLE,
-) -> None:
+) -> FixedManagementApprovalReceiptVerifier:
     actions_by_entity = {
         action.entity_id: action.action for action in solve.result.selected_actions
     }
@@ -203,13 +202,35 @@ def _attach_verifier(
         receipt_hash="",
     )
     receipt = replace(receipt, receipt_hash=receipt.compute_receipt_hash())
-    service.approval_verifier = FixedManagementApprovalReceiptVerifier(
+    return FixedManagementApprovalReceiptVerifier(
         receipts={receipt.receipt_id: receipt},
         source_system=APPROVAL_SOURCE,
         principal_id=APPROVAL_PRINCIPAL,
         principal_role=principal_role,
         clock=lambda: MOMENT,
     )
+
+
+def _attach_verifier(
+    service: NetPlanService,
+    scenario: NetPlanScenario,
+    solve: Any,
+    *,
+    receipt_id: str = RECEIPT_ID,
+    principal_role: str = AUTHORISED_ROLE,
+) -> FixedManagementApprovalReceiptVerifier:
+    """Install the management approval authority the way composition does.
+
+    Returned as well as attached so a test can give the same authority to the
+    Operator service: the Operator submit path does not mint its own signature,
+    it asks `NetPlanService` for one, and both must be looking at the same
+    receipt for that to mean anything.
+    """
+    verifier = _build_verifier(
+        scenario, solve, receipt_id=receipt_id, principal_role=principal_role
+    )
+    service.approval_verifier = verifier
+    return verifier
 
 
 def test_e2e_production_solve_to_operator_projection_and_durable_approval_receipt() -> None:
@@ -242,6 +263,7 @@ def test_e2e_production_solve_to_operator_projection_and_durable_approval_receip
     rebalance_service = NetworkRebalanceService(
         netplan_repository=repo,
         netplan_production_executor=executor,
+        netplan_policy_repository=policy_repo,
         avm_repository=_FakeAvmRepo(),
         tenant_id=TENANT_ID,
         require_canonical=True,
@@ -303,6 +325,18 @@ def test_e2e_production_solve_to_operator_projection_and_durable_approval_receip
         == primary_scenario["unmodelledConstraintClasses"]
     )
 
+    # Step 3: the projection also carries the submit gate's own classification,
+    # resolved from the registered policy. The console renders this rather than
+    # re-deriving the split, so it cannot offer a signature the server refuses.
+    assert primary_scenario["blockedConstraintClasses"] == []
+    assert set(primary_scenario["acknowledgeableConstraintClasses"]) == {
+        "LEASE",
+        "SEQUENCING",
+    }
+    assert primary_scenario["disclosurePolicyVersionId"] == (
+        default_netplan_disclosure_policy(tenant_id=TENANT_ID).policy_version_id
+    )
+
     # Step 4: Operator scenario selection
     select_res = rebalance_service.select_scenario(
         store_id="STORE-101",
@@ -314,16 +348,34 @@ def test_e2e_production_solve_to_operator_projection_and_durable_approval_receip
     )
     assert select_res["store"]["selectedScenarioId"] == primary_scenario["id"]
 
-    # Step 5: Operator submit review with disclosure acknowledgement
+    # Step 5: the same management approval authority is given to both services.
+    # The Operator submit path signs through NetPlanService rather than minting
+    # its own acknowledgement, so this is the single source of authority for the
+    # whole flow.
+    verifier = _attach_verifier(service, scenario, solve, receipt_id=RECEIPT_ID)
+    rebalance_service.netplan_approval_verifier = verifier
+    service.submit_for_approval(
+        scenario.scenario_id,
+        actor=APPROVAL_PRINCIPAL,
+        reason="submitted for network planning approval",
+        occurred_at=MOMENT,
+    )
+
+    # Step 6: Operator submit review. The acknowledgement is produced by this one
+    # call -- a submission that reached Govern without a durable receipt behind
+    # it is the gap this task closes.
+    ack_reason = "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。"
     submit_res = rebalance_service.submit_review(
         store_id="STORE-101",
         reason="Move scenario verified with CP-SAT and submitted for Govern review",
-        actor_role_id=AUTHORISED_ROLE,
+        actor_role_id="expansionManager",
         actor_name="王若寧",
         idempotency_key="idem-e2e-submit",
         correlation_id="corr-e2e-submit",
         acknowledged_classes=["LEASE", "SEQUENCING"],
-        acknowledgement_reason="租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。",
+        acknowledgement_reason=ack_reason,
+        acknowledgement_actor_id=APPROVAL_PRINCIPAL,
+        approval_receipt_id=RECEIPT_ID,
     )
 
     assert submit_res["store"]["status"] == "pendingapproval"
@@ -333,34 +385,29 @@ def test_e2e_production_solve_to_operator_projection_and_durable_approval_receip
     assert (
         approval["unmodelledConstraintClasses"] == primary_scenario["unmodelledConstraintClasses"]
     )
+    assert approval["blockedConstraintClasses"] == []
     assert set(approval["acknowledgedConstraintClasses"]) == {"LEASE", "SEQUENCING"}
-    assert (
-        approval["acknowledgementReason"]
-        == "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。"
+    assert approval["acknowledgementReason"] == ack_reason
+    assert approval["disclosurePolicyVersionId"] == (
+        default_netplan_disclosure_policy(tenant_id=TENANT_ID).policy_version_id
     )
+    # Authority on the approval is the role the verified receipt carried, not the
+    # requester's own `actorRoleId`.
+    assert approval["disclosureAcknowledgedByRole"] == AUTHORISED_ROLE
+    assert approval["disclosureAcknowledgedBy"] == APPROVAL_PRINCIPAL
+    assert approval["disclosureApprovalReceiptId"] == RECEIPT_ID
+    assert approval["disclosureSolverProblemHash"] == solve.problem_hash
 
-    # Step 6: Record NetPlan disclosure acknowledgement receipt
-    _attach_verifier(service, scenario, solve, receipt_id="receipt-e2e-001")
-    service.submit_for_approval(
-        scenario.scenario_id,
-        actor=APPROVAL_PRINCIPAL,
-        reason="submitted for network planning approval",
-        occurred_at=MOMENT,
-    )
-
-    ack = service.acknowledge_unmodelled_constraints(
-        scenario_id=scenario.scenario_id,
-        actor_id=APPROVAL_PRINCIPAL,
-        reason="租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。",
-        acknowledged_classes=["LEASE", "SEQUENCING"],
-        approval_receipt_id="receipt-e2e-001",
-        acknowledged_at=MOMENT,
-    )
-
-    assert ack is not None
+    # The Operator submission left a durable, sealed receipt in the NetPlan
+    # repository -- not a field on an in-memory approval row.
+    stored = repo.list_disclosure_acknowledgements(scenario.scenario_id)
+    assert len(stored) == 1
+    ack = stored[0]
+    assert ack.acknowledgement_id == approval["disclosureAcknowledgementId"]
     assert ack.scenario_id == scenario.scenario_id
     assert ack.solver_problem_hash == solve.problem_hash
     assert ack.actor_role == AUTHORISED_ROLE
+    assert ack.reason == ack_reason
     assert set(ack.acknowledged_classes) == {ConstraintClass.LEASE, ConstraintClass.SEQUENCING}
 
     # Verify cryptographic receipt hash
@@ -418,6 +465,7 @@ def test_e2e_blocked_unmodelled_classes_fail_closed_at_operator_submission_bound
     rebalance_service = NetworkRebalanceService(
         netplan_repository=repo,
         netplan_production_executor=executor,
+        netplan_policy_repository=policy_repo,
         avm_repository=_FakeAvmRepo(),
         tenant_id=TENANT_ID,
         require_canonical=True,
@@ -437,6 +485,18 @@ def test_e2e_blocked_unmodelled_classes_fail_closed_at_operator_submission_bound
     assert solve is not None
     assert solve.result.modelled_constraint_classes == (ConstraintClass.CAPITAL,)
     assert ConstraintClass.CONSTRUCTION in solve.result.unmodelled_constraint_classes
+
+    # The console is told these classes block before anyone tries to submit, so
+    # the acknowledgement form is never offered for them.
+    projected = solve_res["store"]["netPlanScenarios"][0]
+    assert set(projected["blockedConstraintClasses"]) == {
+        "CONSTRUCTION",
+        "EQUIPMENT",
+        "LABOUR",
+        "COVERAGE",
+        "DILUTION",
+    }
+    assert set(projected["acknowledgeableConstraintClasses"]) == {"LEASE", "SEQUENCING"}
 
     selected_id = solve_res["store"]["netPlanScenarios"][0]["id"]
     rebalance_service.select_scenario(
@@ -458,7 +518,36 @@ def test_e2e_blocked_unmodelled_classes_fail_closed_at_operator_submission_bound
             idempotency_key="idem-blocked-submit",
             correlation_id="corr-blocked-submit",
         )
-    assert "blocked and cannot be waived" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "CONSTRUCTION" in message
+    assert "does not permit acknowledging" in message
+    assert default_netplan_disclosure_policy(tenant_id=TENANT_ID).policy_version_id in message
+    assert rebalance_service._store("STORE-101")["status"] == "netplanreview"
+    assert repo.list_disclosure_acknowledgements(scenario.scenario_id) == []
+
+    # Naming the blocked classes explicitly does not open a second door: the
+    # refusal is on the disclosure, not on whether the submitter asked nicely.
+    with pytest.raises(NetworkRebalancePolicyError):
+        rebalance_service.submit_review(
+            store_id="STORE-101",
+            reason="Trying to submit blocked scenario with an acknowledgement",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-blocked-submit-ack",
+            correlation_id="corr-blocked-submit-ack",
+            acknowledged_classes=[
+                "CONSTRUCTION",
+                "EQUIPMENT",
+                "LABOUR",
+                "COVERAGE",
+                "DILUTION",
+                "LEASE",
+                "SEQUENCING",
+            ],
+            acknowledgement_reason="線下已確認，請放行",
+            acknowledgement_actor_id=APPROVAL_PRINCIPAL,
+            approval_receipt_id="receipt-e2e-002",
+        )
 
     # 2. NetPlanService acknowledge_unmodelled_constraints must refuse acknowledging blocked classes
     _attach_verifier(service, scenario, solve, receipt_id="receipt-e2e-002")
@@ -473,6 +562,115 @@ def test_e2e_blocked_unmodelled_classes_fail_closed_at_operator_submission_bound
             acknowledged_at=MOMENT,
         )
     assert "cannot acknowledge CONSTRUCTION under policy" in str(ack_exc.value)
+
+
+def test_e2e_operator_submission_refuses_unsigned_or_unauthorised_acknowledgement() -> None:
+    """The Operator boundary itself enforces the acknowledgement contract.
+
+    Each refusal below was reachable while the submit path carried its own copy
+    of the rule: it recorded `actorRoleId` without checking it, reused the
+    submission reason as the acknowledgement reason, and filled in the class
+    list on the caller's behalf. Any one of those produces a Govern approval
+    that looks signed and is not.
+    """
+    repo = InMemoryNetPlanRepository()
+    policy_repo = InMemoryDecisionPolicyRepository(
+        [default_netplan_disclosure_policy(tenant_id=TENANT_ID)]
+    )
+    scenario = _build_scenario(
+        scenario_id="SCENARIO-E2E-OPERATOR-ACK-001",
+        constraints=_fully_modelled_constraints(),
+    )
+    repo.save_scenario(scenario)
+
+    executor = NetPlanProductionExecutor()
+    rebalance_service = NetworkRebalanceService(
+        netplan_repository=repo,
+        netplan_production_executor=executor,
+        netplan_policy_repository=policy_repo,
+        avm_repository=_FakeAvmRepo(),
+        tenant_id=TENANT_ID,
+        require_canonical=True,
+    )
+    rebalance_service._store("STORE-101")["status"] = "avmready"
+    solve_res = rebalance_service.solve_netplan(
+        store_id="STORE-101",
+        actor_role_id="expansionManager",
+        actor_name="王若寧",
+        idempotency_key="idem-ack-solve",
+        correlation_id="corr-ack-solve",
+    )
+    solve = repo.get_solve(scenario.scenario_id)
+    assert solve is not None
+    rebalance_service.select_scenario(
+        store_id="STORE-101",
+        scenario_id=solve_res["store"]["netPlanScenarios"][0]["id"],
+        actor_role_id="expansionManager",
+        actor_name="王若寧",
+        idempotency_key="idem-ack-select",
+        correlation_id="corr-ack-select",
+    )
+    rebalance_service.netplan_approval_verifier = _build_verifier(
+        scenario, solve, receipt_id="receipt-e2e-operator"
+    )
+
+    def _submit(**overrides: Any) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "store_id": "STORE-101",
+            "reason": "Submitted for Govern review",
+            "actor_role_id": "expansionManager",
+            "actor_name": "王若寧",
+            "idempotency_key": None,
+            "correlation_id": "corr-ack-submit",
+            "acknowledged_classes": ["LEASE", "SEQUENCING"],
+            "acknowledgement_reason": "租約與排程風險已於線下確認。",
+            "acknowledgement_actor_id": APPROVAL_PRINCIPAL,
+            "approval_receipt_id": "receipt-e2e-operator",
+        }
+        payload.update(overrides)
+        return rebalance_service.submit_review(**payload)
+
+    # 1. No named classes: an "acknowledge whatever is outstanding" submission.
+    with pytest.raises(NetworkRebalancePolicyError) as exc_unnamed:
+        _submit(acknowledged_classes=None)
+    assert "naming each class" in str(exc_unnamed.value)
+
+    # 2. Naming only part of the disclosure leaves the rest silently unsigned.
+    with pytest.raises(NetworkRebalancePolicyError) as exc_partial:
+        _submit(acknowledged_classes=["LEASE"])
+    assert "SEQUENCING" in str(exc_partial.value)
+
+    # 3. The acknowledgement reason does not fall back to the submission reason.
+    with pytest.raises(NetworkRebalancePolicyError) as exc_reason:
+        _submit(acknowledgement_reason="   ")
+    assert "requires its own reason" in str(exc_reason.value)
+
+    # 4. No receipt means no established authority.
+    with pytest.raises(NetworkRebalancePolicyError) as exc_receipt:
+        _submit(approval_receipt_id=None)
+    assert "management approval receipt" in str(exc_receipt.value)
+
+    # 5. A principal who is not the one the receipt names cannot sign for it,
+    #    however authoritative the role they put on their own request.
+    with pytest.raises(NetworkRebalancePolicyError) as exc_actor:
+        _submit(acknowledgement_actor_id="principal://someone-else")
+    assert "does not match the verified approval principal" in str(exc_actor.value)
+
+    # 6. A receipt whose principal holds no acknowledging authority is refused
+    #    even though every field of the submission is well formed.
+    rebalance_service.netplan_approval_verifier = _build_verifier(
+        scenario,
+        solve,
+        receipt_id="receipt-e2e-operator",
+        principal_role="expansion-manager",
+    )
+    with pytest.raises(NetworkRebalancePolicyError) as exc_role:
+        _submit()
+    assert "not authorised to acknowledge" in str(exc_role.value)
+
+    # None of the refusals advanced the store or left a partial receipt behind.
+    assert rebalance_service._store("STORE-101")["status"] == "netplanreview"
+    assert repo.list_disclosure_acknowledgements(scenario.scenario_id) == []
 
 
 def test_e2e_acknowledgement_requires_authorized_role_and_non_empty_reason() -> None:

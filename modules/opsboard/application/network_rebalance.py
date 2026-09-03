@@ -22,7 +22,23 @@ from datetime import UTC, datetime
 from typing import Any
 
 from modules.avm.application.valuation import AVMError, AVMService
-from modules.netplan.application.planning import NetPlanService
+from modules.netplan.application.planning import (
+    NetPlanConstraintDisclosureError,
+    NetPlanService,
+)
+from shared.governance.decision_policy import (
+    DecisionPolicy,
+    DecisionPolicyRepository,
+    PolicyResolutionError,
+    resolve_policy,
+)
+from shared.governance.netplan_disclosure import (
+    NETPLAN_DISCLOSURE_POLICY_KIND,
+    DisclosureEvaluation,
+    NetPlanDisclosurePolicyError,
+    authorized_roles,
+    evaluate_disclosure,
+)
 
 
 class NetworkRebalanceError(RuntimeError):
@@ -104,16 +120,21 @@ def _evidence_id(prefix: str = "EV-RB") -> str:
 
 
 def _seed_scenarios() -> list[dict[str, Any]]:
-    default_modelled = [
-        "CAPITAL",
+    # The fixture scenarios are not the output of a solve. They stand in for one
+    # whose caller supplied only ``max_budget``, which is the single cap the
+    # solver requires, so CAPITAL is the only class they may claim to have
+    # bound. Widening this list would make the fixture Operator surface report
+    # five classes as validated that nothing validated -- the exact misreading
+    # ODP-FR-NET-002 disclosure exists to prevent -- and it is not made true by
+    # the fact that it would let the fixture submit path reach Govern.
+    default_modelled = ["CAPITAL"]
+    default_unmodelled = [
+        "LEASE",
         "CONSTRUCTION",
         "EQUIPMENT",
         "LABOUR",
         "COVERAGE",
         "DILUTION",
-    ]
-    default_unmodelled = [
-        "LEASE",
         "SEQUENCING",
     ]
     return [
@@ -242,6 +263,8 @@ class NetworkRebalanceService:
         netplan_repository: Any | None = None,
         avm_production_executor: Any | None = None,
         netplan_production_executor: Any | None = None,
+        netplan_policy_repository: DecisionPolicyRepository | None = None,
+        netplan_approval_verifier: Any | None = None,
         runtime_mode: str | None = None,
         tenant_id: str | None = None,
         require_canonical: bool = False,
@@ -251,6 +274,16 @@ class NetworkRebalanceService:
         self._netplan_repository = netplan_repository
         self._avm_production_executor = avm_production_executor
         self._netplan_production_executor = netplan_production_executor
+        # Deliberately not defaulted to the seeded v1 policy. A submit path that
+        # falls back to built-in rules when the registry is absent cannot say
+        # which policy version let a plan through, which ODP-AC-BR-004 requires
+        # of every historical approval. `_require_disclosure_policy` turns the
+        # absence into a refusal at the submission boundary instead.
+        self._netplan_policy_repository = netplan_policy_repository
+        # Public, like `NetPlanService.approval_verifier`: the management
+        # approval authority is injected by composition and may be installed
+        # after the service is built, but it is never derived from a request.
+        self.netplan_approval_verifier = netplan_approval_verifier
         self._runtime_mode = runtime_mode
         self._tenant_id = tenant_id
         self._require_canonical = require_canonical
@@ -846,6 +879,7 @@ class NetworkRebalanceService:
         correlation_id: str | None,
         acknowledged_classes: list[str] | tuple[str, ...] | None = None,
         acknowledgement_reason: str | None = None,
+        acknowledgement_actor_id: str | None = None,
         approval_receipt_id: str | None = None,
     ) -> dict[str, Any]:
         reason = reason.strip()
@@ -866,35 +900,40 @@ class NetworkRebalanceService:
 
         scenario = self._scenario(store, str(store["selectedScenarioId"]))
 
-        # ODP-FR-NET-002: Evaluate constraint disclosure policy
-        modelled = list(
-            scenario.get("modelledConstraintClasses")
-            or scenario.get("modelled_constraint_classes")
-            or ["CAPITAL"]
-        )
-        unmodelled = list(
-            scenario.get("unmodelledConstraintClasses")
-            or scenario.get("unmodelled_constraint_classes")
-            or []
-        )
-        unmodelled_str = [str(c) for c in unmodelled]
-        blocked = [c for c in unmodelled_str if c not in ("LEASE", "SEQUENCING")]
+        # ODP-FR-NET-002 disclosure gate. Which unmodelled classes block and
+        # which a named authority may sign for is registry data, resolved
+        # point-in-time, never a literal here: the two lists move on a
+        # governance clock, and a copy in this module would keep approving on
+        # rules the registry had already retired.
+        modelled = self._declared_constraint_classes(scenario, "modelled")
+        unmodelled = self._declared_constraint_classes(scenario, "unmodelled")
+        policy = self._require_disclosure_policy()
+        evaluation = evaluate_disclosure(policy, unmodelled_classes=unmodelled)
 
-        if self._require_canonical and blocked:
+        if evaluation.blocking:
             raise NetworkRebalancePolicyError(
-                f"Cannot submit review for scenario {scenario.get('name', store.get('selectedScenarioId'))}: "
-                f"unmodelled constraint classes {blocked} are blocked and cannot be waived"
+                f"cannot submit {scenario.get('name', store.get('selectedScenarioId'))} for "
+                f"review: {', '.join(evaluation.blocking)} "
+                f"{'are' if len(evaluation.blocking) > 1 else 'is'} required by "
+                f"ODP-FR-NET-002 and left unmodelled by this solve. Policy "
+                f"{policy.policy_version_id} does not permit acknowledging "
+                f"{'them' if len(evaluation.blocking) > 1 else 'it'}: supply the "
+                f"missing cap and re-solve"
             )
 
-        ack_classes = list(
-            [
-                str(c)
-                for c in (
-                    acknowledged_classes
-                    or [c for c in unmodelled_str if c in ("LEASE", "SEQUENCING")]
-                )
-            ]
-        )
+        acknowledgement = None
+        ack_classes: list[str] = []
+        if evaluation.acknowledgeable:
+            acknowledgement = self._acknowledge_unmodelled_classes(
+                store=store,
+                policy=policy,
+                evaluation=evaluation,
+                acknowledged_classes=acknowledged_classes,
+                acknowledgement_reason=acknowledgement_reason,
+                acknowledgement_actor_id=acknowledgement_actor_id,
+                approval_receipt_id=approval_receipt_id,
+            )
+            ack_classes = [str(item) for item in acknowledgement.acknowledged_classes]
 
         approval_id = store.get("relatedApprovalId") or f"APR-NET-{store_id}"
         approval = {
@@ -921,14 +960,44 @@ class NetworkRebalanceService:
             "requiredRoleIds": ["opsLead", "auditPm"],
             "modelledConstraintClasses": modelled,
             "unmodelledConstraintClasses": unmodelled,
+            "blockedConstraintClasses": list(evaluation.blocking),
+            "acknowledgeableConstraintClasses": list(evaluation.acknowledgeable),
             "acknowledgedConstraintClasses": ack_classes,
+            "disclosurePolicyVersionId": policy.policy_version_id,
+            "disclosurePolicyLabel": policy.policy_label,
+            "disclosurePolicyVersion": policy.policy_version,
+            # Present only when the exposure was actually signed for. A caller
+            # reading this approval can tell a signed acknowledgement from an
+            # absent one without inferring it from the class list.
+            "disclosureAcknowledgementId": (
+                acknowledgement.acknowledgement_id if acknowledgement is not None else None
+            ),
+            "disclosureAcknowledgedBy": (
+                acknowledgement.actor_id if acknowledgement is not None else None
+            ),
+            "disclosureAcknowledgedByRole": (
+                acknowledgement.actor_role if acknowledgement is not None else None
+            ),
+            "disclosureApprovalReceiptId": (
+                acknowledgement.approval_receipt_id if acknowledgement is not None else None
+            ),
+            "disclosureSolverProblemHash": (
+                acknowledgement.solver_problem_hash if acknowledgement is not None else None
+            ),
             "evidenceIds": [
                 str(store.get("avm", {}).get("evidenceId", "")),
                 *list(scenario.get("evidenceIds", [])),
                 str(store.get("selectedScenarioEvidenceId", "")),
             ],
             "reason": reason,
-            "acknowledgementReason": acknowledgement_reason or reason,
+            # The submission reason is not a fallback for the acknowledgement
+            # reason. They answer different questions -- why this plan is being
+            # sent for approval, and why an unvalidated exposure is acceptable --
+            # and reusing the first as the second produces a receipt that never
+            # recorded an answer to the second.
+            "acknowledgementReason": (
+                acknowledgement.reason if acknowledgement is not None else None
+            ),
             "target": {"workspace": "govern", "entityId": approval_id, "tab": "approvals"},
         }
         approval["evidenceIds"] = [item for item in approval["evidenceIds"] if item]
@@ -988,6 +1057,175 @@ class NetworkRebalanceService:
                 model="AVM/NetPlan",
                 store_id="unscoped",
             )
+
+    @staticmethod
+    def _declared_constraint_classes(scenario: dict[str, Any], kind: str) -> list[str]:
+        """The classes this scenario row says the solve did / did not bind.
+
+        Absence is a refusal rather than an empty list. A row that declares
+        nothing has not disclosed that it bound everything -- it has failed to
+        disclose anything, and reading its missing unmodelled set as "nothing is
+        unmodelled" is the fail-open the CP-SAT production path already shipped
+        once (see the 2026-09-02 correction in
+        docs/design/ODP_NETPLAN_CONSTRAINT_CLASSES_2026-09-01.md).
+        """
+        for key in (f"{kind}ConstraintClasses", f"{kind}_constraint_classes"):
+            if key in scenario and scenario[key] is not None:
+                return [str(item) for item in scenario[key]]
+        raise NetworkRebalancePolicyError(
+            f"selected scenario {scenario.get('id') or scenario.get('name')!r} declares no "
+            f"{kind} constraint classes; refusing to submit a plan whose constraint "
+            "disclosure is unknown"
+        )
+
+    def _require_disclosure_policy(self) -> DecisionPolicy:
+        """Resolve the disclosure policy in force for this tenant, or refuse.
+
+        Point-in-time and tenant-scoped, matching
+        ``NetPlanService._require_disclosure_policy``: re-deriving why a plan was
+        approved months later has to resolve to the rules that approved it.
+        """
+        if self._netplan_policy_repository is None or not self._tenant_id:
+            raise NetworkRebalancePolicyError(
+                "netplan constraint disclosure policy is not configured for this "
+                "Operator surface; refusing to submit a plan without resolving which "
+                "unmodelled constraint classes the policy blocks"
+            )
+        try:
+            return resolve_policy(
+                self._netplan_policy_repository,
+                policy_kind=NETPLAN_DISCLOSURE_POLICY_KIND,
+                tenant_id=self._tenant_id,
+                at=datetime.now(UTC),
+            )
+        except (PolicyResolutionError, NetPlanDisclosurePolicyError) as exc:
+            raise NetworkRebalancePolicyError(
+                f"netplan constraint disclosure policy could not be resolved: {exc}"
+            ) from exc
+
+    def _acknowledge_unmodelled_classes(
+        self,
+        *,
+        store: dict[str, Any],
+        policy: DecisionPolicy,
+        evaluation: DisclosureEvaluation,
+        acknowledged_classes: list[str] | tuple[str, ...] | None,
+        acknowledgement_reason: str | None,
+        acknowledgement_actor_id: str | None,
+        approval_receipt_id: str | None,
+    ) -> Any:
+        """Sign for this solve's acknowledgeable exposure, or refuse to submit.
+
+        The signature is produced by ``NetPlanService``, not here, because that
+        is where authority is taken from the verified management approval
+        receipt rather than from the caller. An Operator request that could name
+        its own authorising role would let an actor authorise themselves, which
+        is the failure the whole acknowledgement path exists to prevent -- so
+        ``actorRoleId`` on the submit payload is recorded as the requester and
+        never consulted for authority.
+        """
+        named = [
+            str(item).strip().upper() for item in (acknowledged_classes or []) if str(item).strip()
+        ]
+        if not named:
+            raise NetworkRebalancePolicyError(
+                "this plan leaves "
+                f"{', '.join(evaluation.acknowledgeable)} unmodelled; submission requires "
+                "naming each class being acknowledged. An 'acknowledge whatever is "
+                "outstanding' submission would produce a receipt whose meaning changes "
+                "with the scenario"
+            )
+        outstanding = [item for item in evaluation.acknowledgeable if item not in named]
+        if outstanding:
+            raise NetworkRebalancePolicyError(
+                f"unmodelled constraint classes {', '.join(outstanding)} were disclosed but "
+                "not acknowledged; every acknowledgeable class this solve left unmodelled "
+                "must be signed for before the plan reaches Govern"
+            )
+        cleaned_reason = str(acknowledgement_reason or "").strip()
+        if not cleaned_reason:
+            raise NetworkRebalancePolicyError(
+                "acknowledging an unmodelled constraint class requires its own reason: "
+                "the receipt has to record why the exposure was accepted"
+            )
+        actor_id = str(acknowledgement_actor_id or "").strip()
+        if not actor_id:
+            raise NetworkRebalancePolicyError(
+                "acknowledging an unmodelled constraint class requires the acknowledging "
+                "principal id, matched against the verified management approval receipt"
+            )
+        receipt_id = str(approval_receipt_id or "").strip()
+        if not receipt_id:
+            raise NetworkRebalancePolicyError(
+                "acknowledging an unmodelled constraint class requires the management "
+                "approval receipt that establishes the signer's authority; roles authorised "
+                f"by policy {policy.policy_version_id} are "
+                f"{', '.join(authorized_roles(policy)) or '(none)'}"
+            )
+        if self._netplan_repository is None:
+            raise NetworkRebalancePolicyError(
+                "this Operator surface has no NetPlan repository, so an acknowledgement "
+                "receipt cannot be made durable; a plan with unmodelled required classes "
+                "cannot be submitted from here"
+            )
+
+        scenario_id = str((store.get("netPlanJob") or {}).get("id") or "")
+        if not scenario_id:
+            raise NetworkRebalancePolicyError(
+                "no NetPlan solve is recorded for this store; nothing can be acknowledged"
+            )
+        service = NetPlanService(
+            repository=self._netplan_repository,
+            production_executor=self._netplan_production_executor,
+            approval_verifier=self.netplan_approval_verifier,
+            policy_repository=self._netplan_policy_repository,
+            runtime_mode=self._runtime_mode,
+        )
+        try:
+            return service.acknowledge_unmodelled_constraints(
+                scenario_id=scenario_id,
+                actor_id=actor_id,
+                reason=cleaned_reason,
+                acknowledged_classes=named,
+                approval_receipt_id=receipt_id,
+            )
+        except NetPlanConstraintDisclosureError as exc:
+            raise NetworkRebalancePolicyError(str(exc)) from exc
+
+    def _disclosure_view(self, scenario: dict[str, Any]) -> dict[str, Any]:
+        """How the submit gate would classify this scenario, for the UI to render.
+
+        Computed from the same policy the gate uses so the console cannot show a
+        class as waivable that the server would block. When no policy resolves,
+        every unmodelled class is reported as blocking: an unresolvable policy is
+        indistinguishable from no policy, and the console must not offer a
+        signature the server will refuse.
+        """
+        try:
+            unmodelled = self._declared_constraint_classes(scenario, "unmodelled")
+        except NetworkRebalancePolicyError:
+            return {
+                "blockedConstraintClasses": [],
+                "acknowledgeableConstraintClasses": [],
+                "disclosurePolicyVersionId": None,
+                "disclosureUndeclared": True,
+            }
+        try:
+            policy = self._require_disclosure_policy()
+            evaluation = evaluate_disclosure(policy, unmodelled_classes=unmodelled)
+        except NetworkRebalancePolicyError:
+            return {
+                "blockedConstraintClasses": list(unmodelled),
+                "acknowledgeableConstraintClasses": [],
+                "disclosurePolicyVersionId": None,
+                "disclosureUndeclared": False,
+            }
+        return {
+            "blockedConstraintClasses": list(evaluation.blocking),
+            "acknowledgeableConstraintClasses": list(evaluation.acknowledgeable),
+            "disclosurePolicyVersionId": evaluation.policy_version_id,
+            "disclosureUndeclared": False,
+        }
 
     def _refresh_canonical_stores(self) -> None:
         self._require_canonical_dependencies()
@@ -1092,6 +1330,7 @@ class NetworkRebalanceService:
             scenarios.append(
                 {
                     **_copy(scenario),
+                    **self._disclosure_view(scenario),
                     "selected": scenario.get("id") == store.get("selectedScenarioId"),
                 }
             )

@@ -96,16 +96,14 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
         "NP-SNAP-20260714-0615"
     }
     for scenario_item in solved_store["netPlanScenarios"]:
-        assert scenario_item["modelledConstraintClasses"] == [
-            "CAPITAL",
+        assert scenario_item["modelledConstraintClasses"] == ["CAPITAL"]
+        assert set(scenario_item["unmodelledConstraintClasses"]) == {
+            "LEASE",
             "CONSTRUCTION",
             "EQUIPMENT",
             "LABOUR",
             "COVERAGE",
             "DILUTION",
-        ]
-        assert set(scenario_item["unmodelledConstraintClasses"]) == {
-            "LEASE",
             "SEQUENCING",
         }
         assert (
@@ -116,6 +114,15 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
             scenario_item["unmodelled_constraint_classes"]
             == scenario_item["unmodelledConstraintClasses"]
         )
+        # No disclosure policy is registered on the fixture surface, so the
+        # console is told every unmodelled class blocks. Reporting LEASE and
+        # SEQUENCING as waivable here would offer a signature this surface
+        # cannot make durable.
+        assert set(scenario_item["blockedConstraintClasses"]) == set(
+            scenario_item["unmodelledConstraintClasses"]
+        )
+        assert scenario_item["acknowledgeableConstraintClasses"] == []
+        assert scenario_item["disclosurePolicyVersionId"] is None
 
     selected = client.post(
         "/api/v1/operator/network-rebalance/stores/RB-801/scenarios/move/select",
@@ -137,6 +144,11 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
         reloaded_store["selectedScenarioEvidenceId"] == selected_store["selectedScenarioEvidenceId"]
     )
 
+    # The fixture scenario discloses seven unmodelled required classes and this
+    # surface has no disclosure policy registered, so submission is refused.
+    # Before ODP-NETPLAN-DISCLOSURE-UI-E2E-001 this returned 200 and created the
+    # Govern approval: the disclosure was projected to the console and then
+    # ignored at the one boundary where it decides anything.
     submitted = client.post(
         "/api/v1/operator/network-rebalance/stores/RB-801/submit-review",
         headers={**NETWORK_HEADERS, "idempotency-key": "idem-r4-008-submit-review"},
@@ -144,17 +156,19 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
             "Move is recommended by NetPlan and requires Govern approval before execution."
         ),
     )
-    assert submitted.status_code == 200, submitted.text
-    submitted_body = submitted.json()
-    assert submitted_body["store"]["status"] == "pendingapproval"
-    assert submitted_body["store"]["relatedApprovalId"] == "APR-NET-RB-801"
-    assert submitted_body["executionBoundary"]["relocationExecuted"] is False
-    assert submitted_body["store"]["relocationExecuted"] is False
+    assert submitted.status_code == 422, submitted.text
+    assert "disclosure policy" in submitted.json()["detail"]
+
+    still_in_review = client.get(
+        "/api/v1/operator/network-rebalance", headers=NETWORK_HEADERS
+    ).json()["stores"][0]
+    assert still_in_review["status"] == "netplanreview"
+    assert still_in_review["relatedApprovalId"] is None
 
     approvals = client.get("/api/v1/operator/approvals", headers=OPS_HEADERS)
     assert approvals.status_code == 200, approvals.text
     approval_ids = {item["id"] for item in approvals.json()["items"]}
-    assert "APR-NET-RB-801" in approval_ids
+    assert "APR-NET-RB-801" not in approval_ids
 
 
 def test_rebalance_runtime_unavailable_fails_closed_with_retryable_state() -> None:

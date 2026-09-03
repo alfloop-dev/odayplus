@@ -45,6 +45,11 @@ class RebalanceSubmitPayload(RebalanceActorPayload):
     reason: str
     acknowledgedClasses: list[ConstraintClass | str] | None = None
     acknowledgementReason: str | None = None
+    # The principal signing for the exposure and the management approval receipt
+    # that establishes their authority. Authority is read off the verified
+    # receipt, never off `actorRoleId`: a submitter who could name their own
+    # authorising role would be authorising themselves.
+    acknowledgementActorId: str | None = None
     approvalReceiptId: str | None = None
 
     @field_validator("reason")
@@ -72,6 +77,14 @@ class RebalanceScenario(BaseModel):
     unmodelledConstraintClasses: list[ConstraintClass]
     modelled_constraint_classes: list[ConstraintClass]
     unmodelled_constraint_classes: list[ConstraintClass]
+    # How the submit gate's policy classifies the unmodelled set. Required, not
+    # optional: a console that has to guess the split would have to hold its own
+    # copy of a versioned governance rule, and would eventually offer a
+    # signature the server refuses.
+    blockedConstraintClasses: list[ConstraintClass]
+    acknowledgeableConstraintClasses: list[ConstraintClass]
+    disclosurePolicyVersionId: str | None = None
+    disclosureUndeclared: bool = False
     isSystemRecommendation: bool = False
     selected: bool = False
     solverStatus: str | None = None
@@ -398,6 +411,7 @@ def create_network_rebalance_sub_router(
                 correlation_id=x_correlation_id,
                 acknowledged_classes=body.acknowledgedClasses,
                 acknowledgement_reason=body.acknowledgementReason,
+                acknowledgement_actor_id=body.acknowledgementActorId,
                 approval_receipt_id=body.approvalReceiptId,
             )
         except NetworkRebalanceNotFound as exc:
