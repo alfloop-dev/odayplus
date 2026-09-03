@@ -29,7 +29,7 @@
 
 ## 第一層：錯數字進人的決定
 
-第 1、2、4、5 項主要是「有界分數預設滿分」；第 3 項另含折舊未進估值路徑，第 6 項則是授權政策不一致。它們同列第一層是因為都能讓人收到看似可信、但保障範圍不明的結果，不是因為根因完全相同。
+第 1–5 項**都**含「有界分數預設滿分」——第 3 項的 `ValuationInput.quality_score` 也在內；第 3 項在滿分預設之外**另含**折舊未進估值路徑，第 6 項則是授權政策不一致。它們同列第一層是因為都能讓人收到看似可信、但保障範圍不明的結果，不是因為根因完全相同。
 
 ### 1. `Prediction.confidence` 預設 1.0
 
@@ -60,7 +60,7 @@
 
 `Poi` · `CompetitorStore` · `Listing` · `HeatZoneScore` · `DataSnapshot`
 
-「其餘」是相對於第 1 項的 `Prediction`。`shared/domain/models.py` 一共六個 canonical model 帶有這個形狀的預設值，前五個與 `Prediction` 帶的是 `confidence`，`DataSnapshot` 帶的是 `quality_score`；這裡把 `Prediction` 單獨列在第 1 項，只因為它離人的畫面最近，不是因為它可以有不同的答案。
+「其餘」是相對於第 1 項的 `Prediction`。`shared/domain/models.py` 一共六個 canonical model 帶有這個形狀的預設值：其中**五個**帶 `confidence`——`Poi`、`CompetitorStore`、`Listing`、`HeatZoneScore`，再加上第 1 項的 `Prediction`；只有 `DataSnapshot` 帶的是 `quality_score`。這裡把 `Prediction` 單獨列在第 1 項，只因為它離人的畫面最近，不是因為它可以有不同的答案。
 
 - **後果**：單獨看比前四項輕，但它們是**前四項的上游**。
 - **建議：五個必須一起決定，而且要與第 1 項同一個答案。** Listing 的 confidence 缺席代表什麼，Prediction 就該一樣。一個一個決定就是下一次詞彙分裂的起點——而詞彙分裂正是查出來的五個成因之一。
@@ -78,8 +78,8 @@
 
 ### 7. Prediction Drift 不存在（`ODP-FR-LH-005`）
 
-- **現況**：四種漂移裡 Data 與 Feature 有，Performance 剛補上基線比較，**Prediction 完全沒有**。
-- **後果**：三種漂移裡**最早示警**的那一種。輸入還沒漂、效能還沒掉，但預測分布已經歪了——那段時間完全盲，而模型還在照常產出被人採用的數字。
+- **現況**：`LH-005`／`LH-007` 要求的是**四個監測面向**——Data、Feature、Prediction、Performance。其中只有 Data、Feature、Prediction 是**分布漂移**；Performance 是絕對門檻不是漂移，它剛補上基線比較。三個分布漂移裡 Data 與 Feature 有，**Prediction 完全沒有**。
+- **後果**：三個分布漂移裡**最早示警**的那一種。輸入還沒漂、效能還沒掉，但預測分布已經歪了——那段時間完全盲，而模型還在照常產出被人採用的數字。
 - **建議：做。** Evidently 已經在用，但鎖定版本沒有 `PredictionDriftPreset`。應先定 prediction 欄位、輸出型別、reference cohort、model/version 邊界與快照保存，再用逐欄 `ValueDrift` 或只含 prediction 欄位的 `DataDriftPreset`；門檻走 `DecisionPolicy`。
 
 ### 8. `root_cause` 是沒有生產者的欄位（`ODP-FR-FCT-004`）
@@ -137,6 +137,6 @@
 |---:|---|---|
 | 1 | 第 3 項 AVM 估值（品質分數 + 折舊） | 本次 trace 明確識別、且直接面向買方的錯數字風險 |
 | 2 | 第 5 項 canonical model 其餘五個一起決定（連同第 1 項共六個） | 它們是 1、2、4 的上游；分開決定會製造下一次詞彙分裂 |
-| 3 | 第 7 項 Prediction Drift | 三種漂移裡唯一還全盲，而且成本最低 |
+| 3 | 第 7 項 Prediction Drift | 三個分布漂移裡唯一還全盲，而且成本最低 |
 
 第 11、12 項先做的不是猜「做不做」，而是指定半天完成資料源證據；證據回來後仍必須形成可追溯 disposition。租約與時序已經證明，**先有量測才有限制**，但「沒有量測」也不能自行消解原始 `MUST`。
