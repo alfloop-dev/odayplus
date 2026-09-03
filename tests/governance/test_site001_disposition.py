@@ -13,15 +13,11 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from pathlib import Path
-
-import pytest
 
 from delivery_toolchain.governance.check_requirement_members import (
     MANIFEST_PATH,
     REPO_ROOT,
     check,
-    is_ai_decider,
     resolve,
 )
 
