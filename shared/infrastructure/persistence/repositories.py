@@ -41,6 +41,7 @@ from modules.forecastops.domain.forecasting import (
 from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
 from modules.learninghub.domain import (
+    BacktestReceipt,
     DatasetSnapshot,
     DqTriageRecord,
     InferenceComparison,
@@ -652,6 +653,7 @@ class DurableLearningHubRepository:
     _VERSIONS = "learninghub.model_versions"
     _CARDS = "learninghub.model_cards"
     _VALIDATIONS = "learninghub.validation_runs"
+    _BACKTEST_RECEIPTS = "learninghub.backtest_receipts"
     _ALIASES = "learninghub.aliases"
     _RELEASES = "learninghub.release_decisions"
     _RELEASE_SAGAS = "learninghub.release_sagas"
@@ -738,6 +740,44 @@ class DurableLearningHubRepository:
 
     def get_validation_run(self, validation_run_id: str) -> ValidationRun | None:
         return self._store.get(self._VALIDATIONS, validation_run_id)
+
+    # -- backtest receipts ------------------------------------------------
+
+    def save_backtest_receipt(self, receipt: BacktestReceipt) -> BacktestReceipt:
+        self._store.put(
+            self._BACKTEST_RECEIPTS,
+            f"{receipt.model_name}:{receipt.model_version}",
+            receipt,
+            group_key=receipt.model_name,
+        )
+        self._store.put(
+            self._BACKTEST_RECEIPTS,
+            receipt.receipt_id,
+            receipt,
+            group_key=receipt.model_name,
+        )
+        return receipt
+
+    def get_backtest_receipt(self, model_name: str, version: str) -> BacktestReceipt | None:
+        return self._store.get(self._BACKTEST_RECEIPTS, f"{model_name}:{version}")
+
+    def get_backtest_receipt_by_id(self, receipt_id: str) -> BacktestReceipt | None:
+        return self._store.get(self._BACKTEST_RECEIPTS, receipt_id)
+
+    def list_backtest_receipts(
+        self, model_name: str | None = None
+    ) -> list[BacktestReceipt]:
+        if model_name is None:
+            records = self._store.list_all(self._BACKTEST_RECEIPTS)
+        else:
+            records = self._store.list_by_group(self._BACKTEST_RECEIPTS, model_name)
+        seen: set[str] = set()
+        unique: list[BacktestReceipt] = []
+        for r in records:
+            if r is not None and isinstance(r, BacktestReceipt) and r.receipt_id not in seen:
+                seen.add(r.receipt_id)
+                unique.append(r)
+        return unique
 
     # -- aliases ----------------------------------------------------------
 

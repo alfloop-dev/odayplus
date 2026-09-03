@@ -310,13 +310,13 @@ def test_durable_sqlite_app_entry_and_multi_rollback_lifecycle(tmp_path: Path) -
 
 
 def test_migration_0014_sql_and_alembic_structure() -> None:
-    migration_sql_path = Path("infra/db/migrations/000019_manual_corrections_audit_schema.sql")
+    migration_sql_path = Path("infra/db/migrations/000020_manual_corrections_audit_schema.sql")
     assert migration_sql_path.exists()
     sql_content = migration_sql_path.read_text(encoding="utf-8")
     assert "CREATE TABLE IF NOT EXISTS odp_runtime.durable_manual_corrections" in sql_content
     assert "idx_runtime_manual_corrections_entity" in sql_content
 
-    alembic_script_path = Path("infra/db/migrations/versions/0014_manual_corrections_audit_schema.py")
+    alembic_script_path = Path("infra/db/migrations/versions/0015_manual_corrections_audit_schema.py")
     assert alembic_script_path.exists()
     script_content = alembic_script_path.read_text(encoding="utf-8")
     assert 'revision: str = "0014"' in script_content

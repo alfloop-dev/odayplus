@@ -310,7 +310,8 @@ infra/db/migrations/versions/0010_model_performance_drift_policy.py,product_oper
 infra/db/migrations/versions/0011_learninghub_prediction_drift.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/db/migrations/versions/0012_netplan_constraint_disclosure.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/db/migrations/versions/0013_work_orders_root_cause_disposition.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
-infra/db/migrations/versions/0014_manual_corrections_audit_schema.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
+infra/db/migrations/versions/0014_learninghub_backtest_receipts.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
+infra/db/migrations/versions/0015_manual_corrections_audit_schema.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/k8s/data-platform/render.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/k8s/data-platform/runtime/deployment_runtime.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 infra/mlflow/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -473,6 +474,7 @@ modules/learninghub/application/__init__.py,product_system,product_required,true
 modules/learninghub/application/monitor.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/application/release.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/learninghub/domain/backtest.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/domain/dataset_snapshot.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/domain/feature_registry.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/domain/inference.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -483,6 +485,7 @@ modules/learninghub/infrastructure/mlflow_adapter.py,product_system,product_requ
 modules/learninghub/infrastructure/mlflow_cloud_run_auth.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/learninghub/runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/learninghub/tests/test_backtest_release_gate.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/learninghub/tests/test_learninghub_production_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/learninghub/tests/test_mlflow_adapter.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/learninghub/tests/test_mlflow_cloud_run_auth.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1005,6 +1008,7 @@ tests/models/test_sitescore_prediction_source.py,verification,verification_only,
 tests/models/test_sitescore_v3_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_assisted_listing_intake_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_assisted_listing_intake_release.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/ops/test_backtest_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_bluegreen_release.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_cloud_run_job_entrypoint.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_cloud_run_live_deployment.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
