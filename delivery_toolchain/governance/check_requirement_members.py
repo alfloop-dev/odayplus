@@ -111,11 +111,14 @@ def is_ai_decider(decider: str) -> bool:
     return False
 
 
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
     """Return why reference is not a valid formal decision ref, or None when valid.
 
     A formal decision reference must be one of:
-    1. A resolvable repo doc path, e.g. 'docs/.../file.md' or 'docs/.../file.md#anchor'
+    1. A resolvable repo doc path strictly within repo boundary, e.g. 'docs/.../file.md' or 'docs/.../file.md#anchor'
     2. A valid URL starting with 'http://', 'https://', or 'github://'
     3. A formal PR or RFC reference, e.g. 'PR #123' or 'RFC-123'
     """
@@ -137,6 +140,10 @@ def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
     raw_path, _, _ = ref.partition("#")
     raw_path = raw_path.strip()
 
+    # Reject attempts to escape repository boundary via absolute path or parent traversals
+    if raw_path.startswith("/") or raw_path.startswith("../") or "/../" in raw_path or raw_path == "..":
+        return f"formal_decision_ref {reference!r} must be repo-relative and cannot escape repository boundary"
+
     valid_doc_extensions = (".md", ".rst", ".json", ".txt", ".adoc")
     is_doc_path = (
         raw_path.startswith(("docs/", ".orchestrator/", "delivery_toolchain/"))
@@ -146,28 +153,36 @@ def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
     if not is_doc_path:
         return f"formal_decision_ref {reference!r} is not a valid document path, URL, or PR/RFC reference"
 
-    path = repo_root / raw_path
-    if not path.is_file():
-        if (REPO_ROOT / raw_path).is_file():
+    def _is_valid_repo_file(base: Path, rel_path: str) -> bool:
+        try:
+            target = (base / rel_path).resolve()
+            base_resolved = base.resolve()
+            target.relative_to(base_resolved)
+        except (ValueError, RuntimeError):
+            return False
+        return target.is_file()
+
+    if not _is_valid_repo_file(repo_root, raw_path):
+        if _is_valid_repo_file(REPO_ROOT, raw_path):
             return None
-        return f"formal_decision_ref target file does not exist: {raw_path!r}"
+        return f"formal_decision_ref target file does not exist within repository: {raw_path!r}"
 
     return None
 
 
 def check_expiry(expiry_val: Any, reference_date: date | None = None) -> tuple[bool, str | None]:
-    """Check if an ISO expiry date is valid and unexpired."""
+    """Check if an ISO expiry date is valid (strictly YYYY-MM-DD) and unexpired."""
     if reference_date is None:
         reference_date = datetime.now(UTC).date()
     if not expiry_val or not isinstance(expiry_val, str):
         return False, "missing or non-string expiry date"
     raw = expiry_val.strip()
-    if "T" in raw:
-        raw = raw.split("T")[0]
+    if not DATE_PATTERN.match(raw):
+        return False, f"invalid ISO expiry date format: {expiry_val!r} (expected YYYY-MM-DD)"
     try:
         exp_date = date.fromisoformat(raw)
     except (ValueError, TypeError):
-        return False, f"invalid ISO expiry date format: {expiry_val!r} (expected YYYY-MM-DD)"
+        return False, f"invalid ISO expiry date: {expiry_val!r} (expected valid calendar date in YYYY-MM-DD)"
     if exp_date < reference_date:
         return False, f"waiver expired on {exp_date.isoformat()} (reference date: {reference_date.isoformat()})"
     return True, None
@@ -312,6 +327,7 @@ def validate_disposition_schema(
 
     # Validate transition history if present
     history = disposition.get("history")
+    history_states: list[str] = []
     if history is not None:
         if not isinstance(history, list):
             failures.append(
@@ -331,6 +347,7 @@ def validate_disposition_schema(
                         Failure(requirement, member_name, f"history item #{idx} has invalid state {curr!r}")
                     )
                     continue
+                history_states.append(curr)
                 if prev is not None and not validate_transition(prev, curr):
                     failures.append(
                         Failure(
@@ -368,28 +385,44 @@ def validate_disposition_schema(
                 )
             )
 
+    # Check consistency between history and previous_state
+    if previous_state is not None and history_states:
+        if history_states[-1] == state:
+            expected_prev = history_states[-2] if len(history_states) >= 2 else None
+        else:
+            expected_prev = history_states[-1]
+
+        if expected_prev is not None and previous_state != expected_prev:
+            failures.append(
+                Failure(
+                    requirement,
+                    member_name,
+                    f"disposition 'previous_state' ({previous_state!r}) contradicts history predecessor state {expected_prev!r}",
+                )
+            )
+
     # State-specific statutory requirements
     if state == "DECIDED":
-        # Required 6 statutory fields
-        decision_ref = disposition.get("formal_decision_ref") or disposition.get("decision_ref")
+        # Required 6 statutory fields (strictly canonical named fields, no aliases)
+        decision_ref = disposition.get("formal_decision_ref")
         decider = disposition.get("decider")
-        scope = disposition.get("scope") or disposition.get("applicable_scope")
+        scope = disposition.get("scope")
         risk_owner = disposition.get("risk_owner")
-        expiry = disposition.get("expiry") or disposition.get("expiry_date")
+        expiry = disposition.get("expiry")
         reopen_trigger = disposition.get("reopen_trigger")
 
         missing: list[str] = []
-        if not decision_ref or not str(decision_ref).strip():
+        if not decision_ref or not isinstance(decision_ref, str) or not decision_ref.strip():
             missing.append("formal_decision_ref")
-        if not decider or not str(decider).strip():
+        if not decider or not isinstance(decider, str) or not decider.strip():
             missing.append("decider")
-        if not scope or not str(scope).strip():
+        if not scope or not isinstance(scope, str) or not scope.strip():
             missing.append("scope")
-        if not risk_owner or not str(risk_owner).strip():
+        if not risk_owner or not isinstance(risk_owner, str) or not risk_owner.strip():
             missing.append("risk_owner")
-        if not expiry or not str(expiry).strip():
+        if not expiry or not isinstance(expiry, str) or not expiry.strip():
             missing.append("expiry")
-        if not reopen_trigger or not str(reopen_trigger).strip():
+        if not reopen_trigger or not isinstance(reopen_trigger, str) or not reopen_trigger.strip():
             missing.append("reopen_trigger")
 
         if missing:
@@ -435,16 +468,16 @@ def validate_disposition_schema(
                 )
 
     elif state == "BLOCKED_BY_EVIDENCE":
-        evidence_needed = disposition.get("evidence_needed") or disposition.get("query_or_command") or disposition.get("evidence_query")
-        evidence_owner = disposition.get("evidence_owner") or disposition.get("owner") or disposition.get("assigned_to")
-        next_review_date = disposition.get("next_review_date") or disposition.get("review_date")
+        evidence_needed = disposition.get("evidence_needed")
+        evidence_owner = disposition.get("evidence_owner")
+        next_review_date = disposition.get("next_review_date")
 
         missing = []
-        if not evidence_needed or not str(evidence_needed).strip():
+        if not evidence_needed or not isinstance(evidence_needed, str) or not evidence_needed.strip():
             missing.append("evidence_needed")
-        if not evidence_owner or not str(evidence_owner).strip():
+        if not evidence_owner or not isinstance(evidence_owner, str) or not evidence_owner.strip():
             missing.append("evidence_owner")
-        if not next_review_date or not str(next_review_date).strip():
+        if not next_review_date or not isinstance(next_review_date, str) or not next_review_date.strip():
             missing.append("next_review_date")
         if missing:
             failures.append(
@@ -454,15 +487,29 @@ def validate_disposition_schema(
                     f"BLOCKED_BY_EVIDENCE disposition missing required field(s): {', '.join(missing)}",
                 )
             )
+        elif next_review_date:
+            valid_date, date_err = check_expiry(next_review_date, reference_date=date.min)
+            if not valid_date:
+                failures.append(
+                    Failure(
+                        requirement,
+                        member_name,
+                        f"invalid ISO next_review_date format: {next_review_date!r} (expected YYYY-MM-DD)",
+                    )
+                )
 
     elif state == "IMPLEMENTATION_READY":
-        assigned_to = disposition.get("assigned_to") or disposition.get("owner")
-        target_phase = disposition.get("target_phase") or disposition.get("acceptance_criteria")
+        assigned_to = disposition.get("assigned_to")
+        target_phase = disposition.get("target_phase")
+        acceptance_criteria = disposition.get("acceptance_criteria")
+
         missing = []
-        if not assigned_to or not str(assigned_to).strip():
+        if not assigned_to or not isinstance(assigned_to, str) or not assigned_to.strip():
             missing.append("assigned_to")
-        if not target_phase or not str(target_phase).strip():
-            missing.append("target_phase")
+        if (not target_phase or not isinstance(target_phase, str) or not target_phase.strip()) and (
+            not acceptance_criteria or not isinstance(acceptance_criteria, str) or not acceptance_criteria.strip()
+        ):
+            missing.append("target_phase or acceptance_criteria")
         if missing:
             failures.append(
                 Failure(
@@ -474,13 +521,15 @@ def validate_disposition_schema(
 
     elif state == "OPEN":
         rationale = disposition.get("rationale") or disposition.get("note")
-        assigned_to = disposition.get("assigned_to") or disposition.get("owner")
-        next_review_date = disposition.get("next_review_date") or disposition.get("review_date")
+        assigned_to = disposition.get("assigned_to")
+        next_review_date = disposition.get("next_review_date")
 
         missing_open: list[str] = []
-        if not rationale or not str(rationale).strip():
+        if not rationale or not isinstance(rationale, str) or not rationale.strip():
             missing_open.append("rationale")
-        if (not assigned_to or not str(assigned_to).strip()) and (not next_review_date or not str(next_review_date).strip()):
+        if (not assigned_to or not isinstance(assigned_to, str) or not assigned_to.strip()) and (
+            not next_review_date or not isinstance(next_review_date, str) or not next_review_date.strip()
+        ):
             missing_open.append("assigned_to or next_review_date")
 
         if missing_open:
@@ -491,6 +540,16 @@ def validate_disposition_schema(
                     f"OPEN disposition missing required field(s): {', '.join(missing_open)}",
                 )
             )
+        elif next_review_date:
+            valid_date, date_err = check_expiry(next_review_date, reference_date=date.min)
+            if not valid_date:
+                failures.append(
+                    Failure(
+                        requirement,
+                        member_name,
+                        f"invalid ISO next_review_date format: {next_review_date!r} (expected YYYY-MM-DD)",
+                    )
+                )
 
     return failures
 

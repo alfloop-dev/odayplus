@@ -461,6 +461,7 @@ class TestDispositionSchemaAndTransitions:
                                     "risk_owner": "Platform Lead",
                                     "expiry": "2027-01-01",
                                     "reopen_trigger": "On review",
+                                    "decision_date": "2026-09-03",
                                 },
                             }
                         ],
@@ -470,6 +471,113 @@ class TestDispositionSchemaAndTransitions:
         )
         failures3, _ = check(root, manifest3, reference_date=date(2026, 9, 3))
         assert any("illegal disposition transition: IMPLEMENTATION_READY -> DECIDED" in f.problem for f in failures3)
+
+    def test_history_tip_and_previous_state_disagreement_is_rejected(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        # History says OPEN -> DECIDED, but previous_state claims BLOCKED_BY_EVIDENCE
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "disagreeing history and previous_state",
+                                "disposition": {
+                                    "state": "DECIDED",
+                                    "previous_state": "BLOCKED_BY_EVIDENCE",
+                                    "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+                                    "decider": "Human/Ops",
+                                    "scope": "Global",
+                                    "risk_owner": "Platform Lead",
+                                    "expiry": "2027-01-01",
+                                    "reopen_trigger": "On review",
+                                    "history": [
+                                        {"state": "OPEN", "date": "2026-09-01"},
+                                        {"state": "DECIDED", "date": "2026-09-02"},
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("contradicts history" in f.problem for f in failures)
+
+        # History ends with OPEN, current state is DECIDED, but previous_state claims BLOCKED_BY_EVIDENCE
+        manifest2 = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "disagreeing history tip",
+                                "disposition": {
+                                    "state": "DECIDED",
+                                    "previous_state": "BLOCKED_BY_EVIDENCE",
+                                    "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+                                    "decider": "Human/Ops",
+                                    "scope": "Global",
+                                    "risk_owner": "Platform Lead",
+                                    "expiry": "2027-01-01",
+                                    "reopen_trigger": "On review",
+                                    "history": [
+                                        {"state": "OPEN", "date": "2026-09-01"},
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures2, _ = check(root, manifest2, reference_date=date(2026, 9, 3))
+        assert any("contradicts history" in f.problem for f in failures2)
+
+        # Consistent history and previous_state: OPEN -> BLOCKED_BY_EVIDENCE -> DECIDED
+        manifest3 = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "consistent history and previous_state",
+                                "disposition": {
+                                    "state": "DECIDED",
+                                    "previous_state": "BLOCKED_BY_EVIDENCE",
+                                    "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+                                    "decider": "Human/Ops",
+                                    "scope": "Global",
+                                    "risk_owner": "Platform Lead",
+                                    "expiry": "2027-01-01",
+                                    "reopen_trigger": "On review",
+                                    "history": [
+                                        {"state": "OPEN", "date": "2026-09-01"},
+                                        {"state": "BLOCKED_BY_EVIDENCE", "date": "2026-09-02"},
+                                        {"state": "DECIDED", "date": "2026-09-03"},
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures3, _ = check(root, manifest3, reference_date=date(2026, 9, 3))
+        assert failures3 == []
 
 
 class TestDecidedDispositionRequirements:
@@ -499,6 +607,87 @@ class TestDecidedDispositionRequirements:
         )
         failures, _ = check(root, manifest)
         assert any("missing required statutory field(s)" in f.problem for f in failures)
+
+    def test_decided_with_alias_fields_rejected_missing_canonical(self, tmp_path: Path) -> None:
+        """DECIDED with legacy aliases (decision_ref, applicable_scope, expiry_date)
+        must fail because canonical fields are missing."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "using alias fields instead of canonical fields",
+                                "disposition": {
+                                    "state": "DECIDED",
+                                    "decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+                                    "decider": "Human/Ops",
+                                    "applicable_scope": "Global",
+                                    "risk_owner": "Platform Lead",
+                                    "expiry_date": "2027-01-01",
+                                    "reopen_trigger": "On review",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any(
+            "DECIDED disposition missing required statutory field(s)" in f.problem
+            and "formal_decision_ref" in f.problem
+            and "scope" in f.problem
+            and "expiry" in f.problem
+            for f in failures
+        )
+
+    def test_decided_with_outside_repo_reference_fails(self, tmp_path: Path) -> None:
+        """formal_decision_ref targeting files outside the repo must fail to enforce audit boundary."""
+        root = _repo(tmp_path)
+        for outside_ref in (
+            "../outside_file.md",
+            "../../etc/passwd",
+            "/etc/passwd",
+            "docs/../../outside.md",
+            "..",
+        ):
+            manifest = _manifest(
+                tmp_path,
+                {
+                    "requirements": [
+                        {
+                            "id": "R-1",
+                            "members": [
+                                {
+                                    "name": "A",
+                                    "status": "absent",
+                                    "note": "outside repo waiver",
+                                    "disposition": {
+                                        "state": "DECIDED",
+                                        "formal_decision_ref": outside_ref,
+                                        "decider": "Human/Ops",
+                                        "scope": "Global",
+                                        "risk_owner": "Platform Lead",
+                                        "expiry": "2027-01-01",
+                                        "reopen_trigger": "On review",
+                                    },
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+            failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+            assert any(
+                "invalid formal_decision_ref" in f.problem or "cannot escape repository boundary" in f.problem
+                for f in failures
+            ), f"Failed to reject outside repo ref {outside_ref!r}"
 
     def test_decided_with_invalid_formal_decision_ref_fails(self, tmp_path: Path) -> None:
         root = _repo(tmp_path)
@@ -757,6 +946,50 @@ class TestWaiverExpiryGate:
         )
         failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
         assert failures == []
+
+    def test_expiry_with_invalid_date_format_fails(self, tmp_path: Path) -> None:
+        """Expiry must strictly conform to ISO YYYY-MM-DD."""
+        root = _repo(tmp_path)
+        for bad_expiry in (
+            "2027-01-01Tgarbage",
+            "2027/01/01",
+            "2027-1-1",
+            "2027-02-30",
+            "tomorrow",
+            "",
+            "2027-13-01",
+        ):
+            manifest = _manifest(
+                tmp_path,
+                {
+                    "requirements": [
+                        {
+                            "id": "R-1",
+                            "members": [
+                                {
+                                    "name": "A",
+                                    "status": "absent",
+                                    "note": "bad date waiver",
+                                    "disposition": {
+                                        "state": "DECIDED",
+                                        "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+                                        "decider": "Human/Ops",
+                                        "scope": "Global",
+                                        "risk_owner": "Platform Lead",
+                                        "expiry": bad_expiry,
+                                        "reopen_trigger": "On quarterly audit",
+                                    },
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+            failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+            assert any(
+                "invalid ISO expiry date" in f.problem or "missing required statutory field" in f.problem
+                for f in failures
+            ), f"Failed to reject invalid expiry: {bad_expiry!r}"
 
 
 class TestOpenDispositionRequirements:

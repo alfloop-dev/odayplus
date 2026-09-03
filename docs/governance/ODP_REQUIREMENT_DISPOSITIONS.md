@@ -30,18 +30,18 @@ stateDiagram-v2
     OPEN --> BLOCKED_BY_EVIDENCE: 等待資料源 / 環境證據
     OPEN --> DECIDED: 正式裁決 (Waiver / Amendment)
     OPEN --> IMPLEMENTATION_READY: 驗收標準與 Owner 就緒
-    
+
     BLOCKED_BY_EVIDENCE --> OPEN: 證據已取得或解除阻塞
     BLOCKED_BY_EVIDENCE --> DECIDED: 經評估決定豁免/修訂
     BLOCKED_BY_EVIDENCE --> IMPLEMENTATION_READY: 證據齊備進入實作排程
-    
+
     DECIDED --> IMPLEMENTATION_READY: 觸發重啟條件 (Reopen Trigger)
     DECIDED --> OPEN: 豁免過期或政策重評
-    
+
     IMPLEMENTATION_READY --> VERIFIED: 程式實作完成且通過測試
     IMPLEMENTATION_READY --> BLOCKED_BY_EVIDENCE: 實作中遭遇證據阻塞
     IMPLEMENTATION_READY --> OPEN: 排程重排或需求變更
-    
+
     VERIFIED --> OPEN: 驗證回歸或新版本重啟
     VERIFIED --> BLOCKED_BY_EVIDENCE: 生產路徑證據失效
 ```
