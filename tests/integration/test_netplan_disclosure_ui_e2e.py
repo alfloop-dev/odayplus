@@ -11,7 +11,6 @@ from fastapi.testclient import TestClient
 from apps.api.app.routes.operator_modules.network_rebalance import (
     create_network_rebalance_sub_router,
 )
-
 from modules.netplan import (
     ActionOption,
     ConstraintClass,
@@ -776,6 +775,7 @@ def _undisclosed_rebalance_service() -> NetworkRebalanceService:
         netplan_policy_repository=policy_repo,
         tenant_id=TENANT_ID,
     )
+
     def _actor(step: str) -> dict[str, str]:
         return {
             "actor_role_id": "expansionManager",
@@ -1121,6 +1121,7 @@ def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared()
     assert refused.status_code == 422, refused.text
     assert "neither modelled nor unmodelled" in refused.json()["detail"]
     assert rebalance_service._state["governApprovals"] == []
-    assert client.get("/api/v1/operator/network-rebalance").json()["stores"][0][
-        "status"
-    ] == "netplanreview"
+    assert (
+        client.get("/api/v1/operator/network-rebalance").json()["stores"][0]["status"]
+        == "netplanreview"
+    )

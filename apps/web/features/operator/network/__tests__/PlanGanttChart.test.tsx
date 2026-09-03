@@ -848,5 +848,119 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     fireEvent.click(primaryButton);
     expect(submitReviewMock).not.toHaveBeenCalled();
   });
-});
+  it("16. RebalancePanel stays closed on an empty disclosure even without the server flag", () => {
+    // The server now sends disclosureUndeclared for this payload, but the
+    // console must not depend on the flag arriving to stay shut: an older API,
+    // a dropped field or a surface that never classified would otherwise turn
+    // a scenario that named no class at all into an enabled submit button.
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-NOFLAG",
+        storeId: "STORE-REB-NOFLAG",
+        storeName: "台南西門店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未申報揭露（無伺服器旗標）",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-NOFLAG",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-NOFLAG",
+            name: "方案 A: 未申報建模範圍",
+            roi: "9.0%",
+            inv: "400K",
+            payback: "3.0 年",
+            risk: "高",
+            time: "2026Q4",
+            modelledConstraintClasses: [],
+            unmodelledConstraintClasses: [],
+            modelled_constraint_classes: [],
+            unmodelled_constraint_classes: [],
+            blockedConstraintClasses: [],
+            acknowledgeableConstraintClasses: [],
+            score: 40.0,
+          },
+        ],
+      },
+    ];
 
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent(
+      "未申報硬限制建模範圍"
+    );
+    expect(
+      screen.getByTestId("scenario-blocked-badge-SCENARIO-NOFLAG")
+    ).toHaveTextContent("未申報建模範圍");
+    expect(
+      screen.queryByTestId("scenario-fully-modelled-badge-SCENARIO-NOFLAG")
+    ).toBeNull();
+    expect(screen.queryByTestId("rebalance-acknowledgement-section")).toBeNull();
+
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("17. PlanGanttChart shows an undeclared disclosure rather than hiding it", () => {
+    // The section used to be rendered only when at least one class was named,
+    // so a plan that disclosed nothing showed no disclosure panel at all --
+    // indistinguishable, on screen, from a plan with nothing to disclose.
+    render(
+      <PlanGanttChart
+        scenarioId="SCENARIO-GANTT-UNDECLARED"
+        scenarioName="NetPlan 未申報揭露案"
+        modelledConstraintClasses={[]}
+        unmodelledConstraintClasses={[]}
+      />
+    );
+
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toBeInTheDocument();
+    expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "true");
+    expect(screen.getByTestId("gantt-disclosure-undeclared")).toHaveTextContent(
+      "未申報硬限制建模範圍"
+    );
+
+    // The sentence that turned a missing disclosure into a verified one.
+    expect(disclosure).not.toHaveTextContent("全部已建模");
+    expect(screen.getByTestId("gantt-unmodelled-undeclared")).toHaveTextContent(
+      "未申報 (無法判定)"
+    );
+    expect(screen.getByTestId("gantt-modelled-undeclared")).toHaveTextContent(
+      "未申報 (無法判定)"
+    );
+  });
+
+  it("18. PlanGanttChart still reads a fully modelled plan as fully modelled", () => {
+    // The counterpart to 17: "no unmodelled classes" is a real result when the
+    // plan did name what it bound, and must not be relabelled as undeclared.
+    render(
+      <PlanGanttChart
+        scenarioId="SCENARIO-GANTT-COMPLETE"
+        scenarioName="NetPlan 全數建模案"
+        modelledConstraintClasses={["CAPITAL", "LEASE", "SEQUENCING"]}
+        unmodelledConstraintClasses={[]}
+      />
+    );
+
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "false");
+    expect(screen.queryByTestId("gantt-disclosure-undeclared")).toBeNull();
+    expect(screen.getByTestId("gantt-unmodelled-classes")).toHaveTextContent(
+      "無未建模限制 (全部已建模)"
+    );
+  });
+});
