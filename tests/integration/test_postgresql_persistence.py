@@ -461,6 +461,12 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
         with pytest.raises(TenantScopeRequiredError):
             bundle.transaction_repository.list_transactions()
     finally:
+        # The row-by-row teardown this had was there to leave the shared product
+        # database as it was found. On a database of this test's own it is not
+        # only redundant, it cannot succeed: onboarding a tenant now seeds its
+        # forecast alert policies, and those rows reference the tenant, so
+        # deleting the tenant is refused -- correctly, since a decision cites
+        # the policy version that produced it.
         bundle.engine.close()
 
 

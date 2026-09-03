@@ -124,6 +124,19 @@ def _require_tenant_scope(engine: Any, tenant_id: str | None) -> str | None:
     return normalized or None
 
 
+def _nullable_tenant_id(tenant_id: str | None) -> str | None:
+    """Bind a blank tenant id as SQL NULL rather than the empty string.
+
+    ``AddressLocation.tenant_id`` defaults to ``""`` for records that predate
+    tenant scoping. SQLite stores that happily, but PostgreSQL's
+    ``tenant_id UUID`` column rejects ``''`` with InvalidTextRepresentation.
+    NULL is the accurate representation of "no tenant" on both backends, and
+    ``_row_to_address`` already reads NULL back as ``""``.
+    """
+    normalized = str(tenant_id or "").strip()
+    return normalized or None
+
+
 def _append_in_filter(
     clauses: list[str],
     params: list[Any],
@@ -2007,7 +2020,7 @@ class DurableAddressLocationRepository:
                 address.h3_res_9,
                 address.h3_res_10,
                 bool(address.manual_override_flag),
-                address.tenant_id,
+                _nullable_tenant_id(address.tenant_id),
                 address.revision,
             ),
         )
