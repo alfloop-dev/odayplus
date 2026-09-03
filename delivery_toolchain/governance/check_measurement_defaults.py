@@ -102,10 +102,10 @@ import ast
 import json
 import re
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 EXEMPTIONS_PATH = Path(__file__).resolve().parent / "measurement_default_exemptions.json"
@@ -799,6 +799,18 @@ def expired_exemptions(exemptions: dict[str, Exemption], today: date) -> list[Ex
     )
 
 
+def stale_exemptions(exemptions: dict[str, Exemption], violations: list[Violation]) -> list[str]:
+    """Exemptions whose field no longer violates.
+
+    This is the half of the contract that makes "remove the entry in the same
+    commit as the fix" enforceable rather than advisory: a fix that leaves its
+    entry behind fails the check, so the file cannot drift into a list of debts
+    that were quietly paid.
+    """
+    live = {violation.key for violation in violations}
+    return sorted(set(exemptions) - live)
+
+
 # --------------------------------------------------------------------------
 # Command line
 # --------------------------------------------------------------------------
@@ -826,7 +838,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--write-exemptions",
         action="store_true",
-        help="record every current violation as an exemption stub for review",
+        help=(
+            "rewrite the ledger from the current violations, keeping existing "
+            "owners, reasons, dates, notes and entry order"
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -836,12 +851,31 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.write_exemptions:
         default_expiry = date.fromordinal(today.toordinal() + DEFAULT_EXEMPTION_DAYS)
+        # Every ``_``-prefixed key is prose an owner wrote about this ledger, and
+        # the entry order is itself an argument -- the file groups a field's
+        # layers by remediation batch rather than by layer, because they have to
+        # move together. Regenerating must preserve both, or the flag that exists
+        # to make the debt visible becomes the thing that scrambles it.
+        notes: dict[str, object] = {}
+        existing_order: list[str] = []
+        if EXEMPTIONS_PATH.exists():
+            existing = json.loads(EXEMPTIONS_PATH.read_text(encoding="utf-8"))
+            notes = {k: v for k, v in existing.items() if k.startswith("_")}
+            existing_order = [e.get("field", "") for e in existing.get("exemptions", [])]
+        by_key = {v.key: v for v in violations}
+        ordered = [by_key[key] for key in existing_order if key in by_key]
+        ordered += [v for v in violations if v.key not in set(existing_order)]
         payload = {
-            "_comment": (
-                "Bounded scores that default to perfect, predating "
-                "check_measurement_defaults.py. Each needs an owner, a reason and an "
-                "expiry date. Removing an entry means the field no longer assumes "
-                "perfect data."
+            **(
+                notes
+                or {
+                    "_comment": (
+                        "Bounded scores that default to perfect, predating "
+                        "check_measurement_defaults.py. Each needs an owner, a reason "
+                        "and an expiry date. Removing an entry means the field no "
+                        "longer assumes perfect data."
+                    )
+                }
             ),
             "exemptions": [
                 {
@@ -855,7 +889,7 @@ def main(argv: list[str] | None = None) -> int:
                         exemptions.get(v.key), "expires", default_expiry
                     ).isoformat(),
                 }
-                for v in violations
+                for v in ordered
             ],
         }
         EXEMPTIONS_PATH.write_text(
@@ -909,8 +943,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
 
-    live = {v.key for v in violations}
-    stale = sorted(set(exemptions) - live)
+    stale = stale_exemptions(exemptions, violations)
     if stale:
         failed = True
         print(
