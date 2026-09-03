@@ -5,7 +5,7 @@
 - **日期**：2026-09-03
 - **任務負責人**：Claude2
 - **審查人**：Antigravity4
-- **基準代碼**：`origin/dev` @ `4f9ca63e`
+- **基準代碼**：`origin/dev` @ `9f53418d`（初版查證基準為 `4f9ca63e`；審查退回後併入 `dev`，見 §6.1）
 - **判定狀態**：`BLOCKED_BY_EVIDENCE`（查無權威裁決，阻擋至 Human/Ops；**未代簽任何 disposition**）
 - **關聯依據**：
   - `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` §第 19 項（merge queue 批次）
@@ -136,6 +136,25 @@ runbook 對 `grouping_strategy` 的理由寫道：本 fleet 吞吐約 1.5 merges
 
 現行 manifest 在變更後**未經修改即通過**：這道閘拒絕的是本來就不該合法的形狀，不是 `NET-002` 那兩筆帶有工程裁決紀錄的處置。
 
+### 6.1 審查退回後的修補：閘把誠實的形狀擋掉了
+
+首次送審遭 `Antigravity4` 退回，理由是本次的 gate 變更誤判了 `dev` 上 PR #1160 併入的兩筆處置——`ODP-FR-SITE-001` 的 `BRAND_TRANSFER` 與 `FORMAT_CONVERSION`。base advance 併入 `9f53418d` 後可完整重現：
+
+```
+ODP-FR-SITE-001 member 'BRAND_TRANSFER': disposition state 'BLOCKED_BY_EVIDENCE'
+  carrying decision fields (reopen_trigger) is missing required statutory field(s):
+  formal_decision_ref, decider, decision_date, scope, risk_owner, expiry
+```
+
+那兩筆正是本文件 §4／§5 所主張的形狀：查無權威裁決 → `BLOCKED_BY_EVIDENCE` + 未簽署移交單，各自寫明「哪一份資料合約到位就解除阻塞」（`reopen_trigger`）。`reopen_trigger` 當時在法定七欄之列，因此 §3.5 的 waiver-parking 閘把它讀成「有人裁決過」，轉而索討裁決才有的六個欄位。**唯一的通過方式是把 `decider` 與 `expiry` 編出來**——本任務拒絕做、且 §3.2 明文禁止的那件事。閘因此把它自己所鼓勵的誠實形狀推向假裁決，這是與第 19 項同形的失效，只是方向相反。
+
+修補分兩層：
+
+- **裁決訊號集合收窄為 `WAIVER_SIGNAL_FIELDS`**（法定七項扣除 `reopen_trigger`）。六項描述「已經做成的裁決」，沒有裁決就寫不出來；`reopen_trigger` 描述未來的觀測，移交需要它的理由與豁免相同。非 `DECIDED` 狀態只要出現任一真正訊號欄位（例如 `decider`），仍須補齊全部七項；`DECIDED` 亦仍須含 `reopen_trigger`——這兩條各有測試守住，收窄的是觸發條件，不是閘本身。
+- **移交必須有可開啟的封包**（`ODP_REQUIREMENT_DISPOSITIONS.md` §3.7）。單純豁免 `BLOCKED_BY_EVIDENCE` 會開出新的洞：移交是 AI 面對不得自簽之 MUST 的唯一合法出口，「已提報 Human/Ops」一句就能讓成員無限期停在該狀態，而沒有人被記錄為收件者——比「已裁決不做」更廉價。現在 note／rationale 宣稱已移交者必須具備可解析的 `formal_handback_ref`，檢驗標準與 `formal_decision_ref` 相同。偵測樣式同樣收窄：`LEASE` 那句「待 Batch 0 確認資料源後，決定轉為實作或正式申請 Waiver」是**還欠什麼**，不是**已經做了什麼**，必須繼續通過。
+
+`dev` 現行 manifest 在修補後未經修改即通過；把收窄改回去，`test_the_repository_manifest_passes` 立刻重現上述兩筆失敗（已以變異驗證確認新增測試皆為承重測試，非裝飾）。
+
 ### 刻意未納入的一項
 
 `BLOCKED_BY_EVIDENCE` 與 `OPEN` 的 `next_review_date` 逾期**仍不會使 CI 失敗**（僅檢查格式）。現行三筆 `BLOCKED_BY_EVIDENCE` 的 `next_review_date` 均為 `2026-10-01`；把逾期改為失敗會在該日讓所有 product PR 同時轉紅，屬於獨立的排程決定，不在本任務授權範圍內。本段記錄此缺口，供後續任務評估。
@@ -156,18 +175,32 @@ merge queue 批次**不是** `ODP-SA-06` 的集合型需求成員。manifest 的
 
 ```bash
 # 全部在 python 3.12 下執行（cp314 無 pgserver wheel）
-uv run --frozen --python 3.12 pytest -m "not requires_live_env" delivery_toolchain
-# 178 passed（CI orchestrator job 對 delivery_toolchain 的同一組測試）
-# 其中 test_check_requirement_members.py 41 -> 55 passed
-# 新增 14 筆：10 筆負向（新閘必須擋下的形狀）、2 筆正向（描述缺席的 note 必須繼續通過）、2 筆 helper
+# 基準：base advance 併入 origin/dev @ 9f53418d 之後
+
+uv run --frozen --python 3.12 pytest -m "not requires_live_env" delivery_toolchain tests/governance
+# 251 passed
+# 其中 test_check_requirement_members.py 41 -> 67 passed
+# 首輪新增 14 筆（note-as-amendment 與 waiver-parking 兩道閘）
+# 本輪新增 12 筆：6 筆守住移交不被當成半份豁免、6 筆守住移交必須有可開啟的封包
 
 uv run --frozen --python 3.12 ruff check delivery_toolchain scripts
 # All checks passed!
 
-uv run --frozen --python 3.12 python delivery_toolchain/governance/check_requirement_members.py --show-gaps
+uv run --frozen --python 3.12 python delivery_toolchain/governance/check_requirement_members.py
 # Requirement member checks passed: 6 set-valued requirements, 32 members
 # (24 satisfied, 8 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=3,
 #  DECIDED=1, IMPLEMENTATION_READY=1, OPEN=3, VERIFIED=24)
+```
+
+變異驗證（確認新增測試會失敗，而非恆綠）：
+
+```bash
+# 1) 把 reopen_trigger 放回裁決訊號集合
+#    -> TestAHandbackIsNotAnIncompleteWaiver::test_a_handback_carrying_a_reopen_trigger_passes FAILED
+#    -> TestTheCheckedInManifestHolds::test_the_repository_manifest_passes FAILED
+#       （訊息即審查退回時所述的 BRAND_TRANSFER / FORMAT_CONVERSION 兩筆）
+# 2) 停用 handback 閘（ref 檢驗與 claim 比對各短路一次）
+#    -> TestAHandbackNeedsSomethingToOpen 之 5 筆全數 FAILED
 ```
 
 ---
