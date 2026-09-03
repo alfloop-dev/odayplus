@@ -38,6 +38,30 @@ def test_model_ready_dbt_baseline_views_are_versioned() -> None:
         assert "is_scoring_eligible" in sql
 
 
+def test_model_ready_dbt_views_confidence_nullability() -> None:
+    model_dir = Path("pipelines/dbt/models/model_ready")
+
+    candidate_sql = (model_dir / "candidate_site_view.sql").read_text(encoding="utf-8")
+    assert (
+        "then least(listings.confidence, address_locations.geocode_confidence)"
+        in candidate_sql
+    )
+    assert "else null" in candidate_sql
+    assert "as confidence" in candidate_sql
+    assert "coalesce(listings.confidence, 1.0)" not in candidate_sql
+    assert "coalesce(address_locations.geocode_confidence, 1.0)" not in candidate_sql
+
+    geo_sql = (model_dir / "geo_grid_view.sql").read_text(encoding="utf-8")
+    assert (
+        "then least(poi_counts.poi_confidence, competitor_counts.competitor_confidence)"
+        in geo_sql
+    )
+    assert "else null" in geo_sql
+    assert "as confidence" in geo_sql
+    assert "coalesce(poi_counts.poi_confidence, 1.0)" not in geo_sql
+    assert "coalesce(competitor_counts.competitor_confidence, 1.0)" not in geo_sql
+
+
 def test_dataset_snapshot_indexes_view_versions_sources_and_entity_count() -> None:
     snapshot = build_dataset_snapshot(
         [

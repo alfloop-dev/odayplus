@@ -6398,6 +6398,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         expired_claim = {
             "claimed_by": "Codex",
             "generation": 7,
+            "run_id": "helper-run-1",
             "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
         }
         dispatched_task = {
@@ -6437,8 +6438,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             "reviewer": "Gemini",
             "depends_on": [],
         }
-        if current_claim is not None:
-            task["helper_execution_lease"] = current_claim
+        task["helper_execution_lease"] = current_claim if current_claim is not None else expired_claim
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -6480,11 +6480,121 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
             mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
             mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
             mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             supervisor.poll_workers(config, state)
         return terminate_worker_pid
+
+    def test_helper_claim_binds_to_launched_run_without_replacing_roles(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "HELPER-BIND-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "original_owner": "Claude",
+                "generation": 11,
+                "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            },
+        }
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="helper",
+            task_id=task["id"],
+            reason=supervisor.REASON_HELPER_CLAIM,
+            metadata={"task": deepcopy(task)},
+        )
+        status = {"tasks": [deepcopy(task)]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+        ):
+            self.assertTrue(supervisor.bind_helper_execution_claim(config, request, "helper-run-11"))
+
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["run_id"], "helper-run-11")
+        self.assertEqual(request.metadata["task"]["helper_execution_lease"]["run_id"], "helper-run-11")
+        self.assertEqual(status["tasks"][0]["owner"], "Claude")
+        self.assertEqual(status["tasks"][0]["reviewer"], "Gemini")
+        commit.assert_called_once()
+
+    def test_helper_run_mismatch_is_reclaimed_without_grace_deferral(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        current_claim = {
+            "claimed_by": "Codex",
+            "generation": 7,
+            "run_id": "replacement-run-1",
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        config, state, status = self._helper_lease_fixture(current_claim=current_claim)
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        worker = state["workers"]["helper-run-1"]
+        self.assertEqual(worker["status"], "superseded")
+        self.assertNotIn("supersede_deferred_since", worker)
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["run_id"], "replacement-run-1")
+        terminate_worker_pid.assert_called_once_with(4321)
+
+    def test_terminal_helper_worker_releases_its_bound_claim(self) -> None:
+        config, state, status = self._helper_lease_fixture()
+        state["workers"]["helper-run-1"]["status"] = "completed"
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        self.assertNotIn("helper_execution_lease", status["tasks"][0])
+        self.assertEqual(state["workers"]["helper-run-1"]["status"], "completed")
+        terminate_worker_pid.assert_not_called()
+
+    def test_helper_claim_renews_across_two_hours_of_fresh_heartbeats(self) -> None:
+        config, state, status = self._helper_lease_fixture()
+        lifecycle = supervisor.worker_lifecycle
+        worker = state["workers"]["helper-run-1"]
+        start = datetime.now(UTC).replace(microsecond=0)
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            lifecycle._sync_supervisor_scope()
+            task_map = supervisor.task_index_from_status(config, status)
+            for offset_minutes in range(0, 121, 3):
+                now = start + timedelta(minutes=offset_minutes)
+                worker["last_heartbeat_at"] = now.isoformat().replace("+00:00", "Z")
+                worker["lease_expires_at"] = (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z")
+                status["tasks"][0]["helper_execution_lease"]["lease_expires_at"] = (
+                    now - timedelta(seconds=1)
+                ).isoformat().replace("+00:00", "Z")
+                disposition, changed = lifecycle._reconcile_helper_claim(
+                    config,
+                    worker,
+                    task_map,
+                    now=now,
+                    alive=True,
+                    runner_reports_failure=False,
+                )
+                self.assertEqual(disposition, "valid")
+                self.assertTrue(changed)
+
+        final_expiry = datetime.fromisoformat(
+            status["tasks"][0]["helper_execution_lease"]["lease_expires_at"].replace("Z", "+00:00")
+        )
+        self.assertGreater(final_expiry, start + timedelta(hours=2))
 
     def test_expired_helper_claim_does_not_kill_live_worker_with_fresh_heartbeat(self) -> None:
         config, state, status = self._helper_lease_fixture()
@@ -6494,9 +6604,16 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         worker = state["workers"]["helper-run-1"]
         self.assertEqual(worker["status"], "running")
         self.assertNotIn("supersede_deferred_since", worker)
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["run_id"], "helper-run-1")
+        self.assertGreater(
+            datetime.fromisoformat(
+                status["tasks"][0]["helper_execution_lease"]["lease_expires_at"].replace("Z", "+00:00")
+            ),
+            datetime.now(UTC) + timedelta(minutes=20),
+        )
         terminate_worker_pid.assert_not_called()
 
-    def test_expired_helper_claim_accepts_fresh_process_activity_without_heartbeat(self) -> None:
+    def test_expired_helper_claim_with_stale_heartbeat_is_superseded(self) -> None:
         config, state, status = self._helper_lease_fixture(
             fresh_heartbeat=False,
             fresh_process_activity=True,
@@ -6504,14 +6621,15 @@ class PollWorkersRecoveryTests(unittest.TestCase):
 
         terminate_worker_pid = self._poll_helper_worker(config, state, status)
 
-        self.assertEqual(state["workers"]["helper-run-1"]["status"], "running")
-        terminate_worker_pid.assert_not_called()
+        self.assertEqual(state["workers"]["helper-run-1"]["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(4321)
 
     def test_expired_same_generation_claim_retained_on_task_does_not_kill_live_worker(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)
         current_claim = {
             "claimed_by": "Codex",
             "generation": 7,
+            "run_id": "helper-run-1",
             "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
         }
         config, state, status = self._helper_lease_fixture(current_claim=current_claim)
@@ -10416,6 +10534,303 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
             self.assertTrue(
                 supervisor.worker_can_be_preempted(config, worker, task_map, now=now_dt)
             )
+
+    def test_p0_in_progress_owner_worker_not_preempted_by_p1_p2_p3_review_or_finalize(self) -> None:
+        """P0 in-progress owner worker cannot be preempted by lower priority (P1/P2/P3) review or finalize tasks."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        now_iso = supervisor.utc_now()
+        worker = {
+            "run_id": "run-p0-owner-1",
+            "task_id": "P0-TASK-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p0-1",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+        state = {
+            "queue": {"events": {"evt-p0-1": {"status": "started", "run_id": "run-p0-owner-1"}}},
+            "workers": {"run-p0-owner-1": worker},
+        }
+
+        for lower_priority in ("P1", "P2", "P3"):
+            # Case A: Lower-priority review candidate
+            task_map_review = {
+                "P0-TASK-001": {
+                    "id": "P0-TASK-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "priority": "P0",
+                    "depends_on": [],
+                },
+                "REV-LOWER-001": {
+                    "id": "REV-LOWER-001",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Antigravity",
+                    "priority": lower_priority,
+                    "depends_on": [],
+                },
+            }
+            with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+                self.assertFalse(
+                    supervisor.higher_priority_ready_task_exists(config, worker, task_map_review, state),
+                    f"P0 in-progress worker should NOT detect higher priority task for {lower_priority} review",
+                )
+
+            # Case B: Lower-priority finalize candidate
+            task_map_finalize = {
+                "P0-TASK-001": {
+                    "id": "P0-TASK-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "priority": "P0",
+                    "depends_on": [],
+                },
+                "FINAL-LOWER-001": {
+                    "id": "FINAL-LOWER-001",
+                    "status": "review_approved",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "priority": lower_priority,
+                    "approved_head": "1111111122222222333333334444444455555555",
+                    "depends_on": [],
+                },
+            }
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+                mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")),
+            ):
+                self.assertFalse(
+                    supervisor.higher_priority_ready_task_exists(config, worker, task_map_finalize, state),
+                    f"P0 in-progress worker should NOT detect higher priority task for {lower_priority} finalize",
+                )
+
+    def test_same_task_priority_candidates_follow_existing_lifecycle_preemption_rules(self) -> None:
+        """Same task priority candidates follow existing lifecycle preemption rules."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        now_iso = supervisor.utc_now()
+        finalize_worker = {
+            "run_id": "run-p1-finalize",
+            "task_id": "P1-FINAL-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p1-fin",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        state = {
+            "queue": {"events": {"evt-p1-fin": {"status": "started", "run_id": "run-p1-finalize"}}},
+            "workers": {"run-p1-finalize": finalize_worker},
+        }
+
+        # 1. P1 review candidate vs P1 finalize worker -> higher priority exists (review > finalize)
+        task_map_p1_rev = {
+            "P1-FINAL-001": {
+                "id": "P1-FINAL-001",
+                "status": "review_approved",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P1",
+                "depends_on": [],
+            },
+            "P1-REV-001": {
+                "id": "P1-REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "priority": "P1",
+                "depends_on": [],
+            },
+        }
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(config, finalize_worker, task_map_p1_rev, state)
+            )
+
+        # 2. P1 finalize candidate vs P1 finalize worker -> no higher priority (same lifecycle priority)
+        task_map_p1_fin = {
+            "P1-FINAL-001": {
+                "id": "P1-FINAL-001",
+                "status": "review_approved",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P1",
+                "depends_on": [],
+            },
+            "P1-FINAL-002": {
+                "id": "P1-FINAL-002",
+                "status": "review_approved",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P1",
+                "approved_head": "1111111122222222333333334444444455555555",
+                "depends_on": [],
+            },
+        }
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")),
+        ):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(config, finalize_worker, task_map_p1_fin, state)
+            )
+
+    def test_higher_task_priority_candidate_preempts_lower_task_priority_worker_along_lifecycle(self) -> None:
+        """Higher task priority candidate strictly preempts lower task priority worker along lifecycle rules."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        now_iso = supervisor.utc_now()
+        worker = {
+            "run_id": "run-p1-finalize",
+            "task_id": "P1-FINAL-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p1-fin",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        state = {
+            "queue": {"events": {"evt-p1-fin": {"status": "started", "run_id": "run-p1-finalize"}}},
+            "workers": {"run-p1-finalize": worker},
+        }
+
+        # P0 finalize candidate vs P1 finalize worker -> P0 is higher priority
+        task_map = {
+            "P1-FINAL-001": {
+                "id": "P1-FINAL-001",
+                "status": "review_approved",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P1",
+                "depends_on": [],
+            },
+            "P0-FINAL-001": {
+                "id": "P0-FINAL-001",
+                "status": "review_approved",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "approved_head": "1111111122222222333333334444444455555555",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")),
+        ):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(config, worker, task_map, state)
+            )
+            self.assertTrue(
+                supervisor.worker_can_be_preempted(config, worker, task_map, state)
+            )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
+            mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True) as sync_preempted,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(5555)
+        sync_preempted.assert_called_once_with(config, worker)
+
+    def test_lawfully_preempted_task_redispatched_by_ready_dispatcher(self) -> None:
+        """Lawfully preempted task is returned to todo and redispatched by the existing ready dispatcher."""
+        config = json.loads(json.dumps(self.config))
+        config["paths"] = {"status_file": "ai-status.json"}
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        worker = {
+            "task_id": "PREEMPTED-001",
+            "agent_id": "antigravity",
+            "provider": "antigravity",
+            "logical_agent_id": "antigravity",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "PREEMPTED-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "priority": "P1",
+                    "depends_on": [],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_json"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "utc_now", return_value="2026-09-03T14:50:00Z"),
+        ):
+            synced = supervisor.sync_preempted_task_status(config, worker)
+
+        self.assertTrue(synced)
+        task = status["tasks"][0]
+        self.assertEqual(task["status"], "todo")
+        self.assertIn("returned to todo until a fresh run restarts it", task["next"])
+
+        # Ready dispatcher now redispatches the todo task
+        state = {"queue": {"events": {}}, "workers": {}}
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "queue_dispatch_event_safely", return_value=True) as queue_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        queue_event.assert_called_once()
+        queued_event = queue_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "PREEMPTED-001")
 
 
 class WorkerOsDuplicateGuardTests(unittest.TestCase):
@@ -18100,6 +18515,38 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             self.assertEqual(snapshot.get("runnable_tasks"), 1)
             decision = controller.get("chair_decision", {})
             self.assertTrue(decision.get("approve_helper_wave"))
+
+    def test_capacity_reconcile_releases_claim_without_a_live_bound_worker(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "HELPER-ORPHAN-001",
+                    "status": "in_progress",
+                    "owner": "claude",
+                    "reviewer": "codex",
+                    "helper_execution_lease": {
+                        "claimed_by": "codex",
+                        "generation": 3,
+                        "run_id": "missing-helper-run",
+                        "lease_expires_at": "2099-01-01T00:00:00Z",
+                    },
+                }
+            ]
+        }
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertTrue(changed)
+        self.assertNotIn("helper_execution_lease", status["tasks"][0])
+        commit.assert_called_once()
 
     def test_canonical_dispatchable_task_ids_respects_custom_schema_and_excludes_invalid_id_or_owner(self) -> None:
         config = self._config()
