@@ -13,6 +13,8 @@ export type RebalanceReviewSubmission = {
   actorName?: string;
   acknowledgedClasses?: string[];
   acknowledgementReason?: string;
+  acknowledgementActorId?: string;
+  approvalReceiptId?: string;
 };
 
 export type RebalancePanelProps = {
@@ -34,7 +36,34 @@ const lightTone: Record<string, string> = {
   R: "#c4342c",
 };
 
-const ACKNOWLEDGEABLE_CLASSES = ["LEASE", "SEQUENCING"];
+/**
+ * Which unmodelled classes a named authority may sign for is versioned
+ * governance data the API resolves per tenant, so the console reads the split
+ * off the scenario rather than holding a copy of it. When the API sends no
+ * classification -- an older payload, or a surface with no policy registered --
+ * every unmodelled class is treated as blocking: offering an acknowledgement
+ * the server will refuse is worse than offering none.
+ */
+function classifyDisclosure(scenario: {
+  unmodelledConstraintClasses?: unknown[] | null;
+  unmodelled_constraint_classes?: unknown[] | null;
+  blockedConstraintClasses?: unknown[] | null;
+  acknowledgeableConstraintClasses?: unknown[] | null;
+} | undefined): { blocked: string[]; acknowledgeable: string[]; unmodelled: string[] } {
+  const rawUnmodelled =
+    scenario?.unmodelledConstraintClasses ?? scenario?.unmodelled_constraint_classes ?? [];
+  const unmodelled = Array.from(new Set(rawUnmodelled.map((item) => String(item))));
+  const rawBlocked = scenario?.blockedConstraintClasses;
+  const rawAcknowledgeable = scenario?.acknowledgeableConstraintClasses;
+  if (rawBlocked == null || rawAcknowledgeable == null) {
+    return { blocked: unmodelled, acknowledgeable: [], unmodelled };
+  }
+  return {
+    blocked: rawBlocked.map((item) => String(item)),
+    acknowledgeable: rawAcknowledgeable.map((item) => String(item)),
+    unmodelled,
+  };
+}
 
 export function RebalancePanel({
   apiError,
@@ -48,8 +77,9 @@ export function RebalancePanel({
 }: RebalancePanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(rows[0]?.id ?? null);
   const [ackReason, setAckReason] = useState<string>("");
-  const [ackActorName, setAckActorName] = useState<string>("王若寧");
-  const [ackActorRole, setAckActorRole] = useState<string>("network-planning-authority");
+  const [ackActorName, setAckActorName] = useState<string>("");
+  const [ackActorId, setAckActorId] = useState<string>("");
+  const [ackReceiptId, setAckReceiptId] = useState<string>("");
   const [acknowledgedClasses, setAcknowledgedClasses] = useState<string[]>([]);
 
   useEffect(() => {
@@ -69,40 +99,36 @@ export function RebalancePanel({
 
   const selectedModelled = useMemo(() => {
     const raw = selectedScenario?.modelledConstraintClasses || selectedScenario?.modelled_constraint_classes;
-    return raw && raw.length > 0 ? Array.from(new Set(raw.map((c) => String(c)))) : ["CAPITAL"];
-  }, [selectedScenario]);
-
-  const selectedUnmodelled = useMemo(() => {
-    const raw = selectedScenario?.unmodelledConstraintClasses || selectedScenario?.unmodelled_constraint_classes;
     return raw && raw.length > 0 ? Array.from(new Set(raw.map((c) => String(c)))) : [];
   }, [selectedScenario]);
 
-  const selectedBlocked = useMemo(
-    () => selectedUnmodelled.filter((c) => !ACKNOWLEDGEABLE_CLASSES.includes(c)),
-    [selectedUnmodelled]
+  const selectedDisclosure = useMemo(
+    () => classifyDisclosure(selectedScenario),
+    [selectedScenario]
   );
+  const selectedUnmodelled = selectedDisclosure.unmodelled;
+  const selectedBlocked = selectedDisclosure.blocked;
   const selectedHasBlocked = selectedBlocked.length > 0;
-
-  const selectedAcknowledgeable = useMemo(
-    () => selectedUnmodelled.filter((c) => ACKNOWLEDGEABLE_CLASSES.includes(c)),
-    [selectedUnmodelled]
-  );
+  const selectedAcknowledgeable = selectedDisclosure.acknowledgeable;
   const selectedNeedsAck = selectedAcknowledgeable.length > 0;
+  const selectedPolicyVersionId = selectedScenario?.disclosurePolicyVersionId ?? null;
 
-  // Initialize acknowledged classes when scenario changes
+  // Every acknowledgeable class starts unticked. Pre-ticking them would produce
+  // exactly the "acknowledge whatever is outstanding" signature the server
+  // refuses, with the signer's name on it.
   useEffect(() => {
-    if (selectedAcknowledgeable.length > 0) {
-      setAcknowledgedClasses(selectedAcknowledgeable);
-    } else {
-      setAcknowledgedClasses([]);
-    }
-  }, [selected?.id, selected?.selectedScenarioId, selectedScenario?.id, selectedAcknowledgeable]);
+    setAcknowledgedClasses([]);
+  }, [selected?.id, selected?.selectedScenarioId, selectedScenario?.id]);
 
   const isAckReasonValid = ackReason.trim().length > 0;
+  const isAckActorValid = ackActorId.trim().length > 0;
+  const isAckReceiptValid = ackReceiptId.trim().length > 0;
   const isAckClassesCovered =
     selectedAcknowledgeable.length === 0 ||
     selectedAcknowledgeable.every((c) => acknowledgedClasses.includes(c));
-  const isAcknowledgementSatisfied = !selectedNeedsAck || (isAckReasonValid && isAckClassesCovered);
+  const isAcknowledgementSatisfied =
+    !selectedNeedsAck ||
+    (isAckReasonValid && isAckClassesCovered && isAckActorValid && isAckReceiptValid);
 
   if (!rows.length || !selected) {
     return (
@@ -131,14 +157,13 @@ export function RebalancePanel({
     if (cta.action === "complete-avm") onCompleteAvm(selected.id);
     if (cta.action === "solve-netplan") onSolveNetPlan(selected.id);
     if (cta.action === "submit-review") {
-      const submissionReason =
-        ackReason.trim() || "Move scenario selected for Govern approval; relocation remains unexecuted.";
       onSubmitReview(selected.id, {
-        reason: submissionReason,
-        actorRoleId: ackActorRole,
-        actorName: ackActorName,
+        reason: "Move scenario selected for Govern approval; relocation remains unexecuted.",
+        actorName: ackActorName.trim() || undefined,
         acknowledgedClasses: selectedNeedsAck ? acknowledgedClasses : undefined,
         acknowledgementReason: selectedNeedsAck ? ackReason.trim() : undefined,
+        acknowledgementActorId: selectedNeedsAck ? ackActorId.trim() : undefined,
+        approvalReceiptId: selectedNeedsAck ? ackReceiptId.trim() : undefined,
       });
     }
   }
@@ -278,11 +303,13 @@ export function RebalancePanel({
                 {selected.netPlanScenarios.map((scenario) => {
                   const scenarioId = scenario.id ?? scenario.name;
                   const scenarioBusy = busyAction === `${selected.id}:select-scenario:${scenarioId}`;
-                  const cardModelled = scenario.modelledConstraintClasses || scenario.modelled_constraint_classes || ["CAPITAL"];
-                  const cardUnmodelled = scenario.unmodelledConstraintClasses || scenario.unmodelled_constraint_classes || [];
-                  const cardBlocked = cardUnmodelled.filter((c) => !ACKNOWLEDGEABLE_CLASSES.includes(c));
+                  const cardModelled =
+                    scenario.modelledConstraintClasses || scenario.modelled_constraint_classes || [];
+                  const cardDisclosure = classifyDisclosure(scenario);
+                  const cardUnmodelled = cardDisclosure.unmodelled;
+                  const cardBlocked = cardDisclosure.blocked;
                   const cardHasBlocked = cardBlocked.length > 0;
-                  const cardNeedsAck = cardUnmodelled.length > 0 && !cardHasBlocked;
+                  const cardNeedsAck = cardDisclosure.acknowledgeable.length > 0;
 
                   return (
                     <button
@@ -312,7 +339,7 @@ export function RebalancePanel({
                       {/* Constraint disclosure badges for each scenario */}
                       <div className={styles.scenarioDisclosureRow} data-testid={`scenario-disclosure-${scenarioId}`}>
                         <span className={styles.scenarioModelledBadge} data-testid={`scenario-modelled-classes-${scenarioId}`}>
-                          已建模: {cardModelled.join(", ")}
+                          已建模: {cardModelled.length > 0 ? cardModelled.join(", ") : "（未申報）"}
                         </span>
                         {cardUnmodelled.length > 0 ? (
                           <span className={styles.scenarioUnmodelledBadge} data-testid={`scenario-unmodelled-classes-${scenarioId}`}>
@@ -321,7 +348,7 @@ export function RebalancePanel({
                         ) : null}
                         {cardHasBlocked ? (
                           <span className={styles.scenarioBlockedBadge} data-testid={`scenario-blocked-badge-${scenarioId}`}>
-                            不可豁免阻擋
+                            不可豁免阻擋: {cardBlocked.join(", ")}
                           </span>
                         ) : cardNeedsAck ? (
                           <span className={styles.scenarioAckBadge} data-testid={`scenario-ack-required-badge-${scenarioId}`}>
@@ -391,7 +418,9 @@ export function RebalancePanel({
               <div>
                 <strong>存在未建模且不可豁免之硬限制 (Blocked: {selectedBlocked.join(", ")})</strong>
                 <p>
-                  {selectedBlocked.join(", ")} 屬於求解器可約束之硬限制。因輸入未宣告上限而未被約束，依治理政策不可由具名簽核豁免，無法進行送審。請重新提供約束上限後重新求解。
+                  {selectedBlocked.join(", ")} 未在此次求解中被約束，依治理政策
+                  {selectedPolicyVersionId ? `（${selectedPolicyVersionId}）` : "（本介面未註冊揭露政策，未建模類別一律視為阻擋）"}
+                  不可由具名簽核豁免，無法進行送審。請補上對應上限後重新求解。
                 </p>
               </div>
             </div>
@@ -407,8 +436,14 @@ export function RebalancePanel({
               <div className={styles.acknowledgementHeader}>
                 <strong>🛡️ 未建模限制具名風險確認 (Constraint Disclosure Acknowledgement)</strong>
                 <p>
-                  本方案未在求解模型中建模以下限制類別，送審前須由授權角色具名確認線下風險與因應措施：
+                  本方案未在求解模型中建模以下限制類別，送審前須由授權主管具名確認線下風險與因應措施。
+                  簽核權限來自管理核准收據，不由本表單自行宣告。
                 </p>
+                {selectedPolicyVersionId ? (
+                  <small className={styles.muted} data-testid="acknowledgement-policy-version">
+                    適用政策版本：{selectedPolicyVersionId}
+                  </small>
+                ) : null}
               </div>
 
               <div className={styles.acknowledgementClassList} data-testid="acknowledgement-class-list">
@@ -444,17 +479,38 @@ export function RebalancePanel({
               </div>
 
               <div className={styles.acknowledgementFieldsGrid}>
+                {/* No "authorized role" field. A submitter who could type their
+                    own authorising role would be authorising themselves; the
+                    server reads the role off the management approval receipt
+                    named below and refuses if it carries no such authority. */}
                 <div className={styles.ackFieldGroup}>
-                  <label htmlFor={`ack-role-${selected.id}`}>授權簽核角色 (Authorized Role)</label>
+                  <label htmlFor={`ack-receipt-${selected.id}`}>
+                    管理核准收據編號 (Approval Receipt) <span className={styles.requiredMark}>*必填</span>
+                  </label>
                   <input
-                    id={`ack-role-${selected.id}`}
+                    id={`ack-receipt-${selected.id}`}
                     type="text"
                     className={styles.inputField}
-                    data-testid="acknowledgement-actor-role-input"
-                    value={ackActorRole}
-                    onChange={(e) => setAckActorRole(e.target.value)}
+                    data-testid="acknowledgement-receipt-input"
+                    value={ackReceiptId}
+                    onChange={(e) => setAckReceiptId(e.target.value)}
                   />
-                  <small className={styles.muted}>政策授權角色: network-planning-authority</small>
+                  <small className={styles.muted}>簽核權限由此收據認定，本欄不可留空。</small>
+                </div>
+
+                <div className={styles.ackFieldGroup}>
+                  <label htmlFor={`ack-actor-id-${selected.id}`}>
+                    簽核人主體識別 (Principal Id) <span className={styles.requiredMark}>*必填</span>
+                  </label>
+                  <input
+                    id={`ack-actor-id-${selected.id}`}
+                    type="text"
+                    className={styles.inputField}
+                    data-testid="acknowledgement-actor-id-input"
+                    value={ackActorId}
+                    onChange={(e) => setAckActorId(e.target.value)}
+                  />
+                  <small className={styles.muted}>須與收據上的核准主體一致，否則送審會被退回。</small>
                 </div>
 
                 <div className={styles.ackFieldGroup}>
@@ -557,7 +613,7 @@ function primaryCta(
         action: "submit-review",
         disabled: true,
         label: "送審（需具名確認）",
-        note: "送審前需填寫未建模限制具名確認理由與簽核人。",
+        note: "送審前需勾選每一項未建模限制，並填寫確認理由、簽核人主體與管理核准收據。",
       };
     }
     return {

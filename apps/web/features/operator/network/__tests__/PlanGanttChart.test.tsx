@@ -546,6 +546,9 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
             unmodelledConstraintClasses: ["CONSTRUCTION", "LEASE", "SEQUENCING"],
             modelled_constraint_classes: ["CAPITAL"],
             unmodelled_constraint_classes: ["CONSTRUCTION", "LEASE", "SEQUENCING"],
+            blockedConstraintClasses: ["CONSTRUCTION"],
+            acknowledgeableConstraintClasses: ["LEASE", "SEQUENCING"],
+            disclosurePolicyVersionId: "netplan-constraint-disclosure-policy-v1:tenant-demo",
             score: 75.0,
           },
           {
@@ -560,6 +563,9 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
             unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
             modelled_constraint_classes: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
             unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
+            blockedConstraintClasses: [],
+            acknowledgeableConstraintClasses: ["LEASE", "SEQUENCING"],
+            disclosurePolicyVersionId: "netplan-constraint-disclosure-policy-v1:tenant-demo",
             score: 82.0,
           },
         ],
@@ -624,6 +630,9 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
             unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
             modelled_constraint_classes: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
             unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
+            blockedConstraintClasses: [],
+            acknowledgeableConstraintClasses: ["LEASE", "SEQUENCING"],
+            disclosurePolicyVersionId: "netplan-constraint-disclosure-policy-v1:tenant-demo",
             score: 91.0,
           },
         ],
@@ -649,9 +658,25 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(screen.getByTestId("ack-class-item-SEQUENCING")).toHaveTextContent("多期排程與工程工期先後次序未於模型內限制");
 
     const reasonInput = screen.getByTestId("acknowledgement-reason-input");
-    const roleInput = screen.getByTestId("acknowledgement-actor-role-input");
+    const actorIdInput = screen.getByTestId("acknowledgement-actor-id-input");
+    const receiptInput = screen.getByTestId("acknowledgement-receipt-input");
     const actorInput = screen.getByTestId("acknowledgement-actor-input");
     const primaryButton = screen.getByTestId("rebalance-primary-action");
+
+    // The panel shows which policy version produced this classification, so a
+    // reader can tell what rules the split in front of them came from.
+    expect(screen.getByTestId("acknowledgement-policy-version")).toHaveTextContent(
+      "netplan-constraint-disclosure-policy-v1:tenant-demo"
+    );
+
+    // There is no "authorised role" field to type into. Authority is read off
+    // the management approval receipt named below, never off the submission.
+    expect(screen.queryByTestId("acknowledgement-actor-role-input")).toBeNull();
+
+    // 1. Nothing is pre-ticked: a pre-filled acknowledgement would be a
+    //    signature nobody chose to give.
+    expect(screen.getByTestId("ack-class-LEASE")).not.toBeChecked();
+    expect(screen.getByTestId("ack-class-SEQUENCING")).not.toBeChecked();
 
     // 2. Initially reason is empty -> CTA is disabled
     expect(primaryButton).toBeDisabled();
@@ -661,24 +686,98 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     fireEvent.change(reasonInput, { target: { value: "    " } });
     expect(primaryButton).toBeDisabled();
 
-    // 4. Typing valid reason & actor -> CTA becomes enabled
     fireEvent.change(reasonInput, { target: { value: "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。" } });
-    fireEvent.change(roleInput, { target: { value: "network-planning-authority" } });
     fireEvent.change(actorInput, { target: { value: "張策略長" } });
+
+    // 4. A reason alone is not enough: the principal and the receipt that
+    //    establishes their authority are both required.
+    expect(primaryButton).toBeDisabled();
+    fireEvent.change(actorIdInput, { target: { value: "principal://network-planning-authority" } });
+    expect(primaryButton).toBeDisabled();
+    fireEvent.change(receiptInput, { target: { value: "receipt-ops-77" } });
+
+    // 5. Still disabled while any disclosed class is unticked.
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(screen.getByTestId("ack-class-LEASE"));
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(screen.getByTestId("ack-class-SEQUENCING"));
 
     expect(primaryButton).not.toBeDisabled();
     expect(primaryButton).toHaveTextContent("送審（Rebalance Review）");
 
-    // 5. Submit review -> verify full payload passed to onSubmitReview
+    // 6. Submit review -> verify full payload passed to onSubmitReview
     fireEvent.click(primaryButton);
     expect(submitReviewMock).toHaveBeenCalledTimes(1);
     expect(submitReviewMock).toHaveBeenCalledWith("STORE-REB-ACK", {
-      reason: "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。",
-      actorRoleId: "network-planning-authority",
+      reason: "Move scenario selected for Govern approval; relocation remains unexecuted.",
       actorName: "張策略長",
       acknowledgedClasses: ["LEASE", "SEQUENCING"],
       acknowledgementReason: "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。",
+      acknowledgementActorId: "principal://network-planning-authority",
+      approvalReceiptId: "receipt-ops-77",
     });
+  });
+
+  it("14. RebalancePanel treats an unclassified disclosure as blocking rather than waivable", () => {
+    // A payload from a surface with no disclosure policy registered -- or from
+    // an older server -- carries the unmodelled set but no split. Guessing that
+    // LEASE and SEQUENCING are the waivable ones would put a signature form in
+    // front of an operator that the server is going to refuse, and would hold a
+    // copy of a versioned governance rule in the console to do it.
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-UNCLASSIFIED",
+        storeId: "STORE-REB-UNCLASSIFIED",
+        storeName: "桃園藝文店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未分類揭露",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-UNCLASSIFIED",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-UNCLASSIFIED",
+            name: "方案 A: 未附政策分類",
+            roi: "12.0%",
+            inv: "600K",
+            payback: "2.4 年",
+            risk: "中",
+            time: "2026Q3",
+            modelledConstraintClasses: ["CAPITAL"],
+            unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL"],
+            unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
+            score: 61.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    expect(screen.getByTestId("scenario-blocked-badge-SCENARIO-UNCLASSIFIED")).toHaveTextContent(
+      "LEASE, SEQUENCING"
+    );
+    expect(screen.queryByTestId("rebalance-acknowledgement-section")).toBeNull();
+    expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent(
+      "本介面未註冊揭露政策"
+    );
+
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
   });
 });
 

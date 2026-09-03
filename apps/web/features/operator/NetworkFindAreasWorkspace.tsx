@@ -936,6 +936,8 @@ export function NetworkFindAreasWorkspace({
       actorName?: string;
       acknowledgedClasses?: string[];
       acknowledgementReason?: string;
+      acknowledgementActorId?: string;
+      approvalReceiptId?: string;
     },
   ) {
     const endpoint =
@@ -952,11 +954,16 @@ export function NetworkFindAreasWorkspace({
       const bodyPayload =
         action === "submit-review" && submission
           ? {
+              // The requester's role, recorded as the requester. It is never the
+              // acknowledging authority -- the API reads that off the approval
+              // receipt named in the submission.
               actorRoleId: submission.actorRoleId || NETWORK_ACTOR.actorRoleId,
-              actorName: submission.actorName || NETWORK_ACTOR.actorName,
+              actorName: submission.actorName,
               reason: submission.reason || "Move scenario selected for Govern approval; relocation remains unexecuted.",
               acknowledgedClasses: submission.acknowledgedClasses,
               acknowledgementReason: submission.acknowledgementReason,
+              acknowledgementActorId: submission.acknowledgementActorId,
+              approvalReceiptId: submission.approvalReceiptId,
             }
           : {
               ...NETWORK_ACTOR,
@@ -974,7 +981,16 @@ export function NetworkFindAreasWorkspace({
         body: JSON.stringify(bodyPayload),
       });
       if (!response.ok) {
-        setRebalanceApiError(`network-rebalance ${action} failed (${response.status})`);
+        // A disclosure refusal names which constraint classes blocked the
+        // submission and under which policy version. A bare status code would
+        // leave the operator with "422" and no way to tell a missing
+        // acknowledgement field from a plan that cannot be submitted at all.
+        const detail = await readErrorDetail(response);
+        setRebalanceApiError(
+          detail
+            ? `network-rebalance ${action} failed (${response.status}): ${detail}`
+            : `network-rebalance ${action} failed (${response.status})`,
+        );
         return;
       }
       await reloadRebalanceSnapshot();
@@ -982,6 +998,21 @@ export function NetworkFindAreasWorkspace({
       setRebalanceApiError(`network-rebalance ${action} failed`);
     } finally {
       setBusyRebalanceAction(null);
+    }
+  }
+
+  async function readErrorDetail(response: Response): Promise<string | null> {
+    try {
+      const body = await response.json();
+      const detail = (body as { detail?: unknown })?.detail;
+      if (typeof detail === "string") return detail;
+      if (detail && typeof detail === "object") {
+        const message = (detail as { message?: unknown }).message;
+        if (typeof message === "string") return message;
+      }
+      return null;
+    } catch {
+      return null;
     }
   }
 

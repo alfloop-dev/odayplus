@@ -1298,10 +1298,14 @@ export type RebalanceActorPayload = {
 
 /** RebalanceScenario */
 export type RebalanceScenario = {
+  acknowledgeableConstraintClasses: ConstraintClass[];
   actions?: unknown[] | null;
   bindingConstraints?: string[];
+  blockedConstraintClasses: ConstraintClass[];
   capacityDelta?: number | null;
   diagnostics?: unknown[];
+  disclosurePolicyVersionId?: string | null;
+  disclosureUndeclared?: boolean;
   evidenceIds?: string[];
   expectedGrossMargin?: number | null;
   id: string;
@@ -1377,6 +1381,7 @@ export type RebalanceStore = {
 /** RebalanceSubmitPayload */
 export type RebalanceSubmitPayload = {
   acknowledgedClasses?: (ConstraintClass | string)[] | null;
+  acknowledgementActorId?: string | null;
   acknowledgementReason?: string | null;
   actorName?: string | null;
   actorRoleId?: string;
