@@ -56,10 +56,20 @@ WHAT IT ENFORCES
    * The statutory fields are validated wherever they appear, not only under
      ``DECIDED``. A waiver parked on a ``VERIFIED`` or ``OPEN`` member used to
      escape every gate -- its decider was never checked and its expiry never
-     came due. Carrying any statutory field now requires carrying all of them,
-     correctly, whatever the state says.
+     came due. Carrying any field that names a ruling already taken -- who,
+     when, over what, whose risk, until when, recorded where -- now requires
+     carrying all seven, correctly, whatever the state says. ``reopen_trigger``
+     is the one statutory field that is not such a signal: it names the future
+     observation that would change the answer, which a handback needs for the
+     same reason a waiver does.
    * ``BLOCKED_BY_EVIDENCE`` MUST provide ``evidence_needed``, ``evidence_owner``,
-     and ``next_review_date``.
+     and ``next_review_date``. It is the state for a gap handed back to human
+     governance *undecided*, so it is judged as a handback and not as a
+     half-written waiver.
+   * A handback is a governance act and must be as auditable as a ruling: a
+     member whose prose says a gap was handed back must carry a resolvable
+     ``formal_handback_ref``. Otherwise "submitted to Human/Ops" becomes the
+     free pass that "decided not to do" no longer is.
    * ``IMPLEMENTATION_READY`` MUST provide ``assigned_to`` and ``target_phase``
      (or ``acceptance_criteria``).
    * ``OPEN`` MUST provide ``rationale`` (or ``note``) and tracking metadata.
@@ -138,6 +148,18 @@ STATUTORY_DECISION_FIELDS = (
     "reopen_trigger",
 )
 
+# Which of those fields betray a ruling when found under a state that is not
+# ``DECIDED``. Six of the seven name a decision already taken -- they cannot be
+# written truthfully unless somebody ruled. ``reopen_trigger`` names a future
+# observation, and a gap handed back to human governance undecided needs one for
+# exactly the same reason a waiver does: BRAND_TRANSFER and FORMAT_CONVERSION
+# each say which contracted data feed would unblock them. Reading it as a waiver
+# signal made the honest shape -- BLOCKED_BY_EVIDENCE plus an unsigned handback,
+# the shape this whole check steers gaps towards -- fail as an incomplete waiver
+# missing a decider and an expiry, which is the one thing an undecided gap must
+# not be asked to invent.
+WAIVER_SIGNAL_FIELDS = tuple(f for f in STATUTORY_DECISION_FIELDS if f != "reopen_trigger")
+
 # Prose that asserts a requirement will not be implemented. Matching it does not
 # make the claim false; it makes the claim answerable -- either the statutory
 # fields are there or the sentence is an unauthorised amendment. The phrases are
@@ -176,16 +198,53 @@ def find_nonimplementation_claim(*texts: Any) -> str | None:
     return None
 
 
-def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
-    """Return why reference is not a valid formal decision ref, or None when valid.
+# Prose that asserts a gap was handed back to human governance. The handback is
+# the sanctioned way out of a MUST an AI may not waive, which is exactly why it
+# needs a ref: an unbacked "submitted to Human/Ops" parks a requirement forever
+# on a submission nobody can find. Narrow on purpose -- "awaiting Batch 0 data
+# source audit before scheduling solver integration or formal waiver" describes
+# what is still owed and must keep passing; a package id or a submission verb
+# claims an act already performed and must not.
+HANDBACK_CLAIM_PATTERN = re.compile(
+    r"""(
+      (?-i:\bHB-[A-Z0-9]+(-[A-Z0-9]+)+\b)
+    | (formal\s+)? hand[\s-]?back (\s+package)? (\s+[\w#-]+)?
+        \s+ (submitted|filed|raised|sent|issued)
+    | handed\s+back\s+to
+    | 已移交 | 移交單 | 移交至 | 已提報
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
 
-    A formal decision reference must be one of:
+
+def find_handback_claim(*texts: Any) -> str | None:
+    """Return the phrase by which *texts* claims a gap was handed back, if any."""
+    for text in texts:
+        if not isinstance(text, str) or not text.strip():
+            continue
+        match = HANDBACK_CLAIM_PATTERN.search(text)
+        if match:
+            return match.group(0).strip()
+    return None
+
+
+def resolve_decision_ref(
+    repo_root: Path, reference: str, field: str = "formal_decision_ref"
+) -> str | None:
+    """Return why reference is not a valid formal governance ref, or None when valid.
+
+    Used for the ruling's ``formal_decision_ref`` and for the handback's
+    ``formal_handback_ref``: both name a governance act, and both are worthless
+    unless a reviewer can open what they point at. *field* names which one is
+    being judged so the message says so.
+
+    A formal reference must be one of:
     1. A resolvable repo doc path strictly within repo boundary, e.g. 'docs/.../file.md' or 'docs/.../file.md#anchor'
     2. A valid URL starting with 'http://', 'https://', or 'github://'
     3. A formal PR or RFC reference, e.g. 'PR #123' or 'RFC-123'
     """
     if not isinstance(reference, str) or not reference.strip():
-        return "formal_decision_ref must be a non-empty string"
+        return f"{field} must be a non-empty string"
     ref = reference.strip()
 
     # Check URL
@@ -204,7 +263,7 @@ def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
 
     # Reject attempts to escape repository boundary via absolute path or parent traversals
     if raw_path.startswith("/") or raw_path.startswith("../") or "/../" in raw_path or raw_path == "..":
-        return f"formal_decision_ref {reference!r} must be repo-relative and cannot escape repository boundary"
+        return f"{field} {reference!r} must be repo-relative and cannot escape repository boundary"
 
     valid_doc_extensions = (".md", ".rst", ".json", ".txt", ".adoc")
     is_doc_path = (
@@ -213,7 +272,7 @@ def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
         or "/" in raw_path
     )
     if not is_doc_path:
-        return f"formal_decision_ref {reference!r} is not a valid document path, URL, or PR/RFC reference"
+        return f"{field} {reference!r} is not a valid document path, URL, or PR/RFC reference"
 
     def _is_valid_repo_file(base: Path, rel_path: str) -> bool:
         try:
@@ -227,7 +286,7 @@ def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
     if not _is_valid_repo_file(repo_root, raw_path):
         if _is_valid_repo_file(REPO_ROOT, raw_path):
             return None
-        return f"formal_decision_ref target file does not exist within repository: {raw_path!r}"
+        return f"{field} target file does not exist within repository: {raw_path!r}"
 
     return None
 
@@ -344,6 +403,46 @@ def resolve(repo_root: Path, reference: str) -> str | None:
     return None
 
 
+def validate_handback_claim(
+    requirement: str,
+    member_name: str,
+    handback_ref: Any,
+    repo_root: Path,
+    *texts: Any,
+) -> list[Failure]:
+    """Hold a claimed handback to a reference a reviewer can open.
+
+    A handback is the sanctioned exit from a MUST that no AI may waive: the gap
+    goes back to human governance undecided. That makes it the next thing worth
+    forging, and the cheapest forgery is prose -- "formal handback
+    HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops" with nothing behind
+    it. The member then sits in ``BLOCKED_BY_EVIDENCE`` indefinitely on a
+    submission nobody can find, which is the same escape "decided not to do"
+    used before it was closed.
+    """
+    failures: list[Failure] = []
+
+    has_ref = isinstance(handback_ref, str) and handback_ref.strip()
+    if has_ref:
+        ref_err = resolve_decision_ref(repo_root, handback_ref, field="formal_handback_ref")
+        if ref_err:
+            failures.append(Failure(requirement, member_name, f"invalid formal_handback_ref: {ref_err}"))
+        return failures
+
+    claim = find_handback_claim(*texts)
+    if claim:
+        failures.append(
+            Failure(
+                requirement,
+                member_name,
+                f"note claims a handback to human governance ({claim!r}) but carries no "
+                "'formal_handback_ref': a submission nobody can open is not a handback. Record the "
+                "package location, or drop the claim",
+            )
+        )
+    return failures
+
+
 def validate_statutory_decision_fields(
     requirement: str,
     member_name: str,
@@ -447,6 +546,9 @@ def validate_disposition_schema(
                     "drop the claim",
                 )
             )
+        failures.extend(
+            validate_handback_claim(requirement, member_name, None, repo_root, claim_text)
+        )
         return failures
 
     if not isinstance(disposition, dict):
@@ -666,11 +768,14 @@ def validate_disposition_schema(
                 )
 
     # A ruling recorded anywhere but under DECIDED. Two shapes, one root: the
-    # statutory gate only ever looked at members that volunteered for it.
+    # statutory gate only ever looked at members that volunteered for it. Only
+    # the fields that name a decision already taken count as the signal --
+    # a lone reopen_trigger is a handback's re-evaluation condition, not a
+    # ruling, and reading it as one refused the honest shape.
     if state != "DECIDED":
         carried = [
             field
-            for field in STATUTORY_DECISION_FIELDS
+            for field in WAIVER_SIGNAL_FIELDS
             if isinstance(disposition.get(field), str) and str(disposition.get(field)).strip()
         ]
         claim = find_nonimplementation_claim(
@@ -699,6 +804,18 @@ def validate_disposition_schema(
                     "disposition carrying the statutory fields signed by an authorized human, or drop the claim",
                 )
             )
+
+    failures.extend(
+        validate_handback_claim(
+            requirement,
+            member_name,
+            disposition.get("formal_handback_ref"),
+            repo_root,
+            claim_text,
+            disposition.get("rationale"),
+            disposition.get("note"),
+        )
+    )
 
     return failures
 

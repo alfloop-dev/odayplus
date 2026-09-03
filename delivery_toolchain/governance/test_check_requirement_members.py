@@ -16,8 +16,10 @@ from delivery_toolchain.governance.check_requirement_members import (
     REPO_ROOT,
     STATUTORY_DECISION_FIELDS,
     VALID_DISPOSITION_STATES,
+    WAIVER_SIGNAL_FIELDS,
     check,
     check_decision_date,
+    find_handback_claim,
     find_nonimplementation_claim,
     is_ai_decider,
     resolve,
@@ -1496,6 +1498,214 @@ class TestAWaiverIsJudgedWhereverItSits:
         )
         failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
         assert failures == []
+
+
+def _handback(**overrides: object) -> dict:
+    """A gap handed back to human governance undecided, in the shape dev uses.
+
+    Modelled on ODP-FR-SITE-001/BRAND_TRANSFER: no data source exists, no AI may
+    waive the requirement, so the gap goes back with the evidence named, an owner
+    named, a review date, a package a reviewer can open, and the observation that
+    would unblock it. Nobody has ruled, so there is no decider and no expiry.
+    """
+    handback = {
+        "state": "BLOCKED_BY_EVIDENCE",
+        "evidence_needed": "External consumer panel feed with versioned schema and producer SLA",
+        "evidence_owner": "Market Intelligence Lead",
+        "next_review_date": "2026-10-01",
+        "rationale": "Repo holds static brand metadata and a synthetic mock view; no real producer exists.",
+        "formal_handback_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-site-001",
+        "reopen_trigger": "A cross-brand POS loyalty dataset is contracted and ingested with a verified SLA.",
+    }
+    handback.update(overrides)
+    return {k: v for k, v in handback.items() if v is not None}
+
+
+def _one_member(disposition: dict, **member_overrides: object) -> dict:
+    member = {
+        "name": "A",
+        "status": "absent",
+        "note": "gap indexed here",
+        "disposition": disposition,
+    }
+    member.update(member_overrides)
+    return {"requirements": [{"id": "R-1", "members": [member]}]}
+
+
+class TestAHandbackIsNotAnIncompleteWaiver:
+    """The honest exit from an un-waivable MUST must not be refused.
+
+    A gap an AI may not waive goes back to human governance undecided:
+    BLOCKED_BY_EVIDENCE plus an unsigned handback. That shape names the
+    observation that would unblock it, for the same reason a waiver names what
+    would reopen it. Counting ``reopen_trigger`` as a signal that a ruling had
+    been made turned the sanctioned shape into an incomplete waiver missing a
+    decider and an expiry -- fields an undecided gap must not be asked to
+    invent, since inventing them is the AI self-signing this file forbids.
+    """
+
+    def test_a_handback_carrying_a_reopen_trigger_passes(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(tmp_path, _one_member(_handback()))
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert failures == []
+
+    def test_reopen_trigger_is_statutory_but_is_not_a_waiver_signal(self) -> None:
+        """It is required of a ruling, and required of a handback; carrying one
+        therefore says nothing about whether a ruling exists."""
+        assert "reopen_trigger" in STATUTORY_DECISION_FIELDS
+        assert "reopen_trigger" not in WAIVER_SIGNAL_FIELDS
+        assert set(WAIVER_SIGNAL_FIELDS) == set(STATUTORY_DECISION_FIELDS) - {"reopen_trigger"}
+
+    def test_a_decided_ruling_still_owes_its_reopen_trigger(self, tmp_path: Path) -> None:
+        """Narrowing the signal must not narrow the DECIDED gate."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path, _one_member(dict(_waiver(reopen_trigger=None), state="DECIDED"))
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("reopen_trigger" in f.problem for f in failures)
+
+    def test_a_real_waiver_signal_beside_a_reopen_trigger_still_demands_the_rest(
+        self, tmp_path: Path
+    ) -> None:
+        """The parking gate stays armed: a decider under BLOCKED_BY_EVIDENCE is
+        a ruling somebody made, and it still owes the other six fields."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path, _one_member(_handback(decider="Human/Ops (Architecture Board)"))
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any(
+            "carrying decision fields" in f.problem and "expiry" in f.problem for f in failures
+        )
+
+    def test_an_expiry_parked_on_a_handback_still_comes_due(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(tmp_path, _one_member(_handback(expiry="2026-01-01")))
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("expired" in f.problem for f in failures)
+
+    def test_the_live_handbacks_are_the_shape_this_protects(self) -> None:
+        """Pin the manifest shape, so a future edit cannot quietly make the
+        regression test above vacuous: these members carry a reopen trigger and
+        no decider, and the repository check must accept them."""
+        payload = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        members = {
+            member["name"]: member
+            for entry in payload["requirements"]
+            if entry["id"] == "ODP-FR-SITE-001"
+            for member in entry["members"]
+        }
+        for name in ("BRAND_TRANSFER", "FORMAT_CONVERSION"):
+            disposition = members[name]["disposition"]
+            assert disposition["state"] == "BLOCKED_BY_EVIDENCE"
+            assert disposition["reopen_trigger"]
+            assert not any(disposition.get(field) for field in WAIVER_SIGNAL_FIELDS)
+
+
+class TestAHandbackNeedsSomethingToOpen:
+    """A handback is a governance act, so it is forgeable in prose.
+
+    It is the sanctioned way past a MUST no AI may waive, which makes
+    "submitted to Human/Ops" the next free pass after "decided not to do" was
+    closed -- and a cheaper one, because it parks the member in
+    BLOCKED_BY_EVIDENCE indefinitely with nobody named as having received it.
+    """
+
+    def test_a_handback_claimed_in_a_note_with_no_ref_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            _one_member(
+                _handback(formal_handback_ref=None),
+                note=(
+                    "No producer exists in the repo. Formal handback "
+                    "HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops."
+                ),
+            ),
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("formal_handback_ref" in f.problem for f in failures)
+
+    def test_a_handback_claimed_in_a_rationale_with_no_ref_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            _one_member(
+                _handback(
+                    formal_handback_ref=None,
+                    rationale="No producer exists; 已移交 Human/Ops 與 Architecture Board 裁決。",
+                )
+            ),
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a handback" in f.problem for f in failures)
+
+    def test_a_handback_ref_pointing_at_nothing_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            _one_member(_handback(formal_handback_ref="docs/evidence/never_written.md")),
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("invalid formal_handback_ref" in f.problem for f in failures)
+
+    def test_a_handback_ref_cannot_escape_the_repository(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            _one_member(_handback(formal_handback_ref="../../etc/passwd")),
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("cannot escape repository boundary" in f.problem for f in failures)
+
+    def test_deleting_the_disposition_does_not_hide_a_handback_claim(self, tmp_path: Path) -> None:
+        """A satisfied member may omit the block, so omitting it is the cheapest
+        place to leave an unbacked claim."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "satisfied",
+                                "evidence": "pkg/mod.py::Thing",
+                                "note": "The remainder was handed back to the Architecture Board.",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a handback" in f.problem for f in failures)
+
+    def test_the_handback_detector_reads_a_submission_and_an_intention_apart(self) -> None:
+        """An act already performed must be backed; what is still owed must not
+        be, or every honestly-recorded block gets pushed into inventing one."""
+        submissions = [
+            "Formal handback HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops.",
+            "handback package filed with the Architecture Board",
+            "The pairwise remainder was handed back to Platform Governance.",
+            "已移交 Human/Ops 裁決",
+            "人類授權移交單已提報至 Architecture Board",
+        ]
+        intentions = [
+            "Awaiting Batch 0 data source audit before scheduling solver integration or formal waiver.",
+            "No such data source is wired to the solver.",
+            "Needs a per-option admissibility check before this can be scheduled.",
+            "查證後確認此項的權威裁決不存在，已阻擋至 Human/Ops",
+            "待資料源確立後轉為 IMPLEMENTATION_READY 或由人類授權人簽署",
+        ]
+        for text in submissions:
+            assert find_handback_claim(text), text
+        for text in intentions:
+            assert find_handback_claim(text) is None, text
 
 
 class TestADecisionMustCarryItsDate:
