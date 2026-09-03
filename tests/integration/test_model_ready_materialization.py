@@ -209,4 +209,3 @@ def test_to_audit_snapshot_row_quality_score_status_mapping() -> None:
     unmeasured_row = manifest_unmeasured.to_audit_snapshot_row()
     assert unmeasured_row["quality_score"] is None
     assert unmeasured_row["quality_score_status"] == "unmeasured"
-

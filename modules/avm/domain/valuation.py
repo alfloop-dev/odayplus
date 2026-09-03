@@ -199,6 +199,23 @@ class NormalizedMargin:
             "feature_version": AVM_FEATURE_VERSION,
         }
 
+    def with_legacy_quality_disposition(self) -> NormalizedMargin:
+        """Apply the legacy-quality downgrade to a persisted margin."""
+
+        reasons = tuple(self.adjustment_reasons)
+        normalized_gm = self.normalized_gm
+        if "legacy_quality_unknown_discount" not in reasons:
+            normalized_gm = round(normalized_gm * 0.92, 2)
+            reasons += ("legacy_quality_unknown_discount",)
+        return NormalizedMargin(
+            **{
+                **self.__dict__,
+                "normalized_gm": normalized_gm,
+                "adjustment_reasons": reasons,
+                "confidence": "low",
+            }
+        )
+
 
 @dataclass(frozen=True)
 class LensValuation:
@@ -482,6 +499,8 @@ def normalize_margin(case: ValuationCase) -> NormalizedMargin:
 def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> ValuationReport:
     item = case.valuation_input
     _require_quality_score(item.quality_score)
+    if item.effective_quality_score_status == LEGACY_UNKNOWN_QUALITY_STATUS:
+        normalized_margin = normalized_margin.with_legacy_quality_disposition()
     income_p50 = normalized_margin.normalized_gm * 2.8
     asset_p50 = max(
         item.asset_book_value
@@ -581,6 +600,8 @@ def build_model_valuation_report(
     """Build policy outputs from an already executed approved model interval."""
 
     _require_quality_score(case.valuation_input.quality_score)
+    if case.valuation_input.effective_quality_score_status == LEGACY_UNKNOWN_QUALITY_STATUS:
+        normalized_margin = normalized_margin.with_legacy_quality_disposition()
 
     fair = PriceBand(
         p10=round(float(p10), 2),
@@ -611,6 +632,12 @@ def build_model_valuation_report(
         prediction_origin_time=case.valuation_input.prediction_origin_time,
         valued_at=datetime.now(UTC),
         execution_metadata=dict(execution_metadata),
+        quality_disposition=(
+            LEGACY_QUALITY_DISPOSITION
+            if case.valuation_input.effective_quality_score_status
+            == LEGACY_UNKNOWN_QUALITY_STATUS
+            else None
+        ),
     )
 
 
