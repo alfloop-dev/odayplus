@@ -332,25 +332,29 @@
         {
           "name": "BRAND_TRANSFER",
           "status": "absent",
-          "note": "Two hits in the whole tree and neither is an implementation: a view name in tests/data/test_pit_snapshot.py, and a hard-coded brand_transfer_confidence of 0.76 in a sample payload in services/signal-store/client.py, which no product module imports.",
+          "note": "core.brands holds static metadata only; brand_transfer_view.sql is a synthetic mock view (cross join with fixed 0.15 transfer_ratio and 1.0 confidence) unconsumed by SiteScore; no producer in repo. Evidence request ER-SITE001-BRAND-TRANSFER-001 and formal handback HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
-            "evidence_needed": "Historical brand customer migration dataset existence verification (Batch 0)",
-            "evidence_owner": "Market Intelligence Lead",
+            "evidence_needed": "External consumer panel feed (e.g. receipt/panel provider) or cross-brand POS loyalty dataset confirmation with versioned schema, producer SLA, and feature specification",
+            "evidence_owner": "Market Intelligence Lead / Commercial Strategy Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Awaiting Batch 0 data confirmation before converting to implementation or formal amendment."
+            "rationale": "Repo contains only static brand metadata and synthetic cross-join mock view; no real producer exists. Handback package HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board for data ingestion contract or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
+            "formal_handback_ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#2-member-1brand-transfer既有品牌客群移轉處置",
+            "reopen_trigger": "External consumer panel feed or cross-brand POS loyalty dataset is contracted and ingested into raw data platform with versioned schema, verified producer SLA, and formal feature extraction specification approved by Commercial Strategy Lead."
           }
         },
         {
           "name": "FORMAT_CONVERSION",
           "status": "absent",
-          "note": "modules/site_economics/domain/formats.py::TargetFormatRegistry picks a store format by area. That is choosing a format, not converting an existing store from one to another; the simulator has no conversion path.",
+          "note": "PostgreSQL (000001) and SQLite (000004) schemas maintain static store_format_code with no format conversion event or renovation history tables; TargetFormatRegistry only selects format by area (new store selection, not conversion); simulator.py only models greenfield new stores. Production-path conversion hits are Listing-to-Candidate conversion or Evidence Level migration notes. Evidence request ER-SITE001-FORMAT-CONVERSION-001 and formal handback HB-SITE001-FORMAT-CONVERSION-001 submitted per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
-            "evidence_needed": "Active store format conversion operational workflow and data confirmation (Batch 0)",
-            "evidence_owner": "Retail Operations Lead",
+            "evidence_needed": "Active store format conversion operational workflow playbook, brownfield financial simulation parameters (downtime loss, capex schedules), and conversion event schema confirmation",
+            "evidence_owner": "Retail Operations Lead / Site Economics Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Awaiting Batch 0 confirmation that store conversion events exist in production."
+            "rationale": "Repo contains only static store format codes and greenfield simulation logic; no format conversion event tracking or remodeling financial model exists in repo. Handback package HB-SITE001-FORMAT-CONVERSION-001 submitted to Human/Ops and Architecture Board for operational playbook confirmation or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
+            "formal_handback_ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#3-member-2format-conversion店型轉換業務事件處置",
+            "reopen_trigger": "Store Operations formally approves a brownfield format conversion playbook with remodeling cost schedules and downtime impact parameters; schema migration introduces store format transition event tables and tracking with authoritative owner sign-off."
           }
         }
       ]

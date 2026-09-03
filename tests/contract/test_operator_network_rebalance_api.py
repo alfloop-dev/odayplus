@@ -95,6 +95,19 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
     assert {item["snapshotId"] for item in solved_store["netPlanScenarios"]} == {
         "NP-SNAP-20260714-0615"
     }
+    for scenario_item in solved_store["netPlanScenarios"]:
+        assert scenario_item["modelledConstraintClasses"] == ["CAPITAL"]
+        assert set(scenario_item["unmodelledConstraintClasses"]) == {
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING",
+        }
+        assert scenario_item["modelled_constraint_classes"] == scenario_item["modelledConstraintClasses"]
+        assert scenario_item["unmodelled_constraint_classes"] == scenario_item["unmodelledConstraintClasses"]
 
     selected = client.post(
         "/api/v1/operator/network-rebalance/stores/RB-801/scenarios/move/select",
