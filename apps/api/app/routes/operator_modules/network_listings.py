@@ -148,11 +148,13 @@ def create_network_listings_sub_router(
             operator_role_id=operator_role_id,
             audit_log=audit_log,
             correlation_id=x_correlation_id,
+            tenant_id=principal.tenant_id,
         )
         snap = active_service(request).snapshot(
             selected_heat_zone_id=selected_heat_zone_id,
             lens=lens,
             correlation_id=x_correlation_id,
+            tenant_id=principal.tenant_id,
         )
 
         is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
@@ -421,6 +423,7 @@ def create_network_listings_sub_router(
                 operator_role_id=operator_role_id,
                 audit_log=audit_log,
                 correlation_id=x_correlation_id,
+                tenant_id=principal.tenant_id,
             )
 
             is_async = x_async_intake == "true"
@@ -476,8 +479,12 @@ def create_network_listings_sub_router(
             operator_role_id=operator_role_id,
             audit_log=audit_log,
             correlation_id=correlation_id,
+            tenant_id=principal.tenant_id,
         )
-        intakes = active_service(request).list_intakes(selected_heat_zone_id=selected_heat_zone_id)
+        intakes = active_service(request).list_intakes(
+            selected_heat_zone_id=selected_heat_zone_id,
+            tenant_id=principal.tenant_id,
+        )
 
         is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE) or operator_role_id in (
             "expansion-manager",

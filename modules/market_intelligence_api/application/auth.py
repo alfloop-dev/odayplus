@@ -20,7 +20,6 @@ from shared.auth import (
     Decision,
     Principal,
     ResourceDescriptor,
-    Role,
     TenantAccessWaiver,
     check_tenant_isolation,
 )

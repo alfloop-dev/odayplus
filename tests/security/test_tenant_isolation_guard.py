@@ -10,7 +10,7 @@ Acceptance Criteria:
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -32,7 +32,6 @@ from modules.market_intelligence_api.application.auth import (
 from shared.audit import InMemoryAuditLog
 from shared.auth import (
     ANONYMOUS,
-    Action,
     DataClassification,
     Principal,
     Role,

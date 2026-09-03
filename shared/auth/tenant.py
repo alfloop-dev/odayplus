@@ -22,14 +22,12 @@ Policy Invariants:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import Any
 
-from shared.auth.abac import AccessRequest, Decision, Environment, ResourceDescriptor
-from shared.auth.identity import DataClassification, Principal, Role
-from shared.auth.rbac import Action
-
+from shared.auth.abac import AccessRequest, Decision
+from shared.auth.identity import Principal
 
 POLICY_ID_TENANT_ISOLATION = "tenant_isolation"
 
@@ -78,6 +76,8 @@ class TenantAccessWaiver:
         on: datetime | date | None = None,
     ) -> bool:
         """Validate whether this waiver covers the access request at the given point in time."""
+        if not self.waiver_id or not str(self.waiver_id).strip():
+            return False
         if not self.approved_by or not str(self.approved_by).strip():
             return False
         if not self.reason or not str(self.reason).strip():
@@ -91,6 +91,8 @@ class TenantAccessWaiver:
 
         if self.expires_at is None:
             # Unbounded waivers without expiration date fail closed
+            return False
+        if not isinstance(self.expires_at, (datetime, date)):
             return False
 
         now = on or datetime.now(UTC)
@@ -107,7 +109,7 @@ class TenantAccessWaiver:
             )
             if cur.tzinfo is None:
                 cur = cur.replace(tzinfo=UTC)
-            if cur > exp:
+            if cur >= exp:
                 return False
         elif isinstance(self.expires_at, date):
             cur_date = now.date() if isinstance(now, datetime) else now
@@ -154,6 +156,11 @@ def check_tenant_isolation(
     # Cross-tenant access attempt (or principal without tenant scope):
     # Check for formal risk acceptance / waiver
     if waiver is not None:
+        if not isinstance(waiver, TenantAccessWaiver):
+            return Decision.deny(
+                "Cross-tenant access denied: waiver is not a valid tenant access waiver",
+                policy_id=POLICY_ID_TENANT_ISOLATION,
+            )
         if waiver.is_valid_for(
             principal_id=principal.subject_id,
             target_tenant_id=clean_resource_tenant,

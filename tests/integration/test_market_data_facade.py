@@ -67,7 +67,6 @@ from shared.auth import (
 from shared.auth.engine import AuthorizationEngine
 
 
-
 @pytest.fixture
 def sample_site_context_payload() -> dict[str, Any]:
     return {

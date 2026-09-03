@@ -76,6 +76,7 @@ def authorize_intake_action(
     audit_log: Any = None,
     correlation_id: str | None = None,
     waiver: TenantAccessWaiver | None = None,
+    tenant_id: str | None = None,
 ) -> None:
     """Enforce deny-by-default assisted intake authorization and segregation."""
     def map_action_to_enum(action_str: str) -> Action:
@@ -101,18 +102,22 @@ def authorize_intake_action(
         if audit_log is not None:
             resource_id = None
             res_type = "listing"
-            tenant_id = None
+            resource_tenant_id = None
             if resource is not None:
                 resource_id = resource.get("id") or resource.get("listingId") or resource.get("listing_id")
                 if "url" in resource or "parsedFields" in resource:
                     res_type = "intake"
-                tenant_id = resource.get("tenantId") or resource.get("tenant_id")
+                resource_tenant_id = resource.get("tenantId") or resource.get("tenant_id")
+                if not resource_id and not resource_tenant_id:
+                    resource_tenant_id = tenant_id
+            else:
+                resource_tenant_id = tenant_id
 
             action_enum = map_action_to_enum(action)
             desc = ResourceDescriptor(
                 type=res_type,
                 resource_id=resource_id,
-                tenant_id=tenant_id,
+                tenant_id=resource_tenant_id,
             )
             access = AccessRequest(
                 principal=principal,
@@ -147,7 +152,7 @@ def authorize_intake_action(
     target_tenant = (
         resource_tenant
         if (resource_tenant or has_target_resource_id)
-        else (principal.tenant_id if principal else None)
+        else (tenant_id.strip() if tenant_id and tenant_id.strip() else None)
     )
     effective_waiver = waiver or (
         resource.get("waiver")
