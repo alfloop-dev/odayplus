@@ -1021,12 +1021,13 @@ def test_adjust_case_workflow_lineage_and_recreate() -> None:
         expected_version=case.version,
     )
 
+    assert isinstance(adj_outcome, AdjustmentOutcome)
     # Predecessor verification
     stopped_orig = adj_outcome.original
     assert stopped_orig.status is InterventionStatus.STOPPED
     assert stopped_orig.is_terminal is True
     assert stopped_orig.replacement_id == adj_outcome.replacement.intervention_id
-    assert stopped_orig.adjustment is not None
+    assert isinstance(stopped_orig.adjustment, AdjustmentRecord)
     assert stopped_orig.adjustment.predecessor_id == case.intervention_id
     assert stopped_orig.adjustment.replacement_id == adj_outcome.replacement.intervention_id
     assert stopped_orig.adjustment.actor == "pricing-lead-1"
