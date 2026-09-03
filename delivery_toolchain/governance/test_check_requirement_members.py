@@ -1177,4 +1177,20 @@ class TestTheCheckedInManifestHolds:
             "ODP-FR-INTV-006",
             "ODP-FR-SHARED-001",
             "ODP-FR-LH-005",
+            "ODP-FR-INT-001",
         } <= ids
+
+    def test_odp_fr_int_001_cdc_disposition_structure(self) -> None:
+        payload = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        int_001 = next(r for r in payload["requirements"] if r["id"] == "ODP-FR-INT-001")
+        assert int_001["member_count"] == 5
+        member_map = {m["name"]: m for m in int_001["members"]}
+        assert set(member_map.keys()) == {"BATCH", "API", "FILE", "EVENT", "CDC"}
+        assert member_map["BATCH"]["status"] == "satisfied"
+        assert member_map["API"]["status"] == "satisfied"
+        assert member_map["FILE"]["status"] == "satisfied"
+        assert member_map["EVENT"]["status"] == "absent"
+        assert member_map["EVENT"]["disposition"]["state"] == "OPEN"
+        assert member_map["CDC"]["status"] == "absent"
+        assert member_map["CDC"]["disposition"]["state"] == "OPEN"
+

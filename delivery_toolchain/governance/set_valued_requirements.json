@@ -398,6 +398,59 @@
           }
         }
       ]
+    },
+    {
+      "id": "ODP-FR-INT-001",
+      "statement": "整合層必須支援 Batch、CDC、API、File 與 Event 來源攝取模式。",
+      "member_count": 5,
+      "members": [
+        {
+          "name": "BATCH",
+          "status": "satisfied",
+          "evidence": "apps/data_platform/source.py::MongoSource",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "API",
+          "status": "satisfied",
+          "evidence": "modules/external_data/connectors/provider_registry.py::PROVIDER_REGISTRY",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "FILE",
+          "status": "satisfied",
+          "evidence": "modules/external_data/application/xlsx_import.py::XlsxCommitReceipt",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "EVENT",
+          "status": "absent",
+          "note": "The machine_status_event schema contract declares integration_mode=event_stream and envelope=event, but in production core.machine_status_events is populated via batch watermark reads of device_log (store.py:394-401). No event broker/stream consumer currently exists in production.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Platform Infrastructure Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Schema contract declares event_stream mode but production ingestion path executes via device_log batch ingestion; reconcile contract or implement event consumer."
+          }
+        },
+        {
+          "name": "CDC",
+          "status": "absent",
+          "note": "Audited in ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md and ODP_INT001_CDC_DISPOSITION_2026-09-03.md. No production upstream requires CDC for change log, ordering, latency, or delete semantics; downstream data plane has no delete propagation path; change stream credentials require expanded cluster-level privileges. Maintained as absent; handback submitted for formal human requirement amendment / waiver governance.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Data Platform Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "No production upstream requires CDC; downstream sink has no delete path; credential boundary expansion unapproved. AI cannot self-sign waivers; pending human governance amendment/waiver authorization."
+          }
+        }
+      ]
     }
   ],
   "_governance_policy": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md"
