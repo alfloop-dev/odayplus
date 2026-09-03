@@ -668,6 +668,16 @@ def test_e2e_operator_submission_refuses_unsigned_or_unauthorised_acknowledgemen
         _submit()
     assert "not authorised to acknowledge" in str(exc_role.value)
 
+    # 7. A solve with nothing outstanding cannot absorb an acknowledgement
+    #    either: silently dropping the named classes would record a signature
+    #    that no later reader could locate.
+    projected_scenario = rebalance_service._store("STORE-101")["netPlanScenarios"][0]
+    projected_scenario["unmodelledConstraintClasses"] = []
+    projected_scenario["unmodelled_constraint_classes"] = []
+    with pytest.raises(NetworkRebalancePolicyError) as exc_nothing:
+        _submit(acknowledged_classes=["LEASE"])
+    assert "no acknowledgeable constraint class" in str(exc_nothing.value)
+
     # None of the refusals advanced the store or left a partial receipt behind.
     assert rebalance_service._store("STORE-101")["status"] == "netplanreview"
     assert repo.list_disclosure_acknowledgements(scenario.scenario_id) == []

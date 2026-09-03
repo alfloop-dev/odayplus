@@ -923,6 +923,15 @@ class NetworkRebalanceService:
 
         acknowledgement = None
         ack_classes: list[str] = []
+        if not evaluation.acknowledgeable and acknowledged_classes:
+            # Accepting the submission and dropping the named classes would
+            # record a signature nobody can find later. Whatever the caller
+            # believed they were signing for, this solve does not carry it.
+            raise NetworkRebalancePolicyError(
+                "this solve leaves no acknowledgeable constraint class unmodelled, so "
+                f"{', '.join(str(item) for item in acknowledged_classes)} cannot be "
+                "acknowledged against it"
+            )
         if evaluation.acknowledgeable:
             acknowledgement = self._acknowledge_unmodelled_classes(
                 store=store,
