@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 MIGRATION_SQL = Path("infra/db/migrations/000018_heatzone_composition.sql")
-ALEMBIC_REV = Path("infra/db/migrations/versions/0013_heatzone_composition.py")
+ALEMBIC_REV = Path("infra/db/migrations/versions/0014_heatzone_composition.py")
 
 
 def _sql() -> str:

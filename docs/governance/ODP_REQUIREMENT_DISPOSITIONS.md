@@ -210,6 +210,20 @@ stateDiagram-v2
 
 ---
 
+### 4.7 `ODP-FR-FCT-004`：ForecastOps 預測特徵與根因契約
+
+#### 成員：`ROOT_CAUSE_CANDIDATE`（根因候選）
+- **處置狀態**：`IMPLEMENTATION_READY`
+- **負責人 (Assigned To)**: `ForecastOps / Platform Ops`
+- **目標交付批次 (Target Phase)**: `Wave 5+`
+- **工程處置 (Engineering Disposition)**:
+  全樹追溯證實目前代碼庫中沒有自動化根因推導生產者。保留相容的
+  `WorkOrder.root_cause`、`RootCauseEvidenceCardContract.causeCandidate` 與資料庫欄位，並在各契約明確標示為 `RESERVED (unproduced)`；不得製造裝飾性 Heuristic 假生產者。
+- **裁決狀態 (Decision Status)**:
+  `ODP_OPEN_DECISIONS_2026-09-03.md` § 8 仍為 `OPEN`。本項是已具備 owner／target phase 的工程實作準備，不是本任務代替人類治理角色建立 Waiver 或 Requirement Amendment。
+
+---
+
 ## 5. 自動化檢驗與 CI 整合
 
 所有登錄於 `delivery_toolchain/governance/set_valued_requirements.json` 的需求成員均由 `delivery_toolchain/governance/check_requirement_members.py` 於 CI 流程中機械式驗證：

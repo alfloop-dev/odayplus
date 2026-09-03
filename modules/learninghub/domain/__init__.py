@@ -1,15 +1,18 @@
 """Learning Hub domain primitives."""
 
 from modules.learninghub.domain.dataset_snapshot import (
+    DatasetQualityAdmissionError,
     DatasetSnapshot,
     DatasetSnapshotError,
     DqTriageRecord,
     ModelReadyRecord,
     PointInTimeIssue,
     PointInTimeViolation,
+    QualityAdmissionIssue,
     build_dataset_snapshot,
     model_ready_record_from_mapping,
     validate_point_in_time,
+    validate_quality_admission,
 )
 from modules.learninghub.domain.feature_registry import (
     FeatureLineageEvent,
@@ -37,6 +40,7 @@ from modules.learninghub.domain.monitoring import (
 
 __all__ = [
     # dataset_snapshot
+    "DatasetQualityAdmissionError",
     "DatasetSnapshot",
     "DatasetSnapshotError",
     "DqTriageRecord",
@@ -50,10 +54,12 @@ __all__ = [
     "MonitoringSignalType",
     "PointInTimeIssue",
     "PointInTimeViolation",
+    "QualityAdmissionIssue",
     "RetrainingRequest",
     "build_dataset_snapshot",
     "model_ready_record_from_mapping",
     "validate_point_in_time",
+    "validate_quality_admission",
     # feature_registry
     "FeatureLineageEvent",
     "FeatureRegistry",

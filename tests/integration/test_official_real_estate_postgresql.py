@@ -78,10 +78,12 @@ def _alembic_config(database: Any) -> Config:
 #
 # 0008 (decision policy registry) is the first revision that binds into the
 # baseline rather than beside it -- it foreign-keys `core.tenants` and
-# constrains `workflow.decisions`, both from 0001. So the stamp now has to come
-# with the objects the later revisions reference, or `upgrade("head")` fails on
-# a table the revision it claims to have applied was supposed to create. Only
-# the referenced shape is needed, which is what keeps this postgis-free.
+# constrains `workflow.decisions`, both from 0001. 0013 (the FCT-004 reserved
+# disposition) is another revision that binds to the baseline: it comments on
+# `core.work_orders.root_cause`. So the stamp now has to come with the objects
+# the later revisions reference, or `upgrade("head")` fails on a table the
+# revision it claims to have applied was supposed to create. Only the
+# referenced shape is needed, which is what keeps this postgis-free.
 _BASELINE_OBJECTS_LATER_REVISIONS_BIND_TO = """
 CREATE SCHEMA IF NOT EXISTS core;
 CREATE SCHEMA IF NOT EXISTS workflow;
@@ -109,6 +111,11 @@ CREATE TABLE IF NOT EXISTS geo.h3_cells (
     geo_cell_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     h3_index    VARCHAR(15) NOT NULL UNIQUE
 );
+
+CREATE TABLE IF NOT EXISTS core.work_orders (
+    work_order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    root_cause TEXT
+);
 """
 
 
@@ -121,6 +128,53 @@ def _stamp_baseline(database: Any) -> None:
 def _upgrade_official_schema(database: Any) -> None:
     _stamp_baseline(database)
     command.upgrade(_alembic_config(database), "head")
+
+
+def test_root_cause_reserved_migration_round_trips_on_postgresql(
+    intake_blank_db: Any,
+) -> None:
+    """Execute the FCT-004 forward migration and its rollback on PostgreSQL.
+
+    The contract is metadata-only, but it still has to be reachable from the
+    real Alembic chain. In particular, the rollback must remove only the
+    reserved comment while preserving the baseline column and table.
+    """
+    _stamp_baseline(intake_blank_db)
+    config = _alembic_config(intake_blank_db)
+
+    command.upgrade(config, "head")
+    with intake_blank_db.connect() as connection:
+        comment = connection.execute(
+            "SELECT col_description('core.work_orders'::regclass, "
+            "ordinal_position) FROM information_schema.columns "
+            "WHERE table_schema = 'core' AND table_name = 'work_orders' "
+            "AND column_name = 'root_cause'"
+        ).fetchone()
+        assert comment == (
+            "RESERVED: No automated producer exists in current release "
+            "(ODP-FR-FCT-004). Owner: ForecastOps/Platform; Target: Wave 5+",
+        )
+
+    command.downgrade(config, "0011")
+    with intake_blank_db.connect() as connection:
+        comment_after_rollback = connection.execute(
+            "SELECT col_description('core.work_orders'::regclass, "
+            "ordinal_position) FROM information_schema.columns "
+            "WHERE table_schema = 'core' AND table_name = 'work_orders' "
+            "AND column_name = 'root_cause'"
+        ).fetchone()
+        current_revision = connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()
+        column_still_exists = connection.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'core' AND table_name = 'work_orders' "
+            "AND column_name = 'root_cause'"
+        ).fetchone()
+
+    assert comment_after_rollback == (None,)
+    assert current_revision == ("0011",)
+    assert column_still_exists == (1,)
 
 
 def _create_model_view_prerequisites(database: Any) -> None:
