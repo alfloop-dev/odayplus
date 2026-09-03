@@ -139,6 +139,7 @@ class PersistenceBundle:
 
 def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
     from modules.forecastops.domain.forecasting import default_forecast_alert_policy
+    from shared.governance import default_netplan_disclosure_policy
 
     seeded_tenants = (
         "tenant-test",
@@ -154,6 +155,11 @@ def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
             for policy in (
                 default_forecast_alert_policy(tenant_id),
                 default_model_performance_drift_policy(tenant_id),
+                # One registry, keyed by policy_kind. NetPlan approval refuses
+                # outright when its kind does not resolve, so a bundle that
+                # seeds the other kinds and not this one would leave every
+                # network plan unapprovable rather than merely ungoverned.
+                default_netplan_disclosure_policy(tenant_id),
             )
         ]
     )

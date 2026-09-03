@@ -14,10 +14,13 @@ from models.shared_ml.production_runtime import (
 )
 from modules.netplan.application.production import NetPlanProductionExecutor
 from modules.netplan.domain.planning import (
+    VALID_TRANSITIONS,
     ApprovalRecord,
     CandidateSiteInput,
+    ConstraintDisclosureAcknowledgement,
     ExecutionRecord,
     ExistingStoreInput,
+    InvalidNetPlanTransitionError,
     NetPlanScenario,
     NetPlanScenarioStatus,
     OutcomeRecord,
@@ -26,9 +29,20 @@ from modules.netplan.domain.planning import (
     build_scenario_options,
 )
 from modules.netplan.infrastructure.repositories import InMemoryNetPlanRepository
+from shared.governance.decision_policy import (
+    DecisionPolicy,
+    DecisionPolicyRepository,
+    resolve_policy,
+)
+from shared.governance.netplan_disclosure import (
+    NETPLAN_DISCLOSURE_POLICY_KIND,
+    evaluate_disclosure,
+    role_is_authorized,
+)
 from solver.netplan import (
     STATUS_INFEASIBLE,
     ActionOption,
+    ConstraintClass,
     ManagementApprovalExpectation,
     ManagementApprovalReceiptVerifier,
     ManagementApprovalVerification,
@@ -47,6 +61,17 @@ class NetPlanNotFoundError(LookupError):
 
 class NetPlanApprovalError(ValueError):
     """Raised when a high-risk approval request is incomplete."""
+
+
+class NetPlanConstraintDisclosureError(NetPlanApprovalError):
+    """Raised when a plan is approved without answering for what was not modelled.
+
+    A subclass of `NetPlanApprovalError` so that existing callers which already
+    treat an approval refusal as a refusal keep working, and a distinct type so
+    that "this plan was never checked against construction capacity" can be
+    told apart from "this receipt does not verify" by anything that cares --
+    they are both refusals, but only one of them is fixed by supplying a cap.
+    """
 
 
 @dataclass(frozen=True)
@@ -68,6 +93,7 @@ class NetPlanService:
         repository: InMemoryNetPlanRepository | None = None,
         production_executor: NetPlanProductionExecutor | None = None,
         approval_verifier: ManagementApprovalReceiptVerifier | None = None,
+        policy_repository: DecisionPolicyRepository | None = None,
         runtime_mode: str | None = None,
     ) -> None:
         self.production_required = production_execution_required(runtime_mode)
@@ -85,6 +111,13 @@ class NetPlanService:
         self.repository = repository or InMemoryNetPlanRepository()
         self.production_executor = production_executor
         self.approval_verifier = approval_verifier
+        # Not defaulted. An approval path that falls back to built-in rules
+        # when the registry is missing cannot say what governed the decision,
+        # and -- worse -- would approve every plan while the gate looks
+        # installed. `_require_disclosure_policy` turns the absence into a
+        # refusal at the point of decision rather than here, so that solving
+        # and rejecting still work without a registry.
+        self.policy_repository = policy_repository
 
     def create_scenario(
         self,
@@ -265,6 +298,107 @@ class NetPlanService:
             occurred_at=occurred_at,
         )
 
+    def acknowledge_unmodelled_constraints(
+        self,
+        scenario_id: str,
+        *,
+        actor_id: str,
+        reason: str,
+        acknowledged_classes: Sequence[ConstraintClass | str],
+        approval_receipt_id: str,
+        acknowledged_at: datetime | None = None,
+    ) -> ConstraintDisclosureAcknowledgement:
+        """Record a named authority accepting named unmodelled-constraint exposure.
+
+        This is the only way a plan with an unmodelled required class reaches
+        approval, and everything it checks is checked because the alternative
+        is a signature that means less than it appears to:
+
+        - The classes are named by the caller and never inferred. An
+          "acknowledge whatever is outstanding" call would produce a receipt
+          whose meaning changes with the scenario, which is a blank cheque with
+          a person's name on it.
+        - Authority comes from `principal_role` on the verified management
+          receipt, not from an argument. An actor who could state their own
+          role could authorise themselves.
+        - The solve must not be stale. Accepting the exposure of a plan that no
+          longer exists is not an acceptance of anything.
+        - A class must be both acknowledgeable under the policy *and* actually
+          unmodelled in this solve. Signing for exposure the plan does not
+          carry means the signer was shown something other than this plan.
+        """
+        cleaned_reason = str(reason or "").strip()
+        if not cleaned_reason:
+            raise NetPlanConstraintDisclosureError(
+                "acknowledging an unmodelled constraint class requires a reason: "
+                "the receipt has to record why the exposure was accepted"
+            )
+        scenario = self._require_scenario(scenario_id)
+        solve = self._require_solve(scenario_id)
+        if solve.is_stale(scenario):
+            raise NetPlanConstraintDisclosureError(
+                "stale solve result cannot be acknowledged: scenario parameters "
+                "have changed since last solve"
+            )
+        now = acknowledged_at or datetime.now(UTC)
+        verification = self._verify_authoritative_solve(
+            scenario,
+            solve,
+            approval_receipt_id=approval_receipt_id,
+        )
+        assert verification.receipt is not None
+        if actor_id != verification.receipt.principal_id:
+            raise NetPlanConstraintDisclosureError(
+                "acknowledging actor does not match the verified approval principal"
+            )
+        policy = self._require_disclosure_policy(scenario, at=now)
+        actor_role = verification.receipt.principal_role
+        if not role_is_authorized(policy, actor_role):
+            raise NetPlanConstraintDisclosureError(
+                f"principal role {actor_role!r} is not authorised to acknowledge "
+                f"unmodelled constraint classes under policy {policy.policy_version_id}"
+            )
+
+        disclosed = self._require_disclosed_classes(scenario, solve)
+        evaluation = evaluate_disclosure(
+            policy,
+            unmodelled_classes=[item.value for item in disclosed],
+        )
+        named = self._normalize_classes(acknowledged_classes)
+        if not named:
+            raise NetPlanConstraintDisclosureError(
+                "acknowledging an unmodelled constraint class requires naming at "
+                "least one class"
+            )
+        waivable = set(evaluation.acknowledgeable)
+        not_waivable = tuple(
+            item.value for item in named if item.value not in waivable
+        )
+        if not_waivable:
+            raise NetPlanConstraintDisclosureError(
+                f"cannot acknowledge {','.join(sorted(not_waivable))} under policy "
+                f"{policy.policy_version_id}: a class is acknowledgeable only when "
+                "the policy permits it and this solve actually left it unmodelled"
+            )
+
+        acknowledgement = ConstraintDisclosureAcknowledgement(
+            acknowledgement_id=f"netplan-disclosure-ack-{uuid4()}",
+            scenario_id=scenario.scenario_id,
+            tenant_id=scenario.tenant_id,
+            acknowledged_classes=named,
+            actor_id=actor_id,
+            actor_role=actor_role,
+            reason=cleaned_reason,
+            policy_version_id=policy.policy_version_id,
+            policy_label=policy.policy_label,
+            policy_version=policy.policy_version,
+            solver_problem_hash=solve.problem_hash,
+            model_version=solve.model_version,
+            approval_receipt_id=verification.receipt.receipt_id,
+            acknowledged_at=now,
+        ).sealed()
+        return self.repository.save_disclosure_acknowledgement(acknowledgement)
+
     def decide(
         self,
         scenario_id: str,
@@ -280,9 +414,32 @@ class NetPlanService:
         normalized = decision.lower()
         scenario = self._require_scenario(scenario_id)
         now = decided_at or datetime.now(UTC)
+        # Establish that this scenario can be decided at all before asking
+        # whether it should be. A scenario that was never submitted is not
+        # approvable for a reason no acknowledgement can fix, so reporting the
+        # disclosure gap first would send the operator to collect a signature
+        # that still would not let the plan through.
+        target_status = (
+            NetPlanScenarioStatus.APPROVED
+            if normalized == "approved"
+            else NetPlanScenarioStatus.REJECTED
+        )
+        if target_status not in VALID_TRANSITIONS.get(scenario.status, frozenset()):
+            raise InvalidNetPlanTransitionError(
+                f"cannot move scenario {scenario.scenario_id} from "
+                f"{scenario.status.value} to {target_status.value}"
+            )
         authority_receipt = None
         authority_verification = None
         verification_violations: tuple[str, ...] = ()
+        modelled_classes: tuple[ConstraintClass, ...] = ()
+        unmodelled_classes: tuple[ConstraintClass, ...] = ()
+        acknowledged_classes: tuple[ConstraintClass, ...] = ()
+        disclosure_policy_version_id = ""
+        disclosure_policy_label = ""
+        disclosure_policy_version = ""
+        disclosure_acknowledgement_id = ""
+        solver_problem_hash = ""
         if normalized == "approved":
             solve = self._require_solve(scenario_id)
             if solve.is_stale(scenario):
@@ -299,6 +456,27 @@ class NetPlanService:
                 raise NetPlanApprovalError(
                     "audit actor does not match the verified approval principal"
                 )
+            # The disclosure gate runs after authority verification and before
+            # the record is written. After, because the acknowledgement is bound
+            # to the same verified receipt and there is nothing to check against
+            # until that receipt is trusted. Before, because an ApprovalRecord
+            # that exists is an approval: a plan must not reach persistence and
+            # then be argued about.
+            acknowledgement = self._enforce_constraint_disclosure(
+                scenario,
+                solve,
+                at=now,
+            )
+            modelled_classes = tuple(solve.result.modelled_constraint_classes)
+            unmodelled_classes = tuple(solve.result.unmodelled_constraint_classes)
+            solver_problem_hash = solve.problem_hash
+            policy = self._require_disclosure_policy(scenario, at=now)
+            disclosure_policy_version_id = policy.policy_version_id
+            disclosure_policy_label = policy.policy_label
+            disclosure_policy_version = policy.policy_version
+            if acknowledgement is not None:
+                acknowledged_classes = acknowledgement.acknowledged_classes
+                disclosure_acknowledgement_id = acknowledgement.acknowledgement_id
             authority_receipt = verification.receipt
             authority_verification = verification
             verification_violations = verification.violations
@@ -313,6 +491,14 @@ class NetPlanService:
             authority_receipt=authority_receipt,
             authority_verification=authority_verification,
             verification_violations=verification_violations,
+            modelled_constraint_classes=modelled_classes,
+            unmodelled_constraint_classes=unmodelled_classes,
+            acknowledged_constraint_classes=acknowledged_classes,
+            disclosure_policy_version_id=disclosure_policy_version_id,
+            disclosure_policy_label=disclosure_policy_label,
+            disclosure_policy_version=disclosure_policy_version,
+            disclosure_acknowledgement_id=disclosure_acknowledgement_id,
+            solver_problem_hash=solver_problem_hash,
         )
         target = (
             NetPlanScenarioStatus.APPROVED
@@ -449,6 +635,167 @@ class NetPlanService:
             raise NetPlanNotFoundError(f"scenario {scenario_id} has no solve record")
         return solve
 
+    @staticmethod
+    def _normalize_classes(
+        classes: Sequence[ConstraintClass | str],
+    ) -> tuple[ConstraintClass, ...]:
+        """Parse caller-named classes, refusing names the solver does not define.
+
+        An unrecognised name is rejected rather than dropped. Silently ignoring
+        `"SEQUENCNG"` would produce a receipt that reads as covering sequencing
+        while covering nothing.
+        """
+        parsed: list[ConstraintClass] = []
+        for item in classes:
+            if isinstance(item, ConstraintClass):
+                candidate = item
+            else:
+                raw = str(item or "").strip().upper()
+                if not raw:
+                    continue
+                try:
+                    candidate = ConstraintClass(raw)
+                except ValueError as exc:
+                    raise NetPlanConstraintDisclosureError(
+                        f"{raw!r} is not a network plan constraint class"
+                    ) from exc
+            if candidate not in parsed:
+                parsed.append(candidate)
+        return tuple(parsed)
+
+    def _require_disclosure_policy(
+        self, scenario: NetPlanScenario, *, at: datetime
+    ) -> DecisionPolicy:
+        """Resolve the disclosure policy in force for this tenant at `at`.
+
+        Point-in-time rather than latest, for the same reason the registry is:
+        re-deriving why a six-month-old plan was approved has to resolve to the
+        rules that approved it.
+        """
+        if self.policy_repository is None:
+            raise NetPlanConstraintDisclosureError(
+                "netplan constraint disclosure policy repository is not configured; "
+                "refusing to approve a plan without resolving which unmodelled "
+                "constraint classes the policy blocks"
+            )
+        return resolve_policy(
+            self.policy_repository,
+            policy_kind=NETPLAN_DISCLOSURE_POLICY_KIND,
+            tenant_id=scenario.tenant_id,
+            at=at,
+        )
+
+    @staticmethod
+    def _require_disclosed_classes(
+        scenario: NetPlanScenario, solve: ScenarioSolveRecord
+    ) -> tuple[ConstraintClass, ...]:
+        """The classes this solve declared it did not bind, or a refusal.
+
+        Two distinct failures are caught here, and neither is a missing feature:
+
+        A result carrying *neither* class set has not disclosed that it bound
+        nothing -- it has failed to disclose anything. Reading its empty
+        unmodelled set as "nothing is unmodelled" is the exact fail-open the
+        CP-SAT production path shipped with (see the 2026-09-02 correction in
+        the constraint-classes design note), where a production plan came back
+        with both sets empty and would have sailed through any gate that
+        trusted them.
+
+        A result whose declaration disagrees with the constraints it was solved
+        under is claiming to have bound something it did not. The staleness
+        check above has already established that the scenario has not moved
+        since the solve, so the two must agree; if they do not, the declaration
+        is wrong and cannot be the basis of an approval.
+        """
+        declared_modelled = tuple(solve.result.modelled_constraint_classes)
+        declared_unmodelled = tuple(solve.result.unmodelled_constraint_classes)
+        if not declared_modelled and not declared_unmodelled:
+            raise NetPlanConstraintDisclosureError(
+                "solve result declares neither modelled nor unmodelled constraint "
+                "classes; an undisclosed solve cannot be approved"
+            )
+        expected_unmodelled = set(scenario.constraints.unmodelled_classes())
+        if set(declared_unmodelled) != expected_unmodelled:
+            raise NetPlanConstraintDisclosureError(
+                "solve result constraint disclosure does not match the scenario "
+                f"constraints: declared unmodelled "
+                f"{sorted(item.value for item in declared_unmodelled)}, "
+                f"constraints imply {sorted(item.value for item in expected_unmodelled)}"
+            )
+        return declared_unmodelled
+
+    def _enforce_constraint_disclosure(
+        self,
+        scenario: NetPlanScenario,
+        solve: ScenarioSolveRecord,
+        *,
+        at: datetime,
+    ) -> ConstraintDisclosureAcknowledgement | None:
+        """Refuse the approval, or return the signature that permits it.
+
+        Returns None when the plan needs no signature -- every required class
+        was modelled. Raises when a required class was not modelled and either
+        the policy forbids waiving it or no valid signature covers it.
+        """
+        policy = self._require_disclosure_policy(scenario, at=at)
+        disclosed = self._require_disclosed_classes(scenario, solve)
+        evaluation = evaluate_disclosure(
+            policy,
+            unmodelled_classes=[item.value for item in disclosed],
+        )
+        if evaluation.is_blocked:
+            raise NetPlanConstraintDisclosureError(
+                "network plan cannot be approved: required constraint classes "
+                f"{','.join(sorted(evaluation.blocking))} were not modelled by this "
+                f"solve and policy {policy.policy_version_id} does not permit "
+                "acknowledging them; supply the corresponding constraint caps and "
+                "re-solve"
+            )
+        if not evaluation.requires_acknowledgement:
+            return None
+        required_signature = self._normalize_classes(evaluation.acknowledgeable)
+        acknowledgement = self._find_valid_acknowledgement(
+            scenario.scenario_id,
+            classes=required_signature,
+            solver_problem_hash=solve.problem_hash,
+            policy_version_id=policy.policy_version_id,
+        )
+        if acknowledgement is None:
+            raise NetPlanConstraintDisclosureError(
+                "network plan cannot be approved: required constraint classes "
+                f"{','.join(sorted(evaluation.acknowledgeable))} were not modelled "
+                "and no valid acknowledgement covers them for this solve under "
+                f"policy {policy.policy_version_id}"
+            )
+        return acknowledgement
+
+    def _find_valid_acknowledgement(
+        self,
+        scenario_id: str,
+        *,
+        classes: Sequence[ConstraintClass],
+        solver_problem_hash: str,
+        policy_version_id: str,
+    ) -> ConstraintDisclosureAcknowledgement | None:
+        """The most recent signature that still answers for this exact solve.
+
+        Signatures are never mutated or expired in place; they simply stop
+        matching once the plan or the policy moves, which is what makes
+        "reuse after a re-solve" impossible without deleting anything.
+        """
+        candidates = [
+            candidate
+            for candidate in self.repository.list_disclosure_acknowledgements(scenario_id)
+            if candidate.covers(
+                classes=classes,
+                solver_problem_hash=solver_problem_hash,
+                policy_version_id=policy_version_id,
+            )
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda candidate: candidate.acknowledged_at)
+
     def _require_authentic_approval(self, scenario_id: str) -> ApprovalRecord:
         approvals = self.repository.list_approvals(scenario_id)
         approval = next(
@@ -549,6 +896,7 @@ class NetPlanService:
 
 __all__ = [
     "NetPlanApprovalError",
+    "NetPlanConstraintDisclosureError",
     "NetPlanNotFoundError",
     "NetPlanService",
     "ScenarioBuildRequest",
