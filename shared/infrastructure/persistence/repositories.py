@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -28,6 +29,7 @@ from models.shared_ml.registry import ModelAlias, ModelRegistryError, ModelVersi
 from models.shared_ml.validation import ValidationRun
 from modules.adlift.domain.incrementality import IncrementalityReport
 from modules.avm.domain import (
+    LEGACY_UNKNOWN_QUALITY_STATUS,
     DataRoom,
     NormalizedMargin,
     ValuationCase,
@@ -207,30 +209,33 @@ class DurableAVMRepository:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
-    @staticmethod
-    def _migrate_legacy_case(case: ValuationCase | None) -> ValuationCase | None:
+    def _migrate_legacy_case(self, case: ValuationCase | None) -> ValuationCase | None:
         if case is None:
             return None
         inp = case.valuation_input
         status = getattr(inp, "quality_score_status", None)
         if status is None:
-            legacy_status = "unmeasured" if inp.quality_score is None else "legacy_unknown"
+            legacy_status = (
+                "unmeasured"
+                if getattr(inp, "quality_score", None) is None
+                else LEGACY_UNKNOWN_QUALITY_STATUS
+            )
             new_input = ValuationInput(
                 store_id=inp.store_id,
                 gm_ttm=inp.gm_ttm,
                 forecast_gm_next_12m=inp.forecast_gm_next_12m,
                 asset_book_value=inp.asset_book_value,
                 equipment_fair_value=inp.equipment_fair_value,
-                lease_liability=inp.lease_liability,
-                working_capital=inp.working_capital,
-                comparable_multiples=inp.comparable_multiples,
-                liquidity_discount=inp.liquidity_discount,
-                quality_score=inp.quality_score,
+                lease_liability=getattr(inp, "lease_liability", 0.0),
+                working_capital=getattr(inp, "working_capital", 0.0),
+                comparable_multiples=getattr(inp, "comparable_multiples", ()),
+                liquidity_discount=getattr(inp, "liquidity_discount", 0.1),
+                quality_score=getattr(inp, "quality_score", None),
                 quality_score_status=legacy_status,
-                source_snapshot_ids=inp.source_snapshot_ids,
-                prediction_origin_time=inp.prediction_origin_time,
+                source_snapshot_ids=getattr(inp, "source_snapshot_ids", ()),
+                prediction_origin_time=getattr(inp, "prediction_origin_time", datetime.now(UTC)),
             )
-            return ValuationCase(
+            migrated = ValuationCase(
                 case_id=case.case_id,
                 store_id=case.store_id,
                 status=case.status,
@@ -239,7 +244,47 @@ class DurableAVMRepository:
                 created_at=case.created_at,
                 status_history=case.status_history,
             )
+            # Persist the marker so every later reader, including report and
+            # data-room readers, observes the same legacy disposition.
+            self._store.put(self._CASES, migrated.case_id, migrated)
+            return migrated
         return case
+
+    def _case_has_legacy_quality(self, case_id: str) -> bool:
+        case = self.get_case(case_id)
+        return bool(
+            case is not None
+            and case.valuation_input.effective_quality_score_status
+            == LEGACY_UNKNOWN_QUALITY_STATUS
+        )
+
+    def _dispose_legacy_report(self, report: ValuationReport) -> ValuationReport:
+        if not (
+            self._case_has_legacy_quality(report.case_id)
+            or report.is_legacy_quality_unknown
+        ):
+            return report
+        disposed = report.with_legacy_quality_disposition()
+        if disposed != report:
+            self._store.put(
+                self._REPORTS,
+                report.report_id,
+                disposed,
+                group_key=report.case_id,
+                seq=getattr(report, "valuation_version", 1),
+            )
+        return disposed
+
+    def _dispose_legacy_dataroom(self, dataroom: DataRoom) -> DataRoom:
+        if not (
+            self._case_has_legacy_quality(dataroom.case_id)
+            or dataroom.is_legacy_quality_unknown
+        ):
+            return dataroom
+        disposed = dataroom.with_legacy_quality_disposition()
+        if disposed != dataroom:
+            self._store.put(self._DATAROOMS, dataroom.case_id, disposed)
+        return disposed
 
     def save_case(self, case: ValuationCase) -> ValuationCase:
         self._store.put(self._CASES, case.case_id, case)
@@ -286,17 +331,22 @@ class DurableAVMRepository:
         return report
 
     def latest_report(self, case_id: str) -> ValuationReport | None:
-        return self._store.latest_in_group(self._REPORTS, case_id)
+        report = self._store.latest_in_group(self._REPORTS, case_id)
+        return None if report is None else self._dispose_legacy_report(report)
 
     def report_history(self, case_id: str) -> list[ValuationReport]:
-        return self._store.list_by_group(self._REPORTS, case_id)
+        return [
+            self._dispose_legacy_report(report)
+            for report in self._store.list_by_group(self._REPORTS, case_id)
+        ]
 
     def save_dataroom(self, dataroom: DataRoom) -> DataRoom:
         self._store.put(self._DATAROOMS, dataroom.case_id, dataroom)
         return dataroom
 
     def get_dataroom(self, case_id: str) -> DataRoom | None:
-        return self._store.get(self._DATAROOMS, case_id)
+        dataroom = self._store.get(self._DATAROOMS, case_id)
+        return None if dataroom is None else self._dispose_legacy_dataroom(dataroom)
 
 
 class DurableForecastOpsRepository:

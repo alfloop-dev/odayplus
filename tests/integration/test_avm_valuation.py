@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -526,3 +528,147 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
     assert "legacy_quality_unknown_discount" in valued_report.normalized_margin.adjustment_reasons
     engine.close()
 
+
+def test_legacy_report_and_dataroom_are_downgraded_on_every_read_path(tmp_path) -> None:
+    from modules.avm.domain import (
+        ApprovalDecision,
+        NormalizedMargin,
+        ValuationCase,
+        ValuationCaseStatus,
+        ValuationInput,
+        generate_data_room,
+        value_store,
+    )
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.repositories import DurableAVMRepository
+
+    engine = SqliteEngine(tmp_path / "legacy-report-paths.sqlite3")
+    store = SqliteDocumentStore(engine)
+    repository = DurableAVMRepository(store)
+
+    def old_case(case_id: str, status: ValuationCaseStatus) -> ValuationCase:
+        case = ValuationCase.create(
+            ValuationInput(
+                store_id=f"store-{case_id}",
+                gm_ttm=1_000_000,
+                forecast_gm_next_12m=1_000_000,
+                asset_book_value=500_000,
+                equipment_fair_value=100_000,
+                quality_score=1.0,
+                quality_score_status=None,
+            ),
+            created_by="legacy-system",
+            correlation_id=f"corr-{case_id}",
+            case_id=case_id,
+        )
+        if status is not ValuationCaseStatus.DATA_READY:
+            case = case.transition(
+                status,
+                actor="legacy-system",
+                reason="legacy persisted status",
+                correlation_id=f"corr-{case_id}",
+            )
+        store.put(repository._CASES, case.case_id, case)
+        return case
+
+    def old_high_confidence_report(case: ValuationCase):
+        high_margin = NormalizedMargin(
+            case_id=case.case_id,
+            store_id=case.store_id,
+            gm_ttm=1_000_000,
+            gm_fwd=1_000_000,
+            normalized_gm=1_000_000,
+            adjustment_reasons=("weighted_ttm_and_forecast_gm",),
+            confidence="high",
+        )
+        report = value_store(case, high_margin)
+        report = replace(
+            report,
+            confidence="high",
+            normalized_margin=replace(report.normalized_margin, confidence="high"),
+            finance_approval=ApprovalDecision(
+                decision_id=f"decision-{case.case_id}",
+                actor_id="legacy-finance",
+                approved_at=case.created_at,
+                decision_reason="historical approval",
+                reserve_price=report.reserve_price,
+                correlation_id=f"corr-{case.case_id}",
+            ),
+        )
+        # Simulate a pickle written before the status/disposition fields existed.
+        object.__delattr__(report, "quality_score_status")
+        object.__delattr__(report, "quality_disposition")
+        return report
+
+    review_case = old_case("legacy-review-case", ValuationCaseStatus.REVIEW_REQUIRED)
+    review_report = old_high_confidence_report(review_case)
+    store.put(
+        repository._REPORTS,
+        review_report.report_id,
+        review_report,
+        group_key=review_case.case_id,
+        seq=1,
+    )
+
+    latest = repository.latest_report(review_case.case_id)
+    assert latest is not None
+    assert latest.confidence == "low"
+    assert latest.normalized_margin.confidence == "low"
+    assert latest.quality_score_status == "legacy_unknown"
+    assert latest.quality_disposition == "legacy_unknown_downgraded"
+    assert latest.finance_approval is None
+    assert repository.report_history(review_case.case_id)[0].quality_disposition == (
+        "legacy_unknown_downgraded"
+    )
+    persisted_report = store.get(repository._REPORTS, review_report.report_id)
+    assert persisted_report.quality_disposition == "legacy_unknown_downgraded"
+
+    service = AVMService(repository=repository)
+    with pytest.raises(ValueError, match="legacy valuation report is downgraded"):
+        service.approve_finance(
+            review_case.case_id,
+            actor="finance-new",
+            reason="review old report",
+            correlation_id="corr-new-approval",
+        )
+
+    dataroom_case = old_case("legacy-dataroom-case", ValuationCaseStatus.DATAROOM_READY)
+    dataroom_report = old_high_confidence_report(dataroom_case)
+    store.put(
+        repository._REPORTS,
+        dataroom_report.report_id,
+        dataroom_report,
+        group_key=dataroom_case.case_id,
+        seq=1,
+    )
+    old_dataroom = generate_data_room(dataroom_report)
+    object.__delattr__(old_dataroom, "quality_score_status")
+    object.__delattr__(old_dataroom, "quality_disposition")
+    store.put(repository._DATAROOMS, dataroom_case.case_id, old_dataroom)
+
+    read_dataroom = service.dataroom(dataroom_case.case_id)
+    assert read_dataroom is not None
+    assert read_dataroom.quality_disposition == "legacy_unknown_downgraded"
+    assert read_dataroom.valuation_card["confidence"] == "low"
+    assert read_dataroom.valuation_card["quality_disposition"] == (
+        "legacy_unknown_downgraded"
+    )
+    assert read_dataroom.valuation_card["finance_approval"] is None
+    persisted_dataroom = store.get(repository._DATAROOMS, dataroom_case.case_id)
+    assert persisted_dataroom.quality_disposition == "legacy_unknown_downgraded"
+
+    with pytest.raises(ValueError, match="legacy valuation report is downgraded"):
+        service.build_dataroom(
+            dataroom_case.case_id,
+            actor="deal-room",
+            correlation_id="corr-dataroom-rebuild",
+        )
+    with pytest.raises(ValueError, match="legacy data room is downgraded"):
+        service.export_dataroom(
+            dataroom_case.case_id,
+            actor="deal-room",
+            reason="export old room",
+            correlation_id="corr-dataroom-export",
+        )
+    engine.close()

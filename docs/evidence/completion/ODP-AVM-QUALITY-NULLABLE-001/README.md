@@ -18,7 +18,9 @@ No valuation report or valuation card is persisted on that path.
 | Domain case | `modules/avm/domain/valuation.py::ValuationInput.to_dict` | Emits `quality_score: null` so absence remains observable |
 | Service boundary | `modules/avm/application/valuation.py::AVMService.normalize` | Rejects before changing case state or writing a margin |
 | Domain consumers | `normalize_margin`, `value_store`, `build_model_valuation_report` | Reject missing quality before deriving confidence or a report |
-| Durable case | `shared/infrastructure/persistence/repositories.py::DurableAVMRepository` | Pickle persistence preserves `None` without coercion; legacy cases without status are disposed as `legacy_unknown` |
+| Durable case | `shared/infrastructure/persistence/repositories.py::DurableAVMRepository` | Pickle persistence preserves `None` without coercion; legacy cases without status are persisted as `legacy_unknown` |
+| Historical reports | `ValuationReport.with_legacy_quality_disposition`, `latest_report`, `report_history` | Legacy reports are persisted as `legacy_unknown_downgraded`, expose only `low` confidence, and cannot carry an actionable old approval |
+| Historical data rooms | `DataRoom.with_legacy_quality_disposition`, `get_dataroom` | Legacy rooms retain historical prices for audit but expose a named low-confidence downgrade; rebuild and export are rejected |
 | PostgreSQL | `infra/db/migrations/000018_avm_quality_score_nullable.sql` and Alembic `0012` | Drops `NOT NULL` and `DEFAULT`; old rows retain values and receive `legacy_unknown` status |
 | SQLite | `infra/db/migrations/000018_avm_quality_score_nullable_sqlite.sql` | Rebuilds the table with nullable score; copies old values unchanged and preserves status on restart |
 | API contract | `packages/openapi-client/openapi.json` | `quality_score` is `number | null` with no default and is not required |
@@ -33,9 +35,14 @@ omitted score. Existing rows keep their value and are marked
 `quality_score_status = 'legacy_unknown'`. New writers (such as `LineageManifest.to_audit_snapshot_row()`)
 explicitly emit `measured` or `unmeasured` status. In `DurableAVMRepository`, legacy
 pickled cases lacking an explicit status marker are migrated on retrieval to
-`quality_score_status = 'legacy_unknown'`. When valued, legacy cases with `legacy_unknown`
-status receive a named `legacy_quality_unknown_discount` and conservative `low` confidence
-rather than being treated as a perfect measurement.
+`quality_score_status = 'legacy_unknown'`, and that marker is written back to the
+case. When valued, legacy cases with `legacy_unknown` status receive a named
+`legacy_quality_unknown_discount` and conservative `low` confidence rather than being
+treated as a perfect measurement. Historical reports and data rooms are also migrated
+on read: their prices remain available for audit, but the report and valuation card are
+marked `legacy_unknown_downgraded`, all exposed confidence is `low`, and any old finance
+approval is retained only under `legacy_finance_approval`. New finance approval, data-room
+rebuild, and data-room export require recomputation with measured quality.
 
 ## Search boundary
 
@@ -49,7 +56,7 @@ longer live.
 
 ## Verification
 
-- `pytest -q modules/avm/tests/test_deal_outcome_and_calibration.py tests/integration/test_avm_valuation.py tests/integration/test_avm_deal_outcome.py tests/integration/test_operator_canonical_wiring.py tests/ops/test_avm_quality_nullable_migration.py` — passed.
+- `pytest -q modules/avm/tests/test_deal_outcome_and_calibration.py tests/integration/test_avm_valuation.py tests/integration/test_avm_deal_outcome.py tests/integration/test_operator_canonical_wiring.py tests/ops/test_avm_quality_nullable_migration.py` — passed, including `test_legacy_report_and_dataroom_are_downgraded_on_every_read_path`.
 - `pytest -q tests/ops/test_avm_quality_nullable_migration.py tests/contract/test_openapi_artifact_and_client.py -k 'avm_quality or generated_client_matches_the_artifact or artifact_is_checked_in_and_matches_the_live_app'` — passed.
 - `python delivery_toolchain/governance/check_measurement_defaults.py` — passed: 36 known (dataclass 10, mapper 8, sql 18), 36 exempted with an owner; next expiry 2026-10-31.
 

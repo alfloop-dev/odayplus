@@ -164,6 +164,11 @@ class AVMService:
         report = self.repository.latest_report(case_id)
         if report is None:
             raise AVMError("valuation report required before finance approval")
+        if report.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy valuation report is downgraded; recompute with measured quality "
+                "before finance approval"
+            )
         if report.finance_approval is not None:
             raise AVMError("latest valuation report is already finance approved")
         approval = ApprovalDecision(
@@ -195,15 +200,20 @@ class AVMService:
             {ValuationCaseStatus.APPROVED, ValuationCaseStatus.DATAROOM_READY},
             action="build data room",
         )
+        report = self.repository.latest_report(case_id)
+        if report is None:
+            raise AVMError("valuation report required before data room")
+        if report.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy valuation report is downgraded; recompute with measured quality "
+                "before building a data room"
+            )
+        if report.finance_approval is None:
+            raise AVMError("finance approval required before data room")
         if case.status is ValuationCaseStatus.DATAROOM_READY:
             existing = self.repository.get_dataroom(case_id)
             if existing is not None:
                 return existing
-        report = self.repository.latest_report(case_id)
-        if report is None:
-            raise AVMError("valuation report required before data room")
-        if report.finance_approval is None:
-            raise AVMError("finance approval required before data room")
         dataroom = self.repository.save_dataroom(generate_data_room(report))
         self.repository.save_case(
             case.transition(
@@ -234,6 +244,10 @@ class AVMService:
         dataroom = self.repository.get_dataroom(case_id)
         if dataroom is None:
             raise AVMError("data room must be built before export")
+        if dataroom.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy data room is downgraded; recompute valuation before export"
+            )
         return self.repository.save_dataroom(
             dataroom.with_export(actor=actor, reason=reason, correlation_id=correlation_id)
         )

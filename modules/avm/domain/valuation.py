@@ -13,6 +13,8 @@ AVM_POLICY_VERSION = "avm-finance-approval-policy-v1"
 QUALITY_SCORE_REQUIRED_MESSAGE = (
     "quality_score is required before AVM valuation; input quality is unmeasured"
 )
+LEGACY_UNKNOWN_QUALITY_STATUS = "legacy_unknown"
+LEGACY_QUALITY_DISPOSITION = "legacy_unknown_downgraded"
 
 
 class ValuationCaseStatus(StrEnum):
@@ -268,6 +270,8 @@ class ValuationReport:
     execution_metadata: dict[str, Any] = field(default_factory=dict)
     finance_approval: ApprovalDecision | None = None
     valuation_version: int = 1
+    quality_score_status: str | None = None
+    quality_disposition: str | None = None
 
     def with_version(self, *, valuation_version: int, report_id: str) -> ValuationReport:
         return ValuationReport(
@@ -276,6 +280,51 @@ class ValuationReport:
 
     def with_approval(self, approval: ApprovalDecision) -> ValuationReport:
         return ValuationReport(**{**self.__dict__, "finance_approval": approval})
+
+    @property
+    def is_legacy_quality_unknown(self) -> bool:
+        return (
+            getattr(self, "quality_score_status", None) == LEGACY_UNKNOWN_QUALITY_STATUS
+            or getattr(self, "quality_disposition", None) == LEGACY_QUALITY_DISPOSITION
+        )
+
+    def with_legacy_quality_disposition(self) -> ValuationReport:
+        """Downgrade an opaque historical report without rewriting its prices.
+
+        Reports created before ``quality_score_status`` existed may contain a
+        high confidence value that cannot be distinguished from the former
+        perfect-score default. Keep the historical numbers for audit, but make
+        every consumer see a named, low-confidence disposition and do not carry
+        an old approval as if it were still actionable.
+        """
+
+        reasons = tuple(self.normalized_margin.adjustment_reasons)
+        if "legacy_quality_unknown_discount" not in reasons:
+            reasons += ("legacy_quality_unknown_discount",)
+        normalized_margin = NormalizedMargin(
+            **{
+                **self.normalized_margin.__dict__,
+                "adjustment_reasons": reasons,
+                "confidence": "low",
+            }
+        )
+        metadata = dict(getattr(self, "execution_metadata", {}) or {})
+        previous_approval = getattr(self, "finance_approval", None)
+        if previous_approval is not None:
+            metadata.setdefault("legacy_finance_approval", previous_approval.to_dict())
+        metadata["quality_score_status"] = LEGACY_UNKNOWN_QUALITY_STATUS
+        metadata["quality_disposition"] = LEGACY_QUALITY_DISPOSITION
+        return ValuationReport(
+            **{
+                **self.__dict__,
+                "normalized_margin": normalized_margin,
+                "confidence": "low",
+                "execution_metadata": metadata,
+                "finance_approval": None,
+                "quality_score_status": LEGACY_UNKNOWN_QUALITY_STATUS,
+                "quality_disposition": LEGACY_QUALITY_DISPOSITION,
+            }
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -290,6 +339,8 @@ class ValuationReport:
             "reserve_price": self.reserve_price,
             "asking_price": self.asking_price,
             "confidence": self.confidence,
+            "quality_score_status": getattr(self, "quality_score_status", None),
+            "quality_disposition": getattr(self, "quality_disposition", None),
             "model_version": self.model_version,
             "feature_version": self.feature_version,
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
@@ -325,6 +376,36 @@ class DataRoom:
     valuation_card: dict[str, Any]
     export_audit: tuple[dict[str, Any], ...] = ()
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    quality_score_status: str | None = None
+    quality_disposition: str | None = None
+
+    @property
+    def is_legacy_quality_unknown(self) -> bool:
+        return (
+            getattr(self, "quality_score_status", None) == LEGACY_UNKNOWN_QUALITY_STATUS
+            or getattr(self, "quality_disposition", None) == LEGACY_QUALITY_DISPOSITION
+            or self.valuation_card.get("quality_disposition") == LEGACY_QUALITY_DISPOSITION
+        )
+
+    def with_legacy_quality_disposition(self) -> DataRoom:
+        """Make an old data room safe to read while retaining an audit marker."""
+
+        card = dict(self.valuation_card)
+        previous_approval = card.get("finance_approval")
+        if previous_approval is not None:
+            card.setdefault("legacy_finance_approval", previous_approval)
+        card["finance_approval"] = None
+        card["confidence"] = "low"
+        card["quality_score_status"] = LEGACY_UNKNOWN_QUALITY_STATUS
+        card["quality_disposition"] = LEGACY_QUALITY_DISPOSITION
+        return DataRoom(
+            **{
+                **self.__dict__,
+                "valuation_card": card,
+                "quality_score_status": LEGACY_UNKNOWN_QUALITY_STATUS,
+                "quality_disposition": LEGACY_QUALITY_DISPOSITION,
+            }
+        )
 
     @property
     def completeness(self) -> float:
@@ -360,6 +441,8 @@ class DataRoom:
             "is_complete": self.is_complete,
             "missing_documents": list(self.missing_documents),
             "valuation_card": self.valuation_card,
+            "quality_score_status": getattr(self, "quality_score_status", None),
+            "quality_disposition": getattr(self, "quality_disposition", None),
             "export_audit": list(self.export_audit),
             "created_at": self.created_at.isoformat(),
         }
@@ -477,6 +560,7 @@ def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> Val
         reserve_price=round(p10 * 0.97, 2),
         asking_price=round(p90 * 1.05, 2),
         confidence=normalized_margin.confidence,
+        quality_score_status=item.effective_quality_score_status,
         model_version=AVM_MODEL_VERSION,
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=item.prediction_origin_time,
@@ -521,6 +605,7 @@ def build_model_valuation_report(
         reserve_price=round(fair.p10 * 0.97, 2),
         asking_price=round(fair.p90 * 1.05, 2),
         confidence=normalized_margin.confidence,
+        quality_score_status=case.valuation_input.effective_quality_score_status,
         model_version=model_version,
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=case.valuation_input.prediction_origin_time,
@@ -575,12 +660,17 @@ def generate_data_room(report: ValuationReport) -> DataRoom:
             "fair_price": report.fair_price.to_dict(),
             "reserve_price": report.reserve_price,
             "asking_price": report.asking_price,
+            "confidence": report.confidence,
+            "quality_score_status": getattr(report, "quality_score_status", None),
+            "quality_disposition": getattr(report, "quality_disposition", None),
             "model_version": report.model_version,
             "valuation_version": report.valuation_version,
             "finance_approval": (
                 report.finance_approval.to_dict() if report.finance_approval else None
             ),
         },
+        quality_score_status=getattr(report, "quality_score_status", None),
+        quality_disposition=getattr(report, "quality_disposition", None),
     )
 
 

@@ -37,6 +37,21 @@ class InMemoryAVMRepository:
     def get_margin(self, case_id: str) -> NormalizedMargin | None:
         return self._margins.get(case_id)
 
+    def _case_has_legacy_quality(self, case_id: str) -> bool:
+        case = self._cases.get(case_id)
+        return bool(
+            case is not None
+            and case.valuation_input.effective_quality_score_status == "legacy_unknown"
+        )
+
+    def _dispose_legacy_report(self, report: ValuationReport) -> ValuationReport:
+        if not (
+            self._case_has_legacy_quality(report.case_id)
+            or report.is_legacy_quality_unknown
+        ):
+            return report
+        return report.with_legacy_quality_disposition()
+
     def save_report(self, report: ValuationReport) -> ValuationReport:
         versions = self._reports.setdefault(report.case_id, [])
         versioned = report.with_version(
@@ -56,17 +71,29 @@ class InMemoryAVMRepository:
 
     def latest_report(self, case_id: str) -> ValuationReport | None:
         versions = self._reports.get(case_id, [])
-        return versions[-1] if versions else None
+        if not versions:
+            return None
+        versions[-1] = self._dispose_legacy_report(versions[-1])
+        return versions[-1]
 
     def report_history(self, case_id: str) -> list[ValuationReport]:
-        return list(self._reports.get(case_id, []))
+        versions = self._reports.get(case_id, [])
+        for index, report in enumerate(versions):
+            versions[index] = self._dispose_legacy_report(report)
+        return list(versions)
 
     def save_dataroom(self, dataroom: DataRoom) -> DataRoom:
         self._datarooms[dataroom.case_id] = dataroom
         return dataroom
 
     def get_dataroom(self, case_id: str) -> DataRoom | None:
-        return self._datarooms.get(case_id)
+        dataroom = self._datarooms.get(case_id)
+        if dataroom is None:
+            return None
+        if self._case_has_legacy_quality(case_id) or dataroom.is_legacy_quality_unknown:
+            dataroom = dataroom.with_legacy_quality_disposition()
+            self._datarooms[case_id] = dataroom
+        return dataroom
 
     def save_deal_outcome(self, outcome: DealOutcome) -> DealOutcome:
         self._deal_outcomes[outcome.outcome_id] = outcome
