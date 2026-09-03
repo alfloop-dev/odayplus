@@ -63,6 +63,11 @@ def test_forecastops_does_not_manufacture_fake_root_cause_producer() -> None:
 def test_source_contract_ingestion_compatibility() -> None:
     """maintenance_work_order_event source contract accepts both present and omitted root_cause."""
     contract = load_contract("maintenance_work_order_event")
+    root_cause_field = next(
+        field for field in contract.fields if field.name == "root_cause"
+    )
+    assert "manual/field maintenance annotation" in root_cause_field.description
+    assert "no automated root-cause producer" in root_cause_field.description
 
     # Case 1: Record with explicit root_cause (manual field maintenance note)
     record_with_cause = {

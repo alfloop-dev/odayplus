@@ -163,7 +163,9 @@ class WorkOrder:
     status: str = "open"  # open/in_progress/resolved/cancelled
     severity: str = "medium"  # low/medium/high/critical
     cost_amount: float = 0.0
-    root_cause: str | None = None  # RESERVED (unproduced): Reserved for future automated root-cause engine (Owner: ForecastOps/Platform; Milestone: Wave 5+)
+    # RESERVED (unproduced): no automated root-cause writer exists in the
+    # current release. Owner: ForecastOps / Platform Ops; Target: Wave 5+.
+    root_cause: str | None = None
 
 
 @dataclass(frozen=True)
