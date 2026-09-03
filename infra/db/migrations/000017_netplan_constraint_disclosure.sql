@@ -40,6 +40,12 @@
 -- Rerunnable: every statement is IF NOT EXISTS, CREATE OR REPLACE, a
 -- catalog-guarded DO block, or an ON CONFLICT DO NOTHING insert.
 
+-- The canonical baseline creates this schema, but some supported upgrade
+-- paths stamp the baseline to avoid extensions that are unavailable in the
+-- target PostgreSQL instance.  This migration owns the table below, so it
+-- must also make its containing schema available on that path.
+CREATE SCHEMA IF NOT EXISTS network;
+
 CREATE TABLE IF NOT EXISTS network.netplan_constraint_acknowledgements (
     acknowledgement_id      VARCHAR(100) PRIMARY KEY,
     scenario_id             VARCHAR(100) NOT NULL,
