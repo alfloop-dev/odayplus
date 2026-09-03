@@ -34,34 +34,6 @@
       "expires": "2026-11-30"
     },
     {
-      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.average_confidence",
-      "layer": "dataclass",
-      "owner": "Antigravity5",
-      "reason": "A candidate site with no confidence data is scored as a fully evidenced one, and the score feeds an expansion decision.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.data_quality_score",
-      "layer": "dataclass",
-      "owner": "Antigravity5",
-      "reason": "Same shape; a site scored from partial data is indistinguishable from one scored from complete data.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.from_mapping.average_confidence",
-      "layer": "mapper",
-      "owner": "Antigravity5",
-      "reason": "_first_present(data, 'average_confidence', 'confidence', default=1.0) hides the substitution behind a helper: neither key present still yields a perfect score. ODP-FR-SITE-004's feasibility rules are the existing exit for insufficient data, and this fallback is what stops a candidate reaching them.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.from_mapping.data_quality_score",
-      "layer": "mapper",
-      "owner": "Antigravity5",
-      "reason": "Same helper, same effect on the quality dimension. Fix with the field above so the two dimensions do not get different answers about what absence means.",
-      "expires": "2026-12-31"
-    },
-    {
       "field": "shared/domain/models.py::Poi.confidence",
       "layer": "dataclass",
       "owner": "Claude2",
