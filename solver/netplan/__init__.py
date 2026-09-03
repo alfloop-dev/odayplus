@@ -18,6 +18,7 @@ from solver.netplan.model import (
     ManagementBaselineInput,
     NetPlanConstraints,
     NetworkAction,
+    canonical_sha256,
 )
 from solver.netplan.optimizer import (
     SOLVER_VERSION,
@@ -59,6 +60,7 @@ __all__ = [
     "NetworkPlanCandidate",
     "NetworkPlanSolveResult",
     "build_feasible_candidates",
+    "canonical_sha256",
     "compare_solver_against_management_baseline",
     "compute_solver_problem_hash",
     "diagnose_infeasible",
