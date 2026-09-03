@@ -18219,6 +18219,38 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             decision = controller.get("chair_decision", {})
             self.assertTrue(decision.get("approve_helper_wave"))
 
+    def test_capacity_reconcile_releases_claim_without_a_live_bound_worker(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "HELPER-ORPHAN-001",
+                    "status": "in_progress",
+                    "owner": "claude",
+                    "reviewer": "codex",
+                    "helper_execution_lease": {
+                        "claimed_by": "codex",
+                        "generation": 3,
+                        "run_id": "missing-helper-run",
+                        "lease_expires_at": "2099-01-01T00:00:00Z",
+                    },
+                }
+            ]
+        }
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertTrue(changed)
+        self.assertNotIn("helper_execution_lease", status["tasks"][0])
+        commit.assert_called_once()
+
     def test_canonical_dispatchable_task_ids_respects_custom_schema_and_excludes_invalid_id_or_owner(self) -> None:
         config = self._config()
         config["schema"] = {

@@ -2839,6 +2839,8 @@ WORKER_RUNTIME_METRIC_COUNTERS = (
     "queue_leases_started",
     "marker_updates",
     "lease_refreshes",
+    "helper_claim_renewals",
+    "helper_claim_releases",
     "missing_process_workers_failed",
     "expired_lease_workers_failed",
     "supersede_deferrals",
