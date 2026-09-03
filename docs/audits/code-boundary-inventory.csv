@@ -945,6 +945,7 @@ tests/integration/test_forecastops_train_runtime_contract.py,verification,verifi
 tests/integration/test_gap_ml_003.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_gap_ml_003_elasticity_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_heatzone_flow.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_int001_cdc_disposition.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_intervention_workflow.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_lean_signal_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_learninghub_dataset_snapshot_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
