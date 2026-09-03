@@ -6,7 +6,11 @@ from __future__ import annotations
 from typing import Any
 
 import worker_workspace
-from dispatch_policy import REASON_HELPER_CLAIM, worker_logical_dispatch_agent_id
+from dispatch_policy import (
+    REASON_HELPER_CLAIM,
+    task_priority_rank,
+    worker_logical_dispatch_agent_id,
+)
 
 
 def _supervisor_module():
@@ -1022,6 +1026,8 @@ def higher_priority_ready_task_exists(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
+    current_task_rank = task_priority_rank(current_task)
+    current_key = (current_task_rank, current_priority)
     higher_priority_task_ids: set[str] = set()
     slot_count = len(logical_worker_slot_ids(config, logical_agent_id))
     urgent_priority_cutoff = dispatch_reason_priority(REASON_OWNED_FINALIZE)
@@ -1053,14 +1059,17 @@ def higher_priority_ready_task_exists(
                 dependencies_done_statuses=dependency_done_statuses,
             )
 
-        if candidate_priority is not None and candidate_priority < current_priority:
-            if (
-                slot_count
-                and urgent_priority_cutoff is not None
-                and candidate_priority > urgent_priority_cutoff
-            ):
-                continue
-            higher_priority_task_ids.add(str(task_id))
+        if candidate_priority is not None:
+            candidate_task_rank = task_priority_rank(task)
+            if (candidate_task_rank, candidate_priority) < current_key:
+                if (
+                    slot_count
+                    and urgent_priority_cutoff is not None
+                    and candidate_priority > urgent_priority_cutoff
+                    and candidate_task_rank >= current_task_rank
+                ):
+                    continue
+                higher_priority_task_ids.add(str(task_id))
 
     if not higher_priority_task_ids:
         return False
@@ -1086,7 +1095,14 @@ def higher_priority_ready_task_exists(
             active_event_ids.add(event_id)
         other_priority = dispatch_reason_priority(other.get("request_snapshot", {}).get("reason"))
         other_task_id = str(other.get("task_id") or "")
-        if str(run_id) != current_run_id and other_priority is not None and other_priority < current_priority and other_task_id:
+        other_task = task_map.get(other_task_id)
+        other_task_rank = task_priority_rank(other_task)
+        if (
+            str(run_id) != current_run_id
+            and other_priority is not None
+            and (other_task_rank, other_priority) < current_key
+            and other_task_id
+        ):
             served_higher_priority_task_ids.add(other_task_id)
 
     queue_records = (effective_state.get("queue", {}) or {}).get("events", {}) or {}
@@ -1107,7 +1123,13 @@ def higher_priority_ready_task_exists(
         occupied_count += 1
         event_priority = dispatch_reason_priority(str(event.get("reason") or ""))
         event_task_id = str(event.get("task_id") or "")
-        if event_priority is not None and event_priority < current_priority and event_task_id:
+        event_task = task_map.get(event_task_id)
+        event_task_rank = task_priority_rank(event_task)
+        if (
+            event_priority is not None
+            and (event_task_rank, event_priority) < current_key
+            and event_task_id
+        ):
             served_higher_priority_task_ids.add(event_task_id)
 
     agent_capacity = agent_dispatch_capacity(config, logical_agent_id)
