@@ -37,11 +37,11 @@ from shared.infrastructure.persistence.model_ready import (
     SnapshotSink,
     build_lineage_manifest,
 )
+from shared.infrastructure.persistence.operator_comments import DurableCommentRepository
 from shared.infrastructure.persistence.outbox import (
     DurableOutboxRepository,
     InMemoryOutboxRepository,
 )
-from shared.infrastructure.persistence.operator_comments import DurableCommentRepository
 from shared.infrastructure.persistence.postgresql import (
     PostgresDocumentStore,
     PostgresEngine,
