@@ -26,7 +26,6 @@ relation.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import date
 from typing import Protocol
 
@@ -35,12 +34,14 @@ from modules.heatzone.v3.absorption import AbsorptionResult
 from shared.governance import HEATZONE_ABSORPTION_POLICY_KIND, DecisionPolicy
 
 __all__ = [
+    "MEASURED_FIELDS",
     "AbsorptionOutcomeConflictError",
     "AbsorptionOutcomeWriteError",
     "AbsorptionOutcomeWriter",
+    "UnregisteredCellError",
     "build_absorption_outcome",
+    "measurement_differences",
     "record_absorption_outcome",
-    "record_side_absorption_outcomes",
 ]
 
 #: The only sides a barrier can have. A split is only admissible where the geo
@@ -54,6 +55,38 @@ class AbsorptionOutcomeWriteError(ValueError):
 
 class AbsorptionOutcomeConflictError(AbsorptionOutcomeWriteError):
     """Raised when a period already holds a different recorded outcome."""
+
+
+class UnregisteredCellError(AbsorptionOutcomeWriteError):
+    """Raised when the outcome names a cell the geo pipeline never registered."""
+
+
+#: The fields compared when a period is recorded again. `basis_at` is excluded
+#: on purpose: it is when the computation ran, not what it measured, so a rerun
+#: of the same inputs differs there and nowhere else. Including it would turn
+#: every idempotent replay into a conflict.
+MEASURED_FIELDS = (
+    "original_demand",
+    "absorbed_demand",
+    "remaining_demand",
+    "absorption_ratio",
+    "absorbing_store_count",
+    "under_realized",
+    "barrier_description",
+    "absorption_policy_version_id",
+    "basis_source_ids",
+)
+
+
+def measurement_differences(
+    existing: AbsorptionOutcomeRecord, incoming: AbsorptionOutcomeRecord
+) -> list[str]:
+    """Which measured fields two recordings of one period disagree on."""
+    return [
+        field
+        for field in MEASURED_FIELDS
+        if getattr(existing, field) != getattr(incoming, field)
+    ]
 
 
 class AbsorptionOutcomeWriter(Protocol):
@@ -170,57 +203,3 @@ def record_absorption_outcome(
         barrier_description=barrier_description,
     )
     return writer.append_absorption_outcome(tenant_id, outcome)
-
-
-def record_side_absorption_outcomes(
-    writer: AbsorptionOutcomeWriter,
-    *,
-    tenant_id: str,
-    cell_id: str,
-    period_start: date,
-    period_end: date,
-    whole_cell: AbsorptionResult,
-    sides: Sequence[tuple[str, AbsorptionResult]],
-    policy: DecisionPolicy,
-    barrier_description: str,
-) -> list[AbsorptionOutcomeRecord]:
-    """Record a cell's whole-cell outcome together with both barrier sides.
-
-    A side-labelled history is the only admissible basis for a split, and one
-    side alone cannot support one: a density ratio needs both. Writing them
-    together means the history never holds a half-measured period that would
-    make a split look unmeasurable when it was merely half-recorded.
-    """
-    labels = [side for side, _ in sides]
-    if sorted(labels) != sorted(BARRIER_SIDES):
-        raise AbsorptionOutcomeWriteError(
-            f"side-labelled outcomes for cell {cell_id} must cover exactly {BARRIER_SIDES}, "
-            f"got {labels}"
-        )
-
-    written = [
-        record_absorption_outcome(
-            writer,
-            tenant_id=tenant_id,
-            cell_id=cell_id,
-            period_start=period_start,
-            period_end=period_end,
-            result=whole_cell,
-            policy=policy,
-        )
-    ]
-    for side, side_result in sides:
-        written.append(
-            record_absorption_outcome(
-                writer,
-                tenant_id=tenant_id,
-                cell_id=cell_id,
-                period_start=period_start,
-                period_end=period_end,
-                result=side_result,
-                policy=policy,
-                barrier_side=side,
-                barrier_description=barrier_description,
-            )
-        )
-    return written

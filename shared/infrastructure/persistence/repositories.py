@@ -37,13 +37,15 @@ from modules.forecastops.domain.forecasting import (
     ForecastSeries,
     InterventionHandoff,
 )
-from modules.heatzone.application.merge_split_evidence import (
-    AbsorptionOutcomeRecord,
-    CellOutcomeSeries,
-)
 from modules.heatzone.application.absorption_outcome_recorder import (
     AbsorptionOutcomeConflictError,
     AbsorptionOutcomeWriteError,
+    UnregisteredCellError,
+    measurement_differences,
+)
+from modules.heatzone.application.merge_split_evidence import (
+    AbsorptionOutcomeRecord,
+    CellOutcomeSeries,
 )
 from modules.heatzone.domain.composition import (
     COMPOSITION_MODEL_VERSION,
@@ -2753,20 +2755,6 @@ class DurableAbsorptionOutcomeWriter:
     anyway, and refusing here says why rather than surfacing a trigger error.
     """
 
-    #: Compared field-by-field on replay. `outcome_id` and `created_at` are
-    #: excluded: they identify the write, not the measurement.
-    _MEASURED_FIELDS = (
-        "original_demand",
-        "absorbed_demand",
-        "remaining_demand",
-        "absorption_ratio",
-        "absorbing_store_count",
-        "under_realized",
-        "barrier_description",
-        "absorption_policy_version_id",
-        "basis_source_ids",
-    )
-
     def __init__(self, engine_or_store: Any) -> None:
         # Share the reader's engine resolution and its SQLite bootstrap, so the
         # writer cannot end up pointed at a relation the reader does not see.
@@ -2801,6 +2789,15 @@ class DurableAbsorptionOutcomeWriter:
             return None
         return self._reader._row_to_outcome(row)
 
+    def _cell_is_registered(self, cell_id: str) -> bool:
+        return (
+            self._engine.query_one(
+                f"SELECT 1 FROM {self._reader.table_cells} WHERE geo_cell_id = ?",
+                (cell_id,),
+            )
+            is not None
+        )
+
     def append_absorption_outcome(
         self, tenant_id: str, outcome: AbsorptionOutcomeRecord
     ) -> AbsorptionOutcomeRecord:
@@ -2810,13 +2807,20 @@ class DurableAbsorptionOutcomeWriter:
                 "HZ-004 outcomes must be traceable to their source"
             )
 
+        if not self._cell_is_registered(outcome.cell_id):
+            # PostgreSQL refuses this through the geo.h3_cells foreign key.
+            # Checking it here means SQLite refuses it the same way and says
+            # why, rather than accepting a row the evidence reader's join then
+            # silently drops.
+            raise UnregisteredCellError(
+                f"cell '{outcome.cell_id}' is not a registered geo cell; HZ-004 outcomes "
+                "attach to cells the geo pipeline published, not to identifiers a caller "
+                "invents"
+            )
+
         existing = self._find_existing(tenant_id, outcome)
         if existing is not None:
-            differing = [
-                field
-                for field in self._MEASURED_FIELDS
-                if getattr(existing, field) != getattr(outcome, field)
-            ]
+            differing = measurement_differences(existing, outcome)
             if differing:
                 raise AbsorptionOutcomeConflictError(
                     f"cell {outcome.cell_id} already holds a different recorded outcome for "

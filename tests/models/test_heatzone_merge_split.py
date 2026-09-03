@@ -20,9 +20,12 @@ from modules.heatzone.application.merge_split_evidence import (
     load_inventory_snapshot_facts,
 )
 from modules.heatzone.domain.composition import (
+    COMPOSITION_MODEL_VERSION,
     CompositionKind,
     CompositionValidationError,
     HeatZoneCompositionRecord,
+    MergeSplitProposalRecord,
+    ProposalStatus,
     generate_merged_zone_id,
 )
 from modules.heatzone.infrastructure.composition_repository import (
@@ -348,20 +351,20 @@ def test_split_requires_side_labelled_outcomes(tmp_path) -> None:
         _mature_evidence(tmp_path, with_barrier=True, existing_zones=zones),
         policy=policy,
     )
-    children = [
+    splits = [
         p for p in with_sides.proposals
         if p.composition_kind == CompositionKind.SPLIT_CHILD
     ]
-    assert len(children) == 2
-    for child in children:
-        # The parent is a zone that exists, so the lineage joins to a real row.
-        assert child.parent_zone_id == zone_id
-        assert child.split_density_ratio >= 2.5
-        assert any("side_labelled_absorption_density_ratio" in r for r in child.reasons)
-    assert {tuple(child.member_cell_ids) for child in children} == {
-        (SPLIT_LEFT,),
-        (SPLIT_RIGHT,),
-    }
+    # One proposal for the whole division, not one per side: an operator
+    # decides a topology, and half a topology is not a smaller decision.
+    assert len(splits) == 1
+    split = splits[0]
+    # The parent is a zone that exists, so the lineage joins to a real row.
+    assert split.parent_zone_id == zone_id
+    assert split.split_density_ratio >= 2.5
+    assert any("side_labelled_absorption_density_ratio" in r for r in split.reasons)
+    assert set(split.child_partitions) == {(SPLIT_LEFT,), (SPLIT_RIGHT,)}
+    assert set(split.member_cell_ids) == {SPLIT_LEFT, SPLIT_RIGHT}
 
 
 def test_split_is_refused_when_the_sides_absorb_alike(tmp_path) -> None:
@@ -675,3 +678,284 @@ def test_counterfactual_gates_bind_when_their_signal_is_removed(tmp_path) -> Non
     ndcg_reason = _decline(((2,) * 8, (10,) * 8))
     assert ndcg_reason.startswith("ndcg_gain_below_threshold")
     assert float(ndcg_reason.split(":")[1].split("<")[0]) < 0.0
+
+
+# ---------------------------------------------------------------------------
+# Split approval atomicity (ODP-FR-HZ-006)
+#
+# A split retires the parent zone. Anything the approval fails to re-home is
+# therefore left in no active zone at all, and no later approval can repair it
+# because the parent it would have to be split from is gone. These tests hold
+# the two halves of that rule: the whole division has to be on one proposal,
+# and applying it has to be all-or-nothing.
+# ---------------------------------------------------------------------------
+
+SPLIT_CELLS = ("cell-split-00", "cell-split-01", "cell-split-02", "cell-split-03")
+
+
+def _split_proposal(
+    *,
+    proposal_id: str = "split-proposal",
+    member_cell_ids: tuple[str, ...] = SPLIT_CELLS,
+    child_partitions: tuple[tuple[str, ...], ...] = (
+        SPLIT_CELLS[:2],
+        SPLIT_CELLS[2:],
+    ),
+    parent_zone_id: str | None = None,
+) -> MergeSplitProposalRecord:
+    parent = parent_zone_id or generate_merged_zone_id(SPLIT_CELLS)
+    return MergeSplitProposalRecord(
+        proposal_id=proposal_id,
+        zone_id=parent,
+        tenant_id=TENANT_ID,
+        composition_kind=CompositionKind.SPLIT_CHILD,
+        member_cell_ids=member_cell_ids,
+        parent_zone_id=parent,
+        child_partitions=child_partitions,
+        ndcg_gain=0.0,
+        cannibalization_variance_reduction=0.0,
+        correlation_rho=0.10,
+        disconnect_index=0.55,
+        split_density_ratio=3.2,
+        confidence=0.64,
+        model_version=COMPOSITION_MODEL_VERSION,
+        policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+    )
+
+
+def _seed_parent_zone(repository, *, cells: tuple[str, ...] = SPLIT_CELLS) -> str:
+    zone_id = generate_merged_zone_id(cells)
+    for cell_id in cells:
+        repository.save_composition(
+            HeatZoneCompositionRecord(
+                zone_id=zone_id,
+                tenant_id=TENANT_ID,
+                member_cell_id=cell_id,
+                composition_kind=CompositionKind.MERGED,
+                decided_by="system",
+                decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+            )
+        )
+    return zone_id
+
+
+def _durable_composition_repository(tmp_path) -> DurableHeatZoneCompositionRepository:
+    engine = SqliteEngine(str(tmp_path / "composition.db"))
+    SqliteDocumentStore(engine)
+    return DurableHeatZoneCompositionRepository(engine)
+
+
+@pytest.mark.parametrize(
+    ("child_partitions", "member_cell_ids", "expected"),
+    [
+        # One side only: approving it would retire the parent and strand the rest.
+        ((SPLIT_CELLS[:2],), SPLIT_CELLS, "at least 2"),
+        # A cell in both children: it would need two active memberships.
+        (
+            (SPLIT_CELLS[:3], SPLIT_CELLS[2:]),
+            SPLIT_CELLS,
+            "more than one child partition",
+        ),
+        # A member nobody re-homes.
+        ((SPLIT_CELLS[:2], (SPLIT_CELLS[2],)), SPLIT_CELLS, "do not cover its members"),
+        # A child cell that is not a member of the zone being divided.
+        (
+            (SPLIT_CELLS[:2], (SPLIT_CELLS[2], "cell-elsewhere")),
+            SPLIT_CELLS,
+            "do not cover its members",
+        ),
+        # An empty side is not a child.
+        (((), SPLIT_CELLS), SPLIT_CELLS, "is empty"),
+    ],
+)
+def test_a_split_proposal_must_describe_the_whole_division(
+    child_partitions, member_cell_ids, expected
+) -> None:
+    with pytest.raises(CompositionValidationError, match=expected):
+        _split_proposal(
+            child_partitions=child_partitions, member_cell_ids=member_cell_ids
+        )
+
+
+def test_a_merge_proposal_must_not_carry_child_partitions() -> None:
+    with pytest.raises(CompositionValidationError, match="must not carry child_partitions"):
+        MergeSplitProposalRecord(
+            proposal_id="merge-proposal",
+            zone_id=generate_merged_zone_id(SPLIT_CELLS[:2]),
+            tenant_id=TENANT_ID,
+            composition_kind=CompositionKind.MERGED,
+            member_cell_ids=SPLIT_CELLS[:2],
+            parent_zone_id=None,
+            child_partitions=(SPLIT_CELLS[:1], SPLIT_CELLS[1:2]),
+            ndcg_gain=0.06,
+            cannibalization_variance_reduction=0.25,
+            correlation_rho=0.80,
+            disconnect_index=0.10,
+            confidence=0.70,
+            model_version=COMPOSITION_MODEL_VERSION,
+            policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+        )
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_approving_a_split_lands_every_child_and_retires_the_parent(
+    tmp_path, durable
+) -> None:
+    """One approval, one complete topology -- no cell left outside a zone."""
+    repository = (
+        _durable_composition_repository(tmp_path)
+        if durable
+        else InMemoryHeatZoneCompositionRepository()
+    )
+    parent_zone_id = _seed_parent_zone(repository)
+    repository.save_proposal(_split_proposal())
+
+    updated, created = repository.approve_proposal(
+        proposal_id="split-proposal",
+        tenant_id=TENANT_ID,
+        approved_by="operator-a",
+        notes="split on the recorded barrier",
+    )
+
+    assert updated.status is ProposalStatus.APPROVED
+    # Both children exist, each with its own deterministic zone id.
+    assert {record.zone_id for record in created} == {
+        generate_merged_zone_id(SPLIT_CELLS[:2]),
+        generate_merged_zone_id(SPLIT_CELLS[2:]),
+    }
+    assert all(record.parent_zone_id == parent_zone_id for record in created)
+
+    # The parent is retired and every one of its cells is active somewhere else.
+    parent_records = repository.get_composition(parent_zone_id, TENANT_ID)
+    assert not any(record.is_active for record in parent_records)
+    active = repository.list_compositions(TENANT_ID, active_only=True)
+    assert sorted(record.member_cell_id for record in active) == sorted(SPLIT_CELLS)
+    assert all(
+        record.composition_kind is CompositionKind.SPLIT_CHILD for record in active
+    )
+
+    # And the whole division is one decision, so there is nothing left to approve.
+    assert repository.list_proposals(TENANT_ID, status=ProposalStatus.PROPOSED) == []
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_a_split_approval_that_cannot_finish_applies_nothing(tmp_path, durable) -> None:
+    """A child that cannot be written rolls the whole approval back.
+
+    The failure is injected on the second child because that is the ordering
+    that matters: by then the parent has been reverted and the first child
+    written, so a non-atomic approval would leave the parent retired, one child
+    live, and the other side's cells in no active zone -- with no parent left to
+    split them from, which is the state no later approval can repair.
+    """
+    repository = (
+        _durable_composition_repository(tmp_path)
+        if durable
+        else InMemoryHeatZoneCompositionRepository()
+    )
+    parent_zone_id = _seed_parent_zone(repository)
+    repository.save_proposal(_split_proposal())
+
+    first_child_zone_id = generate_merged_zone_id(SPLIT_CELLS[:2])
+    second_child_zone_id = generate_merged_zone_id(SPLIT_CELLS[2:])
+    real_save = repository.save_composition
+
+    def failing_save(record):
+        if record.zone_id == second_child_zone_id:
+            raise CompositionValidationError("injected storage failure")
+        return real_save(record)
+
+    repository.save_composition = failing_save
+
+    with pytest.raises(CompositionValidationError, match="injected storage failure"):
+        repository.approve_proposal(
+            proposal_id="split-proposal",
+            tenant_id=TENANT_ID,
+            approved_by="operator-a",
+            notes="split on the recorded barrier",
+        )
+
+    repository.save_composition = real_save
+
+    # Neither child landed -- not even the one that was written before the
+    # failure -- and the parent still holds every cell.
+    assert repository.get_composition(first_child_zone_id, TENANT_ID) == []
+    assert repository.get_composition(second_child_zone_id, TENANT_ID) == []
+    parent_records = repository.get_composition(parent_zone_id, TENANT_ID)
+    assert sorted(r.member_cell_id for r in parent_records if r.is_active) == sorted(
+        SPLIT_CELLS
+    )
+    active = repository.list_compositions(TENANT_ID, active_only=True)
+    assert {r.zone_id for r in active} == {parent_zone_id}
+
+    # The proposal is still open, so the operator can act once storage recovers.
+    still_open = repository.list_proposals(TENANT_ID, status=ProposalStatus.PROPOSED)
+    assert [p.proposal_id for p in still_open] == ["split-proposal"]
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_a_split_survives_persistence_and_rejection(tmp_path, durable) -> None:
+    """The partitions are part of the record, not a detail of the request."""
+    repository = (
+        _durable_composition_repository(tmp_path)
+        if durable
+        else InMemoryHeatZoneCompositionRepository()
+    )
+    _seed_parent_zone(repository)
+    repository.save_proposal(_split_proposal())
+
+    reloaded = repository.get_proposal("split-proposal", TENANT_ID)
+    assert reloaded is not None
+    assert reloaded.child_partitions == (SPLIT_CELLS[:2], SPLIT_CELLS[2:])
+    assert reloaded.to_dict()["child_zone_ids"] == [
+        generate_merged_zone_id(SPLIT_CELLS[:2]),
+        generate_merged_zone_id(SPLIT_CELLS[2:]),
+    ]
+
+    rejected = repository.reject_proposal(
+        proposal_id="split-proposal",
+        tenant_id=TENANT_ID,
+        rejected_by="operator-a",
+        reason="the barrier is a temporary roadworks closure",
+    )
+    assert rejected.status is ProposalStatus.REJECTED
+    # Rejecting a split must not silently drop the division it described.
+    assert rejected.child_partitions == (SPLIT_CELLS[:2], SPLIT_CELLS[2:])
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_a_split_child_can_be_rolled_back_to_nothing_active(tmp_path, durable) -> None:
+    """Rollback of an approved child leaves its cells claimed by no zone.
+
+    That is the honest post-rollback state: the parent was retired by an
+    append-only revert and cannot be un-reverted, so restoring the previous
+    topology is a new composition decision rather than something rollback can
+    infer.
+    """
+    repository = (
+        _durable_composition_repository(tmp_path)
+        if durable
+        else InMemoryHeatZoneCompositionRepository()
+    )
+    _seed_parent_zone(repository)
+    repository.save_proposal(_split_proposal())
+    repository.approve_proposal(
+        proposal_id="split-proposal",
+        tenant_id=TENANT_ID,
+        approved_by="operator-a",
+        notes="split on the recorded barrier",
+    )
+
+    child_zone_id = generate_merged_zone_id(SPLIT_CELLS[:2])
+    reverted = repository.revert_composition(child_zone_id, TENANT_ID)
+    assert sorted(r.member_cell_id for r in reverted) == sorted(SPLIT_CELLS[:2])
+    assert all(not r.is_active for r in reverted)
+
+    active_cells = {
+        r.member_cell_id
+        for r in repository.list_compositions(TENANT_ID, active_only=True)
+    }
+    assert active_cells == set(SPLIT_CELLS[2:])
+    # Reverting twice is refused rather than quietly appending a second revert.
+    with pytest.raises(CompositionValidationError):
+        repository.revert_composition(child_zone_id, TENANT_ID)

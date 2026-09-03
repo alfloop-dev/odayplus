@@ -13,6 +13,8 @@ the identity that gets written into the governance record.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
+from datetime import UTC, date, datetime
 
 from fastapi.testclient import TestClient
 
@@ -21,8 +23,16 @@ from modules.heatzone.domain.composition import (
     CompositionKind,
     HeatZoneCompositionRecord,
 )
+from modules.heatzone.infrastructure import CellRegistration
+from shared.auth import Role
+from shared.governance import (
+    DecisionPolicy,
+    default_heatzone_merge_policy,
+    default_model_performance_drift_policy,
+)
 from shared.infrastructure.persistence import build_persistence
-from tests.integration._authz import HEATZONE_HEADERS
+from tests.integration._authz import HEATZONE_HEADERS, auth_headers
+from tests.integration._heatzone_absorption_rows import outcome_request
 from tests.integration._heatzone_evidence import (
     MERGE_LEFT,
     MERGE_RIGHT,
@@ -548,3 +558,474 @@ def test_durable_policy_resolution_and_proposal_persistence(
         if event.event_type == "heatzone.composition.evaluated.v1"
     ]
     assert evaluated[-1].metadata["source_snapshot_id"] == snapshot_id
+
+
+# ---------------------------------------------------------------------------
+# HZ-004 evidence recording (ODP-FR-HZ-006)
+#
+# Merge/split is required to reason only from realised absorption history, so
+# `expansion.heatzone_absorption_outcomes` has to be a relation something in
+# production writes. These drive that entry through the mounted app.
+# ---------------------------------------------------------------------------
+
+ABSORPTION_HEADERS = {
+    **auth_headers(Role.DATA_OWNER, subject="hz004-pipeline"),
+    "x-tenant-id": TENANT_ID,
+}
+
+WINDOW_START = date(2026, 1, 5)
+WINDOW_END = date(2026, 2, 1)
+
+
+HZ004_CELL = "cell-hz004-00"
+
+
+def _record_outcome(client: TestClient, body: dict, *, headers=ABSORPTION_HEADERS):
+    return client.post(
+        "/api/v1/heatzones/absorption/outcomes", json=body, headers=headers
+    )
+
+
+def _bundle_with_registered_cell(cell_id: str = HZ004_CELL):
+    """A bundle whose geo pipeline has published the cell, and nothing else.
+
+    Registering a cell is identity, not evidence: it is what makes
+    `geo_cell_id` resolvable, which PostgreSQL requires through a foreign key.
+    No absorption history is written here -- that is what the route under test
+    is for.
+    """
+    bundle = build_persistence(mode="memory")
+    bundle.heatzone_evidence_repository.register_cell(
+        TENANT_ID, CellRegistration(cell_id, f"8a{cell_id}", "Taipei", "Xinyi")
+    )
+    return bundle
+
+
+def test_recording_an_absorption_outcome_measures_it_server_side() -> None:
+    """The route computes the outcome; the request only names the inputs."""
+    bundle = _bundle_with_registered_cell()
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id="cell-hz004-00",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            store_ids=("store-1", "store-2"),
+            original_demand=100_000.0,
+            daily_revenue=500.0,
+        ),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    # Two stores at 500/day over a 28-day window is 28_000 of 100_000 demand.
+    assert body["absorbed_demand"] == 28_000.0
+    assert body["remaining_demand"] == 72_000.0
+    assert body["absorption_ratio"] == 0.28
+    assert body["absorbing_store_count"] == 2
+    assert body["absorption_policy_version_id"] == f"heatzone-absorption-v1:{TENANT_ID}"
+    # Traceability is not optional: the basis ids come off each source row's
+    # raw_contract_fingerprint, so the outcome can be tied back to what it read.
+    assert len(body["basis_source_ids"]) == 56
+    assert all(
+        source_id.startswith("sdp-fingerprint-") for source_id in body["basis_source_ids"]
+    )
+
+    stored = bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID)
+    assert [(o.cell_id, o.absorbed_demand) for o in stored] == [
+        ("cell-hz004-00", 28_000.0)
+    ]
+
+    events = [
+        event
+        for event in bundle.audit_log.list_events()
+        if event.event_type == "heatzone.absorption.outcome.recorded.v1"
+    ]
+    assert len(events) == 1
+    assert events[0].metadata["absorption_ratio"] == 0.28
+
+
+def test_a_caller_cannot_state_what_a_zone_absorbed() -> None:
+    """Supplying the measurement is refused, not merged with the computed one."""
+    client = TestClient(create_app(persistence=_bundle_with_registered_cell()))
+
+    body = outcome_request(
+        cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
+    )
+    for field, value in (
+        ("absorbed_demand", 99_000.0),
+        ("absorption_ratio", 0.99),
+        ("absorbing_store_count", 40),
+        ("under_realized", False),
+        ("basis_source_ids", ["made-up"]),
+    ):
+        response = _record_outcome(client, {**body, field: value})
+        assert response.status_code == 422, field
+        assert field in response.text
+
+
+def test_an_untraceable_period_is_refused_rather_than_recorded() -> None:
+    """No fingerprint, no evidence: an unsourced outcome is not admissible."""
+    bundle = _bundle_with_registered_cell()
+    client = TestClient(create_app(persistence=bundle))
+
+    body = outcome_request(
+        cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
+    )
+    for row in body["performances"]:
+        row["raw_contract_fingerprint"] = ""
+
+    response = _record_outcome(client, body)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_NOT_MEASURABLE"
+    assert bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID) == []
+
+
+def test_an_incomplete_window_is_refused_rather_than_recorded() -> None:
+    """A partial period would look measured and would not be."""
+    bundle = _bundle_with_registered_cell()
+    client = TestClient(create_app(persistence=bundle))
+
+    body = outcome_request(
+        cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
+    )
+    # Drop one business day; the assembler must fail closed on the gap rather
+    # than sum what is left and call it the period's absorption.
+    body["performances"] = [
+        row for row in body["performances"] if not row["business_date"].endswith("-15")
+    ]
+
+    response = _record_outcome(client, body)
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_NOT_MEASURABLE"
+    assert bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID) == []
+
+
+def test_a_declared_start_date_is_refused_under_the_seeded_policy() -> None:
+    """Admitting a claimed start date is a governance decision, not a default."""
+    bundle = _bundle_with_registered_cell()
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id="cell-hz004-00",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            method="DECLARED",
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_NOT_MEASURABLE"
+    assert bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID) == []
+
+
+def test_rerecording_a_period_is_idempotent_but_a_disagreement_is_refused() -> None:
+    """History is appended to, never rewritten."""
+    bundle = _bundle_with_registered_cell()
+    client = TestClient(create_app(persistence=bundle))
+
+    body = outcome_request(
+        cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
+    )
+    assert _record_outcome(client, body).status_code == 200
+    assert _record_outcome(client, body).status_code == 200
+    assert len(bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID)) == 1
+
+    # A recomputation that disagrees is a finding, not an update.
+    conflicting = outcome_request(
+        cell_id="cell-hz004-00",
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        daily_revenue=900.0,
+    )
+    response = _record_outcome(client, conflicting)
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "HZ004_OUTCOME_CONFLICT"
+    stored = bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID)
+    assert [o.absorbed_demand for o in stored] == [28_000.0]
+
+
+def test_a_side_labelled_outcome_needs_the_barrier_it_was_split_on() -> None:
+    """Side labels are the only admissible basis for a split, so they carry one.
+
+    A side without a recorded barrier would let a split be taken on a division
+    nobody observed, which is the guess the readiness ruling forbids.
+    """
+    bundle = _bundle_with_registered_cell()
+    client = TestClient(create_app(persistence=bundle))
+
+    unnamed = _record_outcome(
+        client,
+        outcome_request(
+            cell_id=HZ004_CELL,
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            barrier_side="A",
+        ),
+    )
+    assert unnamed.status_code == 422
+    assert unnamed.json()["detail"]["code"] == "HZ004_OUTCOME_REFUSED"
+    assert bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID) == []
+
+    named = _record_outcome(
+        client,
+        outcome_request(
+            cell_id=HZ004_CELL,
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            barrier_side="A",
+            barrier_description="Love River, no crossing within the zone",
+        ),
+    )
+    assert named.status_code == 200, named.text
+    assert named.json()["barrier_side"] == "A"
+
+    stored = bundle.heatzone_evidence_repository.list_cells(TENANT_ID)
+    assert [o.barrier_side for o in stored[0].side_outcomes] == ["A"]
+
+    # A side outside the recorded pair is not a side.
+    invalid = _record_outcome(
+        client,
+        outcome_request(
+            cell_id=HZ004_CELL,
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            barrier_side="C",
+            barrier_description="Love River, no crossing within the zone",
+        ),
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"]["code"] == "HZ004_OUTCOME_REFUSED"
+
+
+def test_an_outcome_for_an_unpublished_cell_is_refused() -> None:
+    """`geo_cell_id` is a foreign key, so an invented cell id is not a cell.
+
+    Without this the SQLite and PostgreSQL paths would disagree: Postgres
+    refuses the insert, SQLite would accept a row the evidence reader's join
+    then silently drops, so the outcome would look recorded and never be read.
+    """
+    bundle = _bundle_with_registered_cell()
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id="cell-never-published",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+        ),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_UNREGISTERED_CELL"
+    assert bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID) == []
+
+
+def test_the_roles_that_decide_a_merge_cannot_write_its_evidence() -> None:
+    """Structural separation: whoever approves a composition cannot record for it.
+
+    The two roles checked here are exactly the ones granted heatzone approval
+    and override, so this is the separation itself rather than a sample of it.
+    """
+    client = TestClient(create_app(persistence=_bundle_with_registered_cell()))
+    body = outcome_request(
+        cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
+    )
+
+    for role in (Role.EXPANSION_USER, Role.EXECUTIVE):
+        response = _record_outcome(
+            client,
+            body,
+            headers={
+                **auth_headers(role, subject="operator-a"),
+                "x-tenant-id": TENANT_ID,
+            },
+        )
+        assert response.status_code == 403, role
+
+
+def test_recorded_outcomes_reach_the_merge_split_engine(monkeypatch, tmp_path) -> None:
+    """The written history is the history evaluate reads.
+
+    Recording is the production entry, so an outcome written through the route
+    has to be visible to a later evaluate on the same bundle -- otherwise the
+    writer fills a relation the engine is not reading.
+    """
+    bundle = _bundle_with_registered_cell()
+    use_matured_receipt(monkeypatch, tmp_path)
+    client = TestClient(create_app(persistence=bundle))
+
+    # Nothing recorded yet: the repository is wired but the history is empty,
+    # so the engine abstains on measured emptiness rather than proposing.
+    empty = _evaluate(client)
+    assert empty.status_code == 200
+    empty_body = empty.json()
+    assert empty_body["abstained"] is True
+    assert empty_body["readiness"]["metrics"]["outcome_period_count"] == 0
+    assert empty_body["readiness"]["metrics"]["basis_source_id_count"] == 0
+    assert empty_body["proposals"] == []
+
+    assert (
+        _record_outcome(
+            client,
+            outcome_request(
+                cell_id="cell-hz004-00",
+                window_start=WINDOW_START,
+                window_end=WINDOW_END,
+            ),
+        ).status_code
+        == 200
+    )
+
+    # The recorded period is now what the engine measures maturity from. One
+    # period is nowhere near a decision, so it still abstains -- but it abstains
+    # on evidence the production entry wrote, which is the property under test.
+    after = _evaluate(client)
+    assert after.status_code == 200
+    body = after.json()
+    assert body["abstained"] is True
+    assert body["readiness"]["metrics"]["outcome_period_count"] == 1
+    assert body["readiness"]["metrics"]["basis_source_id_count"] == 56
+
+
+# ---------------------------------------------------------------------------
+# Effective merge policy (ODP-SD-AMD-001 3.3)
+#
+# Naming a policy version selects one; it does not exempt it from being the
+# right kind, the right tenant's, and in force.
+# ---------------------------------------------------------------------------
+
+
+def _retired_merge_policy() -> DecisionPolicy:
+    """A superseded heatzone_merge version: right kind, right tenant, not in force."""
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    return replace(
+        policy,
+        policy_label="heatzone-merge-v0",
+        policy_version_id=f"heatzone-merge-v0:{TENANT_ID}",
+        policy_version="0.9.0",
+        effective_from=datetime(2026, 1, 1, tzinfo=UTC),
+        effective_to=datetime(2026, 6, 1, tzinfo=UTC),
+    )
+
+
+def test_evaluate_refuses_a_policy_version_of_the_wrong_kind() -> None:
+    """A row that parses is not a heat-zone merge policy."""
+    bundle = _bundle_with_evidence()
+    # Already seeded for this tenant: a real registry row of a different kind.
+    other_kind = default_model_performance_drift_policy(TENANT_ID)
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _evaluate(client, policy_version_id=other_kind.policy_version_id)
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "not 'heatzone_merge'" in detail
+    assert other_kind.policy_kind in detail
+
+
+def test_evaluate_refuses_a_policy_version_that_is_no_longer_in_force() -> None:
+    """A retired version's thresholds are not the ones governing today."""
+    bundle = _bundle_with_evidence()
+    retired = _retired_merge_policy()
+    bundle.forecastops_policy_repository.add(retired)
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _evaluate(client, policy_version_id=retired.policy_version_id)
+
+    assert response.status_code == 422
+    assert "not in force" in response.json()["detail"]
+
+
+def test_evaluate_refuses_another_tenants_policy_version() -> None:
+    bundle = _bundle_with_evidence()
+    foreign = default_heatzone_merge_policy("tenant-b")
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _evaluate(client, policy_version_id=foreign.policy_version_id)
+
+    assert response.status_code == 422
+    assert "does not belong to tenant" in response.json()["detail"]
+
+
+def _seed_overridable_zone(bundle) -> str:
+    zone_id = "MZ-00ff112233445566"
+    bundle.heatzone_composition_repository.save_composition_batch(
+        [
+            HeatZoneCompositionRecord(
+                zone_id=zone_id,
+                tenant_id=TENANT_ID,
+                member_cell_id=cell_id,
+                composition_kind=CompositionKind.MERGED,
+                decided_by="system",
+                decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+            )
+            for cell_id in ("cell-override-00", "cell-override-01")
+        ]
+    )
+    return zone_id
+
+
+def _override(client: TestClient, zone_id: str, **body: object):
+    return client.post(
+        f"/api/v1/heatzones/zones/{zone_id}/override",
+        json={"override_reason": "operator judgement on a recorded barrier", **body},
+        headers=HEATZONE_HEADERS,
+    )
+
+
+def test_override_resolves_a_governed_policy_instead_of_spelling_one() -> None:
+    """The recorded version comes from the registry, not from string assembly."""
+    bundle = _bundle_with_evidence()
+    zone_id = _seed_overridable_zone(bundle)
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _override(client, zone_id)
+
+    assert response.status_code == 200
+    governed = default_heatzone_merge_policy(TENANT_ID)
+    assert all(
+        record["decision_policy_version_id"] == governed.policy_version_id
+        for record in response.json()["records"]
+    )
+
+
+def test_override_refuses_a_policy_version_it_cannot_resolve() -> None:
+    """Previously this route fabricated a version id and wrote it regardless."""
+    bundle = _bundle_with_evidence()
+    zone_id = _seed_overridable_zone(bundle)
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _override(
+        client, zone_id, decision_policy_version_id=f"heatzone-merge-v9:{TENANT_ID}"
+    )
+
+    assert response.status_code == 422
+    assert "not found" in response.json()["detail"]
+    # And nothing was decided: the zone still holds its original composition.
+    lineage = client.get(
+        f"/api/v1/heatzones/zones/{zone_id}/lineage", headers=HEATZONE_HEADERS
+    )
+    assert lineage.json()["decided_by"] == "system"
+
+
+def test_override_refuses_a_policy_version_of_the_wrong_kind() -> None:
+    bundle = _bundle_with_evidence()
+    zone_id = _seed_overridable_zone(bundle)
+    # Already seeded for this tenant: a real registry row of a different kind.
+    other_kind = default_model_performance_drift_policy(TENANT_ID)
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _override(
+        client, zone_id, decision_policy_version_id=other_kind.policy_version_id
+    )
+
+    assert response.status_code == 422
+    assert "not 'heatzone_merge'" in response.json()["detail"]

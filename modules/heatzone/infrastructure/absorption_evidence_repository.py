@@ -12,6 +12,8 @@ from collections.abc import Iterable, Sequence
 
 from modules.heatzone.application.absorption_outcome_recorder import (
     AbsorptionOutcomeConflictError,
+    UnregisteredCellError,
+    measurement_differences,
 )
 from modules.heatzone.application.merge_split_evidence import (
     AbsorptionOutcomeRecord,
@@ -79,18 +81,30 @@ class InMemoryMergeSplitEvidenceRepository:
         append-only trigger; a fixture that quietly grew a second row for one
         period would let a test build a history production cannot.
         """
+        if outcome.cell_id not in self._cells.get(tenant_id, {}):
+            # `geo_cell_id` is a foreign key into geo.h3_cells in PostgreSQL, so
+            # an unregistered cell is refused there. Refusing here too keeps the
+            # two from disagreeing -- and an outcome on a cell the reader cannot
+            # join would otherwise be recorded and silently never read.
+            raise UnregisteredCellError(
+                f"cell '{outcome.cell_id}' is not a registered geo cell for tenant "
+                f"'{tenant_id}'; HZ-004 outcomes attach to cells the geo pipeline "
+                "published, not to identifiers a caller invents"
+            )
+
         for existing in self._outcomes.get(tenant_id, []):
             if (
                 existing.cell_id == outcome.cell_id
                 and existing.period == outcome.period
                 and existing.barrier_side == outcome.barrier_side
             ):
-                if existing != outcome:
+                differing = measurement_differences(existing, outcome)
+                if differing:
                     raise AbsorptionOutcomeConflictError(
                         f"cell {outcome.cell_id} already holds a different recorded outcome "
                         f"for {outcome.period_start.isoformat()}.."
                         f"{outcome.period_end.isoformat()} (side={outcome.barrier_side}); "
-                        "HZ-004 history is append-only"
+                        f"differing: {sorted(differing)}. HZ-004 history is append-only"
                     )
                 return existing
         self.record_outcome(tenant_id, outcome)

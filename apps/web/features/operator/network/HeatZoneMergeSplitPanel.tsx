@@ -20,6 +20,14 @@ export type HeatZoneProposal = {
   member_cell_ids: string[];
   member_count: number;
   parent_zone_id?: string | null;
+  /**
+   * Every side a split divides into, and the zone id each side will get. A
+   * split is approved as one decision, so the operator has to be able to see
+   * the whole resulting topology before approving it -- the member list alone
+   * says which cells are involved, not where each one ends up.
+   */
+  child_partitions?: string[][];
+  child_zone_ids?: string[];
   ndcg_gain: number;
   cannibalization_variance_reduction: number;
   correlation_rho: number;
@@ -446,6 +454,40 @@ export function HeatZoneMergeSplitPanel({
                 </div>
 
                 <div>
+                  {activeProposal.composition_kind === "SPLIT_CHILD" &&
+                    (activeProposal.child_partitions?.length ?? 0) > 0 && (
+                      <div data-testid="split-children" style={{ marginBottom: "10px" }}>
+                        <h5 style={{ margin: "0 0 6px 0", color: "#475569" }}>
+                          分割後子熱區 ({activeProposal.child_partitions!.length})
+                        </h5>
+                        {activeProposal.child_partitions!.map((partition, index) => (
+                          <div
+                            key={activeProposal.child_zone_ids?.[index] ?? index}
+                            style={{
+                              marginBottom: "6px",
+                              padding: "6px 8px",
+                              backgroundColor: "#fffbeb",
+                              border: "1px solid #fde68a",
+                              borderRadius: "4px",
+                              fontFamily: "monospace",
+                              fontSize: "11px",
+                            }}
+                          >
+                            <div style={{ color: "#b45309", fontWeight: 700 }}>
+                              {activeProposal.child_zone_ids?.[index] ?? `子熱區 ${index + 1}`}
+                            </div>
+                            {partition.map((cellId) => (
+                              <div key={cellId} style={{ color: "#334155" }}>
+                                {cellId}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                        <div style={{ color: "#64748b", fontFamily: "inherit" }}>
+                          核准一次即同時建立以上全部子熱區，父熱區同時退場。
+                        </div>
+                      </div>
+                    )}
                   <h5 style={{ margin: "0 0 6px 0", color: "#475569" }}>治理觸發理由與依據</h5>
                   <ul style={{ margin: 0, paddingLeft: "18px", color: "#334155" }}>
                     {activeProposal.reasons.map((r, i) => (

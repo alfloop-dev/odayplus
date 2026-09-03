@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 MIGRATION_SQL = Path("infra/db/migrations/000018_heatzone_composition.sql")
@@ -100,9 +101,37 @@ def test_heatzone_merge_policy_seeding_and_tenant_trigger() -> None:
 def test_alembic_revision_chain() -> None:
     rev = _rev()
 
-    assert 'revision: str = "0013"' in rev
-    assert 'down_revision: str = "0012"' in rev
+    # 0013 is dev's work-order disposition migration; this one follows it, so
+    # the chain stays linear and alembic keeps a single head.
+    assert 'revision: str = "0014"' in rev
+    assert 'down_revision: str = "0013"' in rev
     assert "000018_heatzone_composition.sql" in rev
+
+
+def test_migration_revisions_have_one_head() -> None:
+    """Two migrations claiming one revision id is a duplicate, not a branch."""
+    versions = Path("infra/db/migrations/versions")
+    revisions: dict[str, str] = {}
+    down_revisions: dict[str, str | None] = {}
+    for module in sorted(versions.glob("[0-9]*.py")):
+        text = module.read_text(encoding="utf-8")
+        revision = re.search(r"^revision: str = ['\"](\w+)['\"]", text, re.M)
+        down = re.search(
+            r"^down_revision:[^=]*= (?:['\"](\w+)['\"]|None)", text, re.M
+        )
+        assert revision is not None, f"{module.name} declares no revision"
+        assert down is not None, f"{module.name} declares no down_revision"
+        assert revision.group(1) not in revisions, (
+            f"{module.name} and {revisions[revision.group(1)]} both claim revision "
+            f"{revision.group(1)!r}"
+        )
+        revisions[revision.group(1)] = module.name
+        down_revisions[revision.group(1)] = down.group(1)
+
+    heads = set(revisions) - {d for d in down_revisions.values() if d}
+    assert len(heads) == 1, f"expected one alembic head, found {sorted(heads)}"
+    roots = [rev for rev, down in down_revisions.items() if down is None]
+    assert roots == ["0001"]
 
 
 def test_absorption_evidence_relations_are_declared() -> None:

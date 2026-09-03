@@ -19,6 +19,7 @@ from modules.heatzone.application.absorption_inputs import (
 from modules.heatzone.application.absorption_outcome_recorder import (
     AbsorptionOutcomeConflictError,
     AbsorptionOutcomeWriteError,
+    UnregisteredCellError,
     record_absorption_outcome,
 )
 from modules.heatzone.application.merge_split_engine import (
@@ -940,6 +941,11 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={"code": "HZ004_OUTCOME_CONFLICT", "message": str(exc)},
+                ) from exc
+            except UnregisteredCellError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "HZ004_UNREGISTERED_CELL", "message": str(exc)},
                 ) from exc
             except AbsorptionOutcomeWriteError as exc:
                 raise HTTPException(

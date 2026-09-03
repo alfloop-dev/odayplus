@@ -306,6 +306,7 @@ def _durable_bundle(
     )
     from shared.infrastructure.persistence.outbox import DurableOutboxRepository
     from shared.infrastructure.persistence.repositories import (
+        DurableAbsorptionOutcomeWriter,
         DurableAddressLocationRepository,
         DurableAdLiftRepository,
         DurableArtifactStore,
@@ -321,7 +322,6 @@ def _durable_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
-        DurableAbsorptionOutcomeWriter,
         DurableMergeSplitEvidenceRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
@@ -422,6 +422,7 @@ def _postgres_bundle(
         PostgresEngine,
     )
     from shared.infrastructure.persistence.repositories import (
+        DurableAbsorptionOutcomeWriter,
         DurableAddressLocationRepository,
         DurableAdLiftRepository,
         DurableArtifactStore,
@@ -437,7 +438,6 @@ def _postgres_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
-        DurableAbsorptionOutcomeWriter,
         DurableMergeSplitEvidenceRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
