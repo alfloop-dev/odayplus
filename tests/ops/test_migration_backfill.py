@@ -34,6 +34,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0009",
         "0010",
         "0011",
+        "0012",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -106,6 +107,18 @@ def test_model_performance_policy_migration_is_reachable_from_alembic_head() -> 
     } == {"infra/db/migrations/000014_decision_policy_registry.sql"}
 
 
+def test_prediction_drift_persistence_migration_is_reachable_from_alembic_head() -> None:
+    plan = build_migration_plan(environment="dev")
+    drift_step = next(step for step in plan.steps if step.revision == "0011")
+
+    assert drift_step.path.endswith("0011_learninghub_prediction_drift.py")
+    assert {
+        asset.path
+        for asset in drift_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000017_learninghub_prediction_drift.sql"}
+
+
 def test_netplan_disclosure_migration_is_reachable_from_alembic_head() -> None:
     """The acknowledgement table has to be applied, not merely present on disk.
 
@@ -114,9 +127,9 @@ def test_netplan_disclosure_migration_is_reachable_from_alembic_head() -> None:
     ungoverned approvals -- it would stop approving network plans entirely.
     """
     plan = build_migration_plan(environment="dev")
-    disclosure_step = next(step for step in plan.steps if step.revision == "0011")
+    disclosure_step = next(step for step in plan.steps if step.revision == "0012")
 
-    assert disclosure_step.path.endswith("0011_netplan_constraint_disclosure.py")
+    assert disclosure_step.path.endswith("0012_netplan_constraint_disclosure.py")
     assert {
         asset.path
         for asset in disclosure_step.assets

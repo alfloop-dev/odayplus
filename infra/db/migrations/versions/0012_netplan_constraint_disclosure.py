@@ -1,7 +1,7 @@
 """Durable receipts for accepting unmodelled network plan constraint classes.
 
-Revision ID: 0011
-Revises: 0010
+Revision ID: 0012
+Revises: 0011
 Task: ODP-NETPLAN-DISCLOSURE-APPROVAL-001
 
 Applies `000017_netplan_constraint_disclosure.sql`, which creates the
@@ -25,8 +25,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0011"
-down_revision: str = "0010"
+revision: str = "0012"
+down_revision: str = "0011"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
