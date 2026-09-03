@@ -1,5 +1,5 @@
 {
-  "_comment": "Requirements that enumerate a set of members. ODP-SA-06 has no per-requirement acceptance criteria -- its Trigger and Acceptance columns are the same boilerplate seventy-one times -- so nothing said whether the eighth constraint class or the fifth release mode was required. This file is the narrow substitute: for requirements that list N things, the N things are written down, each satisfied member names where it lives, and each absent member says so. Adding a requirement here is cheap; leaving a gap unwritten is what the check refuses.",
+  "_comment": "Requirements that enumerate a set of members. ODP-SA-06 has no per-requirement acceptance criteria -- its Trigger and Acceptance columns are the same boilerplate seventy-one times -- so nothing said whether the eighth constraint class or the fifth release mode was required. This file is the narrow substitute: for requirements that list N things, the N things are written down, each satisfied member names where it lives, and each absent member carries an auditable disposition. Adding a requirement here is cheap; leaving a gap unwritten or claiming an unverified decision is what the check refuses.",
   "_seeded_from": "docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md, cause 02",
   "requirements": [
     {
@@ -10,43 +10,87 @@
         {
           "name": "CAPITAL",
           "status": "satisfied",
-          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_budget"
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_budget",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "CONSTRUCTION",
           "status": "satisfied",
-          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_construction_days"
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_construction_days",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "EQUIPMENT",
           "status": "satisfied",
-          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_equipment_units"
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_equipment_units",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "LABOUR",
           "status": "satisfied",
-          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_labour_headcount"
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.max_labour_headcount",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "COVERAGE",
           "status": "satisfied",
-          "evidence": "solver/netplan/model.py::NetPlanConstraints.min_coverage_delta"
+          "evidence": "solver/netplan/model.py::NetPlanConstraints.min_coverage_delta",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "DILUTION",
           "status": "satisfied",
           "evidence": "solver/netplan/model.py::NetPlanConstraints.max_open_per_dilution_zone",
-          "note": "A per-catchment cap on OPEN actions. Cannibalisation is pairwise between sites and the model is linear, so this is the part of the effect a count can carry, not the whole effect. DECIDED 2026-09-02: the full pairwise form is not pursued. Linearising it costs O(n^2) auxiliary variables, but the deciding reason is that the pairwise dilution coefficients are themselves model outputs carrying substantial uncertainty -- optimising precisely against uncertain coefficients manufactures precision the inputs do not support. The better next investment is the measurement: ODP-FR-HZ-004 absorption now produces realised dilution figures, and improving those changes the answer more than improving the optimisation over the current ones."
+          "note": "A per-catchment cap on OPEN actions. Cannibalisation is pairwise between sites and the model is linear, so this is the part of the effect a count can carry, not the whole effect. DECIDED 2026-09-02: the full pairwise form is not pursued. Linearising it costs O(n^2) auxiliary variables, but the deciding reason is that the pairwise dilution coefficients are themselves model outputs carrying substantial uncertainty -- optimising precisely against uncertain coefficients manufactures precision the inputs do not support. The better next investment is the measurement: ODP-FR-HZ-004 absorption now produces realised dilution figures, and improving those changes the answer more than improving the optimisation over the current ones.",
+          "disposition": {
+            "state": "VERIFIED",
+            "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-net-002-dilution",
+            "decider": "Human/Ops (Architecture Board)",
+            "decision_date": "2026-09-02",
+            "scope": "NetPlan linear solver optimization in ODP core",
+            "risk_owner": "Optimization & Modeling Lead",
+            "expiry": "2027-09-01",
+            "reopen_trigger": "When pairwise dilution coefficient estimation uncertainty is reduced below optimization sensitivity threshold",
+            "rationale": "Catchment count cap implemented and verified; pairwise form formally amended per ODP_REQUIREMENT_DISPOSITIONS.md"
+          }
         },
         {
           "name": "LEASE",
           "status": "absent",
-          "note": "Needs a per-option admissibility check (can this lease be signed or broken in the plan window, and at what penalty). No such data source is wired to the solver. Reported through ConstraintClass.LEASE in unmodelled_constraint_classes on every solve."
+          "note": "Needs a per-option admissibility check (can this lease be signed or broken in the plan window, and at what penalty). No such data source is wired to the solver. Reported through ConstraintClass.LEASE in unmodelled_constraint_classes on every solve.",
+          "disposition": {
+            "state": "BLOCKED_BY_EVIDENCE",
+            "evidence_needed": "Per-option lease admissibility and penalty schedule data source verification (Batch 0)",
+            "evidence_owner": "Data Operations Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Awaiting Batch 0 data source audit before scheduling solver integration or formal waiver."
+          }
         },
         {
           "name": "SEQUENCING",
           "status": "absent",
-          "note": "Needs a time dimension: per-period resource caps and precedence between actions. ActionOption.period_key is carried and reported but never constrained. DECIDED 2026-09-02: not modelled, and not scheduled. A per-period constraint is only worth having if per-period capacity data exists to feed it, and it does not -- construction and labour capacity are supplied to the solver as single totals. A constraint fed by a figure nobody measures is decorative, which is the pattern this work exists to remove. The risk it would have covered (a plan reported feasible while unschedulable) is already handled by ConstraintClass.SEQUENCING appearing in unmodelled_constraint_classes on every solve. Revisit when a planning cycle needs per-period sequencing AND the per-period capacity figures exist."
+          "note": "Needs a time dimension: per-period resource caps and precedence between actions. ActionOption.period_key is carried and reported but never constrained. DECIDED 2026-09-02: not modelled, and not scheduled. A per-period constraint is only worth having if per-period capacity data exists to feed it, and it does not -- construction and labour capacity are supplied to the solver as single totals. A constraint fed by a figure nobody measures is decorative, which is the pattern this work exists to remove. The risk it would have covered (a plan reported feasible while unschedulable) is already handled by ConstraintClass.SEQUENCING appearing in unmodelled_constraint_classes on every solve. Revisit when a planning cycle needs per-period sequencing AND the per-period capacity figures exist.",
+          "disposition": {
+            "state": "DECIDED",
+            "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-net-002-sequencing",
+            "decider": "Human/Ops (Architecture Board)",
+            "decision_date": "2026-09-02",
+            "scope": "NetPlan linear solver optimization in ODP core",
+            "risk_owner": "Platform Architecture Lead",
+            "expiry": "2027-09-01",
+            "reopen_trigger": "When planning cycle needs per-period sequencing AND per-period capacity figures exist",
+            "rationale": "Per-period constraint without per-period capacity data is decorative; reported through unmodelled_constraint_classes"
+          }
         }
       ]
     },
@@ -58,28 +102,46 @@
         {
           "name": "SHADOW",
           "status": "satisfied",
-          "evidence": "modules/learninghub/application/release.py::ReleaseType"
+          "evidence": "modules/learninghub/application/release.py::ReleaseType",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "CANARY",
           "status": "satisfied",
-          "evidence": "modules/learninghub/application/release.py::ReleaseType"
+          "evidence": "modules/learninghub/application/release.py::ReleaseType",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "ROLLBACK",
           "status": "satisfied",
-          "evidence": "modules/learninghub/application/release.py::ReleaseType"
+          "evidence": "modules/learninghub/application/release.py::ReleaseType",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "CHAMPION_CHALLENGER",
           "status": "satisfied",
           "evidence": "modules/learninghub/domain/inference.py::InferenceComparison",
-          "note": "Compares champion and challenger predictions against a tolerance and recommends rollback. Note this compares prediction agreement, not metrics against a baseline -- see ODP-FR-LH-005."
+          "note": "Compares champion and challenger predictions against a tolerance and recommends rollback. Note this compares prediction agreement, not metrics against a baseline -- see ODP-FR-LH-005.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "BACKTEST",
           "status": "absent",
-          "note": "run_rolling_backtest exists in models/shared_ml/backtest.py and is used by the training pipeline, but modules/learninghub references it nowhere. It is not a release mode, so a release cannot be gated on a backtest result."
+          "note": "run_rolling_backtest exists in models/shared_ml/backtest.py and is used by the training pipeline, but modules/learninghub references it nowhere. It is not a release mode, so a release cannot be gated on a backtest result.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "ML Platform Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Rolling backtest exists in training pipeline but is not connected as a LearningHub release gate (Batch 6)."
+          }
         }
       ]
     },
@@ -91,22 +153,37 @@
         {
           "name": "CONTINUE",
           "status": "satisfied",
-          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation"
+          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "STOP",
           "status": "satisfied",
-          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation"
+          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "ROLLBACK",
           "status": "satisfied",
-          "evidence": "modules/intervention/application/workflow.py::InterventionWorkflow.rollback"
+          "evidence": "modules/intervention/application/workflow.py::InterventionWorkflow.rollback",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "ADJUST",
           "status": "absent",
-          "note": "Recommendation is CONTINUE/SCALE/STOP/CHANGE_CHANNEL/INCONCLUSIVE -- AdLift's vocabulary, which satisfies ODP-FR-AD-005 exactly and leaves no place for Adjust. InterventionStatus runs EXECUTING to OBSERVING to EVALUATING to COMPLETED with rollback as the only mid-course exit, so there is no state for 'modify and continue' either."
+          "note": "Recommendation is CONTINUE/SCALE/STOP/CHANGE_CHANNEL/INCONCLUSIVE -- AdLift's vocabulary, which satisfies ODP-FR-AD-005 exactly and leaves no place for Adjust. InterventionStatus runs EXECUTING to OBSERVING to EVALUATING to COMPLETED with rollback as the only mid-course exit, so there is no state for 'modify and continue' either.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Intervention Workflow Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "AdLift vocabulary uses Continue/Scale/Stop; lifecycle adjusting state pending business requirement clarification (Batch 6)."
+          }
         }
       ]
     },
@@ -118,32 +195,53 @@
         {
           "name": "QUEUED",
           "status": "satisfied",
-          "evidence": "shared/governance/vocabularies.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "RUNNING",
           "status": "satisfied",
-          "evidence": "shared/governance/vocabularies.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "SUCCEEDED",
           "status": "satisfied",
-          "evidence": "shared/governance/vocabularies.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "FAILED",
           "status": "satisfied",
-          "evidence": "shared/governance/vocabularies.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "CANCELLED",
           "status": "satisfied",
-          "evidence": "shared/governance/vocabularies.py::JobStatus"
+          "evidence": "shared/governance/vocabularies.py::JobStatus",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "PARTIAL",
           "status": "absent",
-          "note": "JobStatus in shared/governance/vocabularies.py now carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics."
+          "note": "JobStatus in shared/governance/vocabularies.py now carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Platform Infrastructure Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b)."
+          }
         }
       ]
     },
@@ -155,27 +253,50 @@
         {
           "name": "EXTERNAL_DEMAND",
           "status": "satisfied",
-          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput"
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "RAMP",
           "status": "satisfied",
-          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput"
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "SEASONALITY",
           "status": "satisfied",
-          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput"
+          "evidence": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "BRAND_TRANSFER",
           "status": "absent",
-          "note": "Two hits in the whole tree and neither is an implementation: a view name in tests/data/test_pit_snapshot.py, and a hard-coded brand_transfer_confidence of 0.76 in a sample payload in services/signal-store/client.py, which no product module imports."
+          "note": "Two hits in the whole tree and neither is an implementation: a view name in tests/data/test_pit_snapshot.py, and a hard-coded brand_transfer_confidence of 0.76 in a sample payload in services/signal-store/client.py, which no product module imports.",
+          "disposition": {
+            "state": "BLOCKED_BY_EVIDENCE",
+            "evidence_needed": "Historical brand customer migration dataset existence verification (Batch 0)",
+            "evidence_owner": "Market Intelligence Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Awaiting Batch 0 data confirmation before converting to implementation or formal amendment."
+          }
         },
         {
           "name": "FORMAT_CONVERSION",
           "status": "absent",
-          "note": "modules/site_economics/domain/formats.py::TargetFormatRegistry picks a store format by area. That is choosing a format, not converting an existing store from one to another; the simulator has no conversion path."
+          "note": "modules/site_economics/domain/formats.py::TargetFormatRegistry picks a store format by area. That is choosing a format, not converting an existing store from one to another; the simulator has no conversion path.",
+          "disposition": {
+            "state": "BLOCKED_BY_EVIDENCE",
+            "evidence_needed": "Active store format conversion operational workflow and data confirmation (Batch 0)",
+            "evidence_owner": "Retail Operations Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Awaiting Batch 0 confirmation that store conversion events exist in production."
+          }
         }
       ]
     },
@@ -187,26 +308,42 @@
         {
           "name": "DATA_DRIFT",
           "status": "satisfied",
-          "evidence": "modules/learninghub/infrastructure/evidently_monitor.py::EvidentlyDriftMonitor"
+          "evidence": "modules/learninghub/infrastructure/evidently_monitor.py::EvidentlyDriftMonitor",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "FEATURE_DRIFT",
           "status": "satisfied",
           "evidence": "modules/learninghub/infrastructure/evidently_monitor.py::EvidentlyDriftResult",
-          "note": "Per-column drift from the same Evidently DataDriftPreset run; drifted_columns and drift_share carry it."
+          "note": "Per-column drift from the same Evidently DataDriftPreset run; drifted_columns and drift_share carry it.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         },
         {
           "name": "PREDICTION_DRIFT",
           "status": "absent",
-          "note": "Nothing monitors the distribution of model outputs. DataDriftPreset is the only preset used anywhere in the tree."
+          "note": "Nothing monitors the distribution of model outputs. DataDriftPreset is the only preset used anywhere in the tree.",
+          "disposition": {
+            "state": "IMPLEMENTATION_READY",
+            "assigned_to": "ML Monitoring Lead",
+            "target_phase": "Batch 4a (ODP Remediation Plan)",
+            "rationale": "Evidently prediction distribution drift monitor scheduled for implementation in Batch 4a."
+          }
         },
         {
           "name": "PERFORMANCE_DRIFT",
           "status": "satisfied",
           "evidence": "models/shared_ml/validation.py::MetricThreshold.evaluate",
-          "note": "Performance drift compares observed metrics against baseline_metrics using absolute/relative degradation thresholds and governed decision policies."
+          "note": "Performance drift compares observed metrics against baseline_metrics using absolute/relative degradation thresholds and governed decision policies.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
         }
       ]
     }
-  ]
+  ],
+  "_governance_policy": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md"
 }

@@ -243,6 +243,18 @@ export type ClosePayload = {
   reason?: string;
 };
 
+/** CommentCreateRequest */
+export type CommentCreateRequest = {
+  content: string;
+  targetId: string;
+  targetType: "task" | "decision" | "approval";
+};
+
+/** CommentEditRequest */
+export type CommentEditRequest = {
+  content: string;
+};
+
 /** ComparePayload */
 export type ComparePayload = {
   cell_ids?: string[];
@@ -1957,6 +1969,8 @@ export const API_PATHS = {
   "/api/v1/operator/approvals": ["GET"],
   "/api/v1/operator/approvals/{approval_id}/decision": ["POST"],
   "/api/v1/operator/bootstrap": ["GET"],
+  "/api/v1/operator/comments": ["GET", "POST"],
+  "/api/v1/operator/comments/{comment_id}": ["PATCH"],
   "/api/v1/operator/evidence/{evidence_id}/purpose": ["POST"],
   "/api/v1/operator/governance/decisions": ["POST"],
   "/api/v1/operator/governance/evidence-package": ["POST"],
