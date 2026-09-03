@@ -19,6 +19,10 @@ from datetime import UTC, date, datetime
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from modules.external_data.application.market_data_facade import MarketDataFacade
+from modules.external_data.infrastructure.data_platform_client import (
+    InMemoryDataPlatformTransport,
+)
 from modules.heatzone.domain.composition import (
     CompositionKind,
     HeatZoneCompositionRecord,
@@ -32,10 +36,16 @@ from shared.governance import (
 )
 from shared.infrastructure.persistence import build_persistence
 from tests.integration._authz import HEATZONE_HEADERS, auth_headers
-from tests.integration._heatzone_absorption_rows import outcome_request
+from tests.integration._heatzone_absorption_rows import (
+    operational_start_rows,
+    outcome_request,
+    performance_rows,
+)
 from tests.integration._heatzone_evidence import (
     MERGE_LEFT,
     MERGE_RIGHT,
+    SPLIT_LEFT,
+    SPLIT_RIGHT,
     populate_evidence_repository,
     use_matured_receipt,
 )
@@ -893,6 +903,158 @@ def test_recorded_outcomes_reach_the_merge_split_engine(monkeypatch, tmp_path) -
     assert body["abstained"] is True
     assert body["readiness"]["metrics"]["outcome_period_count"] == 1
     assert body["readiness"]["metrics"]["basis_source_id_count"] == 56
+
+
+def test_record_outcome_with_server_side_facade_lookup_and_verification() -> None:
+    """The route hydrates and verifies rows from the server-side published source repository."""
+    bundle = _bundle_with_registered_cell()
+    transport = InMemoryDataPlatformTransport()
+    stores = ("store-1", "store-2")
+    perfs = performance_rows(
+        store_ids=stores,
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        daily_revenue=500.0,
+    )
+    op_starts = operational_start_rows(
+        store_ids=stores,
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+    )
+    for p in perfs:
+        doc_id = f"{p['store_id']}:{p['business_date']}"
+        transport.store_document("oday.store-daily-performance.v1", doc_id, p)
+    for op in op_starts:
+        transport.store_document("oday.operational-start-observation.v1", op["store_id"], op)
+
+    facade = MarketDataFacade(transport=transport)
+    client = TestClient(
+        create_app(persistence=bundle, market_intelligence_facade=facade)
+    )
+
+    # 1. Caller only names the store_ids and period; server looks up from facade
+    response = _record_outcome(
+        client,
+        {
+            "cell_id": "cell-hz004-00",
+            "period_start": WINDOW_START.isoformat(),
+            "period_end": WINDOW_END.isoformat(),
+            "original_demand": 100_000.0,
+            "store_ids": list(stores),
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["absorbed_demand"] == 28_000.0
+    assert body["absorption_ratio"] == 0.28
+    assert body["absorbing_store_count"] == 2
+    assert len(body["basis_source_ids"]) == 56
+
+
+def test_record_outcome_refuses_client_tampered_performance_row() -> None:
+    """If client supplies fabricated rows that disagree with the published source, fail closed."""
+    bundle = _bundle_with_registered_cell()
+    transport = InMemoryDataPlatformTransport()
+    stores = ("store-1", "store-2")
+    perfs = performance_rows(
+        store_ids=stores,
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        daily_revenue=500.0,
+    )
+    op_starts = operational_start_rows(
+        store_ids=stores,
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+    )
+    for p in perfs:
+        transport.store_document("oday.store-daily-performance.v1", f"{p['store_id']}:{p['business_date']}", p)
+    for op in op_starts:
+        transport.store_document("oday.operational-start-observation.v1", op["store_id"], op)
+
+    facade = MarketDataFacade(transport=transport)
+    client = TestClient(
+        create_app(persistence=bundle, market_intelligence_facade=facade)
+    )
+
+    # Client tries to pass inflated revenue (tampering)
+    tampered_perfs = [dict(p) for p in perfs]
+    tampered_perfs[0]["paid_amount"] = 99_999.0
+
+    response = _record_outcome(
+        client,
+        {
+            "cell_id": "cell-hz004-00",
+            "period_start": WINDOW_START.isoformat(),
+            "period_end": WINDOW_END.isoformat(),
+            "original_demand": 100_000.0,
+            "store_ids": list(stores),
+            "performances": tampered_perfs,
+            "operational_starts": op_starts,
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_INPUT_REFUSED"
+    assert "does not match published source record" in response.json()["detail"]["message"]
+
+
+def test_evaluate_split_declined_when_split_edge_removed_from_adjacency(
+    monkeypatch, tmp_path
+) -> None:
+    """A mature fixture with side evidence but missing adjacency edge is declined during evaluate."""
+    bundle = _bundle_with_evidence()
+    use_matured_receipt(monkeypatch, tmp_path)
+    client = TestClient(create_app(persistence=bundle))
+
+    # Add split candidate zone and barrier evidence
+    from modules.heatzone.domain.composition import generate_merged_zone_id
+    from tests.integration._heatzone_evidence import add_barrier_evidence
+
+    zone_id = generate_merged_zone_id((SPLIT_LEFT, SPLIT_RIGHT))
+    bundle.heatzone_composition_repository.save_composition(
+        HeatZoneCompositionRecord(
+            zone_id=zone_id,
+            tenant_id=TENANT_ID,
+            member_cell_id=SPLIT_LEFT,
+            composition_kind=CompositionKind.MERGED,
+            decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+        )
+    )
+    bundle.heatzone_composition_repository.save_composition(
+        HeatZoneCompositionRecord(
+            zone_id=zone_id,
+            tenant_id=TENANT_ID,
+            member_cell_id=SPLIT_RIGHT,
+            composition_kind=CompositionKind.MERGED,
+            decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+        )
+    )
+    add_barrier_evidence(bundle.heatzone_evidence_repository, tenant_id=TENANT_ID)
+
+    # Link an extra unrelated pair in Taipei so adjacent pair count remains >= 30
+    bundle.heatzone_evidence_repository.link_adjacent(
+        TENANT_ID, "cell-taipei-00", "cell-taipei-02"
+    )
+
+    # Remove the split candidate edge from adjacency while leaving all other pairs
+    bundle.heatzone_evidence_repository._adjacency[TENANT_ID] = {
+        edge
+        for edge in bundle.heatzone_evidence_repository._adjacency.get(TENANT_ID, set())
+        if edge != (SPLIT_LEFT, SPLIT_RIGHT) and edge != (SPLIT_RIGHT, SPLIT_LEFT)
+    }
+
+    response = _evaluate(client)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["abstained"] is False
+    # SPLIT_CHILD proposal is NOT proposed because adjacency edge is missing
+    assert any(
+        d.get("reason") in (
+            "split_partitions_not_spatially_adjacent",
+            "split_candidate_zone_not_spatially_contiguous",
+        )
+        for d in body["declined_candidates"]
+    )
 
 
 # ---------------------------------------------------------------------------

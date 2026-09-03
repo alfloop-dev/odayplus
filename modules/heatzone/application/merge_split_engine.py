@@ -929,6 +929,34 @@ def _mean_square(values: Sequence[float]) -> float:
     return sum(value * value for value in values) / len(values)
 
 
+def _normalize_edge(a: str, b: str) -> tuple[str, str]:
+    return (a, b) if a <= b else (b, a)
+
+
+def _is_partition_connected(cells: Sequence[str], adj_set: set[tuple[str, str]]) -> bool:
+    """True when the cells form a connected component in the adjacency graph."""
+    if len(cells) <= 1:
+        return True
+    cell_set = set(cells)
+    visited: set[str] = set()
+    queue = [cells[0]]
+    visited.add(cells[0])
+    while queue:
+        curr = queue.pop(0)
+        for other in cell_set:
+            if other not in visited and _normalize_edge(curr, other) in adj_set:
+                visited.add(other)
+                queue.append(other)
+    return len(visited) == len(cell_set)
+
+
+def _are_partitions_adjacent(
+    part_a: Sequence[str], part_b: Sequence[str], adj_set: set[tuple[str, str]]
+) -> bool:
+    """True when at least one cell in part_a is adjacent to a cell in part_b."""
+    return any(_normalize_edge(u, v) in adj_set for u in part_a for v in part_b)
+
+
 def _evaluate_splits(
     evidence: MergeSplitEvidence,
     *,
@@ -949,11 +977,23 @@ def _evaluate_splits(
     """
     cell_map = evidence.cell_map()
     proposals: list[MergeSplitProposal] = []
+    adj_set = set(evidence.adjacency)
 
     for zone in evidence.existing_zones:
         if zone.composition_kind != CompositionKind.MERGED.value:
             continue
         if len(zone.member_cell_ids) < 2:
+            continue
+
+        # Spatial contiguity check: the candidate zone member cells must be contiguous
+        if not _is_partition_connected(zone.member_cell_ids, adj_set):
+            declined.append(
+                {
+                    "candidate": zone.zone_id,
+                    "kind": CompositionKind.SPLIT_CHILD.value,
+                    "reason": "split_candidate_zone_not_spatially_contiguous",
+                }
+            )
             continue
 
         sides: dict[str, list[str]] = {}
@@ -986,6 +1026,29 @@ def _evaluate_splits(
             continue
 
         side_a, side_b = sorted(sides)
+
+        # Spatial adjacency check: the two child sides must be adjacent across the boundary
+        if not _are_partitions_adjacent(sides[side_a], sides[side_b], adj_set):
+            declined.append(
+                {
+                    "candidate": zone.zone_id,
+                    "kind": CompositionKind.SPLIT_CHILD.value,
+                    "reason": "split_partitions_not_spatially_adjacent",
+                }
+            )
+            continue
+
+        # Spatial contiguity check: each child partition must be internally contiguous
+        if not _is_partition_connected(sides[side_a], adj_set) or not _is_partition_connected(sides[side_b], adj_set):
+            declined.append(
+                {
+                    "candidate": zone.zone_id,
+                    "kind": CompositionKind.SPLIT_CHILD.value,
+                    "reason": "split_child_partition_not_spatially_contiguous",
+                }
+            )
+            continue
+
         shared = sorted(set(side_series[side_a]) & set(side_series[side_b]))
         if len(shared) < min_side_periods:
             declined.append(

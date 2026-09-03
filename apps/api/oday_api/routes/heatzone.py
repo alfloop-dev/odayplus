@@ -136,8 +136,8 @@ else:
         period_end: str = Field(min_length=1)
         original_demand: float = Field(gt=0.0)
         store_ids: list[str] = Field(min_length=1)
-        performances: list[dict[str, Any]] = Field(min_length=1)
-        operational_starts: list[dict[str, Any]] = Field(min_length=1)
+        performances: list[dict[str, Any]] | None = None
+        operational_starts: list[dict[str, Any]] | None = None
         barrier_side: str | None = None
         barrier_description: str = ""
 
@@ -153,6 +153,8 @@ else:
         evidence_repository_for_tenant: Any | None = None,
         absorption_outcome_writer: Any | None = None,
         absorption_outcome_writer_for_tenant: Any | None = None,
+        market_data_facade: Any | None = None,
+        market_data_facade_for_tenant: Any | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
         model_runtime: ProductionModelRuntime | None = None,
@@ -219,6 +221,16 @@ else:
             if absorption_outcome_writer_for_tenant is not None:
                 return absorption_outcome_writer_for_tenant(tid)
             return absorption_outcome_writer
+
+        def market_data_facade_for_request(request: Request) -> Any:
+            tid = resolve_tenant_id(request)
+            if market_data_facade_for_tenant is not None:
+                scoped = market_data_facade_for_tenant(tid)
+                if scoped is not None:
+                    return scoped
+            if market_data_facade is not None:
+                return market_data_facade
+            return getattr(request.app.state, "market_data_facade", None)
 
         def resolve_merge_policy(
             tenant_id: str, explicit_version_id: str | None, at: datetime
@@ -891,11 +903,122 @@ else:
                     ),
                 ) from exc
 
+            facade = market_data_facade_for_request(request)
+            effective_perfs: list[dict[str, Any]] | Sequence[Any]
+            effective_starts: list[dict[str, Any]] | Sequence[Any]
+
+            server_perfs: list[dict[str, Any]] = []
+            server_op_starts: list[dict[str, Any]] = []
+            facade_has_records = False
+
+            if facade is not None:
+                p_start = period_start
+                p_end = period_end
+                dates_in_period = [
+                    date.fromordinal(d)
+                    for d in range(p_start.toordinal(), p_end.toordinal() + 1)
+                ]
+                dp_client = getattr(facade, "client", facade)
+
+                try:
+                    for s_id in body.store_ids:
+                        op_start_doc = dp_client.get_operational_start_observation(s_id)
+                        server_op_starts.append(
+                            op_start_doc.to_dict() if hasattr(op_start_doc, "to_dict") else dict(op_start_doc)
+                        )
+                        for b_date in dates_in_period:
+                            d_key = b_date.isoformat()
+                            perf_doc = dp_client.get_store_daily_performance(s_id, d_key)
+                            server_perfs.append(
+                                perf_doc.to_dict() if hasattr(perf_doc, "to_dict") else dict(perf_doc)
+                            )
+                    facade_has_records = True
+                except Exception as exc:
+                    if body.performances is None or body.operational_starts is None:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "code": "HZ004_SOURCE_NOT_FOUND",
+                                "message": f"Published source documents not found for stores {body.store_ids}: {exc}",
+                            },
+                        ) from exc
+                    facade_has_records = False
+
+            if facade_has_records:
+                if body.performances is not None:
+                    server_perf_lookup = {
+                        (str(r.get("store_id")), str(r.get("business_date"))): r for r in server_perfs
+                    }
+                    for client_row in body.performances:
+                        key = (str(client_row.get("store_id")), str(client_row.get("business_date")))
+                        server_row = server_perf_lookup.get(key)
+                        if server_row is None:
+                            raise HTTPException(
+                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail={
+                                    "code": "HZ004_INPUT_REFUSED",
+                                    "message": f"Supplied performance row for store '{key[0]}' on {key[1]} is not in published source repository",
+                                },
+                            )
+                        if (
+                            client_row.get("paid_amount") != server_row.get("paid_amount")
+                            or client_row.get("raw_contract_fingerprint") != server_row.get("raw_contract_fingerprint")
+                            or client_row.get("is_complete") != server_row.get("is_complete")
+                            or client_row.get("coverage_state") != server_row.get("coverage_state")
+                        ):
+                            raise HTTPException(
+                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail={
+                                    "code": "HZ004_INPUT_REFUSED",
+                                    "message": f"Supplied performance row for store '{key[0]}' on {key[1]} does not match published source record",
+                                },
+                            )
+
+                if body.operational_starts is not None:
+                    server_start_lookup = {str(r.get("store_id")): r for r in server_op_starts}
+                    for client_start in body.operational_starts:
+                        s_id = str(client_start.get("store_id"))
+                        server_start = server_start_lookup.get(s_id)
+                        if server_start is None:
+                            raise HTTPException(
+                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail={
+                                    "code": "HZ004_INPUT_REFUSED",
+                                    "message": f"Supplied operational start for store '{s_id}' is not in published source repository",
+                                },
+                            )
+                        if (
+                            str(client_start.get("observed_start_business_date")) != str(server_start.get("observed_start_business_date"))
+                            or str(client_start.get("method")) != str(server_start.get("method"))
+                            or str(client_start.get("confidence")) != str(server_start.get("confidence"))
+                        ):
+                            raise HTTPException(
+                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                detail={
+                                    "code": "HZ004_INPUT_REFUSED",
+                                    "message": f"Supplied operational start for store '{s_id}' does not match published source record",
+                                },
+                            )
+
+                effective_perfs = server_perfs
+                effective_starts = server_op_starts
+            else:
+                if body.performances is None or body.operational_starts is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_SOURCE_NOT_FOUND",
+                            "message": "performances and operational_starts must be supplied when no server-side published source records are available",
+                        },
+                    )
+                effective_perfs = body.performances
+                effective_starts = body.operational_starts
+
             try:
                 result = assemble_zone_absorption(
                     store_ids=list(body.store_ids),
-                    performances=body.performances,
-                    operational_starts=body.operational_starts,
+                    performances=effective_perfs,
+                    operational_starts=effective_starts,
                     original_demand=body.original_demand,
                     policy=policy,
                     as_of=period_end,

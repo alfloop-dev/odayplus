@@ -1321,6 +1321,7 @@ else:
                     bundle, "heatzone_absorption_outcome_writer", None
                 ),
                 absorption_outcome_writer_for_tenant=heatzone_absorption_writer_for_tenant,
+                market_data_facade=market_intelligence_facade,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,

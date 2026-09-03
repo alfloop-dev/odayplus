@@ -392,6 +392,44 @@ def test_split_is_refused_when_the_sides_absorb_alike(tmp_path) -> None:
     )
 
 
+def test_split_is_refused_when_split_edge_is_missing_from_adjacency(tmp_path) -> None:
+    """A mature fixture with side evidence but missing adjacency edge is refused."""
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    zone_id = generate_merged_zone_id((SPLIT_LEFT, SPLIT_RIGHT))
+    zones = (ExistingZoneComposition(zone_id, "MERGED", (SPLIT_LEFT, SPLIT_RIGHT)),)
+
+    repository = build_evidence_repository()
+    add_barrier_evidence(repository)
+    # Link an extra unrelated pair in Taipei so adjacent pair count remains >= 30
+    repository.link_adjacent(TENANT_ID, "cell-taipei-00", "cell-taipei-02")
+    # Remove the split candidate edge from adjacency while leaving 30 other pairs
+    repository._adjacency[TENANT_ID] = {
+        edge for edge in repository._adjacency.get(TENANT_ID, set())
+        if edge != (SPLIT_LEFT, SPLIT_RIGHT) and edge != (SPLIT_RIGHT, SPLIT_LEFT)
+    }
+
+    evidence = assemble_merge_split_evidence(
+        repository,
+        tenant_id=TENANT_ID,
+        existing_zones=zones,
+        receipt_path=matured_receipt(tmp_path / "receipt.json"),
+    )
+    assert len(evidence.adjacency) >= 30  # 30 unrelated pairs remain
+
+    evaluation = evaluate_merge_split(evidence, policy=policy)
+    assert [
+        p for p in evaluation.proposals
+        if p.composition_kind == CompositionKind.SPLIT_CHILD
+    ] == []
+    assert any(
+        entry["reason"] in (
+            "split_partitions_not_spatially_adjacent",
+            "split_candidate_zone_not_spatially_contiguous",
+        )
+        for entry in evaluation.declined
+    )
+
+
 def test_in_memory_composition_repository_lifecycle() -> None:
     repo = InMemoryHeatZoneCompositionRepository()
     zone_id = "MZ-aabbccddeeff0011"
