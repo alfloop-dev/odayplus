@@ -10,6 +10,9 @@ from uuid import uuid4
 AVM_MODEL_VERSION = "dealroom-avm-baseline-v1"
 AVM_FEATURE_VERSION = "valuation-view-v1"
 AVM_POLICY_VERSION = "avm-finance-approval-policy-v1"
+QUALITY_SCORE_REQUIRED_MESSAGE = (
+    "quality_score is required before AVM valuation; input quality is unmeasured"
+)
 
 
 class ValuationCaseStatus(StrEnum):
@@ -33,7 +36,7 @@ class ValuationInput:
     working_capital: float = 0.0
     comparable_multiples: tuple[float, ...] = ()
     liquidity_discount: float = 0.1
-    quality_score: float = 1.0
+    quality_score: float | None = None
     source_snapshot_ids: tuple[str, ...] = ()
     prediction_origin_time: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -55,7 +58,9 @@ class ValuationInput:
             liquidity_discount=_bounded(
                 data.get("liquidity_discount", 0.1), minimum=0.0, maximum=0.5
             ),
-            quality_score=_bounded(data.get("quality_score", data.get("data_quality_score", 1.0))),
+            quality_score=_optional_bounded(
+                data.get("quality_score", data.get("data_quality_score"))
+            ),
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
             prediction_origin_time=_parse_datetime(
                 data.get("prediction_origin_time") or datetime.now(UTC)
@@ -346,9 +351,10 @@ def build_valuation_view(data: Mapping[str, Any]) -> ValuationInput:
 
 def normalize_margin(case: ValuationCase) -> NormalizedMargin:
     item = case.valuation_input
+    quality_score = _require_quality_score(item.quality_score)
     normalized = round((item.gm_ttm * 0.45) + (item.forecast_gm_next_12m * 0.55), 2)
     reasons = ["weighted_ttm_and_forecast_gm"]
-    if item.quality_score < 0.8:
+    if quality_score < 0.8:
         normalized = round(normalized * 0.92, 2)
         reasons.append("quality_discount")
     return NormalizedMargin(
@@ -358,12 +364,13 @@ def normalize_margin(case: ValuationCase) -> NormalizedMargin:
         gm_fwd=item.forecast_gm_next_12m,
         normalized_gm=normalized,
         adjustment_reasons=tuple(reasons),
-        confidence=_confidence(item.quality_score),
+        confidence=_confidence(quality_score),
     )
 
 
 def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> ValuationReport:
     item = case.valuation_input
+    _require_quality_score(item.quality_score)
     income_p50 = normalized_margin.normalized_gm * 2.8
     asset_p50 = max(
         item.asset_book_value
@@ -460,6 +467,8 @@ def build_model_valuation_report(
     execution_metadata: Mapping[str, Any],
 ) -> ValuationReport:
     """Build policy outputs from an already executed approved model interval."""
+
+    _require_quality_score(case.valuation_input.quality_score)
 
     fair = PriceBand(
         p10=round(float(p10), 2),
@@ -602,6 +611,18 @@ def _report_source_snapshot_ids(report: ValuationReport) -> tuple[str, ...]:
 
 def _bounded(value: Any, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
     return min(max(float(value), minimum), maximum)
+
+
+def _optional_bounded(
+    value: Any, *, minimum: float = 0.0, maximum: float = 1.0
+) -> float | None:
+    return None if value is None else _bounded(value, minimum=minimum, maximum=maximum)
+
+
+def _require_quality_score(value: float | None) -> float:
+    if value is None:
+        raise ValueError(QUALITY_SCORE_REQUIRED_MESSAGE)
+    return value
 
 
 def _parse_datetime(value: Any) -> datetime:

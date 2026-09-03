@@ -32,6 +32,7 @@ _SCHEMA_FILES = (
     "000005_durable_notifications.sql",
     "000006_durable_outbox.sql",
     "000007_job_lease_columns.sql",
+    "000017_avm_quality_score_nullable_sqlite.sql",
 )
 
 

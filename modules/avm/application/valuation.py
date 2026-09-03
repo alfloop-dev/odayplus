@@ -15,6 +15,7 @@ from modules.avm.application.calibration import (
 )
 from modules.avm.application.production import AVMProductionExecutor
 from modules.avm.domain import (
+    QUALITY_SCORE_REQUIRED_MESSAGE,
     ApprovalDecision,
     DataRoom,
     DealOutcome,
@@ -81,6 +82,8 @@ class AVMService:
             {ValuationCaseStatus.DATA_READY},
             action="normalize valuation inputs",
         )
+        if case.valuation_input.quality_score is None:
+            raise AVMError(QUALITY_SCORE_REQUIRED_MESSAGE)
         active = self.repository.save_case(
             case.transition(
                 ValuationCaseStatus.NORMALIZING,

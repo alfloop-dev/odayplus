@@ -292,6 +292,7 @@ def _seed_rebalance_inputs(
             lease_liability=150_000,
             working_capital=80_000,
             comparable_multiples=(2.1, 2.4, 2.7),
+            quality_score=0.95,
             source_snapshot_ids=("finance-snapshot-live-1",),
         ),
         created_by="finance-live",

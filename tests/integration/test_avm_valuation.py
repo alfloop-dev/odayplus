@@ -57,6 +57,28 @@ def test_valuation_view_and_worker_emit_lenses_and_price_separation() -> None:
     assert result.datarooms == ()
 
 
+@pytest.mark.parametrize("quality_score", ["omitted", None])
+def test_unmeasured_quality_is_retained_but_cannot_produce_a_valuation_card(
+    quality_score: str | None,
+) -> None:
+    payload = _valuation_payload()
+    if quality_score == "omitted":
+        payload.pop("quality_score")
+    else:
+        payload["quality_score"] = quality_score
+
+    repository = InMemoryAVMRepository()
+    service = AVMService(repository=repository)
+    case = service.create_case(payload, created_by="ops-lead", correlation_id="corr-missing-quality")
+
+    assert case.valuation_input.quality_score is None
+    with pytest.raises(ValueError, match="quality_score is required.*unmeasured"):
+        service.value(case.case_id, actor="avm-score-worker", correlation_id="corr-missing-quality")
+
+    assert repository.get_case(case.case_id).status is ValuationCaseStatus.DATA_READY
+    assert repository.latest_report(case.case_id) is None
+
+
 def test_finance_approval_state_gates_versions_and_dataroom_export() -> None:
     service = AVMService(repository=InMemoryAVMRepository())
     case = service.create_case(
@@ -369,3 +391,44 @@ def test_avm_durable_loop_survives_restart(tmp_path) -> None:
         }.issubset(event_types)
     finally:
         reopened.engine.close()
+
+
+@pytest.mark.parametrize("quality_score", ["omitted", None])
+def test_avm_api_does_not_create_a_card_without_quality_score(
+    quality_score: str | None,
+) -> None:
+    client = TestClient(
+        create_app(),
+        headers=AVM_HEADERS,
+        backend_options={"use_uvloop": True},
+    )
+    payload = {**_valuation_payload(), "created_by": "ops-lead"}
+    if quality_score == "omitted":
+        payload.pop("quality_score")
+    else:
+        payload["quality_score"] = quality_score
+
+    created = client.post(
+        "/avm/cases",
+        json=payload,
+        headers={
+            "x-correlation-id": f"corr-avm-missing-quality-{quality_score}",
+            "Idempotency-Key": f"avm-missing-quality-{quality_score}",
+        },
+    )
+    assert created.status_code == 201, created.text
+    case_body = created.json()
+    case_id = case_body["case_id"]
+    assert case_body["valuation_input"]["quality_score"] is None
+
+    valued = client.post(
+        f"/avm/cases/{case_id}/value",
+        json={"actor": "avm-score-worker"},
+        headers={"x-correlation-id": f"corr-avm-missing-quality-{quality_score}"},
+    )
+    assert valued.status_code == 422, valued.text
+    assert "quality_score is required" in valued.json()["detail"]
+
+    reports = client.get(f"/avm/cases/{case_id}/reports")
+    assert reports.status_code == 200
+    assert reports.json()["count"] == 0

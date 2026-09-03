@@ -33,7 +33,7 @@ export type AVMCasePayload = {
   lease_liability?: number;
   liquidity_discount?: number;
   prediction_origin_time?: string | null;
-  quality_score?: number;
+  quality_score?: number | null;
   source_snapshot_ids?: string[];
   store_id: string;
   working_capital?: number;

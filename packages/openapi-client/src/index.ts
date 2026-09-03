@@ -101,7 +101,7 @@ export type CreateAvmCaseInput = {
   working_capital?: number;
   comparable_multiples?: number[];
   liquidity_discount?: number;
-  quality_score?: number;
+  quality_score?: number | null;
   source_snapshot_ids?: string[];
   prediction_origin_time?: string | null;
   created_by: string;

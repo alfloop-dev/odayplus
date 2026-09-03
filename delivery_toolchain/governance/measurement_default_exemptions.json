@@ -23,11 +23,6 @@
       "reason": "Same record, same effect on the confidence dimension."
     },
     {
-      "field": "modules/avm/domain/valuation.py::ValuationInput.quality_score",
-      "owner": "Antigravity4",
-      "reason": "A valuation built from incomplete inputs claims the same input quality as one built from complete inputs, and the valuation card is shown to a buyer."
-    },
-    {
       "field": "shared/domain/models.py::Poi.confidence",
       "owner": "Claude2",
       "reason": "Shared canonical model. A POI whose provider gave no confidence is treated as certain, and POI counts feed heat zone demand."
