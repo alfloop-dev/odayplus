@@ -108,4 +108,4 @@ uv run --python 3.12 pytest delivery_toolchain/governance/test_check_requirement
 ```bash
 uv run --python 3.12 delivery_toolchain/governance/check_code_boundaries.py
 ```
-- 結果：`Code boundary checks passed for 1071 files.`
+- 結果：`Code boundary checks passed for 1069 files.`
