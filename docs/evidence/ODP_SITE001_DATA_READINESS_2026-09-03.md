@@ -26,7 +26,7 @@
    - **業務／資料源待證實事項（Evidence Request）**：Repo 外是否存在離線會員跨店數據、外部市調面板或第三方消費資料合作協議，尚待權威 Source Owner（Commercial Strategy / Data Platform Lead）確認。在取得正式資料規格與接入承諾前，評定為 `BLOCKED_BY_EVIDENCE`。
 
 2. **Format Conversion（店型轉換業務事件）**：評定為 **`BLOCKED_BY_EVIDENCE`**。
-   - **Repo 內查證事實**：PostgreSQL 與 SQLite Schema 中無任何門市店型改裝、擴充或縮減之事件歷程表（僅 `core.stores.store_format_code` 靜態欄位）；`TargetFormatRegistry` 僅依門市坪數推薦新設店型（選店型，非轉店型）；`simulator.py` 缺乏轉換資本支出、停業過渡期營收損失與客群保留模型；全樹搜尋之 `conversion` 命中皆為房源物件流轉（Listing-to-Candidate conversion）。Repo 內無任何店型轉換之資料結構或計算邏輯。
+   - **Repo 內查證事實**：PostgreSQL（`infra/db/migrations/000001_baseline_canonical_schema.sql`）與 SQLite（`infra/db/migrations/000004_durable_product_domain.sql`）Schema 中均無任何門市店型改裝、擴充或縮減之事件歷程表（僅 `core.stores.store_format_code` / `stores.store_format_code` 靜態欄位）；`TargetFormatRegistry` 僅依門市坪數推薦新設店型（選店型，非轉店型）；`simulator.py` 缺乏轉換資本支出、停業過渡期營收損失與客群保留模型；經檢查 repo 內 production-path 與 migration 之 `conversion` 命中，均為房源轉候選點（Listing-to-Candidate conversion）或歷史證據等級遷移（Evidence Level conversion 註記，如 `000013_evidence_level_alignment.sql:3`），明確排除此類非店型語境後，repo 內無任何實體店型轉換之資料結構或計算邏輯。
    - **業務／營運端待證實事項（Evidence Request）**：實體營運中是否存在既有門市改裝轉型之歷史專案、營運作業規範（Playbook）或線下改造財務模型，尚待權威 Source Owner（Store Operations / Real Estate Expansion & Finance Lead）正式證實。在業務定義與資料表結構確立前，評定為 `BLOCKED_BY_EVIDENCE`。
 
 依據 Remediation Plan 第 0 批處置規則，兩項皆**不得**以 fixture 或 placeholder 宣稱 `IMPLEMENTATION_READY`，亦不應在缺乏資料餵養的情況下排入第 6 批程式碼開發，而應以 `BLOCKED_BY_EVIDENCE` 記錄明確 Source Reference、Evidence Request、Owner、檢視週期與重啟條件。
@@ -106,7 +106,9 @@ reopen_trigger: >-
 
 ### 4.2 來源參照（Source References）
 - 規格與治理清單：`delivery_toolchain/governance/set_valued_requirements.json`（`ODP-FR-SITE-001`）
-- 實體綱要：`infra/db/migrations/000001_baseline_canonical_schema.sql`（`core.stores`）
+- 實體綱要（PostgreSQL）：`infra/db/migrations/000001_baseline_canonical_schema.sql`（`core.stores`）
+- 實體綱要（SQLite）：`infra/db/migrations/000004_durable_product_domain.sql`（`stores`）
+- 非店型語境排除（Evidence Level 遷移）：`infra/db/migrations/000013_evidence_level_alignment.sql`
 - 店型規格：`modules/site_economics/domain/formats.py`（`TargetFormatRegistry`）
 - 財務模擬：`modules/site_economics/domain/simulator.py`（`SimulationInput`）
 - 工作流設計：`docs/design/ODAY_PLUS_EXPANSION_WORKFLOW_BLUEPRINT.md`
@@ -116,10 +118,10 @@ reopen_trigger: >-
 | 層級 | 檢查目標與路徑 | Repo 內查證事實（可重現技術現狀） | 業務／營運端待證實事項（Evidence Request） | 判斷 |
 |---|---|---|---|---|
 | **業務事件 (Business Event)** | 門市改裝轉型專案 / 營運歷史紀錄 | Repo 內無任何門市改裝專案紀錄、轉型事件日誌或過渡期營運數據。 | 待 Store Operations 確認線下營運實務是否曾執行門市改裝轉型專案，或目前是否已有改裝轉型標準作業手冊（Playbook）。 | **Repo 無事件記錄** |
-| **持久層 (PostgreSQL)** | `core.stores` 表（`store_format_code`） | `core.stores` 僅記錄門市當前靜態店型代碼（`store_format_code VARCHAR(100)`），**無 `store_format_conversions`、`renovations` 或歷史變更履歷表**。 | 待 Data Platform / Store Operations 確認未來是否規劃店型異動歷史綱要與轉型歷程表。 | **僅靜態代碼** |
+| **持久層 (PostgreSQL & SQLite)** | 1. `core.stores` 表（`infra/db/migrations/000001_baseline_canonical_schema.sql`）<br>2. `stores` 表（`infra/db/migrations/000004_durable_product_domain.sql`） | PostgreSQL 與 SQLite schema 均僅記錄門市當前靜態店型代碼（`store_format_code`），**無 `store_format_conversions`、`renovations` 或歷史變更履歷表**。 | 待 Data Platform / Store Operations 確認未來是否規劃店型異動歷史綱要與轉型歷程表。 | **僅靜態代碼** |
 | **店型規格與註冊表** | `modules/site_economics/domain/formats.py:400-444` (`TargetFormatRegistry`) | `find_best_format_for_area(area_ping)` 僅依門市坪數推薦新設店型（<20 坪 G3_COMPACT，20-35 坪 G2，>35 坪 FLAGSHIP）。**此為新店店型選定（Selection），非現存店型轉換（Conversion）**。 | 待確認店型註冊表是否需要擴充轉換矩陣（例如 G1 轉 G2 之改裝費用與面積調整規則）。 | **新店選型非轉換** |
 | **財務模擬引擎** | `modules/site_economics/domain/simulator.py:28-85` (`SimulationInput`) | 模擬引擎僅計算新設門市之設備支出、裝修費、標準爬坡與折現現金流。**完全無改裝停業損失、舊機殘值折抵、改裝額外成本等轉換計算路徑**。 | 待 Real Estate Expansion & Finance 提供 Brownfield 改裝之財務模擬模型公式與參數。 | **無轉換模型** |
-| **名詞碰撞查證** | `apps/web/features/operator/NetworkFindAreasWorkspace.tsx:483`<br>`docs/design/ODAY_PLUS_EXPANSION_WORKFLOW_BLUEPRINT.md:159`<br>`docs/evidence/completion/ODP-OC-R4-005/` | 程式碼中多處出現 `conversion`，經核對全為 **`Listing-to-Candidate conversion`（房源物件轉為評估候選點之流程狀態推進）**，與實體店型轉換完全無關。 | 無（已排除名詞碰撞假陽性）。 | **子字串名詞碰撞** |
+| **非店型語境排除（Production-Path 與 Migration）** | 1. 房源流轉路徑：`apps/web/features/operator/NetworkFindAreasWorkspace.tsx:483`<br>`docs/design/ODAY_PLUS_EXPANSION_WORKFLOW_BLUEPRINT.md:159`<br>`docs/evidence/completion/ODP-OC-R4-005/`<br>2. 遷移腳本語境：`infra/db/migrations/000013_evidence_level_alignment.sql:3` | 經逐項查證已檢查之 production-path 與 migration 命中：<br>• 房源流程命中全為 **`Listing-to-Candidate conversion`（房源物件轉為評估候選點之流程狀態推進）**。<br>• `000013_evidence_level_alignment.sql:3` 之命中為 **`Evidence Level conversion`（歷史證據等級舊值無對應轉換之遷移註記）**。<br>明確排除上述非店型語境後，repo 內無任何店型轉換業務邏輯。 | 無（已明確排除 Listing 狀態推進與 Evidence Level 遷移之非店型語境假陽性）。 | **非店型語境排除** |
 
 ### 4.4 待查證需求單（Evidence Request）
 - **需求單編號**：`ER-SITE001-FORMAT-CONVERSION-001`
@@ -140,10 +142,12 @@ evidence_request_id: ER-SITE001-FORMAT-CONVERSION-001
 source_references:
   - delivery_toolchain/governance/set_valued_requirements.json
   - infra/db/migrations/000001_baseline_canonical_schema.sql
+  - infra/db/migrations/000004_durable_product_domain.sql
+  - infra/db/migrations/000013_evidence_level_alignment.sql
   - modules/site_economics/domain/formats.py
   - modules/site_economics/domain/simulator.py
   - docs/design/ODAY_PLUS_EXPANSION_WORKFLOW_BLUEPRINT.md
-schema_status: ABSENT_IN_REPO (no format conversion event or renovation history table in schema)
+schema_status: ABSENT_IN_REPO (no format conversion event or renovation history table in PostgreSQL 000001 or SQLite 000004 schemas)
 freshness: UNVERIFIED_NO_REPO_PRODUCER (no operational event stream or conversion logging in repo)
 sample_lineage: TargetFormatRegistry (static area mapping) -> simulator.py (greenfield only) -> zero conversion paths
 next_review_date: 2026-10-01
@@ -179,4 +183,10 @@ grep -n -C 3 "brand_transfer_view" docs/data/MODEL_READY_VIEWS_BASELINE.md
 
 # 3. 查證 TargetFormatRegistry 僅作坪數店型挑選，無店型轉換邏輯
 python3 -c "from modules.site_economics.domain.formats import DEFAULT_FORMAT_REGISTRY; print(DEFAULT_FORMAT_REGISTRY.list_codes()); print(DEFAULT_FORMAT_REGISTRY.find_best_format_for_area(25.0).format_code)"
+
+# 4. 查證 PostgreSQL (000001) 與 SQLite (000004) schema 僅存靜態 store_format_code，無 conversion 歷程表
+grep -n "store_format_code" infra/db/migrations/000001_baseline_canonical_schema.sql infra/db/migrations/000004_durable_product_domain.sql
+
+# 5. 查證 000013 migration 為 Evidence Level conversion 註記而非店型轉換
+grep -n -C 3 "conversion" infra/db/migrations/000013_evidence_level_alignment.sql
 ```
