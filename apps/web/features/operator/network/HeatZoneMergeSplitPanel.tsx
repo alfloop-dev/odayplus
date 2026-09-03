@@ -4,6 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import type { OperatorRoleId } from "../navigation";
 import styles from "../networkFindAreas.module.css";
+import {
+  COMPOSITION_DECISION_DENIED_NOTE,
+  canDecideHeatZoneComposition,
+} from "./listingPermissions";
 
 export type ProposalStatus = "PROPOSED" | "APPROVED" | "REJECTED" | "APPLIED";
 export type CompositionKind = "MERGED" | "SPLIT_CHILD" | "ATOMIC";
@@ -49,8 +53,10 @@ export type ProposalPreviewData = {
 export type HeatZoneMergeSplitPanelProps = {
   activeRoleId: OperatorRoleId;
   proposals?: HeatZoneProposal[];
-  onApproveProposal?: (proposalId: string, decidedBy: string, notes?: string) => Promise<void>;
-  onRejectProposal?: (proposalId: string, rejectedBy: string, reason: string) => Promise<void>;
+  // The deciding operator is taken server-side from the authenticated
+  // principal, so the console never names who is approving.
+  onApproveProposal?: (proposalId: string, notes?: string) => Promise<void>;
+  onRejectProposal?: (proposalId: string, reason: string) => Promise<void>;
   onPreviewProposal?: (proposalId: string) => Promise<ProposalPreviewData | null>;
   selectedProposalId?: string | null;
   onSelectProposal?: (proposalId: string) => void;
@@ -76,6 +82,8 @@ export function HeatZoneMergeSplitPanel({
   const [rejectionReason, setRejectionReason] = useState<string>("");
   const [showApproveModal, setShowApproveModal] = useState<boolean>(false);
   const [showRejectModal, setShowRejectModal] = useState<boolean>(false);
+  // Offering a button the server will refuse is worse than not offering it.
+  const canDecide = canDecideHeatZoneComposition(activeRoleId);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : internalSelectedId;
@@ -119,7 +127,7 @@ export function HeatZoneMergeSplitPanel({
     setActionInProgress(true);
     setFeedbackMessage(null);
     try {
-      await onApproveProposal(activeProposal.proposal_id, activeRoleId, operatorNotes || undefined);
+      await onApproveProposal(activeProposal.proposal_id, operatorNotes || undefined);
       setFeedbackMessage({ type: "success", text: `提案 ${activeProposal.proposal_id} 已成功核准並生效！` });
       setShowApproveModal(false);
       setOperatorNotes("");
@@ -139,7 +147,7 @@ export function HeatZoneMergeSplitPanel({
     setActionInProgress(true);
     setFeedbackMessage(null);
     try {
-      await onRejectProposal(activeProposal.proposal_id, activeRoleId, rejectionReason);
+      await onRejectProposal(activeProposal.proposal_id, rejectionReason);
       setFeedbackMessage({ type: "success", text: `提案 ${activeProposal.proposal_id} 已標記為拒絕。` });
       setShowRejectModal(false);
       setRejectionReason("");
@@ -331,7 +339,13 @@ export function HeatZoneMergeSplitPanel({
                     {previewLoading ? "預覽計算中…" : "預覽拓撲效果"}
                   </button>
 
-                  {activeProposal.status === "PROPOSED" && (
+                  {activeProposal.status === "PROPOSED" && !canDecide && (
+                    <span data-testid="composition-decision-denied" style={{ fontSize: "12px", color: "#b45309" }}>
+                      {COMPOSITION_DECISION_DENIED_NOTE}
+                    </span>
+                  )}
+
+                  {activeProposal.status === "PROPOSED" && canDecide && (
                     <>
                       <button
                         type="button"

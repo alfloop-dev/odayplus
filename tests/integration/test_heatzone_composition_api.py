@@ -1,6 +1,18 @@
-"""Integration tests for HeatZone merge/split composition, override, rollback, and evaluation API (ODP-FR-HZ-006)."""
+"""Production-entry tests for HeatZone merge/split (ODP-FR-HZ-006).
+
+These drive the mounted API through `create_app`, so what they exercise is the
+path a real Operator request takes: the router the application wires, the
+persistence bundle it was built with, and the authorization dependency that
+establishes who is asking.
+
+Two properties are load-bearing here and are asserted rather than assumed:
+a request cannot supply the evidence it is judged against, and it cannot supply
+the identity that gets written into the governance record.
+"""
 
 from __future__ import annotations
+
+import uuid
 
 from fastapi.testclient import TestClient
 
@@ -11,382 +23,385 @@ from modules.heatzone.domain.composition import (
 )
 from shared.infrastructure.persistence import build_persistence
 from tests.integration._authz import HEATZONE_HEADERS
+from tests.integration._heatzone_evidence import (
+    MERGE_LEFT,
+    MERGE_RIGHT,
+    populate_evidence_repository,
+    use_matured_receipt,
+)
 
 TENANT_ID = "tenant-a"
 
+#: `auth_headers` signs the request as this subject; it is the identity the
+#: server must record, whatever the request body says.
+AUTHENTICATED_SUBJECT = "test-operator"
 
-def test_heatzone_merge_split_evaluate_abstains_fail_closed_on_immature_data() -> None:
+
+def _bundle_with_evidence():
     bundle = build_persistence(mode="memory")
-    client = TestClient(create_app(persistence=bundle))
+    populate_evidence_repository(
+        bundle.heatzone_evidence_repository, tenant_id=TENANT_ID
+    )
+    return bundle
 
-    payload = {
-        "cells": [
-            {
-                "cell_id": "cell-1",
-                "h3_index": "8928308280fffff",
-                "admin_city": "Taipei",
-                "admin_district": "Daan",
-                "population": 10000.0,
-                "poi_count": 30,
-                "unmet_demand": 100.0,
-                "absorbed_demand": 80.0,
-                "realized_revenue": 500000.0,
-                "adjacent_cell_ids": ["cell-2"],
-            },
-            {
-                "cell_id": "cell-2",
-                "h3_index": "8928308281fffff",
-                "admin_city": "Taipei",
-                "admin_district": "Daan",
-                "population": 9500.0,
-                "poi_count": 28,
-                "unmet_demand": 95.0,
-                "absorbed_demand": 75.0,
-                "realized_revenue": 480000.0,
-                "adjacent_cell_ids": ["cell-1"],
-            },
-        ],
-        "readiness": {
-            "observation_days": 10,  # Below threshold 180
-            "mature_labels_count": 5,  # Below threshold 200
-            "active_store_count": 2,
-            "adjacent_pairs_count": 1,
-            "metro_clusters_count": 1,
-            "spatial_contiguity_ratio": 0.5,
-            "source_snapshot_id": "snap-immature",
-        },
-    }
 
-    response = client.post(
+def _evaluate(client: TestClient, **body: object):
+    return client.post(
         "/api/v1/heatzones/merge-split/evaluate",
-        json=payload,
+        json=body,
         headers=HEATZONE_HEADERS,
     )
+
+
+def test_evaluate_abstains_on_the_release_bound_production_snapshot() -> None:
+    """Six months of real history is not enough while the contract is immature."""
+    bundle = _bundle_with_evidence()
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _evaluate(client)
+
     assert response.status_code == 200
     body = response.json()
     assert body["abstained"] is True
-    assert len(body["proposals"]) == 0
-    assert any("observation_horizon_insufficient" in r for r in body["abstain_reasons"])
-    assert any("sample_size_insufficient" in r for r in body["abstain_reasons"])
+    assert body["proposals"] == []
+    assert "governed_disabled_by_data_contract_maturity" in body["abstain_reasons"]
+    assert any(
+        "sample_size_insufficient" in reason for reason in body["abstain_reasons"]
+    )
+    assert body["readiness"]["metrics"]["mature_labels_count"] == 0
 
-    # Verify audit event
     events = bundle.audit_log.list_events()
-    eval_events = [e for e in events if e.event_type == "heatzone.composition.evaluated.v1"]
-    assert len(eval_events) >= 1
-    assert eval_events[-1].outcome == "abstained"
+    evaluated = [
+        event
+        for event in events
+        if event.event_type == "heatzone.composition.evaluated.v1"
+    ]
+    assert evaluated[-1].outcome == "abstained"
+    assert evaluated[-1].metadata["governed_disabled"] is True
+    assert evaluated[-1].metadata["source_snapshot_sha256"]
 
 
-def test_heatzone_merge_split_evaluate_generates_proposals_when_mature() -> None:
-    bundle = build_persistence(mode="memory")
+def test_evaluate_refuses_a_request_that_supplies_its_own_readiness() -> None:
+    """The 2026-09 probe: a caller naming its own maturity is now rejected."""
+    client = TestClient(create_app(persistence=_bundle_with_evidence()))
+
+    response = _evaluate(
+        client,
+        readiness={
+            "observation_days": 400,
+            "mature_labels_count": 5_000,
+            "active_store_count": 900,
+            "adjacent_pairs_count": 90,
+            "metro_clusters_count": 4,
+            "spatial_contiguity_ratio": 0.99,
+            "absorption_ratio_cv": 0.01,
+            "drift_psi": 0.01,
+            "wasserstein_distance": 0.01,
+            "source_snapshot_id": "snap-fake-not-registered",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "readiness" in response.text
+
+
+def test_evaluate_refuses_a_request_that_supplies_its_own_cell_outcomes() -> None:
+    client = TestClient(create_app(persistence=_bundle_with_evidence()))
+
+    response = _evaluate(
+        client,
+        cells=[
+            {
+                "cell_id": "cell-1",
+                "absorbed_demand": 99_999.0,
+                "adjacent_cell_ids": ["cell-2"],
+            }
+        ],
+    )
+
+    assert response.status_code == 422
+    assert "cells" in response.text
+
+
+def test_evaluate_fails_closed_when_no_evidence_repository_is_wired() -> None:
+    """An unwired reader reads the same as "no history"; refusing is the safe one."""
+    base = build_persistence(mode="memory")
+    bundle = type(base)(**{**base.__dict__, "heatzone_evidence_repository": None})
     client = TestClient(create_app(persistence=bundle))
 
-    payload = {
-        "cells": [
-            {
-                "cell_id": "cell-10",
-                "h3_index": "8928308280fffff",
-                "admin_city": "Taipei",
-                "admin_district": "Daan",
-                "population": 12000.0,
-                "poi_count": 45,
-                "unmet_demand": 150.0,
-                "absorbed_demand": 120.0,
-                "realized_revenue": 850000.0,
-                "adjacent_cell_ids": ["cell-11"],
-            },
-            {
-                "cell_id": "cell-11",
-                "h3_index": "8928308281fffff",
-                "admin_city": "Taipei",
-                "admin_district": "Daan",
-                "population": 11500.0,
-                "poi_count": 42,
-                "unmet_demand": 145.0,
-                "absorbed_demand": 115.0,
-                "realized_revenue": 820000.0,
-                "adjacent_cell_ids": ["cell-10"],
-            },
-        ],
-        "readiness": {
-            "observation_days": 190,
-            "mature_labels_count": 250,
-            "active_store_count": 60,
-            "adjacent_pairs_count": 35,
-            "metro_clusters_count": 2,
-            "spatial_contiguity_ratio": 0.85,
-            "absorption_ratio_cv": 0.10,
-            "drift_psi": 0.05,
-            "wasserstein_distance": 0.02,
-            "source_snapshot_id": "snap-mature-2026",
-        },
-    }
+    response = _evaluate(client)
 
-    response = client.post(
-        "/api/v1/heatzones/merge-split/evaluate",
-        json=payload,
-        headers=HEATZONE_HEADERS,
-    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "HZ006_EVIDENCE_UNAVAILABLE"
+
+
+def test_evaluate_fails_closed_on_an_unresolvable_policy_version() -> None:
+    client = TestClient(create_app(persistence=_bundle_with_evidence()))
+
+    response = _evaluate(client, policy_version_id="non-existent-policy-version")
+
+    assert response.status_code == 422
+    assert "not found" in response.json()["detail"]
+
+
+def test_evaluate_proposes_once_the_production_contract_matures(
+    monkeypatch, tmp_path
+) -> None:
+    bundle = _bundle_with_evidence()
+    use_matured_receipt(monkeypatch, tmp_path)
+    client = TestClient(create_app(persistence=bundle))
+
+    response = _evaluate(client)
+
     assert response.status_code == 200
     body = response.json()
     assert body["abstained"] is False
-    assert len(body["proposals"]) >= 1
-    assert body["proposals"][0]["zone_id"].startswith("MZ-")
-    assert body["proposals"][0]["ndcg_gain"] >= 0.05
+    merges = [
+        proposal
+        for proposal in body["proposals"]
+        if proposal["composition_kind"] == "MERGED"
+    ]
+    assert len(merges) == 1
+    assert merges[0]["member_cell_ids"] == [MERGE_LEFT, MERGE_RIGHT]
+    assert merges[0]["ndcg_gain"] >= 0.05
+    assert merges[0]["cannibalization_variance_reduction"] >= 0.20
+    assert uuid.UUID(merges[0]["proposal_id"])
+
+    # Adjacency alone proposes nothing: every other neighbour was declined.
+    assert len(body["declined_candidates"]) == 29
+
+    listed = client.get(
+        "/api/v1/heatzones/merge-split/proposals", headers=HEATZONE_HEADERS
+    )
+    assert listed.status_code == 200
+    assert [p["proposal_id"] for p in listed.json()["items"]] == [
+        merges[0]["proposal_id"]
+    ]
 
 
-def test_heatzone_composition_override_and_rollback_flow() -> None:
-    bundle = build_persistence(mode="memory")
+def test_approval_records_the_authenticated_operator_not_the_request_body(
+    monkeypatch, tmp_path
+) -> None:
+    """Identity comes from the credential; a body claiming otherwise is refused."""
+    bundle = _bundle_with_evidence()
+    use_matured_receipt(monkeypatch, tmp_path)
+    client = TestClient(create_app(persistence=bundle))
+
+    proposal = _evaluate(client).json()["proposals"][0]
+    proposal_id = proposal["proposal_id"]
+
+    spoofed = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve",
+        json={"decided_by": "someone.else@odayplus.com", "notes": "not mine to sign"},
+        headers=HEATZONE_HEADERS,
+    )
+    assert spoofed.status_code == 422
+    assert "decided_by" in spoofed.text
+
+    approved = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve",
+        json={"notes": "Approved on the measured counterfactual gain"},
+        headers=HEATZONE_HEADERS,
+    )
+    assert approved.status_code == 200
+    body = approved.json()
+    assert body["proposal"]["approved_by"] == AUTHENTICATED_SUBJECT
+    assert len(body["created_compositions"]) == 2
+    for record in body["created_compositions"]:
+        assert record["decided_by"] == AUTHENTICATED_SUBJECT
+        assert record["model_version"] == proposal["model_version"]
+        assert record["decision_policy_version_id"] == proposal["policy_version_id"]
+
+    approval_events = [
+        event
+        for event in bundle.audit_log.list_events()
+        if event.event_type == "heatzone.composition.proposal.approved.v1"
+    ]
+    assert approval_events[-1].actor == AUTHENTICATED_SUBJECT
+
+
+def test_rejection_records_the_authenticated_operator(monkeypatch, tmp_path) -> None:
+    bundle = _bundle_with_evidence()
+    use_matured_receipt(monkeypatch, tmp_path)
+    client = TestClient(create_app(persistence=bundle))
+
+    proposal_id = _evaluate(client).json()["proposals"][0]["proposal_id"]
+
+    spoofed = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/reject",
+        json={"rejected_by": "someone.else@odayplus.com", "reason": "field survey"},
+        headers=HEATZONE_HEADERS,
+    )
+    assert spoofed.status_code == 422
+
+    rejected = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/reject",
+        json={"reason": "Field survey found a service road between the cells"},
+        headers=HEATZONE_HEADERS,
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["proposal"]["status"] == "REJECTED"
+    assert rejected.json()["proposal"]["approved_by"] == AUTHENTICATED_SUBJECT
+
+
+def test_preview_approve_and_rollback_round_trip(monkeypatch, tmp_path) -> None:
+    """The whole reversible path: preview, approve, read lineage, roll back."""
+    bundle = _bundle_with_evidence()
+    use_matured_receipt(monkeypatch, tmp_path)
+    client = TestClient(create_app(persistence=bundle))
+
+    proposal = _evaluate(client).json()["proposals"][0]
+    proposal_id = proposal["proposal_id"]
+    zone_id = proposal["zone_id"]
+
+    preview = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/preview",
+        headers=HEATZONE_HEADERS,
+    )
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert preview_body["proposed_zone_id"] == zone_id
+    assert preview_body["current_active_compositions"] == []
+    assert preview_body["expected_ndcg_gain"] == proposal["ndcg_gain"]
+
+    approved = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve",
+        json={"notes": "Approved"},
+        headers=HEATZONE_HEADERS,
+    )
+    assert approved.status_code == 200
+
+    lineage = client.get(
+        f"/api/v1/heatzones/zones/{zone_id}/lineage", headers=HEATZONE_HEADERS
+    )
+    assert lineage.status_code == 200
+    lineage_body = lineage.json()
+    assert lineage_body["is_active"] is True
+    assert lineage_body["member_cell_ids"] == [MERGE_LEFT, MERGE_RIGHT]
+    assert lineage_body["model_version"] == proposal["model_version"]
+    assert lineage_body["decision_policy_version_id"] == proposal["policy_version_id"]
+
+    rollback = client.post(
+        f"/api/v1/heatzones/zones/{zone_id}/rollback",
+        json={"revert_reason": "Shadow period showed no ranking benefit"},
+        headers=HEATZONE_HEADERS,
+    )
+    assert rollback.status_code == 200
+    assert len(rollback.json()["reverted_records"]) == 2
+
+    after = client.get(
+        f"/api/v1/heatzones/zones/{zone_id}/lineage", headers=HEATZONE_HEADERS
+    )
+    assert after.json()["is_active"] is False
+
+    # The cells are atomic again, so the same proposal could be made afresh.
+    compositions = client.get(
+        "/api/v1/heatzones/compositions?active_only=true", headers=HEATZONE_HEADERS
+    )
+    assert compositions.json()["items"] == []
+
+    revert_events = [
+        event
+        for event in bundle.audit_log.list_events()
+        if event.event_type == "heatzone.composition.reverted.v1"
+    ]
+    assert revert_events[-1].actor == AUTHENTICATED_SUBJECT
+
+
+def test_composition_override_and_rollback_flow() -> None:
+    bundle = _bundle_with_evidence()
     client = TestClient(create_app(persistence=bundle))
 
     zone_id = "MZ-aabb112233445566"
     comp_repo = bundle.heatzone_composition_repository
     assert comp_repo is not None
-
-    # Pre-populate active composition
-    r1 = HeatZoneCompositionRecord(
-        zone_id=zone_id,
-        tenant_id=TENANT_ID,
-        member_cell_id="cell-alpha",
-        composition_kind=CompositionKind.MERGED,
-        decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+    comp_repo.save_composition_batch(
+        [
+            HeatZoneCompositionRecord(
+                zone_id=zone_id,
+                tenant_id=TENANT_ID,
+                member_cell_id=cell_id,
+                composition_kind=CompositionKind.MERGED,
+                decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+            )
+            for cell_id in ("cell-alpha", "cell-beta")
+        ]
     )
-    r2 = HeatZoneCompositionRecord(
-        zone_id=zone_id,
-        tenant_id=TENANT_ID,
-        member_cell_id="cell-beta",
-        composition_kind=CompositionKind.MERGED,
-        decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
-    )
-    comp_repo.save_composition_batch([r1, r2])
 
-    # 1. Get composition
-    get_res = client.get(
-        f"/api/v1/heatzones/zones/{zone_id}/composition",
+    composition = client.get(
+        f"/api/v1/heatzones/zones/{zone_id}/composition", headers=HEATZONE_HEADERS
+    )
+    assert composition.status_code == 200
+    assert set(composition.json()["member_cell_ids"]) == {"cell-alpha", "cell-beta"}
+
+    empty_reason = client.post(
+        f"/api/v1/heatzones/zones/{zone_id}/override",
+        json={"override_reason": "", "member_cell_ids": ["cell-alpha", "cell-beta"]},
         headers=HEATZONE_HEADERS,
     )
-    assert get_res.status_code == 200
-    comp_data = get_res.json()
-    assert comp_data["zone_id"] == zone_id
-    assert set(comp_data["member_cell_ids"]) == {"cell-alpha", "cell-beta"}
-    assert comp_data["is_active"] is True
+    assert empty_reason.status_code == 422
 
-    # 2. Get lineage
-    lin_res = client.get(
-        f"/api/v1/heatzones/zones/{zone_id}/lineage",
-        headers=HEATZONE_HEADERS,
-    )
-    assert lin_res.status_code == 200
-    assert lin_res.json()["member_count"] == 2
-
-    # 3. Human override: requires non-empty override_reason
-    bad_override = client.post(
+    claimed_identity = client.post(
         f"/api/v1/heatzones/zones/{zone_id}/override",
         json={
             "decided_by": "operator@odayplus.com",
-            "override_reason": "",  # Empty reason rejected
-            "member_cell_ids": ["cell-alpha", "cell-beta", "cell-gamma"],
+            "override_reason": "Field survey",
+            "member_cell_ids": ["cell-alpha", "cell-beta"],
         },
         headers=HEATZONE_HEADERS,
     )
-    assert bad_override.status_code == 422
+    assert claimed_identity.status_code == 422
 
-    # System decided_by rejected for human override
-    sys_override = client.post(
+    override = client.post(
         f"/api/v1/heatzones/zones/{zone_id}/override",
         json={
-            "decided_by": "system",
-            "override_reason": "Some reason",
+            "override_reason": "Spatial boundary adjusted after an operator field survey",
             "member_cell_ids": ["cell-alpha", "cell-beta", "cell-gamma"],
         },
         headers=HEATZONE_HEADERS,
     )
-    assert sys_override.status_code == 422
+    assert override.status_code == 200
+    assert override.json()["decided_by"] == AUTHENTICATED_SUBJECT
+    assert len(override.json()["records"]) == 3
 
-    # Valid human override
-    good_override = client.post(
-        f"/api/v1/heatzones/zones/{zone_id}/override",
-        json={
-            "decided_by": "operator@odayplus.com",
-            "override_reason": "Spatial boundary adjusted based on operator field survey",
-            "member_cell_ids": ["cell-alpha", "cell-beta", "cell-gamma"],
-        },
-        headers=HEATZONE_HEADERS,
-    )
-    assert good_override.status_code == 200
-    override_body = good_override.json()
-    assert override_body["status"] == "overridden"
-    assert len(override_body["records"]) == 3
+    lineage = client.get(
+        f"/api/v1/heatzones/zones/{zone_id}/lineage", headers=HEATZONE_HEADERS
+    ).json()
+    assert lineage["decided_by"] == AUTHENTICATED_SUBJECT
+    assert lineage["member_count"] == 3
 
-    # Verify lineage updated
-    lin_res_after = client.get(
-        f"/api/v1/heatzones/zones/{zone_id}/lineage",
-        headers=HEATZONE_HEADERS,
-    )
-    assert lin_res_after.status_code == 200
-    lin_data = lin_res_after.json()
-    assert lin_data["decided_by"] == "operator@odayplus.com"
-    assert lin_data["member_count"] == 3
-
-    # 4. Soft Rollback
-    rollback_res = client.post(
+    rollback = client.post(
         f"/api/v1/heatzones/zones/{zone_id}/rollback",
         json={"revert_reason": "Reverting operator boundary adjustment"},
         headers=HEATZONE_HEADERS,
     )
-    assert rollback_res.status_code == 200
-    rollback_body = rollback_res.json()
-    assert rollback_body["status"] == "reverted"
-    assert len(rollback_body["reverted_records"]) == 3
+    assert rollback.status_code == 200
+    assert len(rollback.json()["reverted_records"]) == 3
 
-    # Verify lineage shows inactive
-    lin_res_post_rb = client.get(
-        f"/api/v1/heatzones/zones/{zone_id}/lineage",
-        headers=HEATZONE_HEADERS,
+    after = client.get(
+        f"/api/v1/heatzones/zones/{zone_id}/lineage", headers=HEATZONE_HEADERS
     )
-    assert lin_res_post_rb.status_code == 200
-    assert lin_res_post_rb.json()["is_active"] is False
+    assert after.json()["is_active"] is False
 
-    # Check audit log contains override and rollback events
-    events = bundle.audit_log.list_events()
-    types = [e.event_type for e in events]
+    types = [event.event_type for event in bundle.audit_log.list_events()]
     assert "heatzone.composition.overridden.v1" in types
     assert "heatzone.composition.reverted.v1" in types
 
 
-def test_heatzone_merge_split_proposals_preview_approve_and_reject_lifecycle() -> None:
-    bundle = build_persistence(mode="memory")
-    client = TestClient(create_app(persistence=bundle))
-
-    payload = {
-        "cells": [
-            {
-                "cell_id": "cell-201",
-                "h3_index": "8928308280fffff",
-                "admin_city": "Taipei",
-                "admin_district": "Daan",
-                "population": 12000.0,
-                "poi_count": 45,
-                "unmet_demand": 150.0,
-                "absorbed_demand": 120.0,
-                "realized_revenue": 850000.0,
-                "adjacent_cell_ids": ["cell-202"],
-            },
-            {
-                "cell_id": "cell-202",
-                "h3_index": "8928308281fffff",
-                "admin_city": "Taipei",
-                "admin_district": "Daan",
-                "population": 11500.0,
-                "poi_count": 42,
-                "unmet_demand": 145.0,
-                "absorbed_demand": 115.0,
-                "realized_revenue": 820000.0,
-                "adjacent_cell_ids": ["cell-201"],
-            },
-        ],
-        "readiness": {
-            "observation_days": 190,
-            "mature_labels_count": 250,
-            "active_store_count": 60,
-            "adjacent_pairs_count": 35,
-            "metro_clusters_count": 2,
-            "spatial_contiguity_ratio": 0.85,
-            "absorption_ratio_cv": 0.10,
-            "drift_psi": 0.05,
-            "wasserstein_distance": 0.02,
-            "source_snapshot_id": "snap-mature-2026",
-        },
-    }
-
-    # 1. Evaluate
-    eval_res = client.post(
-        "/api/v1/heatzones/merge-split/evaluate",
-        json=payload,
-        headers=HEATZONE_HEADERS,
+def test_durable_policy_resolution_and_proposal_persistence(
+    monkeypatch, tmp_path
+) -> None:
+    """The same flow against SQL-backed policy and composition repositories."""
+    from shared.infrastructure.persistence.decision_policy import (
+        SqlDecisionPolicyRepository,
     )
-    assert eval_res.status_code == 200
-    eval_body = eval_res.json()
-    assert eval_body["abstained"] is False
-    assert len(eval_body["proposals"]) >= 1
-    proposal_id = eval_body["proposals"][0]["proposal_id"]
-    zone_id = eval_body["proposals"][0]["zone_id"]
-
-    # 2. List proposals
-    list_res = client.get(
-        "/api/v1/heatzones/merge-split/proposals",
-        headers=HEATZONE_HEADERS,
-    )
-    assert list_res.status_code == 200
-    props = list_res.json()["items"]
-    assert any(p["proposal_id"] == proposal_id for p in props)
-
-    # 3. Get proposal detail
-    get_prop_res = client.get(
-        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}",
-        headers=HEATZONE_HEADERS,
-    )
-    assert get_prop_res.status_code == 200
-    assert get_prop_res.json()["status"] == "PROPOSED"
-
-    # 4. Preview proposal
-    preview_res = client.post(
-        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/preview",
-        headers=HEATZONE_HEADERS,
-    )
-    assert preview_res.status_code == 200
-    preview_body = preview_res.json()
-    assert preview_body["proposed_zone_id"] == zone_id
-    assert preview_body["expected_ndcg_gain"] >= 0.05
-
-    # 5. Operator approve proposal
-    approve_res = client.post(
-        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve",
-        json={"decided_by": "operator@odayplus.com", "notes": "Approved based on empirical Ndcg gain"},
-        headers=HEATZONE_HEADERS,
-    )
-    assert approve_res.status_code == 200
-    approve_body = approve_res.json()
-    assert approve_body["proposal"]["status"] == "APPROVED"
-    assert len(approve_body["created_compositions"]) == 2
-
-    # 6. Verify active composition and lineage created
-    comp_res = client.get(
-        f"/api/v1/heatzones/zones/{zone_id}/composition",
-        headers=HEATZONE_HEADERS,
-    )
-    assert comp_res.status_code == 200
-    assert comp_res.json()["is_active"] is True
-
-
-def test_heatzone_merge_split_evaluate_fails_closed_on_invalid_policy() -> None:
-    bundle = build_persistence(mode="memory")
-    client = TestClient(create_app(persistence=bundle))
-
-    payload = {
-        "cells": [],
-        "readiness": {},
-        "policy_version_id": "non-existent-policy-version",
-    }
-
-    response = client.post(
-        "/api/v1/heatzones/merge-split/evaluate",
-        json=payload,
-        headers=HEATZONE_HEADERS,
-    )
-    assert response.status_code == 422
-    assert "not found" in response.json()["detail"]
-
-
-def test_heatzone_sql_policy_version_resolution_and_durable_proposal_uuid_flow(tmp_path) -> None:
-    import uuid
-
-    from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
-    from shared.infrastructure.persistence.repositories import DurableHeatZoneCompositionRepository
+    from shared.infrastructure.persistence.repositories import (
+        DurableHeatZoneCompositionRepository,
+    )
 
-    db_path = tmp_path / "sql_test.sqlite3"
-    engine = SqliteEngine(db_path)
+    engine = SqliteEngine(tmp_path / "heatzone_composition.sqlite3")
     engine.execute("ATTACH DATABASE ':memory:' AS workflow")
     engine.execute("ATTACH DATABASE ':memory:' AS expansion")
     engine.execute(
@@ -456,124 +471,80 @@ def test_heatzone_sql_policy_version_resolution_and_durable_proposal_uuid_flow(t
         """
     )
 
-    policy_ver_id = f"heatzone-merge-v1:{TENANT_ID}"
-    policy_repo = SqlDecisionPolicyRepository(engine)
-    # Insert policy into SQL
+    policy_version_id = f"heatzone-merge-v1:{TENANT_ID}"
+    import json as _json
+
+    from shared.governance import DEFAULT_HEATZONE_MERGE_PARAMETERS
+
     engine.execute(
         """
         INSERT INTO workflow.decision_policies
-        (policy_version_id, policy_label, policy_id, policy_version, policy_kind, tenant_id, effective_from, parameters, declared_inputs)
+        (policy_version_id, policy_label, policy_id, policy_version, policy_kind,
+         tenant_id, effective_from, parameters, declared_inputs)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            policy_ver_id,
+            policy_version_id,
             "heatzone-merge-v1",
             "heatzone-merge",
             "1.0.0",
             "heatzone_merge",
             TENANT_ID,
             "2026-01-01T00:00:00+00:00",
-            '{"min_observation_days": 180, "min_mature_labels": 200, "min_active_stores": 50, "min_adjacent_pairs": 30, "min_metro_clusters": 2, "min_spatial_contiguity": 0.80, "max_absorption_cv": 0.15, "max_drift_psi": 0.10, "max_wasserstein": 0.05}',
-            '["store_daily_performance", "operational_start_observation"]',
+            _json.dumps(DEFAULT_HEATZONE_MERGE_PARAMETERS),
+            '["store_daily_performance", "heatzone_absorption_outcomes"]',
         ),
     )
 
-    found_pol = policy_repo.find_version(policy_ver_id)
-    assert found_pol is not None
-    assert found_pol.policy_version_id == policy_ver_id
+    policy_repository = SqlDecisionPolicyRepository(engine)
+    assert policy_repository.find_version(policy_version_id) is not None
 
-    doc_store = SqliteDocumentStore(engine)
-    durable_comp_repo = DurableHeatZoneCompositionRepository(doc_store)
-
-    bundle = build_persistence(mode="memory")
-    bundle = type(bundle)(
+    durable_compositions = DurableHeatZoneCompositionRepository(
+        SqliteDocumentStore(engine)
+    )
+    base = build_persistence(mode="memory")
+    bundle = type(base)(
         **{
-            **bundle.__dict__,
-            "heatzone_composition_repository": durable_comp_repo,
-            "forecastops_policy_repository": policy_repo,
+            **base.__dict__,
+            "heatzone_composition_repository": durable_compositions,
+            "forecastops_policy_repository": policy_repository,
         }
     )
+    populate_evidence_repository(
+        bundle.heatzone_evidence_repository, tenant_id=TENANT_ID
+    )
+    use_matured_receipt(monkeypatch, tmp_path)
     client = TestClient(create_app(persistence=bundle))
 
-    payload = {
-        "cells": [
-            {
-                "cell_id": "aaaaaaaa-1111-2222-3333-444455556666",
-                "h3_index": "8928308280fffff",
-                "admin_city": "Taipei",
-                "admin_district": "Daan",
-                "population": 12000.0,
-                "poi_count": 45,
-                "unmet_demand": 150.0,
-                "absorbed_demand": 120.0,
-                "realized_revenue": 850000.0,
-                "adjacent_cell_ids": ["bbbbbbbb-1111-2222-3333-444455556666"],
-            },
-            {
-                "cell_id": "bbbbbbbb-1111-2222-3333-444455556666",
-                "h3_index": "8928308281fffff",
-                "admin_city": "Taipei",
-                "admin_district": "Daan",
-                "population": 11500.0,
-                "poi_count": 42,
-                "unmet_demand": 145.0,
-                "absorbed_demand": 115.0,
-                "realized_revenue": 820000.0,
-                "adjacent_cell_ids": ["aaaaaaaa-1111-2222-3333-444455556666"],
-            },
-        ],
-        "readiness": {
-            "observation_days": 190,
-            "mature_labels_count": 250,
-            "active_store_count": 60,
-            "adjacent_pairs_count": 35,
-            "metro_clusters_count": 2,
-            "spatial_contiguity_ratio": 0.85,
-            "absorption_ratio_cv": 0.10,
-            "drift_psi": 0.05,
-            "wasserstein_distance": 0.02,
-            "source_snapshot_id": "snap-durable-prod-2026",
-        },
-        "policy_version_id": policy_ver_id,
-    }
+    response = _evaluate(client, policy_version_id=policy_version_id)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["abstained"] is False
+    proposal = body["proposals"][0]
+    proposal_id = proposal["proposal_id"]
+    assert str(uuid.UUID(proposal_id)) == proposal_id
 
-    eval_res = client.post(
-        "/api/v1/heatzones/merge-split/evaluate",
-        json=payload,
+    stored = durable_compositions.get_proposal(proposal_id, TENANT_ID)
+    assert stored is not None
+    assert stored.policy_version_id == policy_version_id
+    snapshot_id = body["evidence"]["snapshot"]["inventory_version"]
+    assert any(f"source_snapshot:{snapshot_id}" in reason for reason in stored.reasons)
+
+    approved = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve",
+        json={"notes": "Approved durable proposal"},
         headers=HEATZONE_HEADERS,
     )
-    assert eval_res.status_code == 200
-    eval_body = eval_res.json()
-    assert eval_body["abstained"] is False
-    assert len(eval_body["proposals"]) >= 1
+    assert approved.status_code == 200
+    assert approved.json()["proposal"]["approved_by"] == AUTHENTICATED_SUBJECT
+    assert len(approved.json()["created_compositions"]) == 2
 
-    prop = eval_body["proposals"][0]
-    prop_id = prop["proposal_id"]
-    # Verify proposal_id is valid UUID string without prefix
-    uuid_obj = uuid.UUID(prop_id)
-    assert str(uuid_obj) == prop_id
+    persisted = durable_compositions.get_composition(proposal["zone_id"], TENANT_ID)
+    assert [record.decided_by for record in persisted] == [AUTHENTICATED_SUBJECT] * 2
 
-    # Verify durable proposal save & retrieval
-    saved_prop = durable_comp_repo.get_proposal(prop_id, TENANT_ID)
-    assert saved_prop is not None
-    assert saved_prop.proposal_id == prop_id
-    assert any("source_snapshot:snap-durable-prod-2026" in r for r in saved_prop.reasons)
-
-    # Approve proposal in durable repo
-    app_res = client.post(
-        f"/api/v1/heatzones/merge-split/proposals/{prop_id}/approve",
-        json={"decided_by": "operator@odayplus.com", "notes": "Approved durable proposal"},
-        headers=HEATZONE_HEADERS,
-    )
-    assert app_res.status_code == 200
-    app_body = app_res.json()
-    assert app_body["proposal"]["status"] == "APPROVED"
-    assert len(app_body["created_compositions"]) == 2
-
-    # Verify audit event carries snapshot ID
-    events = bundle.audit_log.list_events()
-    eval_events = [e for e in events if e.event_type == "heatzone.composition.evaluated.v1"]
-    assert len(eval_events) >= 1
-    assert eval_events[-1].metadata.get("source_snapshot_id") == "snap-durable-prod-2026"
-
-
+    evaluated = [
+        event
+        for event in bundle.audit_log.list_events()
+        if event.event_type == "heatzone.composition.evaluated.v1"
+    ]
+    assert evaluated[-1].metadata["source_snapshot_id"] == snapshot_id

@@ -7,10 +7,17 @@ from datetime import UTC, datetime
 import pytest
 
 from modules.heatzone.application.merge_split_engine import (
-    CandidateCellFeature,
+    MergeSplitPolicyError,
     MergeSplitReadinessInput,
     check_readiness_gates,
+    derive_readiness_input,
     evaluate_merge_split,
+)
+from modules.heatzone.application.merge_split_evidence import (
+    EvidenceUnavailableError,
+    ExistingZoneComposition,
+    assemble_merge_split_evidence,
+    load_inventory_snapshot_facts,
 )
 from modules.heatzone.domain.composition import (
     CompositionKind,
@@ -22,12 +29,23 @@ from modules.heatzone.infrastructure.composition_repository import (
     InMemoryHeatZoneCompositionRepository,
 )
 from shared.governance import (
+    DecisionPolicy,
     default_heatzone_merge_policy,
 )
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.infrastructure.persistence.repositories import (
     DurableHeatZoneCompositionRepository,
+)
+from tests.integration._heatzone_evidence import (
+    MERGE_LEFT,
+    MERGE_RIGHT,
+    SPLIT_LEFT,
+    SPLIT_RIGHT,
+    add_barrier_evidence,
+    build_evidence_repository,
+    matured_receipt,
+    tamper_eligible_count,
 )
 
 TENANT_ID = "11111111-1111-1111-1111-111111111111"
@@ -146,151 +164,229 @@ def test_composition_record_validation_rules() -> None:
         )
 
 
-def test_readiness_gate_fails_closed_when_evidence_immature() -> None:
-    policy = default_heatzone_merge_policy(TENANT_ID)
+def _mature_evidence(tmp_path, *, with_barrier: bool = False, existing_zones=()):
+    repository = build_evidence_repository()
+    if with_barrier:
+        add_barrier_evidence(repository)
+    return assemble_merge_split_evidence(
+        repository,
+        tenant_id=TENANT_ID,
+        existing_zones=existing_zones,
+        receipt_path=matured_receipt(tmp_path / "inventory-receipt.json"),
+    )
 
-    # Production current state: 0 mature labels, 0 days horizon
-    empty_evidence = MergeSplitReadinessInput(
-        observation_days=0,
-        mature_labels_count=0,
-        active_store_count=0,
-        adjacent_pairs_count=0,
-        metro_clusters_count=0,
-        spatial_contiguity_ratio=0.0,
+
+def test_production_inventory_receipt_reports_heatzone_governed_disabled() -> None:
+    """The shipped snapshot is the one production reads, and it is not mature."""
+    facts = load_inventory_snapshot_facts()
+
+    assert facts.eligible_count == 0
+    assert facts.eligible_count < facts.minimum_rows
+    assert facts.governed_disabled is True
+    assert facts.inventory_version.startswith("pg16-production-model-inventory-")
+
+
+def test_evidence_refuses_a_receipt_whose_counts_were_edited(tmp_path) -> None:
+    """Raising the label count without re-hashing must not unlock the gate."""
+    receipt = matured_receipt(tmp_path / "receipt.json")
+    assert load_inventory_snapshot_facts(receipt_path=receipt).eligible_count == 240
+
+    tamper_eligible_count(receipt, eligible_count=9_000)
+
+    with pytest.raises(EvidenceUnavailableError, match="not trustworthy"):
+        load_inventory_snapshot_facts(receipt_path=receipt)
+
+
+def test_evaluation_refuses_when_no_evidence_repository_is_wired() -> None:
+    with pytest.raises(EvidenceUnavailableError, match="evidence repository"):
+        assemble_merge_split_evidence(None, tenant_id=TENANT_ID)
+
+
+def test_readiness_gate_fails_closed_on_the_production_snapshot() -> None:
+    """Real history, real snapshot: still governed-disabled, still abstains."""
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    evidence = assemble_merge_split_evidence(
+        build_evidence_repository(), tenant_id=TENANT_ID
+    )
+
+    readiness = derive_readiness_input(evidence, policy)
+    assert readiness.governed_disabled is True
+    assert readiness.mature_labels_count == 0
+
+    result = check_readiness_gates(readiness, policy)
+    assert result.eligible is False
+    assert "governed_disabled_by_data_contract_maturity" in result.reasons
+    assert any("sample_size_insufficient" in reason for reason in result.reasons)
+
+    evaluation = evaluate_merge_split(evidence, policy=policy)
+    assert evaluation.abstained is True
+    assert evaluation.proposals == ()
+    assert evaluation.abstain_reasons == result.reasons
+
+
+def test_readiness_dimensions_are_measured_from_the_outcome_history(tmp_path) -> None:
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    readiness = derive_readiness_input(_mature_evidence(tmp_path), policy)
+
+    # 8 back-to-back 28-day periods; a horizon nobody declared.
+    assert readiness.observation_days == 224
+    assert readiness.metro_clusters_count == 2
+    assert readiness.spatial_contiguity_ratio == 1.0
+    assert readiness.adjacent_pairs_count == 30
+    assert readiness.basis_source_id_count == 256
+    assert readiness.absorption_ratio_cv is not None
+    assert readiness.absorption_ratio_cv < 0.15
+    assert readiness.drift_psi is not None and readiness.drift_psi < 0.10
+
+    assert check_readiness_gates(readiness, policy).eligible is True
+
+
+def test_readiness_reports_unmeasurable_stability_as_a_failure(tmp_path) -> None:
+    """One period cannot support a CV, and an unmeasured CV is not a pass."""
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    evidence = _mature_evidence(tmp_path)
+    single_period = MergeSplitReadinessInput(
+        observation_days=224,
+        mature_labels_count=240,
+        active_store_count=106,
+        adjacent_pairs_count=30,
+        metro_clusters_count=2,
+        spatial_contiguity_ratio=1.0,
         absorption_ratio_cv=None,
         drift_psi=None,
-        source_snapshot_id="",
+        wasserstein_distance=None,
+        source_snapshot_id=evidence.snapshot.inventory_version,
+        source_snapshot_sha256=evidence.snapshot.content_sha256,
+        basis_source_id_count=8,
     )
 
-    result = check_readiness_gates(empty_evidence, policy)
+    result = check_readiness_gates(single_period, policy)
     assert result.eligible is False
-    assert any("observation_horizon_insufficient" in r for r in result.reasons)
-    assert any("sample_size_insufficient" in r for r in result.reasons)
-    assert any("missing_source_snapshot_id" in r for r in result.reasons)
-    assert any("absorption_cv_unmeasured" in r for r in result.reasons)
+    assert "absorption_cv_unmeasured" in result.reasons
+    assert "drift_psi_unmeasured" in result.reasons
+    assert "wasserstein_distance_unmeasured" in result.reasons
 
-    # Evaluation engine fails closed / abstains with reasons
-    eval_res = evaluate_merge_split(
-        [],
-        readiness_input=empty_evidence,
+
+def test_engine_refuses_a_policy_that_omits_a_threshold(tmp_path) -> None:
+    """A missing threshold is a governance defect, not an invitation to guess."""
+    base = default_heatzone_merge_policy(TENANT_ID)
+    parameters = dict(base.parameters)
+    del parameters["min_correlation_rho"]
+    policy = DecisionPolicy(
+        policy_version_id=base.policy_version_id,
+        policy_label=base.policy_label,
+        policy_id=base.policy_id,
+        policy_version=base.policy_version,
+        policy_kind=base.policy_kind,
+        tenant_id=base.tenant_id,
+        effective_from=base.effective_from,
+        parameters=parameters,
+        declared_inputs=base.declared_inputs,
+    )
+
+    with pytest.raises(MergeSplitPolicyError, match="min_correlation_rho"):
+        evaluate_merge_split(_mature_evidence(tmp_path), policy=policy)
+
+
+def test_merge_proposal_is_earned_from_measured_outcomes(tmp_path) -> None:
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    evaluation = evaluate_merge_split(_mature_evidence(tmp_path), policy=policy)
+
+    assert evaluation.abstained is False
+    merges = [
+        proposal
+        for proposal in evaluation.proposals
+        if proposal.composition_kind == CompositionKind.MERGED
+    ]
+    assert len(merges) == 1
+    proposal = merges[0]
+
+    assert proposal.member_cell_ids == (MERGE_LEFT, MERGE_RIGHT)
+    assert proposal.correlation_rho >= 0.75
+    assert proposal.disconnect_index <= 0.20
+    assert proposal.ndcg_gain >= 0.05
+    assert proposal.cannibalization_variance_reduction >= 0.20
+    assert proposal.zone_id.startswith("MZ-")
+    assert (
+        f"source_snapshot:{evaluation.readiness.metrics['source_snapshot_id']}"
+        in proposal.reasons
+    )
+
+
+def test_adjacent_cells_without_shared_trade_area_are_refused(tmp_path) -> None:
+    """Adjacency alone proposes nothing; every other pair is declined on evidence."""
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    evaluation = evaluate_merge_split(_mature_evidence(tmp_path), policy=policy)
+
+    declined = [d for d in evaluation.declined if d["kind"] == CompositionKind.MERGED.value]
+    assert len(declined) == 29
+    reasons = {entry["reason"].split(":")[0] for entry in declined}
+    assert "correlation_below_threshold" in reasons
+    assert "demand_disconnect_above_threshold" in reasons
+    assert all(entry["paired_periods"] == 8 for entry in declined)
+
+
+def test_split_requires_side_labelled_outcomes(tmp_path) -> None:
+    """A zone with a barrier but no side evidence is declined, not guessed at."""
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    zone_id = generate_merged_zone_id((SPLIT_LEFT, SPLIT_RIGHT))
+    zones = (ExistingZoneComposition(zone_id, "MERGED", (SPLIT_LEFT, SPLIT_RIGHT)),)
+
+    without_sides = evaluate_merge_split(
+        _mature_evidence(tmp_path, existing_zones=zones), policy=policy
+    )
+    assert [
+        p for p in without_sides.proposals
+        if p.composition_kind == CompositionKind.SPLIT_CHILD
+    ] == []
+    assert any(
+        entry["reason"] == "no_side_labelled_hz004_outcomes_for_every_member_cell"
+        for entry in without_sides.declined
+    )
+
+    with_sides = evaluate_merge_split(
+        _mature_evidence(tmp_path, with_barrier=True, existing_zones=zones),
         policy=policy,
     )
-    assert eval_res.abstained is True
-    assert len(eval_res.proposals) == 0
-    assert eval_res.abstain_reasons == result.reasons
+    children = [
+        p for p in with_sides.proposals
+        if p.composition_kind == CompositionKind.SPLIT_CHILD
+    ]
+    assert len(children) == 2
+    for child in children:
+        # The parent is a zone that exists, so the lineage joins to a real row.
+        assert child.parent_zone_id == zone_id
+        assert child.split_density_ratio >= 2.5
+        assert any("side_labelled_absorption_density_ratio" in r for r in child.reasons)
+    assert {tuple(child.member_cell_ids) for child in children} == {
+        (SPLIT_LEFT,),
+        (SPLIT_RIGHT,),
+    }
 
 
-def test_readiness_gate_passes_when_all_thresholds_met() -> None:
+def test_split_is_refused_when_the_sides_absorb_alike(tmp_path) -> None:
     policy = default_heatzone_merge_policy(TENANT_ID)
+    zone_id = generate_merged_zone_id((SPLIT_LEFT, SPLIT_RIGHT))
+    zones = (ExistingZoneComposition(zone_id, "MERGED", (SPLIT_LEFT, SPLIT_RIGHT)),)
 
-    mature_evidence = MergeSplitReadinessInput(
-        observation_days=185,
-        mature_labels_count=240,
-        active_store_count=65,
-        adjacent_pairs_count=42,
-        metro_clusters_count=3,
-        spatial_contiguity_ratio=0.88,
-        absorption_ratio_cv=0.11,
-        drift_psi=0.04,
-        wasserstein_distance=0.02,
-        source_snapshot_id="snap-mature-20260903",
-    )
-
-    result = check_readiness_gates(mature_evidence, policy)
-    assert result.eligible is True
-    assert len(result.reasons) == 0
-
-
-def test_evaluation_engine_generates_merge_and_split_proposals() -> None:
-    policy = default_heatzone_merge_policy(TENANT_ID)
-    mature_evidence = MergeSplitReadinessInput(
-        observation_days=200,
-        mature_labels_count=300,
-        active_store_count=70,
-        adjacent_pairs_count=50,
-        metro_clusters_count=3,
-        spatial_contiguity_ratio=0.90,
-        absorption_ratio_cv=0.09,
-        drift_psi=0.03,
-        wasserstein_distance=0.02,
-        source_snapshot_id="snap-mature-20260903",
-    )
-
-    # 2 adjacent cells with high demand correlation
-    cell_a = CandidateCellFeature(
-        cell_id="cell-uuid-1",
-        h3_index="8928308280fffff",
+    repository = build_evidence_repository()
+    add_barrier_evidence(repository, heavy_side_multiple=1.1)
+    evidence = assemble_merge_split_evidence(
+        repository,
         tenant_id=TENANT_ID,
-        admin_city="Taipei",
-        admin_district="Daan",
-        population=12000.0,
-        poi_count=45,
-        own_store_count=1,
-        competitor_count=2,
-        unmet_demand=150.0,
-        absorbed_demand=120.0,
-        realized_revenue=850000.0,
-        adjacent_cell_ids=("cell-uuid-2",),
-    )
-    cell_b = CandidateCellFeature(
-        cell_id="cell-uuid-2",
-        h3_index="8928308281fffff",
-        tenant_id=TENANT_ID,
-        admin_city="Taipei",
-        admin_district="Daan",
-        population=11500.0,
-        poi_count=42,
-        own_store_count=1,
-        competitor_count=2,
-        unmet_demand=145.0,
-        absorbed_demand=115.0,
-        realized_revenue=820000.0,
-        adjacent_cell_ids=("cell-uuid-1",),
-    )
-    # 1 heterogeneous cell with natural barrier and empirical outcome disparity across sides
-    cell_c = CandidateCellFeature(
-        cell_id="cell-uuid-3",
-        h3_index="8928308282fffff",
-        tenant_id=TENANT_ID,
-        admin_city="Taipei",
-        admin_district="Neihu",
-        population=9000.0,
-        poi_count=20,
-        absorbed_demand=80.0,
-        realized_revenue=400000.0,
-        has_natural_barrier=True,
-        barrier_description="Keelung River & Elevated Expressway",
-        barrier_side_a_revenue=320000.0,
-        barrier_side_a_absorbed_demand=65.0,
-        barrier_side_b_revenue=80000.0,
-        barrier_side_b_absorbed_demand=15.0,
-        child_partition_cell_ids=(("cell-uuid-3-north",), ("cell-uuid-3-south",)),
+        existing_zones=zones,
+        receipt_path=matured_receipt(tmp_path / "receipt.json"),
     )
 
-    eval_result = evaluate_merge_split(
-        [cell_a, cell_b, cell_c],
-        readiness_input=mature_evidence,
-        policy=policy,
+    evaluation = evaluate_merge_split(evidence, policy=policy)
+    assert [
+        p for p in evaluation.proposals
+        if p.composition_kind == CompositionKind.SPLIT_CHILD
+    ] == []
+    assert any(
+        entry["reason"].startswith("side_density_ratio_below_threshold")
+        for entry in evaluation.declined
     )
-
-    assert eval_result.abstained is False
-    assert len(eval_result.proposals) == 3  # 1 merge + 2 split child proposals
-
-    # Check merge proposal
-    merge_prop = next(p for p in eval_result.proposals if p.composition_kind == CompositionKind.MERGED)
-    assert merge_prop.member_cell_ids == ("cell-uuid-1", "cell-uuid-2")
-    assert merge_prop.ndcg_gain >= 0.05
-    assert merge_prop.cannibalization_variance_reduction >= 0.20
-    assert merge_prop.correlation_rho >= 0.75
-    assert merge_prop.zone_id.startswith("MZ-")
-
-    # Check split proposals (both children)
-    split_props = [p for p in eval_result.proposals if p.composition_kind == CompositionKind.SPLIT_CHILD]
-    assert len(split_props) == 2
-    for split_prop in split_props:
-        assert split_prop.parent_zone_id is not None
-        assert split_prop.split_density_ratio >= 2.5
-        assert "internal_natural_barrier_detected" in split_prop.reasons
 
 
 def test_in_memory_composition_repository_lifecycle() -> None:

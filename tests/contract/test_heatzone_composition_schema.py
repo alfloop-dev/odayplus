@@ -247,3 +247,90 @@ class TestCompositionSchemaConstraints:
                 (TENANT_A, f"heatzone-merge-v1:{TENANT_A}"),
             )
 
+
+    def test_absorption_outcome_evidence_is_traceable_and_append_only(
+        self, composition_db
+    ) -> None:
+        """The evidence relation must refuse untraceable rows and any rewrite."""
+        psycopg = composition_db.server.psycopg
+        policy_version_id = f"heatzone-merge-v1:{TENANT_A}"
+        insert = """
+            INSERT INTO expansion.heatzone_absorption_outcomes
+            (tenant_id, geo_cell_id, period_start, period_end, original_demand,
+             absorbed_demand, remaining_demand, absorption_ratio,
+             absorbing_store_count, basis_source_ids, basis_at,
+             absorption_policy_version_id)
+            VALUES (%s, %s, '2026-01-05', '2026-02-01', 1000, 620, 380, 0.62, 3,
+                    %s::jsonb, NOW(), %s)
+            RETURNING outcome_id
+        """
+
+        with composition_db.connect(autocommit=True) as conn:
+            # An outcome with no basis snapshot is indistinguishable from one
+            # somebody typed in, so the relation refuses it.
+            with pytest.raises(psycopg.errors.CheckViolation) as untraceable:
+                conn.execute(insert, (TENANT_A, CELL_1, "[]", policy_version_id))
+            assert "chk_absorption_outcome_basis" in str(untraceable.value)
+
+        with composition_db.connect(autocommit=True) as conn:
+            outcome_id = conn.execute(
+                insert, (TENANT_A, CELL_1, '["fp-a"]', policy_version_id)
+            ).fetchone()[0]
+
+            # Absorbing more than the cell's own demand is not a measurement.
+            with pytest.raises(psycopg.errors.CheckViolation):
+                conn.execute(
+                    """
+                    INSERT INTO expansion.heatzone_absorption_outcomes
+                    (tenant_id, geo_cell_id, period_start, period_end, original_demand,
+                     absorbed_demand, remaining_demand, absorption_ratio,
+                     absorbing_store_count, basis_source_ids, basis_at,
+                     absorption_policy_version_id)
+                    VALUES (%s, %s, '2026-02-02', '2026-03-01', 1000, 1500, 0, 1.0, 3,
+                            '["fp-b"]'::jsonb, NOW(), %s)
+                    """,
+                    (TENANT_A, CELL_2, policy_version_id),
+                )
+
+        with composition_db.connect(autocommit=True) as conn:
+            with pytest.raises(psycopg.errors.CheckViolation) as updated:
+                conn.execute(
+                    "UPDATE expansion.heatzone_absorption_outcomes "
+                    "SET absorbed_demand = 900 WHERE outcome_id = %s",
+                    (outcome_id,),
+                )
+            assert "not permitted on recorded HZ-004 evidence" in str(updated.value)
+
+        with composition_db.connect(autocommit=True) as conn:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                conn.execute(
+                    "DELETE FROM expansion.heatzone_absorption_outcomes "
+                    "WHERE outcome_id = %s",
+                    (outcome_id,),
+                )
+
+    def test_adjacency_pairs_are_stored_once_per_unordered_pair(
+        self, composition_db
+    ) -> None:
+        """Counting a pair twice would inflate the readiness sample size."""
+        psycopg = composition_db.server.psycopg
+        low, high = sorted((CELL_1, CELL_2))
+
+        with composition_db.connect(autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO geo.h3_cell_adjacency (cell_id, neighbor_cell_id) "
+                "VALUES (%s, %s)",
+                (low, high),
+            )
+            with pytest.raises(psycopg.errors.CheckViolation):
+                conn.execute(
+                    "INSERT INTO geo.h3_cell_adjacency (cell_id, neighbor_cell_id) "
+                    "VALUES (%s, %s)",
+                    (high, low),
+                )
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                conn.execute(
+                    "INSERT INTO geo.h3_cell_adjacency (cell_id, neighbor_cell_id) "
+                    "VALUES (%s, %s)",
+                    (low, high),
+                )

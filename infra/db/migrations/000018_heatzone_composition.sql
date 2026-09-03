@@ -156,8 +156,8 @@ AS $seed_heatzone_merge_policy$
         'HeatZoneComposition',
         '熱區合併／拆分決策政策導入，依 HZ-004 實績門檻與空間異質性治理',
         NULL,
-        '{"min_observation_days": 180, "min_mature_labels": 200, "min_active_stores": 50, "min_adjacent_pairs": 30, "min_metro_clusters": 2, "min_spatial_contiguity": 0.80, "max_absorption_cv": 0.15, "max_drift_psi": 0.10, "max_wasserstein": 0.05, "min_correlation_rho": 0.75, "max_disconnect_index": 0.20, "min_split_density_ratio": 2.5, "min_ndcg_gain": 0.05, "min_cannibalization_variance_reduction": 0.20, "allow_cross_admin_boundary": false}'::jsonb,
-        ARRAY['store_daily_performance', 'heatzone_training_view', 'h3_adjacency', 'absorbed_demand']
+        '{"min_observation_days": 180, "min_mature_labels": 200, "min_active_stores": 50, "min_adjacent_pairs": 30, "min_metro_clusters": 2, "min_spatial_contiguity": 0.80, "max_absorption_cv": 0.15, "max_drift_psi": 0.10, "max_wasserstein": 0.05, "min_correlation_rho": 0.75, "max_disconnect_index": 0.20, "min_split_density_ratio": 2.5, "min_ndcg_gain": 0.05, "min_cannibalization_variance_reduction": 0.20, "min_paired_periods": 6, "min_split_side_periods": 6, "allow_cross_admin_boundary": false}'::jsonb,
+        ARRAY['store_daily_performance', 'heatzone_training_view', 'h3_adjacency', 'absorbed_demand', 'heatzone_absorption_outcomes']
     )
     ON CONFLICT (policy_version_id) DO NOTHING;
 $seed_heatzone_merge_policy$;
@@ -178,3 +178,94 @@ CREATE TRIGGER trg_seed_heatzone_merge_policy
     AFTER INSERT ON core.tenants
     FOR EACH ROW
     EXECUTE FUNCTION workflow.on_tenant_insert_seed_heatzone_merge_policy();
+
+-- ---------------------------------------------------------------------------
+-- Trusted HZ-004 evidence for merge/split (ODP-FR-HZ-006 §5.2)
+--
+-- Merge/split may only reason from realised absorption the HZ-004 pipeline
+-- computed, so the outcomes live in their own append-only relation rather than
+-- arriving on an API request. `barrier_side` is the only admissible basis for a
+-- split: without side-labelled outcomes there is no evidence of where a zone
+-- would divide, and inventing a boundary from geometry is precisely what the
+-- readiness ruling forbids.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS geo.h3_cell_adjacency (
+    adjacency_id    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    cell_id         UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id),
+    neighbor_cell_id UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id),
+    k_ring          INTEGER NOT NULL DEFAULT 1,
+    created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    -- Adjacency is symmetric; store one row per unordered pair so a pair cannot
+    -- be counted twice when readiness tallies candidate pairs.
+    CONSTRAINT chk_h3_adjacency_ordered CHECK (cell_id < neighbor_cell_id),
+    CONSTRAINT chk_h3_adjacency_k_ring CHECK (k_ring >= 1),
+    CONSTRAINT uq_h3_adjacency_pair UNIQUE (cell_id, neighbor_cell_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_h3_adjacency_cell
+    ON geo.h3_cell_adjacency (cell_id);
+
+CREATE TABLE IF NOT EXISTS expansion.heatzone_absorption_outcomes (
+    outcome_id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id           UUID NOT NULL REFERENCES core.tenants(tenant_id),
+    geo_cell_id         UUID NOT NULL REFERENCES geo.h3_cells(geo_cell_id),
+    period_start        DATE NOT NULL,
+    period_end          DATE NOT NULL,
+    original_demand     NUMERIC(16, 2) NOT NULL,
+    absorbed_demand     NUMERIC(16, 2) NOT NULL,
+    remaining_demand    NUMERIC(16, 2) NOT NULL,
+    absorption_ratio    NUMERIC(6, 4) NOT NULL,
+    absorbing_store_count INTEGER NOT NULL,
+    under_realized      BOOLEAN NOT NULL DEFAULT FALSE,
+    barrier_side        VARCHAR(1),
+    barrier_description TEXT,
+    basis_source_ids    JSONB NOT NULL,
+    basis_at            TIMESTAMP WITH TIME ZONE NOT NULL,
+    absorption_policy_version_id VARCHAR(100) NOT NULL,
+    created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT chk_absorption_outcome_period CHECK (period_end >= period_start),
+    CONSTRAINT chk_absorption_outcome_amounts CHECK (
+        original_demand >= 0 AND absorbed_demand >= 0 AND remaining_demand >= 0
+        AND absorbed_demand <= original_demand
+    ),
+    CONSTRAINT chk_absorption_outcome_ratio CHECK (
+        absorption_ratio >= 0 AND absorption_ratio <= 1
+    ),
+    CONSTRAINT chk_absorption_outcome_stores CHECK (absorbing_store_count >= 0),
+    CONSTRAINT chk_absorption_outcome_side CHECK (
+        barrier_side IS NULL OR barrier_side IN ('A', 'B')
+    ),
+    -- An outcome with no basis snapshot is untraceable, and an untraceable
+    -- outcome is indistinguishable from one somebody typed in.
+    CONSTRAINT chk_absorption_outcome_basis CHECK (
+        jsonb_typeof(basis_source_ids) = 'array'
+        AND jsonb_array_length(basis_source_ids) > 0
+    ),
+    CONSTRAINT uq_absorption_outcome_period UNIQUE (
+        tenant_id, geo_cell_id, period_start, period_end, barrier_side
+    ),
+    CONSTRAINT fk_absorption_outcome_policy
+        FOREIGN KEY (absorption_policy_version_id, tenant_id)
+        REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_absorption_outcomes_tenant_cell
+    ON expansion.heatzone_absorption_outcomes (tenant_id, geo_cell_id, period_start);
+
+-- Absorption history is evidence: it may be appended to, never rewritten.
+CREATE OR REPLACE FUNCTION expansion.heatzone_absorption_outcomes_append_only()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+BEGIN
+    RAISE EXCEPTION
+        'heatzone_absorption_outcomes_append_only: % is not permitted on recorded HZ-004 evidence',
+        TG_OP USING ERRCODE = '23514';
+END $fn$;
+
+DROP TRIGGER IF EXISTS trg_heatzone_absorption_outcomes_append_only
+    ON expansion.heatzone_absorption_outcomes;
+CREATE TRIGGER trg_heatzone_absorption_outcomes_append_only
+    BEFORE UPDATE OR DELETE ON expansion.heatzone_absorption_outcomes
+    FOR EACH ROW EXECUTE FUNCTION expansion.heatzone_absorption_outcomes_append_only();

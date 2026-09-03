@@ -13,7 +13,7 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -37,6 +37,10 @@ from modules.forecastops.domain.forecasting import (
     ForecastSeries,
     InterventionHandoff,
 )
+from modules.heatzone.application.merge_split_evidence import (
+    AbsorptionOutcomeRecord,
+    CellOutcomeSeries,
+)
 from modules.heatzone.domain.composition import (
     COMPOSITION_MODEL_VERSION,
     CompositionKind,
@@ -45,6 +49,7 @@ from modules.heatzone.domain.composition import (
     MergeSplitProposalRecord,
     ProposalStatus,
     ZoneLineage,
+    parse_datetime,
     validate_composition_record,
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
@@ -2516,6 +2521,206 @@ class DurableHeatZoneCompositionRepository:
             return updated_prop
 
 
+def _as_date(value: Any) -> date:
+    """Coerce a stored period bound to a date, whatever the driver returned."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value).split("T")[0])
+
+
+class DurableMergeSplitEvidenceRepository:
+    """Durable reader for persisted HZ-004 absorption evidence (ODP-FR-HZ-006).
+
+    Read-only by construction. The merge/split API must not be able to write the
+    evidence it is judged against, so the outcome rows arrive from the
+    absorption pipeline and this class only selects them; PostgreSQL enforces
+    the same rule with an append-only trigger on the relation.
+    """
+
+    def __init__(self, engine_or_store: Any) -> None:
+        if hasattr(engine_or_store, "engine"):
+            self._engine = engine_or_store.engine
+        elif hasattr(engine_or_store, "_store") and hasattr(engine_or_store._store, "engine"):
+            self._engine = engine_or_store._store.engine
+        else:
+            self._engine = engine_or_store
+        self._is_postgres = _requires_tenant_scope(self._engine)
+        if not self._is_postgres:
+            self._init_sqlite_tables()
+
+    def _init_sqlite_tables(self) -> None:
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_absorption_outcomes (
+                outcome_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                geo_cell_id TEXT NOT NULL,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                original_demand REAL NOT NULL,
+                absorbed_demand REAL NOT NULL,
+                remaining_demand REAL NOT NULL,
+                absorption_ratio REAL NOT NULL,
+                absorbing_store_count INTEGER NOT NULL,
+                under_realized INTEGER NOT NULL DEFAULT 0,
+                barrier_side TEXT,
+                barrier_description TEXT,
+                basis_source_ids TEXT NOT NULL,
+                basis_at TEXT NOT NULL,
+                absorption_policy_version_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS h3_cells (
+                geo_cell_id TEXT PRIMARY KEY,
+                h3_index TEXT NOT NULL,
+                admin_city TEXT,
+                admin_district TEXT
+            );
+            """
+        )
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS h3_cell_adjacency (
+                adjacency_id TEXT PRIMARY KEY,
+                cell_id TEXT NOT NULL,
+                neighbor_cell_id TEXT NOT NULL,
+                k_ring INTEGER NOT NULL DEFAULT 1
+            );
+            """
+        )
+
+    @property
+    def table_outcomes(self) -> str:
+        return (
+            "expansion.heatzone_absorption_outcomes"
+            if self._is_postgres
+            else "heatzone_absorption_outcomes"
+        )
+
+    @property
+    def table_cells(self) -> str:
+        return "geo.h3_cells" if self._is_postgres else "h3_cells"
+
+    @property
+    def table_adjacency(self) -> str:
+        return "geo.h3_cell_adjacency" if self._is_postgres else "h3_cell_adjacency"
+
+    def _row_to_outcome(self, row: Mapping[str, Any]) -> AbsorptionOutcomeRecord:
+        data = dict(row)
+        basis = data.get("basis_source_ids")
+        if isinstance(basis, str):
+            try:
+                basis = json.loads(basis)
+            except json.JSONDecodeError:
+                basis = [basis]
+        side = data.get("barrier_side")
+        return AbsorptionOutcomeRecord(
+            cell_id=str(data["geo_cell_id"]),
+            period_start=_as_date(data["period_start"]),
+            period_end=_as_date(data["period_end"]),
+            original_demand=float(data["original_demand"]),
+            absorbed_demand=float(data["absorbed_demand"]),
+            remaining_demand=float(data["remaining_demand"]),
+            absorption_ratio=float(data["absorption_ratio"]),
+            absorbing_store_count=int(data["absorbing_store_count"]),
+            basis_source_ids=tuple(str(item) for item in (basis or ())),
+            absorption_policy_version_id=str(data["absorption_policy_version_id"]),
+            basis_at=parse_datetime(data["basis_at"]),
+            under_realized=bool(data.get("under_realized")),
+            barrier_side=str(side) if side else None,
+            barrier_description=str(data.get("barrier_description") or ""),
+        )
+
+    def list_absorption_outcomes(self, tenant_id: str) -> list[AbsorptionOutcomeRecord]:
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? "
+            "ORDER BY geo_cell_id, period_start",
+            (tenant_id,),
+        )
+        return [self._row_to_outcome(row) for row in rows]
+
+    def list_cells(self, tenant_id: str) -> list[CellOutcomeSeries]:
+        outcomes = self.list_absorption_outcomes(tenant_id)
+        cell_ids = sorted({outcome.cell_id for outcome in outcomes})
+        if not cell_ids:
+            return []
+
+        placeholders = ", ".join("?" for _ in cell_ids)
+        rows = self._engine.query(
+            f"SELECT geo_cell_id, h3_index, admin_city, admin_district "
+            f"FROM {self.table_cells} WHERE geo_cell_id IN ({placeholders})",
+            tuple(cell_ids),
+        )
+        identities = {
+            str(row["geo_cell_id"]): (
+                str(row.get("h3_index") or ""),
+                str(row.get("admin_city") or ""),
+                str(row.get("admin_district") or ""),
+            )
+            for row in rows
+        }
+
+        whole: dict[str, list[AbsorptionOutcomeRecord]] = {}
+        sided: dict[str, list[AbsorptionOutcomeRecord]] = {}
+        for outcome in outcomes:
+            bucket = sided if outcome.barrier_side else whole
+            bucket.setdefault(outcome.cell_id, []).append(outcome)
+
+        series: list[CellOutcomeSeries] = []
+        for cell_id in cell_ids:
+            # A cell the geo registry does not know is dropped rather than
+            # defaulted: without its admin identity the cross-boundary rule
+            # cannot be applied, and merging across it would be a guess.
+            identity = identities.get(cell_id)
+            if identity is None:
+                continue
+            h3_index, admin_city, admin_district = identity
+            series.append(
+                CellOutcomeSeries(
+                    cell_id=cell_id,
+                    h3_index=h3_index,
+                    admin_city=admin_city,
+                    admin_district=admin_district,
+                    outcomes=tuple(
+                        sorted(whole.get(cell_id, []), key=lambda o: o.period_start)
+                    ),
+                    side_outcomes=tuple(
+                        sorted(
+                            sided.get(cell_id, []),
+                            key=lambda o: (o.barrier_side or "", o.period_start),
+                        )
+                    ),
+                )
+            )
+        return series
+
+    def list_adjacency(self, tenant_id: str) -> list[tuple[str, str]]:
+        observed = {
+            outcome.cell_id for outcome in self.list_absorption_outcomes(tenant_id)
+        }
+        if not observed:
+            return []
+        rows = self._engine.query(
+            f"SELECT cell_id, neighbor_cell_id FROM {self.table_adjacency}", ()
+        )
+        edges: set[tuple[str, str]] = set()
+        for row in rows:
+            left = str(row["cell_id"])
+            right = str(row["neighbor_cell_id"])
+            # Adjacency is geographic and untenanted; scoping it to the cells
+            # this tenant has outcomes for keeps one tenant's graph from
+            # widening another's candidate set.
+            if left in observed and right in observed:
+                edges.add((left, right) if left <= right else (right, left))
+        return sorted(edges)
+
+
 class DurableListingRepository:
     """Durable mirror of ``InMemoryListingRepository`` (ODP-FLOW-002).
 
@@ -2642,6 +2847,7 @@ __all__ = [
     "DurableLabelRegistry",
     "DurableLearningHubRepository",
     "DurableListingRepository",
+    "DurableMergeSplitEvidenceRepository",
     "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
     "DurableRealizedSiteStore",

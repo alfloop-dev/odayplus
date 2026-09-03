@@ -27,6 +27,11 @@ DEFAULT_HEATZONE_MERGE_PARAMETERS: dict[str, object] = {
     "min_split_density_ratio": 2.5,
     "min_ndcg_gain": 0.05,
     "min_cannibalization_variance_reduction": 0.20,
+    # A pair is only testable once it has been observed jointly for long
+    # enough; below this the engine reports the statistics as unmeasurable and
+    # declines the candidate rather than scoring a short series.
+    "min_paired_periods": 6,
+    "min_split_side_periods": 6,
     "allow_cross_admin_boundary": False,
 }
 
@@ -53,6 +58,7 @@ def default_heatzone_merge_policy(
             "heatzone_training_view",
             "h3_adjacency",
             "absorbed_demand",
+            "heatzone_absorption_outcomes",
         ),
         change_reason="熱區合併／拆分決策政策導入，依 HZ-004 實績門檻與空間異質性治理",
         approved_by="architecture_review",

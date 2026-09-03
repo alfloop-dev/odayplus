@@ -673,8 +673,8 @@ export function NetworkFindAreasWorkspace({
   }, [compositionClient, fixturesAllowed]);
 
   const handleApproveProposal = useCallback(
-    async (proposalId: string, decidedBy: string, notes?: string) => {
-      const ok = await compositionClient.approveProposal(proposalId, decidedBy, notes);
+    async (proposalId: string, notes?: string) => {
+      const ok = await compositionClient.approveProposal(proposalId, notes);
       if (!ok) {
         throw new Error("Failed to approve proposal");
       }
@@ -684,8 +684,8 @@ export function NetworkFindAreasWorkspace({
   );
 
   const handleRejectProposal = useCallback(
-    async (proposalId: string, rejectedBy: string, reason: string) => {
-      const ok = await compositionClient.rejectProposal(proposalId, rejectedBy, reason);
+    async (proposalId: string, reason: string) => {
+      const ok = await compositionClient.rejectProposal(proposalId, reason);
       if (!ok) {
         throw new Error("Failed to reject proposal");
       }

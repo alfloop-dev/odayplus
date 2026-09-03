@@ -74,6 +74,7 @@ class PersistenceBundle:
     transaction_repository: Any
     machine_cycle_repository: Any
     heatzone_composition_repository: Any = None
+    heatzone_evidence_repository: Any = None
     external_fetch_state_store: Any = None
     notification_repository: Any = None
     outbox_repository: Any = None
@@ -117,6 +118,12 @@ class PersistenceBundle:
 
     def heatzone_composition_repository_for_tenant(self, tenant_id: str) -> Any | None:
         return self._scoped_repository("heatzone_composition_repository", tenant_id)
+
+    def heatzone_evidence_repository_for_tenant(self, tenant_id: str) -> Any | None:
+        # The evidence reader already takes tenant_id on every call and reads
+        # relations that are not document-store backed, so it needs no scoped
+        # wrapper -- returning it unchanged keeps one reader per engine.
+        return self.heatzone_evidence_repository
 
     def _scoped_repository(self, attribute: str, tenant_id: str) -> Any | None:
         if not tenant_id or not tenant_id.strip():
@@ -187,6 +194,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from modules.heatzone.infrastructure import (
         HeatZoneResultStore,
         InMemoryHeatZoneCompositionRepository,
+        InMemoryMergeSplitEvidenceRepository,
     )
     from modules.intervention.infrastructure.repositories import (
         InMemoryInterventionRepository,
@@ -246,6 +254,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         ingestion_run_store=InMemoryIngestionRunStore(),
         heatzone_store=HeatZoneResultStore(),
         heatzone_composition_repository=InMemoryHeatZoneCompositionRepository(),
+        heatzone_evidence_repository=InMemoryMergeSplitEvidenceRepository(),
         listing_repository=InMemoryListingRepository(),
         sitescore_decision_store=InMemoryDecisionStore(),
         sitescore_realized_store=InMemoryRealizedSiteStore(),
@@ -297,6 +306,7 @@ def _durable_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
+        DurableMergeSplitEvidenceRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableRealizedSiteStore,
@@ -348,6 +358,7 @@ def _durable_bundle(
         ingestion_run_store=DurableIngestionRunStore(store),
         heatzone_store=DurableHeatZoneResultStore(store),
         heatzone_composition_repository=DurableHeatZoneCompositionRepository(engine),
+        heatzone_evidence_repository=DurableMergeSplitEvidenceRepository(engine),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),
@@ -409,6 +420,7 @@ def _postgres_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
+        DurableMergeSplitEvidenceRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableRealizedSiteStore,
@@ -470,6 +482,7 @@ def _postgres_bundle(
         ingestion_run_store=DurableIngestionRunStore(store),
         heatzone_store=DurableHeatZoneResultStore(store),
         heatzone_composition_repository=DurableHeatZoneCompositionRepository(engine),
+        heatzone_evidence_repository=DurableMergeSplitEvidenceRepository(engine),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),

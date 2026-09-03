@@ -13,9 +13,14 @@ from models.shared_ml import (
     require_live_inputs,
 )
 from modules.heatzone.application.merge_split_engine import (
-    CandidateCellFeature,
-    MergeSplitReadinessInput,
+    MergeSplitPolicyError,
     evaluate_merge_split,
+)
+from modules.heatzone.application.merge_split_evidence import (
+    EvidenceUnavailableError,
+    ExistingZoneComposition,
+    MergeSplitEvidenceRepository,
+    assemble_merge_split_evidence,
 )
 from modules.heatzone.domain.composition import (
     CompositionKind,
@@ -35,7 +40,7 @@ from shared.governance import (
 
 try:
     from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, ConfigDict, Field
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
@@ -49,7 +54,16 @@ else:
 
 
     class HeatZoneOverridePayload(BaseModel):
-        decided_by: str = Field(min_length=1)
+        """Human override of a composition.
+
+        The deciding operator is taken from the authenticated principal, so the
+        body carries only the reason and the shape of the override. `extra` is
+        forbidden so a client that still sends `decided_by` is told its identity
+        claim was rejected instead of having it silently dropped.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
         override_reason: str = Field(min_length=1)
         decision_policy_version_id: str | None = None
         new_kind: str | None = None
@@ -58,22 +72,35 @@ else:
 
 
     class HeatZoneRollbackPayload(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
         revert_reason: str | None = None
 
 
     class HeatZoneMergeSplitEvaluatePayload(BaseModel):
-        cells: list[dict[str, Any]] = Field(default_factory=list)
-        readiness: dict[str, Any] = Field(default_factory=dict)
+        """Request to evaluate merge/split for the caller's tenant.
+
+        There is nothing to send but the policy to evaluate under. Readiness
+        metrics and cell outcomes are read from trusted server-side HZ-004
+        evidence; a request that supplies them is refused rather than obeyed,
+        because a caller able to name its own maturity could talk the engine
+        past a gate the production snapshot fails.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
         policy_version_id: str | None = None
 
 
     class HeatZoneProposalApprovePayload(BaseModel):
-        decided_by: str = Field(min_length=1)
+        model_config = ConfigDict(extra="forbid")
+
         notes: str | None = None
 
 
     class HeatZoneProposalRejectPayload(BaseModel):
-        rejected_by: str = Field(min_length=1)
+        model_config = ConfigDict(extra="forbid")
+
         reason: str = Field(min_length=1)
 
 
@@ -84,6 +111,8 @@ else:
         policy_repository: DecisionPolicyRepository | None = None,
         heatzone_store_for_tenant: Any | None = None,
         composition_repository_for_tenant: Any | None = None,
+        evidence_repository: MergeSplitEvidenceRepository | None = None,
+        evidence_repository_for_tenant: Any | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
         model_runtime: ProductionModelRuntime | None = None,
@@ -138,6 +167,34 @@ else:
                     )
                     return type(comp_repo)(TenantScopedDocumentStore(base_store, tid))
             return comp_repo
+
+        def evidence_repo_for_request(request: Request) -> Any:
+            tid = resolve_tenant_id(request)
+            if evidence_repository_for_tenant is not None:
+                return evidence_repository_for_tenant(tid)
+            return evidence_repository
+
+        def operator_actor(request: Request) -> str:
+            """Identity of the authenticated operator behind this request.
+
+            Governance rows name a person, so the name has to come from the
+            credential the authorization dependency already verified. Taking it
+            from the body would let any holder of the permission write someone
+            else into the audit trail.
+            """
+            principal = getattr(request.state, "operator_principal", None)
+            actor = getattr(principal, "subject_id", None) or getattr(
+                request.state, "operator_subject_id", None
+            )
+            if not actor or not str(actor).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "a verified operator identity is required to decide a "
+                        "heat-zone composition"
+                    ),
+                )
+            return str(actor).strip()
 
         @router.get("", dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))])
         def list_heatzones(request: Request, limit: int = 100) -> dict[str, Any]:
@@ -282,73 +339,50 @@ else:
                         detail=f"failed to resolve governed heatzone_merge policy for tenant '{tid}': {exc}",
                     ) from exc
 
-            r_data = body.readiness or {}
-            readiness_input = MergeSplitReadinessInput(
-                observation_days=int(r_data.get("observation_days", 0)),
-                mature_labels_count=int(r_data.get("mature_labels_count", 0)),
-                active_store_count=int(r_data.get("active_store_count", 0)),
-                adjacent_pairs_count=int(r_data.get("adjacent_pairs_count", 0)),
-                metro_clusters_count=int(r_data.get("metro_clusters_count", 0)),
-                spatial_contiguity_ratio=float(r_data.get("spatial_contiguity_ratio", 0.0)),
-                absorption_ratio_cv=(
-                    float(r_data["absorption_ratio_cv"])
-                    if r_data.get("absorption_ratio_cv") is not None
-                    else None
-                ),
-                drift_psi=(
-                    float(r_data["drift_psi"])
-                    if r_data.get("drift_psi") is not None
-                    else None
-                ),
-                wasserstein_distance=(
-                    float(r_data["wasserstein_distance"])
-                    if r_data.get("wasserstein_distance") is not None
-                    else None
-                ),
-                is_synthetic=bool(r_data.get("is_synthetic", False)),
-                governed_disabled=bool(r_data.get("governed_disabled", False)),
-                source_snapshot_id=str(r_data.get("source_snapshot_id", "")),
-            )
-
-            candidate_cells: list[CandidateCellFeature] = []
-            for c in body.cells:
-                raw_partitions = c.get("child_partition_cell_ids", ())
-                partition_tuples = tuple(
-                    tuple(str(x) for x in part) for part in raw_partitions
+            active_comp_repo = comp_repo_for_request(request)
+            existing_zones: list[ExistingZoneComposition] = []
+            zone_members: dict[str, dict[str, Any]] = {}
+            for record in active_comp_repo.list_compositions(tid, active_only=True):
+                entry = zone_members.setdefault(
+                    record.zone_id,
+                    {"kind": record.composition_kind.value, "cells": []},
                 )
-                candidate_cells.append(
-                    CandidateCellFeature(
-                        cell_id=str(c.get("cell_id", "")),
-                        h3_index=str(c.get("h3_index", "")),
-                        tenant_id=tid,
-                        admin_city=str(c.get("admin_city", "")),
-                        admin_district=str(c.get("admin_district", "")),
-                        population=float(c.get("population", 0.0)),
-                        poi_count=int(c.get("poi_count", 0)),
-                        own_store_count=int(c.get("own_store_count", 0)),
-                        competitor_count=int(c.get("competitor_count", 0)),
-                        median_rent_per_ping=float(c.get("median_rent_per_ping", 0.0)),
-                        unmet_demand=float(c.get("unmet_demand", 0.0)),
-                        absorbed_demand=float(c.get("absorbed_demand", 0.0)),
-                        realized_revenue=float(c.get("realized_revenue", 0.0)),
-                        has_natural_barrier=bool(c.get("has_natural_barrier", False)),
-                        barrier_description=str(c.get("barrier_description", "")),
-                        adjacent_cell_ids=tuple(str(x) for x in c.get("adjacent_cell_ids", [])),
-                        barrier_side_a_revenue=float(c.get("barrier_side_a_revenue", 0.0)),
-                        barrier_side_a_absorbed_demand=float(c.get("barrier_side_a_absorbed_demand", 0.0)),
-                        barrier_side_b_revenue=float(c.get("barrier_side_b_revenue", 0.0)),
-                        barrier_side_b_absorbed_demand=float(c.get("barrier_side_b_absorbed_demand", 0.0)),
-                        child_partition_cell_ids=partition_tuples,
+                entry["cells"].append(record.member_cell_id)
+            for zone_id, entry in sorted(zone_members.items()):
+                existing_zones.append(
+                    ExistingZoneComposition(
+                        zone_id=zone_id,
+                        composition_kind=entry["kind"],
+                        member_cell_ids=tuple(sorted(entry["cells"])),
                     )
                 )
 
-            evaluation = evaluate_merge_split(
-                candidate_cells,
-                readiness_input=readiness_input,
-                policy=policy,
-            )
+            try:
+                evidence = assemble_merge_split_evidence(
+                    evidence_repo_for_request(request),
+                    tenant_id=tid,
+                    existing_zones=existing_zones,
+                )
+            except EvidenceUnavailableError as exc:
+                # No trusted evidence at all is not the same as immature
+                # evidence: the service cannot tell whether it is allowed to
+                # act, so it refuses instead of evaluating on nothing.
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "HZ006_EVIDENCE_UNAVAILABLE",
+                        "message": str(exc),
+                    },
+                ) from exc
 
-            active_comp_repo = comp_repo_for_request(request)
+            try:
+                evaluation = evaluate_merge_split(evidence, policy=policy)
+            except MergeSplitPolicyError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "HZ006_POLICY_INCOMPLETE", "message": str(exc)},
+                ) from exc
+
             if not evaluation.abstained and active_comp_repo is not None:
                 for proposal in evaluation.proposals:
                     active_comp_repo.save_proposal(proposal.to_record())
@@ -366,7 +400,9 @@ else:
                         "abstain_reasons": list(evaluation.abstain_reasons),
                         "proposal_count": len(evaluation.proposals),
                         "policy_version_id": policy.policy_version_id,
-                        "source_snapshot_id": readiness_input.source_snapshot_id,
+                        "source_snapshot_id": evidence.snapshot.inventory_version,
+                        "source_snapshot_sha256": evidence.snapshot.content_sha256,
+                        "governed_disabled": evidence.snapshot.governed_disabled,
                     },
                 )
             )
@@ -413,12 +449,13 @@ else:
             request: Request,
         ) -> dict[str, Any]:
             tid = resolve_tenant_id(request)
+            decided_by = operator_actor(request)
             active_comp_repo = comp_repo_for_request(request)
             try:
                 updated_prop, created_records = active_comp_repo.approve_proposal(
                     proposal_id=proposal_id,
                     tenant_id=tid,
-                    approved_by=body.decided_by,
+                    approved_by=decided_by,
                     notes=body.notes,
                 )
             except CompositionValidationError as exc:
@@ -430,7 +467,7 @@ else:
             active_audit_log.record(
                 AuditEvent(
                     event_type="heatzone.composition.proposal.approved.v1",
-                    actor=body.decided_by,
+                    actor=decided_by,
                     action="approve",
                     resource=f"heatzone/proposals/{proposal_id}",
                     outcome="approved",
@@ -439,6 +476,7 @@ else:
                         "proposal_id": proposal_id,
                         "zone_id": updated_prop.zone_id,
                         "created_count": len(created_records),
+                        "decided_by": decided_by,
                         "notes": body.notes,
                     },
                 )
@@ -458,12 +496,13 @@ else:
             request: Request,
         ) -> dict[str, Any]:
             tid = resolve_tenant_id(request)
+            rejected_by = operator_actor(request)
             active_comp_repo = comp_repo_for_request(request)
             try:
                 updated_prop = active_comp_repo.reject_proposal(
                     proposal_id=proposal_id,
                     tenant_id=tid,
-                    rejected_by=body.rejected_by,
+                    rejected_by=rejected_by,
                     reason=body.reason,
                 )
             except CompositionValidationError as exc:
@@ -475,13 +514,14 @@ else:
             active_audit_log.record(
                 AuditEvent(
                     event_type="heatzone.composition.proposal.rejected.v1",
-                    actor=body.rejected_by,
+                    actor=rejected_by,
                     action="reject",
                     resource=f"heatzone/proposals/{proposal_id}",
                     outcome="rejected",
                     correlation_id=request.state.correlation_id,
                     metadata={
                         "proposal_id": proposal_id,
+                        "rejected_by": rejected_by,
                         "reason": body.reason,
                     },
                 )
@@ -591,10 +631,15 @@ else:
             request: Request,
         ) -> dict[str, Any]:
             tid = resolve_tenant_id(request)
-            if body.decided_by == "system":
+            decided_by = operator_actor(request)
+            if decided_by == "system":
+                # 'system' is the reserved actor for automated decisions, and
+                # the composition constraint keys off it: a principal carrying
+                # that subject id would write a human override that the
+                # override_reason check then rejects at the storage layer.
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Human override must specify operator identity in 'decided_by' (not 'system')",
+                    detail="'system' is reserved for automated decisions and cannot override",
                 )
             if not body.override_reason or not body.override_reason.strip():
                 raise HTTPException(
@@ -619,7 +664,7 @@ else:
                 updated = active_comp_repo.override_composition(
                     zone_id=zone_id,
                     tenant_id=tid,
-                    decided_by=body.decided_by,
+                    decided_by=decided_by,
                     override_reason=body.override_reason,
                     decision_policy_version_id=policy_version,
                     new_kind=new_kind,
@@ -635,7 +680,7 @@ else:
             active_audit_log.record(
                 AuditEvent(
                     event_type="heatzone.composition.overridden.v1",
-                    actor=body.decided_by,
+                    actor=decided_by,
                     action="override",
                     resource=f"heatzone/zones/{zone_id}",
                     outcome="success",
@@ -643,7 +688,7 @@ else:
                     metadata={
                         "zone_id": zone_id,
                         "override_reason": body.override_reason,
-                        "decided_by": body.decided_by,
+                        "decided_by": decided_by,
                         "decision_policy_version_id": policy_version,
                         "updated_cell_count": len(updated),
                     },
@@ -653,7 +698,7 @@ else:
             return {
                 "zone_id": zone_id,
                 "status": "overridden",
-                "decided_by": body.decided_by,
+                "decided_by": decided_by,
                 "override_reason": body.override_reason,
                 "records": [r.to_dict() for r in updated],
             }
@@ -668,6 +713,7 @@ else:
             request: Request,
         ) -> dict[str, Any]:
             tid = resolve_tenant_id(request)
+            reverted_by = operator_actor(request)
             active_comp_repo = comp_repo_for_request(request)
 
             try:
@@ -681,13 +727,14 @@ else:
             active_audit_log.record(
                 AuditEvent(
                     event_type="heatzone.composition.reverted.v1",
-                    actor="operator",
+                    actor=reverted_by,
                     action="rollback",
                     resource=f"heatzone/zones/{zone_id}",
                     outcome="success",
                     correlation_id=request.state.correlation_id,
                     metadata={
                         "zone_id": zone_id,
+                        "reverted_by": reverted_by,
                         "revert_reason": body.revert_reason,
                         "reverted_count": len(reverted),
                     },

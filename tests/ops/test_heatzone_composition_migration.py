@@ -101,5 +101,30 @@ def test_alembic_revision_chain() -> None:
     rev = _rev()
 
     assert 'revision: str = "0013"' in rev
-    assert 'down_revision: str = "0011"' in rev
+    assert 'down_revision: str = "0012"' in rev
     assert "000018_heatzone_composition.sql" in rev
+
+
+def test_absorption_evidence_relations_are_declared() -> None:
+    """Merge/split reads its evidence from relations, not from request bodies."""
+    sql = _sql()
+
+    assert "CREATE TABLE IF NOT EXISTS expansion.heatzone_absorption_outcomes" in sql
+    assert "CREATE TABLE IF NOT EXISTS geo.h3_cell_adjacency" in sql
+    # Every recorded outcome has to name the HZ-004 snapshot it came from.
+    assert "CONSTRAINT chk_absorption_outcome_basis" in sql
+    assert "jsonb_array_length(basis_source_ids) > 0" in sql
+    # Absorption history is evidence: appended to, never rewritten.
+    assert "CREATE TRIGGER trg_heatzone_absorption_outcomes_append_only" in sql
+    assert "BEFORE UPDATE OR DELETE ON expansion.heatzone_absorption_outcomes" in sql
+    # Adjacency is stored once per unordered pair so readiness cannot double-count.
+    assert "CONSTRAINT chk_h3_adjacency_ordered CHECK (cell_id < neighbor_cell_id)" in sql
+
+
+def test_seeded_policy_declares_the_pairing_thresholds() -> None:
+    """A pair is only testable once it has enough jointly observed periods."""
+    sql = _sql()
+
+    assert '"min_paired_periods": 6' in sql
+    assert '"min_split_side_periods": 6' in sql
+    assert "'heatzone_absorption_outcomes'" in sql

@@ -69,6 +69,20 @@ describe("HeatZoneMergeSplitPanel", () => {
     expect(await screen.findByTestId("preview-box")).toBeInTheDocument();
   });
 
+  it("hides the decision controls from a role the server would refuse", () => {
+    render(
+      <HeatZoneMergeSplitPanel
+        activeRoleId="pm-audit"
+        proposals={[sampleProposal]}
+        onApproveProposal={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByTestId("btn-open-approve")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("btn-open-reject")).not.toBeInTheDocument();
+    expect(screen.getByTestId("composition-decision-denied")).toBeInTheDocument();
+  });
+
   it("handles operator approve flow", async () => {
     const onApprove = vi.fn().mockResolvedValue(undefined);
 
@@ -89,7 +103,9 @@ describe("HeatZoneMergeSplitPanel", () => {
     fireEvent.click(confirmApproveBtn);
 
     await waitFor(() => {
-      expect(onApprove).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555", "expansion-manager", undefined);
+      // No decider is sent: the API takes the operator from the authenticated
+      // principal, and a body naming one is rejected.
+      expect(onApprove).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555", undefined);
     });
   });
 
@@ -119,7 +135,7 @@ describe("HeatZoneMergeSplitPanel", () => {
     fireEvent.click(confirmRejectBtn);
 
     await waitFor(() => {
-      expect(onReject).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555", "expansion-manager", "商圈邊界待確認");
+      expect(onReject).toHaveBeenCalledWith("11111111-2222-3333-4444-555555555555", "商圈邊界待確認");
     });
   });
 });

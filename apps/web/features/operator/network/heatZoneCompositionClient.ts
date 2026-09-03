@@ -9,16 +9,10 @@ export type HeatZoneCompositionClient = {
   fetchProposals: (status?: string) => Promise<HeatZoneProposal[]>;
   getProposal: (proposalId: string) => Promise<HeatZoneProposal | null>;
   previewProposal: (proposalId: string) => Promise<ProposalPreviewData | null>;
-  approveProposal: (
-    proposalId: string,
-    decidedBy: string,
-    notes?: string,
-  ) => Promise<boolean>;
-  rejectProposal: (
-    proposalId: string,
-    rejectedBy: string,
-    reason: string,
-  ) => Promise<boolean>;
+  // Neither call carries a decider: the API derives the operator from the
+  // authenticated principal and rejects a body that claims an identity.
+  approveProposal: (proposalId: string, notes?: string) => Promise<boolean>;
+  rejectProposal: (proposalId: string, reason: string) => Promise<boolean>;
   fetchZoneLineage: (zoneId: string) => Promise<Record<string, unknown> | null>;
 };
 
@@ -83,11 +77,7 @@ export function buildHeatZoneCompositionClient(
       return (await response.json()) as ProposalPreviewData;
     },
 
-    async approveProposal(
-      proposalId: string,
-      decidedBy: string,
-      notes?: string,
-    ): Promise<boolean> {
+    async approveProposal(proposalId: string, notes?: string): Promise<boolean> {
       const response = await fetch(
         `/api/v1/heatzones/merge-split/proposals/${encodeURIComponent(proposalId)}/approve`,
         {
@@ -97,20 +87,13 @@ export function buildHeatZoneCompositionClient(
             "X-Correlation-Id": `corr-hz006-proposal-approve-${proposalId}`,
             "Idempotency-Key": `idemp-approve-${proposalId}`,
           },
-          body: JSON.stringify({
-            decided_by: decidedBy,
-            notes: notes || undefined,
-          }),
+          body: JSON.stringify({ notes: notes || undefined }),
         },
       );
       return response.ok;
     },
 
-    async rejectProposal(
-      proposalId: string,
-      rejectedBy: string,
-      reason: string,
-    ): Promise<boolean> {
+    async rejectProposal(proposalId: string, reason: string): Promise<boolean> {
       const response = await fetch(
         `/api/v1/heatzones/merge-split/proposals/${encodeURIComponent(proposalId)}/reject`,
         {
@@ -120,10 +103,7 @@ export function buildHeatZoneCompositionClient(
             "X-Correlation-Id": `corr-hz006-proposal-reject-${proposalId}`,
             "Idempotency-Key": `idemp-reject-${proposalId}`,
           },
-          body: JSON.stringify({
-            rejected_by: rejectedBy,
-            reason,
-          }),
+          body: JSON.stringify({ reason }),
         },
       );
       return response.ok;
