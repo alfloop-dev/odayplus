@@ -1,7 +1,7 @@
 # Canonical 六模型 Producer Lineage、缺席率量測與 Legacy 1.0 遷移風險報告
 
 - 日期：2026-09-03
-- 量測基準 commit：`843567cb`（task branch，base 已 advance 至 `origin/dev` @ `e56eda40`）
+- 重驗基準：`origin/dev` @ `c1371572af63`；task branch 已以 `1c189c6d` 完成 base compose
 - 任務：`ODP-CANONICAL-LEGACY-LINEAGE-001`
 - 關聯文件：
   - [修正計畫](../plans/ODP_REMEDIATION_PLAN_2026-09-03.md)（第 3 批與第 1-2 批邊界）
@@ -10,15 +10,18 @@
 
 ---
 
-## 〇、審查意見處置對照表（含第三輪退回）
+## 〇、審查意見處置對照表（含本次重開）
 
-本報告歷經三輪審查修正，針對 reviewer（Codex2）退回之全部要點進行徹底更正與補齊：
+本報告歷經多輪審查修正，並納入本次重開退回要點；以下逐項記錄處置與可重驗證據：
 
-| # | 退回意見（第三輪） | 本版處置與章節 |
+| # | 退回意見（歷次審查） | 本版處置與章節 |
 |---|---|---|
 | 1 | 報告四.2 的 Prediction 1/2 constructor census 與四.4 的 DataSnapshot 11/20 view-expression census 不是可辨識 source payload 或 snapshot row 的缺席率分子／分母；請改稱 structural exposure，並補實際 snapshot/source evidence，否則明載不可量測，不得把它們作為 absence rate。 | **徹底分離「來源 Payload 缺席率」與「程式結構暴露度」**：<br>1. 來源 Payload 缺席率（Source Payload Absence Rate）：僅在有客觀外部 fixture（M1: Poi 50%, CompetitorStore 50%, Listing raw 50%, Listing assisted 0%）時計算，並強調為契約樣本不可外推；Prediction 與 DataSnapshot 無外部 source payload / row 級快照實體，**明確標記為「不可量測」**，嚴禁以程式碼暴露度冒充。<br>2. 程式結構暴露度（Structural Exposure）：將 AST 建構點（Prediction 50%）與 SQL view 投影（dbt 55%, product_ops 37.5%）正名為結構性暴露指標。（見二、四各節） |
 | 2 | 遺漏實際 production install path：`product_ops/modeling/install_views.py:18` 載入 `product_ops/modeling/sql/model_ready_views.sql`；該檔 :203、:1255-1256 仍有 confidence/data_quality_score 常數，且 :1300-1408 登錄 active/blocked views。請補入六模型 producer→DB→API/client→UI/consumer lineage、分母與 SQL disposition。 | **完整納入生產安裝路徑**：<br>1. Lineage（三.6）補入 `product_ops/modeling/install_views.py` 載入 `model_ready_views.sql` 作為實際生產 DDL 路徑。<br>2. 結構暴露度（四.4）盤點 `model_ready_views.sql` 的 4 個 view / 8 個 bounded-score 欄位位置，指出 :203、:1255、:1256 三處硬編常數 1.0（暴露度 37.5%），並列出 :1300-1408 之 6 個 view contract 狀態。<br>3. SQL disposition（七.1）新增此三處之修訂方案。 |
-| 3 | 五.6 錯述 migration drift：000001 是普通 CREATE TABLE，若 000002 先建表再跑 000001 會失敗，不是兩者都不失敗；另五.1 將 consumer 放最後且稱先改 consumer 使 null branch 死碼，安全 cutover 順序與理由需修正。同步補 DataSnapshot 本身的 v1 legacy_unknown／schema-version 消費語意。 | **修正遷移與分代核心邏輯**：<br>1. Migration Drift（七.6）更正：`000001` 為標準 `CREATE TABLE`，若 `000002` 先跑，`000001` 會因 `already exists` 拋錯；在標準順序 `000001` → `000002` 下，`000002` 的 `IF NOT EXISTS` 使其 `NOT NULL` 約束完全未被施加。<br>2. Safe Cutover 順序（五.1）更正：**下游 consumer 與契約放寬必須最先部署（Phase 1）**，若先改上游產出 NULL，未升級之 downstream consumer（如 `HeatZoneMap.tsx:616` `toFixed()`）會直接白屏崩潰。<br>3. DataSnapshot 分代（五.2）補齊 `schema_version = 'v1'` 之模型准入排除與 API/UI 標記。<br>4. 前瞻 migration 編號更新為 `000018`（因 `000017` 已被 prediction drift 使用）。 |
+| 3 | 五.6 錯述 migration drift：000001 是普通 CREATE TABLE，若 000002 先建表再跑 000001 會失敗，不是兩者都不失敗；另五.1 將 consumer 放最後且稱先改 consumer 使 null branch 死碼，安全 cutover 順序與理由需修正。同步補 DataSnapshot 本身的 v1 legacy_unknown／schema-version 消費語意。 | **修正遷移與分代核心邏輯**：<br>1. Migration Drift（七.6）更正：`000001` 為標準 `CREATE TABLE`，若 `000002` 先跑，`000001` 會因 `already exists` 拋錯；在標準順序 `000001` → `000002` 下，`000002` 的 `IF NOT EXISTS` 使其 `NOT NULL` 約束完全未被施加。<br>2. Safe Cutover 順序（五.1）更正：**下游 consumer 與契約放寬必須最先部署（Phase 1）**，若先改上游產出 NULL，未升級之 downstream consumer（如 `apps/web/features/operator/network/HeatZoneMap.tsx:616` `toFixed()`）會直接白屏崩潰。<br>3. DataSnapshot 分代（五.2）補齊 `schema_version = 'v1'` 之模型准入排除與 API/UI 標記。<br>4. 前瞻 migration 編號更新為 `000018`（因 `000017` 已被 prediction drift 使用）。 |
+| 4 | 可重現 census 指令中的 `\b` 被寫成 literal backspace，照抄會得到 0；需重新提供 ASCII regex 與收據。 | **改用 `grep -rnE '\.confidence([^[:alnum:]_]|$)'`**；本次重驗得到 57 筆總命中，排除 1 筆測試後為 56 筆，SQL 指令同步移除 literal backspace。 |
+| 5 | UI 路徑不存在，且將 PriceOps、SiteScore、HeatZone 畫面誤列為 Prediction consumer；`apps/web` 沒有 prediction-runs consumer。 | **改用實際路徑** `apps/web/features/operator/network/HeatZoneMap.tsx`、`apps/web/features/operator/network/SiteScorePanel.tsx`、`apps/web/features/operator/GrowthWorkspace.tsx`；Prediction 改列 API/client 有路徑、web UI/consumer 缺席，並註明三個畫面各自屬 HeatZone、SiteScore、PriceOps。 |
+| 6 | SQL/dbt 清單標成 22 筆且分類總和不一致；physical entries 應為 dbt bounded-score 11 + competitor JOIN 1 + 0.8 常數 1 + SQLite 5 + production 3。 | **重算為 21 筆 physical entries**；四.4 的 dbt 結構暴露度仍獨立維持 11/20，避免把投影分母與處置項目分母混用。 |
 
 ---
 
@@ -66,14 +69,14 @@
 # → Measurement default checks passed: 40 known (dataclass 11, pydantic 1, mapper 9, sql 18, openapi 1)
 
 # (b) Python .confidence 引用清冊（第六節之 56 筆非測試引用）
-grep -rn "\.confidence" --include="*.py" modules apps shared models solver product_ops pipelines   | grep -vE "(^|/)tests?/|/test_[^/]*\.py:|/[^/]*_test\.py:" | wc -l
-# → 56
+grep -rnE '\.confidence([^[:alnum:]_]|$)' --include="*.py" modules apps shared models solver product_ops pipelines | grep -vE "(^|/)tests?/|/test_[^/]*\.py:|/[^/]*_test\.py:" | wc -l
+# → 56（總命中 57；排除 1 筆測試）
 
 # (c) dbt model_ready view 欄位投影普查
-grep -nE "as +(data_quality_score|confidence)" pipelines/dbt/models/model_ready/*.sql
+grep -nE 'as +(data_quality_score|confidence)([^[:alnum:]_]|$)' pipelines/dbt/models/model_ready/*.sql
 
 # (d) production model_ready SQL view 欄位投影普查
-grep -nE "AS (data_quality_score|confidence)" product_ops/modeling/sql/model_ready_views.sql
+grep -nE 'AS +(data_quality_score|confidence)([^[:alnum:]_]|$)' product_ops/modeling/sql/model_ready_views.sql
 ```
 
 ---
@@ -118,7 +121,7 @@ reporting.py:203"]
 coalesce(...,1.0)"]
         V2["candidate_site_view.sql:13
 coalesce(...,1.0)"]
-        V3["dbt 10 views (11/20 常數)
+        V3["dbt 10 views (11/20 結構暴露)
 + model_ready_views.sql :203,:1255-1256"]
         A1["routes/listings.py:967
 routes/sitescore.py:454"]
@@ -127,7 +130,7 @@ confidence: number"]
     end
 
     subgraph S4["4. Consumer / UI"]
-        U1["HeatZoneMap.tsx
+        U1["apps/web/features/operator/network/HeatZoneMap.tsx
 616/723/779/893"]
         U2["network_scoring.py:657/661
 min() TypeError"]
@@ -155,7 +158,7 @@ min() TypeError"]
 | dbt | `pipelines/dbt/models/model_ready/geo_grid_view.sql:7,39` | `avg(pois.confidence) as poi_confidence` → `least(coalesce(...,1.0), coalesce(...,1.0))` |
 | TS 契約 | `packages/schemas/canonical/index.ts:168` | `confidence: number`（非 nullable） |
 | Python consumer | **無** | 全樹無任何 `poi.confidence` 屬性讀取（56 筆清冊中 Poi 佔 0 筆） |
-| UI | `HeatZoneMap.tsx` | 僅經 `geo_grid_view` 聚合後之格網 confidence 呈現 |
+| UI | `apps/web/features/operator/network/HeatZoneMap.tsx` | 僅經 `geo_grid_view` 聚合後之格網 confidence 呈現 |
 
 ### 2. `CompetitorStore.confidence`
 
@@ -197,9 +200,9 @@ min() TypeError"]
 | ↳ 上游 mapper | `scoring.py:153, 156` | `_first_present(data, "average_confidence", "confidence", default=1.0)` |
 | DB (PG) | `000001:343`、`000002:283` | 000001 nullable `DEFAULT 1.00`；有 `prediction_run_id` 外鍵 |
 | DB (SQLite) | `000004:256` | `REAL NOT NULL DEFAULT 1.00` |
-| API | `routes/sitescore.py:454` | `"confidence": p.confidence` |
-| TS 契約 | `canonical/index.ts:250` | `confidence: number` |
-| UI | `GrowthWorkspace.tsx:588/692`、`SiteScorePanel.tsx:192`、`NetworkFindAreasWorkspace.tsx:1284` | 渲染點位 |
+| API | `apps/api/app/routes/forecastops.py:748`、`apps/api/app/routes/sitescore.py:426` | 兩個 prediction-runs endpoint 都回傳 `Prediction` row，包含 `confidence`；這是 API 可達性，不代表 web 已有 consumer |
+| client / TS 契約 | `packages/schemas/canonical/index.ts:239-250`；generated path `packages/openapi-client/openapi.json:14663, 41050`、`packages/openapi-client/src/generated/types.ts:1745, 1942` | 有 Prediction 型別與兩個 generated client path，但 `confidence` 目前仍是非 nullable `number` |
+| UI / web consumer | **無 prediction-runs consumer** | `rg -n -i 'prediction[-_ ]?runs?|predictionRun|prediction_run|/predictions' apps/web --glob '!**/__tests__/**' --glob '!**/*.test.*'` 無命中。此前列出的 `GrowthWorkspace` 是 PriceOps 彈性信心、`SiteScorePanel` 是 SiteScore、`NetworkFindAreasWorkspace` 是 HeatZone，均不屬於 Prediction UI。 |
 
 ### 5. `HeatZoneScore.confidence`
 
@@ -216,7 +219,7 @@ min() TypeError"]
 | DB (SQLite) | **不存在** | `000004_durable_product_domain.sql` 無 `heatzone_scores` 表 |
 | DB 寫入者 | **無** | 全樹無任何程式寫入 `expansion.heatzone_scores` |
 | TS 契約 | `canonical/index.ts:286`、`domain-types/src/heatzone.ts:22, 46` | `confidence: number` |
-| UI | `HeatZoneMap.tsx:616, 675, 723, 779, 893` | 渲染點位 |
+| UI | `apps/web/features/operator/network/HeatZoneMap.tsx:616, 675, 723, 779, 893` | 渲染點位 |
 
 ### 6. `DataSnapshot.quality_score`
 
@@ -342,7 +345,7 @@ flowchart TD
 
 > [!IMPORTANT]
 > **切勿先改上游 DB/Producer 而後改下游 Consumer！**
-> 若先將 DB/Producer 改為產出 `NULL`，而在下游 consumer（如 `HeatZoneMap.tsx:616` 之 `zone.confidence.toFixed(2)` 或 `network_scoring.py:657` 之 `min(listing.confidence, ...)`）尚未更新前即上線，`NULL` 會立即觸發 `TypeError` 導致前端白屏崩潰與計算中斷。因此必須**先部署具備 null-safety 的消費端，再切換上游資料產出**。
+> 若先將 DB/Producer 改為產出 `NULL`，而在下游 consumer（如 `apps/web/features/operator/network/HeatZoneMap.tsx:616` 之 `zone.confidence.toFixed(2)` 或 `network_scoring.py:657` 之 `min(listing.confidence, ...)`）尚未更新前即上線，`NULL` 會立即觸發 `TypeError` 導致前端白屏崩潰與計算中斷。因此必須**先部署具備 null-safety 的消費端，再切換上游資料產出**。
 
 **前瞻 Migration 定義（`000018_nullable_canonical_confidence.sql`）**
 
@@ -430,7 +433,7 @@ ALTER TABLE audit.data_snapshots  ALTER COLUMN quality_score DROP NOT NULL;
 
 ```bash
 # 總命中 57 筆 = 1 筆測試檔 (opsboard/tests/test_network_listing_geocode_mapping.py:7) + 56 筆非測試引用
-grep -rn "\.confidence" --include="*.py" modules apps shared models solver product_ops pipelines   | grep -vE "(^|/)tests?/|/test_[^/]*\.py:|/[^/]*_test\.py:" | wc -l
+grep -rnE '\.confidence([^[:alnum:]_]|$)' --include="*.py" modules apps shared models solver product_ops pipelines | grep -vE "(^|/)tests?/|/test_[^/]*\.py:|/[^/]*_test\.py:" | wc -l
 # → 56
 ```
 
@@ -468,21 +471,21 @@ grep -rn "\.confidence" --include="*.py" modules apps shared models solver prod
 
 ## 七、SQL／dbt／TypeScript／API／UI 可達性處置清單
 
-### 1. SQL / dbt 處置清單（22 筆）
+### 1. SQL / dbt 處置清單（21 筆 physical entries）
 
-包含 dbt views (13 筆) + SQLite DDL (5 筆) + 生產 SQL views (3 筆) + 0.8 常數 (1 筆)：
+包含 dbt bounded-score 投影 (11 筆) + competitor_counts JOIN 結構 (1 筆) + SQLite DDL (5 筆) + 生產 SQL views (3 筆) + 0.8 常數 (1 筆) = 21 筆：
 
 | # | 檔案路徑與行號 | 現狀定義 | 破壞模式與可達性 | 處置方案 (Disposition) |
 |---|---|---|---|---|
 | 1 | `pipelines/dbt/models/model_ready/geo_grid_view.sql:39` | `least(coalesce(poi_confidence,1.0), coalesce(competitor_confidence,1.0))` | 無 POI / 無競業格網補 1.0 滿分 | 移除 `coalesce`，讓 NULL 自然傳遞 |
 | 2 | `pipelines/dbt/models/model_ready/geo_grid_view.sql:12-21` | `competitor_counts` 未以 `h3_cells` 為基底 | 零競業格網整列遺失 | 改為 `FROM h3_cells LEFT JOIN competitor_stores` |
 | 3 | `pipelines/dbt/models/model_ready/candidate_site_view.sql:13` | `least(coalesce(listings.confidence,1.0), coalesce(geocode_confidence,1.0))` | 缺席補 1.0 滿分 | 移除 `coalesce` |
-| 4-10 | `pipelines/dbt/models/model_ready/` 下之 `brand_transfer_view.sql:17,18`、`matched_control_view.sql:16,17`、`ramp_curve_view.sql:8,9`、`store_machine_timeseries_view.sql:36,37`、`forecast_training_view.sql:47` | `1.0 as data_quality_score` / `1.0 as confidence`（共 9 個投影） | 硬編 1.0 常數，無法反映品質 | 改為來源欄位之 `CASE` 推導或投影 NULL 並在下游 fail-closed |
-| 11 | `pipelines/dbt/models/model_ready/valuation_view.sql:13` | `0.8 as confidence` | 雖非滿分，但為常數偽量測，UI 誤判為 medium 帶 | 改為 `CASE` 動態推導或 NULL |
-| 12-16 | `infra/db/migrations/000004_durable_product_domain.sql:53, 163, 178, 203, 256` | `REAL NOT NULL DEFAULT 1.00` ×5 | SQLite 產品庫預設滿分 | 隨 `000018` 移除 DEFAULT |
-| 17 | **`product_ops/modeling/sql/model_ready_views.sql:203`** | `1.0::double precision AS confidence` | 生產 `forecast_training_view` 硬編信心滿分 | 改為由來源 lineage 動態判定或 NULL |
-| 18 | **`product_ops/modeling/sql/model_ready_views.sql:1255`** | `1.0::double precision AS data_quality_score` | 生產 `listing_property_valuation_view` 硬編品質滿分 | 改為由授權與綱要驗證動態判定 |
-| 19 | **`product_ops/modeling/sql/model_ready_views.sql:1256`** | `1.0::double precision AS confidence` | 同上，硬編信心滿分 | 改為由交易真實性推導或 NULL |
+| 4-12 | `pipelines/dbt/models/model_ready/` 下之 `brand_transfer_view.sql:17,18`、`matched_control_view.sql:16,17`、`ramp_curve_view.sql:8,9`、`store_machine_timeseries_view.sql:36,37`、`forecast_training_view.sql:47` | `1.0 as data_quality_score` / `1.0 as confidence`（共 9 個投影） | 硬編 1.0 常數，無法反映品質 | 改為來源欄位之 `CASE` 推導或投影 NULL 並在下游 fail-closed |
+| 13 | `pipelines/dbt/models/model_ready/valuation_view.sql:13` | `0.8 as confidence` | 雖非滿分，但為常數偽量測，UI 誤判為 medium 帶 | 改為 `CASE` 動態推導或 NULL |
+| 14-18 | `infra/db/migrations/000004_durable_product_domain.sql:53, 163, 178, 203, 256` | `REAL NOT NULL DEFAULT 1.00` ×5 | SQLite 產品庫預設滿分 | 隨 `000018` 移除 DEFAULT |
+| 19 | **`product_ops/modeling/sql/model_ready_views.sql:203`** | `1.0::double precision AS confidence` | 生產 `forecast_training_view` 硬編信心滿分 | 改為由來源 lineage 動態判定或 NULL |
+| 20 | **`product_ops/modeling/sql/model_ready_views.sql:1255`** | `1.0::double precision AS data_quality_score` | 生產 `listing_property_valuation_view` 硬編品質滿分 | 改為由授權與綱要驗證動態判定 |
+| 21 | **`product_ops/modeling/sql/model_ready_views.sql:1256`** | `1.0::double precision AS confidence` | 同上，硬編信心滿分 | 改為由交易真實性推導或 NULL |
 
 ### 2. Python Producer / Mapper 處置清單
 
@@ -503,12 +506,12 @@ grep -rn "\.confidence" --include="*.py" modules apps shared models solver prod
 | `packages/schemas/canonical/index.ts:439` | `quality_score: number` | 無法表達 null | 改為 `quality_score: number \| null` |
 | `packages/domain-types/src/heatzone.ts:22, 46` | `confidence: number` | 無法表達 null | 改為 `confidence: number \| null` |
 | `packages/openapi-client/openapi.json:66` | `AVMCasePayload.quality_score: default 1.0` | 客戶端省略欄位時自動變滿分 | **移除 default 定義** |
-| `apps/web/src/components/HeatZoneMap.tsx:616` | `{zone.confidence.toFixed(2)}` | `TypeError` 面板白屏 | 改為 `zone.confidence != null ? zone.confidence.toFixed(2) : "未評估"` |
-| `apps/web/src/components/HeatZoneMap.tsx:723` | `` `${zone.score} / ${zone.confidence.toFixed(2)}` `` | `TypeError` TextLayer 崩潰 | 改為 null-safe 標籤 `—` |
-| `apps/web/src/components/HeatZoneMap.tsx:779` | `zone.confidence < 0.7` | `null < 0.7` 為 true，但 `undefined < 0.7` 為 **false (fail-open)** | **必改**：先判 `zone.confidence == null` 回傳專屬 stroke，不依賴隱式轉型 |
-| `apps/web/src/components/HeatZoneMap.tsx:893` | `confidenceBand(confidence: number)` | null 誤入 low 帶 | 簽章改 `number \| null`，新增 `"unmeasured"` 分支並給予專屬配色 |
-| `apps/web/src/components/SiteScorePanel.tsx:192` | `{card.confidence ? ... : null}` | falsy 判斷導致真實 `0.0` 信心被隱藏 | 改為 `card.confidence != null` |
-| `apps/web/src/components/GrowthWorkspace.tsx:588, 692` | `信心 {rec.confidence}` | null / undefined 渲染為空白 | 增加 null 分支顯示「未評估」 |
+| `apps/web/features/operator/network/HeatZoneMap.tsx:616` | `{zone.confidence.toFixed(2)}` | `TypeError` 面板白屏 | 改為 `zone.confidence != null ? zone.confidence.toFixed(2) : "未評估"` |
+| `apps/web/features/operator/network/HeatZoneMap.tsx:723` | `` `${zone.score} / ${zone.confidence.toFixed(2)}` `` | `TypeError` TextLayer 崩潰 | 改為 null-safe 標籤 `—` |
+| `apps/web/features/operator/network/HeatZoneMap.tsx:779` | `zone.confidence < 0.7` | `null < 0.7` 為 true，但 `undefined < 0.7` 為 **false (fail-open)** | **必改**：先判 `zone.confidence == null` 回傳專屬 stroke，不依賴隱式轉型 |
+| `apps/web/features/operator/network/HeatZoneMap.tsx:893` | `confidenceBand(confidence: number)` | null 誤入 low 帶 | 簽章改 `number \| null`，新增 `"unmeasured"` 分支並給予專屬配色 |
+| `apps/web/features/operator/network/SiteScorePanel.tsx:192` | `{card.confidence ? ... : null}` | falsy 判斷導致真實 `0.0` 信心被隱藏 | 改為 `card.confidence != null` |
+| `apps/web/features/operator/GrowthWorkspace.tsx:588, 692` | `信心 {rec.confidence}` | null / undefined 渲染為空白 | 增加 null 分支顯示「未評估」 |
 
 ### 4. 閘門盲區絕對缺陷處置
 
@@ -549,4 +552,4 @@ min_quality_score=round(min(quality_scores), 4) if quality_scores else 1.0,
 | **六模型各自有 producer→DB→API/client→UI/consumer lineage** | 六模型四層鏈路完整展開，包含 dbt 與 `product_ops/modeling/sql/model_ready_views.sql` 雙 View 安裝路徑，並明確標註 `HeatZoneScore` 與 `DataSnapshot` 之 surrogate 生產型別 | 第三節、第七節 |
 | **缺席率只用可辨識 source payload 或 snapshot 計算且明載 denominator** | 嚴格區分 M1 來源 Payload 缺席率（載明 D 與 N）與 M2/M3 結構性暴露度；無實體資料者明載「不可量測」，不以建構點或 view 投影冒充 absence rate | 第二節、第四節 |
 | **舊 1.0 不被批次改 NULL 並有 legacy_unknown／schema-version 策略** | 明定禁止批次改 NULL；提出 DataSnapshot 本身與五個非 DataSnapshot 模型之三類分代策略（繼承快照、經 Run 分代、時間戳分代），建立統一之 `legacy_unknown` 消費端語意矩陣 | 第五節 |
-| **列出 56 個 Python 引用及 SQL／TS／API reachability disposition** | 56 筆非測試 Python 引用逐筆列出並三重對帳（A 類 10 + B 類 46）；SQL 22 處、TS 契約 4 組、UI consumer 8 個點位皆具備明確 disposition | 第六節、第七節 |\n
+| **列出 56 個 Python 引用及 SQL／TS／API reachability disposition** | 56 筆非測試 Python 引用逐筆列出並三重對帳（A 類 10 + B 類 46）；SQL 21 個 physical entries、TS 契約 4 組、UI consumer 8 個點位皆具備明確 disposition | 第六節、第七節 |
