@@ -62,6 +62,10 @@ export interface PlanGanttProps {
   selected_actions?: PlanGanttActionItem[];
   bindingConstraints?: string[];
   binding_constraints?: string[];
+  modelledConstraintClasses?: string[];
+  modelled_constraint_classes?: string[];
+  unmodelledConstraintClasses?: string[];
+  unmodelled_constraint_classes?: string[];
   dependencies?: PlanGanttDependency[];
   diagnostics?: NetPlanDiagnostic[];
   quarters?: string[];
@@ -184,6 +188,10 @@ export function PlanGanttChart({
   selected_actions,
   bindingConstraints,
   binding_constraints,
+  modelledConstraintClasses,
+  modelled_constraint_classes,
+  unmodelledConstraintClasses,
+  unmodelled_constraint_classes,
   dependencies,
   diagnostics,
   quarters: customQuarters,
@@ -203,6 +211,18 @@ export function PlanGanttChart({
     () => bindingConstraints || binding_constraints || [],
     [bindingConstraints, binding_constraints]
   );
+
+  const effectiveModelled = useMemo(() => {
+    const raw = modelledConstraintClasses || modelled_constraint_classes;
+    if (raw && raw.length > 0) return Array.from(new Set(raw.map((c) => String(c))));
+    return [];
+  }, [modelledConstraintClasses, modelled_constraint_classes]);
+
+  const effectiveUnmodelled = useMemo(() => {
+    const raw = unmodelledConstraintClasses || unmodelled_constraint_classes;
+    if (raw && raw.length > 0) return Array.from(new Set(raw.map((c) => String(c))));
+    return [];
+  }, [unmodelledConstraintClasses, unmodelled_constraint_classes]);
 
   // Discover and sort all backend-provided quarters
   const quarters = useMemo(() => {
@@ -395,6 +415,76 @@ export function PlanGanttChart({
           </span>
         ))}
       </div>
+
+      {/* ODP-FR-NET-002 Constraint Class Disclosure Section */}
+      {(effectiveModelled.length > 0 || effectiveUnmodelled.length > 0) && (
+        <section
+          className={styles.constraintDisclosureSection}
+          data-testid="gantt-constraint-disclosure"
+          aria-label="ODP-FR-NET-002 硬限制揭露與驗證狀態"
+        >
+          <div className={styles.disclosureHeader}>
+            <span className={styles.disclosureTitle}>
+              🛡️ ODP-FR-NET-002 硬限制揭露 (Constraint Class Disclosure)
+            </span>
+            <span className={styles.disclosureSub}>
+              說出驗證了什麼、未驗證什麼 · 缺席與量測明確區分
+            </span>
+          </div>
+
+          <div className={styles.disclosureGrid}>
+            <div className={styles.disclosureCard}>
+              <div className={styles.disclosureCardHeader}>
+                <span className={styles.modelledDot}>●</span>
+                <strong>已建模驗證限制 ({effectiveModelled.length})</strong>
+              </div>
+              <div className={styles.classBadgeList} data-testid="gantt-modelled-classes">
+                {effectiveModelled.length > 0 ? (
+                  effectiveModelled.map((c) => (
+                    <span
+                      key={c}
+                      className={styles.modelledBadge}
+                      data-testid={`gantt-modelled-${c}`}
+                    >
+                      ✓ {c}
+                    </span>
+                  ))
+                ) : (
+                  <span className={styles.emptyClassText}>無已建模限制</span>
+                )}
+              </div>
+            </div>
+
+            <div className={styles.disclosureCard}>
+              <div className={styles.disclosureCardHeader}>
+                <span className={styles.unmodelledDot}>▲</span>
+                <strong>未建模限制 / 待確認風險 ({effectiveUnmodelled.length})</strong>
+              </div>
+              <div className={styles.classBadgeList} data-testid="gantt-unmodelled-classes">
+                {effectiveUnmodelled.length > 0 ? (
+                  effectiveUnmodelled.map((c) => (
+                    <span
+                      key={c}
+                      className={styles.unmodelledBadge}
+                      data-testid={`gantt-unmodelled-${c}`}
+                    >
+                      ⚠️ {c}
+                    </span>
+                  ))
+                ) : (
+                  <span className={styles.emptyClassText}>無未建模限制 (全部已建模)</span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className={styles.disclosureNotice}>
+            <small>
+              <strong>決策守則：</strong>未建模限制並非已驗證通過；不可豁免之類別 (CONSTRUCTION, EQUIPMENT, LABOUR, COVERAGE, DILUTION) 必須提供約束上限，可豁免類別 (LEASE, SEQUENCING) 須由具權限角色具名確認風險後始得核准。
+            </small>
+          </div>
+        </section>
+      )}
 
       {/* Binding Constraints & Diagnostics Alert Callout */}
       {(rawBindingConstraints.length > 0 || (diagnostics && diagnostics.length > 0)) && (

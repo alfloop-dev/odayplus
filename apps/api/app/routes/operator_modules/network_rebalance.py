@@ -43,6 +43,9 @@ class RebalanceActorPayload(BaseModel):
 
 class RebalanceSubmitPayload(RebalanceActorPayload):
     reason: str
+    acknowledgedClasses: list[ConstraintClass | str] | None = None
+    acknowledgementReason: str | None = None
+    approvalReceiptId: str | None = None
 
     @field_validator("reason")
     @classmethod
@@ -393,6 +396,9 @@ def create_network_rebalance_sub_router(
                 actor_name=body.actorName,
                 idempotency_key=idempotency_key,
                 correlation_id=x_correlation_id,
+                acknowledged_classes=body.acknowledgedClasses,
+                acknowledgement_reason=body.acknowledgementReason,
+                approval_receipt_id=body.approvalReceiptId,
             )
         except NetworkRebalanceNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

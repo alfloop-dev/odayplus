@@ -96,14 +96,16 @@ def test_rebalance_avm_netplan_selection_persists_and_creates_govern_approval() 
         "NP-SNAP-20260714-0615"
     }
     for scenario_item in solved_store["netPlanScenarios"]:
-        assert scenario_item["modelledConstraintClasses"] == ["CAPITAL"]
-        assert set(scenario_item["unmodelledConstraintClasses"]) == {
-            "LEASE",
+        assert scenario_item["modelledConstraintClasses"] == [
+            "CAPITAL",
             "CONSTRUCTION",
             "EQUIPMENT",
             "LABOUR",
             "COVERAGE",
             "DILUTION",
+        ]
+        assert set(scenario_item["unmodelledConstraintClasses"]) == {
+            "LEASE",
             "SEQUENCING",
         }
         assert scenario_item["modelled_constraint_classes"] == scenario_item["modelledConstraintClasses"]

@@ -104,14 +104,16 @@ def _evidence_id(prefix: str = "EV-RB") -> str:
 
 
 def _seed_scenarios() -> list[dict[str, Any]]:
-    default_modelled = ["CAPITAL"]
-    default_unmodelled = [
-        "LEASE",
+    default_modelled = [
+        "CAPITAL",
         "CONSTRUCTION",
         "EQUIPMENT",
         "LABOUR",
         "COVERAGE",
         "DILUTION",
+    ]
+    default_unmodelled = [
+        "LEASE",
         "SEQUENCING",
     ]
     return [
@@ -829,6 +831,9 @@ class NetworkRebalanceService:
         actor_name: str | None,
         idempotency_key: str | None,
         correlation_id: str | None,
+        acknowledged_classes: Sequence[ConstraintClass | str] | None = None,
+        acknowledgement_reason: str | None = None,
+        approval_receipt_id: str | None = None,
     ) -> dict[str, Any]:
         reason = reason.strip()
         if not reason:
@@ -845,6 +850,23 @@ class NetworkRebalanceService:
             raise NetworkRebalancePolicyError("selected scenario is required before submission")
 
         scenario = self._scenario(store, str(store["selectedScenarioId"]))
+
+        # ODP-FR-NET-002: Evaluate constraint disclosure policy
+        modelled = list(scenario.get("modelledConstraintClasses") or scenario.get("modelled_constraint_classes") or ["CAPITAL"])
+        unmodelled = list(scenario.get("unmodelledConstraintClasses") or scenario.get("unmodelled_constraint_classes") or [])
+        unmodelled_str = [str(c) for c in unmodelled]
+        blocked = [c for c in unmodelled_str if c not in ("LEASE", "SEQUENCING")]
+
+        if self._require_canonical and blocked:
+            raise NetworkRebalancePolicyError(
+                f"Cannot submit review for scenario {scenario.get('name', store.get('selectedScenarioId'))}: "
+                f"unmodelled constraint classes {blocked} are blocked and cannot be waived"
+            )
+
+        ack_classes = list(
+            [str(c) for c in (acknowledged_classes or [c for c in unmodelled_str if c in ("LEASE", "SEQUENCING")])]
+        )
+
         approval_id = store.get("relatedApprovalId") or f"APR-NET-{store_id}"
         approval = {
             "id": approval_id,
@@ -868,12 +890,16 @@ class NetworkRebalanceService:
             "requestedByRoleId": actor_role_id,
             "requestedBy": actor_name or "Expansion Manager",
             "requiredRoleIds": ["opsLead", "auditPm"],
+            "modelledConstraintClasses": modelled,
+            "unmodelledConstraintClasses": unmodelled,
+            "acknowledgedConstraintClasses": ack_classes,
             "evidenceIds": [
                 str(store.get("avm", {}).get("evidenceId", "")),
                 *list(scenario.get("evidenceIds", [])),
                 str(store.get("selectedScenarioEvidenceId", "")),
             ],
             "reason": reason,
+            "acknowledgementReason": acknowledgement_reason or reason,
             "target": {"workspace": "govern", "entityId": approval_id, "tab": "approvals"},
         }
         approval["evidenceIds"] = [item for item in approval["evidenceIds"] if item]

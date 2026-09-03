@@ -7285,6 +7285,38 @@
       "RebalanceSubmitPayload": {
         "additionalProperties": true,
         "properties": {
+          "acknowledgedClasses": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ConstraintClass"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledgedclasses"
+          },
+          "acknowledgementReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledgementreason"
+          },
           "actorName": {
             "anyOf": [
               {
@@ -7300,6 +7332,17 @@
             "default": "expansionManager",
             "title": "Actorroleid",
             "type": "string"
+          },
+          "approvalReceiptId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approvalreceiptid"
           },
           "reason": {
             "title": "Reason",

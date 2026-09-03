@@ -930,6 +930,13 @@ export function NetworkFindAreasWorkspace({
   async function postRebalanceAction(
     storeId: string,
     action: "request-avm" | "complete-avm" | "solve-netplan" | "submit-review",
+    submission?: {
+      reason?: string;
+      actorRoleId?: string;
+      actorName?: string;
+      acknowledgedClasses?: string[];
+      acknowledgementReason?: string;
+    },
   ) {
     const endpoint =
       action === "request-avm"
@@ -942,6 +949,20 @@ export function NetworkFindAreasWorkspace({
     const busyKey = `${storeId}:${action}`;
     setBusyRebalanceAction(busyKey);
     try {
+      const bodyPayload =
+        action === "submit-review" && submission
+          ? {
+              actorRoleId: submission.actorRoleId || NETWORK_ACTOR.actorRoleId,
+              actorName: submission.actorName || NETWORK_ACTOR.actorName,
+              reason: submission.reason || "Move scenario selected for Govern approval; relocation remains unexecuted.",
+              acknowledgedClasses: submission.acknowledgedClasses,
+              acknowledgementReason: submission.acknowledgementReason,
+            }
+          : {
+              ...NETWORK_ACTOR,
+              reason: "Move scenario selected for Govern approval; relocation remains unexecuted.",
+            };
+
       const response = await fetch(endpoint, {
         method: "POST",
         headers: {
@@ -950,10 +971,7 @@ export function NetworkFindAreasWorkspace({
           "X-Correlation-Id": `corr-r4-008-${action}-${storeId}`,
           ...NETWORK_OPERATOR_HEADERS,
         },
-        body: JSON.stringify({
-          ...NETWORK_ACTOR,
-          reason: "Move scenario selected for Govern approval; relocation remains unexecuted.",
-        }),
+        body: JSON.stringify(bodyPayload),
       });
       if (!response.ok) {
         setRebalanceApiError(`network-rebalance ${action} failed (${response.status})`);
@@ -1340,7 +1358,7 @@ export function NetworkFindAreasWorkspace({
             onRequestAvm={(storeId) => postRebalanceAction(storeId, "request-avm")}
             onSelectScenario={selectRebalanceScenario}
             onSolveNetPlan={(storeId) => postRebalanceAction(storeId, "solve-netplan")}
-            onSubmitReview={(storeId) => postRebalanceAction(storeId, "submit-review")}
+            onSubmitReview={(storeId, submission) => postRebalanceAction(storeId, "submit-review", submission)}
             rows={viewModel.rebalanceQueue}
           />
         ) : (

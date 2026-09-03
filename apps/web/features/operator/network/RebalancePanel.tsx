@@ -7,6 +7,14 @@ import { PlanGanttChart } from "./PlanGanttChart";
 
 type RebalanceAction = "request-avm" | "complete-avm" | "solve-netplan" | "select-scenario" | "submit-review";
 
+export type RebalanceReviewSubmission = {
+  reason: string;
+  actorRoleId?: string;
+  actorName?: string;
+  acknowledgedClasses?: string[];
+  acknowledgementReason?: string;
+};
+
 export type RebalancePanelProps = {
   apiError?: string | null;
   busyAction?: string | null;
@@ -14,7 +22,7 @@ export type RebalancePanelProps = {
   onRequestAvm: (storeId: string) => void;
   onSelectScenario: (storeId: string, scenarioId: string) => void;
   onSolveNetPlan: (storeId: string) => void;
-  onSubmitReview: (storeId: string) => void;
+  onSubmitReview: (storeId: string, submission?: RebalanceReviewSubmission) => void;
   rows: RebalanceQueueRow[];
 };
 
@@ -25,6 +33,8 @@ const lightTone: Record<string, string> = {
   A: "#d08700",
   R: "#c4342c",
 };
+
+const ACKNOWLEDGEABLE_CLASSES = ["LEASE", "SEQUENCING"];
 
 export function RebalancePanel({
   apiError,
@@ -37,6 +47,10 @@ export function RebalancePanel({
   rows,
 }: RebalancePanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(rows[0]?.id ?? null);
+  const [ackReason, setAckReason] = useState<string>("");
+  const [ackActorName, setAckActorName] = useState<string>("王若寧");
+  const [ackActorRole, setAckActorRole] = useState<string>("network-planning-authority");
+  const [acknowledgedClasses, setAcknowledgedClasses] = useState<string[]>([]);
 
   useEffect(() => {
     if (rows.length > 0 && !rows.some((row) => row.id === selectedId)) {
@@ -48,6 +62,47 @@ export function RebalancePanel({
     () => rows.find((row) => row.id === selectedId) ?? rows[0],
     [rows, selectedId],
   );
+
+  const selectedScenario = selected?.netPlanScenarios?.find(
+    (scenario) => scenario.id === selected.selectedScenarioId
+  );
+
+  const selectedModelled = useMemo(() => {
+    const raw = selectedScenario?.modelledConstraintClasses || selectedScenario?.modelled_constraint_classes;
+    return raw && raw.length > 0 ? Array.from(new Set(raw.map((c) => String(c)))) : ["CAPITAL"];
+  }, [selectedScenario]);
+
+  const selectedUnmodelled = useMemo(() => {
+    const raw = selectedScenario?.unmodelledConstraintClasses || selectedScenario?.unmodelled_constraint_classes;
+    return raw && raw.length > 0 ? Array.from(new Set(raw.map((c) => String(c)))) : [];
+  }, [selectedScenario]);
+
+  const selectedBlocked = useMemo(
+    () => selectedUnmodelled.filter((c) => !ACKNOWLEDGEABLE_CLASSES.includes(c)),
+    [selectedUnmodelled]
+  );
+  const selectedHasBlocked = selectedBlocked.length > 0;
+
+  const selectedAcknowledgeable = useMemo(
+    () => selectedUnmodelled.filter((c) => ACKNOWLEDGEABLE_CLASSES.includes(c)),
+    [selectedUnmodelled]
+  );
+  const selectedNeedsAck = selectedAcknowledgeable.length > 0;
+
+  // Initialize acknowledged classes when scenario changes
+  useEffect(() => {
+    if (selectedAcknowledgeable.length > 0) {
+      setAcknowledgedClasses(selectedAcknowledgeable);
+    } else {
+      setAcknowledgedClasses([]);
+    }
+  }, [selected?.id, selected?.selectedScenarioId, selectedScenario?.id, selectedAcknowledgeable]);
+
+  const isAckReasonValid = ackReason.trim().length > 0;
+  const isAckClassesCovered =
+    selectedAcknowledgeable.length === 0 ||
+    selectedAcknowledgeable.every((c) => acknowledgedClasses.includes(c));
+  const isAcknowledgementSatisfied = !selectedNeedsAck || (isAckReasonValid && isAckClassesCovered);
 
   if (!rows.length || !selected) {
     return (
@@ -61,8 +116,12 @@ export function RebalancePanel({
     );
   }
 
-  const cta = primaryCta(selected);
-  const selectedScenario = selected.netPlanScenarios?.find((scenario) => scenario.id === selected.selectedScenarioId);
+  const cta = primaryCta(
+    selected,
+    isAcknowledgementSatisfied,
+    selectedHasBlocked,
+    selectedBlocked
+  );
   const actionBusy = busyAction?.startsWith(`${selected.id}:`) ?? false;
   const avmP50 = typeof selected.avmP50 === "number" ? selected.avmP50 : null;
 
@@ -71,7 +130,17 @@ export function RebalancePanel({
     if (cta.action === "request-avm") onRequestAvm(selected.id);
     if (cta.action === "complete-avm") onCompleteAvm(selected.id);
     if (cta.action === "solve-netplan") onSolveNetPlan(selected.id);
-    if (cta.action === "submit-review") onSubmitReview(selected.id);
+    if (cta.action === "submit-review") {
+      const submissionReason =
+        ackReason.trim() || "Move scenario selected for Govern approval; relocation remains unexecuted.";
+      onSubmitReview(selected.id, {
+        reason: submissionReason,
+        actorRoleId: ackActorRole,
+        actorName: ackActorName,
+        acknowledgedClasses: selectedNeedsAck ? acknowledgedClasses : undefined,
+        acknowledgementReason: selectedNeedsAck ? ackReason.trim() : undefined,
+      });
+    }
   }
 
   return (
@@ -209,6 +278,12 @@ export function RebalancePanel({
                 {selected.netPlanScenarios.map((scenario) => {
                   const scenarioId = scenario.id ?? scenario.name;
                   const scenarioBusy = busyAction === `${selected.id}:select-scenario:${scenarioId}`;
+                  const cardModelled = scenario.modelledConstraintClasses || scenario.modelled_constraint_classes || ["CAPITAL"];
+                  const cardUnmodelled = scenario.unmodelledConstraintClasses || scenario.unmodelled_constraint_classes || [];
+                  const cardBlocked = cardUnmodelled.filter((c) => !ACKNOWLEDGEABLE_CLASSES.includes(c));
+                  const cardHasBlocked = cardBlocked.length > 0;
+                  const cardNeedsAck = cardUnmodelled.length > 0 && !cardHasBlocked;
+
                   return (
                     <button
                       aria-pressed={scenario.selected || selected.selectedScenarioId === scenarioId}
@@ -233,6 +308,32 @@ export function RebalancePanel({
                       <span className={styles.scenarioDetails}>
                         投資 {scenario.inv} · 回本 {scenario.payback} · 風險 {scenario.risk} · 時程 {scenario.time}
                       </span>
+
+                      {/* Constraint disclosure badges for each scenario */}
+                      <div className={styles.scenarioDisclosureRow} data-testid={`scenario-disclosure-${scenarioId}`}>
+                        <span className={styles.scenarioModelledBadge} data-testid={`scenario-modelled-classes-${scenarioId}`}>
+                          已建模: {cardModelled.join(", ")}
+                        </span>
+                        {cardUnmodelled.length > 0 ? (
+                          <span className={styles.scenarioUnmodelledBadge} data-testid={`scenario-unmodelled-classes-${scenarioId}`}>
+                            未建模: {cardUnmodelled.join(", ")}
+                          </span>
+                        ) : null}
+                        {cardHasBlocked ? (
+                          <span className={styles.scenarioBlockedBadge} data-testid={`scenario-blocked-badge-${scenarioId}`}>
+                            不可豁免阻擋
+                          </span>
+                        ) : cardNeedsAck ? (
+                          <span className={styles.scenarioAckBadge} data-testid={`scenario-ack-required-badge-${scenarioId}`}>
+                            需具名確認
+                          </span>
+                        ) : (
+                          <span className={styles.scenarioFullyModelledBadge} data-testid={`scenario-fully-modelled-badge-${scenarioId}`}>
+                            全部已建模
+                          </span>
+                        )}
+                      </div>
+
                       {scenario.diagnostics && scenario.diagnostics.length > 0 ? (
                         <div className={styles.infeasibilityDiagnostics} data-testid={`scenario-diagnostics-${scenarioId}`}>
                           <strong>不可行性診斷 (Infeasibility Diagnostics)</strong>
@@ -275,9 +376,117 @@ export function RebalancePanel({
                 objectiveScore={selectedScenario?.score}
                 actions={selectedScenario?.actions || selectedScenario?.selected_actions}
                 bindingConstraints={selectedScenario?.bindingConstraints || selectedScenario?.binding_constraints || (selectedScenario?.diagnostics?.map((d) => d.violated_constraint) ?? [])}
+                modelledConstraintClasses={selectedModelled}
+                unmodelledConstraintClasses={selectedUnmodelled}
                 dependencies={selectedScenario?.dependencies}
                 diagnostics={selectedScenario?.diagnostics}
               />
+            </section>
+          ) : null}
+
+          {/* Blocked constraint classes alert */}
+          {selected.status === "netplanreview" && selectedHasBlocked ? (
+            <div className={styles.rebalanceBlockedAlert} data-testid="rebalance-blocked-alert" role="alert">
+              <span className={styles.blockedIcon}>⚠️</span>
+              <div>
+                <strong>存在未建模且不可豁免之硬限制 (Blocked: {selectedBlocked.join(", ")})</strong>
+                <p>
+                  {selectedBlocked.join(", ")} 屬於求解器可約束之硬限制。因輸入未宣告上限而未被約束，依治理政策不可由具名簽核豁免，無法進行送審。請重新提供約束上限後重新求解。
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Acknowledgeable constraint classes form */}
+          {selected.status === "netplanreview" && selectedNeedsAck && !selectedHasBlocked ? (
+            <section
+              className={styles.rebalanceAcknowledgementSection}
+              data-testid="rebalance-acknowledgement-section"
+              aria-label="未建模限制具名風險確認表單"
+            >
+              <div className={styles.acknowledgementHeader}>
+                <strong>🛡️ 未建模限制具名風險確認 (Constraint Disclosure Acknowledgement)</strong>
+                <p>
+                  本方案未在求解模型中建模以下限制類別，送審前須由授權角色具名確認線下風險與因應措施：
+                </p>
+              </div>
+
+              <div className={styles.acknowledgementClassList} data-testid="acknowledgement-class-list">
+                {selectedAcknowledgeable.map((c) => {
+                  const isChecked = acknowledgedClasses.includes(c);
+                  const impactDesc =
+                    c === "LEASE"
+                      ? "租約可行性、檔期條件與解約金未於求解器內驗證，需線下商務確認。"
+                      : c === "SEQUENCING"
+                      ? "多期排程與工程工期先後次序未於模型內限制，需施工團隊排程確認。"
+                      : "未於求解器內建模，需線下確認。";
+                  return (
+                    <label key={c} className={styles.acknowledgementClassItem} data-testid={`ack-class-item-${c}`}>
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        data-testid={`ack-class-${c}`}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setAcknowledgedClasses((prev) => Array.from(new Set([...prev, c])));
+                          } else {
+                            setAcknowledgedClasses((prev) => prev.filter((item) => item !== c));
+                          }
+                        }}
+                      />
+                      <div>
+                        <strong>{c}</strong>
+                        <p>{impactDesc}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+
+              <div className={styles.acknowledgementFieldsGrid}>
+                <div className={styles.ackFieldGroup}>
+                  <label htmlFor={`ack-role-${selected.id}`}>授權簽核角色 (Authorized Role)</label>
+                  <input
+                    id={`ack-role-${selected.id}`}
+                    type="text"
+                    className={styles.inputField}
+                    data-testid="acknowledgement-actor-role-input"
+                    value={ackActorRole}
+                    onChange={(e) => setAckActorRole(e.target.value)}
+                  />
+                  <small className={styles.muted}>政策授權角色: network-planning-authority</small>
+                </div>
+
+                <div className={styles.ackFieldGroup}>
+                  <label htmlFor={`ack-actor-${selected.id}`}>簽核人姓名 (Actor Name)</label>
+                  <input
+                    id={`ack-actor-${selected.id}`}
+                    type="text"
+                    className={styles.inputField}
+                    data-testid="acknowledgement-actor-input"
+                    value={ackActorName}
+                    onChange={(e) => setAckActorName(e.target.value)}
+                  />
+                </div>
+
+                <div className={styles.ackFieldGroupFull}>
+                  <label htmlFor={`ack-reason-${selected.id}`}>
+                    具名風險確認理由 (Acknowledgement Reason) <span className={styles.requiredMark}>*必填</span>
+                  </label>
+                  <textarea
+                    id={`ack-reason-${selected.id}`}
+                    className={styles.textareaField}
+                    data-testid="acknowledgement-reason-input"
+                    placeholder="請詳細填寫未建模限制線下審查與風險確認理由 (不可為空白)..."
+                    rows={3}
+                    value={ackReason}
+                    onChange={(e) => setAckReason(e.target.value)}
+                  />
+                  {!isAckReasonValid && ackReason !== "" ? (
+                    <span className={styles.fieldError}>確認理由不可僅包含空白字元</span>
+                  ) : null}
+                </div>
+              </div>
             </section>
           ) : null}
 
@@ -306,7 +515,12 @@ export function RebalancePanel({
   );
 }
 
-function primaryCta(row: RebalanceQueueRow): {
+function primaryCta(
+  row: RebalanceQueueRow,
+  isAckSatisfied: boolean = true,
+  hasBlocked: boolean = false,
+  blockedClasses: string[] = []
+): {
   action: Exclude<RebalanceAction, "select-scenario"> | null;
   disabled: boolean;
   label: string;
@@ -322,11 +536,35 @@ function primaryCta(row: RebalanceQueueRow): {
     return { action: "solve-netplan", disabled: false, label: "建立 NetPlan Review（三案）" };
   }
   if (row.status === "netplanreview") {
+    if (!row.selectedScenarioId) {
+      return {
+        action: "submit-review",
+        disabled: true,
+        label: "送審（Rebalance Review）",
+        note: "請先選擇 Keep / Move / Exit 其中一案。",
+      };
+    }
+    if (hasBlocked) {
+      return {
+        action: "submit-review",
+        disabled: true,
+        label: "送審（無法送審）",
+        note: `方案包含未建模且不可豁免之限制 (${blockedClasses.join(", ")})，無法送審。`,
+      };
+    }
+    if (!isAckSatisfied) {
+      return {
+        action: "submit-review",
+        disabled: true,
+        label: "送審（需具名確認）",
+        note: "送審前需填寫未建模限制具名確認理由與簽核人。",
+      };
+    }
     return {
       action: "submit-review",
-      disabled: !row.selectedScenarioId,
+      disabled: false,
       label: "送審（Rebalance Review）",
-      note: row.selectedScenarioId ? "送審後由 Govern 核准中心決策。" : "請先選擇 Keep / Move / Exit 其中一案。",
+      note: "送審後由 Govern 核准中心決策，將攜帶具名未建模限制確認收據。",
     };
   }
   if (row.status === "pendingapproval") {

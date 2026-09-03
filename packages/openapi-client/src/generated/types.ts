@@ -1376,8 +1376,11 @@ export type RebalanceStore = {
 
 /** RebalanceSubmitPayload */
 export type RebalanceSubmitPayload = {
+  acknowledgedClasses?: (ConstraintClass | string)[] | null;
+  acknowledgementReason?: string | null;
   actorName?: string | null;
   actorRoleId?: string;
+  approvalReceiptId?: string | null;
   reason: string;
   simulateUnavailable?: boolean;
 };

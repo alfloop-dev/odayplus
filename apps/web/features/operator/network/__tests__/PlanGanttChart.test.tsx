@@ -492,4 +492,193 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(screen.queryByTestId("gantt-bar-STORE-REB-01-2026Q1")).not.toBeInTheDocument();
     expect(screen.getByTestId("gantt-policy-id")).toHaveTextContent("—");
   });
+
+  it("11. PlanGanttChart renders constraint disclosure section with modelled and unmodelled badges", () => {
+    render(
+      <PlanGanttChart
+        scenarioId="SCENARIO-DISCLOSURE-01"
+        scenarioName="NetPlan 限制揭露測試案"
+        modelledConstraintClasses={["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"]}
+        unmodelledConstraintClasses={["LEASE", "SEQUENCING"]}
+      />
+    );
+
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toBeInTheDocument();
+    expect(disclosure).toHaveTextContent("ODP-FR-NET-002 硬限制揭露");
+
+    const modelledGroup = screen.getByTestId("gantt-modelled-classes");
+    expect(modelledGroup).toBeInTheDocument();
+    expect(screen.getByTestId("gantt-modelled-CAPITAL")).toHaveTextContent("✓ CAPITAL");
+    expect(screen.getByTestId("gantt-modelled-CONSTRUCTION")).toHaveTextContent("✓ CONSTRUCTION");
+    expect(screen.getByTestId("gantt-modelled-EQUIPMENT")).toHaveTextContent("✓ EQUIPMENT");
+    expect(screen.getByTestId("gantt-modelled-LABOUR")).toHaveTextContent("✓ LABOUR");
+    expect(screen.getByTestId("gantt-modelled-COVERAGE")).toHaveTextContent("✓ COVERAGE");
+    expect(screen.getByTestId("gantt-modelled-DILUTION")).toHaveTextContent("✓ DILUTION");
+
+    const unmodelledGroup = screen.getByTestId("gantt-unmodelled-classes");
+    expect(unmodelledGroup).toBeInTheDocument();
+    expect(screen.getByTestId("gantt-unmodelled-LEASE")).toHaveTextContent("⚠️ LEASE");
+    expect(screen.getByTestId("gantt-unmodelled-SEQUENCING")).toHaveTextContent("⚠️ SEQUENCING");
+  });
+
+  it("12. RebalancePanel renders disclosure badges on all scenarios and blocks submission if blocked classes exist", () => {
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-BLOCKED",
+        storeId: "STORE-REB-BLOCKED",
+        storeName: "新竹巨城店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未建模硬限制阻擋測試",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-BLOCKED",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-BLOCKED",
+            name: "方案 1: 缺少工程預算約束 (Blocked)",
+            roi: "15.0%",
+            inv: "1.2M",
+            payback: "2.0 年",
+            risk: "中",
+            time: "2026Q2",
+            modelledConstraintClasses: ["CAPITAL"],
+            unmodelledConstraintClasses: ["CONSTRUCTION", "LEASE", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL"],
+            unmodelled_constraint_classes: ["CONSTRUCTION", "LEASE", "SEQUENCING"],
+            score: 75.0,
+          },
+          {
+            id: "SCENARIO-ACK-OK",
+            name: "方案 2: 僅缺少租約與時序 (Ack OK)",
+            roi: "18.0%",
+            inv: "1.0M",
+            payback: "1.8 年",
+            risk: "低",
+            time: "2026Q2",
+            modelledConstraintClasses: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
+            score: 82.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    // 1. Verify card badges on both primary and alternative scenarios
+    expect(screen.getByTestId("scenario-modelled-classes-SCENARIO-BLOCKED")).toHaveTextContent("已建模: CAPITAL");
+    expect(screen.getByTestId("scenario-unmodelled-classes-SCENARIO-BLOCKED")).toHaveTextContent("未建模: CONSTRUCTION, LEASE, SEQUENCING");
+    expect(screen.getByTestId("scenario-blocked-badge-SCENARIO-BLOCKED")).toHaveTextContent("不可豁免阻擋");
+
+    expect(screen.getByTestId("scenario-modelled-classes-SCENARIO-ACK-OK")).toHaveTextContent("已建模: CAPITAL, CONSTRUCTION, EQUIPMENT, LABOUR, COVERAGE, DILUTION");
+    expect(screen.getByTestId("scenario-unmodelled-classes-SCENARIO-ACK-OK")).toHaveTextContent("未建模: LEASE, SEQUENCING");
+    expect(screen.getByTestId("scenario-ack-required-badge-SCENARIO-ACK-OK")).toHaveTextContent("需具名確認");
+
+    // 2. Selected scenario is SCENARIO-BLOCKED -> Verify blocker alert is rendered
+    expect(screen.getByTestId("rebalance-blocked-alert")).toBeInTheDocument();
+    expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent("CONSTRUCTION");
+
+    // 3. Verify primary action button is DISABLED and cannot submit
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    expect(primaryButton).toHaveTextContent("送審（無法送審）");
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("13. RebalancePanel requires non-empty reason and actor to acknowledge unmodelled classes and submit", () => {
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-ACK",
+        storeId: "STORE-REB-ACK",
+        storeName: "台南成功店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未建模具名確認送審測試",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-ACK-ONLY",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-ACK-ONLY",
+            name: "方案 A: 推薦遷移案 (Ack Required)",
+            roi: "22.5%",
+            inv: "850K",
+            payback: "1.5 年",
+            risk: "低",
+            time: "2026Q1",
+            modelledConstraintClasses: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
+            score: 91.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    // 1. Verify acknowledgement form is rendered
+    expect(screen.getByTestId("rebalance-acknowledgement-section")).toBeInTheDocument();
+    expect(screen.getByTestId("ack-class-item-LEASE")).toHaveTextContent("租約可行性、檔期條件與解約金未於求解器內驗證");
+    expect(screen.getByTestId("ack-class-item-SEQUENCING")).toHaveTextContent("多期排程與工程工期先後次序未於模型內限制");
+
+    const reasonInput = screen.getByTestId("acknowledgement-reason-input");
+    const roleInput = screen.getByTestId("acknowledgement-actor-role-input");
+    const actorInput = screen.getByTestId("acknowledgement-actor-input");
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+
+    // 2. Initially reason is empty -> CTA is disabled
+    expect(primaryButton).toBeDisabled();
+    expect(primaryButton).toHaveTextContent("送審（需具名確認）");
+
+    // 3. Typing whitespace only -> CTA remains disabled
+    fireEvent.change(reasonInput, { target: { value: "    " } });
+    expect(primaryButton).toBeDisabled();
+
+    // 4. Typing valid reason & actor -> CTA becomes enabled
+    fireEvent.change(reasonInput, { target: { value: "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。" } });
+    fireEvent.change(roleInput, { target: { value: "network-planning-authority" } });
+    fireEvent.change(actorInput, { target: { value: "張策略長" } });
+
+    expect(primaryButton).not.toBeDisabled();
+    expect(primaryButton).toHaveTextContent("送審（Rebalance Review）");
+
+    // 5. Submit review -> verify full payload passed to onSubmitReview
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).toHaveBeenCalledTimes(1);
+    expect(submitReviewMock).toHaveBeenCalledWith("STORE-REB-ACK", {
+      reason: "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。",
+      actorRoleId: "network-planning-authority",
+      actorName: "張策略長",
+      acknowledgedClasses: ["LEASE", "SEQUENCING"],
+      acknowledgementReason: "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。",
+    });
+  });
 });
+

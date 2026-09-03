@@ -459,3 +459,109 @@
   border-radius: 6px;
   border: 1px dashed #cbd5e1;
 }
+
+.constraintDisclosureSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+}
+
+.disclosureHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.disclosureTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: #166534;
+}
+
+.disclosureSub {
+  font-size: 11px;
+  color: #4b5563;
+}
+
+.disclosureGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.disclosureCard {
+  background: #ffffff;
+  border: 1px solid #dcfce7;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.disclosureCardHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #1e293b;
+}
+
+.modelledDot {
+  color: #16a34a;
+  font-size: 10px;
+}
+
+.unmodelledDot {
+  color: #d97706;
+  font-size: 10px;
+}
+
+.classBadgeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.modelledBadge {
+  font-size: 10.5px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  color: #15803d;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.unmodelledBadge {
+  font-size: 10.5px;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+  color: #b45309;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+
+.emptyClassText {
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.disclosureNotice {
+  border-top: 1px dashed #bbf7d0;
+  padding-top: 6px;
+  color: #374151;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
