@@ -49,19 +49,32 @@ function classifyDisclosure(scenario: {
   unmodelled_constraint_classes?: unknown[] | null;
   blockedConstraintClasses?: unknown[] | null;
   acknowledgeableConstraintClasses?: unknown[] | null;
-} | undefined): { blocked: string[]; acknowledgeable: string[]; unmodelled: string[] } {
+  disclosureUndeclared?: boolean;
+} | undefined): {
+  blocked: string[];
+  acknowledgeable: string[];
+  unmodelled: string[];
+  undeclared: boolean;
+} {
   const rawUnmodelled =
     scenario?.unmodelledConstraintClasses ?? scenario?.unmodelled_constraint_classes ?? [];
   const unmodelled = Array.from(new Set(rawUnmodelled.map((item) => String(item))));
+  // A scenario that declared nothing has not said it bound everything. Its
+  // empty unmodelled set is an absence, not a measurement, so it is never
+  // rendered as "fully modelled".
+  if (scenario?.disclosureUndeclared) {
+    return { blocked: [], acknowledgeable: [], unmodelled, undeclared: true };
+  }
   const rawBlocked = scenario?.blockedConstraintClasses;
   const rawAcknowledgeable = scenario?.acknowledgeableConstraintClasses;
   if (rawBlocked == null || rawAcknowledgeable == null) {
-    return { blocked: unmodelled, acknowledgeable: [], unmodelled };
+    return { blocked: unmodelled, acknowledgeable: [], unmodelled, undeclared: false };
   }
   return {
     blocked: rawBlocked.map((item) => String(item)),
     acknowledgeable: rawAcknowledgeable.map((item) => String(item)),
     unmodelled,
+    undeclared: false,
   };
 }
 
@@ -108,7 +121,7 @@ export function RebalancePanel({
   );
   const selectedUnmodelled = selectedDisclosure.unmodelled;
   const selectedBlocked = selectedDisclosure.blocked;
-  const selectedHasBlocked = selectedBlocked.length > 0;
+  const selectedHasBlocked = selectedBlocked.length > 0 || selectedDisclosure.undeclared;
   const selectedAcknowledgeable = selectedDisclosure.acknowledgeable;
   const selectedNeedsAck = selectedAcknowledgeable.length > 0;
   const selectedPolicyVersionId = selectedScenario?.disclosurePolicyVersionId ?? null;
@@ -308,7 +321,7 @@ export function RebalancePanel({
                   const cardDisclosure = classifyDisclosure(scenario);
                   const cardUnmodelled = cardDisclosure.unmodelled;
                   const cardBlocked = cardDisclosure.blocked;
-                  const cardHasBlocked = cardBlocked.length > 0;
+                  const cardHasBlocked = cardBlocked.length > 0 || cardDisclosure.undeclared;
                   const cardNeedsAck = cardDisclosure.acknowledgeable.length > 0;
 
                   return (
@@ -348,7 +361,9 @@ export function RebalancePanel({
                         ) : null}
                         {cardHasBlocked ? (
                           <span className={styles.scenarioBlockedBadge} data-testid={`scenario-blocked-badge-${scenarioId}`}>
-                            不可豁免阻擋: {cardBlocked.join(", ")}
+                            {cardDisclosure.undeclared
+                              ? "未申報建模範圍"
+                              : `不可豁免阻擋: ${cardBlocked.join(", ")}`}
                           </span>
                         ) : cardNeedsAck ? (
                           <span className={styles.scenarioAckBadge} data-testid={`scenario-ack-required-badge-${scenarioId}`}>
@@ -416,12 +431,25 @@ export function RebalancePanel({
             <div className={styles.rebalanceBlockedAlert} data-testid="rebalance-blocked-alert" role="alert">
               <span className={styles.blockedIcon}>⚠️</span>
               <div>
-                <strong>存在未建模且不可豁免之硬限制 (Blocked: {selectedBlocked.join(", ")})</strong>
-                <p>
-                  {selectedBlocked.join(", ")} 未在此次求解中被約束，依治理政策
-                  {selectedPolicyVersionId ? `（${selectedPolicyVersionId}）` : "（本介面未註冊揭露政策，未建模類別一律視為阻擋）"}
-                  不可由具名簽核豁免，無法進行送審。請補上對應上限後重新求解。
-                </p>
+                <strong>
+                  {selectedDisclosure.undeclared
+                    ? "本方案未申報硬限制建模範圍 (Disclosure undeclared)"
+                    : `存在未建模且不可豁免之硬限制 (Blocked: ${selectedBlocked.join(", ")})`}
+                </strong>
+                {selectedDisclosure.undeclared ? (
+                  <p>
+                    求解結果未說明驗證了哪些硬限制類別。未申報不等於全部已驗證，因此無法送審；
+                    請重新求解並取得完整的硬限制揭露。
+                  </p>
+                ) : (
+                  <p>
+                    {selectedBlocked.join(", ")} 未在此次求解中被約束，依治理政策
+                    {selectedPolicyVersionId
+                      ? `（${selectedPolicyVersionId}）`
+                      : "（本介面未註冊揭露政策，未建模類別一律視為阻擋）"}
+                    不可由具名簽核豁免，無法進行送審。請補上對應上限後重新求解。
+                  </p>
+                )}
               </div>
             </div>
           ) : null}

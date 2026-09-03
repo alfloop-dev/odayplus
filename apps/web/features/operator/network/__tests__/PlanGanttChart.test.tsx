@@ -779,5 +779,74 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     fireEvent.click(primaryButton);
     expect(submitReviewMock).not.toHaveBeenCalled();
   });
+
+  it("15. RebalancePanel refuses a scenario that declared no disclosure at all", () => {
+    // An undeclared scenario has an empty unmodelled set for the same reason a
+    // silent instrument reads zero: nothing was measured. Rendering it as
+    // "fully modelled" is the fail-open the disclosure contract exists to stop.
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-UNDECLARED",
+        storeId: "STORE-REB-UNDECLARED",
+        storeName: "高雄夢時代店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未申報揭露",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-UNDECLARED",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-UNDECLARED",
+            name: "方案 A: 未申報建模範圍",
+            roi: "9.0%",
+            inv: "400K",
+            payback: "3.0 年",
+            risk: "高",
+            time: "2026Q4",
+            modelledConstraintClasses: [],
+            unmodelledConstraintClasses: [],
+            modelled_constraint_classes: [],
+            unmodelled_constraint_classes: [],
+            blockedConstraintClasses: [],
+            acknowledgeableConstraintClasses: [],
+            disclosureUndeclared: true,
+            score: 40.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent(
+      "未申報硬限制建模範圍"
+    );
+    expect(screen.queryByTestId("rebalance-acknowledgement-section")).toBeNull();
+    expect(
+      screen.getByTestId("scenario-modelled-classes-SCENARIO-UNDECLARED")
+    ).toHaveTextContent("（未申報）");
+    expect(
+      screen.getByTestId("scenario-blocked-badge-SCENARIO-UNDECLARED")
+    ).toHaveTextContent("未申報建模範圍");
+    expect(
+      screen.queryByTestId("scenario-fully-modelled-badge-SCENARIO-UNDECLARED")
+    ).toBeNull();
+
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+  });
 });
 
