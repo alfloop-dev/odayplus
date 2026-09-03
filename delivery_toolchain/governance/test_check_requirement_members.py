@@ -1361,6 +1361,7 @@ class TestANoteIsNotAnAmendment:
             "de-scoped by the architecture board",
             "已裁決不做",
             "決定不實作，維持現狀",
+            "架構委員會裁定不做，2027-09-01 到期",
         ]
         absences = [
             "It is not a release mode, so a release cannot be gated on a backtest result.",
@@ -1368,6 +1369,8 @@ class TestANoteIsNotAnAmendment:
             "decided without metadata",
             "That is choosing a format, not converting an existing store from one to another.",
             "no job in the tree currently reports it",
+            "查證後確認此項的權威裁決不存在，已阻擋至 Human/Ops",
+            "本項尚未裁定，next_review_date 為 2026-10-01",
         ]
         for text in rulings:
             assert find_nonimplementation_claim(text), text

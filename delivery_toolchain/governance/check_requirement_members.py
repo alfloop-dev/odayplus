@@ -142,7 +142,9 @@ STATUTORY_DECISION_FIELDS = (
 # make the claim false; it makes the claim answerable -- either the statutory
 # fields are there or the sentence is an unauthorised amendment. The phrases are
 # deliberately narrow: "it is not a release mode" describes an absence and must
-# not match, "DECIDED 2026-09-02: not pursued" rules on one and must.
+# not match, "DECIDED 2026-09-02: not pursued" rules on one and must. The
+# Chinese forms carry their verb for the same reason -- 裁決不存在 ("no such
+# decision exists") is the honest note an audit produces, not a claim.
 NONIMPLEMENTATION_CLAIM_PATTERN = re.compile(
     r"""(
       decided [\s_-]* not [\s_-]* (to [\s_-]*)?
@@ -155,8 +157,9 @@ NONIMPLEMENTATION_CLAIM_PATTERN = re.compile(
     | (formally|permanently)\s+waived
     | waiver\s+granted
     | de-?scoped
-    | 已裁決 | 裁決不 | 裁定不 | 決定不做 | 決定不實作 | 已決定不
-    | 不予實作 | 不再實作 | 正式豁免 | 已豁免
+    | 已裁決不 | 裁決不做 | 裁決不實作 | 裁定不做 | 裁定不實作
+    | 決定不做 | 決定不實作 | 已決定不 | 不予實作 | 不再實作
+    | 正式豁免 | 已豁免
     )""",
     re.IGNORECASE | re.VERBOSE,
 )
