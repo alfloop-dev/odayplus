@@ -468,3 +468,211 @@ def test_top_of_stack_rollback_ordering(
     assert rb_a_ok.json()["address"]["city"] == "Taipei"
     assert rb_a_ok.json()["address"]["revision"] == 5
 
+
+def test_regression_h3_cell_restoration_on_coordinate_rollback(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    """Regression test (P1): Rollback must restore original H3 cells, not retain corrected ones."""
+    import h3
+
+    addr_id = str(uuid4())
+    initial_lat, initial_lng = 25.0330, 121.5654
+    orig_h3_8 = h3.latlng_to_cell(initial_lat, initial_lng, 8)
+    orig_h3_9 = h3.latlng_to_cell(initial_lat, initial_lng, 9)
+    orig_h3_10 = h3.latlng_to_cell(initial_lat, initial_lng, 10)
+
+    address = AddressLocation(
+        address_id=addr_id,
+        raw_address="Taipei 101 Entrance",
+        latitude=initial_lat,
+        longitude=initial_lng,
+        h3_res_8=orig_h3_8,
+        h3_res_9=orig_h3_9,
+        h3_res_10=orig_h3_10,
+        manual_override_flag=False,
+        tenant_id="tenant-alpha",
+        revision=1,
+    )
+    address_repo.save_address(address)
+
+    headers = {
+        "x-subject-id": "reviewer-1",
+        "x-roles": "site_reviewer",
+        "x-tenant-id": "tenant-alpha",
+    }
+
+    # Step 1: Apply correction with coordinates far enough to change H3 cells
+    corrected_lat, corrected_lng = 25.0450, 121.5200
+    corr_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={
+            "latitude": corrected_lat,
+            "longitude": corrected_lng,
+            "reason": "Corrected location to Zhongzheng district location",
+        },
+        headers=headers,
+    )
+    assert corr_resp.status_code == 200
+    corr_data = corr_resp.json()
+    correction_id = corr_data["correction_id"]
+    new_h3_8 = corr_data["address"]["h3_res_8"]
+    new_h3_9 = corr_data["address"]["h3_res_9"]
+    new_h3_10 = corr_data["address"]["h3_res_10"]
+
+    assert new_h3_8 != orig_h3_8
+    assert new_h3_9 != orig_h3_9
+    assert new_h3_10 != orig_h3_10
+
+    # Step 2: Rollback correction
+    rb_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections/{correction_id}/rollback",
+        json={"reason": "Reverting coordinates override back to original 101 spot"},
+        headers=headers,
+    )
+    assert rb_resp.status_code == 200
+    rb_data = rb_resp.json()
+
+    # Step 3: Verify restored coordinates AND restored H3 cells
+    assert rb_data["address"]["latitude"] == initial_lat
+    assert rb_data["address"]["longitude"] == initial_lng
+    assert rb_data["address"]["h3_res_8"] == orig_h3_8
+    assert rb_data["address"]["h3_res_9"] == orig_h3_9
+    assert rb_data["address"]["h3_res_10"] == orig_h3_10
+    assert rb_data["address"]["h3_res_8"] != new_h3_8
+
+
+def test_regression_legacy_empty_tenant_records_cannot_be_claimed_or_bypassed(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    """Regression test (P1): NULL or empty tenant legacy records cannot be claimed or modified by tenant users."""
+    addr_id = str(uuid4())
+    address = AddressLocation(
+        address_id=addr_id,
+        raw_address="Legacy Global Address",
+        latitude=25.0,
+        longitude=121.0,
+        manual_override_flag=False,
+        tenant_id="",  # Un-tenanted legacy record
+        revision=1,
+    )
+    address_repo.save_address(address)
+
+    tenant_headers = {
+        "x-subject-id": "reviewer-tenant-beta",
+        "x-roles": "site_reviewer",
+        "x-tenant-id": "tenant-beta",
+    }
+
+    # 1. Tenant user attempting to read un-tenanted record MUST fail closed (403)
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=tenant_headers)
+    assert get_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in get_resp.text
+
+    # 2. Tenant user attempting to list corrections for un-tenanted record MUST fail closed (403)
+    list_corr_resp = client.get(f"/listings/addresses/{addr_id}/corrections", headers=tenant_headers)
+    assert list_corr_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in list_corr_resp.text
+
+    # 3. Tenant user attempting to apply correction (claim record) MUST fail closed (403)
+    corr_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={"latitude": 25.5, "longitude": 121.5, "reason": "Attempting to claim un-tenanted record"},
+        headers=tenant_headers,
+    )
+    assert corr_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in corr_resp.text
+
+    # 4. Verify record in repository was NOT claimed and tenant_id remains empty
+    saved = address_repo.get_address(addr_id)
+    assert saved is not None
+    assert saved.tenant_id == ""
+    assert saved.revision == 1
+    assert saved.manual_override_flag is False
+
+    # 5. list_addresses for tenant-beta MUST NOT return the un-tenanted record
+    tenant_addresses = address_repo.list_addresses(tenant_id="tenant-beta")
+    assert not any(a.address_id == addr_id for a in tenant_addresses)
+
+
+def test_regression_rollback_audit_self_contained_snapshots(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+    audit_log: InMemoryAuditLog,
+) -> None:
+    """Regression test (P2): Rollback audit and decision card contain self-contained old_value and new_value snapshots."""
+    addr_id = str(uuid4())
+    address = AddressLocation(
+        address_id=addr_id,
+        raw_address="Initial Road 1",
+        city="Taipei",
+        road="Road 1",
+        latitude=25.0100,
+        longitude=121.5100,
+        manual_override_flag=False,
+        tenant_id="tenant-alpha",
+        revision=1,
+    )
+    address_repo.save_address(address)
+
+    headers = {
+        "x-subject-id": "reviewer-1",
+        "x-roles": "site_reviewer",
+        "x-tenant-id": "tenant-alpha",
+    }
+
+    # Step 1: Apply correction
+    corr_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={
+            "road": "Road 1 Modified",
+            "latitude": 25.0200,
+            "longitude": 121.5200,
+            "reason": "Applying surveyor verified road and coordinates",
+        },
+        headers=headers,
+    )
+    assert corr_resp.status_code == 200
+    corr_id = corr_resp.json()["correction_id"]
+
+    # Step 2: Rollback correction
+    rb_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections/{corr_id}/rollback",
+        json={"reason": "Rollback survey override back to baseline"},
+        headers=headers,
+    )
+    assert rb_resp.status_code == 200
+    rb_data = rb_resp.json()
+
+    # Step 3: Verify self-contained old_value and new_value in rollback response
+    assert "old_value" in rb_data
+    assert "new_value" in rb_data
+    assert rb_data["old_value"]["road"] == "Road 1 Modified"
+    assert rb_data["old_value"]["latitude"] == 25.0200
+    assert rb_data["old_value"]["manual_override_flag"] is True
+    assert rb_data["old_value"]["revision"] == 2
+
+    assert rb_data["new_value"]["road"] == "Road 1"
+    assert rb_data["new_value"]["latitude"] == 25.0100
+    assert rb_data["new_value"]["manual_override_flag"] is False
+    assert rb_data["new_value"]["revision"] == 3
+
+    # Step 4: Verify self-contained snapshots in AuditEvent metadata
+    events = audit_log.list_events()
+    rb_event = [e for e in events if e.action == "rollback_manual_override"][-1]
+    assert "old_value" in rb_event.metadata
+    assert "new_value" in rb_event.metadata
+    assert rb_event.metadata["old_value"]["road"] == "Road 1 Modified"
+    assert rb_event.metadata["old_value"]["latitude"] == 25.0200
+    assert rb_event.metadata["new_value"]["road"] == "Road 1"
+    assert rb_event.metadata["new_value"]["latitude"] == 25.0100
+
+    # Step 5: Verify DecisionCard metrics contains self-contained snapshots
+    decision_card = rb_event.metadata["decision_card"]
+    assert "old_value" in decision_card["metrics"]
+    assert "new_value" in decision_card["metrics"]
+    assert decision_card["metrics"]["old_value"]["road"] == "Road 1 Modified"
+    assert decision_card["metrics"]["new_value"]["road"] == "Road 1"
+
+

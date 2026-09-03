@@ -925,6 +925,9 @@ else:
                     "longitude": new_address.longitude,
                     "geocode_precision": new_address.geocode_precision,
                     "geocode_confidence": new_address.geocode_confidence,
+                    "h3_res_8": new_address.h3_res_8,
+                    "h3_res_9": new_address.h3_res_9,
+                    "h3_res_10": new_address.h3_res_10,
                     "manual_override_flag": new_address.manual_override_flag,
                     "tenant_id": new_address.tenant_id,
                     "revision": new_address.revision,
@@ -1023,6 +1026,8 @@ else:
                 "applied_revision": restored_address.revision,
                 "actor_id": actor_id,
                 "reason": reason,
+                "old_value": rollback_card.metrics.get("old_value", {}),
+                "new_value": rollback_card.metrics.get("new_value", {}),
                 "decision_card": rollback_card.to_dict(),
                 "address": {
                     "address_id": restored_address.address_id,
@@ -1036,6 +1041,9 @@ else:
                     "longitude": restored_address.longitude,
                     "geocode_precision": restored_address.geocode_precision,
                     "geocode_confidence": restored_address.geocode_confidence,
+                    "h3_res_8": restored_address.h3_res_8,
+                    "h3_res_9": restored_address.h3_res_9,
+                    "h3_res_10": restored_address.h3_res_10,
                     "manual_override_flag": restored_address.manual_override_flag,
                     "tenant_id": restored_address.tenant_id,
                     "revision": restored_address.revision,
@@ -1060,9 +1068,10 @@ else:
                     detail=f"Address {address_id} not found",
                 )
 
+            address_tenant = address.tenant_id or ""
+            user_tenant = principal.tenant_id or ""
             if (
-                address.tenant_id
-                and address.tenant_id != principal.tenant_id
+                address_tenant != user_tenant
                 and Role.PLATFORM_ADMIN not in principal.roles
             ):
                 raise HTTPException(
@@ -1109,9 +1118,10 @@ else:
                     detail=f"Address {address_id} not found",
                 )
 
+            address_tenant = address.tenant_id or ""
+            user_tenant = principal.tenant_id or ""
             if (
-                address.tenant_id
-                and address.tenant_id != principal.tenant_id
+                address_tenant != user_tenant
                 and Role.PLATFORM_ADMIN not in principal.roles
             ):
                 raise HTTPException(

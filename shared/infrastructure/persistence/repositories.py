@@ -1455,7 +1455,7 @@ class InMemoryAddressLocationRepository:
     def list_addresses(self, tenant_id: str | None = None) -> list[AddressLocation]:
         results = list(self._addresses.values())
         if tenant_id:
-            results = [a for a in results if not a.tenant_id or a.tenant_id == tenant_id]
+            results = [a for a in results if (a.tenant_id or "") == tenant_id]
         return results
 
     def get_corrections(
@@ -1489,7 +1489,9 @@ class InMemoryAddressLocationRepository:
         if existing is None:
             raise KeyError(f"AddressLocation {address_id} not found")
 
-        if existing.tenant_id and existing.tenant_id != tenant_id:
+        existing_tenant = existing.tenant_id or ""
+        req_tenant = tenant_id or ""
+        if existing_tenant != req_tenant:
             raise PermissionError("TENANT_SCOPE_DENIED")
 
         if expected_revision is not None and existing.revision != expected_revision:
@@ -1521,6 +1523,9 @@ class InMemoryAddressLocationRepository:
                 h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
             except Exception:
                 pass
+            old_value["h3_res_8"] = existing.h3_res_8
+            old_value["h3_res_9"] = existing.h3_res_9
+            old_value["h3_res_10"] = existing.h3_res_10
 
         new_address = AddressLocation(
             address_id=existing.address_id,
@@ -1540,7 +1545,7 @@ class InMemoryAddressLocationRepository:
             h3_res_9=h3_res_9,
             h3_res_10=h3_res_10,
             manual_override_flag=True,
-            tenant_id=tenant_id or existing.tenant_id,
+            tenant_id=existing.tenant_id,
             revision=new_revision,
         )
 
@@ -1550,6 +1555,10 @@ class InMemoryAddressLocationRepository:
         }
         for k in updates:
             new_value[k] = getattr(new_address, k)
+        if "latitude" in updates or "longitude" in updates:
+            new_value["h3_res_8"] = h3_res_8
+            new_value["h3_res_9"] = h3_res_9
+            new_value["h3_res_10"] = h3_res_10
 
         correction_id = str(uuid4())
         audit_event_id = str(uuid4())
@@ -1590,7 +1599,7 @@ class InMemoryAddressLocationRepository:
                 metadata={
                     "entity_type": "address_location",
                     "entity_id": address_id,
-                    "tenant_id": tenant_id or existing.tenant_id,
+                    "tenant_id": existing.tenant_id,
                     "correction_id": correction_id,
                     "fields_updated": list(updates.keys()),
                     "old_value": old_value,
@@ -1608,7 +1617,7 @@ class InMemoryAddressLocationRepository:
             correction_id=correction_id,
             entity_type="address_location",
             entity_id=address_id,
-            tenant_id=tenant_id or existing.tenant_id,
+            tenant_id=existing.tenant_id,
             field_name=",".join(updates.keys()),
             old_value=old_value,
             new_value=new_value,
@@ -1655,7 +1664,9 @@ class InMemoryAddressLocationRepository:
         if existing is None:
             raise KeyError(f"AddressLocation {address_id} not found")
 
-        if existing.tenant_id and existing.tenant_id != tenant_id:
+        existing_tenant = existing.tenant_id or ""
+        req_tenant = tenant_id or ""
+        if existing_tenant != req_tenant:
             raise PermissionError("TENANT_SCOPE_DENIED")
 
         if expected_revision is not None and existing.revision != expected_revision:
@@ -1668,7 +1679,8 @@ class InMemoryAddressLocationRepository:
         if correction is None or correction.entity_id != address_id:
             raise KeyError(f"Correction {correction_id} not found for address {address_id}")
 
-        if correction.tenant_id and correction.tenant_id != tenant_id:
+        corr_tenant = correction.tenant_id or ""
+        if corr_tenant != req_tenant:
             raise PermissionError("TENANT_SCOPE_DENIED")
 
         if correction.status != "applied":
@@ -1707,6 +1719,24 @@ class InMemoryAddressLocationRepository:
             ),
         }
 
+        restored_lat = restored_dict["latitude"]
+        restored_lng = restored_dict["longitude"]
+        restored_h3_8 = old_val.get("h3_res_8")
+        restored_h3_9 = old_val.get("h3_res_9")
+        restored_h3_10 = old_val.get("h3_res_10")
+        if (restored_h3_8 is None or restored_h3_9 is None or restored_h3_10 is None) and (restored_lat != 0.0 or restored_lng != 0.0):
+            try:
+                import h3
+
+                if restored_h3_8 is None:
+                    restored_h3_8 = h3.latlng_to_cell(restored_lat, restored_lng, 8)
+                if restored_h3_9 is None:
+                    restored_h3_9 = h3.latlng_to_cell(restored_lat, restored_lng, 9)
+                if restored_h3_10 is None:
+                    restored_h3_10 = h3.latlng_to_cell(restored_lat, restored_lng, 10)
+            except Exception:
+                pass
+
         all_corrections = repo.list_corrections(
             entity_type="address_location", entity_id=address_id
         )
@@ -1725,17 +1755,33 @@ class InMemoryAddressLocationRepository:
             district=restored_dict["district"],
             village=restored_dict["village"],
             road=restored_dict["road"],
-            latitude=restored_dict["latitude"],
-            longitude=restored_dict["longitude"],
+            latitude=restored_lat,
+            longitude=restored_lng,
             geocode_precision=restored_dict["geocode_precision"],
             geocode_confidence=restored_dict["geocode_confidence"],
-            h3_res_8=existing.h3_res_8,
-            h3_res_9=existing.h3_res_9,
-            h3_res_10=existing.h3_res_10,
+            h3_res_8=restored_h3_8 or "",
+            h3_res_9=restored_h3_9 or "",
+            h3_res_10=restored_h3_10 or "",
             manual_override_flag=manual_override_flag,
             tenant_id=existing.tenant_id,
             revision=new_revision,
         )
+
+        rollback_old_value: dict[str, Any] = {
+            "manual_override_flag": existing.manual_override_flag,
+            "revision": existing.revision,
+        }
+        for k in old_val:
+            if hasattr(existing, k):
+                rollback_old_value[k] = getattr(existing, k)
+
+        rollback_new_value: dict[str, Any] = {
+            "manual_override_flag": manual_override_flag,
+            "revision": new_revision,
+        }
+        for k in old_val:
+            if hasattr(restored_address, k):
+                rollback_new_value[k] = getattr(restored_address, k)
 
         audit_event_id = str(uuid4())
         corr_id = correlation_id or str(uuid4())
@@ -1756,6 +1802,8 @@ class InMemoryAddressLocationRepository:
             policy_refs=("ODP-INT-006:manual_correction_rollback",),
             evidence_refs=(f"correction:{correction_id}",),
             metrics={
+                "old_value": rollback_old_value,
+                "new_value": rollback_new_value,
                 "restored_fields": list(old_val.keys()),
                 "manual_override_flag": manual_override_flag,
             },
@@ -1775,7 +1823,10 @@ class InMemoryAddressLocationRepository:
                     "entity_id": address_id,
                     "tenant_id": existing.tenant_id,
                     "correction_id": correction_id,
+                    "old_value": rollback_old_value,
+                    "new_value": rollback_new_value,
                     "restored_values": old_val,
+                    "fields_updated": list(old_val.keys()),
                     "reason": reason.strip(),
                     "source_revision": existing.revision,
                     "applied_revision": new_revision,
@@ -1889,7 +1940,7 @@ class DurableAddressLocationRepository:
     def list_addresses(self, tenant_id: str | None = None) -> list[AddressLocation]:
         if tenant_id:
             rows = self._engine.query(
-                "SELECT * FROM address_locations WHERE tenant_id = ? OR tenant_id IS NULL OR tenant_id = ''",
+                "SELECT * FROM address_locations WHERE tenant_id = ?",
                 (tenant_id,),
             )
         else:
@@ -1951,7 +2002,9 @@ class DurableAddressLocationRepository:
             if existing is None:
                 raise KeyError(f"AddressLocation {address_id} not found")
 
-            if existing.tenant_id and existing.tenant_id != tenant_id:
+            existing_tenant = existing.tenant_id or ""
+            req_tenant = tenant_id or ""
+            if existing_tenant != req_tenant:
                 raise PermissionError("TENANT_SCOPE_DENIED")
 
             if expected_revision is not None and existing.revision != expected_revision:
@@ -1983,6 +2036,9 @@ class DurableAddressLocationRepository:
                     h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
                 except Exception:
                     pass
+                old_value["h3_res_8"] = existing.h3_res_8
+                old_value["h3_res_9"] = existing.h3_res_9
+                old_value["h3_res_10"] = existing.h3_res_10
 
             new_address = AddressLocation(
                 address_id=existing.address_id,
@@ -2002,7 +2058,7 @@ class DurableAddressLocationRepository:
                 h3_res_9=h3_res_9,
                 h3_res_10=h3_res_10,
                 manual_override_flag=True,
-                tenant_id=tenant_id or existing.tenant_id,
+                tenant_id=existing.tenant_id,
                 revision=new_revision,
             )
 
@@ -2012,6 +2068,10 @@ class DurableAddressLocationRepository:
             }
             for k in updates:
                 new_value[k] = getattr(new_address, k)
+            if "latitude" in updates or "longitude" in updates:
+                new_value["h3_res_8"] = h3_res_8
+                new_value["h3_res_9"] = h3_res_9
+                new_value["h3_res_10"] = h3_res_10
 
             correction_id = str(uuid4())
             audit_event_id = str(uuid4())
@@ -2053,7 +2113,7 @@ class DurableAddressLocationRepository:
                     metadata={
                         "entity_type": "address_location",
                         "entity_id": address_id,
-                        "tenant_id": tenant_id or existing.tenant_id,
+                        "tenant_id": existing.tenant_id,
                         "correction_id": correction_id,
                         "fields_updated": list(updates.keys()),
                         "old_value": old_value,
@@ -2071,7 +2131,7 @@ class DurableAddressLocationRepository:
                 correction_id=correction_id,
                 entity_type="address_location",
                 entity_id=address_id,
-                tenant_id=tenant_id or existing.tenant_id,
+                tenant_id=existing.tenant_id,
                 field_name=",".join(updates.keys()),
                 old_value=old_value,
                 new_value=new_value,
@@ -2119,7 +2179,9 @@ class DurableAddressLocationRepository:
             if existing is None:
                 raise KeyError(f"AddressLocation {address_id} not found")
 
-            if existing.tenant_id and existing.tenant_id != tenant_id:
+            existing_tenant = existing.tenant_id or ""
+            req_tenant = tenant_id or ""
+            if existing_tenant != req_tenant:
                 raise PermissionError("TENANT_SCOPE_DENIED")
 
             if expected_revision is not None and existing.revision != expected_revision:
@@ -2132,7 +2194,8 @@ class DurableAddressLocationRepository:
             if correction is None or correction.entity_id != address_id:
                 raise KeyError(f"Correction {correction_id} not found for address {address_id}")
 
-            if correction.tenant_id and correction.tenant_id != tenant_id:
+            corr_tenant = correction.tenant_id or ""
+            if corr_tenant != req_tenant:
                 raise PermissionError("TENANT_SCOPE_DENIED")
 
             if correction.status != "applied":
@@ -2171,6 +2234,24 @@ class DurableAddressLocationRepository:
                 ),
             }
 
+            restored_lat = restored_dict["latitude"]
+            restored_lng = restored_dict["longitude"]
+            restored_h3_8 = old_val.get("h3_res_8")
+            restored_h3_9 = old_val.get("h3_res_9")
+            restored_h3_10 = old_val.get("h3_res_10")
+            if (restored_h3_8 is None or restored_h3_9 is None or restored_h3_10 is None) and (restored_lat != 0.0 or restored_lng != 0.0):
+                try:
+                    import h3
+
+                    if restored_h3_8 is None:
+                        restored_h3_8 = h3.latlng_to_cell(restored_lat, restored_lng, 8)
+                    if restored_h3_9 is None:
+                        restored_h3_9 = h3.latlng_to_cell(restored_lat, restored_lng, 9)
+                    if restored_h3_10 is None:
+                        restored_h3_10 = h3.latlng_to_cell(restored_lat, restored_lng, 10)
+                except Exception:
+                    pass
+
             all_corrections = repo.list_corrections(
                 entity_type="address_location", entity_id=address_id
             )
@@ -2189,17 +2270,33 @@ class DurableAddressLocationRepository:
                 district=restored_dict["district"],
                 village=restored_dict["village"],
                 road=restored_dict["road"],
-                latitude=restored_dict["latitude"],
-                longitude=restored_dict["longitude"],
+                latitude=restored_lat,
+                longitude=restored_lng,
                 geocode_precision=restored_dict["geocode_precision"],
                 geocode_confidence=restored_dict["geocode_confidence"],
-                h3_res_8=existing.h3_res_8,
-                h3_res_9=existing.h3_res_9,
-                h3_res_10=existing.h3_res_10,
+                h3_res_8=restored_h3_8 or "",
+                h3_res_9=restored_h3_9 or "",
+                h3_res_10=restored_h3_10 or "",
                 manual_override_flag=manual_override_flag,
                 tenant_id=existing.tenant_id,
                 revision=new_revision,
             )
+
+            rollback_old_value: dict[str, Any] = {
+                "manual_override_flag": existing.manual_override_flag,
+                "revision": existing.revision,
+            }
+            for k in old_val:
+                if hasattr(existing, k):
+                    rollback_old_value[k] = getattr(existing, k)
+
+            rollback_new_value: dict[str, Any] = {
+                "manual_override_flag": manual_override_flag,
+                "revision": new_revision,
+            }
+            for k in old_val:
+                if hasattr(restored_address, k):
+                    rollback_new_value[k] = getattr(restored_address, k)
 
             audit_event_id = str(uuid4())
             corr_id = correlation_id or str(uuid4())
@@ -2220,6 +2317,8 @@ class DurableAddressLocationRepository:
                 policy_refs=("ODP-INT-006:manual_correction_rollback",),
                 evidence_refs=(f"correction:{correction_id}",),
                 metrics={
+                    "old_value": rollback_old_value,
+                    "new_value": rollback_new_value,
                     "restored_fields": list(old_val.keys()),
                     "manual_override_flag": manual_override_flag,
                 },
@@ -2240,7 +2339,10 @@ class DurableAddressLocationRepository:
                         "entity_id": address_id,
                         "tenant_id": existing.tenant_id,
                         "correction_id": correction_id,
+                        "old_value": rollback_old_value,
+                        "new_value": rollback_new_value,
                         "restored_values": old_val,
+                        "fields_updated": list(old_val.keys()),
                         "reason": reason.strip(),
                         "source_revision": existing.revision,
                         "applied_revision": new_revision,

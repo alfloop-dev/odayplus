@@ -321,3 +321,101 @@ def test_migration_0014_sql_and_alembic_structure() -> None:
     script_content = alembic_script_path.read_text(encoding="utf-8")
     assert 'revision: str = "0014"' in script_content
     assert 'down_revision: str | None = "0013"' in script_content
+
+
+def test_durable_sqlite_h3_restoration_and_tenant_isolation_regressions(tmp_path: Path) -> None:
+    """Integration Regression Test for SQLite: H3 cell restoration on rollback and strict tenant isolation."""
+    import h3
+
+    db_file = tmp_path / "regression_durable.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=db_file)
+    addr_repo = bundle.address_location_repository
+
+    # 1. Test Legacy NULL/Empty Tenant Protection on SQLite
+    untenanted_id = str(uuid4())
+    untenanted_addr = AddressLocation(
+        address_id=untenanted_id,
+        raw_address="Legacy Global Address",
+        latitude=25.0330,
+        longitude=121.5654,
+        manual_override_flag=False,
+        tenant_id="",
+        revision=1,
+    )
+    addr_repo.save_address(untenanted_addr)
+
+    # Cross-tenant modification/claim attempt on un-tenanted record MUST raise PermissionError
+    import pytest
+    with pytest.raises(PermissionError):
+        addr_repo.apply_correction(
+            untenanted_id,
+            updates={"latitude": 25.0400},
+            reason="Illegal attempt to claim un-tenanted record",
+            actor_id="tenant-beta-user",
+            tenant_id="tenant-beta",
+        )
+
+    # Ensure list_addresses for tenant-beta does NOT leak un-tenanted row
+    assert not any(a.address_id == untenanted_id for a in addr_repo.list_addresses(tenant_id="tenant-beta"))
+
+    # 2. Test H3 Cell Restoration and Self-Contained Snapshots on SQLite
+    tenanted_id = str(uuid4())
+    orig_lat, orig_lng = 25.0330, 121.5654
+    orig_h3_8 = h3.latlng_to_cell(orig_lat, orig_lng, 8)
+    orig_h3_9 = h3.latlng_to_cell(orig_lat, orig_lng, 9)
+    orig_h3_10 = h3.latlng_to_cell(orig_lat, orig_lng, 10)
+
+    tenanted_addr = AddressLocation(
+        address_id=tenanted_id,
+        raw_address="Taipei 101 Base",
+        latitude=orig_lat,
+        longitude=orig_lng,
+        h3_res_8=orig_h3_8,
+        h3_res_9=orig_h3_9,
+        h3_res_10=orig_h3_10,
+        manual_override_flag=False,
+        tenant_id="tenant-alpha",
+        revision=1,
+    )
+    addr_repo.save_address(tenanted_addr)
+
+    # Apply coordinate correction
+    corr_lat, corr_lng = 25.0450, 121.5200
+    updated_addr, corr, dec_card = addr_repo.apply_correction(
+        tenanted_id,
+        updates={"latitude": corr_lat, "longitude": corr_lng},
+        reason="Updated coordinates for site entrance",
+        actor_id="reviewer-alpha",
+        tenant_id="tenant-alpha",
+    )
+    assert updated_addr.h3_res_8 != orig_h3_8
+    assert updated_addr.h3_res_8 == h3.latlng_to_cell(corr_lat, corr_lng, 8)
+
+    # Rollback coordinate correction
+    restored_addr, rolled_corr, rb_card = addr_repo.rollback_correction(
+        tenanted_id,
+        corr.correction_id,
+        reason="Reverting coordinate override back to original",
+        actor_id="admin-alpha",
+        tenant_id="tenant-alpha",
+    )
+
+    # Verify restored coordinates and restored H3 cells
+    assert restored_addr.latitude == orig_lat
+    assert restored_addr.longitude == orig_lng
+    assert restored_addr.h3_res_8 == orig_h3_8
+    assert restored_addr.h3_res_9 == orig_h3_9
+    assert restored_addr.h3_res_10 == orig_h3_10
+
+    # Verify self-contained rollback snapshots in decision card metrics
+    assert rb_card.metrics["old_value"]["latitude"] == corr_lat
+    assert rb_card.metrics["old_value"]["h3_res_8"] == h3.latlng_to_cell(corr_lat, corr_lng, 8)
+    assert rb_card.metrics["new_value"]["latitude"] == orig_lat
+    assert rb_card.metrics["new_value"]["h3_res_8"] == orig_h3_8
+
+    # Verify self-contained snapshots in audit log
+    events = bundle.audit_log.list_events()
+    rb_event = [e for e in events if e.action == "rollback_manual_override"][-1]
+    assert rb_event.metadata["old_value"]["latitude"] == corr_lat
+    assert rb_event.metadata["new_value"]["latitude"] == orig_lat
+    assert bundle.audit_log.verify_chain().ok is True
