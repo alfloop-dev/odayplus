@@ -41,6 +41,7 @@ from shared.infrastructure.persistence.outbox import (
     DurableOutboxRepository,
     InMemoryOutboxRepository,
 )
+from shared.infrastructure.persistence.operator_comments import DurableCommentRepository
 from shared.infrastructure.persistence.postgresql import (
     PostgresDocumentStore,
     PostgresEngine,
@@ -88,6 +89,7 @@ __all__ = [
     "DurableAdLiftRepository",
     "DurableArtifactStore",
     "DurableAuditLog",
+    "DurableCommentRepository",
     "DurableDecisionStore",
     "DurableDecisionPolicyRepository",
     "DurableForecastOpsRepository",
