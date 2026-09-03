@@ -119,6 +119,130 @@ def test_expired_helper_execution_leases_are_reported_without_changing_owner() -
     assert capacity_controller.expired_helper_claim_task_ids([task], now=NOW) == []
 
 
+def test_bound_helper_claim_release_requires_a_live_matching_run() -> None:
+    def claim(run_id: str | None, generation: int = 1, expires: str = "2026-08-20T11:59:59Z") -> dict:
+        value = {
+            "claimed_by": "Codex",
+            "generation": generation,
+            "lease_expires_at": expires,
+        }
+        if run_id is not None:
+            value["run_id"] = run_id
+        return value
+
+    def worker(run_id: str, heartbeat: str, *, status: str = "running") -> dict:
+        task = {
+            "id": "LIVE-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim(run_id),
+        }
+        return {
+            "run_id": run_id,
+            "task_id": "LIVE-HELPER-001",
+            "logical_agent_id": "Codex",
+            "status": status,
+            "last_heartbeat_at": heartbeat,
+            "request_snapshot": {
+                "reason": "helper_claim_dispatch",
+                "metadata": {"task": task},
+            },
+        }
+
+    tasks = [
+        {
+            "id": "LIVE-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim(
+                "live-run",
+                expires="2026-08-20T11:59:59Z",
+            ),
+        },
+        {
+            "id": "STALE-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim("stale-run"),
+        },
+        {
+            "id": "MISSING-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim("missing-run"),
+        },
+        {
+            "id": "PRELAUNCH-HELPER-001",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": claim(
+                None,
+                expires="2026-08-20T12:05:00Z",
+            ),
+        },
+    ]
+    runtime_state = {
+        "workers": {
+            "live-run": worker("live-run", "2026-08-20T11:59:30Z"),
+            "stale-run": worker("stale-run", "2026-08-20T11:50:00Z"),
+        }
+    }
+    runtime_state["workers"]["stale-run"]["task_id"] = "STALE-HELPER-001"
+    runtime_state["workers"]["stale-run"]["request_snapshot"]["metadata"]["task"]["id"] = "STALE-HELPER-001"
+
+    released = capacity_controller.helper_claim_task_ids_to_release(
+        config(),
+        tasks,
+        runtime_state,
+        now=NOW,
+    )
+
+    assert released == ["STALE-HELPER-001", "MISSING-HELPER-001"]
+
+
+def test_helper_claim_release_clears_terminal_and_unbound_failed_launches() -> None:
+    tasks = [
+        {
+            "id": "TERMINAL-HELPER-001",
+            "status": "review",
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 1,
+                "run_id": "terminal-run",
+                "lease_expires_at": "2026-09-30T12:00:00Z",
+            },
+        },
+        {
+            "id": "FAILED-LAUNCH-001",
+            "status": "todo",
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 2,
+                "lease_expires_at": "2026-09-30T12:00:00Z",
+            },
+        },
+    ]
+    runtime_state = {
+        "workers": {
+            "failed-run": {
+                "run_id": "failed-run",
+                "task_id": "FAILED-LAUNCH-001",
+                "status": "failed",
+                "request_snapshot": {"reason": "helper_claim_dispatch"},
+            }
+        }
+    }
+
+    assert capacity_controller.helper_claim_task_ids_to_release(
+        config(), tasks, runtime_state, now=NOW
+    ) == ["TERMINAL-HELPER-001", "FAILED-LAUNCH-001"]
+
+
 def test_capacity_snapshot_excludes_human_gate_non_dispatchable_review_and_blocked() -> None:
     tasks = [
         {"id": "HG-001", "status": "todo", "owner": "Human/Ops", "task_class": "human_gate"},
@@ -891,4 +1015,3 @@ def test_claude_auth_status_logged_in_but_oauth_inference_expired_regression() -
     assert snapshot["configured_slot_total"] == 8
     assert snapshot["slot_total"] == 6
     assert snapshot["available_slots"] == 6
-
