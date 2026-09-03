@@ -207,6 +207,36 @@
           "note": "Performance drift compares observed metrics against baseline_metrics using absolute/relative degradation thresholds and governed decision policies."
         }
       ]
+    },
+    {
+      "id": "ODP-FR-FCT-004",
+      "statement": "系統必須提供成長階段、轉折機率、異常證據與根因候選。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "TRAJECTORY_CLASS",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.trajectory_class",
+          "note": "ForecastOutput carries trajectory_class ('growing', 'mature', 'declining', 'plateau') per ODP-FR-FCT-004."
+        },
+        {
+          "name": "TURNING_POINT_PROBABILITY",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.turning_point_probability",
+          "note": "ForecastOutput carries turning_point_probability per ODP-FR-FCT-004."
+        },
+        {
+          "name": "ANOMALY_EVIDENCE",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::Alert.evidence_json",
+          "note": "Alert carries structured anomaly evidence in evidence_json per ODP-FR-FCT-004."
+        },
+        {
+          "name": "ROOT_CAUSE_CANDIDATE",
+          "status": "absent",
+          "note": "DECIDED 2026-09-03 under ODP-FCT-ROOT-CAUSE-CONTRACT-001: No automated root-cause deduction producer exists in current production tree. The schema field is explicitly marked RESERVED with designated Owner (ForecastOps / Platform Ops) and Target Milestone (Wave 5+). Do not synthesize a fake producer."
+        }
+      ]
     }
   ]
 }

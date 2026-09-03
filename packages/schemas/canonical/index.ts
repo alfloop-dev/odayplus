@@ -127,6 +127,11 @@ export interface WorkOrder {
   status: 'open' | 'in_progress' | 'resolved' | 'cancelled';
   severity: 'low' | 'medium' | 'high' | 'critical';
   cost_amount: number;
+  /**
+   * @reserved Reserved for future root-cause candidate engine (ODP-FR-FCT-004).
+   * Not populated by any automated backend pipeline in the current release.
+   * Owner: ForecastOps / Platform Ops. Target Milestone: Wave 5+.
+   */
   root_cause: string | null;
 }
 
