@@ -36,7 +36,11 @@ select
     {{ var('prediction_origin_time', 'current_timestamp') }}::timestamptz as prediction_origin_time,
     array['geo.h3_cells', 'geo.pois', 'geo.competitor_stores', 'expansion.listings'] as source_snapshot_ids,
     case when h3_cells.h3_index is not null then 1.0 else 0.0 end as data_quality_score,
-    least(coalesce(poi_counts.poi_confidence, 1.0), coalesce(competitor_counts.competitor_confidence, 1.0)) as confidence,
+    case
+        when poi_counts.poi_confidence is not null and competitor_counts.competitor_confidence is not null
+            then least(poi_counts.poi_confidence, competitor_counts.competitor_confidence)
+        else null
+    end as confidence,
     true as is_training_eligible,
     true as is_scoring_eligible,
     '' as exclusion_reason,

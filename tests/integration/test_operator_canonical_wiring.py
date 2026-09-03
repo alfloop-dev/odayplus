@@ -459,6 +459,13 @@ def test_rebalance_invokes_avm_and_netplan_oss_and_persists_results(
         assert "isStale" in solved_scenarios[0]
         assert "isInfeasible" in solved_scenarios[0]
         assert "diagnostics" in solved_scenarios[0]
+        assert "modelledConstraintClasses" in solved_scenarios[0]
+        assert "unmodelledConstraintClasses" in solved_scenarios[0]
+        assert solved_scenarios[0]["modelledConstraintClasses"] == ["CAPITAL"]
+        assert "LEASE" in solved_scenarios[0]["unmodelledConstraintClasses"]
+        assert "SEQUENCING" in solved_scenarios[0]["unmodelledConstraintClasses"]
+        assert solved_scenarios[0]["modelled_constraint_classes"] == ["CAPITAL"]
+        assert "LEASE" in solved_scenarios[0]["unmodelled_constraint_classes"]
         durable_solve = harness.netplan("tenant-a").get_solve(scenario_id)
         assert durable_solve is not None
         assert durable_solve.result.solver_version == "netplan-ortools-cp-sat-v2"
