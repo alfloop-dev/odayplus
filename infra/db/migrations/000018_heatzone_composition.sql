@@ -113,6 +113,11 @@ CREATE TABLE IF NOT EXISTS expansion.heatzone_proposals (
     correlation_rho                 NUMERIC(8, 4) NOT NULL DEFAULT 0.0,
     disconnect_index                NUMERIC(8, 4) NOT NULL DEFAULT 0.0,
     split_density_ratio             NUMERIC(8, 2),
+    -- Every side of a split, as an array of member-cell arrays. A split is
+    -- approved as one decision, so the whole division has to be on the row an
+    -- operator approves; a per-child proposal could be approved alone, retiring
+    -- the parent and leaving the other side's cells in no active zone.
+    child_partitions                JSONB NOT NULL DEFAULT '[]'::jsonb,
     confidence                      NUMERIC(8, 4) NOT NULL DEFAULT 0.0,
     model_version                   VARCHAR(100) NOT NULL DEFAULT 'heatzone-composition-v1',
     policy_version_id               VARCHAR(100) NOT NULL,
@@ -126,6 +131,17 @@ CREATE TABLE IF NOT EXISTS expansion.heatzone_proposals (
 
     CONSTRAINT chk_proposal_status CHECK (
         status IN ('PROPOSED', 'APPROVED', 'REJECTED', 'APPLIED')
+    ),
+    -- A split names at least two children; anything else names none.
+    CONSTRAINT chk_proposal_child_partitions CHECK (
+        jsonb_typeof(child_partitions) = 'array'
+        AND (
+            (composition_kind =  'SPLIT_CHILD' AND jsonb_array_length(child_partitions) >= 2)
+         OR (composition_kind <> 'SPLIT_CHILD' AND jsonb_array_length(child_partitions) =  0)
+        )
+    ),
+    CONSTRAINT chk_proposal_split_parent CHECK (
+        composition_kind <> 'SPLIT_CHILD' OR parent_zone_id IS NOT NULL
     ),
     CONSTRAINT fk_heatzone_proposals_policy
         FOREIGN KEY (policy_version_id, tenant_id)

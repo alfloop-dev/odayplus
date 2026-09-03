@@ -18,6 +18,7 @@ from modules.heatzone.domain.composition import (
     MergeSplitProposalRecord,
     ProposalStatus,
     ZoneLineage,
+    approval_zone_assignments,
     validate_composition_record,
 )
 
@@ -287,6 +288,51 @@ class InMemoryHeatZoneCompositionRepository:
         ]
         return sorted(results, key=lambda p: p.created_at, reverse=True)
 
+    def _apply_approval(
+        self,
+        prop: MergeSplitProposalRecord,
+        *,
+        tenant_id: str,
+        approved_by: str,
+        reason: str,
+        now: datetime,
+    ) -> list[HeatZoneCompositionRecord]:
+        """Retire what the proposal replaces and create everything it proposes."""
+        # Soft-revert any existing active compositions for member cells
+        for cell_id in prop.member_cell_ids:
+            active_comp = self.get_active_for_cell(cell_id, tenant_id)
+            if active_comp is not None:
+                self.revert_composition(active_comp.zone_id, tenant_id, reverted_at=now)
+
+        # If SPLIT_CHILD and parent zone is active, soft-revert parent zone
+        if prop.composition_kind == CompositionKind.SPLIT_CHILD and prop.parent_zone_id:
+            parent_active = [
+                r for r in self._records
+                if r.tenant_id == tenant_id and r.zone_id == prop.parent_zone_id and r.is_active
+            ]
+            if parent_active:
+                self.revert_composition(prop.parent_zone_id, tenant_id, reverted_at=now)
+
+        created_records: list[HeatZoneCompositionRecord] = []
+        for zone_id, member_ids in approval_zone_assignments(prop):
+            for cell_id in member_ids:
+                rec = HeatZoneCompositionRecord(
+                    zone_id=zone_id,
+                    tenant_id=tenant_id,
+                    member_cell_id=cell_id,
+                    composition_kind=prop.composition_kind,
+                    parent_zone_id=prop.parent_zone_id,
+                    decided_by=approved_by,
+                    decided_at=now,
+                    decision_policy_version_id=prop.policy_version_id,
+                    model_version=prop.model_version,
+                    override_reason=reason,
+                    reverted_at=None,
+                    created_at=now,
+                )
+                created_records.append(self.save_composition(rec))
+        return created_records
+
     def approve_proposal(
         self,
         proposal_id: str,
@@ -303,39 +349,18 @@ class InMemoryHeatZoneCompositionRepository:
         now = datetime.now(UTC)
         reason = notes or f"Operator approval for proposal {proposal_id}"
 
-        # Soft-revert any existing active compositions for member cells
-        for cell_id in prop.member_cell_ids:
-            active_comp = self.get_active_for_cell(cell_id, tenant_id)
-            if active_comp is not None:
-                self.revert_composition(active_comp.zone_id, tenant_id, reverted_at=now)
-
-        # If SPLIT_CHILD and parent zone is active, soft-revert parent zone
-        if prop.composition_kind == CompositionKind.SPLIT_CHILD and prop.parent_zone_id:
-            parent_active = [
-                r for r in self._records
-                if r.tenant_id == tenant_id and r.zone_id == prop.parent_zone_id and r.is_active
-            ]
-            if parent_active:
-                self.revert_composition(prop.parent_zone_id, tenant_id, reverted_at=now)
-
-        # Create new composition records
-        created_records: list[HeatZoneCompositionRecord] = []
-        for cell_id in prop.member_cell_ids:
-            rec = HeatZoneCompositionRecord(
-                zone_id=prop.zone_id,
-                tenant_id=tenant_id,
-                member_cell_id=cell_id,
-                composition_kind=prop.composition_kind,
-                parent_zone_id=prop.parent_zone_id,
-                decided_by=approved_by,
-                decided_at=now,
-                decision_policy_version_id=prop.policy_version_id,
-                model_version=prop.model_version,
-                override_reason=reason,
-                reverted_at=None,
-                created_at=now,
+        # Approval either lands the whole topology or leaves the previous one
+        # untouched. Without this, a member cell that fails the active-uniqueness
+        # check part-way through would leave the parent already retired and only
+        # some children created -- exactly the state a split must never reach.
+        records_before = list(self._records)
+        try:
+            created_records = self._apply_approval(
+                prop, tenant_id=tenant_id, approved_by=approved_by, reason=reason, now=now
             )
-            created_records.append(self.save_composition(rec))
+        except Exception:
+            self._records = records_before
+            raise
 
         # Update proposal state
         updated_prop = MergeSplitProposalRecord(
@@ -354,6 +379,7 @@ class InMemoryHeatZoneCompositionRepository:
             policy_version_id=prop.policy_version_id,
             status=ProposalStatus.APPROVED,
             split_density_ratio=prop.split_density_ratio,
+            child_partitions=prop.child_partitions,
             reasons=prop.reasons,
             warnings=prop.warnings,
             created_at=prop.created_at,
@@ -396,6 +422,7 @@ class InMemoryHeatZoneCompositionRepository:
             policy_version_id=prop.policy_version_id,
             status=ProposalStatus.REJECTED,
             split_density_ratio=prop.split_density_ratio,
+            child_partitions=prop.child_partitions,
             reasons=prop.reasons,
             warnings=prop.warnings,
             created_at=prop.created_at,

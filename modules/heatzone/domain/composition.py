@@ -171,7 +171,15 @@ class ProposalStatus(StrEnum):
 
 @dataclass(frozen=True)
 class MergeSplitProposalRecord:
-    """Persisted heat-zone merge/split proposal for Operator preview and approval."""
+    """Persisted heat-zone merge/split proposal for Operator preview and approval.
+
+    A split is one proposal, not one proposal per child. `child_partitions`
+    carries every side of the division, so approving it either lands the whole
+    new topology or lands none of it. Emitting a proposal per child would let an
+    operator approve one side, retire the parent, and leave the other side's
+    cells in no active zone at all -- a state no later approval can repair,
+    because the parent it would have to be split from is already gone.
+    """
 
     proposal_id: str
     zone_id: str
@@ -188,12 +196,20 @@ class MergeSplitProposalRecord:
     policy_version_id: str
     status: ProposalStatus = ProposalStatus.PROPOSED
     split_density_ratio: float | None = None
+    child_partitions: tuple[tuple[str, ...], ...] = ()
     reasons: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     approved_by: str | None = None
     approved_at: datetime | None = None
     rejection_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        validate_proposal_record(self)
+
+    def child_zone_ids(self) -> tuple[str, ...]:
+        """Deterministic zone id for each child, in partition order."""
+        return tuple(generate_merged_zone_id(part) for part in self.child_partitions)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -209,6 +225,8 @@ class MergeSplitProposalRecord:
             "correlation_rho": self.correlation_rho,
             "disconnect_index": self.disconnect_index,
             "split_density_ratio": self.split_density_ratio,
+            "child_partitions": [list(part) for part in self.child_partitions],
+            "child_zone_ids": list(self.child_zone_ids()),
             "confidence": self.confidence,
             "model_version": self.model_version,
             "policy_version_id": self.policy_version_id,
@@ -243,6 +261,9 @@ class MergeSplitProposalRecord:
             policy_version_id=str(data.get("policy_version_id", "")),
             status=status,
             split_density_ratio=float(data["split_density_ratio"]) if data.get("split_density_ratio") is not None else None,
+            child_partitions=tuple(
+                tuple(str(cell) for cell in part) for part in data.get("child_partitions", ())
+            ),
             reasons=tuple(str(x) for x in data.get("reasons", ())),
             warnings=tuple(str(x) for x in data.get("warnings", ())),
             created_at=parse_datetime(data.get("created_at")),
@@ -250,6 +271,71 @@ class MergeSplitProposalRecord:
             approved_at=parse_datetime(data["approved_at"]) if data.get("approved_at") else None,
             rejection_reason=str(data["rejection_reason"]) if data.get("rejection_reason") else None,
         )
+
+
+def validate_proposal_record(record: MergeSplitProposalRecord) -> None:
+    """Hold the invariants that make a split approvable in one step.
+
+    A split proposal that does not describe the whole division is not a smaller
+    split, it is an unapplyable one: approving it retires the parent zone and
+    leaves whatever it failed to mention outside every active zone.
+    """
+    if record.composition_kind != CompositionKind.SPLIT_CHILD:
+        if record.child_partitions:
+            raise CompositionValidationError(
+                f"{record.composition_kind} proposal must not carry child_partitions; "
+                "only a split divides a zone"
+            )
+        return
+
+    if not record.parent_zone_id:
+        raise CompositionValidationError("SPLIT_CHILD proposal must specify parent_zone_id")
+
+    if len(record.child_partitions) < 2:
+        raise CompositionValidationError(
+            f"SPLIT_CHILD proposal '{record.proposal_id}' carries "
+            f"{len(record.child_partitions)} child partition(s); a split is only "
+            "approvable as the whole division, so it needs at least 2"
+        )
+
+    seen: set[str] = set()
+    for index, part in enumerate(record.child_partitions, start=1):
+        if not part:
+            raise CompositionValidationError(
+                f"child partition {index} of proposal '{record.proposal_id}' is empty"
+            )
+        overlap = seen & set(part)
+        if overlap:
+            raise CompositionValidationError(
+                f"cell(s) {sorted(overlap)} appear in more than one child partition of "
+                f"proposal '{record.proposal_id}'; a cell belongs to exactly one child"
+            )
+        seen.update(part)
+
+    if seen != set(record.member_cell_ids):
+        missing = sorted(set(record.member_cell_ids) - seen)
+        extra = sorted(seen - set(record.member_cell_ids))
+        raise CompositionValidationError(
+            f"child partitions of proposal '{record.proposal_id}' do not cover its members "
+            f"exactly (unassigned: {missing}, not a member: {extra})"
+        )
+
+
+def approval_zone_assignments(
+    record: MergeSplitProposalRecord,
+) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """The zones an approval of `record` must create, and their members.
+
+    A merge lands one zone; a split lands one zone per child partition. Both
+    repository implementations route through this so the durable and in-memory
+    approvals cannot drift into producing different topologies from the same
+    proposal.
+    """
+    if record.composition_kind == CompositionKind.SPLIT_CHILD:
+        return tuple(
+            (generate_merged_zone_id(part), tuple(part)) for part in record.child_partitions
+        )
+    return ((record.zone_id, tuple(record.member_cell_ids)),)
 
 
 @dataclass(frozen=True)
@@ -298,7 +384,9 @@ __all__ = [
     "ProposalStatus",
     "ZONE_ID_REGEX",
     "ZoneLineage",
+    "approval_zone_assignments",
     "generate_merged_zone_id",
     "parse_datetime",
     "validate_composition_record",
+    "validate_proposal_record",
 ]

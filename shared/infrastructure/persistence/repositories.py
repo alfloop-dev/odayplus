@@ -49,6 +49,7 @@ from modules.heatzone.domain.composition import (
     MergeSplitProposalRecord,
     ProposalStatus,
     ZoneLineage,
+    approval_zone_assignments,
     parse_datetime,
     validate_composition_record,
 )
@@ -2122,6 +2123,7 @@ class DurableHeatZoneCompositionRepository:
                 correlation_rho REAL NOT NULL DEFAULT 0.0,
                 disconnect_index REAL NOT NULL DEFAULT 0.0,
                 split_density_ratio REAL,
+                child_partitions TEXT NOT NULL DEFAULT '[]',
                 confidence REAL NOT NULL DEFAULT 0.0,
                 model_version TEXT NOT NULL,
                 policy_version_id TEXT NOT NULL,
@@ -2164,6 +2166,11 @@ class DurableHeatZoneCompositionRepository:
                 data["warnings"] = json.loads(data["warnings"])
             except Exception:
                 data["warnings"] = []
+        if isinstance(data.get("child_partitions"), str):
+            try:
+                data["child_partitions"] = json.loads(data["child_partitions"])
+            except Exception:
+                data["child_partitions"] = []
         return MergeSplitProposalRecord.from_dict(data)
 
     @contextmanager
@@ -2338,16 +2345,17 @@ class DurableHeatZoneCompositionRepository:
         member_cells_json = json.dumps(list(proposal.member_cell_ids))
         reasons_json = json.dumps(list(proposal.reasons))
         warnings_json = json.dumps(list(proposal.warnings))
+        child_partitions_json = json.dumps([list(part) for part in proposal.child_partitions])
         self._engine.execute(
             f"""
             INSERT INTO {self.table_proposals} (
                 proposal_id, zone_id, tenant_id, composition_kind,
                 member_cell_ids, parent_zone_id, ndcg_gain,
                 cannibalization_variance_reduction, correlation_rho,
-                disconnect_index, split_density_ratio, confidence,
+                disconnect_index, split_density_ratio, child_partitions, confidence,
                 model_version, policy_version_id, status, reasons,
                 warnings, created_at, approved_by, approved_at, rejection_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(proposal_id) DO UPDATE SET
                 status = excluded.status,
                 approved_by = excluded.approved_by,
@@ -2366,6 +2374,7 @@ class DurableHeatZoneCompositionRepository:
                 proposal.correlation_rho,
                 proposal.disconnect_index,
                 proposal.split_density_ratio,
+                child_partitions_json,
                 proposal.confidence,
                 proposal.model_version,
                 proposal.policy_version_id,
@@ -2433,23 +2442,28 @@ class DurableHeatZoneCompositionRepository:
                 if any(r.is_active for r in parent_comps):
                     self.revert_composition(prop.parent_zone_id, tenant_id, reverted_at=now)
 
+            # A split lands one zone per child partition, a merge one zone; the
+            # whole assignment happens inside this transaction, so an approval
+            # that cannot create every child creates none of them and leaves the
+            # parent standing.
             created_records: list[HeatZoneCompositionRecord] = []
-            for cell_id in prop.member_cell_ids:
-                rec = HeatZoneCompositionRecord(
-                    zone_id=prop.zone_id,
-                    tenant_id=tenant_id,
-                    member_cell_id=cell_id,
-                    composition_kind=prop.composition_kind,
-                    parent_zone_id=prop.parent_zone_id,
-                    decided_by=approved_by,
-                    decided_at=now,
-                    decision_policy_version_id=prop.policy_version_id,
-                    model_version=prop.model_version,
-                    override_reason=reason,
-                    reverted_at=None,
-                    created_at=now,
-                )
-                created_records.append(self.save_composition(rec))
+            for zone_id, member_ids in approval_zone_assignments(prop):
+                for cell_id in member_ids:
+                    rec = HeatZoneCompositionRecord(
+                        zone_id=zone_id,
+                        tenant_id=tenant_id,
+                        member_cell_id=cell_id,
+                        composition_kind=prop.composition_kind,
+                        parent_zone_id=prop.parent_zone_id,
+                        decided_by=approved_by,
+                        decided_at=now,
+                        decision_policy_version_id=prop.policy_version_id,
+                        model_version=prop.model_version,
+                        override_reason=reason,
+                        reverted_at=None,
+                        created_at=now,
+                    )
+                    created_records.append(self.save_composition(rec))
 
             updated_prop = MergeSplitProposalRecord(
                 proposal_id=prop.proposal_id,
@@ -2467,6 +2481,7 @@ class DurableHeatZoneCompositionRepository:
                 policy_version_id=prop.policy_version_id,
                 status=ProposalStatus.APPROVED,
                 split_density_ratio=prop.split_density_ratio,
+                child_partitions=prop.child_partitions,
                 reasons=prop.reasons,
                 warnings=prop.warnings,
                 created_at=prop.created_at,
@@ -2510,6 +2525,7 @@ class DurableHeatZoneCompositionRepository:
                 policy_version_id=prop.policy_version_id,
                 status=ProposalStatus.REJECTED,
                 split_density_ratio=prop.split_density_ratio,
+                child_partitions=prop.child_partitions,
                 reasons=prop.reasons,
                 warnings=prop.warnings,
                 created_at=prop.created_at,

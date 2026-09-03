@@ -154,6 +154,7 @@ class MergeSplitProposal:
     model_version: str
     policy_version_id: str
     split_density_ratio: float | None = None
+    child_partitions: tuple[tuple[str, ...], ...] = ()
     reasons: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
 
@@ -171,6 +172,7 @@ class MergeSplitProposal:
             "correlation_rho": self.correlation_rho,
             "disconnect_index": self.disconnect_index,
             "split_density_ratio": self.split_density_ratio,
+            "child_partitions": [list(part) for part in self.child_partitions],
             "confidence": self.confidence,
             "model_version": self.model_version,
             "policy_version_id": self.policy_version_id,
@@ -191,6 +193,7 @@ class MergeSplitProposal:
             correlation_rho=self.correlation_rho,
             disconnect_index=self.disconnect_index,
             split_density_ratio=self.split_density_ratio,
+            child_partitions=self.child_partitions,
             confidence=self.confidence,
             model_version=self.model_version,
             policy_version_id=self.policy_version_id,
@@ -1042,33 +1045,42 @@ def _evaluate_splits(
             "recorded_natural_barrier",
         )
 
-        for index, side in enumerate((side_a, side_b), start=1):
-            member_ids = tuple(sorted(sides[side]))
-            proposals.append(
-                MergeSplitProposal(
-                    proposal_id=str(uuid4()),
-                    zone_id=generate_merged_zone_id(member_ids),
-                    tenant_id=policy.tenant_id,
-                    composition_kind=CompositionKind.SPLIT_CHILD,
-                    member_cell_ids=member_ids,
-                    parent_zone_id=zone.zone_id,
-                    ndcg_gain=0.0,
-                    cannibalization_variance_reduction=0.0,
-                    correlation_rho=round(rho, 4) if rho is not None else 0.0,
-                    disconnect_index=round(disconnect, 4) if disconnect is not None else 0.0,
-                    split_density_ratio=round(density_ratio, 2),
-                    confidence=round(min(1.0, density_ratio / (2.0 * min_split_ratio)), 4),
-                    model_version=model_version,
-                    policy_version_id=policy.policy_version_id,
-                    reasons=(
-                        f"side_labelled_absorption_density_ratio_{density_ratio:.2f}",
-                        f"measured_over_{len(shared)}_shared_periods",
-                        f"barrier:{barrier}",
-                        f"child_partition_{index}_of_2_side_{side}",
-                        f"source_snapshot:{source_snapshot_id}",
-                    ),
-                )
+        # One proposal for the whole division, not one per side. The operator
+        # decides a topology, and half a topology is not a smaller decision:
+        # approving one side alone would retire the parent and strand the other
+        # side's cells outside every active zone, with no parent left to split
+        # them from.
+        child_partitions = tuple(tuple(sorted(sides[side])) for side in (side_a, side_b))
+        all_members = tuple(sorted(cell for part in child_partitions for cell in part))
+        proposals.append(
+            MergeSplitProposal(
+                proposal_id=str(uuid4()),
+                # A split is about the zone being divided, so the proposal is
+                # filed under the parent; the children get their own
+                # deterministic ids from their partitions at approval time.
+                zone_id=zone.zone_id,
+                tenant_id=policy.tenant_id,
+                composition_kind=CompositionKind.SPLIT_CHILD,
+                member_cell_ids=all_members,
+                parent_zone_id=zone.zone_id,
+                child_partitions=child_partitions,
+                ndcg_gain=0.0,
+                cannibalization_variance_reduction=0.0,
+                correlation_rho=round(rho, 4) if rho is not None else 0.0,
+                disconnect_index=round(disconnect, 4) if disconnect is not None else 0.0,
+                split_density_ratio=round(density_ratio, 2),
+                confidence=round(min(1.0, density_ratio / (2.0 * min_split_ratio)), 4),
+                model_version=model_version,
+                policy_version_id=policy.policy_version_id,
+                reasons=(
+                    f"side_labelled_absorption_density_ratio_{density_ratio:.2f}",
+                    f"measured_over_{len(shared)}_shared_periods",
+                    f"barrier:{barrier}",
+                    f"divides_into_{len(child_partitions)}_children_sides_{side_a}_{side_b}",
+                    f"source_snapshot:{source_snapshot_id}",
+                ),
             )
+        )
 
     return proposals
 
