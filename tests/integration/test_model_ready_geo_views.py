@@ -855,3 +855,76 @@ def test_postgresql_install_validation_failure_rolls_back_ddl_and_registry(
         assert connection.execute(
             "SELECT to_regclass('model_ready.view_contracts')"
         ).fetchone() == (None,)
+
+
+def test_model_ready_views_propagate_null_measurements_and_avoid_fake_defaults(
+    intake_blank_db,
+) -> None:
+    with intake_blank_db.connect() as connection:
+        _install_minimal_authoritative_schema(connection)
+        tenant_a, target_a, tenant_c, target_c, daily_runs = _seed_point_in_time_history(connection)
+        connection.execute(MODEL_READY_SQL)
+
+        # 1. Reverse test: When geocode_confidence is NULL, candidate_site_view confidence must be NULL (not 1.0 or 0.0)
+        connection.execute(
+            """
+            UPDATE data_plane.place_geography
+            SET geocode_confidence = NULL
+            WHERE store_id = %s
+            """,
+            (target_a,),
+        )
+        site_null_row = connection.execute(
+            """
+            SELECT confidence
+            FROM model_ready.candidate_site_view
+            WHERE tenant_id = %s AND store_id = %s
+            """,
+            (tenant_a, target_a),
+        ).fetchone()
+        assert site_null_row is not None
+        assert site_null_row[0] is None, (
+            f"Expected NULL confidence for missing geocode, got {site_null_row[0]}"
+        )
+
+        # 2. Positive test: When geocode_confidence is explicitly measured (e.g. 0.65), confidence must reflect 0.65
+        connection.execute(
+            """
+            UPDATE data_plane.place_geography
+            SET geocode_confidence = 0.65
+            WHERE store_id = %s
+            """,
+            (target_a,),
+        )
+        site_measured_row = connection.execute(
+            """
+            SELECT confidence
+            FROM model_ready.candidate_site_view
+            WHERE tenant_id = %s AND store_id = %s
+            """,
+            (tenant_a, target_a),
+        ).fetchone()
+        assert site_measured_row is not None
+        assert site_measured_row[0] == pytest.approx(0.65)
+
+        # 3. HeatZone: When average geocode confidence is NULL, confidence must be NULL
+        connection.execute(
+            """
+            UPDATE data_plane.place_geography
+            SET geocode_confidence = NULL
+            WHERE tenant_id = %s AND h3_res_9 = %s
+            """,
+            (tenant_a, H3_INDEX),
+        )
+        zone_null_row = connection.execute(
+            """
+            SELECT confidence
+            FROM model_ready.heatzone_training_view
+            WHERE tenant_id = %s AND h3_index = %s AND origin_date = %s
+            """,
+            (tenant_a, H3_INDEX, ORIGIN),
+        ).fetchone()
+        assert zone_null_row is not None
+        assert zone_null_row[0] is None, (
+            f"Expected NULL confidence for heatzone when unmeasured, got {zone_null_row[0]}"
+        )

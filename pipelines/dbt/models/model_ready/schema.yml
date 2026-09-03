@@ -1,85 +1,822 @@
 version: 2
 
 models:
-  - name: forecast_training_view
-    description: Store-date forecast model-ready view with PIT-safe lag features.
+  - name: candidate_site_view
+    description: Candidate-site scoring and outcome view for SiteScore.
     columns:
+      - name: view_name
+        description: Model-ready view name.
+        tests:
+          - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
       - name: entity_id
+        description: Primary entity key (candidate site ID).
         tests:
           - not_null
       - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary for features.
         tests:
           - not_null
       - name: prediction_origin_time
+        description: Prediction origin timestamp.
         tests:
           - not_null
       - name: source_snapshot_ids
+        description: Canonical source table lineage array.
         tests:
           - not_null
-  - name: candidate_site_view
-    description: Candidate-site scoring view for SiteScore.
+      - name: data_quality_score
+        description: Rule-derived quality score (1.0 for complete rent and geocode, 0.8 for rent only, 0.0 missing).
+        tests:
+          - not_null
+      - name: confidence
+        description: Nullable measurement representing minimum source confidence (least of listing confidence and geocode confidence); evaluates to NULL when source measurements are absent.
+      - name: is_training_eligible
+        description: Whether row is eligible for training based on positive rent and PIT creation time.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Whether row is eligible for scoring based on positive rent.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason or empty string.
+        tests:
+          - not_null
+      - name: candidate_site_id
+        description: Unique candidate site identifier.
+        tests:
+          - not_null
+      - name: listing_id
+        description: Associated real estate listing identifier.
+      - name: target_format_code
+        description: Target store format code.
+      - name: rent_amount
+        description: Monthly rent amount in TWD.
+      - name: area_ping
+        description: Usable area in Taiwanese ping.
+      - name: frontage_m
+        description: Storefront width in meters.
+      - name: floor
+        description: Floor level.
+      - name: utility_electricity_flag
+        description: Commercial electricity availability flag.
+      - name: utility_drainage_flag
+        description: Water drainage availability flag.
+      - name: utility_gas_flag
+        description: Natural gas availability flag.
+      - name: geocode_confidence
+        description: Geocoding confidence score from address location.
+      - name: h3_index
+        description: H3 spatial index resolution 9.
+      - name: rent_per_ping
+        description: Derived unit rent per ping.
+      - name: hard_rule_fail_reasons
+        description: Array of hard feasibility rule failure reason codes.
+        tests:
+          - not_null
+
+  - name: geo_grid_view
+    description: H3-cell HeatZone feature and cell aggregations baseline.
     columns:
+      - name: view_name
+        description: Model-ready view name.
+        tests:
+          - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
       - name: entity_id
+        description: Primary entity key (H3 index).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary for features.
         tests:
           - not_null
       - name: prediction_origin_time
+        description: Prediction origin timestamp.
         tests:
           - not_null
-  - name: geo_grid_view
-    description: H3-cell HeatZone feature baseline.
-    columns:
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Rule-derived quality score (1.0 for valid H3 cell index, 0.0 otherwise).
+        tests:
+          - not_null
+      - name: confidence
+        description: Nullable measurement representing minimum source confidence (least of POI confidence and competitor confidence); evaluates to NULL when source measurements are absent.
+      - name: is_training_eligible
+        description: Whether row is eligible for HeatZone training.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Whether row is eligible for HeatZone scoring.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
       - name: h3_index
+        description: H3 spatial cell index.
         tests:
           - not_null
-  - name: store_machine_timeseries_view
-    description: Store-date operational time series for ForecastOps and monitoring.
+      - name: h3_resolution
+        description: H3 resolution level.
+        tests:
+          - not_null
+      - name: admin_city
+        description: Administrative city name.
+      - name: admin_district
+        description: Administrative district name.
+      - name: poi_school_count
+        description: Count of educational POIs in cell.
+        tests:
+          - not_null
+      - name: poi_residential_count
+        description: Count of residential POIs in cell.
+        tests:
+          - not_null
+      - name: poi_market_count
+        description: Count of commercial and market POIs in cell.
+        tests:
+          - not_null
+      - name: competitor_count_500m
+        description: Count of active competitor stores within 500m.
+        tests:
+          - not_null
+      - name: competitor_capacity_proxy_500m
+        description: Total estimated competitor capacity within 500m.
+        tests:
+          - not_null
+      - name: rent_p50_per_ping
+        description: Median rent per ping for active listings in cell.
+        tests:
+          - not_null
+      - name: listing_count_active
+        description: Count of active listings in cell.
+        tests:
+          - not_null
+
+  - name: forecast_training_view
+    description: Store-date forecast model-ready view with PIT-safe lag features.
     columns:
+      - name: view_name
+        description: Model-ready view name.
+        tests:
+          - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
+      - name: entity_id
+        description: Primary entity key (store ID).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary.
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        description: Prediction origin timestamp.
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Rule-derived quality score (1.0 for PIT-valid observations, 0.0 for PIT violations).
+        tests:
+          - not_null
+      - name: confidence
+        description: Derived contract score (1.0 for authoritative settled financial transactions).
+        tests:
+          - not_null
+      - name: is_training_eligible
+        description: Training eligibility flag based on PIT observation time.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Scoring eligibility flag based on PIT ingestion time.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
       - name: store_id
+        description: Store identifier.
         tests:
           - not_null
-  - name: intervention_panel_view
-    description: Store-date intervention treatment/outcome panel for InterventionOps and causal review.
+      - name: date
+        description: Observation metric date.
+        tests:
+          - not_null
+      - name: daily_net_revenue
+        description: Daily total net revenue.
+      - name: daily_gross_revenue
+        description: Daily total gross revenue.
+      - name: transaction_count
+        description: Daily transaction count.
+        tests:
+          - not_null
+      - name: revenue_lag_1
+        description: 1-day lagged daily net revenue.
+      - name: revenue_lag_7
+        description: 7-day lagged daily net revenue.
+      - name: rolling_mean_7
+        description: 7-day rolling average net revenue.
+      - name: rolling_mean_28
+        description: 28-day rolling average net revenue.
+
+  - name: store_machine_timeseries_view
+    description: Store-date operational time series for ForecastOps and machine monitoring.
     columns:
+      - name: view_name
+        description: Model-ready view name.
+        tests:
+          - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
+      - name: entity_id
+        description: Composite entity key (store:machine:date).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary.
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        description: Prediction origin timestamp.
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Derived contract quality score (1.0 for authoritative store/machine cycles).
+        tests:
+          - not_null
+      - name: confidence
+        description: Derived contract confidence score (1.0 for machine telemetry records).
+        tests:
+          - not_null
+      - name: is_training_eligible
+        description: Training eligibility flag.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Scoring eligibility flag.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
+      - name: store_id
+        description: Store identifier.
+        tests:
+          - not_null
+      - name: machine_id
+        description: Machine identifier.
+      - name: date
+        description: Timeseries metric date.
+        tests:
+          - not_null
+      - name: gross_revenue
+        description: Gross revenue from store machines.
+        tests:
+          - not_null
+      - name: net_revenue
+        description: Net revenue from store machines.
+        tests:
+          - not_null
+      - name: transaction_count
+        description: Total transaction count.
+        tests:
+          - not_null
+      - name: cycle_count
+        description: Total machine cycle count.
+        tests:
+          - not_null
+      - name: occupied_minutes
+        description: Total machine occupied time in minutes.
+        tests:
+          - not_null
+      - name: available_minutes
+        description: Physical constant for total minutes in a 24-hour day (1440.0).
+        tests:
+          - not_null
+      - name: downtime_minutes
+        description: Idle/downtime in minutes.
+        tests:
+          - not_null
+      - name: utilization_rate
+        description: Machine utilization fraction (occupied / 86400).
+        tests:
+          - not_null
+      - name: avg_cycle_duration_sec
+        description: Average cycle duration in seconds.
+        tests:
+          - not_null
+      - name: refund_count
+        description: Number of refunded transactions.
+        tests:
+          - not_null
+
+  - name: intervention_panel_view
+    description: Store-date intervention treatment and outcome panel for InterventionOps and causal review.
+    columns:
+      - name: view_name
+        description: Model-ready view name.
+        tests:
+          - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
+      - name: entity_id
+        description: Composite entity key (store:intervention:date).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary.
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        description: Prediction origin timestamp.
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Rule-derived score (1.0 for valid interval ordering, 0.0 otherwise).
+        tests:
+          - not_null
+      - name: confidence
+        description: Rule-derived confidence score from ML-05 Evidence Ladder (L0..L5 -> 0.3..1.0; unrated -> 0.0).
+        tests:
+          - not_null
+      - name: is_training_eligible
+        description: Training eligibility based on mature outcome label.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Scoring eligibility based on PIT start time.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
       - name: intervention_id
+        description: Unique intervention identifier.
+        tests:
+          - not_null
+      - name: store_id
+        description: Target store identifier.
+        tests:
+          - not_null
+      - name: date
+        description: Intervention start date.
+        tests:
+          - not_null
+      - name: intervention_type
+        description: Type of operational or pricing intervention.
         tests:
           - not_null
       - name: treatment_flag
+        description: Boolean indicating active treatment.
         tests:
           - not_null
+      - name: treatment_intensity
+        description: Derived contract treatment scaling intensity (default 1.0 = standard intensity).
+        tests:
+          - not_null
+      - name: eligibility_score
+        description: Rule-derived eligibility score (eligible -> 1.0, manual_review -> 0.5, else 0.0).
+        tests:
+          - not_null
+      - name: propensity_score
+        description: Nullable propensity score for causal estimation.
+      - name: overlap_interventions
+        description: Array of concurrent intervention identifiers.
+        tests:
+          - not_null
+      - name: pre_period_flag
+        description: Boolean flag for pre-intervention baseline period.
+        tests:
+          - not_null
+      - name: treatment_period_flag
+        description: Boolean flag for active intervention period.
+        tests:
+          - not_null
+      - name: observation_period_flag
+        description: Boolean flag for full observation period.
+        tests:
+          - not_null
+      - name: outcome_revenue
+        description: Incremental net revenue observed.
+      - name: outcome_gm
+        description: Incremental gross margin observed.
+      - name: evidence_level
+        description: ML-05 evidence ladder rating code (L0..L5).
+
   - name: valuation_view
     description: Store valuation model-ready baseline for DealRoomAVM.
     columns:
+      - name: view_name
+        description: Model-ready view name.
+        tests:
+          - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
+      - name: entity_id
+        description: Composite entity key (store:valuation_date).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary.
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        description: Prediction origin timestamp.
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Rule-derived quality score (1.0 for valid gross margin and income value, 0.0 otherwise).
+        tests:
+          - not_null
+      - name: confidence
+        description: Derived contract valuation confidence baseline (0.8).
+        tests:
+          - not_null
+      - name: is_training_eligible
+        description: Training eligibility based on PIT valuation date.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Scoring eligibility based on PIT prediction origin.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
       - name: store_id
+        description: Store identifier.
         tests:
           - not_null
       - name: valuation_date
+        description: Valuation reference date.
         tests:
           - not_null
+      - name: gm_ttm
+        description: Trailing twelve months gross margin.
+      - name: normalized_gm_ttm
+        description: Normalized trailing twelve months gross margin.
+      - name: gm_fwd_p10
+        description: Forward 12-month gross margin 10th percentile forecast.
+      - name: gm_fwd_p50
+        description: Forward 12-month gross margin 50th percentile forecast.
+      - name: gm_fwd_p90
+        description: Forward 12-month gross margin 90th percentile forecast.
+      - name: asset_book_value
+        description: Depreciated asset book value (p50).
+      - name: remaining_asset_life
+        description: Estimated remaining economic asset life.
+      - name: lease_remaining_months
+        description: Remaining lease term in months.
+      - name: rent_amount
+        description: Base contract rent amount.
+      - name: intervention_adjustment
+        description: Operational adjustment factor.
+        tests:
+          - not_null
+      - name: forecast_confidence
+        description: Derived contract forecast confidence baseline (0.8).
+        tests:
+          - not_null
+      - name: comparable_count
+        description: Number of comparable store transactions.
+        tests:
+          - not_null
+      - name: liquidity_features
+        description: JSONB payload containing liquidity and valuation distribution features.
+        tests:
+          - not_null
+
   - name: network_plan_view
-    description: Planning entity and quarter baseline for NetPlan.
+    description: Planning entity and quarter baseline for NetPlan store optimization.
     columns:
+      - name: view_name
+        description: Model-ready view name.
+        tests:
+          - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
+      - name: entity_id
+        description: Composite entity key (planning_entity:quarter).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary.
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        description: Prediction origin timestamp.
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Rule-derived score (1.0 for feasible/optimal solver plan and valid entity ID, 0.0 otherwise).
+        tests:
+          - not_null
+      - name: confidence
+        description: Rule-derived confidence score from solver status (optimal -> 1.0, feasible -> 0.8, timeout -> 0.4, else 0.0).
+        tests:
+          - not_null
+      - name: is_training_eligible
+        description: Training eligibility based on planning period start.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Scoring eligibility based on solver feasibility.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
+      - name: entity_type
+        description: Entity type ('candidate_site' or 'existing_store').
+        tests:
+          - not_null
       - name: planning_entity_id
+        description: Unique planning store or site identifier.
         tests:
           - not_null
       - name: planning_quarter
+        description: Planning quarter code (e.g. 2026_Q3).
         tests:
           - not_null
+      - name: action_candidates
+        description: Array of potential network actions (OPEN, EXPAND, CLOSE, RENEGOTIATE).
+        tests:
+          - not_null
+      - name: expected_gm_p10
+        description: Expected gross margin delta (p10).
+      - name: expected_gm_p50
+        description: Expected gross margin delta (p50).
+      - name: expected_gm_p90
+        description: Expected gross margin delta (p90).
+      - name: capital_required
+        description: Required capital expenditure in TWD.
+      - name: lease_constraint
+        description: Lease terms and constraint JSONB payload.
+      - name: construction_lead_time
+        description: Construction lead time in days.
+      - name: staffing_constraint
+        description: Staffing constraint JSONB payload.
+      - name: cannibalization_matrix_row
+        description: Cannibalization interaction JSONB payload.
+        tests:
+          - not_null
+      - name: valuation_p50
+        description: Fair valuation baseline.
+      - name: risk_score
+        description: Rule-derived risk score (low -> 0.2, medium -> 0.5, high -> 0.8).
+        tests:
+          - not_null
+      - name: hard_constraint_flags
+        description: Solver hard constraint summary JSONB payload.
+
   - name: brand_transfer_view
-    description: Brand transfer view for SiteScore.
+    description: Brand customer transfer view baseline for SiteScore.
     columns:
-      - name: entity_id
+      - name: view_name
+        description: Model-ready view name.
         tests:
           - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
+      - name: entity_id
+        description: Composite entity key (source_brand_target_brand).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary.
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        description: Prediction origin timestamp.
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Derived contract score (1.0 for valid brand pairs).
+        tests:
+          - not_null
+      - name: confidence
+        description: Derived contract confidence baseline (1.0 for canonical brand relationships).
+        tests:
+          - not_null
+      - name: is_training_eligible
+        description: Training eligibility flag.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Scoring eligibility flag.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
+      - name: source_brand_id
+        description: Source brand identifier.
+        tests:
+          - not_null
+      - name: target_brand_id
+        description: Target brand identifier.
+        tests:
+          - not_null
+      - name: location_type
+        description: Location type category ('urban', 'suburban').
+        tests:
+          - not_null
+      - name: store_format_code
+        description: Target store format code.
+        tests:
+          - not_null
+      - name: store_age_bucket
+        description: Store age cohort bucket ('0_6m', '6_12m', '12m_plus').
+        tests:
+          - not_null
+      - name: transfer_ratio
+        description: Benchmark constant brand transfer ratio (0.15).
+        tests:
+          - not_null
+
   - name: ramp_curve_view
     description: Store cohorts ramp curve view for SiteScore and ForecastOps.
     columns:
-      - name: entity_id
+      - name: view_name
+        description: Model-ready view name.
         tests:
           - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
+      - name: entity_id
+        description: Primary entity key (store ID).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary.
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        description: Prediction origin timestamp.
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Derived contract score (1.0 for valid store entity).
+        tests:
+          - not_null
+      - name: confidence
+        description: Derived contract confidence baseline (1.0).
+        tests:
+          - not_null
+      - name: is_training_eligible
+        description: Training eligibility flag.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Scoring eligibility flag.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
+      - name: store_id
+        description: Store identifier.
+        tests:
+          - not_null
+      - name: store_cohort
+        description: Store opening quarter cohort code.
+        tests:
+          - not_null
+      - name: store_age_months
+        description: Age of store in months at observation date.
+        tests:
+          - not_null
+      - name: calendar_date
+        description: Calendar observation date.
+        tests:
+          - not_null
+      - name: ramp_up_ratio
+        description: Benchmark constant ramp-up ratio at 6 months (0.85).
+        tests:
+          - not_null
+
   - name: matched_control_view
-    description: Matched control view for AdLift campaigns.
+    description: Matched control store pairing view for AdLift and promotional analysis.
     columns:
-      - name: entity_id
+      - name: view_name
+        description: Model-ready view name.
         tests:
           - not_null
+      - name: view_version
+        description: Model-ready view contract version.
+        tests:
+          - not_null
+      - name: entity_id
+        description: Composite entity key (treated_store_control_store).
+        tests:
+          - not_null
+      - name: feature_snapshot_time
+        description: Point-in-time snapshot boundary.
+        tests:
+          - not_null
+      - name: prediction_origin_time
+        description: Prediction origin timestamp.
+        tests:
+          - not_null
+      - name: source_snapshot_ids
+        description: Canonical source table lineage array.
+        tests:
+          - not_null
+      - name: data_quality_score
+        description: Derived contract score (1.0 for valid store pairs).
+        tests:
+          - not_null
+      - name: confidence
+        description: Derived contract confidence baseline (1.0).
+        tests:
+          - not_null
+      - name: is_training_eligible
+        description: Training eligibility flag.
+        tests:
+          - not_null
+      - name: is_scoring_eligible
+        description: Scoring eligibility flag.
+        tests:
+          - not_null
+      - name: exclusion_reason
+        description: Machine-readable exclusion reason.
+        tests:
+          - not_null
+      - name: treated_store_id
+        description: Treated store identifier.
+        tests:
+          - not_null
+      - name: control_store_id
+        description: Control store identifier.
+        tests:
+          - not_null
+      - name: match_date
+        description: Store match observation date.
+        tests:
+          - not_null
+      - name: match_score
+        description: Benchmark constant match similarity score (0.92).
+        tests:
+          - not_null
+
 

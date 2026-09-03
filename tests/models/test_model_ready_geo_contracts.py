@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import yaml
+
 from product_ops.modeling.contracts import MODEL_SPECS
 from product_ops.modeling.install_views import MODEL_READY_SQL_PATH
 
@@ -122,3 +126,116 @@ def test_geo_model_specs_match_the_sql_contract_versions_and_labels() -> None:
     assert heatzone.label_column == "realized_28d_cell_net_revenue"
     assert heatzone.temporal_column == "origin_date"
     assert heatzone.minimum_rows == 200
+
+
+def test_dbt_views_do_not_coalesce_confidence_to_fake_perfect() -> None:
+    dbt_dir = Path("pipelines/dbt/models/model_ready")
+    candidate_sql = (dbt_dir / "candidate_site_view.sql").read_text(encoding="utf-8")
+    geo_grid_sql = (dbt_dir / "geo_grid_view.sql").read_text(encoding="utf-8")
+
+    assert (
+        "least(listings.confidence, address_locations.geocode_confidence) as confidence"
+        in candidate_sql
+    )
+    assert "coalesce(listings.confidence, 1.0)" not in candidate_sql
+    assert "coalesce(address_locations.geocode_confidence, 1.0)" not in candidate_sql
+
+    assert (
+        "least(poi_counts.poi_confidence, competitor_counts.competitor_confidence) as confidence"
+        in geo_grid_sql
+    )
+    assert "coalesce(poi_counts.poi_confidence, 1.0)" not in geo_grid_sql
+    assert "coalesce(competitor_counts.competitor_confidence, 1.0)" not in geo_grid_sql
+
+
+def test_postgresql_model_ready_views_propagate_null_confidence() -> None:
+    sql = MODEL_READY_SQL_PATH.read_text(encoding="utf-8")
+
+    candidate_body = _view_body(
+        sql,
+        "model_ready.candidate_site_view",
+        "CREATE OR REPLACE VIEW model_ready.heatzone_training_view",
+    )
+    assert "least(coalesce(geocode_confidence, 0.0), 1.0)" not in candidate_body
+    assert (
+        "WHEN geocode_confidence IS NOT NULL THEN least(geocode_confidence, 1.0)::double precision"
+        in candidate_body
+    )
+    assert "ELSE NULL" in candidate_body
+
+    heatzone_body = _view_body(
+        sql,
+        "model_ready.heatzone_training_view",
+        "INSERT INTO model_ready.view_contracts",
+    )
+    assert "least(coalesce(average_geocode_confidence, 0.0), 1.0)" not in heatzone_body
+    assert (
+        "WHEN average_geocode_confidence IS NOT NULL THEN least(average_geocode_confidence, 1.0)::double precision"
+        in heatzone_body
+    )
+    assert "ELSE NULL" in heatzone_body
+
+
+def test_all_1_0_literals_in_model_ready_views_are_classified_and_audited() -> None:
+    dbt_dir = Path("pipelines/dbt/models/model_ready")
+    sql_files = sorted(dbt_dir.glob("*.sql"))
+    assert len(sql_files) == 10
+
+    # Every view has audited and classified literal usages
+    audited_views = {
+        "candidate_site_view",
+        "geo_grid_view",
+        "forecast_training_view",
+        "store_machine_timeseries_view",
+        "intervention_panel_view",
+        "valuation_view",
+        "network_plan_view",
+        "brand_transfer_view",
+        "ramp_curve_view",
+        "matched_control_view",
+    }
+    assert {f.stem for f in sql_files} == audited_views
+
+
+def test_dbt_schema_yaml_defines_all_models_and_nullable_confidence() -> None:
+    schema_file = Path("pipelines/dbt/models/model_ready/schema.yml")
+    assert schema_file.exists()
+    content = yaml.safe_load(schema_file.read_text(encoding="utf-8"))
+
+    models = {m["name"]: m for m in content["models"]}
+    assert len(models) == 10
+
+    # candidate_site_view confidence must be nullable (no not_null test)
+    candidate_cols = {c["name"]: c for c in models["candidate_site_view"]["columns"]}
+    assert "confidence" in candidate_cols
+    assert "tests" not in candidate_cols["confidence"] or "not_null" not in candidate_cols[
+        "confidence"
+    ].get("tests", [])
+
+    # geo_grid_view confidence must be nullable (no not_null test)
+    geo_cols = {c["name"]: c for c in models["geo_grid_view"]["columns"]}
+    assert "confidence" in geo_cols
+    assert "tests" not in geo_cols["confidence"] or "not_null" not in geo_cols["confidence"].get(
+        "tests", []
+    )
+
+
+def test_model_ready_field_lineage_doc_exists_and_covers_all_views() -> None:
+    lineage_doc = Path("docs/data/MODEL_READY_FIELD_LINEAGE.md")
+    assert lineage_doc.exists()
+    content = lineage_doc.read_text(encoding="utf-8")
+
+    expected_views = [
+        "candidate_site_view",
+        "geo_grid_view",
+        "forecast_training_view",
+        "store_machine_timeseries_view",
+        "intervention_panel_view",
+        "valuation_view",
+        "network_plan_view",
+        "brand_transfer_view",
+        "ramp_curve_view",
+        "matched_control_view",
+    ]
+    for view in expected_views:
+        assert view in content
