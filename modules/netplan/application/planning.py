@@ -462,7 +462,7 @@ class NetPlanService:
             # until that receipt is trusted. Before, because an ApprovalRecord
             # that exists is an approval: a plan must not reach persistence and
             # then be argued about.
-            acknowledgement = self._enforce_constraint_disclosure(
+            policy, acknowledgement = self._enforce_constraint_disclosure(
                 scenario,
                 solve,
                 at=now,
@@ -470,7 +470,6 @@ class NetPlanService:
             modelled_classes = tuple(solve.result.modelled_constraint_classes)
             unmodelled_classes = tuple(solve.result.unmodelled_constraint_classes)
             solver_problem_hash = solve.problem_hash
-            policy = self._require_disclosure_policy(scenario, at=now)
             disclosure_policy_version_id = policy.policy_version_id
             disclosure_policy_label = policy.policy_label
             disclosure_policy_version = policy.policy_version
@@ -500,13 +499,8 @@ class NetPlanService:
             disclosure_acknowledgement_id=disclosure_acknowledgement_id,
             solver_problem_hash=solver_problem_hash,
         )
-        target = (
-            NetPlanScenarioStatus.APPROVED
-            if approval.is_approved
-            else NetPlanScenarioStatus.REJECTED
-        )
         transitioned = scenario.transition(
-            target,
+            target_status,
             actor=actor_id,
             reason=reason,
             occurred_at=now,
@@ -730,12 +724,19 @@ class NetPlanService:
         solve: ScenarioSolveRecord,
         *,
         at: datetime,
-    ) -> ConstraintDisclosureAcknowledgement | None:
-        """Refuse the approval, or return the signature that permits it.
+    ) -> tuple[DecisionPolicy, ConstraintDisclosureAcknowledgement | None]:
+        """Refuse the approval, or return the policy and the signature permitting it.
 
-        Returns None when the plan needs no signature -- every required class
-        was modelled. Raises when a required class was not modelled and either
-        the policy forbids waiving it or no valid signature covers it.
+        The policy is returned rather than re-resolved by the caller so that the
+        version recorded on the `ApprovalRecord` is provably the same one the
+        decision was checked against -- resolving twice would let a registry
+        write between the two calls produce an approval that names a policy it
+        was never evaluated under.
+
+        The acknowledgement is None when the plan needs no signature: every
+        required class was modelled. Raises when a required class was not
+        modelled and either the policy forbids waiving it or no valid signature
+        covers it.
         """
         policy = self._require_disclosure_policy(scenario, at=at)
         disclosed = self._require_disclosed_classes(scenario, solve)
@@ -752,7 +753,7 @@ class NetPlanService:
                 "re-solve"
             )
         if not evaluation.requires_acknowledgement:
-            return None
+            return policy, None
         required_signature = self._normalize_classes(evaluation.acknowledgeable)
         acknowledgement = self._find_valid_acknowledgement(
             scenario.scenario_id,
@@ -767,7 +768,7 @@ class NetPlanService:
                 "and no valid acknowledgement covers them for this solve under "
                 f"policy {policy.policy_version_id}"
             )
-        return acknowledgement
+        return policy, acknowledgement
 
     def _find_valid_acknowledgement(
         self,
