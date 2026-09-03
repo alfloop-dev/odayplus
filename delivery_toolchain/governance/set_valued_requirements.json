@@ -290,12 +290,28 @@
         {
           "name": "PARTIAL",
           "status": "absent",
-          "note": "JobStatus in shared/governance/vocabularies.py now carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics.",
+          "note": "JobStatus in shared/governance/vocabularies.py now carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics. The Batch 5b producer trace under ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 closed the tree-level question against every registered job type and named the partial-shaped outcomes that are deliberately not mapped onto JobStatus.",
           "disposition": {
-            "state": "OPEN",
-            "assigned_to": "Platform Infrastructure Lead",
+            "state": "BLOCKED_BY_EVIDENCE",
+            "previous_state": "OPEN",
+            "history": [
+              {
+                "state": "OPEN",
+                "date": "2026-09-03",
+                "note": "Gap registered by the disposition registry: the vocabulary carries PARTIAL, no producer was found."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 finished the static producer trace. What is left is not more code reading."
+              }
+            ],
+            "evidence_needed": "Two things, neither of which the tree can answer. (1) A live production queue/scheduler/worker receipt inventory, to say whether any deployed job has ever reported JobStatus.PARTIAL; the repo trace only establishes that no code path writes it. (2) A product decision on whether the partial-shaped command outcomes that do exist -- batch intake 207 per-row receipts, XLSX partial commit, external ingestion accepted/quarantined counts -- should become durable jobs carrying member-level receipts and a member retry contract.",
+            "evidence_owner": "Platform Infrastructure Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b)."
+            "assigned_to": "Platform Infrastructure Lead",
+            "evidence_ref": "docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md",
+            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b). The producer trace walked the default registry (forecast, external-fetch, assisted-listing-intake) and every module worker entry point and found no PARTIAL write. The partial-shaped outcomes that do exist are synchronous command receipts, not queue jobs; wiring them onto JobStatus to complete the member count would be the fake implementation this gate exists to prevent."
           }
         }
       ]

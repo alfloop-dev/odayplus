@@ -160,10 +160,13 @@ stateDiagram-v2
 ### 4.5 `ODP-FR-SHARED-001`：工作狀態回報
 
 #### 成員：`PARTIAL`（部分成功狀態）
-- **處置狀態**：`OPEN`
-- **負責人 (Assigned To)**: `Platform Infrastructure Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（自 `OPEN` 轉入；靜態 producer 查證已完成）
+- **前一狀態 (Previous State)**: `OPEN`
+- **待確認證據 (Evidence Needed)**: 兩項，都不是讀 code 能回答的。(1) live production queue／scheduler／worker receipt inventory，用來判定已部署的 job 是否曾回報過 `JobStatus.PARTIAL`；repo trace 只能證明「沒有任何程式路徑會寫入」。(2) 產品裁決：現存的 partial-shaped command outcome（批次 intake 的 207 逐列 receipt、XLSX 部分 commit、external ingestion 的 accepted／quarantined counts）是否應升格為帶 member receipt 與 member retry contract 的 durable job。
+- **證據負責人 (Evidence Owner)**: `Platform Infrastructure Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: `JobStatus` 詞彙已納入 `PARTIAL`，但系統中尚未有會產出部分成功狀態的長任務；不強行假實作。
+- **證據文件 (Evidence Ref)**: [`docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`](../evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md)
+- **理由 (Rationale)**: `JobStatus` 詞彙已納入 `PARTIAL`，但系統中尚未有會產出部分成功狀態的長任務；不強行假實作。`ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001` 走完 default registry（`forecast`、`external-fetch`、`assisted-listing-intake`）與所有 module worker entry point，皆無 `JobStatus.PARTIAL` write，因此「缺口是否存在」這一題已經關閉；為了把六個成員湊滿而硬接任一 command receipt，正是本閘要防的假實作。
 
 ---
 
