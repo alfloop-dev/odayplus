@@ -8,8 +8,42 @@ import {
   type PlanGanttDependency,
 } from "../PlanGanttChart";
 import { RebalancePanel } from "../RebalancePanel";
-import type { NetPlanDiagnostic } from "../../types";
+import type { ConstraintClass, NetPlanDiagnostic } from "../../types";
 import type { RebalanceQueueRow } from "../../networkFindAreasViewModel";
+// Asserted against the live FastAPI response by
+// tests/integration/test_netplan_disclosure_ui_e2e.py -- see fixtures/README.md.
+import rawApiPayload from "./fixtures/netplanDisclosureApiPayload.json";
+
+// Narrowed once, here, rather than at each use. JSON widens the class names to
+// `string`, so each list is re-typed against the console's own union: a class
+// the backend renames becomes a compile error in this file rather than an
+// assertion that quietly stops matching anything. Field-by-field rather than
+// one cast over the whole object, so a field disappearing from the fixture is
+// caught here too.
+const asConstraintClasses = (values: string[]): ConstraintClass[] =>
+  values as ConstraintClass[];
+
+const apiPayload = {
+  storeId: rawApiPayload.storeId,
+  status: rawApiPayload.status as RebalanceQueueRow["status"],
+  netPlanScenarios: rawApiPayload.netPlanScenarios.map((scenario) => ({
+    id: scenario.id,
+    name: scenario.name,
+    isSystemRecommendation: scenario.isSystemRecommendation,
+    modelledConstraintClasses: asConstraintClasses(scenario.modelledConstraintClasses),
+    unmodelledConstraintClasses: asConstraintClasses(scenario.unmodelledConstraintClasses),
+    modelled_constraint_classes: asConstraintClasses(scenario.modelled_constraint_classes),
+    unmodelled_constraint_classes: asConstraintClasses(
+      scenario.unmodelled_constraint_classes
+    ),
+    blockedConstraintClasses: asConstraintClasses(scenario.blockedConstraintClasses),
+    acknowledgeableConstraintClasses: asConstraintClasses(
+      scenario.acknowledgeableConstraintClasses
+    ),
+    disclosurePolicyVersionId: scenario.disclosurePolicyVersionId,
+    disclosureUndeclared: scenario.disclosureUndeclared,
+  })),
+};
 
 afterEach(cleanup);
 
@@ -962,5 +996,122 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(screen.getByTestId("gantt-unmodelled-classes")).toHaveTextContent(
       "無未建模限制 (全部已建模)"
     );
+  });
+  it("19. RebalancePanel drives the payload a production CP-SAT solve returns over HTTP", () => {
+    // The rows are built from the fixture the Python E2E asserts the FastAPI
+    // response against, not from a literal typed here. That is what makes this
+    // a test of the console against the real contract rather than against
+    // someone's recollection of it: if the backend stops sending a field, the
+    // Python test fails; if the console stops handling what is sent, this one
+    // does.
+    const rows: RebalanceQueueRow[] = [
+      {
+        id: apiPayload.storeId,
+        storeId: apiPayload.storeId,
+        storeName: "台北信義店",
+        status: apiPayload.status,
+        statusLabel: "NetPlan 三案",
+        summary: "production CP-SAT solve",
+        tone: "watch",
+        selectedScenarioId: apiPayload.netPlanScenarios[0].id,
+        // Only the presentation fields are supplied here. Everything the
+        // disclosure turns on comes from the fixture untouched.
+        netPlanScenarios: apiPayload.netPlanScenarios.map((scenario) => ({
+          ...scenario,
+          roi: "12.0%",
+          inv: "420K",
+          payback: "2.4 年",
+          risk: "中",
+          time: "2026Q3",
+          score: 830000,
+        })),
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={rows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    const [primary, alternative] = apiPayload.netPlanScenarios;
+
+    // Both the recommendation and the alternative disclose. An operator reads
+    // these rows side by side, and an alternative that arrived unclassified
+    // would be the one that looked clean.
+    for (const scenario of [primary, alternative]) {
+      expect(
+        screen.getByTestId(`scenario-modelled-classes-${scenario.id}`)
+      ).toHaveTextContent("CAPITAL");
+      expect(
+        screen.getByTestId(`scenario-unmodelled-classes-${scenario.id}`)
+      ).toHaveTextContent("LEASE, SEQUENCING");
+      expect(
+        screen.getByTestId(`scenario-ack-required-badge-${scenario.id}`)
+      ).toHaveTextContent("需具名確認");
+      expect(
+        screen.queryByTestId(`scenario-fully-modelled-badge-${scenario.id}`)
+      ).toBeNull();
+      expect(screen.queryByTestId(`scenario-blocked-badge-${scenario.id}`)).toBeNull();
+    }
+
+    // The six classes the production formulation bound, shown for the selected
+    // plan rather than summarised as a count.
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "false");
+    for (const cls of primary.modelledConstraintClasses) {
+      expect(screen.getByTestId(`gantt-modelled-${cls}`)).toHaveTextContent(cls);
+    }
+    for (const cls of primary.unmodelledConstraintClasses) {
+      expect(screen.getByTestId(`gantt-unmodelled-${cls}`)).toHaveTextContent(cls);
+    }
+
+    // The two structurally unmodellable classes are offered for signature, and
+    // the policy version that permits it is named on screen.
+    const ackSection = screen.getByTestId("rebalance-acknowledgement-section");
+    expect(ackSection).toBeInTheDocument();
+    expect(screen.getByTestId("acknowledgement-policy-version")).toHaveTextContent(
+      primary.disclosurePolicyVersionId
+    );
+
+    // Nothing is pre-ticked, so the CTA starts closed.
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+
+    for (const cls of primary.acknowledgeableConstraintClasses) {
+      fireEvent.click(screen.getByTestId(`ack-class-${cls}`));
+    }
+    fireEvent.change(screen.getByTestId("acknowledgement-receipt-input"), {
+      target: { value: "receipt-e2e-001" },
+    });
+    fireEvent.change(screen.getByTestId("acknowledgement-actor-id-input"), {
+      target: { value: "principal://network-planning-authority" },
+    });
+    fireEvent.change(screen.getByTestId("acknowledgement-reason-input"), {
+      target: { value: "租約條件已由商務處完成線下簽核；時序排程已與工程團隊確認。" },
+    });
+
+    expect(primaryButton).toBeEnabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).toHaveBeenCalledTimes(1);
+
+    const [, submitted] = submitReviewMock.mock.calls[0];
+    expect(submitted.acknowledgedClasses).toEqual(
+      primary.acknowledgeableConstraintClasses
+    );
+    expect(submitted.approvalReceiptId).toBe("receipt-e2e-001");
+    expect(submitted.acknowledgementActorId).toBe(
+      "principal://network-planning-authority"
+    );
+    expect(submitted.acknowledgementReason).toContain("線下簽核");
   });
 });

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -926,6 +928,77 @@ def _canonical_surface(
     return scenario, repo, service, rebalance_service
 
 
+DISCLOSURE_CONTRACT_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "../apps/web/features/operator/network/__tests__/fixtures"
+    / "netplanDisclosureApiPayload.json"
+).resolve()
+
+# The fields the console reads off a scenario row to decide what a plan has
+# been verified against. Compared as a whole rather than field by field, so
+# that a field disappearing is a failure and not a silently skipped assertion.
+_DISCLOSURE_CONTRACT_KEYS = (
+    "id",
+    "name",
+    "isSystemRecommendation",
+    "modelledConstraintClasses",
+    "unmodelledConstraintClasses",
+    # The console falls back to the snake_case spellings, so they are part of
+    # the contract rather than a legacy alias the fixture may omit.
+    "modelled_constraint_classes",
+    "unmodelled_constraint_classes",
+    "blockedConstraintClasses",
+    "acknowledgeableConstraintClasses",
+    "disclosurePolicyVersionId",
+    "disclosureUndeclared",
+)
+
+
+def _disclosure_contract(store: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "storeId": store["storeId"],
+        "status": store["status"],
+        "netPlanScenarios": [
+            {key: row[key] for key in _DISCLOSURE_CONTRACT_KEYS}
+            for row in store["netPlanScenarios"]
+        ],
+    }
+
+
+def test_e2e_http_disclosure_payload_matches_the_console_test_fixture() -> None:
+    """The contract the console is tested against is the one the API sends.
+
+    `PlanGanttChart.test.tsx` renders `RebalancePanel` from this file, so a
+    console test passing means the console handles *this* payload. Without this
+    assertion that would be a claim about a literal someone typed next to the
+    UI assertions, and the two sides of the HTTP boundary would agree with each
+    other right up until the backend changed.
+
+    Regenerate by running this module as a script:
+        uv run --frozen python -m tests.integration.test_netplan_disclosure_ui_e2e
+    """
+    _scenario, _repo, _netplan_service, rebalance_service = _canonical_surface(
+        "SCENARIO-E2E-HTTP-001",
+        _fully_modelled_constraints(),
+    )
+    client = _mount_operator_api(rebalance_service)
+
+    solve_response = client.post(
+        "/api/v1/operator/network-rebalance/stores/STORE-101/netplan/solve",
+        headers={"Idempotency-Key": "idem-http-contract-solve"},
+        json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+    )
+    assert solve_response.status_code == 200, solve_response.text
+
+    observed = _disclosure_contract(solve_response.json()["store"])
+    expected = json.loads(DISCLOSURE_CONTRACT_FIXTURE.read_text(encoding="utf-8"))
+    assert observed == expected, (
+        "the Operator disclosure payload changed; the console is tested against "
+        f"{DISCLOSURE_CONTRACT_FIXTURE.name}, so update that fixture and the UI "
+        "test that reads it in the same change"
+    )
+
+
 def test_e2e_production_solve_over_http_to_operator_payload_and_durable_receipt() -> None:
     """CP-SAT solve → FastAPI → the payload the console renders → durable receipt.
 
@@ -1125,3 +1198,34 @@ def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared()
         client.get("/api/v1/operator/network-rebalance").json()["stores"][0]["status"]
         == "netplanreview"
     )
+
+
+def _write_disclosure_contract_fixture() -> None:
+    """Rewrite the fixture from a live solve.
+
+    A script rather than a test-time side effect. A test that repaired the file
+    it checks would report agreement between the console and an API contract
+    that had just changed underneath it, which is the one thing this fixture
+    exists to make impossible.
+    """
+    _scenario, _repo, _netplan_service, rebalance_service = _canonical_surface(
+        "SCENARIO-E2E-HTTP-001",
+        _fully_modelled_constraints(),
+    )
+    client = _mount_operator_api(rebalance_service)
+    response = client.post(
+        "/api/v1/operator/network-rebalance/stores/STORE-101/netplan/solve",
+        headers={"Idempotency-Key": "idem-http-contract-regen"},
+        json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+    )
+    response.raise_for_status()
+    contract = _disclosure_contract(response.json()["store"])
+    DISCLOSURE_CONTRACT_FIXTURE.write_text(
+        json.dumps(contract, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(f"wrote {DISCLOSURE_CONTRACT_FIXTURE}")
+
+
+if __name__ == "__main__":
+    _write_disclosure_contract_fixture()
