@@ -19,7 +19,7 @@ No valuation report or valuation card is persisted on that path.
 | Service boundary | `modules/avm/application/valuation.py::AVMService.normalize` | Rejects before changing case state or writing a margin |
 | Domain consumers | `normalize_margin`, `value_store`, `build_model_valuation_report` | Reject missing quality before deriving confidence or a report |
 | Durable case | `shared/infrastructure/persistence/repositories.py::DurableAVMRepository` | Pickle persistence preserves `None` without coercion |
-| PostgreSQL | `infra/db/migrations/000018_avm_quality_score_nullable.sql` and Alembic `0011` | Drops `NOT NULL` and `DEFAULT`; old rows retain values and receive `legacy_unknown` status |
+| PostgreSQL | `infra/db/migrations/000018_avm_quality_score_nullable.sql` and Alembic `0012` | Drops `NOT NULL` and `DEFAULT`; old rows retain values and receive `legacy_unknown` status |
 | SQLite | `infra/db/migrations/000018_avm_quality_score_nullable_sqlite.sql` | Rebuilds the table with nullable score; copies old values unchanged and preserves status on restart |
 | API contract | `packages/openapi-client/openapi.json` | `quality_score` is `number | null` with no default and is not required |
 | TypeScript | `packages/openapi-client/src/generated/types.ts`, `src/index.ts` | `quality_score?: number | null` |

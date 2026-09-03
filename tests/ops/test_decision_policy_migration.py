@@ -87,6 +87,7 @@ def test_model_performance_drift_policy_is_seeded_with_all_production_rows() -> 
         "SELECT workflow.seed_model_performance_drift_policy(t.tenant_id) FROM core.tenants t;",
         "CREATE TRIGGER trg_seed_model_performance_drift_policy",
         '"metric_thresholds_by_model"',
+        '"prediction_drift": {"drift_share_threshold": 0.5}',
         '"max_degradation": 0.05',
     )
     for fragment in required:
