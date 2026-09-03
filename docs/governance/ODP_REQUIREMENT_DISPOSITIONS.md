@@ -238,6 +238,7 @@ stateDiagram-v2
 - **處置狀態**：`OPEN`（不適用；維持 absent 並提交人類治理修訂/豁免 Handback）
 - **負責人 (Assigned To)**: `Data Platform Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
+- **正式移交文件 (Formal Handback Ref)**: `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md`
 - **處置依據與查證結論**:
   依 `docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md` 與 `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md` 之查證：
   1. **無真實上游需求**：唯一內部來源為 MongoDB `fongniao_prod`，外部來源均為快照。無任何生產上游需要 Change Stream / oplog 讀取。

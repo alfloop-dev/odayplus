@@ -96,7 +96,8 @@
         "state": "OPEN",
         "assigned_to": "Data Platform Lead",
         "next_review_date": "2026-10-01",
-        "rationale": "No production upstream requires CDC; downstream sink has no delete path; credential boundary expansion unapproved. AI cannot self-sign waivers; pending human governance amendment/waiver authorization."
+        "rationale": "No production upstream requires CDC; downstream sink has no delete path; credential boundary expansion unapproved. AI cannot self-sign waivers; pending human governance amendment/waiver authorization.",
+        "formal_handback_ref": "docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md"
       }
     }
   ]
@@ -164,7 +165,7 @@ python3 delivery_toolchain/governance/check_requirement_members.py
 ```
 **執行結果**：
 ```text
-Requirement member checks passed: 7 set-valued requirements, 37 members (27 satisfied, 10 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=3, DECIDED=1, IMPLEMENTATION_READY=1, OPEN=5, VERIFIED=27).
+Requirement member checks passed: 8 set-valued requirements, 41 members (30 satisfied, 11 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4, DECIDED=1, IMPLEMENTATION_READY=2, OPEN=4, VERIFIED=30).
 Exit code: 0
 ```
 
@@ -175,7 +176,7 @@ Exit code: 0
 **執行結果**：
 ```text
 ..........................................                               [100%]
-42 passed in 0.25s
+68 passed
 Exit code: 0
 ```
 
@@ -186,7 +187,7 @@ Exit code: 0
 **執行結果**：
 ```text
 ......                                                                   [100%]
-6 passed in 0.15s
+7 passed
 Exit code: 0
 ```
 
@@ -200,3 +201,12 @@ Exit code: 0
 91 passed in 0.18s
 Exit code: 0
 ```
+
+### 收據 5：合併最新 dev 基準後的分支驗證
+```bash
+git merge-base --is-ancestor origin/dev HEAD
+git diff --check HEAD^1 HEAD
+```
+**執行結果**：
+`origin/dev`=`ee05af41b87d80bbc62be1b0f504523c9a3b1a0a` 已由 merge commit
+`ec867c65fb50b67dbf10f6eebe69772f04adf6b6` 合入 task branch；兩項命令均 exit code 0。
