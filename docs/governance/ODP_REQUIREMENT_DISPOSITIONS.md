@@ -133,18 +133,28 @@ stateDiagram-v2
 ### 4.2 `ODP-FR-SITE-001`：SiteScore 需求因子
 
 #### 成員：`BRAND_TRANSFER`（品牌移轉）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（待 Batch 0 確認資料源）
-- **待確認證據 (Evidence Needed)**: 歷史品牌客群移轉資料集是否存在且具可信度。
-- **證據負責人 (Evidence Owner)**: `Market Intelligence Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已移交人類治理授權）
+- **Formal Handback Ref**: `docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#2-member-1brand-transfer既有品牌客群移轉處置`
+- **Evidence Request Ref**: `docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md#34-待查證需求單evidence-request`（`ER-SITE001-BRAND-TRANSFER-001`）
+- **Handback Package ID**: `HB-SITE001-BRAND-TRANSFER-001`
+- **待確認證據 (Evidence Needed)**: 外部會員跨店消費數據/市調發票面板數據接入協議、資料綱要與特徵提取規格。
+- **證據／風險負責人 (Evidence & Risk Owner)**: `Market Intelligence Lead / Commercial Strategy Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: 待 Batch 0 調查歷史資料源後決定納入評分特徵或走正式修訂。
+- **重啟條件 (Reopen Trigger)**: 外部消費者面板數據源或跨品牌 POS 會員數據庫正式簽約並接入 raw data platform，具備可驗證之生產 SLA 與特徵規格。
+- **裁決理由 (Rationale)**:
+  Repo 內僅有 `core.brands` 靜態代碼主檔；`brand_transfer_view.sql` 僅為基於笛卡兒積的 mock 視圖（`transfer_ratio = 0.15`），無真實生產者與消費路徑。為避免注入裝飾性固定常數與偽造假精度，拒絕將合成視圖接進生產評分模型。已建立人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Commercial Strategy Lead`，待資料源確立後轉為 `IMPLEMENTATION_READY` 或由人類授權人簽署正式修訂／豁免。
 
 #### 成員：`FORMAT_CONVERSION`（店型轉換）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（待 Batch 0 確認業務行為）
-- **待確認證據 (Evidence Needed)**: 既有門市店型轉換業務動作是否在生產環境實際發生並留有紀錄。
-- **證據負責人 (Evidence Owner)**: `Retail Operations Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已移交人類治理授權）
+- **Formal Handback Ref**: `docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#3-member-2format-conversion店型轉換業務事件處置`
+- **Evidence Request Ref**: `docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md#44-待查證需求單evidence-request`（`ER-SITE001-FORMAT-CONVERSION-001`）
+- **Handback Package ID**: `HB-SITE001-FORMAT-CONVERSION-001`
+- **待確認證據 (Evidence Needed)**: 門市營運端之既有店型改裝轉型（Brownfield Conversion）標準作業手冊（Playbook）、停業期營收折損與改裝財務模型參數。
+- **證據／風險負責人 (Evidence & Risk Owner)**: `Retail Operations Lead / Site Economics Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: 目前僅有店型選擇（選 format），尚無轉換（conversion）業務路徑；待 Batch 0 業務確認。
+- **重啟條件 (Reopen Trigger)**: 門市營運端正式核准 Brownfield 店型改裝轉型作業規範與改裝成本/停業損失排程，且資料庫完成 `core.store_format_conversions` 轉型履歷表之 schema migration。
+- **裁決理由 (Rationale)**:
+  PostgreSQL（`000001`）與 SQLite（`000004`）Schema 僅存靜態 `store_format_code`，無改裝轉型歷程表；`TargetFormatRegistry` 僅依坪數推薦新設店型（選型非轉型）；`simulator.py` 僅模擬 Greenfield 新店經濟效益，無 Brownfield 停業損失與設備殘值折抵邏輯。已明確排除房源流轉與證據等級遷移註記等非店型語境假陽性。已建立人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Retail Operations Lead`，待業務規範與財務參數確立後轉為 `IMPLEMENTATION_READY` 或由人類授權人簽署正式修訂／豁免。
 
 ---
 
