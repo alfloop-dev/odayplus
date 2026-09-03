@@ -6,6 +6,7 @@ infeasibility diagnosis, approval lifecycle, execution, and outcome tracking.
 
 from modules.netplan.application import (
     NetPlanApprovalError,
+    NetPlanConstraintDisclosureError,
     NetPlanNotFoundError,
     NetPlanProductionExecution,
     NetPlanProductionExecutionError,
@@ -20,6 +21,7 @@ from modules.netplan.domain import (
     VALID_TRANSITIONS,
     ApprovalRecord,
     CandidateSiteInput,
+    ConstraintDisclosureAcknowledgement,
     ExecutionRecord,
     ExistingStoreInput,
     InvalidNetPlanTransitionError,
@@ -31,7 +33,10 @@ from modules.netplan.domain import (
     build_outcome_record,
     build_scenario_options,
 )
-from modules.netplan.infrastructure import InMemoryNetPlanRepository
+from modules.netplan.infrastructure import (
+    ImmutableRecordError,
+    InMemoryNetPlanRepository,
+)
 from modules.netplan.workers import (
     NetPlanBatchResult,
     NetPlanSolverWorker,
@@ -43,6 +48,7 @@ from solver.netplan import (
     GOVERNED_DISABLED,
     GOVERNED_ENABLED,
     ActionOption,
+    ConstraintClass,
     FixedManagementApprovalReceiptVerifier,
     ManagementApprovalExpectation,
     ManagementApprovalReceipt,
@@ -68,9 +74,12 @@ __all__ = [
     "ActionOption",
     "ApprovalRecord",
     "CandidateSiteInput",
+    "ConstraintClass",
+    "ConstraintDisclosureAcknowledgement",
     "ExecutionRecord",
     "ExistingStoreInput",
     "FixedManagementApprovalReceiptVerifier",
+    "ImmutableRecordError",
     "InMemoryNetPlanRepository",
     "InvalidNetPlanTransitionError",
     "ManagementApprovalExpectation",
@@ -80,6 +89,7 @@ __all__ = [
     "ManagementBaselineComparisonReceipt",
     "ManagementBaselineInput",
     "NetPlanApprovalError",
+    "NetPlanConstraintDisclosureError",
     "NetPlanBatchResult",
     "NetPlanConstraints",
     "NetPlanNotFoundError",

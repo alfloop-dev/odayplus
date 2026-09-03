@@ -78,7 +78,7 @@ def _alembic_config(database: Any) -> Config:
 #
 # 0008 (decision policy registry) is the first revision that binds into the
 # baseline rather than beside it -- it foreign-keys `core.tenants` and
-# constrains `workflow.decisions`, both from 0001. 0012 (the FCT-004 reserved
+# constrains `workflow.decisions`, both from 0001. 0013 (the FCT-004 reserved
 # disposition) is another revision that binds to the baseline: it comments on
 # `core.work_orders.root_cause`. So the stamp now has to come with the objects
 # the later revisions reference, or `upgrade("head")` fails on a table the

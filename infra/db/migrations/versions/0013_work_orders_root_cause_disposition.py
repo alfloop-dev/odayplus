@@ -1,7 +1,7 @@
-"""WorkOrder root_cause column reserved disposition
+"""WorkOrder root_cause column reserved disposition.
 
-Revision ID: 0012
-Revises: 0011
+Revision ID: 0013
+Revises: 0012
 Create Date: 2026-09-03 12:00:00.000000
 
 Phase: ODP Remediation · W4 Blind Spots
@@ -20,8 +20,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0012"
-down_revision: str | None = "0011"
+revision: str = "0013"
+down_revision: str | None = "0012"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -44,7 +44,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Clear the column comment on rollback
+    # Clear the column comment on rollback while preserving the nullable column.
     connection = op.get_bind()
     raw_conn = getattr(connection, "connection", None)
     driver_conn = getattr(raw_conn, "driver_connection", raw_conn)

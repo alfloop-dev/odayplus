@@ -87,9 +87,26 @@ result.unmodelled_constraint_classes  # 這次求解沒說到的
 
 - `modules/opsboard/application/network_rebalance.py` 建 `plan_rows` 時只複製 `bindingConstraints`，主方案與替代方案都丟掉兩個 class 集合
 - `apps/web/features/operator/network/RebalancePanel.tsx` 只把 binding constraints 傳給 `PlanGanttChart`，沒有顯示未建模類別
-- `modules/netplan/application/planning.py::decide` 會擋 stale solve，但不會因 required class 未建模而擋核准或要求具名風險確認
+- ~~`modules/netplan/application/planning.py::decide` 會擋 stale solve，但不會因 required class 未建模而擋核准或要求具名風險確認~~ —— 已由 `ODP-NETPLAN-DISCLOSURE-APPROVAL-001` 關閉，見下
 
-因此目前只能說「solver/service 知道自己沒驗什麼」，**不能說操作者知道**。結案要同時完成 transport/type、UI 顯示、核准政策與 production-entry E2E：由 `DecisionPolicy` 決定哪些未建模類別必須阻擋，哪些可在顯示影響後由具權限的人明確 acknowledge；receipt 要保存 classes、policy version、actor、reason 與 solve hash。測試必須從 production solve 走到 Operator response／UI／approval，而不是只斷言 result dataclass。
+因此目前仍只能說「solver/service 知道自己沒驗什麼」，**不能說操作者知道**：核准邊界已經會擋，但畫面上仍看不到擋的是什麼。
+
+### 已關閉的一項：核准政策與 receipt（2026-09-03）
+
+`decide()` 現在解析 `netplan_action` 這個 kind 的 `DecisionPolicy`（point-in-time，解不出來就拒絕），把 solve 宣告的未建模類別分成兩堆：
+
+- **阻擋**：CONSTRUCTION、EQUIPMENT、LABOUR、COVERAGE、DILUTION。這五類今天求解器綁得住，未建模只代表呼叫端沒給上限；讓人簽字放行等於把「沒給的輸入」記成「已接受的風險」。
+- **可具名 acknowledge**：LEASE 與 SEQUENCING。formulation 結構上表達不了（本文上面兩節的產品決定），沒有任何輸入能改變這件事，所以由具權限 principal 具名簽收，receipt 保存 classes、policy version、actor、role、reason 與 solve hash。
+
+三個設計點值得在後續工作裡沿用：
+
+1. **權限來自被驗過的 receipt 的 `principal_role`，不是呼叫端參數**。能自稱角色的 actor 等於能自我授權。
+2. **兩個集合都空的 solve 視為「沒有宣告」而拒絕，不是「沒有缺口」**。2026-09-02 更正段落記的 CP-SAT 生產計畫正是兩個都空——任何相信空集合的閘都會剛好放行那些什麼都沒宣稱的計畫。
+3. **舊簽名不需要被撤銷或掃除**：它綁 solve problem hash 與 policy version id，re-solve 或 policy 換版後就自動不再匹配。
+
+DB 端 `network.netplan_constraint_acknowledgements` 以 trigger 拒絕 UPDATE／DELETE，並用 CHECK 把可簽類別鎖在 `{LEASE, SEQUENCING}`——policy 資料可以被 supersede 得更寬鬆，這道 CHECK 是它降不下去的地板。
+
+**仍未關閉**：OpsBoard transport／TS type、`RebalancePanel` 顯示，以及 production solve → Operator response → approval 的 E2E。另外 `ExistingStoreInput`／`CandidateSiteInput` 不帶 `construction_days` 等欄位，所以經 `NetPlanService.create_scenario` 建出來的 scenario 目前只綁得到 CAPITAL——transport 補完前，這些 scenario 一律會被上面那道閘擋住。
 
 ---
 

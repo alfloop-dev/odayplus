@@ -24,7 +24,7 @@
    - 標明擁有團隊為 `ForecastOps / Platform Ops`，目標時程為 `Wave 5+`。
    - 更新後端模型 `shared/domain/models.py` 與 canonical TS 介面 `packages/schemas/canonical/index.ts`，明確標記 `WorkOrder.root_cause` 為 `@reserved` / `RESERVED (unproduced)`。
    - 更新前端型別契約 `packages/domain-types/src/frontend-contracts.ts` 與元件設計文件 `docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md` §5.6，為 `RootCauseEvidenceCardContract` 與 `causeCandidate` 加上 `@reserved` 註釋與保留宣告，消解 API、TS 及 UI 契約暗示該能力已存在的誤導。
-   - 新增 forward migration `000018_work_orders_root_cause_disposition.sql` 與 Alembic revision `0012_work_orders_root_cause_disposition.py`，於資料庫層級記錄 column comment 與保留語意，並具備完整 rollback 機制。
+   - 新增 forward migration `000018_work_orders_root_cause_disposition.sql` 與 Alembic revision `0013_work_orders_root_cause_disposition.py`，接續 base 已存在的 `0012_netplan_constraint_disclosure.py`，於資料庫層級記錄 column comment 與保留語意，並具備完整 rollback 機制。
    - 於治理清單 `delivery_toolchain/governance/set_valued_requirements.json` 登錄 `ODP-FR-FCT-004`，標記 `ROOT_CAUSE_CANDIDATE` 為 `absent`，並以 `IMPLEMENTATION_READY`、`assigned_to` 與 `target_phase` 記錄可執行的工程處置。
    - 新增與更新契約／整合測試（`test_root_cause_contract_disposition.py`、`test_canonical_schema.py`、`test_migration_backfill.py`、`test_official_real_estate_postgresql.py`），在 disposable PostgreSQL 上真正執行 forward migration、檢查 comment、downgrade 後確認 comment 清除且 nullable column 保留。
 
@@ -38,7 +38,7 @@
 |---|---|:---:|:---:|---|
 | `shared/domain/models.py::WorkOrder` | `root_cause: str \| None = None` | ❌ 自動 writer 無 | ❌ backend reader 無 | domain shape 與手動／來源註記的相容邊界；業務模組無呼叫，已標記 RESERVED |
 | `packages/schemas/canonical/index.ts::WorkOrder` | `root_cause: string \| null` | ❌ 自動 writer 無 | ❌ production data reader 無 | canonical type only；前端/API client 沒有讀寫接線，已標記 `@reserved` |
-| `infra/db/migrations/000001_baseline_canonical_schema.sql` | `core.work_orders.root_cause TEXT` | ❌ 無 | ❌ 無 | baseline 只保留 nullable 欄位；無 DAO、SQL query 或 dbt 模型讀寫，migration 0012 只加 RESERVED comment |
+| `infra/db/migrations/000001_baseline_canonical_schema.sql` | `core.work_orders.root_cause TEXT` | ❌ 無 | ❌ 無 | baseline 只保留 nullable 欄位；無 DAO、SQL query 或 dbt 模型讀寫，migration 0013 只加 RESERVED comment |
 | `packages/schemas/source_contracts/internal/maintenance_work_order_event.json` | optional string | ⚠️ 手動／外部工單可帶值 | ❌ 無自動化管線消費 | 允許手動維修工單輸入字串（如 `"worn_seal"`），不是模型推導結果；省略與帶值均維持相容 |
 | `modules/forecastops/` (`ForecastOutput`, `Alert`) | 無 `root_cause` 欄位 | ❌ 無 | ❌ 無 | `ForecastOutput` 提供 `trajectory_class` 與 `turning_point_probability`；`Alert` 提供 `evidence_json` 異常證據，無根因候選 |
 | `packages/domain-types/` + `packages/ui-domain/` (`RootCauseEvidenceCardContract`) | UI presentation contract + component render | ❌ 無後端產出 | ⚠️ 有 presentation reader，無 API data wiring | `components.tsx` 只讀 contract、fixture 提供示例；不代表 root-cause engine 存在。type、design 與 governance 均標記 `@reserved` / `unproduced`；ForecastOps API 只提供原始 `evidence_json` |
@@ -73,14 +73,14 @@
    - `docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md` §5.6：為 `RootCauseEvidenceCard` 標註契約保留宣告（ODP-FR-FCT-004）。
 4. **Database Migration (`infra/db/migrations/`)**
    - `000018_work_orders_root_cause_disposition.sql`：執行 `COMMENT ON COLUMN core.work_orders.root_cause IS 'RESERVED: No automated producer exists in current release (ODP-FR-FCT-004). Owner: ForecastOps/Platform; Target: Wave 5+';`
-   - `versions/0012_work_orders_root_cause_disposition.py`：Alembic 遷移腳本，支援 `upgrade` 與 `downgrade` 回滾。
+   - `versions/0013_work_orders_root_cause_disposition.py`：Alembic 遷移腳本，接續 `0012_netplan_constraint_disclosure.py`，支援 `upgrade` 與 `downgrade` 回滾。
 5. **Governance Registry (`delivery_toolchain/governance/set_valued_requirements.json`)**
    - 登錄 `ODP-FR-FCT-004`，4 個 members（3 個 satisfied、`ROOT_CAUSE_CANDIDATE` 記為 `absent`，disposition 為 `IMPLEMENTATION_READY`，並具名 owner／target phase）。
 6. **Contract & Regression Tests (`tests/contract/`, `tests/ops/`, `tests/integration/`)**
    - 新增 `tests/contract/test_root_cause_contract_disposition.py`（7 項驗證通過）。
    - 更新 `tests/contract/test_canonical_schema.py`。
    - 更新 `tests/ops/test_migration_backfill.py`。
-   - 更新 `tests/integration/test_official_real_estate_postgresql.py`：baseline fixture 提供 0012 所需的 `core.work_orders`，並在 disposable PostgreSQL 上真正執行 forward migration、檢查 comment、downgrade 後確認 comment 清除且 nullable column 保留。
+   - 更新 `tests/integration/test_official_real_estate_postgresql.py`：baseline fixture 提供 0013 所需的 `core.work_orders`，並在 disposable PostgreSQL 上真正執行 forward migration、檢查 comment、downgrade 後確認 comment 清除且 nullable column 保留。
 
 ---
 
@@ -105,7 +105,7 @@ uv run --python 3.12 pytest tests/ops/test_migration_backfill.py -v
 uv run --python 3.12 pytest -q \
   tests/integration/test_official_real_estate_postgresql.py::test_root_cause_reserved_migration_round_trips_on_postgresql
 ```
-- 結果：`1 passed`（`0012` upgrade 寫入 RESERVED comment；downgrade 至 `0011` 清除 comment、保留 `core.work_orders.root_cause` 欄位）
+- 結果：`1 passed`（`0013` upgrade 寫入 RESERVED comment；downgrade 至 `0011` 逆轉 base 的 `0012` 與本 task 的 `0013`，清除 comment、保留 `core.work_orders.root_cause` 欄位）
 
 ### 5.4 治理清單成員驗證測試
 ```bash
@@ -118,7 +118,7 @@ uv run --python 3.12 pytest delivery_toolchain/governance/test_check_requirement
 uv run --python 3.12 pytest -q \
   tests/integration/test_official_real_estate_postgresql.py::test_alembic_head_installs_official_schema_and_both_view_branches
 ```
-- 結果：`1 passed`（官方 PostgreSQL fixture 的 baseline stamp 提供 0012 所需 `core.work_orders`，Alembic head 可達）
+- 結果：`1 passed`（官方 PostgreSQL fixture 的 baseline stamp 提供 0013 所需 `core.work_orders`，Alembic head 可達）
 
 ### 5.6 程式碼邊界防護檢查
 ```bash
