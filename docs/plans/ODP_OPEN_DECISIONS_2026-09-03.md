@@ -57,8 +57,11 @@
 
 `Poi` · `CompetitorStore` · `Listing` · `HeatZoneScore` · `DataSnapshot`
 
+「其餘」是相對於第 1 項的 `Prediction`。`shared/domain/models.py` 一共六個 canonical model 帶有這個形狀的預設值，前五個與 `Prediction` 帶的是 `confidence`，`DataSnapshot` 帶的是 `quality_score`；這裡把 `Prediction` 單獨列在第 1 項，只因為它離人的畫面最近，不是因為它可以有不同的答案。
+
 - **後果**：單獨看比前四項輕，但它們是**前四項的上游**。
-- **建議：五個必須一起決定。** Listing 的 confidence 缺席代表什麼，Prediction 就該一樣。一個一個決定就是下一次詞彙分裂的起點——而詞彙分裂正是查出來的五個成因之一。
+- **建議：五個必須一起決定，而且要與第 1 項同一個答案。** Listing 的 confidence 缺席代表什麼，Prediction 就該一樣。一個一個決定就是下一次詞彙分裂的起點——而詞彙分裂正是查出來的五個成因之一。
+- **執行上不分開**：[修正計畫](ODP_REMEDIATION_PLAN_2026-09-03.md)的第 3 批把第 1 項與這一項合成一個不可拆的 task，六個模型、六筆豁免一次處理。
 
 ### 6. 三份租戶檢查的 `PLATFORM_ADMIN` 不一致
 
@@ -130,7 +133,7 @@
 | 順位 | 項目 | 理由 |
 |---:|---|---|
 | 1 | 第 3 項 AVM 估值（品質分數 + 折舊） | 唯一一個錯誤會離開公司的項目 |
-| 2 | 第 5 項 canonical model 五個一起決定 | 它們是 1、2、4 的上游；分開決定會製造下一次詞彙分裂 |
+| 2 | 第 5 項 canonical model 其餘五個一起決定（連同第 1 項共六個） | 它們是 1、2、4 的上游；分開決定會製造下一次詞彙分裂 |
 | 3 | 第 7 項 Prediction Drift | 三種漂移裡唯一還全盲，而且成本最低 |
 
 第 11、12 項不需要裁決「做不做」，只需要指派半天確認資料源在不在——租約與時序已經證明，**先有量測才有限制**，這一步跳不得。

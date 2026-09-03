@@ -54,7 +54,7 @@ modules/heatzone/v3/scoring.py:69
 | 0 | 兩項資料源確認 | 不寫程式。它決定第 6 批裡三項到底存不存在，先做才不會排到假工作 | 無 |
 | 1 | AVM 估值兩處 | 唯一錯誤會離開公司的地方；**而且半徑最小**（`quality_score` 全樹 4 個引用） | 無 |
 | 2 | SiteScore 兩個 + `ModelReadyRecord` 兩個 | 中等半徑（8–10 個引用），SiteScore 已有 feasibility rules 可承接 | 無 |
-| 3 | canonical model 五個 | **危害高但排第三**：`.confidence` 全樹 56 個引用點，工作量最大，先做會卡住其他人 | 建議在 1、2 之後 |
+| 3 | canonical model 六個 | **危害高但排第三**：`.confidence` 全樹 56 個引用點，工作量最大，先做會卡住其他人 | 建議在 1、2 之後 |
 | 4 | 三個盲區 | 新增能力，不改既有語意，可與 1–3 並行 | 無 |
 | 5 | 政策與詞彙 | 要先有答案才有工作 | 你的裁決 |
 | 6 | 其餘缺席 | 不產生錯答案，可長期排 | 部分依第 0 批 |
@@ -132,11 +132,15 @@ modules/heatzone/v3/scoring.py:69
 
 ---
 
-## 第 3 批 —— canonical model 五個
+## 第 3 批 —— canonical model 六個
 
 **高危害、最大半徑、1 個 task 不可拆。**
 
-`Poi` · `CompetitorStore` · `Listing` · `Prediction` · `HeatZoneScore` · `DataSnapshot`
+`shared/domain/models.py` 的六個：`Poi` · `CompetitorStore` · `Listing` · `Prediction` · `HeatZoneScore` · `DataSnapshot`
+
+前五個帶的是 `confidence`，`DataSnapshot` 帶的是 `quality_score`。六個各對應一筆豁免，就是這一批要刪的六筆——`measurement_default_exemptions.json` 裡以 `shared/domain/models.py::` 開頭的全部條目。
+
+待裁決清單把它們寫成兩項：`Prediction.confidence` 是第 1 項（它最可能不帶限定詞出現在操作者畫面上），其餘五個是第 5 項。那是**裁決的排序，不是執行的切法**——第 5 項本身就要求 Listing 與 Prediction 得到同一個答案，所以這裡六個一起做。
 
 ### 為什麼不能拆
 
@@ -149,14 +153,14 @@ grep -rn "\.confidence\b" --include=*.py modules apps shared models solver
     → 56 個非測試引用點
 ```
 
-那 56 個不全屬於這五個類別（`.confidence` 是共用屬性名），但**每一個都得逐一看過**才能確定哪些會收到 `None`。這是真正的成本，不是欄位本身。
+那 56 個不全屬於這批帶 `confidence` 的五個類別（`.confidence` 是共用屬性名），但**每一個都得逐一看過**才能確定哪些會收到 `None`。這是真正的成本，不是欄位本身。
 
 ### 做法
 
-1. 先寫一條會失敗的測試：五個類別各建一個沒有 confidence 的實例，斷言下游不會把它當滿分
+1. 先寫一條會失敗的測試：六個類別各建一個沒有量測值的實例（五個缺 `confidence`、`DataSnapshot` 缺 `quality_score`），斷言下游不會把它當滿分
 2. 欄位改 `float | None = None`，讓型別檢查與測試把所有需要處理的呼叫點暴露出來
 3. 逐點決定：棄權、標記、還是往上傳。**禁止 `or 1.0`**——那是把缺陷搬位置
-4. 刪除六筆豁免（`DataSnapshot.quality_score` 也在這批）
+4. 刪除這六筆豁免——`shared/domain/models.py::` 開頭的條目一筆不留
 
 ### 風險
 
