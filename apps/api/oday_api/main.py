@@ -114,6 +114,7 @@ else:
         forecastops_policy_repository: Any = None,
         netplan_repository: Any = None,
         netplan_approval_verifier: Any = None,
+        netplan_policy_repository: Any = None,
         learninghub_repository: Any = None,
         artifact_store: Any = None,
         priceops_repository: Any = None,
@@ -1128,6 +1129,15 @@ else:
             else getattr(bundle, "forecastops_policy_repository", None)
         )
         netplan_repo = netplan_repository or bundle.netplan_repository
+        # The decision-policy registry is one table serving every policy_kind;
+        # `bundle.forecastops_policy_repository` is named for its first consumer,
+        # not scoped to it. NetPlan approval resolves `netplan_action` from the
+        # same registry, and refuses when it cannot.
+        netplan_policy_repo = (
+            netplan_policy_repository
+            if netplan_policy_repository is not None
+            else getattr(bundle, "forecastops_policy_repository", None)
+        )
         learning_repo = learninghub_repository or bundle.learninghub_repository
         model_artifacts = artifact_store or bundle.artifact_store
         price_repo = priceops_repository or bundle.priceops_repository
@@ -1382,6 +1392,7 @@ else:
                 audit_log=audit_log,
                 production_executor=netplan_production_executor,
                 approval_verifier=netplan_approval_verifier,
+                policy_repository=netplan_policy_repo,
                 runtime_mode=domain_runtime_mode,
             ),
         )

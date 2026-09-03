@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 MIGRATION_SQL = Path("infra/db/migrations/000018_heatzone_composition.sql")
-ALEMBIC_REV = Path("infra/db/migrations/versions/0012_heatzone_composition.py")
+ALEMBIC_REV = Path("infra/db/migrations/versions/0013_heatzone_composition.py")
 
 
 def _sql() -> str:
@@ -100,6 +100,6 @@ def test_heatzone_merge_policy_seeding_and_tenant_trigger() -> None:
 def test_alembic_revision_chain() -> None:
     rev = _rev()
 
-    assert 'revision: str = "0012"' in rev
+    assert 'revision: str = "0013"' in rev
     assert 'down_revision: str = "0011"' in rev
     assert "000018_heatzone_composition.sql" in rev
