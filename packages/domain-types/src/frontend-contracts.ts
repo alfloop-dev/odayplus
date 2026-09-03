@@ -151,6 +151,11 @@ export type RootCauseCategory =
   | "Competitor"
   | "External Shock";
 
+/**
+ * @reserved Reserved presentation contract for future root-cause candidate engine (ODP-FR-FCT-004).
+ * `causeCandidate` and this evidence card currently have no automated backend producer (unproduced).
+ * Owner: ForecastOps / Platform Ops. Target Milestone: Wave 5+.
+ */
 export type RootCauseEvidenceCardContract = {
   causeCandidate: RootCauseCategory;
   evidenceStrength: number;

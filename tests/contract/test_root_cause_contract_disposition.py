@@ -99,10 +99,30 @@ def test_canonical_ts_schema_marks_root_cause_as_reserved() -> None:
     assert "root_cause: string | null;" in content
 
 
-def test_migration_0011_structure_and_rollback() -> None:
-    """Alembic revision 0011 and SQL 000017 are present and executable."""
-    sql_path = REPO_ROOT / "infra/db/migrations/000017_work_orders_root_cause_disposition.sql"
-    py_path = REPO_ROOT / "infra/db/migrations/versions/0011_work_orders_root_cause_disposition.py"
+def test_frontend_contracts_and_design_mark_root_cause_evidence_as_reserved() -> None:
+    """packages/domain-types and component contracts design doc must mark RootCauseEvidenceCard / causeCandidate as reserved."""
+    frontend_contracts_path = REPO_ROOT / "packages/domain-types/src/frontend-contracts.ts"
+    design_doc_path = REPO_ROOT / "docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md"
+
+    ts_content = frontend_contracts_path.read_text(encoding="utf-8")
+    assert "export type RootCauseEvidenceCardContract" in ts_content
+    assert "@reserved" in ts_content
+    assert "ODP-FR-FCT-004" in ts_content
+    assert "causeCandidate" in ts_content
+    assert "ForecastOps / Platform Ops" in ts_content
+    assert "Wave 5+" in ts_content
+
+    doc_content = design_doc_path.read_text(encoding="utf-8")
+    assert "### 5.6 RootCauseEvidenceCard" in doc_content
+    assert "ODP-FR-FCT-004" in doc_content
+    assert "unproduced / reserved" in doc_content
+    assert "ForecastOps / Platform Ops" in doc_content
+
+
+def test_migration_0012_structure_and_rollback() -> None:
+    """Alembic revision 0012 and SQL 000018 are present and executable."""
+    sql_path = REPO_ROOT / "infra/db/migrations/000018_work_orders_root_cause_disposition.sql"
+    py_path = REPO_ROOT / "infra/db/migrations/versions/0012_work_orders_root_cause_disposition.py"
 
     assert sql_path.exists()
     assert py_path.exists()
@@ -113,9 +133,9 @@ def test_migration_0011_structure_and_rollback() -> None:
     assert "ODP-FR-FCT-004" in sql_content
 
     py_content = py_path.read_text(encoding="utf-8")
-    assert "revision: str = \"0011\"" in py_content
-    assert "down_revision: str = \"0010\"" in py_content
-    assert "000017_work_orders_root_cause_disposition.sql" in py_content
+    assert 'revision: str = "0012"' in py_content
+    assert 'down_revision: str | None = "0011"' in py_content
+    assert "000018_work_orders_root_cause_disposition.sql" in py_content
     assert "def downgrade" in py_content
 
 

@@ -1,7 +1,7 @@
 """WorkOrder root_cause column reserved disposition
 
-Revision ID: 0011
-Revises: 0010
+Revision ID: 0012
+Revises: 0011
 Create Date: 2026-09-03 12:00:00.000000
 
 Phase: ODP Remediation · W4 Blind Spots
@@ -20,15 +20,15 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0011"
-down_revision: str = "0010"
+revision: str = "0012"
+down_revision: str | None = "0011"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    sql_file_path = os.path.join(dir_path, "../000017_work_orders_root_cause_disposition.sql")
+    sql_file_path = os.path.join(dir_path, "../000018_work_orders_root_cause_disposition.sql")
 
     with open(sql_file_path, encoding="utf-8") as f:
         sql_content = f.read()
