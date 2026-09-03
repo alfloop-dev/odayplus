@@ -136,8 +136,8 @@ uv run --frozen python -m pytest \
 
 ## 6. Base advance 附帶處置
 
-本輪合入 `origin/dev` 時，dev 已落地 `0013_work_orders_root_cause_disposition`，與本任務的 `0013_heatzone_composition` **撞號**（兩者 `revision="0013"`、`down_revision="0012"`）。若照原樣合併，alembic 會出現重複 revision id 與多重 head。
+本輪合入 `origin/dev` 時，dev 先後落地 `0013_work_orders_root_cause_disposition` 與 `0014_learninghub_backtest_receipts`。
 
-處置：本任務的 migration 改編為 `0014_heatzone_composition`（`down_revision="0013"`），並在 `tests/ops/test_heatzone_composition_migration.py` 新增結構性檢查——列舉所有 migration，斷言無重複 revision id、恰好一個 head、根為 `0001`。撞號會被測試擋下，而不是等到部署時才發現。
+處置：本任務的 migration 改編為 `0015_heatzone_composition`（`down_revision="0014"`），對應 SQL 為 `000020_heatzone_composition.sql`，並在 `tests/ops/test_heatzone_composition_migration.py` 進行結構性檢查——列舉所有 migration，斷言無重複 revision id、恰好一個 head、根為 `0001`。撞號會被測試擋下，而不是等到部署時才發現。
 
 Stamped baseline fixture（`tests/integration/test_official_real_estate_postgresql.py`）同時保留雙方的表定義。

@@ -904,115 +904,125 @@ else:
                 ) from exc
 
             facade = market_data_facade_for_request(request)
-            effective_perfs: list[dict[str, Any]] | list[Any]
-            effective_starts: list[dict[str, Any]] | list[Any]
+            if facade is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "HZ004_FACADE_UNAVAILABLE",
+                        "message": "MarketDataFacade is not configured; cannot resolve authoritative absorption source records",
+                    },
+                )
+
+            principal = getattr(request.state, "operator_principal", None)
+            if principal is None:
+                try:
+                    from apps.api.oday_api.security.dependencies import principal_from_headers
+
+                    principal = principal_from_headers(request.headers)
+                except Exception:
+                    principal = None
+
+            p_start = period_start
+            p_end = period_end
+            dates_in_period = [
+                date.fromordinal(d)
+                for d in range(p_start.toordinal(), p_end.toordinal() + 1)
+            ]
 
             server_perfs: list[dict[str, Any]] = []
             server_op_starts: list[dict[str, Any]] = []
-            facade_has_records = False
 
-            if facade is not None:
-                p_start = period_start
-                p_end = period_end
-                dates_in_period = [
-                    date.fromordinal(d)
-                    for d in range(p_start.toordinal(), p_end.toordinal() + 1)
-                ]
-                dp_client = getattr(facade, "client", facade)
+            from modules.external_data.application.market_data_facade import (
+                MarketDataAuthorizationError,
+                MarketDataNotFoundError,
+            )
 
-                try:
-                    for s_id in body.store_ids:
-                        op_start_doc = dp_client.get_operational_start_observation(s_id)
-                        server_op_starts.append(
-                            op_start_doc.to_dict() if hasattr(op_start_doc, "to_dict") else dict(op_start_doc)
+            try:
+                for s_id in body.store_ids:
+                    op_start_doc = facade.get_operational_start_observation(s_id, principal=principal)
+                    server_op_starts.append(
+                        op_start_doc.to_dict() if hasattr(op_start_doc, "to_dict") else dict(op_start_doc)
+                    )
+                    for b_date in dates_in_period:
+                        d_key = b_date.isoformat()
+                        perf_doc = facade.get_store_daily_performance(s_id, d_key, principal=principal)
+                        server_perfs.append(
+                            perf_doc.to_dict() if hasattr(perf_doc, "to_dict") else dict(perf_doc)
                         )
-                        for b_date in dates_in_period:
-                            d_key = b_date.isoformat()
-                            perf_doc = dp_client.get_store_daily_performance(s_id, d_key)
-                            server_perfs.append(
-                                perf_doc.to_dict() if hasattr(perf_doc, "to_dict") else dict(perf_doc)
-                            )
-                    facade_has_records = True
-                except Exception as exc:
-                    if body.performances is None or body.operational_starts is None:
+            except MarketDataAuthorizationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "HZ004_SOURCE_UNAUTHORIZED",
+                        "message": f"Principal is not authorized to read market data sources: {exc}",
+                    },
+                ) from exc
+            except (MarketDataNotFoundError, Exception) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "HZ004_SOURCE_NOT_FOUND",
+                        "message": f"Published source documents not found for stores {body.store_ids}: {exc}",
+                    },
+                ) from exc
+
+            if body.performances is not None:
+                server_perf_lookup = {
+                    (str(r.get("store_id")), str(r.get("business_date"))): r for r in server_perfs
+                }
+                for client_row in body.performances:
+                    key = (str(client_row.get("store_id")), str(client_row.get("business_date")))
+                    server_row = server_perf_lookup.get(key)
+                    if server_row is None:
                         raise HTTPException(
                             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail={
-                                "code": "HZ004_SOURCE_NOT_FOUND",
-                                "message": f"Published source documents not found for stores {body.store_ids}: {exc}",
+                                "code": "HZ004_INPUT_REFUSED",
+                                "message": f"Supplied performance row for store '{key[0]}' on {key[1]} is not in published source repository",
                             },
-                        ) from exc
-                    facade_has_records = False
+                        )
+                    if (
+                        client_row.get("paid_amount") != server_row.get("paid_amount")
+                        or client_row.get("raw_contract_fingerprint") != server_row.get("raw_contract_fingerprint")
+                        or client_row.get("is_complete") != server_row.get("is_complete")
+                        or client_row.get("coverage_state") != server_row.get("coverage_state")
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "code": "HZ004_INPUT_REFUSED",
+                                "message": f"Supplied performance row for store '{key[0]}' on {key[1]} does not match published source record",
+                            },
+                        )
 
-            if facade_has_records:
-                if body.performances is not None:
-                    server_perf_lookup = {
-                        (str(r.get("store_id")), str(r.get("business_date"))): r for r in server_perfs
-                    }
-                    for client_row in body.performances:
-                        key = (str(client_row.get("store_id")), str(client_row.get("business_date")))
-                        server_row = server_perf_lookup.get(key)
-                        if server_row is None:
-                            raise HTTPException(
-                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                detail={
-                                    "code": "HZ004_INPUT_REFUSED",
-                                    "message": f"Supplied performance row for store '{key[0]}' on {key[1]} is not in published source repository",
-                                },
-                            )
-                        if (
-                            client_row.get("paid_amount") != server_row.get("paid_amount")
-                            or client_row.get("raw_contract_fingerprint") != server_row.get("raw_contract_fingerprint")
-                            or client_row.get("is_complete") != server_row.get("is_complete")
-                            or client_row.get("coverage_state") != server_row.get("coverage_state")
-                        ):
-                            raise HTTPException(
-                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                detail={
-                                    "code": "HZ004_INPUT_REFUSED",
-                                    "message": f"Supplied performance row for store '{key[0]}' on {key[1]} does not match published source record",
-                                },
-                            )
+            if body.operational_starts is not None:
+                server_start_lookup = {str(r.get("store_id")): r for r in server_op_starts}
+                for client_start in body.operational_starts:
+                    s_id = str(client_start.get("store_id"))
+                    server_start = server_start_lookup.get(s_id)
+                    if server_start is None:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "code": "HZ004_INPUT_REFUSED",
+                                "message": f"Supplied operational start for store '{s_id}' is not in published source repository",
+                            },
+                        )
+                    if (
+                        str(client_start.get("observed_start_business_date")) != str(server_start.get("observed_start_business_date"))
+                        or str(client_start.get("method")) != str(server_start.get("method"))
+                        or str(client_start.get("confidence")) != str(server_start.get("confidence"))
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "code": "HZ004_INPUT_REFUSED",
+                                "message": f"Supplied operational start for store '{s_id}' does not match published source record",
+                            },
+                        )
 
-                if body.operational_starts is not None:
-                    server_start_lookup = {str(r.get("store_id")): r for r in server_op_starts}
-                    for client_start in body.operational_starts:
-                        s_id = str(client_start.get("store_id"))
-                        server_start = server_start_lookup.get(s_id)
-                        if server_start is None:
-                            raise HTTPException(
-                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                detail={
-                                    "code": "HZ004_INPUT_REFUSED",
-                                    "message": f"Supplied operational start for store '{s_id}' is not in published source repository",
-                                },
-                            )
-                        if (
-                            str(client_start.get("observed_start_business_date")) != str(server_start.get("observed_start_business_date"))
-                            or str(client_start.get("method")) != str(server_start.get("method"))
-                            or str(client_start.get("confidence")) != str(server_start.get("confidence"))
-                        ):
-                            raise HTTPException(
-                                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                                detail={
-                                    "code": "HZ004_INPUT_REFUSED",
-                                    "message": f"Supplied operational start for store '{s_id}' does not match published source record",
-                                },
-                            )
-
-                effective_perfs = server_perfs
-                effective_starts = server_op_starts
-            else:
-                if body.performances is None or body.operational_starts is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail={
-                            "code": "HZ004_SOURCE_NOT_FOUND",
-                            "message": "performances and operational_starts must be supplied when no server-side published source records are available",
-                        },
-                    )
-                effective_perfs = body.performances
-                effective_starts = body.operational_starts
+            effective_perfs = server_perfs
+            effective_starts = server_op_starts
 
             try:
                 result = assemble_zone_absorption(
@@ -1048,6 +1058,50 @@ else:
                     },
                 )
 
+            evidence_repo = evidence_repo_for_request(request)
+            registered_cell = None
+            if evidence_repo is not None:
+                if hasattr(evidence_repo, "get_cell"):
+                    registered_cell = evidence_repo.get_cell(tid, body.cell_id)
+                elif hasattr(evidence_repo, "_cells"):
+                    registered_cell = evidence_repo._cells.get(tid, {}).get(body.cell_id)
+
+            target_barrier_side = body.barrier_side
+            target_barrier_desc = body.barrier_description
+
+            if registered_cell is not None:
+                reg_side = getattr(registered_cell, "barrier_side", None)
+                reg_desc = getattr(registered_cell, "barrier_description", "") or ""
+                if reg_side is None:
+                    if target_barrier_side is not None:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "code": "HZ004_BARRIER_UNBACKED",
+                                "message": f"Cell '{body.cell_id}' has no registered geo barrier; side-labelled outcomes require trusted geo evidence",
+                            },
+                        )
+                else:
+                    if target_barrier_side is not None and target_barrier_side != reg_side:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "code": "HZ004_BARRIER_UNBACKED",
+                                "message": f"Supplied barrier side '{target_barrier_side}' does not match registered geo barrier '{reg_side}'",
+                            },
+                        )
+                    target_barrier_side = reg_side
+                    target_barrier_desc = reg_desc or target_barrier_desc
+            else:
+                if target_barrier_side is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_BARRIER_UNBACKED",
+                            "message": f"Cannot record side-labelled outcome for cell '{body.cell_id}' without trusted geo registration",
+                        },
+                    )
+
             try:
                 recorded = record_absorption_outcome(
                     writer,
@@ -1057,8 +1111,8 @@ else:
                     period_end=period_end,
                     result=result,
                     policy=policy,
-                    barrier_side=body.barrier_side,
-                    barrier_description=body.barrier_description,
+                    barrier_side=target_barrier_side,
+                    barrier_description=target_barrier_desc,
                 )
             except AbsorptionOutcomeConflictError as exc:
                 raise HTTPException(

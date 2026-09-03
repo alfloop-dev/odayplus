@@ -1,5 +1,9 @@
 """Learning Hub domain primitives."""
 
+from modules.learninghub.domain.backtest import (
+    BacktestReceipt,
+    evaluate_backtest_run,
+)
 from modules.learninghub.domain.dataset_snapshot import (
     DatasetQualityAdmissionError,
     DatasetSnapshot,
@@ -39,6 +43,9 @@ from modules.learninghub.domain.monitoring import (
 )
 
 __all__ = [
+    # backtest
+    "BacktestReceipt",
+    "evaluate_backtest_run",
     # dataset_snapshot
     "DatasetQualityAdmissionError",
     "DatasetSnapshot",

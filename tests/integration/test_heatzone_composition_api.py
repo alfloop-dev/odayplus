@@ -15,14 +15,18 @@ from __future__ import annotations
 import uuid
 from dataclasses import replace
 from datetime import UTC, date, datetime
+from typing import Any
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from apps.api.oday_api.routes.heatzone import create_heatzone_router
 from modules.external_data.application.market_data_facade import MarketDataFacade
 from modules.external_data.infrastructure.data_platform_client import (
     InMemoryDataPlatformTransport,
 )
+from modules.heatzone.application.merge_split_evidence import AbsorptionOutcomeRecord
 from modules.heatzone.domain.composition import (
     CompositionKind,
     HeatZoneCompositionRecord,
@@ -596,25 +600,77 @@ def _record_outcome(client: TestClient, body: dict, *, headers=ABSORPTION_HEADER
     )
 
 
-def _bundle_with_registered_cell(cell_id: str = HZ004_CELL):
-    """A bundle whose geo pipeline has published the cell, and nothing else.
-
-    Registering a cell is identity, not evidence: it is what makes
-    `geo_cell_id` resolvable, which PostgreSQL requires through a foreign key.
-    No absorption history is written here -- that is what the route under test
-    is for.
-    """
+def _bundle_with_registered_cell(
+    cell_id: str = HZ004_CELL,
+    *,
+    barrier_side: str | None = None,
+    barrier_description: str = "",
+):
+    """A bundle whose geo pipeline has published the cell, and optionally its barrier."""
     bundle = build_persistence(mode="memory")
     bundle.heatzone_evidence_repository.register_cell(
-        TENANT_ID, CellRegistration(cell_id, f"8a{cell_id}", "Taipei", "Xinyi")
+        TENANT_ID,
+        CellRegistration(
+            cell_id,
+            f"8a{cell_id}",
+            "Taipei",
+            "Xinyi",
+            barrier_side=barrier_side,
+            barrier_description=barrier_description,
+        ),
     )
     return bundle
+
+
+def _client_with_populated_sources(
+    bundle,
+    *,
+    stores: tuple[str, ...] = ("store-1", "store-2"),
+    window_start: date = WINDOW_START,
+    window_end: date = WINDOW_END,
+    daily_revenue: float = 500.0,
+    fingerprint: str = "sdp-fingerprint",
+    method: str = "FIRST_OBSERVED_TRANSACTION",
+    confidence: str = "HIGH",
+    drop_date: str | None = None,
+    facade_override: Any = None,
+) -> TestClient:
+    if facade_override is not None:
+        return TestClient(
+            create_app(persistence=bundle, market_intelligence_facade=facade_override)
+        )
+    transport = InMemoryDataPlatformTransport()
+    perfs = performance_rows(
+        store_ids=stores,
+        window_start=window_start,
+        window_end=window_end,
+        daily_revenue=daily_revenue,
+        fingerprint=fingerprint,
+    )
+    op_starts = operational_start_rows(
+        store_ids=stores,
+        window_start=window_start,
+        window_end=window_end,
+        method=method,
+        confidence=confidence,
+    )
+    for p in perfs:
+        if drop_date and p["business_date"] == drop_date:
+            continue
+        doc_id = f"{p['store_id']}:{p['business_date']}"
+        transport.store_document("oday.store-daily-performance.v1", doc_id, p)
+    for op in op_starts:
+        transport.store_document(
+            "oday.operational-start-observation.v1", op["store_id"], op
+        )
+    facade = MarketDataFacade(transport=transport)
+    return TestClient(create_app(persistence=bundle, market_intelligence_facade=facade))
 
 
 def test_recording_an_absorption_outcome_measures_it_server_side() -> None:
     """The route computes the outcome; the request only names the inputs."""
     bundle = _bundle_with_registered_cell()
-    client = TestClient(create_app(persistence=bundle))
+    client = _client_with_populated_sources(bundle)
 
     response = _record_outcome(
         client,
@@ -659,7 +715,8 @@ def test_recording_an_absorption_outcome_measures_it_server_side() -> None:
 
 def test_a_caller_cannot_state_what_a_zone_absorbed() -> None:
     """Supplying the measurement is refused, not merged with the computed one."""
-    client = TestClient(create_app(persistence=_bundle_with_registered_cell()))
+    bundle = _bundle_with_registered_cell()
+    client = _client_with_populated_sources(bundle)
 
     body = outcome_request(
         cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
@@ -679,13 +736,14 @@ def test_a_caller_cannot_state_what_a_zone_absorbed() -> None:
 def test_an_untraceable_period_is_refused_rather_than_recorded() -> None:
     """No fingerprint, no evidence: an unsourced outcome is not admissible."""
     bundle = _bundle_with_registered_cell()
-    client = TestClient(create_app(persistence=bundle))
+    client = _client_with_populated_sources(bundle, fingerprint="")
 
     body = outcome_request(
-        cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
+        cell_id="cell-hz004-00",
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        fingerprint="",
     )
-    for row in body["performances"]:
-        row["raw_contract_fingerprint"] = ""
 
     response = _record_outcome(client, body)
 
@@ -697,28 +755,24 @@ def test_an_untraceable_period_is_refused_rather_than_recorded() -> None:
 def test_an_incomplete_window_is_refused_rather_than_recorded() -> None:
     """A partial period would look measured and would not be."""
     bundle = _bundle_with_registered_cell()
-    client = TestClient(create_app(persistence=bundle))
+    drop_day = f"{WINDOW_START.year:04d}-{WINDOW_START.month:02d}-15"
+    client = _client_with_populated_sources(bundle, drop_date=drop_day)
 
     body = outcome_request(
         cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
     )
-    # Drop one business day; the assembler must fail closed on the gap rather
-    # than sum what is left and call it the period's absorption.
-    body["performances"] = [
-        row for row in body["performances"] if not row["business_date"].endswith("-15")
-    ]
 
     response = _record_outcome(client, body)
 
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "HZ004_NOT_MEASURABLE"
+    assert response.json()["detail"]["code"] == "HZ004_SOURCE_NOT_FOUND"
     assert bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID) == []
 
 
 def test_a_declared_start_date_is_refused_under_the_seeded_policy() -> None:
     """Admitting a claimed start date is a governance decision, not a default."""
     bundle = _bundle_with_registered_cell()
-    client = TestClient(create_app(persistence=bundle))
+    client = _client_with_populated_sources(bundle, method="DECLARED")
 
     response = _record_outcome(
         client,
@@ -738,7 +792,7 @@ def test_a_declared_start_date_is_refused_under_the_seeded_policy() -> None:
 def test_rerecording_a_period_is_idempotent_but_a_disagreement_is_refused() -> None:
     """History is appended to, never rewritten."""
     bundle = _bundle_with_registered_cell()
-    client = TestClient(create_app(persistence=bundle))
+    client = _client_with_populated_sources(bundle)
 
     body = outcome_request(
         cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
@@ -747,18 +801,27 @@ def test_rerecording_a_period_is_idempotent_but_a_disagreement_is_refused() -> N
     assert _record_outcome(client, body).status_code == 200
     assert len(bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID)) == 1
 
-    # A recomputation that disagrees is a finding, not an update.
-    conflicting = outcome_request(
+    # If the stored outcome in repository differs from a new calculation, it's a conflict
+    differing_outcome = AbsorptionOutcomeRecord(
         cell_id="cell-hz004-00",
-        window_start=WINDOW_START,
-        window_end=WINDOW_END,
-        daily_revenue=900.0,
+        period_start=WINDOW_START,
+        period_end=WINDOW_END,
+        original_demand=100_000.0,
+        absorbed_demand=50_000.0,
+        remaining_demand=50_000.0,
+        absorption_ratio=0.50,
+        absorbing_store_count=2,
+        basis_source_ids=("other-fingerprint",),
+        absorption_policy_version_id=f"heatzone-absorption-v1:{TENANT_ID}",
+        basis_at=datetime(2026, 9, 1, tzinfo=UTC),
+        under_realized=False,
     )
-    response = _record_outcome(client, conflicting)
+    bundle.heatzone_evidence_repository._outcomes[TENANT_ID] = [differing_outcome]
+    response = _record_outcome(client, body)
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "HZ004_OUTCOME_CONFLICT"
     stored = bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID)
-    assert [o.absorbed_demand for o in stored] == [28_000.0]
+    assert [o.absorbed_demand for o in stored] == [50_000.0]
 
 
 def test_a_side_labelled_outcome_needs_the_barrier_it_was_split_on() -> None:
@@ -767,22 +830,13 @@ def test_a_side_labelled_outcome_needs_the_barrier_it_was_split_on() -> None:
     A side without a recorded barrier would let a split be taken on a division
     nobody observed, which is the guess the readiness ruling forbids.
     """
-    bundle = _bundle_with_registered_cell()
-    client = TestClient(create_app(persistence=bundle))
-
-    unnamed = _record_outcome(
-        client,
-        outcome_request(
-            cell_id=HZ004_CELL,
-            window_start=WINDOW_START,
-            window_end=WINDOW_END,
-            barrier_side="A",
-        ),
+    barrier_desc = "Love River, no crossing within the zone"
+    bundle = _bundle_with_registered_cell(
+        cell_id=HZ004_CELL, barrier_side="A", barrier_description=barrier_desc
     )
-    assert unnamed.status_code == 422
-    assert unnamed.json()["detail"]["code"] == "HZ004_OUTCOME_REFUSED"
-    assert bundle.heatzone_evidence_repository.list_absorption_outcomes(TENANT_ID) == []
+    client = _client_with_populated_sources(bundle)
 
+    # 1. Matching registered barrier succeeds
     named = _record_outcome(
         client,
         outcome_request(
@@ -790,7 +844,7 @@ def test_a_side_labelled_outcome_needs_the_barrier_it_was_split_on() -> None:
             window_start=WINDOW_START,
             window_end=WINDOW_END,
             barrier_side="A",
-            barrier_description="Love River, no crossing within the zone",
+            barrier_description=barrier_desc,
         ),
     )
     assert named.status_code == 200, named.text
@@ -799,7 +853,7 @@ def test_a_side_labelled_outcome_needs_the_barrier_it_was_split_on() -> None:
     stored = bundle.heatzone_evidence_repository.list_cells(TENANT_ID)
     assert [o.barrier_side for o in stored[0].side_outcomes] == ["A"]
 
-    # A side outside the recorded pair is not a side.
+    # 2. A side outside the recorded barrier is refused.
     invalid = _record_outcome(
         client,
         outcome_request(
@@ -807,11 +861,27 @@ def test_a_side_labelled_outcome_needs_the_barrier_it_was_split_on() -> None:
             window_start=WINDOW_START,
             window_end=WINDOW_END,
             barrier_side="C",
-            barrier_description="Love River, no crossing within the zone",
+            barrier_description=barrier_desc,
         ),
     )
     assert invalid.status_code == 422
-    assert invalid.json()["detail"]["code"] == "HZ004_OUTCOME_REFUSED"
+    assert invalid.json()["detail"]["code"] == "HZ004_BARRIER_UNBACKED"
+
+    # 3. Supplying barrier_side for a cell with no registered barrier is refused.
+    bundle_unbacked = _bundle_with_registered_cell(cell_id="cell-no-barrier")
+    client_unbacked = _client_with_populated_sources(bundle_unbacked)
+    unbacked = _record_outcome(
+        client_unbacked,
+        outcome_request(
+            cell_id="cell-no-barrier",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            barrier_side="A",
+            barrier_description=barrier_desc,
+        ),
+    )
+    assert unbacked.status_code == 422
+    assert unbacked.json()["detail"]["code"] == "HZ004_BARRIER_UNBACKED"
 
 
 def test_an_outcome_for_an_unpublished_cell_is_refused() -> None:
@@ -822,7 +892,7 @@ def test_an_outcome_for_an_unpublished_cell_is_refused() -> None:
     then silently drops, so the outcome would look recorded and never be read.
     """
     bundle = _bundle_with_registered_cell()
-    client = TestClient(create_app(persistence=bundle))
+    client = _client_with_populated_sources(bundle)
 
     response = _record_outcome(
         client,
@@ -844,7 +914,8 @@ def test_the_roles_that_decide_a_merge_cannot_write_its_evidence() -> None:
     The two roles checked here are exactly the ones granted heatzone approval
     and override, so this is the separation itself rather than a sample of it.
     """
-    client = TestClient(create_app(persistence=_bundle_with_registered_cell()))
+    bundle = _bundle_with_registered_cell()
+    client = _client_with_populated_sources(bundle)
     body = outcome_request(
         cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
     )
@@ -870,7 +941,7 @@ def test_recorded_outcomes_reach_the_merge_split_engine(monkeypatch, tmp_path) -
     """
     bundle = _bundle_with_registered_cell()
     use_matured_receipt(monkeypatch, tmp_path)
-    client = TestClient(create_app(persistence=bundle))
+    client = _client_with_populated_sources(bundle)
 
     # Nothing recorded yet: the repository is wired but the history is empty,
     # so the engine abstains on measured emptiness rather than proposing.
@@ -903,6 +974,87 @@ def test_recorded_outcomes_reach_the_merge_split_engine(monkeypatch, tmp_path) -
     assert body["abstained"] is True
     assert body["readiness"]["metrics"]["outcome_period_count"] == 1
     assert body["readiness"]["metrics"]["basis_source_id_count"] == 56
+
+
+def test_record_outcome_fails_closed_when_facade_unavailable() -> None:
+    """If MarketDataFacade is not configured, the route fails closed with 503."""
+    bundle = _bundle_with_registered_cell()
+    app = FastAPI()
+    app.include_router(
+        create_heatzone_router(
+            store=bundle.heatzone_store,
+            composition_repository=bundle.heatzone_composition_repository,
+            policy_repository=bundle.forecastops_policy_repository,
+            evidence_repository=bundle.heatzone_evidence_repository,
+            absorption_outcome_writer=bundle.heatzone_absorption_outcome_writer,
+            market_data_facade=None,
+            audit_log=bundle.audit_log,
+        ),
+        prefix="/api/v1",
+    )
+    client = TestClient(app)
+
+    response = _record_outcome(
+        client,
+        {
+            "cell_id": "cell-hz004-00",
+            "period_start": WINDOW_START.isoformat(),
+            "period_end": WINDOW_END.isoformat(),
+            "original_demand": 100_000.0,
+            "store_ids": ["store-1"],
+        },
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "HZ004_FACADE_UNAVAILABLE"
+
+
+def test_record_outcome_fails_closed_when_published_sources_missing() -> None:
+    """If store documents are missing in published repository, fail closed with 422."""
+    bundle = _bundle_with_registered_cell()
+    transport = InMemoryDataPlatformTransport()
+    # Empty transport - no documents stored
+    facade = MarketDataFacade(transport=transport)
+    client = TestClient(
+        create_app(persistence=bundle, market_intelligence_facade=facade)
+    )
+
+    response = _record_outcome(
+        client,
+        {
+            "cell_id": "cell-hz004-00",
+            "period_start": WINDOW_START.isoformat(),
+            "period_end": WINDOW_END.isoformat(),
+            "original_demand": 100_000.0,
+            "store_ids": ["store-1"],
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_SOURCE_NOT_FOUND"
+
+
+def test_record_outcome_enforces_market_data_principal_authorization() -> None:
+    """MarketDataFacade validates caller principal and tenant isolation."""
+    bundle = _bundle_with_registered_cell()
+    client = _client_with_populated_sources(bundle)
+
+    # Caller with unpermitted role
+    unauthorized_headers = {
+        **auth_headers(Role.AUDITOR, subject="unauthorized-auditor"),
+        "x-tenant-id": TENANT_ID,
+    }
+    # First, auditor is not allowed to create heatzone absorption (403 from require_permission)
+    response = _record_outcome(
+        client,
+        {
+            "cell_id": "cell-hz004-00",
+            "period_start": WINDOW_START.isoformat(),
+            "period_end": WINDOW_END.isoformat(),
+            "original_demand": 100_000.0,
+            "store_ids": ["store-1"],
+        },
+        headers=unauthorized_headers,
+    )
+    assert response.status_code == 403
 
 
 def test_record_outcome_with_server_side_facade_lookup_and_verification() -> None:

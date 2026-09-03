@@ -12,6 +12,7 @@ from collections.abc import Iterable, Sequence
 
 from modules.heatzone.application.absorption_outcome_recorder import (
     AbsorptionOutcomeConflictError,
+    AbsorptionOutcomeWriteError,
     UnregisteredCellError,
     measurement_differences,
 )
@@ -29,7 +30,7 @@ __all__ = [
 class CellRegistration:
     """Identity of an H3 cell as the geo pipeline registered it."""
 
-    __slots__ = ("cell_id", "h3_index", "admin_city", "admin_district")
+    __slots__ = ("cell_id", "h3_index", "admin_city", "admin_district", "barrier_side", "barrier_description")
 
     def __init__(
         self,
@@ -37,11 +38,15 @@ class CellRegistration:
         h3_index: str,
         admin_city: str = "",
         admin_district: str = "",
+        barrier_side: str | None = None,
+        barrier_description: str = "",
     ) -> None:
         self.cell_id = cell_id
         self.h3_index = h3_index
         self.admin_city = admin_city
         self.admin_district = admin_district
+        self.barrier_side = barrier_side
+        self.barrier_description = barrier_description
 
 
 class InMemoryMergeSplitEvidenceRepository:
@@ -56,6 +61,9 @@ class InMemoryMergeSplitEvidenceRepository:
 
     def register_cell(self, tenant_id: str, cell: CellRegistration) -> None:
         self._cells.setdefault(tenant_id, {})[cell.cell_id] = cell
+
+    def get_cell(self, tenant_id: str, cell_id: str) -> CellRegistration | None:
+        return self._cells.get(tenant_id, {}).get(cell_id)
 
     def record_outcome(self, tenant_id: str, outcome: AbsorptionOutcomeRecord) -> None:
         if not outcome.basis_source_ids:
@@ -81,7 +89,8 @@ class InMemoryMergeSplitEvidenceRepository:
         append-only trigger; a fixture that quietly grew a second row for one
         period would let a test build a history production cannot.
         """
-        if outcome.cell_id not in self._cells.get(tenant_id, {}):
+        registered = self._cells.get(tenant_id, {}).get(outcome.cell_id)
+        if registered is None:
             # `geo_cell_id` is a foreign key into geo.h3_cells in PostgreSQL, so
             # an unregistered cell is refused there. Refusing here too keeps the
             # two from disagreeing -- and an outcome on a cell the reader cannot
@@ -91,6 +100,17 @@ class InMemoryMergeSplitEvidenceRepository:
                 f"'{tenant_id}'; HZ-004 outcomes attach to cells the geo pipeline "
                 "published, not to identifiers a caller invents"
             )
+
+        if outcome.barrier_side is not None:
+            reg_side = getattr(registered, "barrier_side", None)
+            if reg_side is None:
+                raise AbsorptionOutcomeWriteError(
+                    f"cell '{outcome.cell_id}' has no registered geo barrier; side-labelled outcomes require trusted geo evidence"
+                )
+            if outcome.barrier_side != reg_side:
+                raise AbsorptionOutcomeWriteError(
+                    f"barrier_side '{outcome.barrier_side}' does not match registered geo barrier side '{reg_side}'"
+                )
 
         for existing in self._outcomes.get(tenant_id, []):
             if (

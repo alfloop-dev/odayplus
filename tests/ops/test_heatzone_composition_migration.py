@@ -5,8 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-MIGRATION_SQL = Path("infra/db/migrations/000018_heatzone_composition.sql")
-ALEMBIC_REV = Path("infra/db/migrations/versions/0014_heatzone_composition.py")
+MIGRATION_SQL = Path("infra/db/migrations/000020_heatzone_composition.sql")
+ALEMBIC_REV = Path("infra/db/migrations/versions/0015_heatzone_composition.py")
 
 
 def _sql() -> str:
@@ -101,11 +101,11 @@ def test_heatzone_merge_policy_seeding_and_tenant_trigger() -> None:
 def test_alembic_revision_chain() -> None:
     rev = _rev()
 
-    # 0013 is dev's work-order disposition migration; this one follows it, so
+    # 0014 is dev's learninghub backtest receipts migration; this one follows it, so
     # the chain stays linear and alembic keeps a single head.
-    assert 'revision: str = "0014"' in rev
-    assert 'down_revision: str = "0013"' in rev
-    assert "000018_heatzone_composition.sql" in rev
+    assert 'revision: str = "0015"' in rev
+    assert 'down_revision: str = "0014"' in rev
+    assert "000020_heatzone_composition.sql" in rev
 
 
 def test_migration_revisions_have_one_head() -> None:
