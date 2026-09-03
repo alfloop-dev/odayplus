@@ -4,7 +4,7 @@ from __future__ import annotations
 
 """Worker lifecycle logic extracted from legacy supervisor."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from common import (
@@ -88,14 +88,11 @@ def _helper_worker_runtime_assignment_is_valid(
     task_map: dict[str, dict[str, Any]],
     now: datetime,
 ) -> bool:
-    """Keep an active helper alive after its dispatch claim is released.
+    """Return whether the worker still owns its bound helper claim.
 
-    ``helper_execution_lease`` controls when another worker may be assigned
-    the task; ``worker.lease_expires_at`` controls the process that is already
-    running.  The former is intentionally allowed to expire while the latter
-    remains valid.  The dispatch snapshot is the only durable record of which
-    helper claim generation this process started with, so use it to distinguish
-    claim expiry from a real owner/reviewer/claim handoff.
+    The claim and process leases are separate clocks, but a live helper may
+    only use the process lease after its claim is bound to that exact run. An
+    expired or missing claim is not an alternate assignment mechanism.
     """
     request = worker.get("request_snapshot")
     if not isinstance(request, dict) or str(request.get("reason") or "") != "helper_claim_dispatch":
@@ -104,7 +101,10 @@ def _helper_worker_runtime_assignment_is_valid(
     task_id = str(worker.get("task_id") or "")
     task = task_map.get(task_id)
     dispatched_task = worker_dispatch_task_snapshot(worker)
-    if not isinstance(task, dict) or str(dispatched_task.get("id") or "") != task_id:
+    task_id_field = (config.get("schema", {}) or {}).get("task_id_field", "id")
+    if not isinstance(task, dict) or str(
+        dispatched_task.get(task_id_field) or dispatched_task.get("id") or ""
+    ) != task_id:
         return False
 
     task_status = str(task.get("status") or "").lower()
@@ -129,6 +129,9 @@ def _helper_worker_runtime_assignment_is_valid(
     dispatched_claim = dispatched_task.get("helper_execution_lease")
     if not isinstance(dispatched_claim, dict):
         return False
+    current_claim = task.get("helper_execution_lease")
+    if not isinstance(current_claim, dict):
+        return False
     generation = dispatched_claim.get("generation")
     if generation is None:
         return False
@@ -143,50 +146,258 @@ def _helper_worker_runtime_assignment_is_valid(
     dispatched_claim_owner = normalize_agent_id(str(dispatched_claim.get("claimed_by") or ""))
     if not worker_agent or worker_agent != dispatched_claim_owner:
         return False
+    try:
+        current_generation = int(current_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if current_generation != generation:
+        return False
+    if normalize_agent_id(str(current_claim.get("claimed_by") or "")) != worker_agent:
+        return False
 
     runtime_lease_expires_at = _parse_iso_utc(str(worker.get("lease_expires_at") or ""))
     if runtime_lease_expires_at is None or now > runtime_lease_expires_at.astimezone(UTC):
         return False
 
+    current_run_id = str(current_claim.get("run_id") or "").strip()
+    if current_run_id != str(worker.get("run_id") or "").strip():
+        return False
     runtime_settings = worker_runtime_settings(config)
     heartbeat_stale_after = max(
         60,
         int(runtime_settings.get("heartbeat_stale_seconds", 300))
         + int(runtime_settings.get("heartbeat_grace_seconds", 60)),
     )
-    process_activity_stale_after = max(
-        60,
-        int(config.get("supervisor", {}).get("stall_after_seconds", heartbeat_stale_after)),
-    )
-    has_fresh_activity = False
-    for field, stale_after in (
-        ("last_heartbeat_at", heartbeat_stale_after),
-        ("last_process_activity_at", process_activity_stale_after),
-    ):
-        activity_at = _parse_iso_utc(str(worker.get(field) or ""))
-        if activity_at is not None and (now - activity_at.astimezone(UTC)).total_seconds() <= stale_after:
-            has_fresh_activity = True
-            break
-    if not has_fresh_activity:
+    heartbeat_at = _parse_iso_utc(str(worker.get("last_heartbeat_at") or ""))
+    if heartbeat_at is None:
         return False
+    if (now - heartbeat_at.astimezone(UTC)).total_seconds() > heartbeat_stale_after:
+        return False
+    return True
 
-    current_claim = task.get("helper_execution_lease")
-    if isinstance(current_claim, dict) and current_claim:
-        try:
-            current_generation = int(current_claim.get("generation"))
-        except (TypeError, ValueError):
-            return False
-        return (
-            current_generation == generation
-            and normalize_agent_id(str(current_claim.get("claimed_by") or "")) == worker_agent
+
+def _helper_claim_dispatch_matches(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+    *,
+    require_owned_status: bool = True,
+) -> bool:
+    """Check task roles, generation, claimant, and run binding exactly."""
+    if not isinstance(task, dict):
+        return False
+    request = worker.get("request_snapshot")
+    if not isinstance(request, dict) or str(request.get("reason") or "") != "helper_claim_dispatch":
+        return False
+    dispatched_task = worker_dispatch_task_snapshot(worker)
+    task_id = str(worker.get("task_id") or "").strip()
+    task_id_field = (config.get("schema", {}) or {}).get("task_id_field", "id")
+    if not task_id or str(
+        dispatched_task.get(task_id_field) or dispatched_task.get("id") or ""
+    ).strip() != task_id:
+        return False
+    schema = config.get("schema", {}) or {}
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    for field in (owner_field, reviewer_field):
+        dispatched_identity = dispatched_task.get(
+            field,
+            dispatched_task.get("owner" if field == owner_field else "reviewer"),
         )
+        if normalize_agent_id(str(task.get(field) or "")) != normalize_agent_id(str(dispatched_identity or "")):
+            return False
 
-    # The supervisor removes an expired helper claim before this lifecycle poll.
-    # Only treat an absent claim as that release when the worker's captured
-    # claim really did expire; an unexplained claim disappearance must not
-    # become a second assignment/lease mechanism.
-    claim_expires_at = _parse_iso_utc(str(dispatched_claim.get("lease_expires_at") or ""))
-    return claim_expires_at is not None and now >= claim_expires_at.astimezone(UTC)
+    if require_owned_status:
+        task_status = str(task.get("status") or "").lower()
+        owned_statuses = normalized_status_set(
+            ready_dispatch_settings(config).get("owned_statuses"),
+            ["in_progress", "todo"],
+        )
+        if task_status not in owned_statuses:
+            return False
+    dispatched_claim = dispatched_task.get("helper_execution_lease")
+    current_claim = task.get("helper_execution_lease")
+    if not isinstance(dispatched_claim, dict) or not isinstance(current_claim, dict):
+        return False
+    try:
+        dispatched_generation = int(dispatched_claim.get("generation"))
+        current_generation = int(current_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    worker_agent = normalize_agent_id(
+        display_name_for(config, worker_logical_dispatch_agent_id(config, worker))
+    )
+    return bool(
+        worker_agent
+        and normalize_agent_id(str(dispatched_claim.get("claimed_by") or "")) == worker_agent
+        and normalize_agent_id(str(current_claim.get("claimed_by") or "")) == worker_agent
+        and dispatched_generation == current_generation
+        and str(current_claim.get("run_id") or "").strip() == str(worker.get("run_id") or "").strip()
+    )
+
+
+def _helper_claim_renewal_window_seconds(config: dict[str, Any], lease_seconds: int) -> int:
+    poll_interval = float(config.get("supervisor", {}).get("poll_interval_seconds", 180) or 180)
+    return max(60, min(max(60, lease_seconds // 2), int(max(60, poll_interval * 2))))
+
+
+def _helper_claim_is_due_for_renewal(
+    config: dict[str, Any],
+    claim: dict[str, Any],
+    now: datetime,
+) -> bool:
+    expires_at = _parse_iso_utc(str(claim.get("lease_expires_at") or ""))
+    if expires_at is None:
+        return True
+    helper_settings = ready_dispatch_settings(config).get("helper_execution_lease", {}) or {}
+    lease_seconds = max(60, int(float(helper_settings.get("lease_seconds", 1800) or 1800)))
+    return (expires_at.astimezone(UTC) - now).total_seconds() <= _helper_claim_renewal_window_seconds(
+        config, lease_seconds
+    )
+
+
+def _persist_helper_claim_change(
+    config: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    task_id: str,
+    *,
+    generation: int,
+    claimed_by: str,
+    run_id: str,
+    lease_expires_at: str | None,
+) -> bool:
+    """CAS-write a claim mutation without changing task ownership."""
+    status = load_status(config)
+    latest_task = task_index_from_status(config, status).get(task_id)
+    current_claim = latest_task.get("helper_execution_lease") if isinstance(latest_task, dict) else None
+    if not isinstance(latest_task, dict) or not isinstance(current_claim, dict):
+        return False
+    try:
+        current_generation = int(current_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if (
+        current_generation != generation
+        or normalize_agent_id(str(current_claim.get("claimed_by") or "")) != normalize_agent_id(claimed_by)
+        or str(current_claim.get("run_id") or "").strip() != run_id
+    ):
+        return False
+    if lease_expires_at is None:
+        latest_task.pop("helper_execution_lease", None)
+    else:
+        current_claim["lease_expires_at"] = lease_expires_at
+        current_claim["last_renewed_at"] = utc_now()
+    try:
+        committed = commit_canonical_task_transition(config, status)
+    except (KeyError, OSError, ValueError):
+        return False
+    if committed:
+        original_task = task_map.get(task_id)
+        if isinstance(original_task, dict):
+            updated_task = dict(latest_task)
+            original_task.clear()
+            original_task.update(updated_task)
+    return committed
+
+
+def _reconcile_helper_claim(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    *,
+    now: datetime,
+    alive: bool,
+    runner_reports_failure: bool,
+) -> tuple[str, bool]:
+    """Renew a live helper claim or release only this worker's claim.
+
+    The result is ``(disposition, changed)`` where disposition is ``valid``
+    or ``invalid``. A run mismatch never deletes the current claim: it belongs
+    to another dispatch and the normal lifecycle supersede path handles the
+    old worker.
+    """
+    request = worker.get("request_snapshot")
+    if not isinstance(request, dict) or str(request.get("reason") or "") != "helper_claim_dispatch":
+        return "not_helper", False
+    task_id = str(worker.get("task_id") or "").strip()
+    task = task_map.get(task_id)
+    if not task:
+        return "invalid", False
+    current_claim = task.get("helper_execution_lease")
+    dispatched_task = worker_dispatch_task_snapshot(worker)
+    dispatched_claim = dispatched_task.get("helper_execution_lease")
+    if not isinstance(current_claim, dict) or not isinstance(dispatched_claim, dict):
+        return "invalid", False
+
+    try:
+        generation = int(dispatched_claim.get("generation"))
+    except (TypeError, ValueError):
+        return "invalid", False
+    claimed_by = normalize_agent_id(str(dispatched_claim.get("claimed_by") or ""))
+    run_id = str(worker.get("run_id") or "").strip()
+    claim_matches_worker = _helper_claim_dispatch_matches(
+        config,
+        worker,
+        task,
+        require_owned_status=False,
+    )
+    current_run_id = str(current_claim.get("run_id") or "").strip()
+    current_claim_is_this_run = (
+        claim_matches_worker
+        and current_run_id == run_id
+        and run_id
+    )
+    if (
+        alive
+        and not runner_reports_failure
+        and worker.get("status") in active_worker_statuses(config)
+        and _helper_worker_runtime_assignment_is_valid(config, worker, task_map, now)
+    ):
+        if not _helper_claim_is_due_for_renewal(config, current_claim, now):
+            return "valid", False
+        helper_settings = ready_dispatch_settings(config).get("helper_execution_lease", {}) or {}
+        lease_seconds = max(60, int(float(helper_settings.get("lease_seconds", 1800) or 1800)))
+        renewed_until = isoformat_utc(now + timedelta(seconds=lease_seconds))
+        if not current_claim_is_this_run:
+            return "invalid", False
+        changed = _persist_helper_claim_change(
+            config,
+            task_map,
+            task_id,
+            generation=generation,
+            claimed_by=claimed_by,
+            run_id=run_id,
+            lease_expires_at=renewed_until,
+        )
+        if changed:
+            write_activity_log(
+                config,
+                {
+                    "type": "helper_claim_renewed",
+                    "task_id": task_id,
+                    "claimed_by": claimed_by,
+                    "worker_run_id": run_id,
+                    "generation": generation,
+                    "lease_expires_at": renewed_until,
+                    "message": "Fresh heartbeat renewed the helper claim for the same worker run.",
+                },
+            )
+        return "valid", changed
+
+    # Release only a claim proven to belong to this worker. If the claim was
+    # replaced by another generation/run, leave it untouched for that worker.
+    if current_claim_is_this_run:
+        changed = _persist_helper_claim_change(
+            config,
+            task_map,
+            task_id,
+            generation=generation,
+            claimed_by=claimed_by,
+            run_id=run_id,
+            lease_expires_at=None,
+        )
+        return "invalid", changed
+    return "invalid", False
 
 
 @_entrypoint
@@ -655,6 +866,8 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     poll_counts = {
         "marker_updates": 0,
         "lease_refreshes": 0,
+        "helper_claim_renewals": 0,
+        "helper_claim_releases": 0,
         "expired_lease_workers_failed": 0,
         "supersede_deferrals": 0,
     }
@@ -677,6 +890,21 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 poll_counts["marker_updates"] += 1
                 changed = True
             runner_reports_failure = _runner_reports_failure(worker)
+            helper_disposition, helper_claim_changed = _reconcile_helper_claim(
+                config,
+                worker,
+                task_map,
+                now=now,
+                alive=False,
+                runner_reports_failure=runner_reports_failure,
+            )
+            if helper_claim_changed:
+                poll_counts[
+                    "helper_claim_renewals"
+                    if helper_disposition == "valid"
+                    else "helper_claim_releases"
+                ] += 1
+                changed = True
             queue_event_id = worker.get("queue_event_id")
             queue_record = (
                 (state.get("queue") or {}).get("events", {}).get(queue_event_id)
@@ -791,6 +1019,22 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             terminate_worker_pid(worker.get("pid"))
         alive = process_alive and not runner_reports_failure
         worktree_preserved = False
+
+        helper_disposition, helper_claim_changed = _reconcile_helper_claim(
+            config,
+            worker,
+            task_map,
+            now=now,
+            alive=alive,
+            runner_reports_failure=runner_reports_failure,
+        )
+        if helper_claim_changed:
+            poll_counts[
+                "helper_claim_renewals"
+                if helper_disposition == "valid"
+                else "helper_claim_releases"
+            ] += 1
+            changed = True
 
         def preserve_worker_worktree_once(
             trigger: str,
@@ -928,8 +1172,25 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 or changed
             )
             continue
+        dispatched_task = worker_dispatch_task_snapshot(worker)
+        dispatched_claim = dispatched_task.get("helper_execution_lease")
+        is_bound_helper = (
+            str((worker.get("request_snapshot") or {}).get("reason") or "")
+            == "helper_claim_dispatch"
+            and isinstance(dispatched_claim, dict)
+        )
         assignment_matches = worker_matches_current_assignment(config, worker, task_map)
-        if not assignment_matches and alive:
+        if is_bound_helper:
+            # The generic assignment predicate only knows claimant/lease
+            # liveness. Helper workers additionally require the dispatch
+            # generation and run binding, otherwise an old worker can keep a
+            # replacement helper's claim alive.
+            assignment_matches = _helper_claim_dispatch_matches(
+                config,
+                worker,
+                task_map.get(str(worker.get("task_id") or "")),
+            )
+        elif not assignment_matches and alive:
             assignment_matches = _helper_worker_runtime_assignment_is_valid(
                 config,
                 worker,
@@ -968,7 +1229,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 config, worker, now
             )
             grace_seconds = max(0, int(worker_runtime_settings(config).get("supersede_grace_seconds", 120)))
-            if alive and heartbeat_is_fresh and grace_seconds > 0:
+            if alive and heartbeat_is_fresh and grace_seconds > 0 and not is_bound_helper:
                 deferred_since = _parse_iso_utc(str(worker.get("supersede_deferred_since") or ""))
                 if deferred_since is None:
                     worker["supersede_deferred_since"] = utc_now()
