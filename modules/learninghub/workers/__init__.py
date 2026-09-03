@@ -4,6 +4,7 @@ from modules.learninghub.workers.release_worker import (
     LearningHubReleaseWorker,
     run_learninghub_release,
     run_learninghub_release_monitor,
+    run_learninghub_prediction_drift,
     run_learninghub_release_recovery,
 )
 
@@ -12,4 +13,5 @@ __all__ = [
     "run_learninghub_release",
     "run_learninghub_release_recovery",
     "run_learninghub_release_monitor",
+    "run_learninghub_prediction_drift",
 ]

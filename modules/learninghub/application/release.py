@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from hashlib import sha256
@@ -55,6 +55,7 @@ from modules.learninghub.domain import (
     build_dataset_snapshot,
 )
 from modules.learninghub.infrastructure import (
+    EvidentlyDriftMonitor,
     InMemoryLearningHubRepository,
     LearningHubRepository,
     MlflowRegistryAdapter,
@@ -195,9 +196,11 @@ class LearningHubService:
         recover_on_startup: bool = True,
         worker_id: str | None = None,
         release_lease_seconds: float = DEFAULT_RELEASE_LEASE_SECONDS,
+        prediction_drift_monitor: EvidentlyDriftMonitor | None = None,
     ) -> None:
         self.worker_id = worker_id or f"learninghub-worker-{uuid4()}"
         self.release_lease_seconds = float(release_lease_seconds)
+        self.prediction_drift_monitor = prediction_drift_monitor or EvidentlyDriftMonitor()
         self.production_required = learninghub_production_required(runtime_mode)
         if self.production_required and (
             repository is None or isinstance(repository, InMemoryLearningHubRepository)
@@ -1643,6 +1646,131 @@ class LearningHubService:
             reason=reason,
             policy=policy,
         )
+
+    def monitor_prediction_drift(
+        self,
+        *,
+        model_name: str,
+        model_version: str,
+        reference_rows: Sequence[Mapping[str, Any]],
+        current_rows: Sequence[Mapping[str, Any]],
+        reference_snapshot_id: str,
+        current_snapshot_id: str,
+        cohort_key: str,
+        prediction_columns: Sequence[str] | None = None,
+        output_types: Mapping[str, str] | None = None,
+        policy: DecisionPolicy | None = None,
+        requested_by: str = "system",
+        reason: str | None = None,
+    ) -> MonitoringEvaluation:
+        """Run the production prediction-output drift monitor.
+
+        The model version, population cohort, output schema, and both source
+        snapshots are part of the receipt. A missing policy or an incomplete
+        output schema fails before Evidently runs; no built-in threshold or
+        mixed-version comparison is allowed.
+        """
+
+        if policy is None:
+            raise LearningHubError(
+                "prediction drift monitoring requires a resolved DecisionPolicy"
+            )
+        model = self.repository.get_model_version(model_name, model_version)
+        if model is None:
+            raise LearningHubError(f"unknown model version {model_name}:{model_version}")
+        production = self.repository.get_alias(model_name, ModelAlias.PRODUCTION)
+        if production is not None and production.version != model_version:
+            raise LearningHubError(
+                "prediction drift monitoring requires the current production model version"
+            )
+        configured_columns = model.monitoring_config.get("prediction_columns")
+        columns = tuple(prediction_columns or configured_columns or ())
+        configured_types = model.monitoring_config.get("prediction_output_types")
+        types = output_types or (
+            configured_types if isinstance(configured_types, Mapping) else None
+        )
+
+        result = self.prediction_drift_monitor.run_prediction(
+            reference_rows=reference_rows,
+            current_rows=current_rows,
+            model_name=model_name,
+            model_version=model_version,
+            cohort_key=cohort_key,
+            prediction_columns=columns,
+            output_types=types,
+            reference_snapshot_id=reference_snapshot_id,
+            current_snapshot_id=current_snapshot_id,
+            policy=policy,
+        )
+        evaluation_id = f"prediction-drift-{uuid4()}"
+        breaches: tuple[MonitoringBreach, ...] = ()
+        if result.drift_detected:
+            breaches = (
+                MonitoringBreach(
+                    metric_name="prediction_drift_share",
+                    observed_value=result.drift_share,
+                    threshold_message=(
+                        "prediction output distribution drift exceeded the "
+                        f"DecisionPolicy threshold (policy={policy.policy_version_id})"
+                    ),
+                    severity=ValidationStatus.FAILED.value,
+                ),
+            )
+        evaluation = MonitoringEvaluation(
+            evaluation_id=evaluation_id,
+            model_name=model_name,
+            model_version=model_version,
+            # Keep generic repository consumers able to index the current
+            # population while retaining the explicit pair below.
+            dataset_snapshot_id=current_snapshot_id,
+            signal_type=MonitoringSignalType.PREDICTION_DRIFT,
+            observed_metrics={"prediction_drift_share": result.drift_share},
+            baseline_metrics={},
+            breaches=breaches,
+            requested_by=requested_by,
+            decision_policy_version_id=policy.policy_version_id,
+            reference_snapshot_id=result.reference_snapshot_id,
+            current_snapshot_id=result.current_snapshot_id,
+            cohort_key=result.cohort_key,
+            prediction_columns=result.prediction_columns,
+            prediction_output_types=result.prediction_output_types or {},
+            drift_detected=result.drift_detected,
+            drifted_columns=result.drifted_column_names,
+            drift_report_json=result.report_json,
+            drift_engine=result.engine,
+            alert_id=evaluation_id if result.drift_detected else None,
+        )
+        audit_event = self.audit_log.record(
+            AuditEvent(
+                event_type="learninghub.prediction_drift.v1",
+                actor=requested_by,
+                action="monitor_prediction_drift",
+                resource=f"model/{model_name}:{model_version}",
+                outcome="breached" if result.drift_detected else "healthy",
+                correlation_id=evaluation_id,
+                metadata=evaluation.to_dict(),
+            )
+        )
+        evaluation = replace(evaluation, audit_event_id=audit_event.event_id)
+        self.repository.save_monitoring_evaluation(evaluation)
+        if result.drift_detected:
+            self.repository.save_retraining_request(
+                RetrainingRequest(
+                    request_id=f"retrain-{uuid4()}",
+                    model_name=model_name,
+                    source_model_version=model_version,
+                    trigger_evaluation_id=evaluation_id,
+                    trigger_type=MonitoringSignalType.PREDICTION_DRIFT,
+                    reason=reason or "prediction output distribution drift detected",
+                    dataset_snapshot_id=current_snapshot_id,
+                    observed_metrics=dict(evaluation.observed_metrics),
+                    baseline_metrics={},
+                    requested_by=requested_by,
+                    auto_promotion=False,
+                    decision_policy_version_id=policy.policy_version_id,
+                )
+            )
+        return evaluation
 
     def compare_inference(
         self,

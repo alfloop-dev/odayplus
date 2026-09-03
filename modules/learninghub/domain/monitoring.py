@@ -9,6 +9,7 @@ from typing import Any
 
 class MonitoringSignalType(StrEnum):
     DRIFT = "DRIFT"
+    PREDICTION_DRIFT = "PREDICTION_DRIFT"
     OUTCOME = "OUTCOME"
 
 
@@ -48,6 +49,41 @@ class MonitoringEvaluation:
     requested_by: str = "system"
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     decision_policy_version_id: str | None = None
+    # Prediction-drift evaluations carry both immutable population snapshot
+    # identities. ``dataset_snapshot_id`` remains the legacy/current snapshot
+    # field used by generic monitoring evaluations.
+    reference_snapshot_id: str | None = None
+    current_snapshot_id: str | None = None
+    cohort_key: str | None = None
+    prediction_columns: tuple[str, ...] = ()
+    prediction_output_types: Mapping[str, str] = field(default_factory=dict)
+    drift_detected: bool | None = None
+    drifted_columns: tuple[str, ...] = ()
+    drift_report_json: str | None = None
+    drift_engine: str | None = None
+    alert_id: str | None = None
+    audit_event_id: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.signal_type is not MonitoringSignalType.PREDICTION_DRIFT:
+            return
+        required = {
+            "reference_snapshot_id": self.reference_snapshot_id,
+            "current_snapshot_id": self.current_snapshot_id,
+            "cohort_key": self.cohort_key,
+            "decision_policy_version_id": self.decision_policy_version_id,
+        }
+        missing = [name for name, value in required.items() if not str(value or "").strip()]
+        if missing:
+            raise ValueError(
+                "prediction drift evaluation requires " + ", ".join(missing)
+            )
+        if self.reference_snapshot_id == self.current_snapshot_id:
+            raise ValueError("prediction drift snapshot ids must differ")
+        if not self.prediction_columns:
+            raise ValueError("prediction drift evaluation requires prediction columns")
+        if self.drift_detected is None:
+            raise ValueError("prediction drift evaluation requires drift_detected")
 
     @property
     def triggered(self) -> bool:
@@ -69,6 +105,28 @@ class MonitoringEvaluation:
         }
         if self.decision_policy_version_id is not None:
             data["decision_policy_version_id"] = self.decision_policy_version_id
+        if self.reference_snapshot_id is not None:
+            data["reference_snapshot_id"] = self.reference_snapshot_id
+        if self.current_snapshot_id is not None:
+            data["current_snapshot_id"] = self.current_snapshot_id
+        if self.cohort_key is not None:
+            data["cohort_key"] = self.cohort_key
+        if self.prediction_columns:
+            data["prediction_columns"] = list(self.prediction_columns)
+        if self.prediction_output_types:
+            data["prediction_output_types"] = dict(self.prediction_output_types)
+        if self.drift_detected is not None:
+            data["drift_detected"] = self.drift_detected
+        if self.drifted_columns:
+            data["drifted_columns"] = list(self.drifted_columns)
+        if self.drift_report_json is not None:
+            data["drift_report_json"] = self.drift_report_json
+        if self.drift_engine is not None:
+            data["drift_engine"] = self.drift_engine
+        if self.alert_id is not None:
+            data["alert_id"] = self.alert_id
+        if self.audit_event_id is not None:
+            data["audit_event_id"] = self.audit_event_id
         return data
 
 
