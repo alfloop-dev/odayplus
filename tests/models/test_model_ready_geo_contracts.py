@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import re
+from collections import Counter
 from pathlib import Path
 from typing import NamedTuple
 
@@ -202,9 +205,7 @@ AUDITED_LITERALS: list[LiteralAuditEntry] = [
     LiteralAuditEntry("dbt", "geo_grid_view", "confidence", "Measurement", True, "Empirical POI and competitor confidence measurement; NULL when absent."),
     LiteralAuditEntry("dbt", "geo_grid_view", "data_quality_score", "Derived Rule", False, "Rule derived from H3 index non-null presence."),
     LiteralAuditEntry("dbt", "forecast_training_view", "data_quality_score", "Derived Rule", False, "PIT observation time constraint rule."),
-    LiteralAuditEntry("dbt", "forecast_training_view", "confidence", "Derived Contract", False, "Authoritative core.transactions financial ledger invariant."),
-    LiteralAuditEntry("dbt", "store_machine_timeseries_view", "data_quality_score", "Derived Contract", False, "Authoritative store and machine telemetry aggregation contract."),
-    LiteralAuditEntry("dbt", "store_machine_timeseries_view", "confidence", "Derived Contract", False, "Sensor cycle telemetry logs from data plane."),
+    LiteralAuditEntry("dbt", "store_machine_timeseries_view", "data_quality_score", "Derived Rule", False, "Both transaction and machine-cycle rows must be present, and the transaction aggregate must satisfy the feature snapshot bounds."),
     LiteralAuditEntry("dbt", "store_machine_timeseries_view", "available_minutes", "Physical Constant", False, "24 * 60 = 1440 minutes per day invariant."),
     LiteralAuditEntry("dbt", "intervention_panel_view", "data_quality_score", "Derived Rule", False, "Temporal observation window validity rule."),
     LiteralAuditEntry("dbt", "intervention_panel_view", "confidence", "Derived Rule", False, "ML-05 Evidence Ladder causal tier mapping."),
@@ -216,18 +217,15 @@ AUDITED_LITERALS: list[LiteralAuditEntry] = [
     LiteralAuditEntry("dbt", "network_plan_view", "data_quality_score", "Derived Rule", False, "Solver status optimal/feasible predicate rule."),
     LiteralAuditEntry("dbt", "network_plan_view", "confidence", "Derived Rule", False, "MIP/CP-SAT solver convergence confidence mapping."),
     LiteralAuditEntry("dbt", "network_plan_view", "risk_score", "Derived Rule", False, "Action risk level mapping rule."),
-    LiteralAuditEntry("dbt", "brand_transfer_view", "data_quality_score", "Derived Contract", False, "Synthetic pair matrix invariant from core.brands."),
-    LiteralAuditEntry("dbt", "brand_transfer_view", "confidence", "Derived Contract", False, "Baseline brand relationship pairing contract."),
+    LiteralAuditEntry("dbt", "brand_transfer_view", "data_quality_score", "Derived Rule", False, "The output score is 1.0 only when both brand identifiers are present in the source pair."),
     LiteralAuditEntry("dbt", "brand_transfer_view", "transfer_ratio", "Benchmark Constant", False, "Retail customer brand transfer baseline parameter."),
-    LiteralAuditEntry("dbt", "ramp_curve_view", "data_quality_score", "Derived Contract", False, "Store entity baseline invariant from core.stores."),
-    LiteralAuditEntry("dbt", "ramp_curve_view", "confidence", "Derived Contract", False, "Store ramp curve contract invariant."),
+    LiteralAuditEntry("dbt", "ramp_curve_view", "data_quality_score", "Derived Rule", False, "The output score is 1.0 only for a stored entity whose effective_from is within the feature snapshot."),
     LiteralAuditEntry("dbt", "ramp_curve_view", "ramp_up_ratio", "Benchmark Constant", False, "6-month store ramp-up ratio benchmark baseline."),
-    LiteralAuditEntry("dbt", "matched_control_view", "data_quality_score", "Derived Contract", False, "Store pairing baseline invariant from core.stores."),
-    LiteralAuditEntry("dbt", "matched_control_view", "confidence", "Derived Contract", False, "Control group pairing contract invariant."),
+    LiteralAuditEntry("dbt", "matched_control_view", "data_quality_score", "Derived Rule", False, "The output score is 1.0 only when both treated and control store identifiers are present."),
     LiteralAuditEntry("dbt", "matched_control_view", "match_score", "Benchmark Constant", False, "Synthetic matching similarity benchmark baseline."),
     # PostgreSQL product views
     LiteralAuditEntry("postgresql", "model_ready.forecast_training_view", "data_quality_score", "Derived Rule", False, "Full canonical lineage and ingestion completion audit rule."),
-    LiteralAuditEntry("postgresql", "model_ready.forecast_training_view", "confidence", "Derived Contract", False, "Settled TWD transactions in core.transactions ledger contract."),
+    LiteralAuditEntry("postgresql", "model_ready.forecast_training_view", "confidence", "Derived Contract", False, "The production view filters succeeded TWD transactions and requires canonical lineage and completed ingestion runs before the contract score is emitted."),
     LiteralAuditEntry("postgresql", "model_ready.candidate_site_view", "data_quality_score", "Derived Rule", False, "90-day prior/label partition completeness audit rule."),
     LiteralAuditEntry("postgresql", "model_ready.candidate_site_view", "confidence", "Measurement", True, "Empirical geocode confidence bounded by 1.0 max; NULL when unmeasured."),
     LiteralAuditEntry("postgresql", "model_ready.heatzone_training_view", "data_quality_score", "Derived Rule", False, "90-day prior and 28-day forward partition completeness audit rule."),
@@ -265,6 +263,99 @@ def test_all_1_0_literals_in_model_ready_views_are_classified_and_audited() -> N
         else:
             assert entry.nullable is False, f"Non-measurement {entry.view_name}.{entry.column_name} should not be nullable"
 
+    # The audit must be anchored to the SQL, rather than merely validating a
+    # hand-maintained list.  Every 1.0 token is assigned to the output column
+    # in the SELECT item that contains it, then matched to an audit entry.
+    observed: Counter[tuple[str, str, str]] = Counter()
+    for sql_path, source_layer in [
+        *[(path, "dbt") for path in sql_files],
+        (MODEL_READY_SQL_PATH, "postgresql"),
+    ]:
+        sql = sql_path.read_text(encoding="utf-8")
+        for literal in re.finditer(r"\b1\.0\b", sql):
+            item = _select_item_containing_literal(sql, literal.start())
+            alias_match = re.search(r"\bas\s+([a-z_][a-z0-9_]*)\s*$", item, re.IGNORECASE | re.DOTALL)
+            assert alias_match is not None, (
+                f"Could not identify output alias for 1.0 in {sql_path}: {item.strip()}"
+            )
+            if source_layer == "dbt":
+                view_name = sql_path.stem
+            else:
+                view_matches = list(
+                    re.finditer(
+                        r"CREATE\s+OR\s+REPLACE\s+VIEW\s+([a-z0-9_.]+)\s+AS",
+                        sql[: literal.start()],
+                        re.IGNORECASE,
+                    )
+                )
+                assert view_matches, f"Could not identify PostgreSQL view for {literal.group()}"
+                view_name = view_matches[-1].group(1)
+            observed[(source_layer, view_name, alias_match.group(1).lower())] += 1
+
+    audited = Counter(
+        (entry.source_layer, entry.view_name, entry.column_name)
+        for entry in AUDITED_LITERALS
+    )
+    assert observed, "The SQL corpus must contain audited 1.0 literals"
+    for key, count in observed.items():
+        assert audited[key] >= count, (
+            f"SQL literal coverage is missing for {key}: observed {count}, "
+            f"audited {audited[key]}"
+        )
+
+
+def _select_item_containing_literal(sql: str, literal_offset: int) -> str:
+    """Return the top-level SELECT item containing a numeric literal."""
+    lowered = sql.lower()
+    select_start = lowered.rfind("select", 0, literal_offset)
+    assert select_start >= 0, "A literal must occur inside a SELECT list"
+
+    depth = 0
+    quote: str | None = None
+    item_start = select_start + len("select")
+    item_end: int | None = None
+    index = item_start
+    while index < len(sql):
+        char = sql[index]
+        if not quote and sql.startswith("--", index):
+            newline = sql.find("\n", index + 2)
+            index = len(sql) if newline < 0 else newline + 1
+            continue
+        if quote:
+            if char == quote:
+                if index + 1 < len(sql) and sql[index + 1] == quote:
+                    index += 2
+                    continue
+                quote = None
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif char == "," and depth == 0:
+            if index < literal_offset:
+                item_start = index + 1
+            elif item_end is None:
+                item_end = index
+                break
+        elif depth == 0 and lowered.startswith("from", index):
+            boundary = index + len("from")
+            if (index == 0 or not (lowered[index - 1].isalnum() or lowered[index - 1] == "_")) and (
+                boundary == len(lowered) or not (lowered[boundary].isalnum() or lowered[boundary] == "_")
+            ):
+                item_end = index
+                break
+        index += 1
+
+    assert item_end is not None, "Could not find SELECT item boundary"
+    assert item_start <= literal_offset <= item_end
+    return sql[item_start:item_end]
+
 
 def test_dbt_schema_yaml_defines_all_models_and_nullable_confidence() -> None:
     schema_file = Path("pipelines/dbt/models/model_ready/schema.yml")
@@ -274,18 +365,64 @@ def test_dbt_schema_yaml_defines_all_models_and_nullable_confidence() -> None:
     models = {m["name"]: m for m in content["models"]}
     assert len(models) == 10
 
-    # candidate_site_view confidence must be nullable (no not_null test)
-    candidate_cols = {c["name"]: c for c in models["candidate_site_view"]["columns"]}
-    assert "confidence" in candidate_cols
-    assert "tests" not in candidate_cols["confidence"] or "not_null" not in candidate_cols[
-        "confidence"
-    ].get("tests", [])
+    def column(model_name: str, column_name: str) -> dict[str, object]:
+        return next(c for c in models[model_name]["columns"] if c["name"] == column_name)
 
-    # geo_grid_view confidence must be nullable (no not_null test)
-    geo_cols = {c["name"]: c for c in models["geo_grid_view"]["columns"]}
-    assert "confidence" in geo_cols
-    assert "tests" not in geo_cols["confidence"] or "not_null" not in geo_cols["confidence"].get(
-        "tests", []
+    def assert_nullable(model_name: str, column_name: str) -> None:
+        tests = column(model_name, column_name).get("tests", [])
+        assert "not_null" not in tests, f"{model_name}.{column_name} must remain nullable"
+
+    for model_name in (
+        "candidate_site_view",
+        "geo_grid_view",
+        "store_machine_timeseries_view",
+        "brand_transfer_view",
+        "ramp_curve_view",
+        "matched_control_view",
+    ):
+        assert_nullable(model_name, "confidence")
+
+    for model_name, column_name in (
+        ("candidate_site_view", "is_training_eligible"),
+        ("candidate_site_view", "is_scoring_eligible"),
+        ("network_plan_view", "entity_id"),
+        ("network_plan_view", "planning_entity_id"),
+    ):
+        assert_nullable(model_name, column_name)
+
+
+def test_dbt_nullable_contracts_and_derived_quality_rules_match_sql() -> None:
+    dbt_dir = Path("pipelines/dbt/models/model_ready")
+    forecast = (dbt_dir / "forecast_training_view.sql").read_text(encoding="utf-8")
+    assert "and transaction_status = 'succeeded'" in forecast
+    assert "null::numeric as confidence" in forecast
+
+    store_machine = (dbt_dir / "store_machine_timeseries_view.sql").read_text(encoding="utf-8")
+    assert "t.store_id is not null" in store_machine
+    assert "c.store_id is not null" in store_machine
+    assert "null::numeric as confidence" in store_machine
+
+    for view_name, identifiers in (
+        ("brand_transfer_view", ("source_brand_id", "target_brand_id")),
+        ("ramp_curve_view", ("store_id", "effective_from")),
+        ("matched_control_view", ("treated_store_id", "control_store_id")),
+    ):
+        sql = (dbt_dir / f"{view_name}.sql").read_text(encoding="utf-8")
+        assert "then 1.0" in sql
+        assert "null::numeric as confidence" in sql
+        for identifier in identifiers:
+            assert identifier in sql
+
+
+def test_resolved_model_ready_sql_exemptions_are_removed() -> None:
+    exemptions = json.loads(
+        Path("delivery_toolchain/governance/measurement_default_exemptions.json").read_text(
+            encoding="utf-8"
+        )
+    )["exemptions"]
+    assert not any(
+        entry["field"].startswith("pipelines/dbt/models/model_ready/")
+        for entry in exemptions
     )
 
 

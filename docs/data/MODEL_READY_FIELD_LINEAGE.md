@@ -41,9 +41,9 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 | `geo_grid_view` | `confidence` | `case when poi_counts.poi_confidence is not null and competitor_counts.competitor_confidence is not null then least(poi_counts.poi_confidence, competitor_counts.competitor_confidence) else null end` | **Measurement** | **Yes (NULL)** | Empirical measurement of POI and competitor spatial confidence. Evaluates to `NULL` when either source is unmeasured. |
 | `geo_grid_view` | `data_quality_score` | `case when h3_cells.h3_index is not null then 1.0 else 0.0 end` | **Derived Rule** | No (0.0/1.0) | Derived from verifiable spatial cell identity existence. |
 | `forecast_training_view` | `data_quality_score` | `case when latest_observation_time <= ... then 1.0 else 0.0 end` | **Derived Rule** | No (0.0/1.0) | Point-in-time (PIT) leakage prevention rule based on observation timestamp. |
-| `forecast_training_view` | `confidence` | `1.0 as confidence` | **Derived Contract** | No (1.0) | Settled financial transactions in `core.transactions` (`transaction_status = 'succeeded'`) are authoritative ledger entries. |
-| `store_machine_timeseries_view` | `data_quality_score` | `1.0 as data_quality_score` | **Derived Contract** | No (1.0) | Verified core transaction and machine cycle telemetry aggregation. |
-| `store_machine_timeseries_view` | `confidence` | `1.0 as confidence` | **Derived Contract** | No (1.0) | Machine telemetry sensor records from canonical data plane. |
+| `forecast_training_view` | `confidence` | `null::numeric as confidence` | **Measurement** | **Yes (NULL)** | The source CTE has no confidence field; it filters succeeded transactions and the event, observation, and ingestion timestamps to the three PIT bounds, but does not infer confidence from those predicates. |
+| `store_machine_timeseries_view` | `data_quality_score` | `case when transaction and cycle rows are present and transaction timestamps are within the snapshot then 1.0 else 0.0 end` | **Derived Rule** | No (0.0/1.0) | A complete score requires both source sides of the full outer join plus the transaction observation and ingestion bounds. |
+| `store_machine_timeseries_view` | `confidence` | `null::numeric as confidence` | **Measurement** | **Yes (NULL)** | Neither upstream relation exposes a confidence measurement; absence remains NULL instead of being inferred from row presence. |
 | `store_machine_timeseries_view` | `available_minutes` | `1440.0 as available_minutes` | **Physical Constant** | No (1440.0) | Physical minutes per 24-hour day (24 * 60). |
 | `intervention_panel_view` | `data_quality_score` | `case when start <= end and obs_start <= obs_end then 1.0 else 0.0 end` | **Derived Rule** | No (0.0/1.0) | Verifiable temporal consistency predicate. |
 | `intervention_panel_view` | `confidence` | `case outcomes.evidence_level when 'L5' then 1.0 when 'L4' then 0.95 ... else 0.0 end` | **Derived Rule** | No (0.0..1.0) | Causal evidence mapping according to ML-05 Evidence Ladder. |
@@ -55,14 +55,14 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 | `network_plan_view` | `data_quality_score` | `case when solver_status in ('optimal', 'feasible') and entity is not null then 1.0 else 0.0 end` | **Derived Rule** | No (0.0/1.0) | Mathematical solver execution state check. |
 | `network_plan_view` | `confidence` | `case solver_status when 'optimal' then 1.0 when 'feasible' then 0.8 when 'timeout' then 0.4 else 0.0 end` | **Derived Rule** | No (0.0..1.0) | MIP/CP-SAT solver convergence confidence mapping. |
 | `network_plan_view` | `risk_score` | `case actions.risk_level when 'low' then 0.2 when 'medium' then 0.5 when 'high' then 0.8 else 0.5 end` | **Derived Rule** | No (0.2..0.8) | Plan action risk tier mapping. |
-| `brand_transfer_view` | `data_quality_score` | `1.0 as data_quality_score` | **Derived Contract** | No (1.0) | Baseline synthetic pair matrix from `core.brands`. |
-| `brand_transfer_view` | `confidence` | `1.0 as confidence` | **Derived Contract** | No (1.0) | Baseline relationship confidence contract. |
+| `brand_transfer_view` | `data_quality_score` | `case when source_brand_id is not null and target_brand_id is not null then 1.0 else 0.0 end` | **Derived Rule** | No (0.0/1.0) | The score only certifies that both identifiers required by the pair relation are present. |
+| `brand_transfer_view` | `confidence` | `null::numeric as confidence` | **Measurement** | **Yes (NULL)** | `core.brands` supplies identifiers only; no relationship-confidence measurement is available in this view. |
 | `brand_transfer_view` | `transfer_ratio` | `0.15 as transfer_ratio` | **Benchmark Constant**| No (0.15) | Retail customer brand transfer baseline parameter. |
-| `ramp_curve_view` | `data_quality_score` | `1.0 as data_quality_score` | **Derived Contract** | No (1.0) | Baseline store entity validation from `core.stores`. |
-| `ramp_curve_view` | `confidence` | `1.0 as confidence` | **Derived Contract** | No (1.0) | Baseline ramp curve confidence contract. |
+| `ramp_curve_view` | `data_quality_score` | `case when store_id is not null and effective_from <= ... then 1.0 else 0.0 end` | **Derived Rule** | No (0.0/1.0) | The score certifies a present store entity that is effective at the feature snapshot. |
+| `ramp_curve_view` | `confidence` | `null::numeric as confidence` | **Measurement** | **Yes (NULL)** | `core.stores` supplies the entity and effective date only; no ramp-confidence measurement is available in this view. |
 | `ramp_curve_view` | `ramp_up_ratio` | `0.85 as ramp_up_ratio` | **Benchmark Constant**| No (0.85) | New store 6-month ramp-up ratio baseline. |
-| `matched_control_view` | `data_quality_score` | `1.0 as data_quality_score` | **Derived Contract** | No (1.0) | Store pair relationship baseline from `core.stores`. |
-| `matched_control_view` | `confidence` | `1.0 as confidence` | **Derived Contract** | No (1.0) | Control group pairing confidence contract. |
+| `matched_control_view` | `data_quality_score` | `case when treated_store_id is not null and control_store_id is not null then 1.0 else 0.0 end` | **Derived Rule** | No (0.0/1.0) | The score only certifies that both store identifiers required by the pair relation are present. |
+| `matched_control_view` | `confidence` | `null::numeric as confidence` | **Measurement** | **Yes (NULL)** | `core.stores` supplies the pair identifiers only; match confidence is not measured by this relation. |
 | `matched_control_view` | `match_score` | `0.92 as match_score` | **Benchmark Constant**| No (0.92) | Store matching score benchmark baseline. |
 
 ### 2.2 PostgreSQL Production Views (`product_ops/modeling/sql/model_ready_views.sql`)
@@ -70,7 +70,7 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 | View | Column | Expression | Classification | Nullable? | Rationale & Evidence |
 |---|---|---|---|---|---|
 | `model_ready.forecast_training_view` | `data_quality_score` | `CASE WHEN lineage_complete AND source_run_complete THEN 1.0 ELSE 0.0 END::double precision` | **Derived Rule** | No (0.0/1.0) | Full data-plane canonical lineage and ingestion completion audit. |
-| `model_ready.forecast_training_view` | `confidence` | `1.0::double precision AS confidence` | **Derived Contract** | No (1.0) | Settled TWD transactions in `core.transactions` from authoritative ingestion. |
+| `model_ready.forecast_training_view` | `confidence` | `1.0::double precision AS confidence` | **Derived Contract** | No (1.0) | The production view filters `transaction_status = 'succeeded'` and `currency = 'TWD'`, then gates the score through canonical lineage and ingestion-run completion. |
 | `model_ready.candidate_site_view` | `data_quality_score` | `CASE WHEN identity_lineage_complete AND prior_lineage_complete AND label_lineage_complete AND prior_covered_days = 90 AND label_covered_days = 90 THEN 1.0 ELSE 0.0 END::double precision` | **Derived Rule** | No (0.0/1.0) | Full 90-day prior/label partition completeness and point-in-time sanity. |
 | `model_ready.candidate_site_view` | `confidence` | `CASE WHEN geocode_confidence IS NOT NULL THEN least(geocode_confidence, 1.0)::double precision ELSE NULL END` | **Measurement** | **Yes (NULL)** | Empirical geocode confidence from `data_plane.place_geography`. Propagates NULL when unmeasured. |
 | `model_ready.heatzone_training_view` | `data_quality_score` | `CASE WHEN identity_lineage_complete AND prior_lineage_complete AND label_lineage_complete AND prior_covered_days = 90 AND label_covered_days = 28 THEN 1.0 ELSE 0.0 END::double precision` | **Derived Rule** | No (0.0/1.0) | 90-day prior and 28-day forward partition coverage audit. |
@@ -163,7 +163,7 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 | `prediction_origin_time` | TIMESTAMPTZ | No | `{{ var('prediction_origin_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `source_snapshot_ids` | TEXT[] | No | `array['core.transactions']` | Provenance | Static array of source tables |
 | `data_quality_score` | NUMERIC | No | `case when latest_observation_time <= ... then 1.0 else 0.0 end` | Derived Rule | PIT guard |
-| `confidence` | NUMERIC | No | `1.0` | Derived Contract | Settled ledger transactions |
+| `confidence` | NUMERIC | **Yes** | `null::numeric` | Measurement | No upstream confidence field exists; the view preserves absence as NULL even though the source is filtered to succeeded, PIT-safe rows. |
 | `is_training_eligible` | BOOLEAN | No | `latest_observation_time <= ...` | Derived Rule | False on PIT violation |
 | `is_scoring_eligible` | BOOLEAN | No | `latest_ingested_at <= ...` | Derived Rule | False if ingested after snapshot |
 | `exclusion_reason` | TEXT | No | `case when latest_observation_time > ... then 'pit_violation' else '' end` | Derived Rule | Machine-readable exclusion code |
@@ -192,8 +192,8 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 | `feature_snapshot_time` | TIMESTAMPTZ | No | `{{ var('feature_snapshot_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `prediction_origin_time` | TIMESTAMPTZ | No | `{{ var('prediction_origin_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `source_snapshot_ids` | TEXT[] | No | `array['core.transactions', 'core.machine_cycles']` | Provenance | Static array of source tables |
-| `data_quality_score` | NUMERIC | No | `1.0` | Derived Contract | Authoritative operational logs |
-| `confidence` | NUMERIC | No | `1.0` | Derived Contract | Telemetry contract |
+| `data_quality_score` | NUMERIC | No | `case when both source rows and transaction PIT timestamps are present then 1.0 else 0.0 end` | Derived Rule | Missing either source side yields 0.0. |
+| `confidence` | NUMERIC | **Yes** | `null::numeric` | Measurement | No source confidence field exists, so missing measurement remains NULL. |
 | `is_training_eligible` | BOOLEAN | No | `true` | Derived Rule | Constant true |
 | `is_scoring_eligible` | BOOLEAN | No | `true` | Derived Rule | Constant true |
 | `exclusion_reason` | TEXT | No | `''` | Derived Rule | Empty string |
@@ -334,8 +334,8 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 | `feature_snapshot_time` | TIMESTAMPTZ | No | `{{ var('feature_snapshot_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `prediction_origin_time` | TIMESTAMPTZ | No | `{{ var('prediction_origin_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `source_snapshot_ids` | TEXT[] | No | `array['core.brands']` | Provenance | Static array of source tables |
-| `data_quality_score` | NUMERIC | No | `1.0` | Derived Contract | Base brand pairs |
-| `confidence` | NUMERIC | No | `1.0` | Derived Contract | Mock contract |
+| `data_quality_score` | NUMERIC | No | `case when both brand identifiers are not null then 1.0 else 0.0 end` | Derived Rule | The identifier-presence predicate is the only quality evidence in this relation. |
+| `confidence` | NUMERIC | **Yes** | `null::numeric` | Measurement | No relationship-confidence source is present. |
 | `is_training_eligible` | BOOLEAN | No | `true` | Derived Rule | Constant true |
 | `is_scoring_eligible` | BOOLEAN | No | `true` | Derived Rule | Constant true |
 | `exclusion_reason` | TEXT | No | `''` | Derived Rule | Empty string |
@@ -361,8 +361,8 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 | `feature_snapshot_time` | TIMESTAMPTZ | No | `{{ var('feature_snapshot_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `prediction_origin_time` | TIMESTAMPTZ | No | `{{ var('prediction_origin_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `source_snapshot_ids` | TEXT[] | No | `array['core.stores']` | Provenance | Static array of source tables |
-| `data_quality_score` | NUMERIC | No | `1.0` | Derived Contract | Store entity baseline |
-| `confidence` | NUMERIC | No | `1.0` | Derived Contract | Baseline contract |
+| `data_quality_score` | NUMERIC | No | `case when store_id is not null and effective_from <= ... then 1.0 else 0.0 end` | Derived Rule | The source-effective predicate is the only quality evidence in this relation. |
+| `confidence` | NUMERIC | **Yes** | `null::numeric` | Measurement | No ramp-confidence source is present. |
 | `is_training_eligible` | BOOLEAN | No | `true` | Derived Rule | Constant true |
 | `is_scoring_eligible` | BOOLEAN | No | `true` | Derived Rule | Constant true |
 | `exclusion_reason` | TEXT | No | `''` | Derived Rule | Empty string |
@@ -387,8 +387,8 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 | `feature_snapshot_time` | TIMESTAMPTZ | No | `{{ var('feature_snapshot_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `prediction_origin_time` | TIMESTAMPTZ | No | `{{ var('prediction_origin_time') }}::timestamptz` | Provenance | dbt runtime variable |
 | `source_snapshot_ids` | TEXT[] | No | `array['core.stores']` | Provenance | Static array of source tables |
-| `data_quality_score` | NUMERIC | No | `1.0` | Derived Contract | Store pairing baseline |
-| `confidence` | NUMERIC | No | `1.0` | Derived Contract | Baseline pairing contract |
+| `data_quality_score` | NUMERIC | No | `case when both treated and control store identifiers are not null then 1.0 else 0.0 end` | Derived Rule | The identifier-presence predicate is the only quality evidence in this relation. |
+| `confidence` | NUMERIC | **Yes** | `null::numeric` | Measurement | No match-confidence source is present. |
 | `is_training_eligible` | BOOLEAN | No | `true` | Derived Rule | Constant true |
 | `is_scoring_eligible` | BOOLEAN | No | `true` | Derived Rule | Constant true |
 | `exclusion_reason` | TEXT | No | `''` | Derived Rule | Empty string |
@@ -456,4 +456,4 @@ Every occurrence of `1.0`, `1.00`, `coalesce(..., 1.0)`, and score constants acr
 ### 4.2 DatasetSnapshot / LearningHub Admission (`modules/learninghub/domain/dataset_snapshot.py`)
 1. **Row Mapper**:
    - The row mapper in `dataset_snapshot.py` must preserve `None` for `confidence` and `data_quality_score` when missing from source views.
-   - Training dataset admission must block records with `confidence is None` or log explicit exclusion codes rather than silently promoting unmeasured rows.\n
+   - Training dataset admission must block records with `confidence is None` or log explicit exclusion codes rather than silently promoting unmeasured rows.

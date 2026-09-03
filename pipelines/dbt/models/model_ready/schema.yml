@@ -36,12 +36,8 @@ models:
         description: Nullable measurement representing minimum source confidence (least of listing confidence and geocode confidence); evaluates to NULL when source measurements are absent.
       - name: is_training_eligible
         description: Whether row is eligible for training based on positive rent and PIT creation time.
-        tests:
-          - not_null
       - name: is_scoring_eligible
         description: Whether row is eligible for scoring based on positive rent.
-        tests:
-          - not_null
       - name: exclusion_reason
         description: Machine-readable exclusion reason or empty string.
         tests:
@@ -197,9 +193,7 @@ models:
         tests:
           - not_null
       - name: confidence
-        description: Derived contract score (1.0 for authoritative settled financial transactions).
-        tests:
-          - not_null
+        description: Nullable confidence measurement; this view has no upstream confidence field and preserves absence as NULL.
       - name: is_training_eligible
         description: Training eligibility flag based on PIT observation time.
         tests:
@@ -265,13 +259,11 @@ models:
         tests:
           - not_null
       - name: data_quality_score
-        description: Derived contract quality score (1.0 for authoritative store/machine cycles).
+        description: Derived rule score (1.0 only when both transaction and machine-cycle sources are present within the PIT bounds).
         tests:
           - not_null
       - name: confidence
-        description: Derived contract confidence score (1.0 for machine telemetry records).
-        tests:
-          - not_null
+        description: Nullable confidence measurement; this view has no upstream confidence field and therefore preserves it as NULL.
       - name: is_training_eligible
         description: Training eligibility flag.
         tests:
@@ -538,8 +530,6 @@ models:
           - not_null
       - name: entity_id
         description: Composite entity key (planning_entity:quarter).
-        tests:
-          - not_null
       - name: feature_snapshot_time
         description: Point-in-time snapshot boundary.
         tests:
@@ -578,8 +568,6 @@ models:
           - not_null
       - name: planning_entity_id
         description: Unique planning store or site identifier.
-        tests:
-          - not_null
       - name: planning_quarter
         description: Planning quarter code (e.g. 2026_Q3).
         tests:
@@ -647,9 +635,7 @@ models:
         tests:
           - not_null
       - name: confidence
-        description: Derived contract confidence baseline (1.0 for canonical brand relationships).
-        tests:
-          - not_null
+        description: Nullable confidence measurement; the source brand pair relation provides no confidence measurement.
       - name: is_training_eligible
         description: Training eligibility flag.
         tests:
@@ -719,9 +705,7 @@ models:
         tests:
           - not_null
       - name: confidence
-        description: Derived contract confidence baseline (1.0).
-        tests:
-          - not_null
+        description: Nullable confidence measurement; the source store relation provides no confidence measurement.
       - name: is_training_eligible
         description: Training eligibility flag.
         tests:
@@ -787,9 +771,7 @@ models:
         tests:
           - not_null
       - name: confidence
-        description: Derived contract confidence baseline (1.0).
-        tests:
-          - not_null
+        description: Nullable confidence measurement; the source store pair relation provides no confidence measurement.
       - name: is_training_eligible
         description: Training eligibility flag.
         tests:

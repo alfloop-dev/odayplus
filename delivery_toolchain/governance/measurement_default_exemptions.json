@@ -90,69 +90,6 @@
       "expires": "2026-12-31"
     },
     {
-      "field": "pipelines/dbt/models/model_ready/brand_transfer_view.sql::<select>.data_quality_score",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "A literal 1.0 projected as a quality score: not a measurement and not a rule, since there is no input that could make it anything else. Brand transfer is also one of the members batch 0 is confirming a data source for, so this may resolve by the view being withdrawn rather than corrected.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/brand_transfer_view.sql::<select>.confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Same literal on the confidence column of the same view.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/matched_control_view.sql::<select>.data_quality_score",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Constant 1.0 as a quality score for matched controls. Match quality is exactly the thing a causal estimate needs to be able to doubt, and a constant column cannot express doubt.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/matched_control_view.sql::<select>.confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Same view, confidence column.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/ramp_curve_view.sql::<select>.data_quality_score",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Constant 1.0 as a quality score for ramp curves, including curves built from very few observed weeks.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/ramp_curve_view.sql::<select>.confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Same view, confidence column.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/store_machine_timeseries_view.sql::<select>.data_quality_score",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Constant 1.0 across a machine time series, where gaps in telemetry are the ordinary case rather than the exception.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/store_machine_timeseries_view.sql::<select>.confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Same view, confidence column.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/forecast_training_view.sql::<select>.confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Constant 1.0 as confidence. The line above it is the counter-example worth keeping: data_quality_score is a case expression on observation recency that can return 0.0, so it is a rule and is deliberately not flagged. Whatever rule belongs on confidence has not been written yet.",
-      "expires": "2026-12-31"
-    },
-    {
       "field": "shared/domain/models.py::Poi.confidence",
       "layer": "dataclass",
       "owner": "Claude2",
