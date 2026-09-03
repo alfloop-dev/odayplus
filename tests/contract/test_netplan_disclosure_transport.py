@@ -696,6 +696,47 @@ class TestNetPlanDisclosureTransport:
             _validate_netplan_scenario_disclosure_contract(plan_row)
             assert plan_row["modelledConstraintClasses"] == ["CAPITAL", "CONSTRUCTION"]
 
+    def test_every_typescript_constraint_class_copy_matches_the_python_enum(self) -> None:
+        """The five TypeScript declarations of ConstraintClass must list exactly the Python members.
+
+        Transporting the classes required declaring the union in five places:
+        the generated client (regenerated from the artifact and already policed
+        by check_drift.py) plus four hand-maintained copies. tsc only checks
+        each consumer against whichever copy it imports, so it cannot see two
+        copies disagreeing with each other. Without this test, adding a ninth
+        class updates the generated client and silently leaves four unions
+        short -- and a union that is short in the frontend is one that types a
+        real disclosure value as impossible.
+        """
+        import re
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        declarations = [
+            Path("packages/schemas/canonical/index.ts"),
+            Path("packages/openapi-client/src/index.ts"),
+            Path("packages/openapi-client/src/generated/types.ts"),
+            Path("packages/domain-types/src/frontend-contracts.ts"),
+            Path("apps/web/features/operator/types.ts"),
+        ]
+        expected = {c.value for c in ConstraintClass}
+
+        for relative in declarations:
+            target = repo_root / relative
+            assert target.is_file(), f"{relative} is missing"
+            content = target.read_text(encoding="utf-8")
+            match = re.search(
+                r"export type ConstraintClass\s*=(?P<body>[^;]+);",
+                content,
+            )
+            assert match is not None, f"{relative} does not declare `export type ConstraintClass`"
+            # Both quote styles are in use across these files.
+            members = set(re.findall(r"""['"]([A-Z_]+)['"]""", match.group("body")))
+            assert members == expected, (
+                f"{relative} declares ConstraintClass as {sorted(members)}, "
+                f"but solver.netplan.model.ConstraintClass is {sorted(expected)}"
+            )
+
     def test_openapi_schema_and_generated_types_contain_typed_netplan_contract(self) -> None:
         """OpenAPI artifact and generated TypeScript types must define typed ConstraintClass and RebalanceScenario."""
         import json
