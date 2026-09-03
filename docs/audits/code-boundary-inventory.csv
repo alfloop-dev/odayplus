@@ -767,8 +767,6 @@ shared/infrastructure/persistence/command_receipts.py,product_system,product_req
 shared/infrastructure/persistence/decision_policy.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/document_store.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/engine.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
-shared/infrastructure/persistence/engine.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
-shared/infrastructure/persistence/engine.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/external_data.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/factory.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/job_queue.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
