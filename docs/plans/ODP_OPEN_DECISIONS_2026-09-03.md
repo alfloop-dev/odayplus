@@ -1,0 +1,142 @@
+# 待裁決事項，依危害排序
+
+- 日期：2026-09-03
+- 基準：`origin/dev` @ `6b893fd3`
+- 來源：[FR 查證報告](../evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md)、[閘的清查](../evidence/ODP_GATE_SWEEP_2026-09-01.md)
+- 接續：[修正計畫](ODP_REMEDIATION_PLAN_2026-09-03.md)
+
+這裡列二十筆需要 disposition 的查證發現；不是二十筆都仍待裁決，也不是二十個實作 task。第 19 項已有方向，第 20 項是 `BLOCKED_BY_EVIDENCE`，其餘要先補證據、裁決或實作。順序不是按模組也不是按工作量，是按**一個缺陷會不會產生一個看起來可信、而且會被人拿去做決定的錯誤數字**。
+
+狀態用語固定為：`OPEN`（尚無決定）、`BLOCKED_BY_EVIDENCE`（缺指定證據）、`DECIDED`（已有可追溯決定）、`IMPLEMENTATION_READY`（驗收與 owner 已齊）、`VERIFIED`（實作與 production-path evidence 已驗）。「在 manifest note 寫 decided-not-doing」本身不會修改原始 `MUST`；不做必須連到正式 requirement amendment 或 waiver/risk acceptance，含 decider、日期、範圍、owner、期限與重啟條件。
+本文件快照中，第 1–18 項仍是 `OPEN`（第 11、12 項先補資料源證據），第 19 項是決策方向已有但稽核欄位未齊的 `DECIDED`，第 20 項是 `BLOCKED_BY_EVIDENCE`。
+
+## 排序判準
+
+這一輪查證裡最危險的通常不是「缺功能」，而是看似完整的錯答案。不過缺功能仍可能造成決策盲區、人工繞路或舊資料持續污染；以下風險層級是相對排序，不代表第三層可以無限期拖延。
+
+危險的是**系統回答了，而那個回答是錯的，而且看起來跟對的回答一模一樣**。展店求解器回報「可行」，但它只驗過預算；熱區信心預設滿分，於是沒有覆蓋率資料的區域跟資料齊全的區域排名一致。
+
+四層：
+
+| 層 | 項數 | 定義 |
+|---|---:|---|
+| 一 | 6 | 錯數字直接進人的決定 |
+| 二 | 4 | 盲區——事情在發生而沒有東西回報 |
+| 三 | 9 | 已知缺席／未實作；相對風險較低但仍有能力與規格落差 |
+| 四 | 1 | 在這裡判不了 |
+
+---
+
+## 第一層：錯數字進人的決定
+
+第 1–5 項**都**含「有界分數預設滿分」——第 3 項的 `ValuationInput.quality_score` 也在內；第 3 項在滿分預設之外**另含**折舊未進估值路徑，第 6 項則是授權政策不一致。它們同列第一層是因為都能讓人收到看似可信、但保障範圍不明的結果，不是因為根因完全相同。
+
+### 1. `Prediction.confidence` 預設 1.0
+
+- **現況**：一筆沒有信心值的預測被存下來時，宣稱自己完全確定。
+- **後果**：若直接進操作者畫面而沒有「未評估」狀態，會被讀成完全確定；但本次 repo trace 沒找到可證明這個欄位已直達 UI 的完整鏈路，所以 UI 可達性是待驗證假設，不是既成事實。
+- **選項**：(甲) `float | None = None`，UI 對 `None` 顯示「未評估」；(乙) 預設 0.0；(丙) 建構時必填。
+- **建議：甲。** 乙會讓真正評估出低信心的與未評估的混在一起，那是把一個分辨換成另一個。丙最嚴格但會擋住既有呼叫端，代價與收益不成比例。
+
+### 2. SiteScore 的兩個輸入分數
+
+- **現況**：`average_confidence` 與 `data_quality_score` 都預設 1.0。
+- **後果**：資料不全的候選點分數與資料齊全的**無法區分**，而那個分數決定要不要開一家店。
+- **建議**：同第 1 項的甲。SiteScore 已有 `ODP-FR-SITE-004` 的 feasibility rules 可承接「資料不足 → 不給建議」，比 Prediction 更好接。
+
+### 3. AVM 估值的兩處
+
+- **現況**：`ValuationInput.quality_score` 預設 1.0；**而且折舊完全不在估值路徑上**——它在 `site_economics`，`modules/avm` 沒有 import 它。
+- **後果**：估值卡是**拿給買方看的**。輸入不完整的估值宣稱與完整輸入相同的品質，而且算出的價格漏了折舊；這是本次 repo trace 中明確識別的對外錯數字風險，不能推成全系統唯一。
+- **建議：兩件一起修，而且優先於 1、2。** 論單次後果，一個對外的錯價格最嚴重。
+
+### 4. `ModelReadyRecord` 的兩個分數
+
+- **現況**：進訓練快照的記錄，沒有品質分數就被當成乾淨的。
+- **後果**：**會複利。** 其他項一次錯一個數字；這個讓一批髒資料進入訓練，之後那個模型產出的每個數字都帶著它，無從追溯。
+- **建議**：甲。與 `ODP-FR-LH-004` 相關——BLOCKED feature 的閘剛修好可從 API 到達，這是同一道防線的另一半。
+
+### 5. canonical model 的其餘五個
+
+`Poi` · `CompetitorStore` · `Listing` · `HeatZoneScore` · `DataSnapshot`
+
+「其餘」是相對於第 1 項的 `Prediction`。`shared/domain/models.py` 一共六個 canonical model 帶有這個形狀的預設值：其中**五個**帶 `confidence`——`Poi`、`CompetitorStore`、`Listing`、`HeatZoneScore`，再加上第 1 項的 `Prediction`；只有 `DataSnapshot` 帶的是 `quality_score`。這裡把 `Prediction` 單獨列在第 1 項，只因為它離人的畫面最近，不是因為它可以有不同的答案。
+
+- **後果**：單獨看比前四項輕，但它們是**前四項的上游**。
+- **建議：五個必須一起決定，而且要與第 1 項同一個答案。** Listing 的 confidence 缺席代表什麼，Prediction 就該一樣。一個一個決定就是下一次詞彙分裂的起點——而詞彙分裂正是查出來的五個成因之一。
+- **執行上不分開**：[修正計畫](ODP_REMEDIATION_PLAN_2026-09-03.md)的第 3 批把第 1 項與這一項合成一個不可拆的 task，六個模型、六筆豁免一次處理。
+
+### 6. 三份租戶檢查的 `PLATFORM_ADMIN` 不一致
+
+- **現況**：`market_intelligence_api` 與 `market_data_facade` 對 `PLATFORM_ADMIN` 允許跨租戶，`intake_authorization` 不允許；非管理員跨租戶才是三處共同拒絕的部分。
+- **後果**：不能由「都有 403 分支」推成「不是破口」。政策未定、跨租戶稽核未證明時，這是授權語意不一致；預設 fail closed，或由安全／產品 owner 寫下具期限的風險接受。
+- **建議**：先回答政策問題再統一。答案是「可以但要留稽核」則 intake 是錯的；「不可以」則另外兩個是錯的。
+
+---
+
+## 第二層：盲區
+
+### 7. Prediction Drift 不存在（`ODP-FR-LH-005`）
+
+- **現況**：`LH-005`／`LH-007` 要求的是**四個監測面向**——Data、Feature、Prediction、Performance。其中只有 Data、Feature、Prediction 是**分布漂移**；Performance 是絕對門檻不是漂移，它剛補上基線比較。三個分布漂移裡 Data 與 Feature 有，**Prediction 完全沒有**。
+- **後果**：三個分布漂移裡**最早示警**的那一種。輸入還沒漂、效能還沒掉，但預測分布已經歪了——那段時間完全盲，而模型還在照常產出被人採用的數字。
+- **建議：做。** Evidently 已經在用，但鎖定版本沒有 `PredictionDriftPreset`。應先定 prediction 欄位、輸出型別、reference cohort、model/version 邊界與快照保存，再用逐欄 `ValueDrift` 或只含 prediction 欄位的 `DataDriftPreset`；門檻走 `DecisionPolicy`。
+
+### 8. `root_cause` 是沒有生產者的欄位（`ODP-FR-FCT-004`）
+
+- **現況**：全樹只有欄位定義與 TS 型別兩處，**沒有任何程式寫入**。
+- **後果**：異常被偵測到，原因永遠沒被記錄。
+- **建議：標成保留欄位或刪掉，不要接生產者。** 根因推導是一整個功能不是一個欄位。目前狀態最糟——讀 schema 的人以為有這個能力。
+
+### 9. 人工校正只有旗標沒有寫入路徑（`ODP-FR-INT-006`）
+
+- **現況**：`manual_override_flag` 存在，API 只讀不寫。
+- **後果**：操作者**沒辦法修正錯的資料**，所以錯的資料留著，下游每個計算都繼承它。唯一一個「人已經知道錯了卻不能改」的項目。
+- **建議**：做，但要連稽核一起——人工覆寫必須留痕，否則是把沉默的錯誤換成沉默的修改。
+
+### 10. `PARTIAL` 沒有生產者（`ODP-FR-SHARED-001`）
+
+- **現況**：詞彙已備好、`shared/jobs/queue.py` 已改用它，但沒有任何 job 會設定它。清單誠實記為 `absent`。
+- **建議**：先回答「**哪些 job 真的會半成功**」。答案是「目前沒有」就維持 absent 並記下來，那是誠實的。**不要為了讓清單好看而硬接。**
+
+---
+
+## 第三層：已知的缺席
+
+這一層比「錯答案直接進人的決定」風險低，但不是零風險：缺席仍可能讓人用人工替代流程、讓模型少一個必要訊號，或讓能力宣稱與實作不一致。排序依「做了會改變多少決定」。
+
+| # | 項目 | 建議 |
+|---:|---|---|
+| 11 | `SITE-001` Brand Transfer / Format Conversion | **先花半天確認資料源與業務事件是否存在**；再轉實作，或用正式 amendment／waiver 處置 |
+| 12 | `NET-002` 租約限制 | 先確認 per-option 檔期／解約金資料；存在才設計可行性檢查，不存在則正式修訂／豁免，不能只改 note |
+| 13 | `HZ-006` 熱區合併／拆分 | 唯一會隨時間惡化的一項，但建議等 `HZ-004` 吸收數字累積幾個月 |
+| 14 | `PRICE-006` Bandit + Gate | 目前沒有所以安全。**只出 bandit 不出 gate 是獨特風險**，兩者必須同批 |
+| 15 | `INT-001` CDC 接入 | 先問有沒有來源系統真的需要。若批次與 API 夠用，標為不適用 |
+| 16 | `INTV-006` Adjust | 先問實務：現在要調整的介入人是怎麼做的 |
+| 17 | `LH-003` Backtest 當發布閘 | 低。Shadow／Canary／Rollback／Champion-Challenger 已覆蓋大部分 |
+| 18 | `OPS-002` 留言 | 純缺功能。價值在把討論與決策綁在一起，不在提供溝通管道 |
+| 19 | merge queue 批次 | `DECIDED`：方向是不做；仍須補決策連結、decider、日期、適用期限與 reopen trigger 才算可稽核結案 |
+
+---
+
+## 第四層：判不了
+
+### 20. `SHARED-008` 與四條 NFR
+
+`SHARED-008`（Dev/Staging/Prod 不共用 Production Secret）、`PERF`、`BATCH`、`AVAIL`、`RPO`。
+
+全部是部署與執行時的事實，不在 repo 內，GCP 專案已停權。
+
+**狀態：`BLOCKED_BY_EVIDENCE`。** 不是空白結案。每一項要指定證據 owner、可觀測環境、命令／查詢、通過門檻與下次檢查日期；環境恢復後才能轉 `DECIDED` 或 `VERIFIED`。
+
+---
+
+## 如果只做三件
+
+| 順位 | 項目 | 理由 |
+|---:|---|---|
+| 1 | 第 3 項 AVM 估值（品質分數 + 折舊） | 本次 trace 明確識別、且直接面向買方的錯數字風險 |
+| 2 | 第 5 項 canonical model 其餘五個一起決定（連同第 1 項共六個） | 它們是 1、2、4 的上游；分開決定會製造下一次詞彙分裂 |
+| 3 | 第 7 項 Prediction Drift | 三個分布漂移裡唯一還全盲，而且成本最低 |
+
+第 11、12 項先做的不是猜「做不做」，而是指定半天完成資料源證據；證據回來後仍必須形成可追溯 disposition。租約與時序已經證明，**先有量測才有限制**，但「沒有量測」也不能自行消解原始 `MUST`。
