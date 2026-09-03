@@ -40,6 +40,8 @@ from modules.learninghub.domain import (
     validate_point_in_time,
 )
 from modules.learninghub.infrastructure import (
+    EvidentlyDriftMonitor,
+    EvidentlyDriftResult,
     InMemoryLearningHubRepository,
     LearningHubReleaseConflict,
     LearningHubReleaseFenced,
@@ -50,9 +52,9 @@ from modules.learninghub.infrastructure import (
 from modules.learninghub.runtime import LearningHubRuntimeConfigurationError
 from modules.learninghub.workers import (
     LearningHubReleaseWorker,
+    run_learninghub_prediction_drift,
     run_learninghub_release,
     run_learninghub_release_monitor,
-    run_learninghub_prediction_drift,
     run_learninghub_release_recovery,
 )
 
@@ -61,6 +63,8 @@ __all__ = [
     "AliasReconciliationReceipt",
     "DatasetSnapshot",
     "DatasetSnapshotError",
+    "EvidentlyDriftMonitor",
+    "EvidentlyDriftResult",
     "GuardrailBreach",
     "InMemoryLearningHubRepository",
     "InferenceComparison",

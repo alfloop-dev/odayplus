@@ -1660,6 +1660,7 @@ class LearningHubService:
         prediction_columns: Sequence[str] | None = None,
         output_types: Mapping[str, str] | None = None,
         policy: DecisionPolicy | None = None,
+        decision_policy: DecisionPolicy | None = None,
         requested_by: str = "system",
         reason: str | None = None,
     ) -> MonitoringEvaluation:
@@ -1671,6 +1672,7 @@ class LearningHubService:
         mixed-version comparison is allowed.
         """
 
+        policy = policy or decision_policy
         if policy is None:
             raise LearningHubError(
                 "prediction drift monitoring requires a resolved DecisionPolicy"
@@ -1689,6 +1691,10 @@ class LearningHubService:
         types = output_types or (
             configured_types if isinstance(configured_types, Mapping) else None
         )
+        if types is None:
+            raise LearningHubError(
+                "prediction drift monitoring requires prediction output types"
+            )
 
         result = self.prediction_drift_monitor.run_prediction(
             reference_rows=reference_rows,

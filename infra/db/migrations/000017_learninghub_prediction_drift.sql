@@ -7,6 +7,25 @@
 
 CREATE SCHEMA IF NOT EXISTS learning;
 
+-- Existing model-performance policy rows predate the prediction-drift
+-- extension. Extend them in place without replacing the versioned policy or
+-- changing any performance thresholds; fresh rows already carry this key via
+-- the canonical policy seed.
+UPDATE workflow.decision_policies
+SET parameters = CASE
+        WHEN parameters ? 'prediction_drift' THEN parameters
+        ELSE parameters || '{"prediction_drift": {"drift_share_threshold": 0.5}}'::jsonb
+    END,
+    declared_inputs = CASE
+        WHEN 'prediction_outputs' = ANY(declared_inputs) THEN declared_inputs
+        ELSE array_append(declared_inputs, 'prediction_outputs')
+    END
+WHERE policy_kind = 'model_performance_drift'
+  AND (
+      NOT (parameters ? 'prediction_drift')
+      OR NOT ('prediction_outputs' = ANY(declared_inputs))
+  );
+
 CREATE TABLE IF NOT EXISTS learning.prediction_drift_evaluations (
     evaluation_id               VARCHAR(100) PRIMARY KEY,
     model_name                  VARCHAR(255) NOT NULL,

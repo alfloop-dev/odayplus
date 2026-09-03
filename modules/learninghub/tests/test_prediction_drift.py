@@ -14,8 +14,12 @@ from modules.learninghub.infrastructure import (
 )
 from modules.learninghub.workers import run_learninghub_prediction_drift
 from shared.audit import InMemoryAuditLog
-from shared.governance import DecisionPolicy
-from shared.infrastructure.persistence import DurableLearningHubRepository, SqliteDocumentStore, SqliteEngine
+from shared.governance import DecisionPolicy, default_model_performance_drift_policy
+from shared.infrastructure.persistence import (
+    DurableLearningHubRepository,
+    SqliteDocumentStore,
+    SqliteEngine,
+)
 
 
 def _policy() -> DecisionPolicy:
@@ -51,6 +55,15 @@ def _rows(values: range, *, cohort: str = "region:north") -> list[dict[str, obje
     ]
 
 
+def test_seeded_model_performance_policy_declares_prediction_threshold() -> None:
+    policy = default_model_performance_drift_policy()
+
+    assert policy.parameters["prediction_drift"] == {
+        "drift_share_threshold": 0.5
+    }
+    assert "prediction_outputs" in policy.declared_inputs
+
+
 def test_prediction_drift_same_distribution_is_healthy() -> None:
     result = EvidentlyDriftMonitor().run_prediction(
         reference_rows=_rows(range(1, 101)),
@@ -71,6 +84,7 @@ def test_prediction_drift_same_distribution_is_healthy() -> None:
     assert result.current_snapshot_id == "snapshot-current"
     assert result.model_version == "v1"
     assert result.prediction_output_types == {"prediction": "numeric"}
+    assert result.drifted_column_names == ()
 
 
 def test_prediction_drift_shifted_output_alerts() -> None:
@@ -90,6 +104,7 @@ def test_prediction_drift_shifted_output_alerts() -> None:
     assert result.drift_detected is True
     assert result.drifted_columns == 1
     assert result.drift_share == 1.0
+    assert result.drifted_column_names == ("prediction",)
     assert result.decision_policy_version_id == _policy().policy_version_id
 
 

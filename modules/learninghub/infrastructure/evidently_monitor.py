@@ -175,6 +175,7 @@ class EvidentlyDriftMonitor:
         return self._result(
             evaluation=evaluation,
             drift_share_threshold=threshold,
+            snapshot_id=current_id,
             reference_snapshot_id=reference_id,
             current_snapshot_id=current_id,
             model_name=normalized_model_name,
@@ -488,15 +489,40 @@ def _drifted_column_names(payload: Mapping[str, Any]) -> tuple[str, ...]:
         name = str(metric.get("metric_name", ""))
         if "ValueDrift" not in name:
             continue
-        column = name.split("(", 1)[-1].rstrip(")")
-        if "=" in column:
-            column = column.split("=", 1)[-1]
+        arguments = name.partition("(")[2].rpartition(")")[0]
+        parsed_arguments = {
+            key.strip(): value.strip()
+            for key, separator, value in (
+                argument.partition("=") for argument in arguments.split(",")
+            )
+            if separator
+        }
+        column = parsed_arguments.get("column", "")
         if column and column not in names:
             value = metric.get("value")
-            if isinstance(value, Mapping) and value.get("drift_detected") is False:
+            if not _drift_metric_detected(value, parsed_arguments):
                 continue
             names.append(column)
     return tuple(names)
+
+
+def _drift_metric_detected(value: Any, arguments: Mapping[str, str]) -> bool:
+    if isinstance(value, Mapping):
+        if value.get("drift_detected") is not None:
+            return bool(value["drift_detected"])
+        for key in ("p_value", "p-value", "distance", "value"):
+            if key in value:
+                value = value[key]
+                break
+    try:
+        observed = float(value)
+        threshold = float(arguments["threshold"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    method = arguments.get("method", "").lower()
+    if "p_value" in method or "p-value" in method:
+        return observed < threshold
+    return observed >= threshold
 
 
 __all__ = [

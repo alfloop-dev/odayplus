@@ -65,7 +65,7 @@ class MonitoringEvaluation:
     audit_event_id: str | None = None
 
     def __post_init__(self) -> None:
-        if self.signal_type is not MonitoringSignalType.PREDICTION_DRIFT:
+        if self.signal_type != MonitoringSignalType.PREDICTION_DRIFT:
             return
         required = {
             "reference_snapshot_id": self.reference_snapshot_id,

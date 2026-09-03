@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 MIGRATION = Path("infra/db/migrations/000017_learninghub_prediction_drift.sql")
 
 
@@ -9,6 +8,8 @@ def test_prediction_drift_receipt_requires_replayable_lineage() -> None:
 
     for fragment in (
         "CREATE TABLE IF NOT EXISTS learning.prediction_drift_evaluations",
+        "ELSE parameters || '{\"prediction_drift\": {\"drift_share_threshold\": 0.5}}'::jsonb",
+        "ELSE array_append(declared_inputs, 'prediction_outputs')",
         "reference_snapshot_id       VARCHAR(255) NOT NULL",
         "current_snapshot_id         VARCHAR(255) NOT NULL",
         "model_version               VARCHAR(100) NOT NULL",
