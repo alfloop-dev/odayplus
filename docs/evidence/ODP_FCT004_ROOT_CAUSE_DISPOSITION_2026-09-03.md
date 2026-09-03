@@ -3,8 +3,8 @@
 - 日期：2026-09-03
 - 任務：`ODP-FCT-ROOT-CAUSE-CONTRACT-001`
 - 擁有者：Codex2
-- 審查者：Claude2
-- 狀態：`SUBMITTED_FOR_REVIEW`
+- 審查者：Antigravity2
+- 狀態：`READY_FOR_REVIEW`
 - 基準：`task/ODP-FCT-ROOT-CAUSE-CONTRACT-001`
 - 關聯文件：
   - [修正計畫](../plans/ODP_REMEDIATION_PLAN_2026-09-03.md) § 4b
@@ -124,4 +124,4 @@ uv run --python 3.12 pytest -q \
 ```bash
 uv run --python 3.12 delivery_toolchain/governance/check_code_boundaries.py
 ```
-- 結果：`Code boundary checks passed for 1069 files.`
+- 結果：`Code boundary checks passed for 1080 files.`
