@@ -41,6 +41,16 @@ applied by `delivery_toolchain/github/apply_branch_protection.py`.
 | `min_entries_to_merge` | `1` | Do not hold a ready PR waiting for company; latency matters more than batching here. |
 | `min_entries_to_merge_wait_minutes` | `5` | Inert while `min_entries_to_merge` is 1; kept explicit so raising the minimum later is a one-value change. |
 
+The `min_entries_to_merge` row is a **tuning default, not a governance ruling**.
+It was read as one: `docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md` item 19 quoted
+it as "already decided not to batch" and then asked for the decider and date
+that a ruling would have. There is no such ruling, and the row next to it
+says so — the wait-minutes value exists precisely so the minimum can be
+raised in one edit. Changing these two values is a config change under this
+runbook; declaring that this queue will never batch is a governance decision
+that belongs to Human/Ops. See
+[`docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md`](../evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md).
+
 ### `strict` must be off on `dev`
 
 `strict` ("require branches to be up to date before merging") is mutually

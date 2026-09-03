@@ -14,8 +14,13 @@ from pathlib import Path
 from delivery_toolchain.governance.check_requirement_members import (
     MANIFEST_PATH,
     REPO_ROOT,
+    STATUTORY_DECISION_FIELDS,
     VALID_DISPOSITION_STATES,
+    WAIVER_SIGNAL_FIELDS,
     check,
+    check_decision_date,
+    find_handback_claim,
+    find_nonimplementation_claim,
     is_ai_decider,
     resolve,
     validate_transition,
@@ -493,6 +498,7 @@ class TestDispositionSchemaAndTransitions:
                                     "decider": "Human/Ops",
                                     "scope": "Global",
                                     "risk_owner": "Platform Lead",
+                                    "decision_date": "2026-09-02",
                                     "expiry": "2027-01-01",
                                     "reopen_trigger": "On review",
                                     "history": [
@@ -528,6 +534,7 @@ class TestDispositionSchemaAndTransitions:
                                     "decider": "Human/Ops",
                                     "scope": "Global",
                                     "risk_owner": "Platform Lead",
+                                    "decision_date": "2026-09-02",
                                     "expiry": "2027-01-01",
                                     "reopen_trigger": "On review",
                                     "history": [
@@ -562,6 +569,7 @@ class TestDispositionSchemaAndTransitions:
                                     "decider": "Human/Ops",
                                     "scope": "Global",
                                     "risk_owner": "Platform Lead",
+                                    "decision_date": "2026-09-02",
                                     "expiry": "2027-01-01",
                                     "reopen_trigger": "On review",
                                     "history": [
@@ -674,6 +682,7 @@ class TestDecidedDispositionRequirements:
                                         "decider": "Human/Ops",
                                         "scope": "Global",
                                         "risk_owner": "Platform Lead",
+                                        "decision_date": "2026-09-02",
                                         "expiry": "2027-01-01",
                                         "reopen_trigger": "On review",
                                     },
@@ -784,6 +793,7 @@ class TestDecidedDispositionRequirements:
                                         "decider": "Platform Governance Lead",
                                         "scope": "Batch 0",
                                         "risk_owner": "Platform Lead",
+                                        "decision_date": "2026-09-02",
                                         "expiry": "2027-09-01",
                                         "reopen_trigger": "On quarterly audit",
                                     },
@@ -835,6 +845,7 @@ class TestAISelfSigningWaiversForbidden:
                                         "decider": ai_name,
                                         "scope": "Global",
                                         "risk_owner": "Platform Lead",
+                                        "decision_date": "2026-09-02",
                                         "expiry": "2027-09-01",
                                         "reopen_trigger": "Never",
                                     },
@@ -903,6 +914,7 @@ class TestWaiverExpiryGate:
                                     "decider": "Human/Ops",
                                     "scope": "Global",
                                     "risk_owner": "Platform Lead",
+                                    "decision_date": "2025-01-01",
                                     "expiry": "2025-12-31",
                                     "reopen_trigger": "On quarterly audit",
                                 },
@@ -935,6 +947,7 @@ class TestWaiverExpiryGate:
                                     "decider": "Human/Ops",
                                     "scope": "Global",
                                     "risk_owner": "Platform Lead",
+                                    "decision_date": "2026-09-02",
                                     "expiry": "2027-01-01",
                                     "reopen_trigger": "On quarterly audit",
                                 },
@@ -976,6 +989,7 @@ class TestWaiverExpiryGate:
                                         "decider": "Human/Ops",
                                         "scope": "Global",
                                         "risk_owner": "Platform Lead",
+                                        "decision_date": "2026-09-02",
                                         "expiry": bad_expiry,
                                         "reopen_trigger": "On quarterly audit",
                                     },
@@ -1158,6 +1172,634 @@ class TestOtherDispositionStates:
         failures, tally = check(root, manifest)
         assert failures == []
         assert tally["dispositions"]["IMPLEMENTATION_READY"] == 1
+
+
+def _waiver(**overrides: object) -> dict:
+    """A complete, valid formal ruling. Tests remove or spoil one field at a time."""
+    waiver = {
+        "formal_decision_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+        "decider": "Human/Ops (Architecture Board)",
+        "decision_date": "2026-09-02",
+        "scope": "Global",
+        "risk_owner": "Platform Lead",
+        "expiry": "2027-09-01",
+        "reopen_trigger": "On quarterly audit",
+    }
+    waiver.update(overrides)
+    return {k: v for k, v in waiver.items() if v is not None}
+
+
+class TestANoteIsNotAnAmendment:
+    """Prose cannot close a MUST requirement.
+
+    The failure this catches is the one the whole file exists for, one layer up:
+    a member says in its note that somebody decided not to build the thing, and
+    the disposition underneath it never names who, when, until when, or on what
+    observation it reopens. The green check then reports a governed gap.
+    """
+
+    def test_an_english_ruling_in_a_note_under_open_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "DECIDED 2026-09-02: the batched form is not pursued.",
+                                "disposition": {
+                                    "state": "OPEN",
+                                    "rationale": "not worth the complexity",
+                                    "assigned_to": "Platform Lead",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a requirement amendment" in f.problem for f in failures)
+
+    def test_a_chinese_ruling_in_a_note_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "已裁決不做；方向是維持現狀。",
+                                "disposition": {
+                                    "state": "BLOCKED_BY_EVIDENCE",
+                                    "evidence_needed": "usage figures",
+                                    "evidence_owner": "Data Operations Lead",
+                                    "next_review_date": "2026-10-01",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a requirement amendment" in f.problem for f in failures)
+
+    def test_a_ruling_in_the_disposition_rationale_is_refused(self, tmp_path: Path) -> None:
+        """Moving the sentence from note to rationale must not move it out of reach."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "no producer exists for this member",
+                                "disposition": {
+                                    "state": "OPEN",
+                                    "rationale": "Formally decided: this will not be implemented.",
+                                    "next_review_date": "2026-10-01",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a requirement amendment" in f.problem for f in failures)
+
+    def test_a_note_that_only_describes_an_absence_still_passes(self, tmp_path: Path) -> None:
+        """The shipped BACKTEST and ADJUST notes, verbatim. A gate that cannot tell
+        'nobody built it' from 'somebody ruled against building it' would force
+        every honest gap into a waiver it does not have."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "BACKTEST",
+                                "status": "absent",
+                                "note": (
+                                    "run_rolling_backtest exists in models/shared_ml/backtest.py and is used "
+                                    "by the training pipeline, but modules/learninghub references it nowhere. "
+                                    "It is not a release mode, so a release cannot be gated on a backtest result."
+                                ),
+                                "disposition": {
+                                    "state": "OPEN",
+                                    "rationale": "not connected as a release gate",
+                                    "next_review_date": "2026-10-01",
+                                },
+                            },
+                            {
+                                "name": "ADJUST",
+                                "status": "absent",
+                                "note": (
+                                    "Recommendation is CONTINUE/SCALE/STOP/CHANGE_CHANNEL/INCONCLUSIVE, which "
+                                    "leaves no place for Adjust, and there is no state for 'modify and continue'."
+                                ),
+                                "disposition": {
+                                    "state": "OPEN",
+                                    "rationale": "pending business requirement clarification",
+                                    "next_review_date": "2026-10-01",
+                                },
+                            },
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert failures == []
+
+    def test_deleting_the_disposition_block_does_not_hide_the_claim(self, tmp_path: Path) -> None:
+        """A satisfied member needs no disposition, so dropping the block is the
+        cheapest way to carry a ruling with nothing to validate."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "satisfied",
+                                "evidence": "pkg/mod.py::Thing",
+                                "note": "The count cap is in. DECIDED 2026-09-02: the rest is not pursued.",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a requirement amendment" in f.problem for f in failures)
+
+    def test_the_claim_detector_reads_ruling_and_absence_apart(self) -> None:
+        rulings = [
+            "DECIDED 2026-09-02: not modelled, and not scheduled.",
+            "decided not to implement the batched path",
+            "the full pairwise form is not pursued",
+            "this will not be implemented in the current model",
+            "formally waived until the next planning cycle",
+            "de-scoped by the architecture board",
+            "已裁決不做",
+            "決定不實作，維持現狀",
+            "架構委員會裁定不做，2027-09-01 到期",
+        ]
+        absences = [
+            "It is not a release mode, so a release cannot be gated on a backtest result.",
+            "No such data source is wired to the solver.",
+            "decided without metadata",
+            "That is choosing a format, not converting an existing store from one to another.",
+            "no job in the tree currently reports it",
+            "查證後確認此項的權威裁決不存在，已阻擋至 Human/Ops",
+            "本項尚未裁定，next_review_date 為 2026-10-01",
+        ]
+        for text in rulings:
+            assert find_nonimplementation_claim(text), text
+        for text in absences:
+            assert find_nonimplementation_claim(text) is None, text
+
+
+class TestAWaiverIsJudgedWhereverItSits:
+    """A waiver parked on a non-DECIDED member used to escape every gate.
+
+    ODP-FR-NET-002/DILUTION is the live shape: a satisfied member whose note
+    rules out the rest of the requirement, carrying decider, expiry and reopen
+    trigger under a VERIFIED disposition. Before this gate, none of those fields
+    were read -- the expiry would have passed in 2027 with CI still green.
+    """
+
+    def test_a_waiver_on_a_verified_member_still_expires(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "satisfied",
+                                "evidence": "pkg/mod.py::Thing",
+                                "note": "the remainder is not pursued",
+                                "disposition": dict(_waiver(expiry="2026-01-01"), state="VERIFIED"),
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("expired" in f.problem for f in failures)
+
+    def test_a_half_recorded_waiver_on_another_state_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "gap indexed here",
+                                "disposition": {
+                                    "state": "OPEN",
+                                    "rationale": "carrying half a ruling",
+                                    "next_review_date": "2026-10-01",
+                                    "decider": "Human/Ops (Architecture Board)",
+                                    "expiry": "2027-09-01",
+                                },
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any(
+            "carrying decision fields" in f.problem and "formal_decision_ref" in f.problem
+            for f in failures
+        )
+
+    def test_a_waiver_on_another_state_cannot_be_ai_signed(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "gap indexed here",
+                                "disposition": dict(
+                                    _waiver(decider="Claude2"),
+                                    state="IMPLEMENTATION_READY",
+                                    assigned_to="Platform Lead",
+                                    target_phase="Batch 6",
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("AI decider" in f.problem for f in failures)
+
+    def test_a_complete_waiver_on_a_verified_member_passes(self, tmp_path: Path) -> None:
+        """The legitimate case must stay legitimate: a member satisfied in part,
+        whose remainder carries a dated, owned, expiring human ruling."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "satisfied",
+                                "evidence": "pkg/mod.py::Thing",
+                                "note": "DECIDED 2026-09-02: the pairwise form is not pursued.",
+                                "disposition": dict(_waiver(), state="VERIFIED"),
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert failures == []
+
+
+def _handback(**overrides: object) -> dict:
+    """A gap handed back to human governance undecided, in the shape dev uses.
+
+    Modelled on ODP-FR-SITE-001/BRAND_TRANSFER: no data source exists, no AI may
+    waive the requirement, so the gap goes back with the evidence named, an owner
+    named, a review date, a package a reviewer can open, and the observation that
+    would unblock it. Nobody has ruled, so there is no decider and no expiry.
+    """
+    handback = {
+        "state": "BLOCKED_BY_EVIDENCE",
+        "evidence_needed": "External consumer panel feed with versioned schema and producer SLA",
+        "evidence_owner": "Market Intelligence Lead",
+        "next_review_date": "2026-10-01",
+        "rationale": "Repo holds static brand metadata and a synthetic mock view; no real producer exists.",
+        "formal_handback_ref": "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-site-001",
+        "reopen_trigger": "A cross-brand POS loyalty dataset is contracted and ingested with a verified SLA.",
+    }
+    handback.update(overrides)
+    return {k: v for k, v in handback.items() if v is not None}
+
+
+def _one_member(disposition: dict, **member_overrides: object) -> dict:
+    member = {
+        "name": "A",
+        "status": "absent",
+        "note": "gap indexed here",
+        "disposition": disposition,
+    }
+    member.update(member_overrides)
+    return {"requirements": [{"id": "R-1", "members": [member]}]}
+
+
+class TestAHandbackIsNotAnIncompleteWaiver:
+    """The honest exit from an un-waivable MUST must not be refused.
+
+    A gap an AI may not waive goes back to human governance undecided:
+    BLOCKED_BY_EVIDENCE plus an unsigned handback. That shape names the
+    observation that would unblock it, for the same reason a waiver names what
+    would reopen it. Counting ``reopen_trigger`` as a signal that a ruling had
+    been made turned the sanctioned shape into an incomplete waiver missing a
+    decider and an expiry -- fields an undecided gap must not be asked to
+    invent, since inventing them is the AI self-signing this file forbids.
+    """
+
+    def test_a_handback_carrying_a_reopen_trigger_passes(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(tmp_path, _one_member(_handback()))
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert failures == []
+
+    def test_reopen_trigger_is_statutory_but_is_not_a_waiver_signal(self) -> None:
+        """It is required of a ruling, and required of a handback; carrying one
+        therefore says nothing about whether a ruling exists."""
+        assert "reopen_trigger" in STATUTORY_DECISION_FIELDS
+        assert "reopen_trigger" not in WAIVER_SIGNAL_FIELDS
+        assert set(WAIVER_SIGNAL_FIELDS) == set(STATUTORY_DECISION_FIELDS) - {"reopen_trigger"}
+
+    def test_a_decided_ruling_still_owes_its_reopen_trigger(self, tmp_path: Path) -> None:
+        """Narrowing the signal must not narrow the DECIDED gate."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path, _one_member(dict(_waiver(reopen_trigger=None), state="DECIDED"))
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("reopen_trigger" in f.problem for f in failures)
+
+    def test_a_real_waiver_signal_beside_a_reopen_trigger_still_demands_the_rest(
+        self, tmp_path: Path
+    ) -> None:
+        """The parking gate stays armed: a decider under BLOCKED_BY_EVIDENCE is
+        a ruling somebody made, and it still owes the other six fields."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path, _one_member(_handback(decider="Human/Ops (Architecture Board)"))
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any(
+            "carrying decision fields" in f.problem and "expiry" in f.problem for f in failures
+        )
+
+    def test_an_expiry_parked_on_a_handback_still_comes_due(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(tmp_path, _one_member(_handback(expiry="2026-01-01")))
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("expired" in f.problem for f in failures)
+
+    def test_the_live_handbacks_are_the_shape_this_protects(self) -> None:
+        """Pin the manifest shape, so a future edit cannot quietly make the
+        regression test above vacuous: these members carry a reopen trigger and
+        no decider, and the repository check must accept them."""
+        payload = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+        members = {
+            member["name"]: member
+            for entry in payload["requirements"]
+            if entry["id"] == "ODP-FR-SITE-001"
+            for member in entry["members"]
+        }
+        for name in ("BRAND_TRANSFER", "FORMAT_CONVERSION"):
+            disposition = members[name]["disposition"]
+            assert disposition["state"] == "BLOCKED_BY_EVIDENCE"
+            assert disposition["reopen_trigger"]
+            assert not any(disposition.get(field) for field in WAIVER_SIGNAL_FIELDS)
+
+
+class TestAHandbackNeedsSomethingToOpen:
+    """A handback is a governance act, so it is forgeable in prose.
+
+    It is the sanctioned way past a MUST no AI may waive, which makes
+    "submitted to Human/Ops" the next free pass after "decided not to do" was
+    closed -- and a cheaper one, because it parks the member in
+    BLOCKED_BY_EVIDENCE indefinitely with nobody named as having received it.
+    """
+
+    def test_a_handback_claimed_in_a_note_with_no_ref_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            _one_member(
+                _handback(formal_handback_ref=None),
+                note=(
+                    "No producer exists in the repo. Formal handback "
+                    "HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops."
+                ),
+            ),
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("formal_handback_ref" in f.problem for f in failures)
+
+    def test_a_handback_claimed_in_a_rationale_with_no_ref_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            _one_member(
+                _handback(
+                    formal_handback_ref=None,
+                    rationale="No producer exists; 已移交 Human/Ops 與 Architecture Board 裁決。",
+                )
+            ),
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a handback" in f.problem for f in failures)
+
+    def test_a_handback_ref_pointing_at_nothing_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            _one_member(_handback(formal_handback_ref="docs/evidence/never_written.md")),
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("invalid formal_handback_ref" in f.problem for f in failures)
+
+    def test_a_handback_ref_cannot_escape_the_repository(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            _one_member(_handback(formal_handback_ref="../../etc/passwd")),
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("cannot escape repository boundary" in f.problem for f in failures)
+
+    def test_deleting_the_disposition_does_not_hide_a_handback_claim(self, tmp_path: Path) -> None:
+        """A satisfied member may omit the block, so omitting it is the cheapest
+        place to leave an unbacked claim."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "satisfied",
+                                "evidence": "pkg/mod.py::Thing",
+                                "note": "The remainder was handed back to the Architecture Board.",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a handback" in f.problem for f in failures)
+
+    def test_the_handback_detector_reads_a_submission_and_an_intention_apart(self) -> None:
+        """An act already performed must be backed; what is still owed must not
+        be, or every honestly-recorded block gets pushed into inventing one."""
+        submissions = [
+            "Formal handback HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops.",
+            "handback package filed with the Architecture Board",
+            "The pairwise remainder was handed back to Platform Governance.",
+            "已移交 Human/Ops 裁決",
+            "人類授權移交單已提報至 Architecture Board",
+        ]
+        intentions = [
+            "Awaiting Batch 0 data source audit before scheduling solver integration or formal waiver.",
+            "No such data source is wired to the solver.",
+            "Needs a per-option admissibility check before this can be scheduled.",
+            "查證後確認此項的權威裁決不存在，已阻擋至 Human/Ops",
+            "待資料源確立後轉為 IMPLEMENTATION_READY 或由人類授權人簽署",
+        ]
+        for text in submissions:
+            assert find_handback_claim(text), text
+        for text in intentions:
+            assert find_handback_claim(text) is None, text
+
+
+class TestADecisionMustCarryItsDate:
+    def test_decision_date_is_statutory(self, tmp_path: Path) -> None:
+        assert "decision_date" in STATUTORY_DECISION_FIELDS
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "undated ruling",
+                                "disposition": dict(_waiver(decision_date=None), state="DECIDED"),
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any(
+            "missing required statutory field(s): decision_date" in f.problem for f in failures
+        )
+
+    def test_a_decision_dated_in_the_future_is_refused(self, tmp_path: Path) -> None:
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "absent",
+                                "note": "ruling dated after the run",
+                                "disposition": dict(_waiver(decision_date="2027-01-01"), state="DECIDED"),
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("is in the future" in f.problem for f in failures)
+
+    def test_an_inverted_waiver_cannot_pass_from_any_run_date(self, tmp_path: Path) -> None:
+        """A ruling that expires before it was made needs no ordering rule of its
+        own. Whenever CI runs, one of the two dates is already wrong relative to
+        that run: before the expiry the decision is in the future, after it the
+        waiver has lapsed."""
+        root = _repo(tmp_path)
+
+        def _inverted() -> Path:
+            return _manifest(
+                tmp_path,
+                {
+                    "requirements": [
+                        {
+                            "id": "R-1",
+                            "members": [
+                                {
+                                    "name": "A",
+                                    "status": "absent",
+                                    "note": "ruling that lapsed before it was made",
+                                    "disposition": dict(
+                                        _waiver(decision_date="2026-09-02", expiry="2026-09-01"),
+                                        state="DECIDED",
+                                    ),
+                                }
+                            ],
+                        }
+                    ]
+                },
+            )
+
+        early, _ = check(root, _inverted(), reference_date=date(2026, 8, 1))
+        assert any("is in the future" in f.problem for f in early)
+
+        late, _ = check(root, _inverted(), reference_date=date(2026, 9, 3))
+        assert any("expired" in f.problem for f in late)
+
+    def test_check_decision_date_helper(self) -> None:
+        assert check_decision_date("2026-09-02", date(2026, 9, 3)) == (True, None)
+        assert check_decision_date("2026-09-04", date(2026, 9, 3))[0] is False
+        assert check_decision_date("02/09/2026", date(2026, 9, 3))[0] is False
+        assert check_decision_date("2026-13-01", date(2026, 9, 3))[0] is False
+        assert check_decision_date(None, date(2026, 9, 3))[0] is False
 
 
 class TestTheCheckedInManifestHolds:
