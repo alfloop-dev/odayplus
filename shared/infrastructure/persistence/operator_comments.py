@@ -65,7 +65,7 @@ class DurableCommentRepository:
     ) -> list[dict[str, Any]]:
         engine = self._require_engine()
         rows = engine.query(
-            f"SELECT * FROM {self.table} "
+            f"SELECT * FROM {self.table} "  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
             "WHERE tenant_id = ? AND target_type = ? AND target_id = ? "
             "ORDER BY created_at, comment_id",
             (tenant_id, target_type, target_id),
@@ -75,7 +75,7 @@ class DurableCommentRepository:
     def get_comment(self, tenant_id: str, comment_id: str) -> dict[str, Any] | None:
         engine = self._require_engine()
         row = engine.query_one(
-            f"SELECT * FROM {self.table} WHERE tenant_id = ? AND comment_id = ?",
+            f"SELECT * FROM {self.table} WHERE tenant_id = ? AND comment_id = ?",  # nosec B608 -- fixed dialect-selected relation; values are bound
             (tenant_id, comment_id),
         )
         return None if row is None else self._decode(row)
@@ -85,7 +85,7 @@ class DurableCommentRepository:
     ) -> dict[str, Any] | None:
         engine = self._require_engine()
         row = engine.query_one(
-            f"SELECT * FROM {self.table} "
+            f"SELECT * FROM {self.table} "  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
             "WHERE tenant_id = ? AND created_by = ? AND idempotency_key = ?",
             (tenant_id, actor_id, idempotency_key),
         )
@@ -96,7 +96,7 @@ class DurableCommentRepository:
         if str(comment.get("tenantId") or "").strip() != tenant_id:
             raise CommentForbidden("comment tenant does not match the verified tenant")
         engine.execute(
-            f"INSERT INTO {self.table} ("
+            f"INSERT INTO {self.table} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
             "tenant_id, comment_id, target_type, target_id, content, created_by, "
             "created_at, updated_by, updated_at, edited, edit_count, "
             "idempotency_key, correlation_id, history_json"
