@@ -494,3 +494,141 @@ def test_durable_composition_repository_lifecycle(tmp_path) -> None:
     assert post_lineage is not None
     assert post_lineage.is_active is False
 
+
+
+def test_a_pair_already_in_one_zone_is_not_proposed_again(tmp_path) -> None:
+    """Re-proposing a live zone would churn the audit trail for no change."""
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    zone_id = generate_merged_zone_id((MERGE_LEFT, MERGE_RIGHT))
+    zones = (ExistingZoneComposition(zone_id, "MERGED", (MERGE_LEFT, MERGE_RIGHT)),)
+
+    evaluation = evaluate_merge_split(
+        _mature_evidence(tmp_path, existing_zones=zones), policy=policy
+    )
+
+    assert [
+        proposal
+        for proposal in evaluation.proposals
+        if proposal.composition_kind == CompositionKind.MERGED
+    ] == []
+    assert any(
+        entry["reason"] == f"already_composed_into_zone:{zone_id}"
+        for entry in evaluation.declined
+    )
+
+
+def test_durable_evidence_repository_reads_the_same_history(tmp_path) -> None:
+    """The SQL reader must produce the evidence the engine acts on, not a shape
+    that only the in-memory double satisfies."""
+    import json
+
+    from shared.infrastructure.persistence.repositories import (
+        DurableMergeSplitEvidenceRepository,
+    )
+    from tests.integration._heatzone_evidence import (
+        ABSORPTION_POLICY_ID,
+        build_evidence_repository,
+    )
+
+    engine = SqliteEngine(tmp_path / "evidence.sqlite3")
+    durable = DurableMergeSplitEvidenceRepository(engine)
+    reference = build_evidence_repository()
+
+    for cell in reference.list_cells(TENANT_ID):
+        engine.execute(
+            "INSERT INTO h3_cells (geo_cell_id, h3_index, centroid_latitude, "
+            "centroid_longitude, admin_city, admin_district) "
+            "VALUES (?, ?, 25.03, 121.56, ?, ?)",
+            (cell.cell_id, cell.h3_index, cell.admin_city, cell.admin_district),
+        )
+    for index, outcome in enumerate(reference.list_absorption_outcomes(TENANT_ID)):
+        engine.execute(
+            """
+            INSERT INTO heatzone_absorption_outcomes (
+                outcome_id, tenant_id, geo_cell_id, period_start, period_end,
+                original_demand, absorbed_demand, remaining_demand,
+                absorption_ratio, absorbing_store_count, under_realized,
+                barrier_side, barrier_description, basis_source_ids, basis_at,
+                absorption_policy_version_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"outcome-{index}",
+                TENANT_ID,
+                outcome.cell_id,
+                outcome.period_start.isoformat(),
+                outcome.period_end.isoformat(),
+                outcome.original_demand,
+                outcome.absorbed_demand,
+                outcome.remaining_demand,
+                outcome.absorption_ratio,
+                outcome.absorbing_store_count,
+                int(outcome.under_realized),
+                outcome.barrier_side,
+                outcome.barrier_description,
+                json.dumps(list(outcome.basis_source_ids)),
+                outcome.basis_at.isoformat(),
+                ABSORPTION_POLICY_ID,
+                outcome.basis_at.isoformat(),
+            ),
+        )
+    for index, (left, right) in enumerate(reference.list_adjacency(TENANT_ID)):
+        engine.execute(
+            "INSERT INTO h3_cell_adjacency (adjacency_id, cell_id, neighbor_cell_id, k_ring) "
+            "VALUES (?, ?, ?, 1)",
+            (f"edge-{index}", left, right),
+        )
+
+    assert durable.list_adjacency(TENANT_ID) == reference.list_adjacency(TENANT_ID)
+    assert [c.cell_id for c in durable.list_cells(TENANT_ID)] == [
+        c.cell_id for c in reference.list_cells(TENANT_ID)
+    ]
+
+    evidence = assemble_merge_split_evidence(
+        durable,
+        tenant_id=TENANT_ID,
+        receipt_path=matured_receipt(tmp_path / "receipt.json"),
+    )
+    evaluation = evaluate_merge_split(
+        evidence, policy=default_heatzone_merge_policy(TENANT_ID)
+    )
+
+    assert evaluation.abstained is False
+    assert [
+        tuple(p.member_cell_ids)
+        for p in evaluation.proposals
+        if p.composition_kind == CompositionKind.MERGED
+    ] == [(MERGE_LEFT, MERGE_RIGHT)]
+
+
+def test_durable_evidence_repository_drops_a_cell_the_geo_registry_lacks(
+    tmp_path,
+) -> None:
+    """An unregistered cell has no admin identity, so the boundary rule cannot
+    be applied to it and it must not reach the engine."""
+    import json
+
+    from shared.infrastructure.persistence.repositories import (
+        DurableMergeSplitEvidenceRepository,
+    )
+    from tests.integration._heatzone_evidence import ABSORPTION_POLICY_ID
+
+    engine = SqliteEngine(tmp_path / "orphan.sqlite3")
+    durable = DurableMergeSplitEvidenceRepository(engine)
+    engine.execute(
+        """
+        INSERT INTO heatzone_absorption_outcomes (
+            outcome_id, tenant_id, geo_cell_id, period_start, period_end,
+            original_demand, absorbed_demand, remaining_demand, absorption_ratio,
+            absorbing_store_count, under_realized, barrier_side,
+            barrier_description, basis_source_ids, basis_at,
+            absorption_policy_version_id, created_at
+        ) VALUES ('o-1', ?, 'cell-not-registered', '2026-01-05', '2026-02-01',
+                  1000, 620, 380, 0.62, 3, 0, NULL, '', ?,
+                  '2026-09-01T00:00:00+00:00', ?, '2026-09-01T00:00:00+00:00')
+        """,
+        (TENANT_ID, json.dumps(["fp-a"]), ABSORPTION_POLICY_ID),
+    )
+
+    assert len(durable.list_absorption_outcomes(TENANT_ID)) == 1
+    assert durable.list_cells(TENANT_ID) == []

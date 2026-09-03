@@ -294,8 +294,7 @@ def derive_readiness_input(
     cell_map = evidence.cell_map()
     snapshot = evidence.snapshot
 
-    ratios: list[float] = []
-    periods: list[tuple[date, date]] = []
+    dated_ratios: list[tuple[tuple[date, date], float]] = []
     basis_ids: set[str] = set()
     active_stores = 0
     for cell in evidence.cells:
@@ -306,18 +305,15 @@ def derive_readiness_input(
         # contribution to the absorbing-store population.
         active_stores += max(o.absorbing_store_count for o in cell.outcomes)
         for outcome in cell.outcomes:
-            ratios.append(outcome.absorption_ratio)
-            periods.append(outcome.period)
+            dated_ratios.append((outcome.period, outcome.absorption_ratio))
             basis_ids.update(outcome.basis_source_ids)
 
-    ordered_ratios = [ratio for _, ratio in sorted(
-        ((outcome.period, outcome.absorption_ratio)
-         for cell in evidence.cells
-         for outcome in cell.outcomes),
-        key=lambda item: item[0],
-    )]
-    midpoint = len(ordered_ratios) // 2
-    earlier, later = ordered_ratios[:midpoint], ordered_ratios[midpoint:]
+    # Drift is measured between the earlier and later halves of the history, so
+    # the pooled ratios are ordered by period before being split.
+    dated_ratios.sort(key=lambda item: item[0])
+    ratios = [ratio for _, ratio in dated_ratios]
+    midpoint = len(ratios) // 2
+    earlier, later = ratios[:midpoint], ratios[midpoint:]
 
     metro_clusters = {
         cell.admin_city.strip()
@@ -341,7 +337,7 @@ def derive_readiness_input(
         governed_disabled=snapshot.governed_disabled,
         source_snapshot_id=snapshot.inventory_version,
         source_snapshot_sha256=snapshot.content_sha256,
-        outcome_period_count=len(set(periods)),
+        outcome_period_count=len({period for period, _ in dated_ratios}),
         basis_source_id_count=len(basis_ids),
     )
 
@@ -486,6 +482,11 @@ def evaluate_merge_split(
     allow_cross_admin = _require_bool(policy, "allow_cross_admin_boundary")
 
     cell_map = evidence.cell_map()
+    zone_of_cell = {
+        cell_id: zone.zone_id
+        for zone in evidence.existing_zones
+        for cell_id in zone.member_cell_ids
+    }
     proposals: list[MergeSplitProposal] = []
     declined: list[dict[str, Any]] = []
 
@@ -503,6 +504,19 @@ def evaluate_merge_split(
                     "candidate": f"{left_id}+{right_id}",
                     "kind": CompositionKind.MERGED.value,
                     "reason": "cross_admin_boundary_not_permitted_by_policy",
+                }
+            )
+            continue
+
+        active_zone = zone_of_cell.get(left_id)
+        if active_zone is not None and zone_of_cell.get(right_id) == active_zone:
+            # Already one zone. Re-proposing it would put an approval through a
+            # revert-and-recreate that changes nothing but the audit trail.
+            declined.append(
+                {
+                    "candidate": f"{left_id}+{right_id}",
+                    "kind": CompositionKind.MERGED.value,
+                    "reason": f"already_composed_into_zone:{active_zone}",
                 }
             )
             continue
@@ -529,10 +543,23 @@ def evaluate_merge_split(
             )
             continue
 
-        assert stats.correlation_rho is not None
-        assert stats.disconnect_index is not None
-        assert stats.ndcg_gain is not None
-        assert stats.variance_reduction is not None
+        # `_merge_refusal` returned None, which it only does once all four
+        # statistics are present; bind them so the proposal cannot be built
+        # from a value the refusal check would have caught.
+        rho = stats.correlation_rho
+        disconnect = stats.disconnect_index
+        ndcg_gain = stats.ndcg_gain
+        variance_reduction = stats.variance_reduction
+        if (
+            rho is None
+            or disconnect is None
+            or ndcg_gain is None
+            or variance_reduction is None
+        ):  # pragma: no cover - unreachable while _merge_refusal is total
+            raise MergeSplitPolicyError(
+                f"pair {left_id}+{right_id} passed the merge rules with an "
+                "unmeasured statistic; refusing to propose"
+            )
 
         member_ids = (left_id, right_id)
         proposals.append(
@@ -543,13 +570,11 @@ def evaluate_merge_split(
                 composition_kind=CompositionKind.MERGED,
                 member_cell_ids=member_ids,
                 parent_zone_id=None,
-                ndcg_gain=round(stats.ndcg_gain, 4),
-                cannibalization_variance_reduction=round(stats.variance_reduction, 4),
-                correlation_rho=round(stats.correlation_rho, 4),
-                disconnect_index=round(stats.disconnect_index, 4),
-                confidence=round(
-                    _merge_confidence(stats.correlation_rho, stats.disconnect_index), 4
-                ),
+                ndcg_gain=round(ndcg_gain, 4),
+                cannibalization_variance_reduction=round(variance_reduction, 4),
+                correlation_rho=round(rho, 4),
+                disconnect_index=round(disconnect, 4),
+                confidence=round(_merge_confidence(rho, disconnect), 4),
                 model_version=model_version,
                 policy_version_id=policy.policy_version_id,
                 reasons=(
@@ -734,12 +759,15 @@ def _ndcg_gain(
     if len(shared) < 2:
         return None
 
-    ranked_cells = [
-        cell
-        for cell in cell_map.values()
-        if all(period in cell.absorbed_by_period() for period in shared)
+    absorbed_by_cell = {
+        cell_id: cell.absorbed_by_period() for cell_id, cell in cell_map.items()
+    }
+    ranked_ids = [
+        cell_id
+        for cell_id, absorbed in absorbed_by_cell.items()
+        if all(period in absorbed for period in shared)
     ]
-    if len(ranked_cells) < 3:
+    if len(ranked_ids) < 3:
         # Below three units the ranking is near-perfect either way and the
         # comparison carries no information.
         return None
@@ -749,18 +777,18 @@ def _ndcg_gain(
     for index in range(1, len(shared)):
         prior, current = shared[index - 1], shared[index]
         pooled_prior = sum(
-            cell_map[cid].absorbed_by_period()[prior] for cid in merged_ids
+            absorbed_by_cell[cell_id][prior] for cell_id in merged_ids
         ) / len(merged_ids)
 
         atomic_units: list[tuple[float, float]] = []
         merged_units: list[tuple[float, float]] = []
-        for cell in ranked_cells:
-            absorbed = cell.absorbed_by_period()
+        for cell_id in ranked_ids:
+            absorbed = absorbed_by_cell[cell_id]
             relevance = absorbed[current]
             atomic_units.append((absorbed[prior], relevance))
             merged_units.append(
                 (
-                    pooled_prior if cell.cell_id in merged_ids else absorbed[prior],
+                    pooled_prior if cell_id in merged_ids else absorbed[prior],
                     relevance,
                 )
             )
@@ -993,12 +1021,15 @@ def _evaluate_splits(
             )
             continue
 
-        ratio_series_a = [side_series[side_a][period] for period in shared]
-        ratio_series_b = [side_series[side_b][period] for period in shared]
-        rho = pearson_correlation(ratio_series_a, ratio_series_b)
-        disconnect = _disconnect_index(
-            _normalized(ratio_series_a), _normalized(ratio_series_b)
-        )
+        # On a split these two fields describe the sides rather than a pair of
+        # neighbours: how the two sides of the barrier co-move, and how far
+        # apart their absorption sits. Neither gates the split -- the density
+        # ratio does -- but both are recorded so a reviewer can see the shape of
+        # the evidence the split was taken on.
+        series_a = [side_series[side_a][period] for period in shared]
+        series_b = [side_series[side_b][period] for period in shared]
+        rho = pearson_correlation(series_a, series_b)
+        disconnect = _disconnect_index(series_a, series_b)
         barrier = next(
             (
                 cell_map[cid].barrier_description
@@ -1037,13 +1068,6 @@ def _evaluate_splits(
             )
 
     return proposals
-
-
-def _normalized(values: Sequence[float]) -> list[float]:
-    peak = max(values) if values else 0.0
-    if peak <= 0.0:
-        return [0.0 for _ in values]
-    return [value / peak for value in values]
 
 
 __all__ = [

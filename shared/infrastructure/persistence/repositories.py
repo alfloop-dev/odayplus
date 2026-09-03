@@ -2574,23 +2574,19 @@ class DurableMergeSplitEvidenceRepository:
             );
             """
         )
-        self._engine.execute(
-            """
-            CREATE TABLE IF NOT EXISTS h3_cells (
-                geo_cell_id TEXT PRIMARY KEY,
-                h3_index TEXT NOT NULL,
-                admin_city TEXT,
-                admin_district TEXT
-            );
-            """
-        )
+        # `h3_cells` is not created here: the SQLite engine already bootstraps
+        # the geo tables from 000004, and shadowing that definition with a
+        # narrower one would silently diverge from the relation the geo pipeline
+        # writes.
         self._engine.execute(
             """
             CREATE TABLE IF NOT EXISTS h3_cell_adjacency (
                 adjacency_id TEXT PRIMARY KEY,
                 cell_id TEXT NOT NULL,
                 neighbor_cell_id TEXT NOT NULL,
-                k_ring INTEGER NOT NULL DEFAULT 1
+                k_ring INTEGER NOT NULL DEFAULT 1,
+                CHECK (cell_id < neighbor_cell_id),
+                UNIQUE (cell_id, neighbor_cell_id)
             );
             """
         )
@@ -2657,14 +2653,15 @@ class DurableMergeSplitEvidenceRepository:
             f"FROM {self.table_cells} WHERE geo_cell_id IN ({placeholders})",
             tuple(cell_ids),
         )
-        identities = {
-            str(row["geo_cell_id"]): (
-                str(row.get("h3_index") or ""),
-                str(row.get("admin_city") or ""),
-                str(row.get("admin_district") or ""),
+        identities = {}
+        for row in rows:
+            # sqlite3.Row has no .get, so normalise before reading optionals.
+            record = dict(row)
+            identities[str(record["geo_cell_id"])] = (
+                str(record.get("h3_index") or ""),
+                str(record.get("admin_city") or ""),
+                str(record.get("admin_district") or ""),
             )
-            for row in rows
-        }
 
         whole: dict[str, list[AbsorptionOutcomeRecord]] = {}
         sided: dict[str, list[AbsorptionOutcomeRecord]] = {}

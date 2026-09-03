@@ -82,9 +82,10 @@ export function HeatZoneMergeSplitPanel({
   const [rejectionReason, setRejectionReason] = useState<string>("");
   const [showApproveModal, setShowApproveModal] = useState<boolean>(false);
   const [showRejectModal, setShowRejectModal] = useState<boolean>(false);
+  const [feedbackMessage, setFeedbackMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   // Offering a button the server will refuse is worse than not offering it.
   const canDecide = canDecideHeatZoneComposition(activeRoleId);
-  const [feedbackMessage, setFeedbackMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const selectedId = controlledSelectedId !== undefined ? controlledSelectedId : internalSelectedId;
 

@@ -302,10 +302,10 @@ def use_matured_receipt(monkeypatch, tmp_path: Path) -> Path:
     from modules.heatzone.application import merge_split_evidence
 
     receipt = matured_receipt(tmp_path / "matured-inventory-receipt.json")
+    real_loader = merge_split_evidence.load_model_ready_receipt
 
     def _load(path: Path | None = None) -> dict[str, object]:
         return real_loader(path or receipt)
 
-    real_loader = merge_split_evidence.load_model_ready_receipt
     monkeypatch.setattr(merge_split_evidence, "load_model_ready_receipt", _load)
     return receipt

@@ -105,24 +105,6 @@ class AbsorptionOutcomeRecord:
     def period(self) -> tuple[date, date]:
         return (self.period_start, self.period_end)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "cell_id": self.cell_id,
-            "period_start": self.period_start.isoformat(),
-            "period_end": self.period_end.isoformat(),
-            "original_demand": self.original_demand,
-            "absorbed_demand": self.absorbed_demand,
-            "remaining_demand": self.remaining_demand,
-            "absorption_ratio": self.absorption_ratio,
-            "absorbing_store_count": self.absorbing_store_count,
-            "basis_source_ids": list(self.basis_source_ids),
-            "absorption_policy_version_id": self.absorption_policy_version_id,
-            "basis_at": self.basis_at.isoformat(),
-            "under_realized": self.under_realized,
-            "barrier_side": self.barrier_side,
-            "barrier_description": self.barrier_description,
-        }
-
 
 @dataclass(frozen=True)
 class CellOutcomeSeries:
@@ -136,11 +118,6 @@ class CellOutcomeSeries:
     side_outcomes: tuple[AbsorptionOutcomeRecord, ...] = ()
 
     @property
-    def has_barrier_evidence(self) -> bool:
-        sides = {o.barrier_side for o in self.side_outcomes if o.barrier_side}
-        return len(sides) >= 2
-
-    @property
     def barrier_description(self) -> str:
         for outcome in self.side_outcomes:
             if outcome.barrier_description:
@@ -149,9 +126,6 @@ class CellOutcomeSeries:
 
     def absorbed_by_period(self) -> dict[tuple[date, date], float]:
         return {o.period: o.absorbed_demand for o in self.outcomes}
-
-    def ratio_by_period(self) -> dict[tuple[date, date], float]:
-        return {o.period: o.absorption_ratio for o in self.outcomes}
 
     def demand_by_period(self) -> dict[tuple[date, date], float]:
         return {o.period: o.original_demand for o in self.outcomes}
