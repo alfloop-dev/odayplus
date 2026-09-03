@@ -1,8 +1,11 @@
 """Contract tests for NetPlan constraint class disclosure transport.
 
 Verifies ODP-FR-NET-002 constraint class disclosure across the entire pipeline:
-1. Pure solver / optimizer candidate generation (MIP and CP-SAT).
-2. Production solve -> OpsBoard network rebalance projection.
+1. Library MIP candidate generation (``solve_network_plan``).
+2. Solve -> OpsBoard network rebalance projection, over both solvers: the
+   library MIP and, separately, the CP-SAT ``NetPlanProductionExecutor`` that
+   ``NetPlanService`` routes to when ``production_required`` is set. Asserting
+   only the first is what let the two drift apart before.
 3. Operator HTTP API response contract (/api/v1/operator/network-rebalance).
 4. Strict semantics distinguishing None, empty list, and missing fields.
 5. Fail-closed contract validation that catches any field loss in projection.
@@ -132,6 +135,7 @@ def _build_test_scenario(
                 expected_gross_margin=50.0,
                 budget_cost=0.0,
                 risk_score=0.1,
+                source_snapshot_ids=("snap-2026-09",),
                 construction_days=0.0,
                 equipment_units=0.0,
                 labour_headcount=0.0,
@@ -143,6 +147,7 @@ def _build_test_scenario(
                 expected_gross_margin=80.0,
                 budget_cost=30.0,
                 risk_score=0.2,
+                source_snapshot_ids=("snap-2026-09",),
                 construction_days=10.0,
                 equipment_units=2.0,
                 labour_headcount=1.0,
@@ -156,6 +161,7 @@ def _build_test_scenario(
                 expected_gross_margin=40.0,
                 budget_cost=0.0,
                 risk_score=0.1,
+                source_snapshot_ids=("snap-2026-09",),
                 construction_days=0.0,
                 equipment_units=0.0,
                 labour_headcount=0.0,
@@ -167,6 +173,7 @@ def _build_test_scenario(
                 expected_gross_margin=100.0,
                 budget_cost=80.0,
                 risk_score=0.3,
+                source_snapshot_ids=("snap-2026-09",),
                 construction_days=25.0,
                 equipment_units=5.0,
                 labour_headcount=3.0,
@@ -181,6 +188,7 @@ def _build_test_scenario(
                 expected_gross_margin=120.0,
                 budget_cost=90.0,
                 risk_score=0.25,
+                source_snapshot_ids=("snap-2026-09",),
                 construction_days=30.0,
                 equipment_units=6.0,
                 labour_headcount=4.0,
@@ -598,6 +606,95 @@ class TestNetPlanDisclosureTransport:
                     idempotency_key=None,
                     correlation_id="test-corr",
                 )
+
+    def test_production_cp_sat_route_projects_constraint_classes_through_opsboard(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The route production actually takes must transport disclosure, not just the library one.
+
+        There are two solvers. ``solve_network_plan`` builds a pywraplp MIP;
+        ``NetPlanProductionExecutor`` builds a CP-SAT model, and
+        ``NetPlanService`` routes to the second whenever ``production_required``
+        is set. Every other test in this file leaves ``production_required``
+        false, so they all walk the library. That is the exact shape
+        ODP_NETPLAN_CONSTRAINT_CLASSES_2026-09-01 records being committed inside
+        the change that catalogued it: a guarantee proven only on the path the
+        runtime does not use. This test pins the other one.
+        """
+        pytest.importorskip("ortools", reason="the production solver needs OR-Tools CP-SAT")
+
+        from modules.avm.domain.valuation import ValuationCase, ValuationInput
+        from modules.avm.infrastructure.repositories import InMemoryAVMRepository
+        from modules.netplan.application.production import NetPlanProductionExecutor
+
+        # runtime_mode stays None so strict_production_composition does not also
+        # demand a durable repository; production_required still flips, which is
+        # the branch under test.
+        monkeypatch.setenv("ODP_PRODUCT_MODE", "production")
+
+        avm_repo = InMemoryAVMRepository()
+        case = ValuationCase.create(
+            ValuationInput(
+                store_id="store-1",
+                gm_ttm=100000.0,
+                forecast_gm_next_12m=120000.0,
+                asset_book_value=500000.0,
+                equipment_fair_value=300000.0,
+            ),
+            created_by="test-op",
+            correlation_id="corr-avm-prod-001",
+        )
+        avm_repo.save_case(case)
+
+        netplan_repo = InMemoryNetPlanRepository()
+        netplan_repo.save_scenario(
+            _build_test_scenario(
+                scenario_id="NP-SCEN-PROD-801",
+                max_budget=200.0,
+                max_construction_days=60.0,
+            )
+        )
+
+        # Recording wrapper: without it a green assertion below would also be
+        # satisfied by the library MIP, which is precisely how the two solvers
+        # drifted apart unnoticed the first time.
+        executed: list[str] = []
+
+        class RecordingExecutor(NetPlanProductionExecutor):
+            def execute(self, scenario, **kwargs):  # type: ignore[no-untyped-def]
+                executed.append(scenario.scenario_id)
+                return super().execute(scenario, **kwargs)
+
+        executor = RecordingExecutor()
+        service = NetworkRebalanceService(
+            avm_repository=avm_repo,
+            netplan_repository=netplan_repo,
+            netplan_production_executor=executor,
+            tenant_id="tenant-test",
+            require_canonical=True,
+        )
+        store = service._store("store-1")
+        store["status"] = "avmready"
+
+        response = service.solve_netplan(
+            store_id="store-1",
+            actor_role_id="expansionManager",
+            actor_name="Test Operator",
+            idempotency_key=None,
+            correlation_id="corr-reb-prod-001",
+        )
+
+        assert executed == ["NP-SCEN-PROD-801"], (
+            "NetPlanService did not route through the production CP-SAT executor; "
+            "this test would then be asserting the library path a second time"
+        )
+
+        scenarios = response["store"]["netPlanScenarios"]
+        assert len(scenarios) >= 1, "expected at least primary scenario"
+        for plan_row in scenarios:
+            _validate_netplan_scenario_disclosure_contract(plan_row)
+            assert plan_row["modelledConstraintClasses"] == ["CAPITAL", "CONSTRUCTION"]
 
     def test_openapi_schema_and_generated_types_contain_typed_netplan_contract(self) -> None:
         """OpenAPI artifact and generated TypeScript types must define typed ConstraintClass and RebalanceScenario."""
