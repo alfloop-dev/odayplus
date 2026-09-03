@@ -158,5 +158,14 @@ def test_governance_registry_records_fct004_disposition() -> None:
     assert members_by_name["TURNING_POINT_PROBABILITY"]["status"] == "satisfied"
     assert members_by_name["ANOMALY_EVIDENCE"]["status"] == "satisfied"
     assert members_by_name["ROOT_CAUSE_CANDIDATE"]["status"] == "absent"
-    assert "RESERVED" in members_by_name["ROOT_CAUSE_CANDIDATE"]["note"]
-    assert "Wave 5+" in members_by_name["ROOT_CAUSE_CANDIDATE"]["note"]
+    root_cause_member = members_by_name["ROOT_CAUSE_CANDIDATE"]
+    assert "RESERVED" in root_cause_member["note"]
+    assert "Wave 5+" in root_cause_member["note"]
+
+    disposition = root_cause_member["disposition"]
+    assert disposition["state"] == "IMPLEMENTATION_READY"
+    assert disposition["assigned_to"] == "ForecastOps / Platform Ops"
+    assert disposition["target_phase"] == "Wave 5+"
+    assert "DECIDED" not in root_cause_member["note"]
+    assert "formal_decision_ref" not in disposition
+    assert "decider" not in disposition

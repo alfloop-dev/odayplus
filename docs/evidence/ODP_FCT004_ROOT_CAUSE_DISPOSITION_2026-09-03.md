@@ -20,12 +20,12 @@
 本任務完成以下工作：
 1. **全樹 Writer / Reader 證明**：完成跨 Python domain、ForecastOps、API、Ingestion contracts、TypeScript schemas、Frontend domain types、dbt pipelines 及 PostgreSQL DDL 的 lineage 查證，證實 production backend 沒有自動化根因推導（automated root cause deduction）的 writer，也沒有依賴該推導結果的 backend reader。`RootCauseEvidenceCard` 是既有但未接後端資料的 presentation consumer，僅由 fixture 驅動，並已明示 `RESERVED (unproduced)`。
 2. **拒絕製造假生產者**：堅守架構原則，不臨時撰寫裝飾性的根因推導 heuristic 來虛偽滿足需求。
-3. **正式處置為 `RESERVED (unproduced)`**：
+3. **工程處置為 `RESERVED (unproduced)`，治理狀態為 `IMPLEMENTATION_READY`**（不是本任務代替人類治理角色建立正式 Waiver 或 Requirement Amendment）：
    - 標明擁有團隊為 `ForecastOps / Platform Ops`，目標時程為 `Wave 5+`。
    - 更新後端模型 `shared/domain/models.py` 與 canonical TS 介面 `packages/schemas/canonical/index.ts`，明確標記 `WorkOrder.root_cause` 為 `@reserved` / `RESERVED (unproduced)`。
    - 更新前端型別契約 `packages/domain-types/src/frontend-contracts.ts` 與元件設計文件 `docs/design/ODAY_PLUS_COMPONENT_CONTRACTS.md` §5.6，為 `RootCauseEvidenceCardContract` 與 `causeCandidate` 加上 `@reserved` 註釋與保留宣告，消解 API、TS 及 UI 契約暗示該能力已存在的誤導。
    - 新增 forward migration `000018_work_orders_root_cause_disposition.sql` 與 Alembic revision `0012_work_orders_root_cause_disposition.py`，於資料庫層級記錄 column comment 與保留語意，並具備完整 rollback 機制。
-   - 於治理清單 `delivery_toolchain/governance/set_valued_requirements.json` 正式登錄 `ODP-FR-FCT-004`，標記 `ROOT_CAUSE_CANDIDATE` 為 `absent` 並附完整 disposition 決策記錄。
+   - 於治理清單 `delivery_toolchain/governance/set_valued_requirements.json` 登錄 `ODP-FR-FCT-004`，標記 `ROOT_CAUSE_CANDIDATE` 為 `absent`，並以 `IMPLEMENTATION_READY`、`assigned_to` 與 `target_phase` 記錄可執行的工程處置。
    - 新增與更新契約／整合測試（`test_root_cause_contract_disposition.py`、`test_canonical_schema.py`、`test_migration_backfill.py`、`test_official_real_estate_postgresql.py`），在 disposable PostgreSQL 上真正執行 forward migration、檢查 comment、downgrade 後確認 comment 清除且 nullable column 保留。
 
 ---
@@ -47,17 +47,18 @@
 
 ---
 
-## 3. 處置決策與評估
+## 3. 處置評估與實作就緒結論
 
-針對 `FCT-004` 根因候選能力的處置，評估三個選項：
+針對 `FCT-004` 根因候選能力的工程處置，評估三個選項；本任務沒有宣告正式的人類裁決：
 
 1. **選項 A：臨時實作一個 Heuristic 根因推導器（拒絕）**
    - 違反本次架構修復核心原則：「不為讓清單好看而硬接假生產者」。根因推導涉及完整多維度因果分析系統，硬塞假推導器會產生看似可信但毫無統計保證的錯因，誤導營運決策。
 2. **選項 B：完全自 Schema 移除 `root_cause` 欄位（次佳，未採納）**
    - 雖然生產無推導器，但 `maintenance_work_order_event` 內部資料來源合約中包含手動工單之維修備註（如 `"worn_seal"`）。若物理移除，會破壞來源工單紀錄之相容性。
-3. **選項 C：標記為 `RESERVED (unproduced)`（採納）**
+3. **選項 C：標記為 `RESERVED (unproduced)` 並登錄 `IMPLEMENTATION_READY`（採納的工程處置）**
    - 保留資料相容性，同時在所有型別、API 契約、前端展示合約、資料庫註解與治理清單中明示「目前版本無自動化生產者」。
    - 指定擁有者（ForecastOps / Platform Ops）與目標時程（Wave 5+）。
+   - `ODP_OPEN_DECISIONS_2026-09-03.md` § 8 仍為 `OPEN`；本項沒有 `formal_decision_ref`、`decider` 或其他 Waiver／Amendment 欄位，不把工程排程冒充正式裁決。
 
 ---
 
@@ -74,7 +75,7 @@
    - `000018_work_orders_root_cause_disposition.sql`：執行 `COMMENT ON COLUMN core.work_orders.root_cause IS 'RESERVED: No automated producer exists in current release (ODP-FR-FCT-004). Owner: ForecastOps/Platform; Target: Wave 5+';`
    - `versions/0012_work_orders_root_cause_disposition.py`：Alembic 遷移腳本，支援 `upgrade` 與 `downgrade` 回滾。
 5. **Governance Registry (`delivery_toolchain/governance/set_valued_requirements.json`)**
-   - 登錄 `ODP-FR-FCT-004`，4 個 members（3 個 satisfied、`ROOT_CAUSE_CANDIDATE` 記為 `absent` 並附完整 disposition note）。
+   - 登錄 `ODP-FR-FCT-004`，4 個 members（3 個 satisfied、`ROOT_CAUSE_CANDIDATE` 記為 `absent`，disposition 為 `IMPLEMENTATION_READY`，並具名 owner／target phase）。
 6. **Contract & Regression Tests (`tests/contract/`, `tests/ops/`, `tests/integration/`)**
    - 新增 `tests/contract/test_root_cause_contract_disposition.py`（7 項驗證通過）。
    - 更新 `tests/contract/test_canonical_schema.py`。
@@ -91,7 +92,7 @@
 ```bash
 uv run --python 3.12 pytest tests/contract/test_root_cause_contract_disposition.py -v
 ```
-- 結果：`7 passed`（Python contract compatibility、reserved markers、no fake ForecastOps producer、governance disposition）
+- 結果：`7 passed`（Python contract compatibility、reserved markers、no fake ForecastOps producer、governance `IMPLEMENTATION_READY` disposition）
 
 ### 5.2 資料庫遷移計畫與回滾規劃測試
 ```bash

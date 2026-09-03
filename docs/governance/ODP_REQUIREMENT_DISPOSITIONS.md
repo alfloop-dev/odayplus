@@ -180,16 +180,14 @@ stateDiagram-v2
 ### 4.7 `ODP-FR-FCT-004`：ForecastOps 預測特徵與根因契約
 
 #### 成員：`ROOT_CAUSE_CANDIDATE`（根因候選）
-- **處置狀態**：`DECIDED`（正式 Waiver / 契約保留宣告）
-- **Formal Decision Ref**: `docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-fct-004-root-cause-candidate`
-- **裁決者 (Decider)**: `Human/Ops (Architecture Board)`
-- **裁決日期 (Decision Date)**: `2026-09-03`
-- **適用範圍 (Scope)**: ForecastOps 預測警示、WorkOrder 實體與前端 RootCauseEvidenceCard 展示契約
-- **風險擁有者 (Risk Owner)**: `ForecastOps / Platform Ops Lead`
-- **有效期限 (Expiry)**: `2027-09-01`
-- **重啟條件 (Reopen Trigger)**: 當 Wave 5+ 預計排程開發自動化根因推導演算法與模型時。
-- **裁決理由 (Rationale)**:
-  經全樹追溯證實目前代碼庫中無任何自動化根因推導生產者。為避免「讀 schema 的人誤以為有此能力」，拒絕製造裝飾性 Heuristic 假生產者；將 `WorkOrder.root_cause`、`RootCauseEvidenceCardContract.causeCandidate` 及資料庫欄位註解明確標示為 `RESERVED (unproduced)`，保留資料相容性並消除契約誤導。
+- **處置狀態**：`IMPLEMENTATION_READY`
+- **負責人 (Assigned To)**: `ForecastOps / Platform Ops`
+- **目標交付批次 (Target Phase)**: `Wave 5+`
+- **工程處置 (Engineering Disposition)**:
+  全樹追溯證實目前代碼庫中沒有自動化根因推導生產者。保留相容的
+  `WorkOrder.root_cause`、`RootCauseEvidenceCardContract.causeCandidate` 與資料庫欄位，並在各契約明確標示為 `RESERVED (unproduced)`；不得製造裝飾性 Heuristic 假生產者。
+- **裁決狀態 (Decision Status)**:
+  `ODP_OPEN_DECISIONS_2026-09-03.md` § 8 仍為 `OPEN`。本項是已具備 owner／target phase 的工程實作準備，不是本任務代替人類治理角色建立 Waiver 或 Requirement Amendment。
 
 ---
 
