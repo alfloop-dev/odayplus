@@ -24,7 +24,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    sql_file_path = Path(__file__).resolve().parents[1] / "000017_avm_quality_score_nullable.sql"
+    sql_file_path = Path(__file__).resolve().parents[1] / "000018_avm_quality_score_nullable.sql"
     op.execute(sa.text(sql_file_path.read_text(encoding="utf-8")))
 
 
