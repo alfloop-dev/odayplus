@@ -19,6 +19,8 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.intervention import (
+    AdjustmentOutcome,
+    AdjustmentRecord,
     CloseDisposition,
     EvaluationMethod,
     EvidenceLevel,
@@ -36,6 +38,9 @@ from modules.intervention import (
     run_observation_sweep,
 )
 from shared.auth import Role
+from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+from shared.infrastructure.persistence.engine import SqliteEngine
+from shared.infrastructure.persistence.repositories import DurableInterventionRepository
 from tests.integration._authz import INTERVENTION_HEADERS, auth_headers
 
 START = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
@@ -968,4 +973,491 @@ def test_api_assignment_rbac_and_inbox_deep_link_filtering() -> None:
     )
     assert unassign.status_code == 200
     assert unassign.json()["assigned_to"] is None
+
+
+def test_recommendation_vocabulary_includes_adjust_and_distinguishes_others() -> None:
+    """ODP-FR-INTV-006: Canonical vocabulary distinguishes ADJUST from CONTINUE, STOP, SCALE, CHANGE_CHANNEL."""
+    assert Recommendation.ADJUST == "ADJUST"
+    assert Recommendation.CONTINUE == "CONTINUE"
+    assert Recommendation.STOP == "STOP"
+    assert Recommendation.SCALE == "SCALE"
+    assert Recommendation.CHANGE_CHANNEL == "CHANGE_CHANNEL"
+    assert Recommendation.INCONCLUSIVE == "INCONCLUSIVE"
+    all_recs = {r.value for r in Recommendation}
+    assert len(all_recs) == 6
+    assert "ADJUST" in all_recs
+    assert callable(InterventionWorkflow.rollback)
+    assert callable(InterventionWorkflow.stop)
+    assert callable(InterventionWorkflow.adjust_case)
+
+
+def test_adjust_case_workflow_lineage_and_recreate() -> None:
+    """ODP-FR-INTV-006: Stop-plus-recreate replacement with durable lineage & audit."""
+    repo = InMemoryInterventionRepository()
+    workflow = InterventionWorkflow(repository=repo)
+
+    # 1. Drive initial intervention to OBSERVING
+    case = workflow.open_case(
+        store_id="store-adj-1",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="alert-price-001",
+        expected_outcome="increase gross margin by 5%",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops-mgr-a",
+        action_spec={"price_change_pct": -5, "rollback_plan": "revert to standard price"},
+    )
+    _drive_to_approved(workflow, case.intervention_id)
+    case = workflow.execute(case.intervention_id, executor="field-op-1", executed_at=EXEC_TIME)
+    assert case.status is InterventionStatus.OBSERVING
+
+    # 2. Adjust active intervention
+    adj_outcome = workflow.adjust_case(
+        case.intervention_id,
+        actor="pricing-lead-1",
+        reason="deepen discount to 8% due to local competitor promo",
+        action_spec={"price_change_pct": -8},
+        rollback_plan="restore baseline tier",
+        expected_version=case.version,
+    )
+
+    # Predecessor verification
+    stopped_orig = adj_outcome.original
+    assert stopped_orig.status is InterventionStatus.STOPPED
+    assert stopped_orig.is_terminal is True
+    assert stopped_orig.replacement_id == adj_outcome.replacement.intervention_id
+    assert stopped_orig.adjustment is not None
+    assert stopped_orig.adjustment.predecessor_id == case.intervention_id
+    assert stopped_orig.adjustment.replacement_id == adj_outcome.replacement.intervention_id
+    assert stopped_orig.adjustment.actor == "pricing-lead-1"
+    assert stopped_orig.adjustment.reason == "deepen discount to 8% due to local competitor promo"
+    assert stopped_orig.adjustment.rollback_plan == "restore baseline tier"
+    assert stopped_orig.adjustment.policy_version == stopped_orig.policy_version
+
+    # Replacement verification
+    repl = adj_outcome.replacement
+    assert repl.status is InterventionStatus.CANDIDATE
+    assert repl.is_terminal is False
+    assert repl.predecessor_id == case.intervention_id
+    assert repl.trigger_ref == f"adjust:{case.intervention_id}"
+    assert repl.store_id == "store-adj-1"
+    assert repl.kind is InterventionKind.PRICE_CHANGE
+    assert repl.action_spec["price_change_pct"] == -8
+    assert repl.action_spec["rollback_plan"] == "restore baseline tier"
+    assert repl.adjustment is not None
+    assert repl.adjustment.predecessor_id == case.intervention_id
+    assert repl.adjustment.replacement_id == repl.intervention_id
+
+    # Audit records verification
+    events = workflow.audit_log.list_events()
+    adjust_events = [e for e in events if e.action == "adjust"]
+    assert len(adjust_events) == 1
+    assert adjust_events[0].resource == f"intervention/{case.intervention_id}"
+    assert adjust_events[0].metadata["replacement_id"] == repl.intervention_id
+
+    create_events = [
+        e for e in events if e.action == "create" and e.resource == f"intervention/{repl.intervention_id}"
+    ]
+    assert len(create_events) == 1
+    assert create_events[0].metadata["predecessor_id"] == case.intervention_id
+
+    # 3. Complete lifecycle on replacement case
+    repl = workflow.check_eligibility(repl.intervention_id, eligible=True, actor="ops-mgr-a")
+    repl = workflow.propose_action(
+        repl.intervention_id,
+        actor="ops-mgr-a",
+        action_spec={"price_change_pct": -8, "rollback_plan": "restore baseline tier"},
+    )
+    repl = workflow.check_conflict(repl.intervention_id, actor="ops-mgr-a")
+    repl = workflow.submit_for_approval(repl.intervention_id, actor="ops-mgr-a")
+    repl = workflow.approve(repl.intervention_id, actor="regional-sup-1", reason="approved replacement")
+    repl = workflow.execute(repl.intervention_id, executor="field-op-1", executed_at=EXEC_TIME)
+    repl = workflow.collect_outcome(
+        repl.intervention_id,
+        actor="measurer",
+        incremental_revenue=15000.0,
+        incremental_gross_margin=6000.0,
+        treatment_store_count=1,
+        control_store_count=4,
+        evaluation_method=EvaluationMethod.SYNTHETIC_CONTROL,
+        has_control_group=True,
+        pretrend_status=PretrendStatus.PASS,
+    )
+    eval_outcome = workflow.evaluate_effect(repl.intervention_id, actor="measurer", now=MATURE_TIME)
+    assert eval_outcome.effect.recommendation is Recommendation.CONTINUE
+    closed = workflow.close_case(
+        repl.intervention_id,
+        actor="ops-mgr-a",
+        disposition=CloseDisposition.KEEP,
+        reason="adjustment successfully completed and measured",
+    )
+    assert closed.status is InterventionStatus.CLOSED
+
+
+def test_adjust_terminal_interventions_rejected() -> None:
+    """ODP-FR-INTV-006: Adjusting terminal interventions (STOPPED, ROLLED_BACK, CLOSED, REJECTED, INELIGIBLE) is rejected."""
+    repo = InMemoryInterventionRepository()
+    workflow = InterventionWorkflow(repository=repo)
+
+    # 1. STOPPED case
+    case = workflow.open_case(
+        store_id="s1",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="t1",
+        expected_outcome="outcome",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops",
+    )
+    _drive_to_approved(workflow, case.intervention_id)
+    stopped = workflow.stop(case.intervention_id, actor="ops", reason="cancel")
+    assert stopped.status is InterventionStatus.STOPPED
+
+    with pytest.raises(InterventionError, match="cannot adjust terminal intervention in status STOPPED"):
+        workflow.adjust_case(stopped.intervention_id, actor="ops", reason="try adjust")
+
+    # 2. ROLLED_BACK case
+    case2 = workflow.open_case(
+        store_id="s2",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="t2",
+        expected_outcome="outcome",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops",
+    )
+    _drive_to_approved(workflow, case2.intervention_id)
+    case2 = workflow.execute(case2.intervention_id, executor="op", executed_at=EXEC_TIME)
+    rb = workflow.rollback(case2.intervention_id, actor="ops", reason="adverse")
+    assert rb.status is InterventionStatus.ROLLED_BACK
+
+    with pytest.raises(InterventionError, match="cannot adjust terminal intervention in status ROLLED_BACK"):
+        workflow.adjust_case(rb.intervention_id, actor="ops", reason="try adjust")
+
+    # 3. REJECTED case
+    case3 = workflow.open_case(
+        store_id="s3",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="t3",
+        expected_outcome="outcome",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops",
+    )
+    workflow.check_eligibility(case3.intervention_id, eligible=True, actor="ops")
+    workflow.propose_action(case3.intervention_id, action_spec={"pct": -5}, actor="ops")
+    workflow.check_conflict(case3.intervention_id, actor="ops")
+    workflow.submit_for_approval(case3.intervention_id, actor="ops")
+    rejected = workflow.reject(case3.intervention_id, actor="sup", reason="bad")
+    assert rejected.status is InterventionStatus.REJECTED
+
+    with pytest.raises(InterventionError, match="cannot adjust terminal intervention in status REJECTED"):
+        workflow.adjust_case(rejected.intervention_id, actor="ops", reason="try adjust")
+
+
+def test_adjust_stale_version_and_empty_reason_rejected() -> None:
+    """ODP-FR-INTV-006: Stale version mismatch and empty reasons are rejected."""
+    repo = InMemoryInterventionRepository()
+    workflow = InterventionWorkflow(repository=repo)
+    case = workflow.open_case(
+        store_id="s1",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="t1",
+        expected_outcome="outcome",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops",
+    )
+
+    # Stale version check
+    with pytest.raises(InterventionError, match="stale update: expected version 99, current is 1"):
+        workflow.adjust_case(
+            case.intervention_id,
+            actor="ops",
+            reason="valid reason",
+            expected_version=99,
+        )
+
+    # Empty reason check
+    with pytest.raises(InterventionError, match="adjusting an intervention requires a reason"):
+        workflow.adjust_case(
+            case.intervention_id,
+            actor="ops",
+            reason="   ",
+        )
+
+
+def test_stop_and_rollback_workflow_and_validation() -> None:
+    """ODP-FR-INTV-006: Direct stop and rollback operations transition to terminal status."""
+    repo = InMemoryInterventionRepository()
+    workflow = InterventionWorkflow(repository=repo)
+
+    case = workflow.open_case(
+        store_id="s1",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="t1",
+        expected_outcome="outcome",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops",
+    )
+    # Stop from CANDIDATE is disallowed (requires APPROVED, EXECUTING, OBSERVING)
+    with pytest.raises(InterventionError, match="cannot stop on intervention in status CANDIDATE"):
+        workflow.stop(case.intervention_id, actor="ops", reason="too early")
+
+    # Stop requires reason
+    _drive_to_approved(workflow, case.intervention_id)
+    with pytest.raises(InterventionError, match="stop requires a reason"):
+        workflow.stop(case.intervention_id, actor="ops", reason="")
+
+    stopped = workflow.stop(case.intervention_id, actor="ops", reason="campaign cancelled")
+    assert stopped.status is InterventionStatus.STOPPED
+
+
+def test_api_adjust_production_entry_success_and_rejections() -> None:
+    """ODP-FR-INTV-006: API endpoint POST /interventions/{id}/adjust handles RBAC, lineage, idempotency, and rejections."""
+    app = create_app()
+    client = TestClient(app, headers=INTERVENTION_HEADERS)
+
+    # 1. Create and drive intervention to EXECUTING
+    created = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-adj-1",
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-100",
+            "expected_outcome": "boost revenue",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+            "action_spec": {"price_change_pct": -5, "rollback_plan": "revert"},
+        },
+    )
+    assert created.status_code == 201
+    iid = created.json()["intervention_id"]
+
+    client.post(f"/interventions/{iid}/eligibility", json={"eligible": True, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/conflict-check", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/submit", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/approve", json={"action": "APPROVE", "actor": "sup-hero", "reason": "approved"})
+    client.post(f"/interventions/{iid}/execute", json={"executor": "field-op", "executed_at": EXEC_TIME.isoformat()})
+
+    # 2. RBAC check: AUDITOR cannot adjust (HTTP 403)
+    auditor_client = TestClient(app, headers=auth_headers(Role.AUDITOR))
+    unauth_adj = auditor_client.post(
+        f"/interventions/{iid}/adjust",
+        json={
+            "actor": "auditor-1",
+            "reason": "try unauthorized adjust",
+        },
+    )
+    assert unauth_adj.status_code == 403
+
+    # 3. Stale update rejection (HTTP 409)
+    stale_adj = client.post(
+        f"/interventions/{iid}/adjust",
+        json={
+            "actor": "ops-hero",
+            "reason": "adjust pricing",
+            "expected_version": 999,
+        },
+    )
+    assert stale_adj.status_code == 409
+    assert stale_adj.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+    # 4. Missing reason rejection (HTTP 422)
+    empty_reason = client.post(
+        f"/interventions/{iid}/adjust",
+        json={
+            "actor": "ops-hero",
+            "reason": "",
+        },
+    )
+    assert empty_reason.status_code == 422
+
+    # 5. Successful Adjust with Idempotency Key
+    idem_key = "adj-idem-key-001"
+    adj_res = client.post(
+        f"/interventions/{iid}/adjust",
+        headers={"Idempotency-Key": idem_key},
+        json={
+            "actor": "pricing-director",
+            "reason": "strategic discount adjustment",
+            "action_spec": {"price_change_pct": -12},
+            "rollback_plan": "tier baseline restore",
+        },
+    )
+    assert adj_res.status_code == 200
+    adj_data = adj_res.json()
+    assert adj_data["original_status"] == "STOPPED"
+    assert adj_data["replacement_status"] == "CANDIDATE"
+    repl_id = adj_data["replacement_intervention_id"]
+    assert repl_id != iid
+
+    # Verify original details
+    assert adj_data["original"]["replacement_id"] == repl_id
+    assert adj_data["original"]["adjustment"]["predecessor_id"] == iid
+    assert adj_data["original"]["adjustment"]["replacement_id"] == repl_id
+    assert adj_data["original"]["adjustment"]["reason"] == "strategic discount adjustment"
+
+    # Verify replacement details
+    assert adj_data["replacement"]["predecessor_id"] == iid
+    assert adj_data["replacement"]["action_spec"]["price_change_pct"] == -12
+    assert adj_data["replacement"]["action_spec"]["rollback_plan"] == "tier baseline restore"
+
+    # 6. Idempotency replay check
+    replay_res = client.post(
+        f"/interventions/{iid}/adjust",
+        headers={"Idempotency-Key": idem_key},
+        json={
+            "actor": "pricing-director",
+            "reason": "strategic discount adjustment",
+            "action_spec": {"price_change_pct": -12},
+            "rollback_plan": "tier baseline restore",
+        },
+    )
+    assert replay_res.status_code == 200
+    assert replay_res.json()["replacement_intervention_id"] == repl_id
+
+    # 7. Reject adjust on already STOPPED original (HTTP 422)
+    terminal_adj = client.post(
+        f"/interventions/{iid}/adjust",
+        json={
+            "actor": "pricing-director",
+            "reason": "another adjust attempt",
+        },
+    )
+    assert terminal_adj.status_code == 422
+    assert "cannot adjust terminal intervention in status STOPPED" in terminal_adj.json()["detail"]
+
+    # 8. Query replacement case from API
+    repl_get = client.get(f"/interventions/{repl_id}")
+    assert repl_get.status_code == 200
+    assert repl_get.json()["predecessor_id"] == iid
+    assert repl_get.json()["status"] == "CANDIDATE"
+
+
+def test_api_stop_and_rollback_endpoints() -> None:
+    """ODP-FR-INTV-006: API endpoints POST /interventions/{id}/stop and POST /interventions/{id}/rollback."""
+    app = create_app()
+    client = TestClient(app, headers=INTERVENTION_HEADERS)
+
+    # 1. Stop endpoint test
+    created1 = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-stop-1",
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-201",
+            "expected_outcome": "boost revenue",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+        },
+    )
+    assert created1.status_code == 201
+    iid1 = created1.json()["intervention_id"]
+    client.post(f"/interventions/{iid1}/eligibility", json={"eligible": True, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid1}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid1}/conflict-check", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid1}/submit", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid1}/approve", json={"action": "APPROVE", "actor": "sup-hero", "reason": "approved"})
+
+    # Unauthorized stop
+    auditor_client = TestClient(app, headers=auth_headers(Role.AUDITOR))
+    unauth_stop = auditor_client.post(f"/interventions/{iid1}/stop", json={"actor": "auditor", "reason": "stop"})
+    assert unauth_stop.status_code == 403
+
+    # Authorized stop
+    stop_res = client.post(f"/interventions/{iid1}/stop", json={"actor": "ops-hero", "reason": "cancelled due to supply issue"})
+    assert stop_res.status_code == 200
+    assert stop_res.json()["status"] == "STOPPED"
+
+    # 2. Rollback endpoint test
+    created2 = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-rb-1",
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-202",
+            "expected_outcome": "boost revenue",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+        },
+    )
+    assert created2.status_code == 201
+    iid2 = created2.json()["intervention_id"]
+    client.post(f"/interventions/{iid2}/eligibility", json={"eligible": True, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid2}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid2}/conflict-check", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid2}/submit", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid2}/approve", json={"action": "APPROVE", "actor": "sup-hero", "reason": "approved"})
+    client.post(f"/interventions/{iid2}/execute", json={"executor": "field-op", "executed_at": EXEC_TIME.isoformat()})
+
+    # Unauthorized rollback
+    unauth_rb = auditor_client.post(f"/interventions/{iid2}/rollback", json={"actor": "auditor", "reason": "rollback"})
+    assert unauth_rb.status_code == 403
+
+    # Authorized rollback
+    rb_res = client.post(f"/interventions/{iid2}/rollback", json={"actor": "ops-hero", "reason": "adverse price reaction observed"})
+    assert rb_res.status_code == 200
+    assert rb_res.json()["status"] == "ROLLED_BACK"
+
+
+def test_durable_intervention_repository_persists_adjust_lineage(tmp_path: pytest.TempPathFactory) -> None:
+    """ODP-FR-INTV-006: DurableInterventionRepository preserves predecessor_id, replacement_id, and adjustment records."""
+    db_file = tmp_path / "durable_interventions.db"
+    engine = SqliteEngine(db_file)
+    store = SqliteDocumentStore(engine)
+    repo = DurableInterventionRepository(store)
+
+    workflow = InterventionWorkflow(repository=repo)
+    case = workflow.open_case(
+        store_id="store-durable-1",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="alert-durable-001",
+        expected_outcome="improve margin",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops-mgr",
+        action_spec={"price_change_pct": -5, "rollback_plan": "restore standard price"},
+    )
+    _drive_to_approved(workflow, case.intervention_id)
+    case = workflow.execute(case.intervention_id, executor="op", executed_at=EXEC_TIME)
+
+    adj_outcome = workflow.adjust_case(
+        case.intervention_id,
+        actor="ops-mgr",
+        reason="durable adjustment test",
+        action_spec={"price_change_pct": -7},
+        rollback_plan="durable rollback plan",
+    )
+
+    # Re-instantiate repository over same database to ensure persistent durability
+    fresh_engine = SqliteEngine(db_file)
+    fresh_store = SqliteDocumentStore(fresh_engine)
+    fresh_repo = DurableInterventionRepository(fresh_store)
+
+    read_orig = fresh_repo.get(case.intervention_id)
+    assert read_orig is not None
+    assert read_orig.status is InterventionStatus.STOPPED
+    assert read_orig.replacement_id == adj_outcome.replacement.intervention_id
+    assert read_orig.adjustment is not None
+    assert read_orig.adjustment.reason == "durable adjustment test"
+    assert read_orig.adjustment.rollback_plan == "durable rollback plan"
+
+    read_repl = fresh_repo.get(adj_outcome.replacement.intervention_id)
+    assert read_repl is not None
+    assert read_repl.status is InterventionStatus.CANDIDATE
+    assert read_repl.predecessor_id == case.intervention_id
+    assert read_repl.adjustment is not None
+    assert read_repl.adjustment.reason == "durable adjustment test"
+
+    store_cases = fresh_repo.list_by_store("store-durable-1")
+    assert len(store_cases) == 2
+    case_ids = {c.intervention_id for c in store_cases}
+    assert case.intervention_id in case_ids
+    assert adj_outcome.replacement.intervention_id in case_ids
 

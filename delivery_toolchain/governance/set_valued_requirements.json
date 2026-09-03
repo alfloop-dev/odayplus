@@ -96,7 +96,7 @@
         {
           "name": "STOP",
           "status": "satisfied",
-          "evidence": "modules/intervention/domain/lifecycle.py::Recommendation"
+          "evidence": "modules/intervention/application/workflow.py::InterventionWorkflow.stop"
         },
         {
           "name": "ROLLBACK",
@@ -105,8 +105,9 @@
         },
         {
           "name": "ADJUST",
-          "status": "absent",
-          "note": "Recommendation is CONTINUE/SCALE/STOP/CHANGE_CHANNEL/INCONCLUSIVE -- AdLift's vocabulary, which satisfies ODP-FR-AD-005 exactly and leaves no place for Adjust. InterventionStatus runs EXECUTING to OBSERVING to EVALUATING to COMPLETED with rollback as the only mid-course exit, so there is no state for 'modify and continue' either."
+          "status": "satisfied",
+          "evidence": "modules/intervention/application/workflow.py::InterventionWorkflow.adjust_case",
+          "note": "Adjusts an active intervention via stop-plus-recreate: stops the predecessor case and opens a replacement case with durable predecessor_id/replacement_id lineage, preserving original intervention parameters, reason, actor, policy version, and rollback plan."
         }
       ]
     },

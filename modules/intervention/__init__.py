@@ -8,6 +8,7 @@ Evidence Level resolution and Label Registry writeback.
 
 from modules.intervention.application.workflow import (
     IROMI_BREAKEVEN,
+    AdjustmentOutcome,
     EffectEvaluationOutcome,
     InterventionWorkflow,
     LabelRegistryHook,
@@ -15,6 +16,7 @@ from modules.intervention.application.workflow import (
 from modules.intervention.domain.lifecycle import (
     FEATURE_VERSION,
     POLICY_VERSION,
+    AdjustmentRecord,
     ApprovalRecord,
     CloseDisposition,
     CloseRecord,
@@ -55,6 +57,8 @@ __all__ = [
     "FEATURE_VERSION",
     "IROMI_BREAKEVEN",
     "POLICY_VERSION",
+    "AdjustmentOutcome",
+    "AdjustmentRecord",
     "ApprovalRecord",
     "CloseDisposition",
     "CloseRecord",

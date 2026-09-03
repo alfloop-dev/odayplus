@@ -248,6 +248,97 @@
         "title": "AdLiftIncrementalityJobPayload",
         "type": "object"
       },
+      "AdjustPayload": {
+        "properties": {
+          "action_spec": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Spec"
+          },
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "expected_outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Outcome"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "planned_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned End"
+          },
+          "planned_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planned Start"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "rollback_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollback Plan"
+          }
+        },
+        "required": [
+          "actor",
+          "reason"
+        ],
+        "title": "AdjustPayload",
+        "type": "object"
+      },
       "ApiError": {
         "properties": {
           "code": {
@@ -6629,6 +6720,26 @@
         "title": "RoleWorkspacesRequest",
         "type": "object"
       },
+      "RollbackPayload": {
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor",
+          "reason"
+        ],
+        "title": "RollbackPayload",
+        "type": "object"
+      },
       "SavedView": {
         "properties": {
           "created_at": {
@@ -7198,6 +7309,26 @@
           "risk_acknowledged"
         ],
         "title": "SplitRequest",
+        "type": "object"
+      },
+      "StopPayload": {
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "actor",
+          "reason"
+        ],
+        "title": "StopPayload",
         "type": "object"
       },
       "StoreOpsCameraPurposePayload": {
@@ -18015,6 +18146,136 @@
         ]
       }
     },
+    "/api/v1/interventions/{intervention_id}/adjust": {
+      "post": {
+        "operationId": "adjust_case_api_v1_interventions__intervention_id__adjust_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intervention_id",
+            "required": true,
+            "schema": {
+              "title": "Intervention Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdjustPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Adjust Case Api V1 Interventions  Intervention Id  Adjust Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Adjust Case",
+        "tags": [
+          "interventions"
+        ]
+      }
+    },
     "/api/v1/interventions/{intervention_id}/approve": {
       "post": {
         "operationId": "decide_api_v1_interventions__intervention_id__approve_post",
@@ -19154,6 +19415,266 @@
           }
         },
         "summary": "Collect Outcome",
+        "tags": [
+          "interventions"
+        ]
+      }
+    },
+    "/api/v1/interventions/{intervention_id}/rollback": {
+      "post": {
+        "operationId": "rollback_case_api_v1_interventions__intervention_id__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intervention_id",
+            "required": true,
+            "schema": {
+              "title": "Intervention Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Rollback Case Api V1 Interventions  Intervention Id  Rollback Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Rollback Case",
+        "tags": [
+          "interventions"
+        ]
+      }
+    },
+    "/api/v1/interventions/{intervention_id}/stop": {
+      "post": {
+        "operationId": "stop_case_api_v1_interventions__intervention_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intervention_id",
+            "required": true,
+            "schema": {
+              "title": "Intervention Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StopPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Stop Case Api V1 Interventions  Intervention Id  Stop Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Stop Case",
         "tags": [
           "interventions"
         ]

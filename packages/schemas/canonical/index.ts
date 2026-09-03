@@ -346,6 +346,9 @@ export interface Intervention {
   observation_start_time: string;
   observation_end_time: string;
   status: 'proposed' | 'approved' | 'executing' | 'observing' | 'evaluated' | 'stopped' | 'rolled_back';
+  predecessor_id?: string | null;
+  replacement_id?: string | null;
+  adjustment_json?: Record<string, any> | null;
 }
 
 /** ADR-0004: single authority for evidence strength, per ODP-ML-05 §5. */
