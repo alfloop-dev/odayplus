@@ -1,62 +1,289 @@
 {
-  "_comment": "Bounded quality/confidence scores that default to their maximum, predating check_measurement_defaults.py. Every entry is a place where 'nobody supplied this' currently reads as 'measured, and perfect'. Each needs an owner and a reason; the reason should say what actually happens downstream, not that it is pre-existing. Removing an entry means the field no longer assumes perfect data. New violations are refused rather than exempted by default.",
-  "_severity_note": "The two HeatZoneV3Input entries are the sharpest: check_support_and_abstention abstains when confidence < 0.25 or coverage_ratio < 0.50, so these defaults make that gate unreachable for a zone whose coverage was never measured. They should be fixed before the rest.",
+  "_comment": "Bounded quality/confidence scores that are assumed perfect when nobody measured them, predating check_measurement_defaults.py. Every entry is a place where 'nobody supplied this' currently reads as 'measured, and perfect'. Each needs an owner, a reason and an expiry date; the reason should say what actually happens downstream, not that it is pre-existing. Removing an entry means the field no longer assumes perfect data, and it must be removed in the same commit as the fix. New violations are refused rather than exempted by default.",
+  "_layer_note": "Entries are grouped by remediation batch, not by layer, because one field is the same debt in five places: the AVM quality score is a dataclass default, a Pydantic request default, a mapper fallback and a published OpenAPI default, and fixing any one of them alone leaves the value being restored by the next. The layer key says which shape a given entry is; the shared expiry date says they have to move together.",
+  "_severity_note": "modules/heatzone/v3/contract.py::HeatZoneV3ScoreResult.from_dict.confidence is the sharpest entry and carries the earliest date. ODP-HEATZONE-ABSTENTION-REACHABLE-001 (8c49de09) correctly changed HeatZoneV3Input.confidence and .coverage_ratio to None so an unmeasured zone fails closed into abstention -- and the result mapper one class below still rebuilds a stored result with float(data.get('confidence', 1.0)). A round-tripped batch result therefore comes back claiming perfect confidence for a zone that abstained. It is the reason this check now reads six layers instead of one: the input fix was real, complete for its layer, and not enough.",
   "exemptions": [
     {
+      "field": "modules/avm/domain/valuation.py::ValuationInput.quality_score",
+      "layer": "dataclass",
+      "owner": "Antigravity4",
+      "reason": "A valuation built from incomplete inputs claims the same input quality as one built from complete inputs, and the valuation card is shown to a buyer.",
+      "expires": "2026-11-30"
+    },
+    {
+      "field": "modules/avm/domain/valuation.py::ValuationInput.from_mapping.data_quality_score",
+      "layer": "mapper",
+      "owner": "Antigravity4",
+      "reason": "from_mapping falls back to 1.0 for both spellings of the field, so making the dataclass annotation optional would change nothing for any valuation built from a mapping -- which is every valuation that arrives over the API.",
+      "expires": "2026-11-30"
+    },
+    {
+      "field": "apps/api/app/routes/avm.py::AVMCasePayload.quality_score",
+      "layer": "pydantic",
+      "owner": "Antigravity4",
+      "reason": "The API's own copy of the contract. A caller who omits quality_score has a perfect score inserted before the domain sees the request, so the domain can no longer tell an unmeasured case from a flawless one. This is the layer where absence was still visible.",
+      "expires": "2026-11-30"
+    },
+    {
+      "field": "packages/openapi-client/openapi.json::components.schemas.AVMCasePayload.quality_score",
+      "layer": "openapi",
+      "owner": "Antigravity4",
+      "reason": "The published schema states default 1.0, so the substitution is now part of the external contract. The generated TypeScript type is quality_score?: number and carries no default, meaning no client author ever sees the choice being made for them. Changing this changes what integrators are promised, which is why it belongs in the same batch as the domain fix and not after it.",
+      "expires": "2026-11-30"
+    },
+    {
       "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.average_confidence",
+      "layer": "dataclass",
       "owner": "Antigravity5",
-      "reason": "A candidate site with no confidence data is scored as a fully evidenced one, and the score feeds an expansion decision."
+      "reason": "A candidate site with no confidence data is scored as a fully evidenced one, and the score feeds an expansion decision.",
+      "expires": "2026-12-31"
     },
     {
       "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.data_quality_score",
+      "layer": "dataclass",
       "owner": "Antigravity5",
-      "reason": "Same shape; a site scored from partial data is indistinguishable from one scored from complete data."
+      "reason": "Same shape; a site scored from partial data is indistinguishable from one scored from complete data.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.from_mapping.average_confidence",
+      "layer": "mapper",
+      "owner": "Antigravity5",
+      "reason": "_first_present(data, 'average_confidence', 'confidence', default=1.0) hides the substitution behind a helper: neither key present still yields a perfect score. ODP-FR-SITE-004's feasibility rules are the existing exit for insufficient data, and this fallback is what stops a candidate reaching them.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.from_mapping.data_quality_score",
+      "layer": "mapper",
+      "owner": "Antigravity5",
+      "reason": "Same helper, same effect on the quality dimension. Fix with the field above so the two dimensions do not get different answers about what absence means.",
+      "expires": "2026-12-31"
     },
     {
       "field": "modules/learninghub/domain/dataset_snapshot.py::ModelReadyRecord.data_quality_score",
+      "layer": "dataclass",
       "owner": "Codex2",
-      "reason": "Records entering a training snapshot without a quality score are treated as clean. Related to ODP-FR-LH-004: the blocked-feature gate is also unreachable through the API, so neither check stops a low-quality record reaching training."
+      "reason": "Records entering a training snapshot without a quality score are treated as clean. Related to ODP-FR-LH-004: the blocked-feature gate is also unreachable through the API, so neither check stops a low-quality record reaching training.",
+      "expires": "2026-12-31"
     },
     {
       "field": "modules/learninghub/domain/dataset_snapshot.py::ModelReadyRecord.confidence",
+      "layer": "dataclass",
       "owner": "Codex2",
-      "reason": "Same record, same effect on the confidence dimension."
+      "reason": "Same record, same effect on the confidence dimension.",
+      "expires": "2026-12-31"
     },
     {
-      "field": "modules/avm/domain/valuation.py::ValuationInput.quality_score",
-      "owner": "Antigravity4",
-      "reason": "A valuation built from incomplete inputs claims the same input quality as one built from complete inputs, and the valuation card is shown to a buyer."
+      "field": "modules/learninghub/domain/dataset_snapshot.py::model_ready_record_from_mapping.data_quality_score",
+      "layer": "mapper",
+      "owner": "Codex2",
+      "reason": "The row mapper restores 1.0 for a row the view left null, so snapshot admission never sees the absence it would have to refuse. This is the second of the four points on the lineage the batch has to accept together: source, view, mapper, admission.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "modules/learninghub/domain/dataset_snapshot.py::model_ready_record_from_mapping.confidence",
+      "layer": "mapper",
+      "owner": "Codex2",
+      "reason": "Same mapper, confidence dimension. This one compounds: a dirty batch admitted here is carried by every number the trained model produces afterwards, with no way back to the record that caused it.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/candidate_site_view.sql::listings.confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "coalesce(listings.confidence, 1.0) turns a listing whose provider gave no confidence into a perfectly confident row before Python ever runs. least() then takes the minimum of two coalesced values, so a missing figure cannot lower the result.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/candidate_site_view.sql::address_locations.geocode_confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "The geocode half of the same least(). address_locations.geocode_confidence is a nullable column -- the schema says the figure can be absent, and this coalesce is what discards that statement.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/geo_grid_view.sql::poi_counts.poi_confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "avg(pois.confidence) over a cell with no POI rows is null, and this coalesce reads that as perfect. Note the ordering constraint with batch 3: the source column pois.confidence has its own DEFAULT 1.00 exemption, so fixing this view alone would surface no nulls to coalesce.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/geo_grid_view.sql::competitor_counts.competitor_confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Same shape on the competitor half, and it feeds the competition gap term of the heat zone score.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/brand_transfer_view.sql::<select>.data_quality_score",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "A literal 1.0 projected as a quality score: not a measurement and not a rule, since there is no input that could make it anything else. Brand transfer is also one of the members batch 0 is confirming a data source for, so this may resolve by the view being withdrawn rather than corrected.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/brand_transfer_view.sql::<select>.confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Same literal on the confidence column of the same view.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/matched_control_view.sql::<select>.data_quality_score",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Constant 1.0 as a quality score for matched controls. Match quality is exactly the thing a causal estimate needs to be able to doubt, and a constant column cannot express doubt.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/matched_control_view.sql::<select>.confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Same view, confidence column.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/ramp_curve_view.sql::<select>.data_quality_score",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Constant 1.0 as a quality score for ramp curves, including curves built from very few observed weeks.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/ramp_curve_view.sql::<select>.confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Same view, confidence column.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/store_machine_timeseries_view.sql::<select>.data_quality_score",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Constant 1.0 across a machine time series, where gaps in telemetry are the ordinary case rather than the exception.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/store_machine_timeseries_view.sql::<select>.confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Same view, confidence column.",
+      "expires": "2026-12-31"
+    },
+    {
+      "field": "pipelines/dbt/models/model_ready/forecast_training_view.sql::<select>.confidence",
+      "layer": "sql",
+      "owner": "Codex2",
+      "reason": "Constant 1.0 as confidence. The line above it is the counter-example worth keeping: data_quality_score is a case expression on observation recency that can return 0.0, so it is a rule and is deliberately not flagged. Whatever rule belongs on confidence has not been written yet.",
+      "expires": "2026-12-31"
     },
     {
       "field": "shared/domain/models.py::Poi.confidence",
+      "layer": "dataclass",
       "owner": "Claude2",
-      "reason": "Shared canonical model. A POI whose provider gave no confidence is treated as certain, and POI counts feed heat zone demand."
+      "reason": "Shared canonical model. A POI whose provider gave no confidence is treated as certain, and POI counts feed heat zone demand.",
+      "expires": "2027-01-31"
     },
     {
       "field": "shared/domain/models.py::CompetitorStore.confidence",
+      "layer": "dataclass",
       "owner": "Claude2",
-      "reason": "Shared canonical model. Competitor capacity with no confidence is treated as certain, and it feeds the competition gap term."
+      "reason": "Shared canonical model. Competitor capacity with no confidence is treated as certain, and it feeds the competition gap term.",
+      "expires": "2027-01-31"
     },
     {
       "field": "shared/domain/models.py::Listing.confidence",
+      "layer": "dataclass",
       "owner": "Claude2",
-      "reason": "Shared canonical model. Relates to ODP-BR-LST-001: the promotion path was substituting a confidence literal until PR #1091; the dataclass default is the same assumption one layer down."
+      "reason": "Shared canonical model. Relates to ODP-BR-LST-001: the promotion path was substituting a confidence literal until PR #1091; the dataclass default is the same assumption one layer down.",
+      "expires": "2027-01-31"
     },
     {
       "field": "shared/domain/models.py::Prediction.confidence",
+      "layer": "dataclass",
       "owner": "Claude2",
-      "reason": "A prediction stored without a confidence figure claims perfect confidence. This is the one most likely to reach an operator's screen unqualified."
+      "reason": "A prediction stored without a confidence figure claims perfect confidence. This is the one most likely to reach an operator's screen unqualified.",
+      "expires": "2027-01-31"
     },
     {
       "field": "shared/domain/models.py::HeatZoneScore.confidence",
+      "layer": "dataclass",
       "owner": "Claude2",
-      "reason": "The persisted score record; same assumption as the input types above, retained after scoring."
+      "reason": "The persisted score record; same assumption as the input types above, retained after scoring.",
+      "expires": "2027-01-31"
     },
     {
       "field": "shared/domain/models.py::DataSnapshot.quality_score",
+      "layer": "dataclass",
       "owner": "Claude2",
-      "reason": "A snapshot whose quality was never assessed is recorded as flawless, and downstream consumers resolve quality through this record."
+      "reason": "A snapshot whose quality was never assessed is recorded as flawless, and downstream consumers resolve quality through this record.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "modules/external_data/connectors/external.py::PoiConnector.canonicalize.confidence",
+      "layer": "mapper",
+      "owner": "Claude2",
+      "reason": "The ingestion entry point for Poi. It also writes a field lineage entry claiming confidence came from the source record, so the substituted 1.0 is recorded as provenanced data. Fix with Poi.confidence or the lineage keeps asserting a source that did not supply the value.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "modules/external_data/connectors/external.py::CompetitorStoreConnector.canonicalize.confidence",
+      "layer": "mapper",
+      "owner": "Claude2",
+      "reason": "Same shape for CompetitorStore, in a different class in the same file -- which is why these are two entries and not one: two connectors, two source contracts, two decisions to make.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "modules/external_data/geo/pipeline.py::GeoPipeline._track_common.confidence",
+      "layer": "mapper",
+      "owner": "Claude2",
+      "reason": "Records with no confidence enter the aggregate as 1.0, so the per-bucket confidence summary is biased upward by exactly the records that had no evidence behind them.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::data_snapshots.quality_score",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00. The column cannot hold 'not measured' at all, so making DataSnapshot.quality_score optional in Python has no persistent form to write. This batch needs a migration, not just a dataclass edit.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::pois.confidence",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00 under Poi.confidence, and the source of the nulls that geo_grid_view coalesces. The two entries are the same decision seen from either end of the pipeline.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::competitor_stores.confidence",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00 under CompetitorStore.confidence; existing rows carry the substituted value with no marker saying it was substituted, so the migration has to decide what happens to them.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::listings.confidence",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00 under Listing.confidence.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "infra/db/migrations/000004_durable_product_domain.sql::predictions.confidence",
+      "layer": "sql",
+      "owner": "Claude2",
+      "reason": "NOT NULL DEFAULT 1.00 under Prediction.confidence -- the persisted form of the entry most likely to reach an operator's screen.",
+      "expires": "2027-01-31"
+    },
+    {
+      "field": "modules/heatzone/v3/contract.py::HeatZoneV3ScoreResult.from_dict.confidence",
+      "layer": "mapper",
+      "owner": "Antigravity6",
+      "reason": "ODP-HEATZONE-ABSTENTION-REACHABLE-001 made HeatZoneV3Input.confidence and .coverage_ratio optional so an unmeasured zone abstains. HeatZoneV3ScoreResult.from_dict still restores 1.0, so a batch result read back from storage claims perfect confidence for a zone that abstained, and HeatZoneV3BatchResult.from_dict rebuilds every score through it. Earliest date because the fix that made the rest of this module correct is what makes this line reachable and wrong.",
+      "expires": "2026-10-31"
     }
   ],
-  "_owner_note": "Owners are grouped by module so fields that have to be decided together are not split. shared/domain/models.py holds six canonical models (Poi, CompetitorStore, Listing, Prediction, HeatZoneScore, DataSnapshot) and goes to one owner for that reason: whatever absence means for a Listing's confidence it should mean for a Prediction's, and deciding them separately is how the next vocabulary fork starts. The two heatzone entries are the ones to fix first -- they are what put check_support_and_abstention out of reach for a zone with no coverage data."
+  "_owner_note": "Owners follow the remediation batches so that fields which have to be decided together are not split across people. Batch 1 (2026-11-30) is AVM across dataclass, Pydantic, mapper and OpenAPI. Batch 2 (2026-12-31) is SiteScore, and separately ModelReadyRecord together with the model-ready views that feed it -- source, view, mapper and snapshot admission are accepted on one lineage table, which is why the dbt entries sit with the dataclass ones. Batch 3 (2027-01-31) is the six canonical models in shared/domain/models.py plus their ingestion mappers and their NOT NULL DEFAULT 1.00 columns: whatever absence means for a Listing's confidence it should mean for a Prediction's, and deciding them separately is how the next vocabulary fork starts. The heat zone entry stands alone with the earliest date for the reason given above.",
+  "_expiry_note": "An expiry date is not a deadline for the check; it is a date on which the owner has to say something. Renewing an entry on the day it fires without a changed reason is a decision to keep the defect, and should be visible as one. Removing an entry is only correct in the same commit as the fix -- the stale-exemption check refuses an entry whose field no longer violates, which is what stops the file drifting into a list of debts that were quietly paid or quietly forgotten."
 }
