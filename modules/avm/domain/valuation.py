@@ -660,12 +660,6 @@ def build_model_valuation_report(
         prediction_origin_time=case.valuation_input.prediction_origin_time,
         valued_at=datetime.now(UTC),
         execution_metadata=dict(execution_metadata),
-        quality_disposition=(
-            LEGACY_QUALITY_DISPOSITION
-            if case.valuation_input.effective_quality_score_status
-            == LEGACY_UNKNOWN_QUALITY_STATUS
-            else None
-        ),
     )
 
 
