@@ -465,8 +465,9 @@ class TestNetPlanDisclosureTransport:
     def test_solve_netplan_projection_fails_closed_when_solve_result_missing_or_none_classes(self) -> None:
         """NetworkRebalanceService.solve_netplan must fail closed if solver result lacks constraint classes."""
         from unittest.mock import MagicMock, patch
-        from modules.avm.infrastructure.repositories import InMemoryAVMRepository
+
         from modules.avm.domain.valuation import ValuationCase, ValuationInput
+        from modules.avm.infrastructure.repositories import InMemoryAVMRepository
 
         avm_repo = InMemoryAVMRepository()
         val_input = ValuationInput(
