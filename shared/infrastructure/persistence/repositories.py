@@ -1478,6 +1478,168 @@ class DurableManualCorrectionRepository:
         )
 
 
+# Canonical AddressLocation fields a manual correction can move. The
+# before/after snapshot has to cover all of them rather than only the fields the
+# caller named: applying a correction also derives geocode_precision,
+# geocode_confidence and the h3 cells, so a snapshot limited to the requested
+# fields cannot restore the record on rollback.
+_CORRECTABLE_ADDRESS_FIELDS: tuple[str, ...] = (
+    "raw_address",
+    "normalized_address",
+    "city",
+    "district",
+    "village",
+    "road",
+    "latitude",
+    "longitude",
+    "geocode_precision",
+    "geocode_confidence",
+    "h3_res_8",
+    "h3_res_9",
+    "h3_res_10",
+)
+
+
+def _build_corrected_address(
+    existing: AddressLocation, updates: dict[str, Any]
+) -> AddressLocation:
+    """Return ``existing`` with ``updates`` applied and derived fields refreshed.
+
+    Shared by the in-memory and durable repositories so the two write paths
+    cannot drift apart on which fields a correction touches.
+    """
+    new_lat = float(updates.get("latitude", existing.latitude))
+    new_lng = float(updates.get("longitude", existing.longitude))
+
+    h3_res_8 = existing.h3_res_8
+    h3_res_9 = existing.h3_res_9
+    h3_res_10 = existing.h3_res_10
+    if "latitude" in updates or "longitude" in updates:
+        try:
+            import h3
+
+            h3_res_8 = h3.latlng_to_cell(new_lat, new_lng, 8)
+            h3_res_9 = h3.latlng_to_cell(new_lat, new_lng, 9)
+            h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
+        except Exception:
+            pass
+
+    return AddressLocation(
+        address_id=existing.address_id,
+        raw_address=updates.get("raw_address", existing.raw_address),
+        normalized_address=updates.get("normalized_address", existing.normalized_address),
+        city=updates.get("city", existing.city),
+        district=updates.get("district", existing.district),
+        village=updates.get("village", existing.village),
+        road=updates.get("road", existing.road),
+        latitude=new_lat,
+        longitude=new_lng,
+        geocode_precision=updates.get("geocode_precision", "manual"),
+        geocode_confidence=float(
+            updates.get("geocode_confidence", existing.geocode_confidence or 1.0)
+        ),
+        h3_res_8=h3_res_8,
+        h3_res_9=h3_res_9,
+        h3_res_10=h3_res_10,
+        manual_override_flag=True,
+        tenant_id=existing.tenant_id,
+        revision=existing.revision + 1,
+    )
+
+
+def _correction_snapshots(
+    before: AddressLocation, after: AddressLocation, updates: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build the self-contained ``old_value`` / ``new_value`` pair for a write.
+
+    Covers the requested fields plus every other canonical field the write
+    actually moved, so ``old_value`` alone is enough to reconstruct the
+    pre-correction record.
+    """
+    old_value: dict[str, Any] = {
+        "manual_override_flag": before.manual_override_flag,
+        "revision": before.revision,
+    }
+    new_value: dict[str, Any] = {
+        "manual_override_flag": after.manual_override_flag,
+        "revision": after.revision,
+    }
+    for name in _CORRECTABLE_ADDRESS_FIELDS:
+        old = getattr(before, name)
+        new = getattr(after, name)
+        if name in updates or old != new:
+            old_value[name] = old
+            new_value[name] = new
+    return old_value, new_value
+
+
+def _restore_from_snapshot(
+    existing: AddressLocation,
+    old_value: dict[str, Any],
+    *,
+    new_revision: int,
+    manual_override_flag: bool,
+) -> AddressLocation:
+    """Rebuild the pre-correction record from a correction's ``old_value``.
+
+    Snapshots written before ``_correction_snapshots`` may omit fields; those
+    fall back to the current record, and missing h3 cells are recomputed from
+    the restored coordinates so a cell can never disagree with its lat/lng.
+    """
+    restored: dict[str, Any] = {}
+    for name in _CORRECTABLE_ADDRESS_FIELDS:
+        restored[name] = old_value.get(name, getattr(existing, name))
+    restored["latitude"] = float(restored["latitude"])
+    restored["longitude"] = float(restored["longitude"])
+    restored["geocode_confidence"] = float(restored["geocode_confidence"])
+
+    coords_moved = (restored["latitude"], restored["longitude"]) != (
+        existing.latitude,
+        existing.longitude,
+    )
+    missing_cells = [
+        name
+        for name in ("h3_res_8", "h3_res_9", "h3_res_10")
+        if name not in old_value
+    ]
+    if missing_cells and coords_moved:
+        try:
+            import h3
+
+            for name in missing_cells:
+                resolution = int(name.rsplit("_", 1)[1])
+                restored[name] = h3.latlng_to_cell(
+                    restored["latitude"], restored["longitude"], resolution
+                )
+        except Exception:
+            pass
+
+    return AddressLocation(
+        address_id=existing.address_id,
+        manual_override_flag=manual_override_flag,
+        tenant_id=existing.tenant_id,
+        revision=new_revision,
+        **restored,
+    )
+
+
+def _rollback_override_flag(
+    old_value: dict[str, Any], other_applied: list[ManualCorrection]
+) -> bool:
+    """Decide the override flag a rollback restores.
+
+    Rollback is top-of-stack only, so ``old_value`` is by construction the state
+    immediately before this correction and is authoritative -- including for a
+    record that was already flagged before any tracked correction existed.
+    Corrections written before snapshots carried the flag fall back to whether
+    any other correction is still applied.
+    """
+    flag = old_value.get("manual_override_flag")
+    if flag is not None:
+        return bool(flag)
+    return len(other_applied) > 0
+
+
 @dataclass
 class InMemoryAddressLocationRepository:
     _addresses: dict[str, AddressLocation] = field(default_factory=dict)
@@ -1539,66 +1701,9 @@ class InMemoryAddressLocationRepository:
                 f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
             )
 
-        old_value: dict[str, Any] = {
-            "manual_override_flag": existing.manual_override_flag,
-            "revision": existing.revision,
-        }
-        for k in updates:
-            if hasattr(existing, k):
-                old_value[k] = getattr(existing, k)
-
-        new_revision = existing.revision + 1
-        new_lat = float(updates.get("latitude", existing.latitude))
-        new_lng = float(updates.get("longitude", existing.longitude))
-
-        h3_res_8 = existing.h3_res_8
-        h3_res_9 = existing.h3_res_9
-        h3_res_10 = existing.h3_res_10
-        if "latitude" in updates or "longitude" in updates:
-            try:
-                import h3
-
-                h3_res_8 = h3.latlng_to_cell(new_lat, new_lng, 8)
-                h3_res_9 = h3.latlng_to_cell(new_lat, new_lng, 9)
-                h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
-            except Exception:
-                pass
-            old_value["h3_res_8"] = existing.h3_res_8
-            old_value["h3_res_9"] = existing.h3_res_9
-            old_value["h3_res_10"] = existing.h3_res_10
-
-        new_address = AddressLocation(
-            address_id=existing.address_id,
-            raw_address=updates.get("raw_address", existing.raw_address),
-            normalized_address=updates.get("normalized_address", existing.normalized_address),
-            city=updates.get("city", existing.city),
-            district=updates.get("district", existing.district),
-            village=updates.get("village", existing.village),
-            road=updates.get("road", existing.road),
-            latitude=new_lat,
-            longitude=new_lng,
-            geocode_precision=updates.get("geocode_precision", "manual"),
-            geocode_confidence=float(
-                updates.get("geocode_confidence", existing.geocode_confidence or 1.0)
-            ),
-            h3_res_8=h3_res_8,
-            h3_res_9=h3_res_9,
-            h3_res_10=h3_res_10,
-            manual_override_flag=True,
-            tenant_id=existing.tenant_id,
-            revision=new_revision,
-        )
-
-        new_value: dict[str, Any] = {
-            "manual_override_flag": True,
-            "revision": new_revision,
-        }
-        for k in updates:
-            new_value[k] = getattr(new_address, k)
-        if "latitude" in updates or "longitude" in updates:
-            new_value["h3_res_8"] = h3_res_8
-            new_value["h3_res_9"] = h3_res_9
-            new_value["h3_res_10"] = h3_res_10
+        new_address = _build_corrected_address(existing, updates)
+        new_revision = new_address.revision
+        old_value, new_value = _correction_snapshots(existing, new_address, updates)
 
         correction_id = str(uuid4())
         audit_event_id = str(uuid4())
@@ -1744,84 +1849,23 @@ class InMemoryAddressLocationRepository:
         old_val = correction.old_value or {}
         new_revision = existing.revision + 1
 
-        restored_dict = {
-            "raw_address": old_val.get("raw_address", existing.raw_address),
-            "normalized_address": old_val.get("normalized_address", existing.normalized_address),
-            "city": old_val.get("city", existing.city),
-            "district": old_val.get("district", existing.district),
-            "village": old_val.get("village", existing.village),
-            "road": old_val.get("road", existing.road),
-            "latitude": float(old_val.get("latitude", existing.latitude)),
-            "longitude": float(old_val.get("longitude", existing.longitude)),
-            "geocode_precision": old_val.get("geocode_precision", existing.geocode_precision),
-            "geocode_confidence": float(
-                old_val.get("geocode_confidence", existing.geocode_confidence)
-            ),
-        }
-
-        restored_lat = restored_dict["latitude"]
-        restored_lng = restored_dict["longitude"]
-        restored_h3_8 = old_val.get("h3_res_8")
-        restored_h3_9 = old_val.get("h3_res_9")
-        restored_h3_10 = old_val.get("h3_res_10")
-        if (restored_h3_8 is None or restored_h3_9 is None or restored_h3_10 is None) and (restored_lat != 0.0 or restored_lng != 0.0):
-            try:
-                import h3
-
-                if restored_h3_8 is None:
-                    restored_h3_8 = h3.latlng_to_cell(restored_lat, restored_lng, 8)
-                if restored_h3_9 is None:
-                    restored_h3_9 = h3.latlng_to_cell(restored_lat, restored_lng, 9)
-                if restored_h3_10 is None:
-                    restored_h3_10 = h3.latlng_to_cell(restored_lat, restored_lng, 10)
-            except Exception:
-                pass
-
-        all_corrections = repo.list_corrections(
-            entity_type="address_location", entity_id=address_id
-        )
         other_applied = [
             c
-            for c in all_corrections
+            for c in repo.list_corrections(entity_type="address_location", entity_id=address_id)
             if c.correction_id != correction_id and c.status == "applied"
         ]
-        manual_override_flag = len(other_applied) > 0
+        manual_override_flag = _rollback_override_flag(old_val, other_applied)
 
-        restored_address = AddressLocation(
-            address_id=existing.address_id,
-            raw_address=restored_dict["raw_address"],
-            normalized_address=restored_dict["normalized_address"],
-            city=restored_dict["city"],
-            district=restored_dict["district"],
-            village=restored_dict["village"],
-            road=restored_dict["road"],
-            latitude=restored_lat,
-            longitude=restored_lng,
-            geocode_precision=restored_dict["geocode_precision"],
-            geocode_confidence=restored_dict["geocode_confidence"],
-            h3_res_8=restored_h3_8 or "",
-            h3_res_9=restored_h3_9 or "",
-            h3_res_10=restored_h3_10 or "",
+        restored_address = _restore_from_snapshot(
+            existing,
+            old_val,
+            new_revision=new_revision,
             manual_override_flag=manual_override_flag,
-            tenant_id=existing.tenant_id,
-            revision=new_revision,
         )
 
-        rollback_old_value: dict[str, Any] = {
-            "manual_override_flag": existing.manual_override_flag,
-            "revision": existing.revision,
-        }
-        for k in old_val:
-            if hasattr(existing, k):
-                rollback_old_value[k] = getattr(existing, k)
-
-        rollback_new_value: dict[str, Any] = {
-            "manual_override_flag": manual_override_flag,
-            "revision": new_revision,
-        }
-        for k in old_val:
-            if hasattr(restored_address, k):
-                rollback_new_value[k] = getattr(restored_address, k)
+        rollback_old_value, rollback_new_value = _correction_snapshots(
+            existing, restored_address, old_val
+        )
 
         audit_event_id = str(uuid4())
         corr_id = correlation_id or str(uuid4())
@@ -2052,66 +2096,9 @@ class DurableAddressLocationRepository:
                     f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
                 )
 
-            old_value: dict[str, Any] = {
-                "manual_override_flag": existing.manual_override_flag,
-                "revision": existing.revision,
-            }
-            for k in updates:
-                if hasattr(existing, k):
-                    old_value[k] = getattr(existing, k)
-
-            new_revision = existing.revision + 1
-            new_lat = float(updates.get("latitude", existing.latitude))
-            new_lng = float(updates.get("longitude", existing.longitude))
-
-            h3_res_8 = existing.h3_res_8
-            h3_res_9 = existing.h3_res_9
-            h3_res_10 = existing.h3_res_10
-            if "latitude" in updates or "longitude" in updates:
-                try:
-                    import h3
-
-                    h3_res_8 = h3.latlng_to_cell(new_lat, new_lng, 8)
-                    h3_res_9 = h3.latlng_to_cell(new_lat, new_lng, 9)
-                    h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
-                except Exception:
-                    pass
-                old_value["h3_res_8"] = existing.h3_res_8
-                old_value["h3_res_9"] = existing.h3_res_9
-                old_value["h3_res_10"] = existing.h3_res_10
-
-            new_address = AddressLocation(
-                address_id=existing.address_id,
-                raw_address=updates.get("raw_address", existing.raw_address),
-                normalized_address=updates.get("normalized_address", existing.normalized_address),
-                city=updates.get("city", existing.city),
-                district=updates.get("district", existing.district),
-                village=updates.get("village", existing.village),
-                road=updates.get("road", existing.road),
-                latitude=new_lat,
-                longitude=new_lng,
-                geocode_precision=updates.get("geocode_precision", "manual"),
-                geocode_confidence=float(
-                    updates.get("geocode_confidence", existing.geocode_confidence or 1.0)
-                ),
-                h3_res_8=h3_res_8,
-                h3_res_9=h3_res_9,
-                h3_res_10=h3_res_10,
-                manual_override_flag=True,
-                tenant_id=existing.tenant_id,
-                revision=new_revision,
-            )
-
-            new_value: dict[str, Any] = {
-                "manual_override_flag": True,
-                "revision": new_revision,
-            }
-            for k in updates:
-                new_value[k] = getattr(new_address, k)
-            if "latitude" in updates or "longitude" in updates:
-                new_value["h3_res_8"] = h3_res_8
-                new_value["h3_res_9"] = h3_res_9
-                new_value["h3_res_10"] = h3_res_10
+            new_address = _build_corrected_address(existing, updates)
+            new_revision = new_address.revision
+            old_value, new_value = _correction_snapshots(existing, new_address, updates)
 
             correction_id = str(uuid4())
             audit_event_id = str(uuid4())
@@ -2259,84 +2246,23 @@ class DurableAddressLocationRepository:
             old_val = correction.old_value or {}
             new_revision = existing.revision + 1
 
-            restored_dict = {
-                "raw_address": old_val.get("raw_address", existing.raw_address),
-                "normalized_address": old_val.get("normalized_address", existing.normalized_address),
-                "city": old_val.get("city", existing.city),
-                "district": old_val.get("district", existing.district),
-                "village": old_val.get("village", existing.village),
-                "road": old_val.get("road", existing.road),
-                "latitude": float(old_val.get("latitude", existing.latitude)),
-                "longitude": float(old_val.get("longitude", existing.longitude)),
-                "geocode_precision": old_val.get("geocode_precision", existing.geocode_precision),
-                "geocode_confidence": float(
-                    old_val.get("geocode_confidence", existing.geocode_confidence)
-                ),
-            }
-
-            restored_lat = restored_dict["latitude"]
-            restored_lng = restored_dict["longitude"]
-            restored_h3_8 = old_val.get("h3_res_8")
-            restored_h3_9 = old_val.get("h3_res_9")
-            restored_h3_10 = old_val.get("h3_res_10")
-            if (restored_h3_8 is None or restored_h3_9 is None or restored_h3_10 is None) and (restored_lat != 0.0 or restored_lng != 0.0):
-                try:
-                    import h3
-
-                    if restored_h3_8 is None:
-                        restored_h3_8 = h3.latlng_to_cell(restored_lat, restored_lng, 8)
-                    if restored_h3_9 is None:
-                        restored_h3_9 = h3.latlng_to_cell(restored_lat, restored_lng, 9)
-                    if restored_h3_10 is None:
-                        restored_h3_10 = h3.latlng_to_cell(restored_lat, restored_lng, 10)
-                except Exception:
-                    pass
-
-            all_corrections = repo.list_corrections(
-                entity_type="address_location", entity_id=address_id
-            )
             other_applied = [
                 c
-                for c in all_corrections
+                for c in repo.list_corrections(entity_type="address_location", entity_id=address_id)
                 if c.correction_id != correction_id and c.status == "applied"
             ]
-            manual_override_flag = len(other_applied) > 0
+            manual_override_flag = _rollback_override_flag(old_val, other_applied)
 
-            restored_address = AddressLocation(
-                address_id=existing.address_id,
-                raw_address=restored_dict["raw_address"],
-                normalized_address=restored_dict["normalized_address"],
-                city=restored_dict["city"],
-                district=restored_dict["district"],
-                village=restored_dict["village"],
-                road=restored_dict["road"],
-                latitude=restored_lat,
-                longitude=restored_lng,
-                geocode_precision=restored_dict["geocode_precision"],
-                geocode_confidence=restored_dict["geocode_confidence"],
-                h3_res_8=restored_h3_8 or "",
-                h3_res_9=restored_h3_9 or "",
-                h3_res_10=restored_h3_10 or "",
+            restored_address = _restore_from_snapshot(
+                existing,
+                old_val,
+                new_revision=new_revision,
                 manual_override_flag=manual_override_flag,
-                tenant_id=existing.tenant_id,
-                revision=new_revision,
             )
 
-            rollback_old_value: dict[str, Any] = {
-                "manual_override_flag": existing.manual_override_flag,
-                "revision": existing.revision,
-            }
-            for k in old_val:
-                if hasattr(existing, k):
-                    rollback_old_value[k] = getattr(existing, k)
-
-            rollback_new_value: dict[str, Any] = {
-                "manual_override_flag": manual_override_flag,
-                "revision": new_revision,
-            }
-            for k in old_val:
-                if hasattr(restored_address, k):
-                    rollback_new_value[k] = getattr(restored_address, k)
+            rollback_old_value, rollback_new_value = _correction_snapshots(
+                existing, restored_address, old_val
+            )
 
             audit_event_id = str(uuid4())
             corr_id = correlation_id or str(uuid4())

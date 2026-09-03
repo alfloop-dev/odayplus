@@ -2,7 +2,7 @@
 
 Tests:
 1. SQLite durable persistence: save, correct, audit chain, restart survival, rollback, restart survival.
-2. Alembic migration 0014 schema execution and downgrade idempotency.
+2. Alembic migration 0015 schema execution and downgrade idempotency.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from shared.infrastructure.persistence.factory import build_persistence
 from shared.infrastructure.persistence.repositories import (
     DurableAddressLocationRepository,
     DurableManualCorrectionRepository,
+    InMemoryAddressLocationRepository,
 )
 
 
@@ -309,7 +310,7 @@ def test_durable_sqlite_app_entry_and_multi_rollback_lifecycle(tmp_path: Path) -
     assert rb_a_ok.json()["address"]["revision"] == 5
 
 
-def test_migration_0014_sql_and_alembic_structure() -> None:
+def test_migration_0015_sql_and_alembic_structure() -> None:
     migration_sql_path = Path("infra/db/migrations/000020_manual_corrections_audit_schema.sql")
     assert migration_sql_path.exists()
     sql_content = migration_sql_path.read_text(encoding="utf-8")
@@ -319,8 +320,8 @@ def test_migration_0014_sql_and_alembic_structure() -> None:
     alembic_script_path = Path("infra/db/migrations/versions/0015_manual_corrections_audit_schema.py")
     assert alembic_script_path.exists()
     script_content = alembic_script_path.read_text(encoding="utf-8")
-    assert 'revision: str = "0014"' in script_content
-    assert 'down_revision: str | None = "0013"' in script_content
+    assert 'revision: str = "0015"' in script_content
+    assert 'down_revision: str | None = "0014"' in script_content
 
 
 def test_durable_sqlite_h3_restoration_and_tenant_isolation_regressions(tmp_path: Path) -> None:
@@ -419,3 +420,172 @@ def test_durable_sqlite_h3_restoration_and_tenant_isolation_regressions(tmp_path
     assert rb_event.metadata["old_value"]["latitude"] == corr_lat
     assert rb_event.metadata["new_value"]["latitude"] == orig_lat
     assert bundle.audit_log.verify_chain().ok is True
+
+
+def _correction_regression_address(address_id: str, **overrides: object) -> AddressLocation:
+    """A saved address whose derived geocode fields differ from the values a
+    correction would silently impose."""
+    fields: dict[str, object] = {
+        "address_id": address_id,
+        "raw_address": "Taipei City Xinyi Dist Section 5 No 7",
+        "normalized_address": "Taipei City Xinyi District Section 5 No 7",
+        "city": "Taipei City",
+        "district": "Xinyi District",
+        "road": "Section 5",
+        "latitude": 25.0330,
+        "longitude": 121.5650,
+        "geocode_precision": "rooftop",
+        "geocode_confidence": 0.90,
+        "manual_override_flag": False,
+        "tenant_id": "tenant-regress",
+        "revision": 1,
+    }
+    fields.update(overrides)
+    return AddressLocation(**fields)  # type: ignore[arg-type]
+
+
+def _address_repositories(tmp_path: Path) -> list[object]:
+    """Both production write paths, so a fix to one cannot silently skip the other."""
+    engine = SqliteEngine(tmp_path / "correction_regressions.sqlite3")
+    corrections = DurableManualCorrectionRepository(engine)
+    return [
+        InMemoryAddressLocationRepository(),
+        DurableAddressLocationRepository(
+            engine, correction_repo=corrections, audit_log=DurableAuditLog(engine)
+        ),
+    ]
+
+
+def test_rollback_restores_geocode_fields_the_correction_changed_implicitly(
+    tmp_path: Path,
+) -> None:
+    """A correction that names only ``latitude`` still rewrites geocode_precision
+    to ``manual``. That implicit write has to reach ``old_value`` or rollback
+    cannot put the original precision back."""
+    for repo in _address_repositories(tmp_path):
+        address_id = str(uuid4())
+        repo.save_address(  # type: ignore[attr-defined]
+            _correction_regression_address(address_id, geocode_precision="rooftop")
+        )
+
+        _, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+            address_id,
+            updates={"latitude": 25.0500},
+            reason="shift the pin to the building entrance",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=1,
+        )
+
+        assert repo.get_address(address_id).geocode_precision == "manual"  # type: ignore[attr-defined]
+        assert correction.old_value["geocode_precision"] == "rooftop"
+
+        repo.rollback_correction(  # type: ignore[attr-defined]
+            address_id,
+            correction_id=correction.correction_id,
+            reason="pin was correct before the edit",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+        )
+
+        restored = repo.get_address(address_id)  # type: ignore[attr-defined]
+        assert restored.geocode_precision == "rooftop"
+        assert restored.latitude == 25.0330
+
+
+def test_rollback_restores_zero_geocode_confidence(tmp_path: Path) -> None:
+    """``geocode_confidence or 1.0`` turns a legitimate 0.0 into 1.0, so 0.0 has
+    to be snapshotted rather than treated as absent."""
+    for repo in _address_repositories(tmp_path):
+        address_id = str(uuid4())
+        repo.save_address(  # type: ignore[attr-defined]
+            _correction_regression_address(address_id, geocode_confidence=0.0)
+        )
+
+        _, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+            address_id,
+            updates={"city": "New Taipei City"},
+            reason="city was recorded incorrectly",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=1,
+        )
+        assert correction.old_value["geocode_confidence"] == 0.0
+
+        repo.rollback_correction(  # type: ignore[attr-defined]
+            address_id,
+            correction_id=correction.correction_id,
+            reason="city change was not approved",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+        )
+
+        restored = repo.get_address(address_id)  # type: ignore[attr-defined]
+        assert restored.geocode_confidence == 0.0
+        assert restored.city == "Taipei City"
+
+
+def test_rollback_preserves_override_flag_that_predates_the_correction(
+    tmp_path: Path,
+) -> None:
+    """The flag is restored from ``old_value``, not inferred from how many other
+    corrections remain applied: a record flagged before any correction existed
+    must stay flagged after a rollback."""
+    for repo in _address_repositories(tmp_path):
+        address_id = str(uuid4())
+        repo.save_address(  # type: ignore[attr-defined]
+            _correction_regression_address(address_id, manual_override_flag=True)
+        )
+
+        _, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+            address_id,
+            updates={"road": "Section 6"},
+            reason="road name needs correcting",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=1,
+        )
+        assert correction.old_value["manual_override_flag"] is True
+
+        _, rollback_card = repo.rollback_correction(  # type: ignore[attr-defined]
+            address_id,
+            correction_id=correction.correction_id,
+            reason="road name was already correct",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+        )[1:]
+
+        restored = repo.get_address(address_id)  # type: ignore[attr-defined]
+        assert restored.manual_override_flag is True
+        assert restored.road == "Section 5"
+        assert rollback_card.metrics["new_value"]["manual_override_flag"] is True
+
+
+def test_rollback_clears_override_flag_the_correction_introduced(tmp_path: Path) -> None:
+    """The complement of the case above: a record that was not flagged before the
+    correction must come back unflagged."""
+    for repo in _address_repositories(tmp_path):
+        address_id = str(uuid4())
+        repo.save_address(  # type: ignore[attr-defined]
+            _correction_regression_address(address_id, manual_override_flag=False)
+        )
+
+        _, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+            address_id,
+            updates={"road": "Section 6"},
+            reason="road name needs correcting",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=1,
+        )
+        assert repo.get_address(address_id).manual_override_flag is True  # type: ignore[attr-defined]
+
+        repo.rollback_correction(  # type: ignore[attr-defined]
+            address_id,
+            correction_id=correction.correction_id,
+            reason="road name was already correct",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+        )
+
+        assert repo.get_address(address_id).manual_override_flag is False  # type: ignore[attr-defined]
