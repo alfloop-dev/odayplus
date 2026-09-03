@@ -904,8 +904,8 @@ else:
                 ) from exc
 
             facade = market_data_facade_for_request(request)
-            effective_perfs: list[dict[str, Any]] | Sequence[Any]
-            effective_starts: list[dict[str, Any]] | Sequence[Any]
+            effective_perfs: list[dict[str, Any]] | list[Any]
+            effective_starts: list[dict[str, Any]] | list[Any]
 
             server_perfs: list[dict[str, Any]] = []
             server_op_starts: list[dict[str, Any]] = []
