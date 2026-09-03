@@ -812,6 +812,9 @@ def _ndcg(units: Sequence[tuple[float, float]]) -> float | None:
     if all(relevance <= 0 for relevance in relevances):
         return None
 
+    # Stable sort, so the two pooled units in the merged arm break their tie on
+    # input (cell id) order rather than on relevance -- ordering ties by the
+    # label would hand the merged arm a free win.
     ordered = sorted(units, key=lambda unit: unit[0], reverse=True)
     dcg = sum(
         relevance / math.log2(rank + 2)

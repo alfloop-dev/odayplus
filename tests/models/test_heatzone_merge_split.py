@@ -632,3 +632,46 @@ def test_durable_evidence_repository_drops_a_cell_the_geo_registry_lacks(
 
     assert len(durable.list_absorption_outcomes(TENANT_ID)) == 1
     assert durable.list_cells(TENANT_ID) == []
+
+
+def test_counterfactual_gates_bind_when_their_signal_is_removed(tmp_path) -> None:
+    """Take away one signal at a time and the matching rule refuses the pair.
+
+    Both statistics could otherwise be read as decoration. Removing the zone's
+    store-count movement leaves the dilution fit unidentified; flattening the
+    pair into two persistently unequal cells makes pooling actively worse and
+    drives the NDCG gain negative. Neither variant merges.
+    """
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    receipt = matured_receipt(tmp_path / "receipt.json")
+
+    def _decline(pair_store_counts):
+        evidence = assemble_merge_split_evidence(
+            build_evidence_repository(pair_store_counts=pair_store_counts),
+            tenant_id=TENANT_ID,
+            receipt_path=receipt,
+        )
+        evaluation = evaluate_merge_split(evidence, policy=policy)
+        assert [
+            proposal
+            for proposal in evaluation.proposals
+            if proposal.composition_kind == CompositionKind.MERGED
+        ] == []
+        return next(
+            entry["reason"]
+            for entry in evaluation.declined
+            if entry["candidate"] == f"{MERGE_LEFT}+{MERGE_RIGHT}"
+        )
+
+    # The pair total never moves, so "does the zone's store count explain this
+    # cell's take better than its own?" has no answer to give.
+    assert (
+        _decline(((2, 6, 2, 6, 2, 6, 2, 6), (6, 2, 6, 2, 6, 2, 6, 2)))
+        == "cannibalization_variance_reduction_unmeasurable"
+    )
+
+    # Persistently unequal cells: pooling them hides a real difference, and the
+    # ranking gets worse rather than merely failing to improve.
+    ndcg_reason = _decline(((2,) * 8, (10,) * 8))
+    assert ndcg_reason.startswith("ndcg_gain_below_threshold")
+    assert float(ndcg_reason.split(":")[1].split("<")[0]) < 0.0

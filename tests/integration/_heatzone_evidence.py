@@ -114,7 +114,10 @@ def _outcome(
     )
 
 
-def _merge_pair_plans() -> tuple[_CellPlan, _CellPlan]:
+def _merge_pair_plans(
+    left_stores: tuple[int, ...] = _LEFT_STORES,
+    right_stores: tuple[int, ...] = _RIGHT_STORES,
+) -> tuple[_CellPlan, _CellPlan]:
     """One trade area: a shared demand cycle split between the cells by stores.
 
     Store counts move in opposite directions while the pair total alternates
@@ -132,16 +135,16 @@ def _merge_pair_plans() -> tuple[_CellPlan, _CellPlan]:
         d_left = _LEFT_DEMAND_BASE * cycle
         d_right = _RIGHT_DEMAND_BASE * cycle * _RIGHT_DEMAND_WOBBLE[index]
         zone_take = _ZONE_TAKE_SHARE * (d_left + d_right)
-        total_stores = _LEFT_STORES[index] + _RIGHT_STORES[index]
+        total_stores = left_stores[index] + right_stores[index]
         left_demand.append(d_left)
         right_demand.append(d_right)
-        left_absorbed.append(zone_take * _LEFT_STORES[index] / total_stores)
-        right_absorbed.append(zone_take * _RIGHT_STORES[index] / total_stores)
+        left_absorbed.append(zone_take * left_stores[index] / total_stores)
+        right_absorbed.append(zone_take * right_stores[index] / total_stores)
     return (
         _CellPlan(MERGE_LEFT, "Taipei", "Xinyi", tuple(left_demand),
-                  tuple(left_absorbed), _LEFT_STORES),
+                  tuple(left_absorbed), left_stores),
         _CellPlan(MERGE_RIGHT, "Taipei", "Xinyi", tuple(right_demand),
-                  tuple(right_absorbed), _RIGHT_STORES),
+                  tuple(right_absorbed), right_stores),
     )
 
 
@@ -164,21 +167,32 @@ def _steady_plan(
 
 
 def build_evidence_repository(
-    *, tenant_id: str = TENANT_ID
+    *,
+    tenant_id: str = TENANT_ID,
+    pair_store_counts: tuple[tuple[int, ...], tuple[int, ...]] | None = None,
 ) -> InMemoryMergeSplitEvidenceRepository:
-    """A fresh repository holding history that clears every readiness gate."""
+    """A fresh repository holding history that clears every readiness gate.
+
+    `pair_store_counts` reshapes the merge pair's store history so a test can
+    remove one signal at a time and watch the corresponding rule refuse.
+    """
     return populate_evidence_repository(
-        InMemoryMergeSplitEvidenceRepository(), tenant_id=tenant_id
+        InMemoryMergeSplitEvidenceRepository(),
+        tenant_id=tenant_id,
+        pair_store_counts=pair_store_counts,
     )
 
 
 def populate_evidence_repository(
-    repository: InMemoryMergeSplitEvidenceRepository, *, tenant_id: str = TENANT_ID
+    repository: InMemoryMergeSplitEvidenceRepository,
+    *,
+    tenant_id: str = TENANT_ID,
+    pair_store_counts: tuple[tuple[int, ...], tuple[int, ...]] | None = None,
 ) -> InMemoryMergeSplitEvidenceRepository:
     """Write the history into an existing repository, e.g. a bundle's own."""
     bounds = periods()
 
-    left_plan, right_plan = _merge_pair_plans()
+    left_plan, right_plan = _merge_pair_plans(*(pair_store_counts or ()))
     plans: list[_CellPlan] = [left_plan, right_plan]
 
     # Two metropolitan clusters, sixteen cells each, chained so the graph
