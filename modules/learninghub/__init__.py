@@ -3,6 +3,7 @@
 from modules.learninghub.application import (
     DEFAULT_RELEASE_LEASE_SECONDS,
     AliasReconciliationReceipt,
+    BacktestReceipt,
     GuardrailBreach,
     LearningHubConflictError,
     LearningHubError,
@@ -13,6 +14,7 @@ from modules.learninghub.application import (
     RecommendedAction,
     ReleaseMonitorAssessment,
     ReleaseType,
+    evaluate_backtest_run,
     evaluate_guardrails,
 )
 from modules.learninghub.domain import (
@@ -64,6 +66,7 @@ from modules.learninghub.workers import (
 __all__ = [
     "DEFAULT_RELEASE_LEASE_SECONDS",
     "AliasReconciliationReceipt",
+    "BacktestReceipt",
     "DatasetQualityAdmissionError",
     "DatasetSnapshot",
     "DatasetSnapshotError",
@@ -97,6 +100,7 @@ __all__ = [
     "ReleaseType",
     "RetrainingRequest",
     "build_dataset_snapshot",
+    "evaluate_backtest_run",
     "evaluate_guardrails",
     "model_ready_record_from_mapping",
     "run_learninghub_release",
