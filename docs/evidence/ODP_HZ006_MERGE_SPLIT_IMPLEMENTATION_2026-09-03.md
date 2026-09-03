@@ -3,8 +3,8 @@
 - **任務識別碼**：`ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001`
 - **文件路徑**：`docs/evidence/ODP_HZ006_MERGE_SPLIT_IMPLEMENTATION_2026-09-03.md`
 - **日期**：2026-09-03
-- **任務負責人**：Claude2
-- **審查人**：Codex2
+- **任務負責人**：Antigravity2
+- **審查人**：Claude
 - **前置任務**：`ODP-HZ006-MERGE-SPLIT-READINESS-001`（`done`，見 `docs/evidence/ODP_HZ006_MERGE_SPLIT_READINESS_2026-09-03.md`）
 - **關聯依據**：
   - `docs/design/ODP-SA-06-AMD-001.md` §3.2（`ODP-FR-HZ-006`）、§3.5（`ODP-FR-HZ-004`）
@@ -141,3 +141,18 @@ uv run --frozen python -m pytest \
 處置：本任務的 migration 改編為 `0015_heatzone_composition`（`down_revision="0014"`），對應 SQL 為 `000020_heatzone_composition.sql`，並在 `tests/ops/test_heatzone_composition_migration.py` 進行結構性檢查——列舉所有 migration，斷言無重複 revision id、恰好一個 head、根為 `0001`。撞號會被測試擋下，而不是等到部署時才發現。
 
 Stamped baseline fixture（`tests/integration/test_official_real_estate_postgresql.py`）同時保留雙方的表定義。
+
+---
+
+## 7. 審查回應與邊界處置（Round 7）
+
+針對第七輪審查退回之兩項發現處置如下：
+
+### 7.1 Migration 回歸修正
+- `tests/ops/test_migration_backfill.py` 補上 `"0015"` alembic revision 索引，並新增 `test_heatzone_composition_ddl_is_reachable_from_alembic_head()` 斷言 `0015_heatzone_composition.py` 包含 `000020_heatzone_composition.sql`，修復 base-advance 漏補 migration plan 清單的回歸。
+
+### 7.2 移除私有屬性探測與 Durable 拆分明確 Fail-Closed 宣告
+1. **移除私有屬性回退**：`apps/api/oday_api/routes/heatzone.py` 移除 `hasattr(evidence_repo, "_cells")` 之私有屬性反射，僅透過公開的 `get_cell(tid, cell_id)` 介面查詢註冊空間單元。
+2. **Durable 拆分顯式 Fail-Closed**：目前持久層尚未實作受信任的 geo barrier 寫入 pipeline（`geo.h3_cells` 無 barrier 欄位）。當呼叫端嘗試對持久層未註冊 barrier 的空間單元紀錄帶有 `barrier_side` 的實績時，路由明確回傳 `422 HZ004_BARRIER_UNBACKED`；合併／拆分評估引擎對持久層候選拆分熱區，亦依據已宣告的命名規則 `no_side_labelled_hz004_outcomes_for_every_member_cell` 顯式拒絕與棄權，杜絕無地理障礙證據的猜測性拆分。
+3. **測試保證**：於 `tests/integration/test_heatzone_composition_api.py`（`test_durable_path_side_based_split_refused_and_barrier_unbacked`）與 `tests/models/test_heatzone_merge_split.py`（`test_durable_evidence_repository_refuses_split_when_cells_lack_barrier_sides`）新增持久層真實路徑之斷言測試。
+

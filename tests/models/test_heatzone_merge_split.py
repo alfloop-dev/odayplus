@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -28,6 +29,9 @@ from modules.heatzone.domain.composition import (
     ProposalStatus,
     generate_merged_zone_id,
 )
+from modules.heatzone.infrastructure import (
+    InMemoryMergeSplitEvidenceRepository,
+)
 from modules.heatzone.infrastructure.composition_repository import (
     InMemoryHeatZoneCompositionRepository,
 )
@@ -41,6 +45,7 @@ from shared.infrastructure.persistence.repositories import (
     DurableHeatZoneCompositionRepository,
 )
 from tests.integration._heatzone_evidence import (
+    ABSORPTION_POLICY_ID,
     MERGE_LEFT,
     MERGE_RIGHT,
     SPLIT_LEFT,
@@ -558,31 +563,19 @@ def test_a_pair_already_in_one_zone_is_not_proposed_again(tmp_path) -> None:
     )
 
 
-def test_durable_evidence_repository_reads_the_same_history(tmp_path) -> None:
-    """The SQL reader must produce the evidence the engine acts on, not a shape
-    that only the in-memory double satisfies."""
-    import json
-
-    from shared.infrastructure.persistence.repositories import (
-        DurableMergeSplitEvidenceRepository,
-    )
-    from tests.integration._heatzone_evidence import (
-        ABSORPTION_POLICY_ID,
-        build_evidence_repository,
-    )
-
-    engine = SqliteEngine(tmp_path / "evidence.sqlite3")
-    durable = DurableMergeSplitEvidenceRepository(engine)
-    reference = build_evidence_repository()
-
-    for cell in reference.list_cells(TENANT_ID):
+def _populate_durable_sqlite_evidence(
+    engine: SqliteEngine,
+    reference: InMemoryMergeSplitEvidenceRepository,
+    tenant_id: str = TENANT_ID,
+) -> None:
+    for cell in reference.list_cells(tenant_id):
         engine.execute(
             "INSERT INTO h3_cells (geo_cell_id, h3_index, centroid_latitude, "
             "centroid_longitude, admin_city, admin_district) "
             "VALUES (?, ?, 25.03, 121.56, ?, ?)",
             (cell.cell_id, cell.h3_index, cell.admin_city, cell.admin_district),
         )
-    for index, outcome in enumerate(reference.list_absorption_outcomes(TENANT_ID)):
+    for index, outcome in enumerate(reference.list_absorption_outcomes(tenant_id)):
         engine.execute(
             """
             INSERT INTO heatzone_absorption_outcomes (
@@ -595,7 +588,7 @@ def test_durable_evidence_repository_reads_the_same_history(tmp_path) -> None:
             """,
             (
                 f"outcome-{index}",
-                TENANT_ID,
+                tenant_id,
                 outcome.cell_id,
                 outcome.period_start.isoformat(),
                 outcome.period_end.isoformat(),
@@ -613,12 +606,26 @@ def test_durable_evidence_repository_reads_the_same_history(tmp_path) -> None:
                 outcome.basis_at.isoformat(),
             ),
         )
-    for index, (left, right) in enumerate(reference.list_adjacency(TENANT_ID)):
+    for index, (left, right) in enumerate(reference.list_adjacency(tenant_id)):
         engine.execute(
             "INSERT INTO h3_cell_adjacency (adjacency_id, cell_id, neighbor_cell_id, k_ring) "
             "VALUES (?, ?, ?, 1)",
             (f"edge-{index}", left, right),
         )
+
+
+def test_durable_evidence_repository_reads_the_same_history(tmp_path) -> None:
+    """The SQL reader must produce the evidence the engine acts on, not a shape
+    that only the in-memory double satisfies."""
+    from shared.infrastructure.persistence.repositories import (
+        DurableMergeSplitEvidenceRepository,
+    )
+    from tests.integration._heatzone_evidence import build_evidence_repository
+
+    engine = SqliteEngine(tmp_path / "evidence.sqlite3")
+    durable = DurableMergeSplitEvidenceRepository(engine)
+    reference = build_evidence_repository()
+    _populate_durable_sqlite_evidence(engine, reference)
 
     assert durable.list_adjacency(TENANT_ID) == reference.list_adjacency(TENANT_ID)
     assert [c.cell_id for c in durable.list_cells(TENANT_ID)] == [
@@ -673,6 +680,46 @@ def test_durable_evidence_repository_drops_a_cell_the_geo_registry_lacks(
 
     assert len(durable.list_absorption_outcomes(TENANT_ID)) == 1
     assert durable.list_cells(TENANT_ID) == []
+
+
+def test_durable_evidence_repository_refuses_split_when_cells_lack_barrier_sides(
+    tmp_path,
+) -> None:
+    """On durable evidence repository where cells lack geo barrier sides,
+    the split engine explicitly declines split candidates with the named rule
+    'no_side_labelled_hz004_outcomes_for_every_member_cell'."""
+    from shared.infrastructure.persistence.repositories import (
+        DurableMergeSplitEvidenceRepository,
+    )
+    from tests.integration._heatzone_evidence import build_evidence_repository
+
+    engine = SqliteEngine(tmp_path / "durable_split.sqlite3")
+    durable = DurableMergeSplitEvidenceRepository(engine)
+    reference = build_evidence_repository()
+    _populate_durable_sqlite_evidence(engine, reference)
+
+    zone_id = generate_merged_zone_id([SPLIT_LEFT, SPLIT_RIGHT])
+    existing = [
+        ExistingZoneComposition(
+            zone_id=zone_id,
+            composition_kind=CompositionKind.MERGED,
+            member_cell_ids=(SPLIT_LEFT, SPLIT_RIGHT),
+        )
+    ]
+    evidence = assemble_merge_split_evidence(
+        durable,
+        tenant_id=TENANT_ID,
+        receipt_path=matured_receipt(tmp_path / "receipt.json"),
+        existing_zones=existing,
+    )
+    evaluation = evaluate_merge_split(
+        evidence, policy=default_heatzone_merge_policy(TENANT_ID)
+    )
+    assert not any(p.composition_kind == CompositionKind.SPLIT_CHILD for p in evaluation.proposals)
+    assert any(
+        d.get("reason") == "no_side_labelled_hz004_outcomes_for_every_member_cell"
+        for d in evaluation.declined
+    )
 
 
 def test_counterfactual_gates_bind_when_their_signal_is_removed(tmp_path) -> None:

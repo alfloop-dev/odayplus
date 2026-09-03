@@ -1060,11 +1060,8 @@ else:
 
             evidence_repo = evidence_repo_for_request(request)
             registered_cell = None
-            if evidence_repo is not None:
-                if hasattr(evidence_repo, "get_cell"):
-                    registered_cell = evidence_repo.get_cell(tid, body.cell_id)
-                elif hasattr(evidence_repo, "_cells"):
-                    registered_cell = evidence_repo._cells.get(tid, {}).get(body.cell_id)
+            if evidence_repo is not None and hasattr(evidence_repo, "get_cell"):
+                registered_cell = evidence_repo.get_cell(tid, body.cell_id)
 
             target_barrier_side = body.barrier_side
             target_barrier_desc = body.barrier_description

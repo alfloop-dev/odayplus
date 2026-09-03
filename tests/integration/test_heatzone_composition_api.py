@@ -12,6 +12,7 @@ the identity that gets written into the governance record.
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -46,10 +47,12 @@ from tests.integration._heatzone_absorption_rows import (
     performance_rows,
 )
 from tests.integration._heatzone_evidence import (
+    ABSORPTION_POLICY_ID,
     MERGE_LEFT,
     MERGE_RIGHT,
     SPLIT_LEFT,
     SPLIT_RIGHT,
+    build_evidence_repository,
     populate_evidence_repository,
     use_matured_receipt,
 )
@@ -882,6 +885,111 @@ def test_a_side_labelled_outcome_needs_the_barrier_it_was_split_on() -> None:
     )
     assert unbacked.status_code == 422
     assert unbacked.json()["detail"]["code"] == "HZ004_BARRIER_UNBACKED"
+
+
+def test_durable_path_side_based_split_refused_and_barrier_unbacked(
+    tmp_path, monkeypatch
+) -> None:
+    """On durable persistence, cells have no registered geo barrier pipeline.
+
+    Attempting to record a side-labelled outcome on a durable bundle is refused
+    with HZ004_BARRIER_UNBACKED. When evaluating merge/split on durable history,
+    any split candidate is refused fail-closed by the named rule
+    'no_side_labelled_hz004_outcomes_for_every_member_cell'.
+    """
+    db_path = tmp_path / "durable_barrier.db"
+    bundle = build_persistence(mode="sqlite", db_path=db_path)
+    bundle.engine.execute(
+        "INSERT INTO h3_cells (geo_cell_id, h3_index, centroid_latitude, centroid_longitude, admin_city, admin_district) "
+        "VALUES (?, ?, 25.03, 121.56, 'Taipei', 'Xinyi')",
+        (HZ004_CELL, f"8a{HZ004_CELL}"),
+    )
+    client = _client_with_populated_sources(bundle)
+
+    # 1. Attempting to record side-labelled outcome fails closed on durable path
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id=HZ004_CELL,
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            barrier_side="A",
+            barrier_description="Provincial Highway 17",
+        ),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_BARRIER_UNBACKED"
+
+    # 2. On durable evaluation with mature evidence, candidate split zones without side evidence decline
+    reference = build_evidence_repository(tenant_id=TENANT_ID)
+    for cell in reference.list_cells(TENANT_ID):
+        bundle.engine.execute(
+            "INSERT OR IGNORE INTO h3_cells (geo_cell_id, h3_index, centroid_latitude, centroid_longitude, admin_city, admin_district) "
+            "VALUES (?, ?, 25.03, 121.56, ?, ?)",
+            (cell.cell_id, cell.h3_index, cell.admin_city, cell.admin_district),
+        )
+    for index, outcome in enumerate(reference.list_absorption_outcomes(TENANT_ID)):
+        bundle.engine.execute(
+            """
+            INSERT OR IGNORE INTO heatzone_absorption_outcomes (
+                outcome_id, tenant_id, geo_cell_id, period_start, period_end,
+                original_demand, absorbed_demand, remaining_demand,
+                absorption_ratio, absorbing_store_count, under_realized,
+                barrier_side, barrier_description, basis_source_ids, basis_at,
+                absorption_policy_version_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                f"outcome-{index}",
+                TENANT_ID,
+                outcome.cell_id,
+                outcome.period_start.isoformat(),
+                outcome.period_end.isoformat(),
+                outcome.original_demand,
+                outcome.absorbed_demand,
+                outcome.remaining_demand,
+                outcome.absorption_ratio,
+                outcome.absorbing_store_count,
+                int(outcome.under_realized),
+                outcome.barrier_side,
+                outcome.barrier_description,
+                json.dumps(list(outcome.basis_source_ids)),
+                outcome.basis_at.isoformat(),
+                ABSORPTION_POLICY_ID,
+                outcome.basis_at.isoformat(),
+            ),
+        )
+    for index, (left, right) in enumerate(reference.list_adjacency(TENANT_ID)):
+        bundle.engine.execute(
+            "INSERT OR IGNORE INTO h3_cell_adjacency (adjacency_id, cell_id, neighbor_cell_id, k_ring) "
+            "VALUES (?, ?, ?, 1)",
+            (f"edge-{index}", left, right),
+        )
+
+    use_matured_receipt(monkeypatch, tmp_path)
+    zone_id = "MZ-0011223344556677"
+    bundle.heatzone_composition_repository.save_composition_batch(
+        [
+            HeatZoneCompositionRecord(
+                zone_id=zone_id,
+                tenant_id=TENANT_ID,
+                member_cell_id=cell_id,
+                composition_kind=CompositionKind.MERGED,
+                decided_by="system",
+                decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+            )
+            for cell_id in (SPLIT_LEFT, SPLIT_RIGHT)
+        ]
+    )
+    eval_resp = _evaluate(client)
+    assert eval_resp.status_code == 200
+    eval_body = eval_resp.json()
+    assert eval_body["abstained"] is False
+    assert all(p["composition_kind"] != "split_child" for p in eval_body["proposals"])
+    assert any(
+        d.get("reason") == "no_side_labelled_hz004_outcomes_for_every_member_cell"
+        for d in eval_body.get("declined_candidates", [])
+    )
 
 
 def test_an_outcome_for_an_unpublished_cell_is_refused() -> None:
