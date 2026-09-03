@@ -1334,6 +1334,7 @@ export function OperatorConsole({ searchParams = {} }: { searchParams?: Record<s
                 onSelectApproval: (approval) => showToast(`${approval.id} selected`),
               }}
               decisions={liveGovernanceDecisions.length ? liveGovernanceDecisions : undefined}
+              canComment={activeRoleId !== "pm-audit"}
               role={activeRole.label}
               roleId={activeRoleId}
             />
