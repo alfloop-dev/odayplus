@@ -127,11 +127,12 @@ runbook 對 `grouping_strategy` 的理由寫道：本 fleet 吞吐約 1.5 merges
 1. **把裁決寫進 `note`，狀態填別的。** 成員 note 寫「已裁決不做」而 disposition 是 `OPEN`，稽核輸出只會顯示一個「有理由、有 owner」的正常缺口。
 2. **把豁免掛在非 `DECIDED` 狀態上。** 現行 manifest 的 `ODP-FR-NET-002 / DILUTION` 就是這個形狀：`status: satisfied`、`disposition.state: VERIFIED`，note 裁定完整配對形式不做，並帶有 `decider`、`expiry: 2027-09-01`、`reopen_trigger`——但**這些欄位過去沒有任何一項被驗證過**。它的 expiry 會在 2027-09-01 靜默失效，CI 仍然全綠。
 
-本任務的 gate 變更（commit `d736aed0`）：
+本任務的 gate 變更（commit `d736aed0` 及其後續修補）：
 
 - **法定欄位在哪裡出現就在哪裡受審**：帶其中任一欄位就必須帶齊全部，並通過 reference 可解析、decider 非 AI、expiry 未過期的檢查，不論 `state` 宣告為何。
 - **note 不是修訂**：成員 `note` 或 disposition `rationale` 宣稱不實作裁決（`DECIDED 2026-09-02: not pursued`、`已裁決不做`、`decided not to implement`…）而狀態非 `DECIDED` 者，一律拒絕。偵測樣式刻意收窄——`It is not a release mode` 這類**描述缺席**的句子必須繼續通過，否則每個誠實的缺口都會被逼去申請它沒有的豁免（測試 `test_a_note_that_only_describes_an_absence_still_passes` 以現行 manifest 的 `BACKTEST`／`ADJUST` 原文守住這條界線）。
 - **`decision_date` 納入法定欄位**：沒有日期的裁決無法計齡、無法追溯到做成它的那場會議。三個既有測試 fixture 早已按慣例帶了這個欄位，但沒有任何規則要求它。
+- **刪掉 disposition 區塊不能藏起宣稱**：`satisfied` 成員本來就可以不帶 disposition，因此「把裁決留在 note、把區塊刪掉」是繞過上述規則最便宜的一條路。現在成員的 note 一律受審，不論它有沒有 disposition 區塊。
 
 現行 manifest 在變更後**未經修改即通過**：這道閘拒絕的是本來就不該合法的形狀，不是 `NET-002` 那兩筆帶有工程裁決紀錄的處置。
 
@@ -155,12 +156,10 @@ merge queue 批次**不是** `ODP-SA-06` 的集合型需求成員。manifest 的
 
 ```bash
 # 全部在 python 3.12 下執行（cp314 無 pgserver wheel）
-uv run --frozen --python 3.12 pytest delivery_toolchain/governance/test_check_requirement_members.py -q
-# 54 passed
+uv run --frozen --python 3.12 pytest -m "not requires_live_env" delivery_toolchain -q
+# 全綠；其中 test_check_requirement_members.py 55 passed
 
-uv run --frozen --python 3.12 ruff check \
-  delivery_toolchain/governance/check_requirement_members.py \
-  delivery_toolchain/governance/test_check_requirement_members.py
+uv run --frozen --python 3.12 ruff check delivery_toolchain scripts
 # All checks passed!
 
 uv run --frozen --python 3.12 python delivery_toolchain/governance/check_requirement_members.py --show-gaps

@@ -428,6 +428,22 @@ def validate_disposition_schema(
                     "absent member declares no 'disposition' block; an un-dispositioned gap is refused",
                 )
             )
+            return failures
+        # A satisfied member needs no disposition -- unless its note rules part
+        # of the requirement out, which deleting the block would otherwise be
+        # the cheapest way to hide.
+        claim = find_nonimplementation_claim(claim_text)
+        if claim:
+            failures.append(
+                Failure(
+                    requirement,
+                    member_name,
+                    f"note claims a non-implementation decision ({claim!r}) while the member carries no "
+                    "disposition at all: a note is an index entry, not a requirement amendment. Record the "
+                    "ruling as a disposition with the statutory fields signed by an authorized human, or "
+                    "drop the claim",
+                )
+            )
         return failures
 
     if not isinstance(disposition, dict):
@@ -763,8 +779,10 @@ def check(
                     if problem:
                         failures.append(Failure(requirement, name, problem))
 
-                if disposition is not None:
-                    disp_failures = validate_disposition_schema(
+                # Called even when the block is absent: a satisfied member may
+                # legitimately omit it, but its note is still judged.
+                failures.extend(
+                    validate_disposition_schema(
                         requirement,
                         name,
                         status,
@@ -773,7 +791,8 @@ def check(
                         repo_root=repo_root,
                         claim_text=member.get("note", ""),
                     )
-                    failures.extend(disp_failures)
+                )
+                if disposition is not None:
                     disp_state = disposition.get("state", "VERIFIED")
                     if disp_state in tally["dispositions"]:
                         tally["dispositions"][disp_state] += 1

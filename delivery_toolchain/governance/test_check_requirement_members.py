@@ -1326,6 +1326,31 @@ class TestANoteIsNotAnAmendment:
         failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
         assert failures == []
 
+    def test_deleting_the_disposition_block_does_not_hide_the_claim(self, tmp_path: Path) -> None:
+        """A satisfied member needs no disposition, so dropping the block is the
+        cheapest way to carry a ruling with nothing to validate."""
+        root = _repo(tmp_path)
+        manifest = _manifest(
+            tmp_path,
+            {
+                "requirements": [
+                    {
+                        "id": "R-1",
+                        "members": [
+                            {
+                                "name": "A",
+                                "status": "satisfied",
+                                "evidence": "pkg/mod.py::Thing",
+                                "note": "The count cap is in. DECIDED 2026-09-02: the rest is not pursued.",
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+        failures, _ = check(root, manifest, reference_date=date(2026, 9, 3))
+        assert any("not a requirement amendment" in f.problem for f in failures)
+
     def test_the_claim_detector_reads_ruling_and_absence_apart(self) -> None:
         rulings = [
             "DECIDED 2026-09-02: not modelled, and not scheduled.",
