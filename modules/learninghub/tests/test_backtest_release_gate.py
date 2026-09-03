@@ -1,22 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import UTC, datetime
-from pathlib import Path
 import tempfile
+from dataclasses import replace
+from pathlib import Path
+
 import pytest
 
 from models.shared_ml import (
     BacktestReceipt,
-    MetricThreshold,
     ModelAlias,
     ModelCardApproval,
-    ModelRiskLevel,
-    ModelStage,
-    ModelVersion,
-    ValidationRun,
     ValidationStatus,
-    evaluate_backtest_run,
 )
 from modules.learninghub import (
     InMemoryLearningHubRepository,
@@ -27,7 +21,6 @@ from modules.learninghub import (
 )
 from shared.audit import InMemoryAuditLog
 from shared.governance import (
-    DecisionPolicy,
     default_model_performance_drift_policy,
 )
 from shared.infrastructure.persistence import (
@@ -38,8 +31,6 @@ from shared.infrastructure.persistence import (
 from tests.integration._learninghub_fixtures import (
     DEFAULT_MODEL_NAME,
     dataset_rows,
-    model_card as fixture_model_card,
-    model_version as fixture_model_version,
     prepare_candidate,
 )
 
