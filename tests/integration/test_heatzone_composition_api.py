@@ -379,11 +379,10 @@ def test_heatzone_merge_split_evaluate_fails_closed_on_invalid_policy() -> None:
 
 def test_heatzone_sql_policy_version_resolution_and_durable_proposal_uuid_flow(tmp_path) -> None:
     import uuid
-    from datetime import date
-    from shared.governance import DecisionPolicy
+
+    from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
     from shared.infrastructure.persistence.document_store import SqliteDocumentStore
     from shared.infrastructure.persistence.engine import SqliteEngine
-    from shared.infrastructure.persistence.decision_policy import SqlDecisionPolicyRepository
     from shared.infrastructure.persistence.repositories import DurableHeatZoneCompositionRepository
 
     db_path = tmp_path / "sql_test.sqlite3"
