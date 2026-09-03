@@ -10,7 +10,7 @@ Implements:
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -381,7 +381,7 @@ def _compute_activity_correlation(c1: CandidateCellFeature, c2: CandidateCellFea
     
     mean1 = sum(v1) / len(v1)
     mean2 = sum(v2) / len(v2)
-    num = sum((x - mean1) * (y - mean2) for x, y in zip(v1, v2))
+    num = sum((x - mean1) * (y - mean2) for x, y in zip(v1, v2, strict=True))
     den1 = math.sqrt(sum((x - mean1) ** 2 for x in v1))
     den2 = math.sqrt(sum((y - mean2) ** 2 for y in v2))
     if den1 == 0 or den2 == 0:

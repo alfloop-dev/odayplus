@@ -19,9 +19,6 @@ from modules.heatzone.application.merge_split_engine import (
 from modules.heatzone.domain.composition import (
     CompositionKind,
     CompositionValidationError,
-    HeatZoneCompositionRecord,
-    ZoneLineage,
-    generate_merged_zone_id,
 )
 from modules.heatzone.infrastructure import (
     HeatZoneCompositionRepository,

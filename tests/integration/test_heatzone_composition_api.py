@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
@@ -10,9 +9,8 @@ from modules.heatzone.domain.composition import (
     CompositionKind,
     HeatZoneCompositionRecord,
 )
-from shared.auth import Role
 from shared.infrastructure.persistence import build_persistence
-from tests.integration._authz import HEATZONE_HEADERS, auth_headers
+from tests.integration._authz import HEATZONE_HEADERS
 
 TENANT_ID = "tenant-a"
 

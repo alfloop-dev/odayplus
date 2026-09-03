@@ -1,9 +1,9 @@
 from modules.heatzone.domain.composition import (
     COMPOSITION_MODEL_VERSION,
+    ZONE_ID_REGEX,
     CompositionKind,
     CompositionValidationError,
     HeatZoneCompositionRecord,
-    ZONE_ID_REGEX,
     ZoneLineage,
     generate_merged_zone_id,
     validate_composition_record,

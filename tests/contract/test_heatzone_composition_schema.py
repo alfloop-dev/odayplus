@@ -26,7 +26,7 @@ CELL_1 = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 CELL_2 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 CELL_3 = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
-BASELINE_STUB = f"""
+BASELINE_STUB = """
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE SCHEMA IF NOT EXISTS core;
 CREATE SCHEMA IF NOT EXISTS geo;

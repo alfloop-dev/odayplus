@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import uuid4
 
 import pytest
 
 from modules.heatzone.application.merge_split_engine import (
     CandidateCellFeature,
-    MergeSplitProposal,
     MergeSplitReadinessInput,
     check_readiness_gates,
     evaluate_merge_split,
@@ -18,15 +16,12 @@ from modules.heatzone.domain.composition import (
     CompositionKind,
     CompositionValidationError,
     HeatZoneCompositionRecord,
-    ZoneLineage,
     generate_merged_zone_id,
-    validate_composition_record,
 )
 from modules.heatzone.infrastructure.composition_repository import (
     InMemoryHeatZoneCompositionRepository,
 )
 from shared.governance import (
-    DecisionPolicy,
     default_heatzone_merge_policy,
 )
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
