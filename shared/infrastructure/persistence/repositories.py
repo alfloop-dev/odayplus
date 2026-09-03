@@ -9,6 +9,7 @@ application tests stay compatible. State lives in ``durable_documents`` via
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -1399,6 +1400,24 @@ class DurableManualCorrectionRepository:
             occurred_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
         old_val = json.loads(row["old_value_json"]) if row["old_value_json"] else None
         new_val = json.loads(row["new_value_json"]) if row["new_value_json"] else None
+        decision_card_json = row["decision_card_json"] or ""
+        card_hash = ""
+        if decision_card_json:
+            try:
+                card_data = json.loads(decision_card_json)
+                if isinstance(card_data, dict) and "card_hash" in card_data:
+                    card_hash = str(card_data["card_hash"])
+                elif isinstance(card_data, dict):
+                    card_data_clean = dict(card_data)
+                    card_data_clean.pop("card_hash", None)
+                    encoded = json.dumps(
+                        card_data_clean, sort_keys=True, separators=(",", ":"), default=str
+                    )
+                    card_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                else:
+                    card_hash = hashlib.sha256(decision_card_json.encode("utf-8")).hexdigest()
+            except Exception:
+                card_hash = hashlib.sha256(decision_card_json.encode("utf-8")).hexdigest()
         return ManualCorrection(
             correction_id=row["correction_id"],
             entity_type=row["entity_type"],
@@ -1414,7 +1433,7 @@ class DurableManualCorrectionRepository:
             applied_revision=int(row["applied_revision"]),
             status=row["status"],
             correlation_id=row["correlation_id"] or "",
-            decision_card_hash=row["decision_card_json"] or "",
+            decision_card_hash=card_hash,
             audit_event_id=row["audit_event_id"] or "",
         )
 
@@ -1470,7 +1489,7 @@ class InMemoryAddressLocationRepository:
         if existing is None:
             raise KeyError(f"AddressLocation {address_id} not found")
 
-        if existing.tenant_id and tenant_id and existing.tenant_id != tenant_id:
+        if existing.tenant_id and existing.tenant_id != tenant_id:
             raise PermissionError("TENANT_SCOPE_DENIED")
 
         if expected_revision is not None and existing.revision != expected_revision:
@@ -1636,7 +1655,7 @@ class InMemoryAddressLocationRepository:
         if existing is None:
             raise KeyError(f"AddressLocation {address_id} not found")
 
-        if existing.tenant_id and tenant_id and existing.tenant_id != tenant_id:
+        if existing.tenant_id and existing.tenant_id != tenant_id:
             raise PermissionError("TENANT_SCOPE_DENIED")
 
         if expected_revision is not None and existing.revision != expected_revision:
@@ -1649,9 +1668,25 @@ class InMemoryAddressLocationRepository:
         if correction is None or correction.entity_id != address_id:
             raise KeyError(f"Correction {correction_id} not found for address {address_id}")
 
+        if correction.tenant_id and correction.tenant_id != tenant_id:
+            raise PermissionError("TENANT_SCOPE_DENIED")
+
         if correction.status != "applied":
             raise ValueError(
                 f"Correction {correction_id} is already in status {correction.status}"
+            )
+
+        all_corrections = repo.list_corrections(
+            entity_type="address_location", entity_id=address_id
+        )
+        applied_corrections = [c for c in all_corrections if c.status == "applied"]
+        if not applied_corrections:
+            raise ValueError(f"No applied corrections found for address {address_id}")
+
+        latest_applied = max(applied_corrections, key=lambda c: c.applied_revision)
+        if correction.correction_id != latest_applied.correction_id:
+            raise ValueError(
+                f"ROLLBACK_ORDER_VIOLATION: Only latest applied correction '{latest_applied.correction_id}' (revision {latest_applied.applied_revision}) can be rolled back; '{correction_id}' is not top-of-stack."
             )
 
         old_val = correction.old_value or {}
@@ -1916,7 +1951,7 @@ class DurableAddressLocationRepository:
             if existing is None:
                 raise KeyError(f"AddressLocation {address_id} not found")
 
-            if existing.tenant_id and tenant_id and existing.tenant_id != tenant_id:
+            if existing.tenant_id and existing.tenant_id != tenant_id:
                 raise PermissionError("TENANT_SCOPE_DENIED")
 
             if expected_revision is not None and existing.revision != expected_revision:
@@ -2084,7 +2119,7 @@ class DurableAddressLocationRepository:
             if existing is None:
                 raise KeyError(f"AddressLocation {address_id} not found")
 
-            if existing.tenant_id and tenant_id and existing.tenant_id != tenant_id:
+            if existing.tenant_id and existing.tenant_id != tenant_id:
                 raise PermissionError("TENANT_SCOPE_DENIED")
 
             if expected_revision is not None and existing.revision != expected_revision:
@@ -2097,9 +2132,25 @@ class DurableAddressLocationRepository:
             if correction is None or correction.entity_id != address_id:
                 raise KeyError(f"Correction {correction_id} not found for address {address_id}")
 
+            if correction.tenant_id and correction.tenant_id != tenant_id:
+                raise PermissionError("TENANT_SCOPE_DENIED")
+
             if correction.status != "applied":
                 raise ValueError(
                     f"Correction {correction_id} is already in status {correction.status}"
+                )
+
+            all_corrections = repo.list_corrections(
+                entity_type="address_location", entity_id=address_id
+            )
+            applied_corrections = [c for c in all_corrections if c.status == "applied"]
+            if not applied_corrections:
+                raise ValueError(f"No applied corrections found for address {address_id}")
+
+            latest_applied = max(applied_corrections, key=lambda c: c.applied_revision)
+            if correction.correction_id != latest_applied.correction_id:
+                raise ValueError(
+                    f"ROLLBACK_ORDER_VIOLATION: Only latest applied correction '{latest_applied.correction_id}' (revision {latest_applied.applied_revision}) can be rolled back; '{correction_id}' is not top-of-stack."
                 )
 
             old_val = correction.old_value or {}

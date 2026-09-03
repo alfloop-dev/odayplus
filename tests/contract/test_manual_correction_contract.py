@@ -342,3 +342,129 @@ def test_rollback_compensation_and_audit(
     assert rb_event.metadata["reason"] == "Reverting incorrect GPS override back to original"
     assert rb_event.metadata["decision_card"]["outcome"] == "ROLLED_BACK"
     assert audit_log.verify_chain().ok is True
+
+
+def test_tenant_fail_closed_without_tenant_header(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    # Seed address for tenant-alpha
+    addr_id = str(uuid4())
+    address = AddressLocation(
+        address_id=addr_id,
+        raw_address="Taipei",
+        latitude=25.0,
+        longitude=121.0,
+        manual_override_flag=False,
+        tenant_id="tenant-alpha",
+        revision=1,
+    )
+    address_repo.save_address(address)
+
+    # Authenticated site_reviewer with NO tenant header
+    headers_no_tenant = {
+        "x-subject-id": "site-reviewer-no-tenant",
+        "x-roles": "site_reviewer",
+    }
+
+    # 1. Attempting correction without tenant header MUST fail closed (403 TENANT_SCOPE_DENIED)
+    corr_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={"latitude": 25.1, "longitude": 121.1, "reason": "No tenant header modification attempt"},
+        headers=headers_no_tenant,
+    )
+    assert corr_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in corr_resp.text
+
+    # 2. Reading address without tenant header MUST fail closed (403 TENANT_SCOPE_DENIED)
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=headers_no_tenant)
+    assert get_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in get_resp.text
+
+    # 3. Listing corrections without tenant header MUST fail closed (403 TENANT_SCOPE_DENIED)
+    list_resp = client.get(f"/listings/addresses/{addr_id}/corrections", headers=headers_no_tenant)
+    assert list_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in list_resp.text
+
+
+def test_top_of_stack_rollback_ordering(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    addr_id = str(uuid4())
+    address = AddressLocation(
+        address_id=addr_id,
+        raw_address="Taipei Original Road 1",
+        city="Taipei",
+        road="Original Road",
+        latitude=25.0,
+        longitude=121.0,
+        manual_override_flag=False,
+        tenant_id="tenant-alpha",
+        revision=1,
+    )
+    address_repo.save_address(address)
+
+    headers = {
+        "x-subject-id": "reviewer-1",
+        "x-roles": "site_reviewer",
+        "x-tenant-id": "tenant-alpha",
+    }
+
+    # 1. Apply correction A (road -> Road A, rev 2)
+    resp_a = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={"road": "Road A", "reason": "Updated road name to Road A"},
+        headers=headers,
+    )
+    assert resp_a.status_code == 200
+    corr_a_id = resp_a.json()["correction_id"]
+    assert resp_a.json()["address"]["revision"] == 2
+
+    # 2. Apply correction B (city -> City B, rev 3)
+    resp_b = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={"city": "City B", "reason": "Updated city name to City B"},
+        headers=headers,
+    )
+    assert resp_b.status_code == 200
+    corr_b_id = resp_b.json()["correction_id"]
+    assert resp_b.json()["address"]["revision"] == 3
+    assert resp_b.json()["address"]["road"] == "Road A"
+    assert resp_b.json()["address"]["city"] == "City B"
+
+    # 3. Attempt to rollback A while B is still active on top -> MUST FAIL (422 ROLLBACK_ORDER_VIOLATION)
+    rb_a_fail = client.post(
+        f"/listings/addresses/{addr_id}/corrections/{corr_a_id}/rollback",
+        json={"reason": "Attempting out-of-order rollback of A"},
+        headers=headers,
+    )
+    assert rb_a_fail.status_code == 422
+    assert "ROLLBACK_ORDER_VIOLATION" in rb_a_fail.text
+
+    # 4. Rollback B (top of stack) -> SUCCEEDS, leaves A intact (road="Road A", city restored to "Taipei", rev 4)
+    rb_b_ok = client.post(
+        f"/listings/addresses/{addr_id}/corrections/{corr_b_id}/rollback",
+        json={"reason": "Reverting correction B from top of stack"},
+        headers=headers,
+    )
+    assert rb_b_ok.status_code == 200
+    assert rb_b_ok.json()["status"] == "rolled_back"
+    assert rb_b_ok.json()["manual_override_flag"] is True  # A is still applied!
+    assert rb_b_ok.json()["address"]["road"] == "Road A"
+    assert rb_b_ok.json()["address"]["city"] == "Taipei"
+    assert rb_b_ok.json()["address"]["revision"] == 4
+
+    # 5. Now rollback A (now top of stack) -> SUCCEEDS, restores all to initial, manual_override_flag=False, rev 5
+    rb_a_ok = client.post(
+        f"/listings/addresses/{addr_id}/corrections/{corr_a_id}/rollback",
+        json={"reason": "Reverting correction A from top of stack"},
+        headers=headers,
+    )
+    assert rb_a_ok.status_code == 200
+    assert rb_a_ok.json()["status"] == "rolled_back"
+    assert rb_a_ok.json()["manual_override_flag"] is False
+    assert rb_a_ok.json()["address"]["road"] == "Original Road"
+    assert rb_a_ok.json()["address"]["city"] == "Taipei"
+    assert rb_a_ok.json()["address"]["revision"] == 5
+

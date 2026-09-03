@@ -738,16 +738,22 @@ else:
             if bound_address_repository is not None:
                 return bound_address_repository
             if hasattr(request, "app") and hasattr(request.app, "state"):
-                if hasattr(request.app.state, "address_location_repository") and request.app.state.address_location_repository:
+                if getattr(request.app.state, "address_location_repository", None):
                     return request.app.state.address_location_repository
+                bundle = getattr(request.app.state, "persistence_bundle", None)
+                if bundle and getattr(bundle, "address_location_repository", None):
+                    return bundle.address_location_repository
             return InMemoryAddressLocationRepository()
 
         def _correction_repo(request: Request) -> Any:
             if bound_correction_repository is not None:
                 return bound_correction_repository
             if hasattr(request, "app") and hasattr(request.app, "state"):
-                if hasattr(request.app.state, "manual_correction_repository") and request.app.state.manual_correction_repository:
+                if getattr(request.app.state, "manual_correction_repository", None):
                     return request.app.state.manual_correction_repository
+                bundle = getattr(request.app.state, "persistence_bundle", None)
+                if bundle and getattr(bundle, "manual_correction_repository", None):
+                    return bundle.manual_correction_repository
             return InMemoryManualCorrectionRepository()
 
         router = APIRouter(prefix="/listings", tags=["listings"])
@@ -1056,7 +1062,6 @@ else:
 
             if (
                 address.tenant_id
-                and principal.tenant_id
                 and address.tenant_id != principal.tenant_id
                 and Role.PLATFORM_ADMIN not in principal.roles
             ):
@@ -1106,7 +1111,6 @@ else:
 
             if (
                 address.tenant_id
-                and principal.tenant_id
                 and address.tenant_id != principal.tenant_id
                 and Role.PLATFORM_ADMIN not in principal.roles
             ):

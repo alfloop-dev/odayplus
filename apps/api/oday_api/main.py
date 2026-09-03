@@ -126,6 +126,8 @@ else:
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
         operator_live_repository: Any = None,
+        address_location_repository: Any = None,
+        manual_correction_repository: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
@@ -1149,6 +1151,12 @@ else:
             store=bundle.sitescore_decision_store,
         )
         listing_repository = bundle.listing_repository
+        address_location_repo = (
+            address_location_repository or getattr(bundle, "address_location_repository", None)
+        )
+        manual_correction_repo = (
+            manual_correction_repository or getattr(bundle, "manual_correction_repository", None)
+        )
         adlift_repo = adlift_repository or bundle.adlift_repository
         store_ops_repo = store_ops_repository or bundle.store_ops_repository
         label_registry = intervention_label_registry or bundle.intervention_label_registry
@@ -1328,7 +1336,13 @@ else:
             ),
         )
         mount_versioned(
-            api, create_listings_router(audit_log=audit_log, repository=listing_repository)
+            api,
+            create_listings_router(
+                audit_log=audit_log,
+                repository=listing_repository,
+                address_repository=address_location_repo,
+                correction_repository=manual_correction_repo,
+            ),
         )
         mount_versioned(
             api,
@@ -1563,6 +1577,8 @@ else:
         api.state.sitescore_workflow = decision_workflow
         api.state.sitescore_realization_hook = realization_hook
         api.state.listing_repository = listing_repository
+        api.state.address_location_repository = address_location_repo
+        api.state.manual_correction_repository = manual_correction_repo
         api.state.adlift_repository = adlift_repo
         api.state.store_ops_repository = store_ops_repo
         api.state.intervention_workflow = interventions_workflow

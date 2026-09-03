@@ -7,12 +7,17 @@ Tests:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from uuid import uuid4
 
+from starlette.testclient import TestClient
+
+from apps.api.oday_api.main import create_app
 from shared.domain.models import AddressLocation
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
 from shared.infrastructure.persistence.engine import SqliteEngine
+from shared.infrastructure.persistence.factory import build_persistence
 from shared.infrastructure.persistence.repositories import (
     DurableAddressLocationRepository,
     DurableManualCorrectionRepository,
@@ -144,6 +149,7 @@ def test_sqlite_durable_manual_correction_and_restart_survival(tmp_path: Path) -
     final_corrections = addr_repo3.get_corrections(addr_id, correction_repo=corr_repo3)
     assert len(final_corrections) == 1
     assert final_corrections[0].status == "rolled_back"
+    assert re.match(r"^[a-f0-9]{64}$", final_corrections[0].decision_card_hash)
 
     # Verify audit hash chain verification on all logged events across restarts
     assert audit_log3.verify_chain().ok is True
@@ -151,6 +157,156 @@ def test_sqlite_durable_manual_correction_and_restart_survival(tmp_path: Path) -
     assert len(events) == 2
     assert events[0].action == "manual_override"
     assert events[1].action == "rollback_manual_override"
+
+
+def test_production_app_entry_manual_correction_wiring(tmp_path: Path) -> None:
+    """Acceptance: create_app wiring properly routes to persistence bundle repositories."""
+    # 1. Test with in-memory persistence bundle
+    bundle_mem = build_persistence(mode="memory")
+    app_mem = create_app(persistence=bundle_mem)
+    client_mem = TestClient(app_mem)
+
+    addr_id = str(uuid4())
+    addr = AddressLocation(
+        address_id=addr_id,
+        raw_address="Taipei 101 Tower",
+        latitude=25.0339,
+        longitude=121.5645,
+        manual_override_flag=False,
+        tenant_id="tenant-prod-entry",
+        revision=1,
+    )
+    bundle_mem.address_location_repository.save_address(addr)
+
+    headers = {
+        "x-subject-id": "site-reviewer-prod",
+        "x-roles": "site_reviewer",
+        "x-tenant-id": "tenant-prod-entry",
+    }
+    payload = {
+        "latitude": 25.0340,
+        "longitude": 121.5646,
+        "reason": "Production entry route check for coordinate update",
+    }
+
+    resp = client_mem.post(f"/api/v1/listings/addresses/{addr_id}/corrections", json=payload, headers=headers)
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["manual_override_flag"] is True
+    assert data["address"]["revision"] == 2
+
+    # Verify state was mutated in the injected bundle, not a forgotten in-memory copy
+    bundle_addr = bundle_mem.address_location_repository.get_address(addr_id)
+    assert bundle_addr is not None
+    assert bundle_addr.manual_override_flag is True
+    assert bundle_addr.revision == 2
+    assert bundle_addr.latitude == 25.0340
+
+    bundle_corrs = bundle_mem.manual_correction_repository.list_corrections(entity_id=addr_id)
+    assert len(bundle_corrs) == 1
+    assert bundle_corrs[0].status == "applied"
+
+
+def test_durable_sqlite_app_entry_and_multi_rollback_lifecycle(tmp_path: Path) -> None:
+    """Acceptance: create_app with durable SQLite persistence survives restart and respects top-of-stack."""
+    db_file = tmp_path / "app_durable.sqlite3"
+    bundle1 = build_persistence(mode="durable", db_path=db_file)
+    app1 = create_app(persistence=bundle1)
+    client1 = TestClient(app1)
+
+    addr_id = str(uuid4())
+    addr = AddressLocation(
+        address_id=addr_id,
+        raw_address="Durable Tower",
+        city="Taipei",
+        road="Xinyi Rd",
+        latitude=25.0300,
+        longitude=121.5600,
+        manual_override_flag=False,
+        tenant_id="tenant-durable-e2e",
+        revision=1,
+    )
+    bundle1.address_location_repository.save_address(addr)
+
+    headers = {
+        "x-subject-id": "reviewer-e2e",
+        "x-roles": "site_reviewer",
+        "x-tenant-id": "tenant-durable-e2e",
+    }
+
+    # Step 1: Apply correction A (road -> Xinyi Rd Sec 5, rev 2)
+    resp_a = client1.post(
+        f"/api/v1/listings/addresses/{addr_id}/corrections",
+        json={"road": "Xinyi Rd Sec 5", "reason": "Accurate road section specified"},
+        headers=headers,
+    )
+    assert resp_a.status_code == 200
+    corr_a_id = resp_a.json()["correction_id"]
+    assert resp_a.json()["address"]["revision"] == 2
+
+    # Step 2: Apply correction B (latitude -> 25.0350, rev 3)
+    resp_b = client1.post(
+        f"/api/v1/listings/addresses/{addr_id}/corrections",
+        json={"latitude": 25.0350, "reason": "High-accuracy GPS fix at lobby"},
+        headers=headers,
+    )
+    assert resp_b.status_code == 200
+    corr_b_id = resp_b.json()["correction_id"]
+    assert resp_b.json()["address"]["revision"] == 3
+
+    # Step 3: Simulate restart with new app and bundle against same DB
+    bundle2 = build_persistence(mode="durable", db_path=db_file)
+    app2 = create_app(persistence=bundle2)
+    client2 = TestClient(app2)
+
+    # Readback address and corrections
+    get_resp = client2.get(f"/api/v1/listings/addresses/{addr_id}", headers=headers)
+    assert get_resp.status_code == 200
+    assert get_resp.json()["revision"] == 3
+    assert get_resp.json()["manual_override_flag"] is True
+    assert get_resp.json()["road"] == "Xinyi Rd Sec 5"
+    assert get_resp.json()["latitude"] == 25.0350
+
+    list_resp = client2.get(f"/api/v1/listings/addresses/{addr_id}/corrections", headers=headers)
+    assert list_resp.status_code == 200
+    corrs = list_resp.json()["corrections"]
+    assert len(corrs) == 2
+    for c in corrs:
+        assert re.match(r"^[a-f0-9]{64}$", c["decision_card_hash"])
+
+    # Step 4: Out-of-order rollback of A must fail with 422
+    rb_a_fail = client2.post(
+        f"/api/v1/listings/addresses/{addr_id}/corrections/{corr_a_id}/rollback",
+        json={"reason": "Attempting invalid non-top rollback"},
+        headers=headers,
+    )
+    assert rb_a_fail.status_code == 422
+    assert "ROLLBACK_ORDER_VIOLATION" in rb_a_fail.text
+
+    # Step 5: Rollback B (top of stack) -> rev 4, leaves A intact
+    rb_b_ok = client2.post(
+        f"/api/v1/listings/addresses/{addr_id}/corrections/{corr_b_id}/rollback",
+        json={"reason": "Reverting GPS override B"},
+        headers=headers,
+    )
+    assert rb_b_ok.status_code == 200
+    assert rb_b_ok.json()["status"] == "rolled_back"
+    assert rb_b_ok.json()["manual_override_flag"] is True
+    assert rb_b_ok.json()["address"]["road"] == "Xinyi Rd Sec 5"
+    assert rb_b_ok.json()["address"]["latitude"] == 25.0300
+    assert rb_b_ok.json()["address"]["revision"] == 4
+
+    # Step 6: Rollback A (now top of stack) -> rev 5, restores initial state
+    rb_a_ok = client2.post(
+        f"/api/v1/listings/addresses/{addr_id}/corrections/{corr_a_id}/rollback",
+        json={"reason": "Reverting road section override A"},
+        headers=headers,
+    )
+    assert rb_a_ok.status_code == 200
+    assert rb_a_ok.json()["status"] == "rolled_back"
+    assert rb_a_ok.json()["manual_override_flag"] is False
+    assert rb_a_ok.json()["address"]["road"] == "Xinyi Rd"
+    assert rb_a_ok.json()["address"]["revision"] == 5
 
 
 def test_migration_0014_sql_and_alembic_structure() -> None:
