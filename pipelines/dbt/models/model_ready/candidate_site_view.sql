@@ -10,7 +10,11 @@ select
         when listings.rent_amount > 0 then 0.8
         else 0.0
     end as data_quality_score,
-    least(listings.confidence, address_locations.geocode_confidence) as confidence,
+    case
+        when listings.confidence is not null and address_locations.geocode_confidence is not null
+            then least(listings.confidence, address_locations.geocode_confidence)
+        else null
+    end as confidence,
     listings.rent_amount > 0
       and candidate_sites.created_at <= {{ var('feature_snapshot_time', 'current_timestamp') }}::timestamptz as is_training_eligible,
     listings.rent_amount > 0 as is_scoring_eligible,

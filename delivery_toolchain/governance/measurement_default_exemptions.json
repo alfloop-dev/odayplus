@@ -90,34 +90,6 @@
       "expires": "2026-12-31"
     },
     {
-      "field": "pipelines/dbt/models/model_ready/candidate_site_view.sql::listings.confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "coalesce(listings.confidence, 1.0) turns a listing whose provider gave no confidence into a perfectly confident row before Python ever runs. least() then takes the minimum of two coalesced values, so a missing figure cannot lower the result.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/candidate_site_view.sql::address_locations.geocode_confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "The geocode half of the same least(). address_locations.geocode_confidence is a nullable column -- the schema says the figure can be absent, and this coalesce is what discards that statement.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/geo_grid_view.sql::poi_counts.poi_confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "avg(pois.confidence) over a cell with no POI rows is null, and this coalesce reads that as perfect. Note the ordering constraint with batch 3: the source column pois.confidence has its own DEFAULT 1.00 exemption, so fixing this view alone would surface no nulls to coalesce.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "pipelines/dbt/models/model_ready/geo_grid_view.sql::competitor_counts.competitor_confidence",
-      "layer": "sql",
-      "owner": "Codex2",
-      "reason": "Same shape on the competitor half, and it feeds the competition gap term of the heat zone score.",
-      "expires": "2026-12-31"
-    },
-    {
       "field": "pipelines/dbt/models/model_ready/brand_transfer_view.sql::<select>.data_quality_score",
       "layer": "sql",
       "owner": "Codex2",

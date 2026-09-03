@@ -818,5 +818,3 @@ models:
         description: Benchmark constant match similarity score (0.92).
         tests:
           - not_null
-
-
