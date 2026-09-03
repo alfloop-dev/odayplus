@@ -409,8 +409,8 @@ export interface NetworkPlan {
   objective_value: number;
   solver_status: string;
   constraint_summary_json: Record<string, any>;
-  modelled_constraint_classes?: ConstraintClass[];
-  unmodelled_constraint_classes?: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
   created_at: string;
 }
 

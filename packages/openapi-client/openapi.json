@@ -1307,6 +1307,21 @@
         "title": "ConflictError",
         "type": "object"
       },
+      "ConstraintClass": {
+        "description": "The hard-constraint classes a network plan must honour (ODP-FR-NET-002).\n\nThe solver does not model all of them. That is not by itself a defect --\na plan built without a construction-capacity figure cannot honour one --\nbut reporting such a plan as simply \"feasible\" is, because \"feasible under\nthe constraints we modelled\" and \"feasible under all eight\" are different\nclaims that read identically.\n\n``NetPlanConstraints.modelled_classes`` and the matching field on the solve\nresult keep those two apart, so a reader can tell which question the answer\nis an answer to.",
+        "enum": [
+          "CAPITAL",
+          "LEASE",
+          "CONSTRUCTION",
+          "EQUIPMENT",
+          "LABOUR",
+          "COVERAGE",
+          "DILUTION",
+          "SEQUENCING"
+        ],
+        "title": "ConstraintClass",
+        "type": "string"
+      },
       "CorrectionReceipt": {
         "properties": {
           "audit_event_id": {
@@ -5092,6 +5107,328 @@
         "title": "NetworkListingMergePayload",
         "type": "object"
       },
+      "NetworkRebalanceCounts": {
+        "additionalProperties": true,
+        "properties": {
+          "pendingApprovals": {
+            "default": 0,
+            "title": "Pendingapprovals",
+            "type": "integer"
+          },
+          "stores": {
+            "default": 0,
+            "title": "Stores",
+            "type": "integer"
+          }
+        },
+        "title": "NetworkRebalanceCounts",
+        "type": "object"
+      },
+      "NetworkRebalanceMetadata": {
+        "additionalProperties": true,
+        "properties": {
+          "avm": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avm"
+          },
+          "canonicalPackage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonicalpackage"
+          },
+          "canonicalZipSha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonicalzipsha256"
+          },
+          "netPlan": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Netplan"
+          },
+          "screenLabels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Screenlabels",
+            "type": "array"
+          },
+          "serviceVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Serviceversion"
+          }
+        },
+        "title": "NetworkRebalanceMetadata",
+        "type": "object"
+      },
+      "NetworkRebalanceModels": {
+        "additionalProperties": true,
+        "properties": {
+          "avm": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avm"
+          },
+          "netPlan": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Netplan"
+          }
+        },
+        "title": "NetworkRebalanceModels",
+        "type": "object"
+      },
+      "NetworkRebalanceMutationResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "auditEvent": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auditevent"
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlationid"
+          },
+          "store": {
+            "$ref": "#/components/schemas/RebalanceStore"
+          }
+        },
+        "required": [
+          "store"
+        ],
+        "title": "NetworkRebalanceMutationResponse",
+        "type": "object"
+      },
+      "NetworkRebalanceReviewResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "approval": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval"
+          },
+          "auditEvent": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auditevent"
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlationid"
+          },
+          "store": {
+            "$ref": "#/components/schemas/RebalanceStore"
+          }
+        },
+        "required": [
+          "store"
+        ],
+        "title": "NetworkRebalanceReviewResponse",
+        "type": "object"
+      },
+      "NetworkRebalanceSnapshotResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "auditEvents": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Auditevents",
+            "type": "array"
+          },
+          "correlationId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlationid"
+          },
+          "counts": {
+            "$ref": "#/components/schemas/NetworkRebalanceCounts"
+          },
+          "governApprovals": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Governapprovals",
+            "type": "array"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkRebalanceMetadata"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata"
+          },
+          "models": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NetworkRebalanceModels"
+              },
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Models"
+          },
+          "selectedScenario": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RebalanceScenario"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectedStore": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RebalanceStore"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "selectedStoreId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selectedstoreid"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "stores": {
+            "items": {
+              "$ref": "#/components/schemas/RebalanceStore"
+            },
+            "title": "Stores",
+            "type": "array"
+          }
+        },
+        "required": [
+          "stores"
+        ],
+        "title": "NetworkRebalanceSnapshotResponse",
+        "type": "object"
+      },
       "NetworkScoringActorPayload": {
         "additionalProperties": true,
         "properties": {
@@ -6142,6 +6479,760 @@
           }
         },
         "title": "RebalanceActorPayload",
+        "type": "object"
+      },
+      "RebalanceScenario": {
+        "additionalProperties": true,
+        "properties": {
+          "actions": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actions"
+          },
+          "bindingConstraints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Bindingconstraints",
+            "type": "array"
+          },
+          "capacityDelta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capacitydelta"
+          },
+          "diagnostics": {
+            "items": {},
+            "title": "Diagnostics",
+            "type": "array"
+          },
+          "evidenceIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Evidenceids",
+            "type": "array"
+          },
+          "expectedGrossMargin": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedgrossmargin"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "inv": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inv"
+          },
+          "investmentTwd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Investmenttwd"
+          },
+          "isInfeasible": {
+            "default": false,
+            "title": "Isinfeasible",
+            "type": "boolean"
+          },
+          "isStale": {
+            "default": false,
+            "title": "Isstale",
+            "type": "boolean"
+          },
+          "isSystemRecommendation": {
+            "default": false,
+            "title": "Issystemrecommendation",
+            "type": "boolean"
+          },
+          "modelledConstraintClasses": {
+            "items": {
+              "$ref": "#/components/schemas/ConstraintClass"
+            },
+            "title": "Modelledconstraintclasses",
+            "type": "array"
+          },
+          "modelled_constraint_classes": {
+            "items": {
+              "$ref": "#/components/schemas/ConstraintClass"
+            },
+            "title": "Modelled Constraint Classes",
+            "type": "array"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "payback": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payback"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk"
+          },
+          "roi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roi"
+          },
+          "roiPct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roipct"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "selected": {
+            "default": false,
+            "title": "Selected",
+            "type": "boolean"
+          },
+          "solverStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solverstatus"
+          },
+          "solverVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Solverversion"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time"
+          },
+          "unmodelledConstraintClasses": {
+            "items": {
+              "$ref": "#/components/schemas/ConstraintClass"
+            },
+            "title": "Unmodelledconstraintclasses",
+            "type": "array"
+          },
+          "unmodelled_constraint_classes": {
+            "items": {
+              "$ref": "#/components/schemas/ConstraintClass"
+            },
+            "title": "Unmodelled Constraint Classes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "modelledConstraintClasses",
+          "unmodelledConstraintClasses",
+          "modelled_constraint_classes",
+          "unmodelled_constraint_classes"
+        ],
+        "title": "RebalanceScenario",
+        "type": "object"
+      },
+      "RebalanceStore": {
+        "additionalProperties": true,
+        "properties": {
+          "approvalStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approvalstatus"
+          },
+          "avm": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avm"
+          },
+          "avmConf": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmconf"
+          },
+          "avmEvidenceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmevidenceid"
+          },
+          "avmJob": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmjob"
+          },
+          "avmModelVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmmodelversion"
+          },
+          "avmP10": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmp10"
+          },
+          "avmP50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmp50"
+          },
+          "avmP90": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmp90"
+          },
+          "avmRequestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmrequestid"
+          },
+          "avmReserve": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmreserve"
+          },
+          "avmSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmsnapshotid"
+          },
+          "canonicalAvmCaseId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonicalavmcaseid"
+          },
+          "canonicalNetPlanScenarioIds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Canonicalnetplanscenarioids"
+          },
+          "evidence": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "executionBoundary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executionboundary"
+          },
+          "healthNote": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Healthnote"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lightHistory": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lighthistory"
+          },
+          "monthlyRevenueLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthlyrevenuelabel"
+          },
+          "monthlyRevenueTwd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Monthlyrevenuetwd"
+          },
+          "netPlanJob": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Netplanjob"
+          },
+          "netPlanModelVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Netplanmodelversion"
+          },
+          "netPlanOptionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Netplanoptionid"
+          },
+          "netPlanScenarios": {
+            "items": {
+              "$ref": "#/components/schemas/RebalanceScenario"
+            },
+            "title": "Netplanscenarios",
+            "type": "array"
+          },
+          "netPlanSnapshotId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Netplansnapshotid"
+          },
+          "ownerName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownername"
+          },
+          "ownerRoleId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ownerroleid"
+          },
+          "relatedApprovalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relatedapprovalid"
+          },
+          "relocationExecuted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relocationexecuted"
+          },
+          "runtimeState": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtimestate"
+          },
+          "selectedScenarioEvidenceId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selectedscenarioevidenceid"
+          },
+          "selectedScenarioId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selectedscenarioid"
+          },
+          "selectedScenarioOwner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selectedscenarioowner"
+          },
+          "sourceIssueId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sourceissueid"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "statusLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Statuslabel"
+          },
+          "storeId": {
+            "title": "Storeid",
+            "type": "string"
+          },
+          "storeName": {
+            "title": "Storename",
+            "type": "string"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "trend": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trend"
+          },
+          "utilizationLabel": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utilizationlabel"
+          },
+          "utilizationPct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utilizationpct"
+          }
+        },
+        "required": [
+          "id",
+          "storeId",
+          "storeName",
+          "status"
+        ],
+        "title": "RebalanceStore",
         "type": "object"
       },
       "RebalanceSubmitPayload": {
@@ -29522,9 +30613,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Network Rebalance Api V1 Operator Network Rebalance Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkRebalanceSnapshotResponse"
                 }
               }
             },
@@ -29650,9 +30739,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Get Network Rebalance Api V1 Operator Network Rebalance  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkRebalanceSnapshotResponse"
                 }
               }
             },
@@ -29744,9 +30831,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Reset Network Rebalance Api V1 Operator Network Rebalance Reset Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkRebalanceSnapshotResponse"
                 }
               }
             },
@@ -29891,9 +30976,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Complete Avm Api V1 Operator Network Rebalance Stores  Store Id  Avm Complete Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkRebalanceMutationResponse"
                 }
               }
             },
@@ -30038,9 +31121,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Request Avm Api V1 Operator Network Rebalance Stores  Store Id  Avm Request Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkRebalanceMutationResponse"
                 }
               }
             },
@@ -30185,9 +31266,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Solve Netplan Api V1 Operator Network Rebalance Stores  Store Id  Netplan Solve Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkRebalanceMutationResponse"
                 }
               }
             },
@@ -30341,9 +31420,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Select Scenario Api V1 Operator Network Rebalance Stores  Store Id  Scenarios  Scenario Id  Select Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkRebalanceMutationResponse"
                 }
               }
             },
@@ -30488,9 +31565,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Submit Review Api V1 Operator Network Rebalance Stores  Store Id  Submit Review Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/NetworkRebalanceReviewResponse"
                 }
               }
             },

@@ -271,10 +271,10 @@ export type NetPlanScenarioCardContract = {
   expectedGrossMargin: Interval;
   risk: RiskLevel;
   bindingConstraints: string[];
-  modelledConstraintClasses?: ConstraintClass[];
-  unmodelledConstraintClasses?: ConstraintClass[];
-  modelled_constraint_classes?: ConstraintClass[];
-  unmodelled_constraint_classes?: ConstraintClass[];
+  modelledConstraintClasses: ConstraintClass[];
+  unmodelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
   solverStatus: JobStatus;
   alternativePlanAvailable: boolean;
   approvalStatus: DecisionStatus;

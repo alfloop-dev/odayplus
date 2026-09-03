@@ -260,8 +260,8 @@ export type NetPlanScenarioSummary = {
   solver_version?: string;
   model_version?: string;
   correlation_id?: string;
-  modelled_constraint_classes?: ConstraintClass[];
-  unmodelled_constraint_classes?: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
   [key: string]: unknown;
 };
 
@@ -274,10 +274,10 @@ export type NetPlanScenarioDetail = {
   risk?: number;
   capacityDelta?: number;
   bindingConstraints?: string[];
-  modelledConstraintClasses?: ConstraintClass[];
-  unmodelledConstraintClasses?: ConstraintClass[];
-  modelled_constraint_classes?: ConstraintClass[];
-  unmodelled_constraint_classes?: ConstraintClass[];
+  modelledConstraintClasses: ConstraintClass[];
+  unmodelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
   solverStatus?: string;
   solverVersion?: string;
   isSystemRecommendation?: boolean;

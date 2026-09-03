@@ -461,3 +461,199 @@ class TestNetPlanDisclosureTransport:
         }
         with pytest.raises(AssertionError, match="overlap between modelled and unmodelled"):
             _validate_netplan_scenario_disclosure_contract(corrupted_5)
+
+    def test_solve_netplan_projection_fails_closed_when_solve_result_missing_or_none_classes(self) -> None:
+        """NetworkRebalanceService.solve_netplan must fail closed if solver result lacks constraint classes."""
+        from unittest.mock import MagicMock, patch
+        from modules.avm.infrastructure.repositories import InMemoryAVMRepository
+        from modules.avm.domain.valuation import ValuationCase, ValuationInput
+
+        avm_repo = InMemoryAVMRepository()
+        val_input = ValuationInput(
+            store_id="store-1",
+            gm_ttm=100000.0,
+            forecast_gm_next_12m=120000.0,
+            asset_book_value=500000.0,
+            equipment_fair_value=300000.0,
+        )
+        case = ValuationCase.create(
+            val_input,
+            created_by="test-op",
+            correlation_id="corr-avm-001",
+        )
+        avm_repo.save_case(case)
+
+        netplan_repo = InMemoryNetPlanRepository()
+        scenario = _build_test_scenario("sc-failclosed-001")
+        netplan_repo.save_scenario(scenario)
+
+        service = NetworkRebalanceService(
+            avm_repository=avm_repo,
+            netplan_repository=netplan_repo,
+            tenant_id="tenant-test",
+            require_canonical=True,
+        )
+        store = service._store("store-1")
+        store["status"] = "avmready"
+
+        # 1. Missing modelled_constraint_classes in result_payload
+        mock_solve = MagicMock()
+        mock_solve.is_stale.return_value = False
+        mock_solve.solved_at.isoformat.return_value = "2026-09-03T12:00:00Z"
+        mock_solve.result.to_dict.return_value = {
+            "solver_status": "optimal",
+            "solver_version": "netplan-v1",
+            "objective_value": 100.0,
+            "expected_gross_margin": 100.0,
+            "budget_usage": 50.0,
+            "average_risk": 0.1,
+            "capacity_delta": 1,
+            "selected_actions": [],
+            "binding_constraints": ["max_budget"],
+            "unmodelled_constraint_classes": ["LEASE", "SEQUENCING"],
+            # modelled_constraint_classes omitted
+        }
+
+        with patch("modules.opsboard.application.network_rebalance.NetPlanService") as mock_netplan_service_cls:
+            mock_netplan_service_cls.return_value.solve.return_value = mock_solve
+            with pytest.raises(ValueError, match="missing 'modelled_constraint_classes'"):
+                service.solve_netplan(
+                    store_id="store-1",
+                    actor_role_id="expansionManager",
+                    actor_name="Test Actor",
+                    idempotency_key=None,
+                    correlation_id="test-corr",
+                )
+
+        # 2. None unmodelled_constraint_classes in result_payload
+        mock_solve.result.to_dict.return_value = {
+            "solver_status": "optimal",
+            "solver_version": "netplan-v1",
+            "objective_value": 100.0,
+            "expected_gross_margin": 100.0,
+            "budget_usage": 50.0,
+            "average_risk": 0.1,
+            "capacity_delta": 1,
+            "selected_actions": [],
+            "binding_constraints": ["max_budget"],
+            "modelled_constraint_classes": ["CAPITAL"],
+            "unmodelled_constraint_classes": None,
+        }
+
+        with patch("modules.opsboard.application.network_rebalance.NetPlanService") as mock_netplan_service_cls:
+            mock_netplan_service_cls.return_value.solve.return_value = mock_solve
+            with pytest.raises(ValueError, match="missing 'unmodelled_constraint_classes'"):
+                service.solve_netplan(
+                    store_id="store-1",
+                    actor_role_id="expansionManager",
+                    actor_name="Test Actor",
+                    idempotency_key=None,
+                    correlation_id="test-corr",
+                )
+
+        # 3. Alternative missing modelled_constraint_classes
+        mock_solve.result.to_dict.return_value = {
+            "solver_status": "optimal",
+            "solver_version": "netplan-v1",
+            "objective_value": 100.0,
+            "expected_gross_margin": 100.0,
+            "budget_usage": 50.0,
+            "average_risk": 0.1,
+            "capacity_delta": 1,
+            "selected_actions": [],
+            "binding_constraints": ["max_budget"],
+            "modelled_constraint_classes": ["CAPITAL"],
+            "unmodelled_constraint_classes": [
+                "LEASE",
+                "CONSTRUCTION",
+                "EQUIPMENT",
+                "LABOUR",
+                "COVERAGE",
+                "DILUTION",
+                "SEQUENCING",
+            ],
+            "alternatives": [
+                {
+                    "objective_value": 90.0,
+                    "expected_gross_margin": 90.0,
+                    "budget_usage": 40.0,
+                    "average_risk": 0.1,
+                    "capacity_delta": 1,
+                    "actions": [],
+                    "binding_constraints": ["max_budget"],
+                    # modelled_constraint_classes omitted in alternative
+                    "unmodelled_constraint_classes": ["LEASE", "SEQUENCING"],
+                }
+            ],
+        }
+
+        with patch("modules.opsboard.application.network_rebalance.NetPlanService") as mock_netplan_service_cls:
+            mock_netplan_service_cls.return_value.solve.return_value = mock_solve
+            with pytest.raises(ValueError, match="Alternative 1 missing 'modelled_constraint_classes'"):
+                service.solve_netplan(
+                    store_id="store-1",
+                    actor_role_id="expansionManager",
+                    actor_name="Test Actor",
+                    idempotency_key=None,
+                    correlation_id="test-corr",
+                )
+
+    def test_openapi_schema_and_generated_types_contain_typed_netplan_contract(self) -> None:
+        """OpenAPI artifact and generated TypeScript types must define typed ConstraintClass and RebalanceScenario."""
+        import json
+        from pathlib import Path
+
+        repo_root = Path(__file__).resolve().parents[2]
+        openapi_path = repo_root / "packages" / "openapi-client" / "openapi.json"
+        types_path = repo_root / "packages" / "openapi-client" / "src" / "generated" / "types.ts"
+
+        assert openapi_path.exists(), "openapi.json must exist"
+        assert types_path.exists(), "types.ts must exist"
+
+        openapi_data = json.loads(openapi_path.read_text(encoding="utf-8"))
+        schemas = openapi_data.get("components", {}).get("schemas", {})
+
+        # 1. ConstraintClass schema exists and has 8 enum values
+        assert "ConstraintClass" in schemas
+        constraint_enum = schemas["ConstraintClass"].get("enum", [])
+        assert set(constraint_enum) == ALL_CONSTRAINT_CLASSES
+
+        # 2. RebalanceScenario schema exists and has required constraint class arrays
+        assert "RebalanceScenario" in schemas
+        scenario_schema = schemas["RebalanceScenario"]
+        scenario_props = scenario_schema.get("properties", {})
+        assert "modelledConstraintClasses" in scenario_props
+        assert "unmodelledConstraintClasses" in scenario_props
+        assert "modelled_constraint_classes" in scenario_props
+        assert "unmodelled_constraint_classes" in scenario_props
+
+        # Verify items ref ConstraintClass
+        modelled_items = scenario_props["modelledConstraintClasses"].get("items", {})
+        assert modelled_items.get("$ref") == "#/components/schemas/ConstraintClass"
+
+        # Verify required list includes constraint class fields
+        scenario_required = scenario_schema.get("required", [])
+        assert "modelledConstraintClasses" in scenario_required
+        assert "unmodelledConstraintClasses" in scenario_required
+        assert "modelled_constraint_classes" in scenario_required
+        assert "unmodelled_constraint_classes" in scenario_required
+
+        # 3. Verify response models are attached to operator network-rebalance routes
+        paths = openapi_data.get("paths", {})
+        get_op = paths.get("/api/v1/operator/network-rebalance", {}).get("get", {})
+        get_200 = get_op.get("responses", {}).get("200", {}).get("content", {}).get("application/json", {}).get("schema", {})
+        assert get_200.get("$ref") == "#/components/schemas/NetworkRebalanceSnapshotResponse"
+
+        solve_op = paths.get("/api/v1/operator/network-rebalance/stores/{store_id}/netplan/solve", {}).get("post", {})
+        solve_200 = solve_op.get("responses", {}).get("200", {}).get("content", {}).get("application/json", {}).get("schema", {})
+        assert solve_200.get("$ref") == "#/components/schemas/NetworkRebalanceMutationResponse"
+
+        # 4. Verify generated types.ts content
+        types_content = types_path.read_text(encoding="utf-8")
+        assert "export type ConstraintClass =" in types_content
+        for c in ALL_CONSTRAINT_CLASSES:
+            assert f'"{c}"' in types_content
+        assert "export type RebalanceScenario =" in types_content
+        assert "modelledConstraintClasses: (ConstraintClass)[];" in types_content or "modelledConstraintClasses: ConstraintClass[];" in types_content
+        assert "export type NetworkRebalanceSnapshotResponse =" in types_content
+        assert "export type NetworkRebalanceMutationResponse =" in types_content

@@ -363,10 +363,10 @@ export type NetPlanScenarioDetail = {
   policyVersion?: string;
   binding_constraints?: string[];
   bindingConstraints?: string[];
-  modelledConstraintClasses?: ConstraintClass[];
-  unmodelledConstraintClasses?: ConstraintClass[];
-  modelled_constraint_classes?: ConstraintClass[];
-  unmodelled_constraint_classes?: ConstraintClass[];
+  modelledConstraintClasses: ConstraintClass[];
+  unmodelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
   actions?: any[];
   selected_actions?: any[];
   dependencies?: any[];

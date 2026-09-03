@@ -596,8 +596,19 @@ class NetworkRebalanceService:
             is_stale = solve.is_stale(scenario)
             is_infeasible = result_payload.get("infeasible", False) or (result_payload.get("solver_status") == "infeasible")
             diagnostics = result_payload.get("diagnostics", [])
-            modelled_classes = list(result_payload.get("modelled_constraint_classes", []))
-            unmodelled_classes = list(result_payload.get("unmodelled_constraint_classes", []))
+            if (
+                "modelled_constraint_classes" not in result_payload
+                or result_payload["modelled_constraint_classes"] is None
+            ):
+                raise ValueError("NetPlan solve result missing 'modelled_constraint_classes'")
+            if (
+                "unmodelled_constraint_classes" not in result_payload
+                or result_payload["unmodelled_constraint_classes"] is None
+            ):
+                raise ValueError("NetPlan solve result missing 'unmodelled_constraint_classes'")
+
+            modelled_classes = list(result_payload["modelled_constraint_classes"])
+            unmodelled_classes = list(result_payload["unmodelled_constraint_classes"])
             plan_rows = [
                 {
                     "id": scenario.scenario_id,
@@ -627,12 +638,19 @@ class NetworkRebalanceService:
                 result_payload.get("alternatives", []),
                 start=1,
             ):
-                alt_modelled = list(
-                    alternative.get("modelled_constraint_classes", modelled_classes)
-                )
-                alt_unmodelled = list(
-                    alternative.get("unmodelled_constraint_classes", unmodelled_classes)
-                )
+                if (
+                    "modelled_constraint_classes" not in alternative
+                    or alternative["modelled_constraint_classes"] is None
+                ):
+                    raise ValueError(f"Alternative {index} missing 'modelled_constraint_classes'")
+                if (
+                    "unmodelled_constraint_classes" not in alternative
+                    or alternative["unmodelled_constraint_classes"] is None
+                ):
+                    raise ValueError(f"Alternative {index} missing 'unmodelled_constraint_classes'")
+
+                alt_modelled = list(alternative["modelled_constraint_classes"])
+                alt_unmodelled = list(alternative["unmodelled_constraint_classes"])
                 plan_rows.append(
                     {
                         "id": f"{scenario.scenario_id}:alternative:{index}",
