@@ -47,6 +47,8 @@ class AddressLocation:
     h3_res_9: str = ""
     h3_res_10: str = ""
     manual_override_flag: bool = False
+    tenant_id: str = ""
+    revision: int = 1
 
 
 @dataclass(frozen=True)
@@ -519,3 +521,24 @@ class DataSnapshot:
     row_count: int = 0
     quality_score: float = 1.0
     created_by_run_id: str = ""
+
+
+@dataclass(frozen=True)
+class ManualCorrection:
+    """Manual correction record with audit and rollback lineage (ODP-INT-006)."""
+    correction_id: str = field(default_factory=lambda: str(uuid4()))
+    entity_type: str = "address_location"
+    entity_id: str = ""
+    tenant_id: str = ""
+    field_name: str = ""
+    old_value: Any = None
+    new_value: Any = None
+    reason: str = ""
+    actor_id: str = ""
+    occurred_at: datetime = field(default_factory=datetime.now)
+    source_revision: int = 1
+    applied_revision: int = 2
+    status: str = "applied"  # applied / rolled_back
+    correlation_id: str = ""
+    decision_card_hash: str = ""
+    audit_event_id: str = ""

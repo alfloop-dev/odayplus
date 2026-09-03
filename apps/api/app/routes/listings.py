@@ -681,17 +681,70 @@ else:
         source_id: str | None = None
 
 
+    class AddressCorrectionPayload(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        latitude: float | None = None
+        longitude: float | None = None
+        raw_address: str | None = None
+        normalized_address: str | None = None
+        city: str | None = None
+        district: str | None = None
+        village: str | None = None
+        road: str | None = None
+        geocode_precision: str | None = None
+        geocode_confidence: float | None = None
+        reason: str = Field(..., min_length=5)
+        expected_revision: int | None = None
+        risk_acknowledged: bool = False
+        actor: str | None = None
+        actor_id: str | None = None
+        actorRoleId: str | None = None
+        actorName: str | None = None
+
+    class AddressRollbackPayload(BaseModel):
+        model_config = ConfigDict(extra="allow")
+        reason: str = Field(..., min_length=5)
+        expected_revision: int | None = None
+        actor: str | None = None
+        actor_id: str | None = None
+
     def create_listings_router(
         *,
         audit_log: InMemoryAuditLog | None = None,
         repository: Any = None,
+        address_repository: Any = None,
+        correction_repository: Any = None,
     ) -> APIRouter:
-        from apps.api.oday_api.security.dependencies import build_engine, require_permission
-        from shared.auth import Action
+        from apps.api.oday_api.security.dependencies import build_engine, principal_from_headers, require_permission
+        from shared.auth import Action, Role
+        from shared.infrastructure.persistence.repositories import (
+            InMemoryAddressLocationRepository,
+            InMemoryManualCorrectionRepository,
+            InvalidCorrectionError,
+            StaleRevisionError,
+        )
 
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
         bound_repository = repository
+        bound_address_repository = address_repository
+        bound_correction_repository = correction_repository
+
+        def _address_repo(request: Request) -> Any:
+            if bound_address_repository is not None:
+                return bound_address_repository
+            if hasattr(request, "app") and hasattr(request.app, "state"):
+                if hasattr(request.app.state, "address_location_repository") and request.app.state.address_location_repository:
+                    return request.app.state.address_location_repository
+            return InMemoryAddressLocationRepository()
+
+        def _correction_repo(request: Request) -> Any:
+            if bound_correction_repository is not None:
+                return bound_correction_repository
+            if hasattr(request, "app") and hasattr(request.app, "state"):
+                if hasattr(request.app.state, "manual_correction_repository") and request.app.state.manual_correction_repository:
+                    return request.app.state.manual_correction_repository
+            return InMemoryManualCorrectionRepository()
 
         router = APIRouter(prefix="/listings", tags=["listings"])
 
@@ -724,6 +777,366 @@ else:
             return {
                 "candidates": [
                     candidate.to_card_dict() for candidate in repository.list_candidates()
+                ]
+            }
+
+        @router.post(
+            "/addresses/{address_id}/corrections",
+            status_code=status.HTTP_200_OK,
+        )
+        def submit_address_correction(
+            address_id: str,
+            body: AddressCorrectionPayload,
+            request: Request,
+            if_match: str | None = Header(None, alias="If-Match"),
+        ) -> dict[str, Any]:
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated or not principal.subject_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required",
+                )
+            actor_id = principal.subject_id
+
+            authorized_roles = {
+                Role.SITE_REVIEWER,
+                Role.DATA_OWNER,
+                Role.EXPANSION_USER,
+                Role.OPERATIONS_MANAGER,
+                Role.PLATFORM_ADMIN,
+            }
+            if not any(r in authorized_roles for r in principal.roles):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="PERMISSION_DENIED: Role not authorized for manual corrections",
+                )
+
+            reason = (body.reason or "").strip()
+            if len(reason) < 5:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="INVALID_REASON: Reason is required and must be at least 5 characters.",
+                )
+
+            expected_revision = body.expected_revision
+            if if_match is not None and expected_revision is None:
+                cleaned_match = if_match.strip().strip('"').lstrip('W/').strip('"')
+                if cleaned_match.isdigit():
+                    expected_revision = int(cleaned_match)
+
+            addr_repo = _address_repo(request)
+            corr_repo = _correction_repo(request)
+            audit = getattr(request.app.state, "audit_log", active_audit_log) if hasattr(request, "app") and hasattr(request.app, "state") else active_audit_log
+
+            updates: dict[str, Any] = {}
+            for field_name in (
+                "latitude",
+                "longitude",
+                "raw_address",
+                "normalized_address",
+                "city",
+                "district",
+                "village",
+                "road",
+                "geocode_precision",
+                "geocode_confidence",
+            ):
+                val = getattr(body, field_name, None)
+                if val is not None:
+                    updates[field_name] = val
+
+            if not updates:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No valid fields to correct in request",
+                )
+
+            try:
+                corr_id = request.headers.get("x-correlation-id") or str(uuid4())
+                new_address, correction, decision_card = addr_repo.apply_correction(
+                    address_id,
+                    updates=updates,
+                    reason=reason,
+                    actor_id=actor_id,
+                    tenant_id=principal.tenant_id,
+                    expected_revision=expected_revision,
+                    correlation_id=corr_id,
+                    risk_acknowledged=body.risk_acknowledged,
+                    audit_log=audit,
+                    correction_repo=corr_repo,
+                )
+            except KeyError:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Address {address_id} not found",
+                )
+            except PermissionError:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Cross-tenant modification forbidden",
+                )
+            except StaleRevisionError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=str(e),
+                )
+            except InvalidCorrectionError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(e),
+                )
+
+            return {
+                "correction_id": correction.correction_id,
+                "address_id": new_address.address_id,
+                "tenant_id": new_address.tenant_id,
+                "field_name": correction.field_name,
+                "old_value": correction.old_value,
+                "new_value": correction.new_value,
+                "manual_override_flag": new_address.manual_override_flag,
+                "source_revision": correction.source_revision,
+                "applied_revision": correction.applied_revision,
+                "status": correction.status,
+                "actor_id": actor_id,
+                "reason": correction.reason,
+                "correlation_id": correction.correlation_id,
+                "audit_event_id": correction.audit_event_id,
+                "decision_card_hash": correction.decision_card_hash,
+                "decision_card": decision_card.to_dict(),
+                "address": {
+                    "address_id": new_address.address_id,
+                    "raw_address": new_address.raw_address,
+                    "normalized_address": new_address.normalized_address,
+                    "city": new_address.city,
+                    "district": new_address.district,
+                    "village": new_address.village,
+                    "road": new_address.road,
+                    "latitude": new_address.latitude,
+                    "longitude": new_address.longitude,
+                    "geocode_precision": new_address.geocode_precision,
+                    "geocode_confidence": new_address.geocode_confidence,
+                    "manual_override_flag": new_address.manual_override_flag,
+                    "tenant_id": new_address.tenant_id,
+                    "revision": new_address.revision,
+                },
+            }
+
+        @router.post(
+            "/addresses/{address_id}/corrections/{correction_id}/rollback",
+            status_code=status.HTTP_200_OK,
+        )
+        def rollback_address_correction(
+            address_id: str,
+            correction_id: str,
+            body: AddressRollbackPayload,
+            request: Request,
+            if_match: str | None = Header(None, alias="If-Match"),
+        ) -> dict[str, Any]:
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated or not principal.subject_id:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required",
+                )
+            actor_id = principal.subject_id
+
+            authorized_roles = {
+                Role.SITE_REVIEWER,
+                Role.DATA_OWNER,
+                Role.EXPANSION_USER,
+                Role.OPERATIONS_MANAGER,
+                Role.PLATFORM_ADMIN,
+            }
+            if not any(r in authorized_roles for r in principal.roles):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="PERMISSION_DENIED: Role not authorized for rollback",
+                )
+
+            reason = (body.reason or "").strip()
+            if len(reason) < 5:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="INVALID_REASON: Reason is required and must be at least 5 characters.",
+                )
+
+            expected_revision = body.expected_revision
+            if if_match is not None and expected_revision is None:
+                cleaned_match = if_match.strip().strip('"').lstrip('W/').strip('"')
+                if cleaned_match.isdigit():
+                    expected_revision = int(cleaned_match)
+
+            addr_repo = _address_repo(request)
+            corr_repo = _correction_repo(request)
+            audit = getattr(request.app.state, "audit_log", active_audit_log) if hasattr(request, "app") and hasattr(request.app, "state") else active_audit_log
+
+            try:
+                corr_id = request.headers.get("x-correlation-id") or str(uuid4())
+                restored_address, updated_correction, rollback_card = addr_repo.rollback_correction(
+                    address_id,
+                    correction_id,
+                    reason=reason,
+                    actor_id=actor_id,
+                    tenant_id=principal.tenant_id,
+                    expected_revision=expected_revision,
+                    correlation_id=corr_id,
+                    audit_log=audit,
+                    correction_repo=corr_repo,
+                )
+            except KeyError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=str(e),
+                )
+            except PermissionError:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Cross-tenant modification forbidden",
+                )
+            except StaleRevisionError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=str(e),
+                )
+            except (InvalidCorrectionError, ValueError) as e:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(e),
+                )
+
+            return {
+                "correction_id": updated_correction.correction_id,
+                "address_id": restored_address.address_id,
+                "status": updated_correction.status,
+                "manual_override_flag": restored_address.manual_override_flag,
+                "source_revision": updated_correction.source_revision,
+                "applied_revision": restored_address.revision,
+                "actor_id": actor_id,
+                "reason": reason,
+                "decision_card": rollback_card.to_dict(),
+                "address": {
+                    "address_id": restored_address.address_id,
+                    "raw_address": restored_address.raw_address,
+                    "normalized_address": restored_address.normalized_address,
+                    "city": restored_address.city,
+                    "district": restored_address.district,
+                    "village": restored_address.village,
+                    "road": restored_address.road,
+                    "latitude": restored_address.latitude,
+                    "longitude": restored_address.longitude,
+                    "geocode_precision": restored_address.geocode_precision,
+                    "geocode_confidence": restored_address.geocode_confidence,
+                    "manual_override_flag": restored_address.manual_override_flag,
+                    "tenant_id": restored_address.tenant_id,
+                    "revision": restored_address.revision,
+                },
+            }
+
+        @router.get(
+            "/addresses/{address_id}",
+        )
+        def get_address_location(address_id: str, request: Request) -> dict[str, Any]:
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required",
+                )
+            addr_repo = _address_repo(request)
+            address = addr_repo.get_address(address_id)
+            if not address:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Address {address_id} not found",
+                )
+
+            if (
+                address.tenant_id
+                and principal.tenant_id
+                and address.tenant_id != principal.tenant_id
+                and Role.PLATFORM_ADMIN not in principal.roles
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Cross-tenant access forbidden",
+                )
+
+            return {
+                "address_id": address.address_id,
+                "raw_address": address.raw_address,
+                "normalized_address": address.normalized_address,
+                "city": address.city,
+                "district": address.district,
+                "village": address.village,
+                "road": address.road,
+                "latitude": address.latitude,
+                "longitude": address.longitude,
+                "geocode_precision": address.geocode_precision,
+                "geocode_confidence": address.geocode_confidence,
+                "h3_res_8": address.h3_res_8,
+                "h3_res_9": address.h3_res_9,
+                "h3_res_10": address.h3_res_10,
+                "manual_override_flag": address.manual_override_flag,
+                "tenant_id": address.tenant_id,
+                "revision": address.revision,
+            }
+
+        @router.get(
+            "/addresses/{address_id}/corrections",
+        )
+        def list_address_corrections(address_id: str, request: Request) -> dict[str, Any]:
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required",
+                )
+            addr_repo = _address_repo(request)
+            corr_repo = _correction_repo(request)
+            address = addr_repo.get_address(address_id)
+            if not address:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Address {address_id} not found",
+                )
+
+            if (
+                address.tenant_id
+                and principal.tenant_id
+                and address.tenant_id != principal.tenant_id
+                and Role.PLATFORM_ADMIN not in principal.roles
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Cross-tenant access forbidden",
+                )
+
+            corrections = addr_repo.get_corrections(address_id, correction_repo=corr_repo)
+            return {
+                "corrections": [
+                    {
+                        "correction_id": c.correction_id,
+                        "entity_type": c.entity_type,
+                        "entity_id": c.entity_id,
+                        "tenant_id": c.tenant_id,
+                        "field_name": c.field_name,
+                        "old_value": c.old_value,
+                        "new_value": c.new_value,
+                        "reason": c.reason,
+                        "actor_id": c.actor_id,
+                        "occurred_at": (
+                            c.occurred_at.isoformat()
+                            if hasattr(c.occurred_at, "isoformat")
+                            else str(c.occurred_at)
+                        ),
+                        "source_revision": c.source_revision,
+                        "applied_revision": c.applied_revision,
+                        "status": c.status,
+                        "correlation_id": c.correlation_id,
+                        "decision_card_hash": c.decision_card_hash,
+                        "audit_event_id": c.audit_event_id,
+                    }
+                    for c in corrections
                 ]
             }
 

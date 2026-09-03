@@ -63,6 +63,7 @@ from shared.infrastructure.persistence.repositories import (
     DurableListingRepository,
     DurableMachineCycleRepository,
     DurableMachineRepository,
+    DurableManualCorrectionRepository,
     DurableNetPlanRepository,
     DurablePriceOpsRepository,
     DurableRealizedSiteStore,
@@ -74,9 +75,12 @@ from shared.infrastructure.persistence.repositories import (
     InMemoryBrandRepository,
     InMemoryMachineCycleRepository,
     InMemoryMachineRepository,
+    InMemoryManualCorrectionRepository,
     InMemoryStoreRepository,
     InMemoryTenantRepository,
     InMemoryTransactionRepository,
+    InvalidCorrectionError,
+    StaleRevisionError,
 )
 
 __all__ = [
@@ -116,6 +120,10 @@ __all__ = [
     "DurableBrandRepository",
     "InMemoryAddressLocationRepository",
     "DurableAddressLocationRepository",
+    "InMemoryManualCorrectionRepository",
+    "DurableManualCorrectionRepository",
+    "InvalidCorrectionError",
+    "StaleRevisionError",
     "InMemoryStoreRepository",
     "DurableStoreRepository",
     "InMemoryMachineRepository",
