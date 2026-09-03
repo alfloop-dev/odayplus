@@ -1192,7 +1192,22 @@ class NetworkRebalanceService:
         except NetPlanConstraintDisclosureError as exc:
             raise NetworkRebalancePolicyError(str(exc)) from exc
 
-    def _disclosure_view(self, scenario: dict[str, Any]) -> dict[str, Any]:
+    def _optional_disclosure_policy(self) -> DecisionPolicy | None:
+        """The policy if one resolves, else ``None``.
+
+        Read paths must not fail because the registry is unreachable -- the
+        snapshot is how an operator finds out a plan is blocked. The refusal
+        belongs at submission, so this returns ``None`` and `_disclosure_view`
+        renders the fail-closed classification.
+        """
+        try:
+            return self._require_disclosure_policy()
+        except NetworkRebalancePolicyError:
+            return None
+
+    def _disclosure_view(
+        self, scenario: dict[str, Any], policy: DecisionPolicy | None
+    ) -> dict[str, Any]:
         """How the submit gate would classify this scenario, for the UI to render.
 
         Computed from the same policy the gate uses so the console cannot show a
@@ -1211,9 +1226,10 @@ class NetworkRebalanceService:
                 "disclosureUndeclared": True,
             }
         try:
-            policy = self._require_disclosure_policy()
+            if policy is None:
+                raise NetPlanDisclosurePolicyError("no netplan disclosure policy resolved")
             evaluation = evaluate_disclosure(policy, unmodelled_classes=unmodelled)
-        except NetworkRebalancePolicyError:
+        except NetPlanDisclosurePolicyError:
             return {
                 "blockedConstraintClasses": list(unmodelled),
                 "acknowledgeableConstraintClasses": [],
@@ -1326,11 +1342,15 @@ class NetworkRebalanceService:
     def _view_store(self, store: dict[str, Any]) -> dict[str, Any]:
         avm = store.get("avm") or {}
         scenarios = []
+        # Resolved once per store rather than once per scenario: the registry may
+        # be a database, and the three cases of one solve are governed by the
+        # same point-in-time policy.
+        policy = self._optional_disclosure_policy() if store.get("netPlanScenarios") else None
         for scenario in store.get("netPlanScenarios", []):
             scenarios.append(
                 {
                     **_copy(scenario),
-                    **self._disclosure_view(scenario),
+                    **self._disclosure_view(scenario, policy),
                     "selected": scenario.get("id") == store.get("selectedScenarioId"),
                 }
             )
