@@ -1,6 +1,6 @@
 from pathlib import Path
 
-MIGRATION = Path("infra/db/migrations/000018_learninghub_backtest_receipts.sql")
+MIGRATION = Path("infra/db/migrations/000019_learninghub_backtest_receipts.sql")
 
 
 def test_backtest_receipt_migration_requires_replayable_lineage() -> None:

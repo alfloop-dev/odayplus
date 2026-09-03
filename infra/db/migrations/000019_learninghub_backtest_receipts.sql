@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS learning.backtest_receipts (
     requested_by                VARCHAR(100) NOT NULL DEFAULT 'system',
     audit_event_id              VARCHAR(100),
     report_artifact_uri         VARCHAR(1000),
-    report_sha256               VARCHAR(100),
+    report_sha256                VARCHAR(100),
     created_at                  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT chk_backtest_receipt_model_version CHECK (model_version <> ''),
