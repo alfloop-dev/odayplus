@@ -28,8 +28,14 @@ def test_heatzone_composition_table_schema_and_constraints() -> None:
     assert "parent_zone_id      VARCHAR(100)" in sql
     assert "decided_by          VARCHAR(255) NOT NULL" in sql
     assert "decision_policy_version_id VARCHAR(100) NOT NULL" in sql
+    assert "model_version       VARCHAR(100) NOT NULL DEFAULT 'heatzone-composition-v1'" in sql
     assert "override_reason     TEXT" in sql
     assert "reverted_at         TIMESTAMP WITH TIME ZONE" in sql
+
+    # Proposals table
+    assert "CREATE TABLE IF NOT EXISTS expansion.heatzone_proposals" in sql
+    assert "proposal_id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4()" in sql
+    assert "CONSTRAINT chk_proposal_status CHECK" in sql
 
     # Constraints
     assert "CONSTRAINT chk_composition_kind CHECK" in sql

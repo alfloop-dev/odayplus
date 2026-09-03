@@ -212,6 +212,7 @@ def test_evaluation_engine_generates_merge_and_split_proposals() -> None:
         spatial_contiguity_ratio=0.90,
         absorption_ratio_cv=0.09,
         drift_psi=0.03,
+        wasserstein_distance=0.02,
         source_snapshot_id="snap-mature-20260903",
     )
 
@@ -246,7 +247,7 @@ def test_evaluation_engine_generates_merge_and_split_proposals() -> None:
         realized_revenue=820000.0,
         adjacent_cell_ids=("cell-uuid-1",),
     )
-    # 1 heterogeneous cell with natural barrier
+    # 1 heterogeneous cell with natural barrier and empirical outcome disparity across sides
     cell_c = CandidateCellFeature(
         cell_id="cell-uuid-3",
         h3_index="8928308282fffff",
@@ -255,8 +256,15 @@ def test_evaluation_engine_generates_merge_and_split_proposals() -> None:
         admin_district="Neihu",
         population=9000.0,
         poi_count=20,
+        absorbed_demand=80.0,
+        realized_revenue=400000.0,
         has_natural_barrier=True,
         barrier_description="Keelung River & Elevated Expressway",
+        barrier_side_a_revenue=320000.0,
+        barrier_side_a_absorbed_demand=65.0,
+        barrier_side_b_revenue=80000.0,
+        barrier_side_b_absorbed_demand=15.0,
+        child_partition_cell_ids=(("cell-uuid-3-north",), ("cell-uuid-3-south",)),
     )
 
     eval_result = evaluate_merge_split(
@@ -266,7 +274,7 @@ def test_evaluation_engine_generates_merge_and_split_proposals() -> None:
     )
 
     assert eval_result.abstained is False
-    assert len(eval_result.proposals) == 2
+    assert len(eval_result.proposals) == 3  # 1 merge + 2 split child proposals
 
     # Check merge proposal
     merge_prop = next(p for p in eval_result.proposals if p.composition_kind == CompositionKind.MERGED)
@@ -276,11 +284,13 @@ def test_evaluation_engine_generates_merge_and_split_proposals() -> None:
     assert merge_prop.correlation_rho >= 0.75
     assert merge_prop.zone_id.startswith("MZ-")
 
-    # Check split proposal
-    split_prop = next(p for p in eval_result.proposals if p.composition_kind == CompositionKind.SPLIT_CHILD)
-    assert split_prop.parent_zone_id is not None
-    assert split_prop.split_density_ratio >= 2.5
-    assert "internal_natural_barrier_detected" in split_prop.reasons
+    # Check split proposals (both children)
+    split_props = [p for p in eval_result.proposals if p.composition_kind == CompositionKind.SPLIT_CHILD]
+    assert len(split_props) == 2
+    for split_prop in split_props:
+        assert split_prop.parent_zone_id is not None
+        assert split_prop.split_density_ratio >= 2.5
+        assert "internal_natural_barrier_detected" in split_prop.reasons
 
 
 def test_in_memory_composition_repository_lifecycle() -> None:
@@ -387,3 +397,4 @@ def test_durable_composition_repository_lifecycle(tmp_path) -> None:
     post_lineage = repo.get_lineage(zone_id, TENANT_ID)
     assert post_lineage is not None
     assert post_lineage.is_active is False
+

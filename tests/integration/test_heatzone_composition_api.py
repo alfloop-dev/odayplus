@@ -116,6 +116,7 @@ def test_heatzone_merge_split_evaluate_generates_proposals_when_mature() -> None
             "spatial_contiguity_ratio": 0.85,
             "absorption_ratio_cv": 0.10,
             "drift_psi": 0.05,
+            "wasserstein_distance": 0.02,
             "source_snapshot_id": "snap-mature-2026",
         },
     }
@@ -250,3 +251,128 @@ def test_heatzone_composition_override_and_rollback_flow() -> None:
     types = [e.event_type for e in events]
     assert "heatzone.composition.overridden.v1" in types
     assert "heatzone.composition.reverted.v1" in types
+
+
+def test_heatzone_merge_split_proposals_preview_approve_and_reject_lifecycle() -> None:
+    bundle = build_persistence(mode="memory")
+    client = TestClient(create_app(persistence=bundle))
+
+    payload = {
+        "cells": [
+            {
+                "cell_id": "cell-201",
+                "h3_index": "8928308280fffff",
+                "admin_city": "Taipei",
+                "admin_district": "Daan",
+                "population": 12000.0,
+                "poi_count": 45,
+                "unmet_demand": 150.0,
+                "absorbed_demand": 120.0,
+                "realized_revenue": 850000.0,
+                "adjacent_cell_ids": ["cell-202"],
+            },
+            {
+                "cell_id": "cell-202",
+                "h3_index": "8928308281fffff",
+                "admin_city": "Taipei",
+                "admin_district": "Daan",
+                "population": 11500.0,
+                "poi_count": 42,
+                "unmet_demand": 145.0,
+                "absorbed_demand": 115.0,
+                "realized_revenue": 820000.0,
+                "adjacent_cell_ids": ["cell-201"],
+            },
+        ],
+        "readiness": {
+            "observation_days": 190,
+            "mature_labels_count": 250,
+            "active_store_count": 60,
+            "adjacent_pairs_count": 35,
+            "metro_clusters_count": 2,
+            "spatial_contiguity_ratio": 0.85,
+            "absorption_ratio_cv": 0.10,
+            "drift_psi": 0.05,
+            "wasserstein_distance": 0.02,
+            "source_snapshot_id": "snap-mature-2026",
+        },
+    }
+
+    # 1. Evaluate
+    eval_res = client.post(
+        "/api/v1/heatzones/merge-split/evaluate",
+        json=payload,
+        headers=HEATZONE_HEADERS,
+    )
+    assert eval_res.status_code == 200
+    eval_body = eval_res.json()
+    assert eval_body["abstained"] is False
+    assert len(eval_body["proposals"]) >= 1
+    proposal_id = eval_body["proposals"][0]["proposal_id"]
+    zone_id = eval_body["proposals"][0]["zone_id"]
+
+    # 2. List proposals
+    list_res = client.get(
+        "/api/v1/heatzones/merge-split/proposals",
+        headers=HEATZONE_HEADERS,
+    )
+    assert list_res.status_code == 200
+    props = list_res.json()["items"]
+    assert any(p["proposal_id"] == proposal_id for p in props)
+
+    # 3. Get proposal detail
+    get_prop_res = client.get(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}",
+        headers=HEATZONE_HEADERS,
+    )
+    assert get_prop_res.status_code == 200
+    assert get_prop_res.json()["status"] == "PROPOSED"
+
+    # 4. Preview proposal
+    preview_res = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/preview",
+        headers=HEATZONE_HEADERS,
+    )
+    assert preview_res.status_code == 200
+    preview_body = preview_res.json()
+    assert preview_body["proposed_zone_id"] == zone_id
+    assert preview_body["expected_ndcg_gain"] >= 0.05
+
+    # 5. Operator approve proposal
+    approve_res = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve",
+        json={"decided_by": "operator@odayplus.com", "notes": "Approved based on empirical Ndcg gain"},
+        headers=HEATZONE_HEADERS,
+    )
+    assert approve_res.status_code == 200
+    approve_body = approve_res.json()
+    assert approve_body["proposal"]["status"] == "APPROVED"
+    assert len(approve_body["created_compositions"]) == 2
+
+    # 6. Verify active composition and lineage created
+    comp_res = client.get(
+        f"/api/v1/heatzones/zones/{zone_id}/composition",
+        headers=HEATZONE_HEADERS,
+    )
+    assert comp_res.status_code == 200
+    assert comp_res.json()["is_active"] is True
+
+
+def test_heatzone_merge_split_evaluate_fails_closed_on_invalid_policy() -> None:
+    bundle = build_persistence(mode="memory")
+    client = TestClient(create_app(persistence=bundle))
+
+    payload = {
+        "cells": [],
+        "readiness": {},
+        "policy_version_id": "non-existent-policy-version",
+    }
+
+    response = client.post(
+        "/api/v1/heatzones/merge-split/evaluate",
+        json=payload,
+        headers=HEATZONE_HEADERS,
+    )
+    assert response.status_code == 422
+    assert "not found" in response.json()["detail"]
+

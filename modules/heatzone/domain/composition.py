@@ -71,6 +71,7 @@ class HeatZoneCompositionRecord:
     decided_by: str = "system"
     decided_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     decision_policy_version_id: str = ""
+    model_version: str = COMPOSITION_MODEL_VERSION
     override_reason: str | None = None
     reverted_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -93,6 +94,7 @@ class HeatZoneCompositionRecord:
             "decided_by": self.decided_by,
             "decided_at": self.decided_at.isoformat(),
             "decision_policy_version_id": self.decision_policy_version_id,
+            "model_version": self.model_version,
             "override_reason": self.override_reason,
             "reverted_at": self.reverted_at.isoformat() if self.reverted_at else None,
             "created_at": self.created_at.isoformat(),
@@ -113,6 +115,7 @@ class HeatZoneCompositionRecord:
             decided_by=str(data.get("decided_by", "system")),
             decided_at=parse_datetime(data.get("decided_at")),
             decision_policy_version_id=str(data.get("decision_policy_version_id", "")),
+            model_version=str(data.get("model_version", COMPOSITION_MODEL_VERSION)),
             override_reason=str(data["override_reason"]) if data.get("override_reason") else None,
             reverted_at=parse_datetime(data["reverted_at"]) if data.get("reverted_at") else None,
             created_at=parse_datetime(data.get("created_at")),
@@ -157,6 +160,98 @@ def validate_composition_record(record: HeatZoneCompositionRecord) -> None:
             )
 
 
+class ProposalStatus(StrEnum):
+    """Lifecycle status of a merge/split proposal."""
+
+    PROPOSED = "PROPOSED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    APPLIED = "APPLIED"
+
+
+@dataclass(frozen=True)
+class MergeSplitProposalRecord:
+    """Persisted heat-zone merge/split proposal for Operator preview and approval."""
+
+    proposal_id: str
+    zone_id: str
+    tenant_id: str
+    composition_kind: CompositionKind
+    member_cell_ids: tuple[str, ...]
+    parent_zone_id: str | None
+    ndcg_gain: float
+    cannibalization_variance_reduction: float
+    correlation_rho: float
+    disconnect_index: float
+    confidence: float
+    model_version: str
+    policy_version_id: str
+    status: ProposalStatus = ProposalStatus.PROPOSED
+    split_density_ratio: float | None = None
+    reasons: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    rejection_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "proposal_id": self.proposal_id,
+            "zone_id": self.zone_id,
+            "tenant_id": self.tenant_id,
+            "composition_kind": self.composition_kind.value,
+            "member_cell_ids": list(self.member_cell_ids),
+            "member_count": len(self.member_cell_ids),
+            "parent_zone_id": self.parent_zone_id,
+            "ndcg_gain": self.ndcg_gain,
+            "cannibalization_variance_reduction": self.cannibalization_variance_reduction,
+            "correlation_rho": self.correlation_rho,
+            "disconnect_index": self.disconnect_index,
+            "split_density_ratio": self.split_density_ratio,
+            "confidence": self.confidence,
+            "model_version": self.model_version,
+            "policy_version_id": self.policy_version_id,
+            "status": self.status.value,
+            "reasons": list(self.reasons),
+            "warnings": list(self.warnings),
+            "created_at": self.created_at.isoformat(),
+            "approved_by": self.approved_by,
+            "approved_at": self.approved_at.isoformat() if self.approved_at else None,
+            "rejection_reason": self.rejection_reason,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> MergeSplitProposalRecord:
+        raw_kind = data.get("composition_kind", CompositionKind.MERGED)
+        kind = raw_kind if isinstance(raw_kind, CompositionKind) else CompositionKind(str(raw_kind))
+        raw_status = data.get("status", ProposalStatus.PROPOSED)
+        status = raw_status if isinstance(raw_status, ProposalStatus) else ProposalStatus(str(raw_status))
+        return cls(
+            proposal_id=str(data["proposal_id"]),
+            zone_id=str(data["zone_id"]),
+            tenant_id=str(data["tenant_id"]),
+            composition_kind=kind,
+            member_cell_ids=tuple(str(x) for x in data.get("member_cell_ids", ())),
+            parent_zone_id=str(data["parent_zone_id"]) if data.get("parent_zone_id") else None,
+            ndcg_gain=float(data.get("ndcg_gain", 0.0)),
+            cannibalization_variance_reduction=float(data.get("cannibalization_variance_reduction", 0.0)),
+            correlation_rho=float(data.get("correlation_rho", 0.0)),
+            disconnect_index=float(data.get("disconnect_index", 0.0)),
+            confidence=float(data.get("confidence", 0.0)),
+            model_version=str(data.get("model_version", COMPOSITION_MODEL_VERSION)),
+            policy_version_id=str(data.get("policy_version_id", "")),
+            status=status,
+            split_density_ratio=float(data["split_density_ratio"]) if data.get("split_density_ratio") is not None else None,
+            reasons=tuple(str(x) for x in data.get("reasons", ())),
+            warnings=tuple(str(x) for x in data.get("warnings", ())),
+            created_at=parse_datetime(data.get("created_at")),
+            approved_by=str(data["approved_by"]) if data.get("approved_by") else None,
+            approved_at=parse_datetime(data["approved_at"]) if data.get("approved_at") else None,
+            rejection_reason=str(data["rejection_reason"]) if data.get("rejection_reason") else None,
+        )
+
+
 @dataclass(frozen=True)
 class ZoneLineage:
     """Aggregated lineage and active structure of a heat zone."""
@@ -172,6 +267,7 @@ class ZoneLineage:
     override_reason: str | None
     reverted_at: datetime | None
     is_active: bool
+    model_version: str = COMPOSITION_MODEL_VERSION
     records: tuple[HeatZoneCompositionRecord, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -185,6 +281,7 @@ class ZoneLineage:
             "decided_by": self.decided_by,
             "decided_at": self.decided_at.isoformat(),
             "decision_policy_version_id": self.decision_policy_version_id,
+            "model_version": self.model_version,
             "override_reason": self.override_reason,
             "reverted_at": self.reverted_at.isoformat() if self.reverted_at else None,
             "is_active": self.is_active,
@@ -197,6 +294,8 @@ __all__ = [
     "CompositionKind",
     "CompositionValidationError",
     "HeatZoneCompositionRecord",
+    "MergeSplitProposalRecord",
+    "ProposalStatus",
     "ZONE_ID_REGEX",
     "ZoneLineage",
     "generate_merged_zone_id",

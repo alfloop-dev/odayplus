@@ -148,6 +148,9 @@ def _default_decision_policy_repository() -> InMemoryDecisionPolicyRepository:
 
     seeded_tenants = (
         "tenant-test",
+        "tenant-a",
+        "tenant-b",
+        "tenant-default",
         "11111111-1111-1111-1111-111111111111",
         "22222222-2222-2222-2222-222222222222",
         "00000000-0000-0000-0000-000000000001",
@@ -338,7 +341,7 @@ def _durable_bundle(
         intervention_label_registry=DurableLabelRegistry(store),
         ingestion_run_store=DurableIngestionRunStore(store),
         heatzone_store=DurableHeatZoneResultStore(store),
-        heatzone_composition_repository=DurableHeatZoneCompositionRepository(store),
+        heatzone_composition_repository=DurableHeatZoneCompositionRepository(engine),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),
@@ -460,7 +463,7 @@ def _postgres_bundle(
         intervention_label_registry=DurableLabelRegistry(store),
         ingestion_run_store=DurableIngestionRunStore(store),
         heatzone_store=DurableHeatZoneResultStore(store),
-        heatzone_composition_repository=DurableHeatZoneCompositionRepository(store),
+        heatzone_composition_repository=DurableHeatZoneCompositionRepository(engine),
         listing_repository=DurableListingRepository(store),
         sitescore_decision_store=DurableDecisionStore(store),
         sitescore_realized_store=DurableRealizedSiteStore(store),

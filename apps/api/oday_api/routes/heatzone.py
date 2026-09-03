@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from models.shared_ml import (
@@ -29,7 +30,6 @@ from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.governance import (
     DecisionPolicyRepository,
     InMemoryDecisionPolicyRepository,
-    default_heatzone_merge_policy,
     resolve_policy,
 )
 
@@ -65,6 +65,16 @@ else:
         cells: list[dict[str, Any]] = Field(default_factory=list)
         readiness: dict[str, Any] = Field(default_factory=dict)
         policy_version_id: str | None = None
+
+
+    class HeatZoneProposalApprovePayload(BaseModel):
+        decided_by: str = Field(min_length=1)
+        notes: str | None = None
+
+
+    class HeatZoneProposalRejectPayload(BaseModel):
+        rejected_by: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
 
 
     def create_heatzone_router(
@@ -238,16 +248,39 @@ else:
             tid = resolve_tenant_id(request)
             policy = None
             if body.policy_version_id:
-                policy = pol_repo.get_by_version(body.policy_version_id)
-            if policy is None:
+                if hasattr(pol_repo, "versions"):
+                    for v in pol_repo.versions:
+                        if v.policy_version_id == body.policy_version_id:
+                            policy = v
+                            break
+                elif hasattr(pol_repo, "get_by_version"):
+                    policy = pol_repo.get_by_version(body.policy_version_id)
+                elif hasattr(pol_repo, "find_version"):
+                    policy = pol_repo.find_version(body.policy_version_id)
+
+                if policy is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"decision policy version '{body.policy_version_id}' not found",
+                    )
+                if policy.tenant_id != tid:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"decision policy version '{body.policy_version_id}' does not belong to tenant '{tid}'",
+                    )
+            else:
                 try:
                     policy = resolve_policy(
                         pol_repo,
                         policy_kind="heatzone_merge",
                         tenant_id=tid,
+                        at=datetime.now(UTC),
                     )
-                except Exception:
-                    policy = default_heatzone_merge_policy(tid)
+                except Exception as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"failed to resolve governed heatzone_merge policy for tenant '{tid}': {exc}",
+                    ) from exc
 
             r_data = body.readiness or {}
             readiness_input = MergeSplitReadinessInput(
@@ -279,6 +312,10 @@ else:
 
             candidate_cells: list[CandidateCellFeature] = []
             for c in body.cells:
+                raw_partitions = c.get("child_partition_cell_ids", ())
+                partition_tuples = tuple(
+                    tuple(str(x) for x in part) for part in raw_partitions
+                )
                 candidate_cells.append(
                     CandidateCellFeature(
                         cell_id=str(c.get("cell_id", "")),
@@ -297,6 +334,11 @@ else:
                         has_natural_barrier=bool(c.get("has_natural_barrier", False)),
                         barrier_description=str(c.get("barrier_description", "")),
                         adjacent_cell_ids=tuple(str(x) for x in c.get("adjacent_cell_ids", [])),
+                        barrier_side_a_revenue=float(c.get("barrier_side_a_revenue", 0.0)),
+                        barrier_side_a_absorbed_demand=float(c.get("barrier_side_a_absorbed_demand", 0.0)),
+                        barrier_side_b_revenue=float(c.get("barrier_side_b_revenue", 0.0)),
+                        barrier_side_b_absorbed_demand=float(c.get("barrier_side_b_absorbed_demand", 0.0)),
+                        child_partition_cell_ids=partition_tuples,
                     )
                 )
 
@@ -305,6 +347,11 @@ else:
                 readiness_input=readiness_input,
                 policy=policy,
             )
+
+            active_comp_repo = comp_repo_for_request(request)
+            if not evaluation.abstained and active_comp_repo is not None:
+                for proposal in evaluation.proposals:
+                    active_comp_repo.save_proposal(proposal.to_record())
 
             active_audit_log.record(
                 AuditEvent(
@@ -323,6 +370,160 @@ else:
                 )
             )
             return evaluation.to_dict()
+
+        @router.get(
+            "/merge-split/proposals",
+            dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))],
+        )
+        def list_heatzone_proposals(
+            request: Request,
+            status_filter: str | None = Query(default=None, alias="status"),
+        ) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+            proposals = active_comp_repo.list_proposals(tid, status=status_filter)
+            return {
+                "items": [p.to_dict() for p in proposals],
+                "count": len(proposals),
+            }
+
+        @router.get(
+            "/merge-split/proposals/{proposal_id}",
+            dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))],
+        )
+        def get_heatzone_proposal(proposal_id: str, request: Request) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+            prop = active_comp_repo.get_proposal(proposal_id, tid)
+            if prop is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Proposal '{proposal_id}' not found for tenant '{tid}'",
+                )
+            return prop.to_dict()
+
+        @router.post(
+            "/merge-split/proposals/{proposal_id}/approve",
+            dependencies=[Depends(require_permission("heatzone", Action.OVERRIDE, engine=authz_engine))],
+        )
+        def approve_heatzone_proposal(
+            proposal_id: str,
+            body: HeatZoneProposalApprovePayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+            try:
+                updated_prop, created_records = active_comp_repo.approve_proposal(
+                    proposal_id=proposal_id,
+                    tenant_id=tid,
+                    approved_by=body.decided_by,
+                    notes=body.notes,
+                )
+            except CompositionValidationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
+            active_audit_log.record(
+                AuditEvent(
+                    event_type="heatzone.composition.proposal.approved.v1",
+                    actor=body.decided_by,
+                    action="approve",
+                    resource=f"heatzone/proposals/{proposal_id}",
+                    outcome="approved",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "proposal_id": proposal_id,
+                        "zone_id": updated_prop.zone_id,
+                        "created_count": len(created_records),
+                        "notes": body.notes,
+                    },
+                )
+            )
+            return {
+                "proposal": updated_prop.to_dict(),
+                "created_compositions": [r.to_dict() for r in created_records],
+            }
+
+        @router.post(
+            "/merge-split/proposals/{proposal_id}/reject",
+            dependencies=[Depends(require_permission("heatzone", Action.OVERRIDE, engine=authz_engine))],
+        )
+        def reject_heatzone_proposal(
+            proposal_id: str,
+            body: HeatZoneProposalRejectPayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+            try:
+                updated_prop = active_comp_repo.reject_proposal(
+                    proposal_id=proposal_id,
+                    tenant_id=tid,
+                    rejected_by=body.rejected_by,
+                    reason=body.reason,
+                )
+            except CompositionValidationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
+            active_audit_log.record(
+                AuditEvent(
+                    event_type="heatzone.composition.proposal.rejected.v1",
+                    actor=body.rejected_by,
+                    action="reject",
+                    resource=f"heatzone/proposals/{proposal_id}",
+                    outcome="rejected",
+                    correlation_id=request.state.correlation_id,
+                    metadata={
+                        "proposal_id": proposal_id,
+                        "reason": body.reason,
+                    },
+                )
+            )
+            return {
+                "proposal": updated_prop.to_dict(),
+            }
+
+        @router.post(
+            "/merge-split/proposals/{proposal_id}/preview",
+            dependencies=[Depends(require_permission("heatzone", Action.VIEW, engine=authz_engine))],
+        )
+        def preview_heatzone_proposal(
+            proposal_id: str,
+            request: Request,
+        ) -> dict[str, Any]:
+            tid = resolve_tenant_id(request)
+            active_comp_repo = comp_repo_for_request(request)
+            prop = active_comp_repo.get_proposal(proposal_id, tid)
+            if prop is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Proposal '{proposal_id}' not found for tenant '{tid}'",
+                )
+
+            current_compositions = []
+            for cell_id in prop.member_cell_ids:
+                curr = active_comp_repo.get_active_for_cell(cell_id, tid)
+                if curr is not None:
+                    current_compositions.append(curr.to_dict())
+
+            return {
+                "proposal": prop.to_dict(),
+                "current_active_compositions": current_compositions,
+                "proposed_zone_id": prop.zone_id,
+                "proposed_kind": prop.composition_kind.value,
+                "proposed_member_cells": list(prop.member_cell_ids),
+                "expected_ndcg_gain": prop.ndcg_gain,
+                "expected_cannibalization_variance_reduction": prop.cannibalization_variance_reduction,
+                "correlation_rho": prop.correlation_rho,
+                "disconnect_index": prop.disconnect_index,
+                "confidence": prop.confidence,
+            }
 
         @router.get(
             "/compositions",

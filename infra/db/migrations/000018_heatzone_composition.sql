@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS expansion.heatzone_composition (
     decided_by          VARCHAR(255) NOT NULL,   -- 'system' or operator identifier
     decided_at          TIMESTAMP WITH TIME ZONE NOT NULL,
     decision_policy_version_id VARCHAR(100) NOT NULL,
+    model_version       VARCHAR(100) NOT NULL DEFAULT 'heatzone-composition-v1',
     override_reason     TEXT,                    -- Required when decided_by <> 'system'
     reverted_at         TIMESTAMP WITH TIME ZONE,-- Revert timestamp; NULL = currently active
     created_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -73,11 +74,11 @@ BEGIN
     END IF;
     IF ROW(NEW.composition_id, NEW.zone_id, NEW.tenant_id, NEW.member_cell_id,
            NEW.composition_kind, NEW.parent_zone_id, NEW.decided_by, NEW.decided_at,
-           NEW.decision_policy_version_id, NEW.override_reason, NEW.created_at)
+           NEW.decision_policy_version_id, NEW.model_version, NEW.override_reason, NEW.created_at)
        IS DISTINCT FROM
        ROW(OLD.composition_id, OLD.zone_id, OLD.tenant_id, OLD.member_cell_id,
            OLD.composition_kind, OLD.parent_zone_id, OLD.decided_by, OLD.decided_at,
-           OLD.decision_policy_version_id, OLD.override_reason, OLD.created_at)
+           OLD.decision_policy_version_id, OLD.model_version, OLD.override_reason, OLD.created_at)
     THEN
         RAISE EXCEPTION
             'heatzone_composition_append_only: only reverted_at may change (composition_id=%)',
@@ -91,6 +92,41 @@ DROP TRIGGER IF EXISTS trg_heatzone_composition_append_only
 CREATE TRIGGER trg_heatzone_composition_append_only
     BEFORE UPDATE OR DELETE ON expansion.heatzone_composition
     FOR EACH ROW EXECUTE FUNCTION expansion.heatzone_composition_append_only();
+
+-- Proposals table for Operator preview and approval workflow
+CREATE TABLE IF NOT EXISTS expansion.heatzone_proposals (
+    proposal_id                     UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    zone_id                         VARCHAR(100) NOT NULL,
+    tenant_id                       UUID NOT NULL REFERENCES core.tenants(tenant_id),
+    composition_kind                VARCHAR(50) NOT NULL,
+    member_cell_ids                 JSONB NOT NULL,
+    parent_zone_id                  VARCHAR(100),
+    ndcg_gain                       NUMERIC(8, 4) NOT NULL DEFAULT 0.0,
+    cannibalization_variance_reduction NUMERIC(8, 4) NOT NULL DEFAULT 0.0,
+    correlation_rho                 NUMERIC(8, 4) NOT NULL DEFAULT 0.0,
+    disconnect_index                NUMERIC(8, 4) NOT NULL DEFAULT 0.0,
+    split_density_ratio             NUMERIC(8, 2),
+    confidence                      NUMERIC(8, 4) NOT NULL DEFAULT 0.0,
+    model_version                   VARCHAR(100) NOT NULL DEFAULT 'heatzone-composition-v1',
+    policy_version_id               VARCHAR(100) NOT NULL,
+    status                          VARCHAR(50) NOT NULL DEFAULT 'PROPOSED',
+    reasons                         JSONB NOT NULL DEFAULT '[]'::jsonb,
+    warnings                        JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at                      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    approved_by                     VARCHAR(255),
+    approved_at                     TIMESTAMP WITH TIME ZONE,
+    rejection_reason                TEXT,
+
+    CONSTRAINT chk_proposal_status CHECK (
+        status IN ('PROPOSED', 'APPROVED', 'REJECTED', 'APPLIED')
+    ),
+    CONSTRAINT fk_heatzone_proposals_policy
+        FOREIGN KEY (policy_version_id, tenant_id)
+        REFERENCES workflow.decision_policies(policy_version_id, tenant_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_heatzone_proposals_tenant_status
+    ON expansion.heatzone_proposals (tenant_id, status, created_at DESC);
 
 -- Seed governing decision policy for heatzone_merge
 CREATE OR REPLACE FUNCTION workflow.seed_heatzone_merge_policy(p_tenant_id UUID)

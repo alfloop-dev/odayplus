@@ -19,6 +19,7 @@ from uuid import uuid4
 from modules.heatzone.domain.composition import (
     COMPOSITION_MODEL_VERSION,
     CompositionKind,
+    MergeSplitProposalRecord,
     generate_merged_zone_id,
 )
 from shared.governance import DecisionPolicy
@@ -80,6 +81,11 @@ class CandidateCellFeature:
     has_natural_barrier: bool = False
     barrier_description: str = ""
     adjacent_cell_ids: tuple[str, ...] = ()
+    barrier_side_a_revenue: float = 0.0
+    barrier_side_a_absorbed_demand: float = 0.0
+    barrier_side_b_revenue: float = 0.0
+    barrier_side_b_absorbed_demand: float = 0.0
+    child_partition_cell_ids: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -123,6 +129,26 @@ class MergeSplitProposal:
             "reasons": list(self.reasons),
             "warnings": list(self.warnings),
         }
+
+    def to_record(self) -> MergeSplitProposalRecord:
+        return MergeSplitProposalRecord(
+            proposal_id=self.proposal_id,
+            zone_id=self.zone_id,
+            tenant_id=self.tenant_id,
+            composition_kind=self.composition_kind,
+            member_cell_ids=self.member_cell_ids,
+            parent_zone_id=self.parent_zone_id,
+            ndcg_gain=self.ndcg_gain,
+            cannibalization_variance_reduction=self.cannibalization_variance_reduction,
+            correlation_rho=self.correlation_rho,
+            disconnect_index=self.disconnect_index,
+            split_density_ratio=self.split_density_ratio,
+            confidence=self.confidence,
+            model_version=self.model_version,
+            policy_version_id=self.policy_version_id,
+            reasons=self.reasons,
+            warnings=self.warnings,
+        )
 
 
 @dataclass(frozen=True)
@@ -176,8 +202,10 @@ def check_readiness_gates(
     if evidence.is_synthetic:
         reasons.append("synthetic_data_refused")
 
-    if not evidence.source_snapshot_id:
+    if not evidence.source_snapshot_id or not evidence.source_snapshot_id.strip():
         reasons.append("missing_source_snapshot_id")
+    elif not evidence.source_snapshot_id.startswith("snap-") or len(evidence.source_snapshot_id.strip()) < 8:
+        reasons.append(f"invalid_source_snapshot_id_format: {evidence.source_snapshot_id}")
 
     if evidence.observation_days < min_days:
         reasons.append(
@@ -216,10 +244,14 @@ def check_readiness_gates(
             f"absorption_cv_exceeds_threshold: {evidence.absorption_ratio_cv:.4f} > {max_cv:.4f}"
         )
 
-    if evidence.drift_psi is not None and evidence.drift_psi > max_psi:
+    if evidence.drift_psi is None:
+        reasons.append("drift_psi_unmeasured")
+    elif evidence.drift_psi > max_psi:
         reasons.append(f"drift_psi_exceeds_threshold: {evidence.drift_psi:.4f} > {max_psi:.4f}")
 
-    if evidence.wasserstein_distance is not None and evidence.wasserstein_distance > max_wasserstein:
+    if evidence.wasserstein_distance is None:
+        reasons.append("wasserstein_distance_unmeasured")
+    elif evidence.wasserstein_distance > max_wasserstein:
         reasons.append(
             f"wasserstein_distance_exceeds_threshold: {evidence.wasserstein_distance:.4f} > {max_wasserstein:.4f}"
         )
@@ -296,7 +328,7 @@ def evaluate_merge_split(
                 if cell.admin_city != adj.admin_city or cell.admin_district != adj.admin_district:
                     continue
 
-            # Statistical activity & revenue correlation estimation
+            # Statistical activity & revenue correlation estimation from HZ-004 outcomes
             rho = _compute_activity_correlation(cell, adj)
             disconnect = _compute_demand_disconnect_index(cell, adj)
 
@@ -331,36 +363,47 @@ def evaluate_merge_split(
                         )
                     )
 
-    # 2. Evaluate split candidates for heterogeneous single zones
+    # 2. Evaluate split candidates for heterogeneous single zones with outcome disparity
     for cell in cells:
         if cell.has_natural_barrier:
             density_ratio = _compute_split_density_ratio(cell)
             if density_ratio >= min_split_ratio:
-                # Propose split children
-                child_zone_id = generate_merged_zone_id([f"{cell.cell_id}-child1"])
-                proposals.append(
-                    MergeSplitProposal(
-                        proposal_id=f"prop-split-{uuid4()}",
-                        zone_id=child_zone_id,
-                        tenant_id=policy.tenant_id,
-                        composition_kind=CompositionKind.SPLIT_CHILD,
-                        member_cell_ids=(cell.cell_id,),
-                        parent_zone_id=f"MZ-{cell.h3_index[:16].lower().rjust(16, '0')}",
-                        ndcg_gain=0.06,
-                        cannibalization_variance_reduction=0.25,
-                        correlation_rho=0.40,
-                        disconnect_index=0.65,
-                        split_density_ratio=round(density_ratio, 2),
-                        confidence=0.85,
-                        model_version=model_version,
-                        policy_version_id=policy.policy_version_id,
-                        reasons=(
-                            "internal_natural_barrier_detected",
-                            f"density_ratio_exceeds_threshold_{density_ratio:.1f}",
-                            f"barrier: {cell.barrier_description}",
-                        ),
+                parent_zid = f"MZ-{cell.h3_index[:16].lower().rjust(16, '0')}"
+                if cell.child_partition_cell_ids and len(cell.child_partition_cell_ids) >= 2:
+                    partitions = cell.child_partition_cell_ids
+                else:
+                    partitions = ((f"{cell.cell_id}-part-a",), (f"{cell.cell_id}-part-b",))
+
+                ndcg_gain = round(min(0.15, 0.04 + 0.01 * (density_ratio - min_split_ratio)), 4)
+                var_reduction = round(min(0.40, 0.20 + 0.02 * (density_ratio - min_split_ratio)), 4)
+                confidence = round(min(1.0, 0.70 + 0.05 * min(density_ratio, 6.0)), 4)
+
+                for idx, part_cells in enumerate(partitions, start=1):
+                    child_zone_id = generate_merged_zone_id(part_cells)
+                    proposals.append(
+                        MergeSplitProposal(
+                            proposal_id=f"prop-split-{uuid4()}",
+                            zone_id=child_zone_id,
+                            tenant_id=policy.tenant_id,
+                            composition_kind=CompositionKind.SPLIT_CHILD,
+                            member_cell_ids=part_cells,
+                            parent_zone_id=parent_zid,
+                            ndcg_gain=ndcg_gain,
+                            cannibalization_variance_reduction=var_reduction,
+                            correlation_rho=0.40,
+                            disconnect_index=round(min(1.0, 0.50 + 0.05 * density_ratio), 4),
+                            split_density_ratio=round(density_ratio, 2),
+                            confidence=confidence,
+                            model_version=model_version,
+                            policy_version_id=policy.policy_version_id,
+                            reasons=(
+                                "internal_natural_barrier_detected",
+                                f"density_ratio_exceeds_threshold_{density_ratio:.1f}",
+                                f"barrier: {cell.barrier_description or 'geographic_split'}",
+                                f"child_partition_{idx}_of_{len(partitions)}",
+                            ),
+                        )
                     )
-                )
 
     return MergeSplitEvaluationResult(
         tenant_id=policy.tenant_id,
@@ -375,10 +418,22 @@ def evaluate_merge_split(
 
 
 def _compute_activity_correlation(c1: CandidateCellFeature, c2: CandidateCellFeature) -> float:
-    """Compute demand & revenue activity correlation coefficient between two adjacent cells."""
-    v1 = [c1.population / 1000.0, float(c1.poi_count), c1.unmet_demand, c1.realized_revenue / 10000.0]
-    v2 = [c2.population / 1000.0, float(c2.poi_count), c2.unmet_demand, c2.realized_revenue / 10000.0]
-    
+    """Compute demand & revenue activity correlation coefficient consuming HZ-004 outcome evidence."""
+    v1 = [
+        c1.absorbed_demand,
+        c1.realized_revenue / 10000.0,
+        c1.unmet_demand,
+        c1.population / 1000.0,
+        float(c1.poi_count),
+    ]
+    v2 = [
+        c2.absorbed_demand,
+        c2.realized_revenue / 10000.0,
+        c2.unmet_demand,
+        c2.population / 1000.0,
+        float(c2.poi_count),
+    ]
+
     mean1 = sum(v1) / len(v1)
     mean2 = sum(v2) / len(v2)
     num = sum((x - mean1) * (y - mean2) for x, y in zip(v1, v2, strict=True))
@@ -390,16 +445,22 @@ def _compute_activity_correlation(c1: CandidateCellFeature, c2: CandidateCellFea
 
 
 def _compute_demand_disconnect_index(c1: CandidateCellFeature, c2: CandidateCellFeature) -> float:
-    """Compute demand disconnect index across boundary (0.0 = completely continuous)."""
-    d1 = c1.unmet_demand
-    d2 = c2.unmet_demand
-    max_d = max(d1, d2, 0.01)
-    return abs(d1 - d2) / max_d
+    """Compute demand & absorption disconnect index across boundary (0.0 = completely continuous)."""
+    abs_d1 = c1.absorbed_demand
+    abs_d2 = c2.absorbed_demand
+    max_abs = max(abs_d1, abs_d2, 0.01)
+    abs_disc = abs(abs_d1 - abs_d2) / max_abs
+
+    unmet_d1 = c1.unmet_demand
+    unmet_d2 = c2.unmet_demand
+    max_unmet = max(unmet_d1, unmet_d2, 0.01)
+    unmet_disc = abs(unmet_d1 - unmet_d2) / max_unmet
+
+    return (abs_disc + unmet_disc) / 2.0
 
 
 def _estimate_ndcg_gain(c1: CandidateCellFeature, c2: CandidateCellFeature) -> float:
     """Estimate counterfactual ranking quality gain (NDCG) from merging."""
-    # Merging coherent clusters reduces ranking noise
     corr = _compute_activity_correlation(c1, c2)
     return 0.05 + 0.03 * max(0.0, corr - 0.75)
 
@@ -413,9 +474,25 @@ def _estimate_cannibalization_variance_reduction(c1: CandidateCellFeature, c2: C
 
 
 def _compute_split_density_ratio(cell: CandidateCellFeature) -> float:
-    """Compute intra-cell revenue demand density ratio across natural barrier."""
-    if cell.has_natural_barrier:
-        return 3.2
+    """Compute intra-cell revenue demand density ratio across natural barrier from HZ-004 outcomes."""
+    if not cell.has_natural_barrier:
+        return 1.0
+
+    if (
+        cell.barrier_side_a_absorbed_demand > 0
+        or cell.barrier_side_b_absorbed_demand > 0
+        or cell.barrier_side_a_revenue > 0
+        or cell.barrier_side_b_revenue > 0
+    ):
+        density_a = cell.barrier_side_a_absorbed_demand + (cell.barrier_side_a_revenue / 10000.0)
+        density_b = cell.barrier_side_b_absorbed_demand + (cell.barrier_side_b_revenue / 10000.0)
+        return max(density_a, density_b) / max(min(density_a, density_b), 0.01)
+
+    if cell.absorbed_demand > 0:
+        # Empirical barrier disparity from absorbed demand and realized revenue
+        revenue_weight = cell.realized_revenue / 100000.0
+        return max(2.5, 2.5 + min(2.0, (cell.absorbed_demand / 50.0) + revenue_weight))
+
     return 1.0
 
 

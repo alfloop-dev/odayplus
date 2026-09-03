@@ -9,6 +9,7 @@ application tests stay compatible. State lives in ``durable_documents`` via
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -37,9 +38,12 @@ from modules.forecastops.domain.forecasting import (
     InterventionHandoff,
 )
 from modules.heatzone.domain.composition import (
+    COMPOSITION_MODEL_VERSION,
     CompositionKind,
     CompositionValidationError,
     HeatZoneCompositionRecord,
+    MergeSplitProposalRecord,
+    ProposalStatus,
     ZoneLineage,
     validate_composition_record,
 )
@@ -2060,16 +2064,102 @@ class DurableHeatZoneResultStore:
 
 
 class DurableHeatZoneCompositionRepository:
-    """Durable mirror of HeatZoneCompositionRepository (ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001)."""
+    """Durable mirror of HeatZoneCompositionRepository executing direct SQL (ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001)."""
 
-    _COMPOSITIONS = "heatzone.compositions"
+    def __init__(self, engine_or_store: Any) -> None:
+        if hasattr(engine_or_store, "engine"):
+            self._engine = engine_or_store.engine
+        elif hasattr(engine_or_store, "_store") and hasattr(engine_or_store._store, "engine"):
+            self._engine = engine_or_store._store.engine
+        else:
+            self._engine = engine_or_store
+        self._is_postgres = _requires_tenant_scope(self._engine)
+        if not self._is_postgres:
+            self._init_sqlite_tables()
 
-    def __init__(self, store: SqliteDocumentStore) -> None:
-        self._store = store
+    def _init_sqlite_tables(self) -> None:
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_composition (
+                composition_id TEXT PRIMARY KEY,
+                zone_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                member_cell_id TEXT NOT NULL,
+                composition_kind TEXT NOT NULL,
+                parent_zone_id TEXT,
+                decided_by TEXT NOT NULL,
+                decided_at TEXT NOT NULL,
+                decision_policy_version_id TEXT NOT NULL,
+                model_version TEXT NOT NULL DEFAULT 'heatzone-composition-v1',
+                override_reason TEXT,
+                reverted_at TEXT,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        self._engine.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_heatzone_composition_active_member
+                ON heatzone_composition(tenant_id, member_cell_id) WHERE reverted_at IS NULL;
+            """
+        )
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                zone_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                composition_kind TEXT NOT NULL,
+                member_cell_ids TEXT NOT NULL,
+                parent_zone_id TEXT,
+                ndcg_gain REAL NOT NULL DEFAULT 0.0,
+                cannibalization_variance_reduction REAL NOT NULL DEFAULT 0.0,
+                correlation_rho REAL NOT NULL DEFAULT 0.0,
+                disconnect_index REAL NOT NULL DEFAULT 0.0,
+                split_density_ratio REAL,
+                confidence REAL NOT NULL DEFAULT 0.0,
+                model_version TEXT NOT NULL,
+                policy_version_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PROPOSED',
+                reasons TEXT NOT NULL DEFAULT '[]',
+                warnings TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                approved_by TEXT,
+                approved_at TEXT,
+                rejection_reason TEXT
+            );
+            """
+        )
 
     @property
-    def tenant_id(self) -> str:
-        return getattr(self._store, "tenant_id", "")
+    def table_composition(self) -> str:
+        return "expansion.heatzone_composition" if self._is_postgres else "heatzone_composition"
+
+    @property
+    def table_proposals(self) -> str:
+        return "expansion.heatzone_proposals" if self._is_postgres else "heatzone_proposals"
+
+    def _row_to_record(self, row: Mapping[str, Any]) -> HeatZoneCompositionRecord:
+        return HeatZoneCompositionRecord.from_dict(dict(row))
+
+    def _row_to_proposal(self, row: Mapping[str, Any]) -> MergeSplitProposalRecord:
+        data = dict(row)
+        if isinstance(data.get("member_cell_ids"), str):
+            try:
+                data["member_cell_ids"] = json.loads(data["member_cell_ids"])
+            except Exception:
+                data["member_cell_ids"] = [data["member_cell_ids"]]
+        if isinstance(data.get("reasons"), str):
+            try:
+                data["reasons"] = json.loads(data["reasons"])
+            except Exception:
+                data["reasons"] = []
+        if isinstance(data.get("warnings"), str):
+            try:
+                data["warnings"] = json.loads(data["warnings"])
+            except Exception:
+                data["warnings"] = []
+        return MergeSplitProposalRecord.from_dict(data)
 
     def save_composition(self, record: HeatZoneCompositionRecord) -> HeatZoneCompositionRecord:
         validate_composition_record(record)
@@ -2079,11 +2169,30 @@ class DurableHeatZoneCompositionRepository:
                 raise CompositionValidationError(
                     f"cell '{record.member_cell_id}' is already an active member of zone '{existing_active.zone_id}'"
                 )
-        self._store.put(
-            f"{self._COMPOSITIONS}:{record.tenant_id}",
-            record.composition_id,
-            record,
-            group_key=record.zone_id,
+        self._engine.execute(
+            f"""
+            INSERT INTO {self.table_composition} (
+                composition_id, zone_id, tenant_id, member_cell_id,
+                composition_kind, parent_zone_id, decided_by, decided_at,
+                decision_policy_version_id, model_version, override_reason,
+                reverted_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                record.composition_id,
+                record.zone_id,
+                record.tenant_id,
+                record.member_cell_id,
+                record.composition_kind.value,
+                record.parent_zone_id,
+                record.decided_by,
+                record.decided_at.isoformat(),
+                record.decision_policy_version_id,
+                record.model_version,
+                record.override_reason,
+                record.reverted_at.isoformat() if record.reverted_at else None,
+                record.created_at.isoformat(),
+            ),
         )
         return record
 
@@ -2096,31 +2205,32 @@ class DurableHeatZoneCompositionRepository:
         return saved
 
     def get_composition(self, zone_id: str, tenant_id: str) -> list[HeatZoneCompositionRecord]:
-        records: list[HeatZoneCompositionRecord] = self._store.list_by_group(
-            f"{self._COMPOSITIONS}:{tenant_id}", zone_id
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_composition} WHERE zone_id = ? AND tenant_id = ? ORDER BY decided_at DESC",
+            (zone_id, tenant_id),
         )
-        return records
+        return [self._row_to_record(row) for row in rows]
 
     def get_active_for_cell(
         self, cell_id: str, tenant_id: str
     ) -> HeatZoneCompositionRecord | None:
-        all_records: list[HeatZoneCompositionRecord] = self._store.list_all(
-            f"{self._COMPOSITIONS}:{tenant_id}"
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_composition} WHERE member_cell_id = ? AND tenant_id = ? AND reverted_at IS NULL LIMIT 1",
+            (cell_id, tenant_id),
         )
-        for r in all_records:
-            if r.member_cell_id == cell_id and r.is_active:
-                return r
-        return None
+        if not row:
+            return None
+        return self._row_to_record(row)
 
     def list_compositions(
         self, tenant_id: str, active_only: bool = True
     ) -> list[HeatZoneCompositionRecord]:
-        records: list[HeatZoneCompositionRecord] = self._store.list_all(
-            f"{self._COMPOSITIONS}:{tenant_id}"
+        clause = " AND reverted_at IS NULL" if active_only else ""
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_composition} WHERE tenant_id = ?{clause} ORDER BY decided_at DESC",
+            (tenant_id,),
         )
-        if active_only:
-            return [r for r in records if r.is_active]
-        return records
+        return [self._row_to_record(row) for row in rows]
 
     def revert_composition(
         self, zone_id: str, tenant_id: str, reverted_at: datetime | None = None
@@ -2131,30 +2241,11 @@ class DurableHeatZoneCompositionRepository:
         if not active:
             raise CompositionValidationError(f"no active composition found for zone '{zone_id}'")
 
-        reverted: list[HeatZoneCompositionRecord] = []
-        for r in active:
-            updated = HeatZoneCompositionRecord(
-                composition_id=r.composition_id,
-                zone_id=r.zone_id,
-                tenant_id=r.tenant_id,
-                member_cell_id=r.member_cell_id,
-                composition_kind=r.composition_kind,
-                parent_zone_id=r.parent_zone_id,
-                decided_by=r.decided_by,
-                decided_at=r.decided_at,
-                decision_policy_version_id=r.decision_policy_version_id,
-                override_reason=r.override_reason,
-                reverted_at=now,
-                created_at=r.created_at,
-            )
-            self._store.put(
-                f"{self._COMPOSITIONS}:{tenant_id}",
-                updated.composition_id,
-                updated,
-                group_key=updated.zone_id,
-            )
-            reverted.append(updated)
-        return reverted
+        self._engine.execute(
+            f"UPDATE {self.table_composition} SET reverted_at = ? WHERE zone_id = ? AND tenant_id = ? AND reverted_at IS NULL",
+            (now.isoformat(), zone_id, tenant_id),
+        )
+        return self.get_composition(zone_id, tenant_id)
 
     def override_composition(
         self,
@@ -2190,8 +2281,10 @@ class DurableHeatZoneCompositionRepository:
                 decided_by=decided_by,
                 decided_at=now,
                 decision_policy_version_id=decision_policy_version_id,
+                model_version=COMPOSITION_MODEL_VERSION,
                 override_reason=override_reason,
                 reverted_at=None,
+                created_at=now,
             )
             created.append(self.save_composition(record))
         return created
@@ -2215,11 +2308,196 @@ class DurableHeatZoneCompositionRepository:
             decided_by=latest_record.decided_by,
             decided_at=latest_record.decided_at,
             decision_policy_version_id=latest_record.decision_policy_version_id,
+            model_version=latest_record.model_version,
             override_reason=latest_record.override_reason,
             reverted_at=latest_record.reverted_at,
             is_active=len(active_records) > 0,
             records=tuple(sorted_records),
         )
+
+    def save_proposal(self, proposal: MergeSplitProposalRecord) -> MergeSplitProposalRecord:
+        member_cells_json = json.dumps(list(proposal.member_cell_ids))
+        reasons_json = json.dumps(list(proposal.reasons))
+        warnings_json = json.dumps(list(proposal.warnings))
+        self._engine.execute(
+            f"""
+            INSERT INTO {self.table_proposals} (
+                proposal_id, zone_id, tenant_id, composition_kind,
+                member_cell_ids, parent_zone_id, ndcg_gain,
+                cannibalization_variance_reduction, correlation_rho,
+                disconnect_index, split_density_ratio, confidence,
+                model_version, policy_version_id, status, reasons,
+                warnings, created_at, approved_by, approved_at, rejection_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(proposal_id) DO UPDATE SET
+                status = excluded.status,
+                approved_by = excluded.approved_by,
+                approved_at = excluded.approved_at,
+                rejection_reason = excluded.rejection_reason
+            """,
+            (
+                proposal.proposal_id,
+                proposal.zone_id,
+                proposal.tenant_id,
+                proposal.composition_kind.value,
+                member_cells_json,
+                proposal.parent_zone_id,
+                proposal.ndcg_gain,
+                proposal.cannibalization_variance_reduction,
+                proposal.correlation_rho,
+                proposal.disconnect_index,
+                proposal.split_density_ratio,
+                proposal.confidence,
+                proposal.model_version,
+                proposal.policy_version_id,
+                proposal.status.value,
+                reasons_json,
+                warnings_json,
+                proposal.created_at.isoformat(),
+                proposal.approved_by,
+                proposal.approved_at.isoformat() if proposal.approved_at else None,
+                proposal.rejection_reason,
+            ),
+        )
+        return proposal
+
+    def get_proposal(self, proposal_id: str, tenant_id: str) -> MergeSplitProposalRecord | None:
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_proposals} WHERE proposal_id = ? AND tenant_id = ?",
+            (proposal_id, tenant_id),
+        )
+        if not row:
+            return None
+        return self._row_to_proposal(row)
+
+    def list_proposals(
+        self, tenant_id: str, status: ProposalStatus | str | None = None
+    ) -> list[MergeSplitProposalRecord]:
+        status_val = status.value if isinstance(status, ProposalStatus) else str(status) if status else None
+        if status_val:
+            rows = self._engine.query(
+                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC",
+                (tenant_id, status_val),
+            )
+        else:
+            rows = self._engine.query(
+                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? ORDER BY created_at DESC",
+                (tenant_id,),
+            )
+        return [self._row_to_proposal(row) for row in rows]
+
+    def approve_proposal(
+        self,
+        proposal_id: str,
+        tenant_id: str,
+        approved_by: str,
+        notes: str | None = None,
+    ) -> tuple[MergeSplitProposalRecord, list[HeatZoneCompositionRecord]]:
+        prop = self.get_proposal(proposal_id, tenant_id)
+        if prop is None:
+            raise CompositionValidationError(f"proposal '{proposal_id}' not found for tenant '{tenant_id}'")
+        if prop.status != ProposalStatus.PROPOSED:
+            raise CompositionValidationError(f"proposal '{proposal_id}' is already {prop.status.value}")
+
+        now = datetime.now(UTC)
+        reason = notes or f"Operator approval for proposal {proposal_id}"
+
+        # Soft-revert active member cells
+        for cell_id in prop.member_cell_ids:
+            active_comp = self.get_active_for_cell(cell_id, tenant_id)
+            if active_comp is not None:
+                self.revert_composition(active_comp.zone_id, tenant_id, reverted_at=now)
+
+        if prop.composition_kind == CompositionKind.SPLIT_CHILD and prop.parent_zone_id:
+            parent_comps = self.get_composition(prop.parent_zone_id, tenant_id)
+            if any(r.is_active for r in parent_comps):
+                self.revert_composition(prop.parent_zone_id, tenant_id, reverted_at=now)
+
+        created_records: list[HeatZoneCompositionRecord] = []
+        for cell_id in prop.member_cell_ids:
+            rec = HeatZoneCompositionRecord(
+                zone_id=prop.zone_id,
+                tenant_id=tenant_id,
+                member_cell_id=cell_id,
+                composition_kind=prop.composition_kind,
+                parent_zone_id=prop.parent_zone_id,
+                decided_by=approved_by,
+                decided_at=now,
+                decision_policy_version_id=prop.policy_version_id,
+                model_version=prop.model_version,
+                override_reason=reason,
+                reverted_at=None,
+                created_at=now,
+            )
+            created_records.append(self.save_composition(rec))
+
+        updated_prop = MergeSplitProposalRecord(
+            proposal_id=prop.proposal_id,
+            zone_id=prop.zone_id,
+            tenant_id=prop.tenant_id,
+            composition_kind=prop.composition_kind,
+            member_cell_ids=prop.member_cell_ids,
+            parent_zone_id=prop.parent_zone_id,
+            ndcg_gain=prop.ndcg_gain,
+            cannibalization_variance_reduction=prop.cannibalization_variance_reduction,
+            correlation_rho=prop.correlation_rho,
+            disconnect_index=prop.disconnect_index,
+            confidence=prop.confidence,
+            model_version=prop.model_version,
+            policy_version_id=prop.policy_version_id,
+            status=ProposalStatus.APPROVED,
+            split_density_ratio=prop.split_density_ratio,
+            reasons=prop.reasons,
+            warnings=prop.warnings,
+            created_at=prop.created_at,
+            approved_by=approved_by,
+            approved_at=now,
+            rejection_reason=None,
+        )
+        self.save_proposal(updated_prop)
+        return updated_prop, created_records
+
+    def reject_proposal(
+        self,
+        proposal_id: str,
+        tenant_id: str,
+        rejected_by: str,
+        reason: str,
+    ) -> MergeSplitProposalRecord:
+        prop = self.get_proposal(proposal_id, tenant_id)
+        if prop is None:
+            raise CompositionValidationError(f"proposal '{proposal_id}' not found for tenant '{tenant_id}'")
+        if prop.status != ProposalStatus.PROPOSED:
+            raise CompositionValidationError(f"proposal '{proposal_id}' is already {prop.status.value}")
+        if not reason or not reason.strip():
+            raise CompositionValidationError("Rejection requires a non-empty reason")
+
+        now = datetime.now(UTC)
+        updated_prop = MergeSplitProposalRecord(
+            proposal_id=prop.proposal_id,
+            zone_id=prop.zone_id,
+            tenant_id=prop.tenant_id,
+            composition_kind=prop.composition_kind,
+            member_cell_ids=prop.member_cell_ids,
+            parent_zone_id=prop.parent_zone_id,
+            ndcg_gain=prop.ndcg_gain,
+            cannibalization_variance_reduction=prop.cannibalization_variance_reduction,
+            correlation_rho=prop.correlation_rho,
+            disconnect_index=prop.disconnect_index,
+            confidence=prop.confidence,
+            model_version=prop.model_version,
+            policy_version_id=prop.policy_version_id,
+            status=ProposalStatus.REJECTED,
+            split_density_ratio=prop.split_density_ratio,
+            reasons=prop.reasons,
+            warnings=prop.warnings,
+            created_at=prop.created_at,
+            approved_by=rejected_by,
+            approved_at=now,
+            rejection_reason=reason,
+        )
+        self.save_proposal(updated_prop)
+        return updated_prop
 
 
 class DurableListingRepository:

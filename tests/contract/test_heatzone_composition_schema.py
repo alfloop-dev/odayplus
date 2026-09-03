@@ -222,3 +222,28 @@ class TestCompositionSchemaConstraints:
                     (comp_id,),
                 )
             assert "is already reverted" in str(excinfo_reupd.value)
+
+    def test_model_version_and_proposals_schema(self, composition_db) -> None:
+        with composition_db.connect(autocommit=True) as conn:
+            # 1. Verify model_version default and storage
+            row = conn.execute(
+                """
+                INSERT INTO expansion.heatzone_composition
+                (zone_id, tenant_id, member_cell_id, composition_kind, decided_by, decided_at, decision_policy_version_id, model_version)
+                VALUES ('MZ-1111222233334444', %s, %s, 'MERGED', 'system', NOW(), %s, 'heatzone-composition-v1')
+                RETURNING model_version
+                """,
+                (TENANT_A, CELL_1, f"heatzone-merge-v1:{TENANT_A}"),
+            ).fetchone()
+            assert row[0] == "heatzone-composition-v1"
+
+            # 2. Verify proposals table insertion and foreign key
+            conn.execute(
+                """
+                INSERT INTO expansion.heatzone_proposals
+                (proposal_id, zone_id, tenant_id, composition_kind, member_cell_ids, ndcg_gain, cannibalization_variance_reduction, correlation_rho, disconnect_index, confidence, model_version, policy_version_id, status)
+                VALUES ('12345678-1234-5678-1234-567812345678', 'MZ-1111222233334444', %s, 'MERGED', '["cell-1"]'::jsonb, 0.06, 0.25, 0.85, 0.10, 0.85, 'heatzone-composition-v1', %s, 'PROPOSED')
+                """,
+                (TENANT_A, f"heatzone-merge-v1:{TENANT_A}"),
+            )
+
