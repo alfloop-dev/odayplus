@@ -25,6 +25,7 @@ from modules.avm.domain import (
     ValuationInput,
     ValuationReport,
     build_valuation_view,
+    ensure_legacy_quality_disposition,
     generate_data_room,
     normalize_margin,
     value_store,
@@ -116,6 +117,14 @@ class AVMService:
                 raise AVMError("normalized margin required before valuation")
             margin = self.normalize(case_id, actor=actor, correlation_id=correlation_id)
             case = self._case(case_id)
+        else:
+            # A legacy case may already have a persisted margin produced under
+            # the former implicit-perfect quality default.  Do not let the
+            # presence of that margin bypass the legacy discount and low
+            # confidence disposition.
+            disposed_margin = ensure_legacy_quality_disposition(case, margin)
+            if disposed_margin != margin:
+                margin = self.repository.save_margin(disposed_margin)
         valuing = case.transition(
             ValuationCaseStatus.VALUING,
             actor=actor,

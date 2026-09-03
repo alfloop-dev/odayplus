@@ -199,6 +199,30 @@ class NormalizedMargin:
             "feature_version": AVM_FEATURE_VERSION,
         }
 
+    def with_legacy_quality_disposition(self) -> NormalizedMargin:
+        """Apply the conservative disposition to an opaque persisted margin.
+
+        A margin written before ``quality_score_status`` existed can carry a
+        high-confidence value even when its case's former ``1.0`` default was
+        actually an omitted measurement.  Make that margin safe for every
+        valuation entry point.  The reason guard keeps the operation
+        idempotent when a repository and a domain consumer both enforce it.
+        """
+
+        reasons = tuple(self.adjustment_reasons)
+        normalized_gm = self.normalized_gm
+        if "legacy_quality_unknown_discount" not in reasons:
+            normalized_gm = round(normalized_gm * 0.92, 2)
+            reasons += ("legacy_quality_unknown_discount",)
+        return NormalizedMargin(
+            **{
+                **self.__dict__,
+                "normalized_gm": normalized_gm,
+                "adjustment_reasons": reasons,
+                "confidence": "low",
+            }
+        )
+
 
 @dataclass(frozen=True)
 class LensValuation:
@@ -479,9 +503,22 @@ def normalize_margin(case: ValuationCase) -> NormalizedMargin:
     )
 
 
+def ensure_legacy_quality_disposition(
+    case: ValuationCase,
+    normalized_margin: NormalizedMargin,
+) -> NormalizedMargin:
+    """Do not let an opaque legacy margin bypass AVM quality handling."""
+
+    if case.valuation_input.effective_quality_score_status != LEGACY_UNKNOWN_QUALITY_STATUS:
+        return normalized_margin
+    return normalized_margin.with_legacy_quality_disposition()
+
+
 def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> ValuationReport:
     item = case.valuation_input
     _require_quality_score(item.quality_score)
+    normalized_margin = ensure_legacy_quality_disposition(case, normalized_margin)
+    quality_status = item.effective_quality_score_status
     income_p50 = normalized_margin.normalized_gm * 2.8
     asset_p50 = max(
         item.asset_book_value
@@ -560,7 +597,12 @@ def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> Val
         reserve_price=round(p10 * 0.97, 2),
         asking_price=round(p90 * 1.05, 2),
         confidence=normalized_margin.confidence,
-        quality_score_status=item.effective_quality_score_status,
+        quality_score_status=quality_status,
+        quality_disposition=(
+            LEGACY_QUALITY_DISPOSITION
+            if quality_status == LEGACY_UNKNOWN_QUALITY_STATUS
+            else None
+        ),
         model_version=AVM_MODEL_VERSION,
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=item.prediction_origin_time,
@@ -581,6 +623,8 @@ def build_model_valuation_report(
     """Build policy outputs from an already executed approved model interval."""
 
     _require_quality_score(case.valuation_input.quality_score)
+    normalized_margin = ensure_legacy_quality_disposition(case, normalized_margin)
+    quality_status = case.valuation_input.effective_quality_score_status
 
     fair = PriceBand(
         p10=round(float(p10), 2),
@@ -605,7 +649,12 @@ def build_model_valuation_report(
         reserve_price=round(fair.p10 * 0.97, 2),
         asking_price=round(fair.p90 * 1.05, 2),
         confidence=normalized_margin.confidence,
-        quality_score_status=case.valuation_input.effective_quality_score_status,
+        quality_score_status=quality_status,
+        quality_disposition=(
+            LEGACY_QUALITY_DISPOSITION
+            if quality_status == LEGACY_UNKNOWN_QUALITY_STATUS
+            else None
+        ),
         model_version=model_version,
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=case.valuation_input.prediction_origin_time,

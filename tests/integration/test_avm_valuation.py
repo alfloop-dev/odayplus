@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from modules.avm import (
     AVM_FEATURE_VERSION,
+    LEGACY_QUALITY_DISPOSITION,
+    LEGACY_UNKNOWN_QUALITY_STATUS,
     InMemoryAVMRepository,
     ValuationCaseStatus,
     build_valuation_view,
@@ -671,4 +673,66 @@ def test_legacy_report_and_dataroom_are_downgraded_on_every_read_path(tmp_path) 
             reason="export old room",
             correlation_id="corr-dataroom-export",
         )
+    engine.close()
+
+
+def test_persisted_legacy_margin_is_downgraded_before_valuation(tmp_path) -> None:
+    """A saved pre-nullability margin must not bypass the value entry gate."""
+
+    from modules.avm.domain import NormalizedMargin, ValuationCase, ValuationInput
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.repositories import DurableAVMRepository
+
+    engine = SqliteEngine(tmp_path / "legacy-margin-entry.sqlite3")
+    store = SqliteDocumentStore(engine)
+    repository = DurableAVMRepository(store)
+    case = ValuationCase.create(
+        ValuationInput(
+            store_id="store-legacy-margin",
+            gm_ttm=1_000_000,
+            forecast_gm_next_12m=1_000_000,
+            asset_book_value=500_000,
+            equipment_fair_value=100_000,
+            quality_score=1.0,
+            quality_score_status=LEGACY_UNKNOWN_QUALITY_STATUS,
+        ),
+        created_by="legacy-system",
+        correlation_id="corr-legacy-margin",
+        case_id="case-legacy-margin-1",
+    )
+    store.put(repository._CASES, case.case_id, case)
+    repository.save_margin(
+        NormalizedMargin(
+            case_id=case.case_id,
+            store_id=case.store_id,
+            gm_ttm=1_000_000,
+            gm_fwd=1_000_000,
+            normalized_gm=1_000_000,
+            adjustment_reasons=("weighted_ttm_and_forecast_gm",),
+            confidence="high",
+        )
+    )
+
+    service = AVMService(repository=repository)
+    report = service.value(
+        case.case_id,
+        actor="avm-score-worker",
+        correlation_id="corr-legacy-margin-value",
+    )
+
+    assert report.confidence == "low"
+    assert report.normalized_margin.confidence == "low"
+    assert report.normalized_margin.normalized_gm == 920_000
+    assert "legacy_quality_unknown_discount" in report.normalized_margin.adjustment_reasons
+    assert report.quality_disposition == LEGACY_QUALITY_DISPOSITION
+
+    persisted_margin = repository.get_margin(case.case_id)
+    assert persisted_margin is not None
+    assert persisted_margin.confidence == "low"
+    assert "legacy_quality_unknown_discount" in persisted_margin.adjustment_reasons
+    persisted_report = store.get(repository._REPORTS, report.report_id)
+    assert persisted_report is not None
+    assert persisted_report.confidence == "low"
+    assert persisted_report.quality_disposition == LEGACY_QUALITY_DISPOSITION
     engine.close()

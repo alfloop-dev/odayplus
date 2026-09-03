@@ -17,7 +17,7 @@ No valuation report or valuation card is persisted on that path.
 | Domain parser | `modules/avm/domain/valuation.py::ValuationInput.from_mapping` | `quality_score` and legacy `data_quality_score` alias are bounded only when present; no perfect fallback |
 | Domain case | `modules/avm/domain/valuation.py::ValuationInput.to_dict` | Emits `quality_score: null` so absence remains observable |
 | Service boundary | `modules/avm/application/valuation.py::AVMService.normalize` | Rejects before changing case state or writing a margin |
-| Domain consumers | `normalize_margin`, `value_store`, `build_model_valuation_report` | Reject missing quality before deriving confidence or a report |
+| Domain consumers | `normalize_margin`, `value_store`, `build_model_valuation_report` | Reject missing quality before deriving confidence or a report; idempotently downgrade opaque legacy margins |
 | Durable case | `shared/infrastructure/persistence/repositories.py::DurableAVMRepository` | Pickle persistence preserves `None` without coercion; legacy cases without status are persisted as `legacy_unknown` |
 | Historical reports | `ValuationReport.with_legacy_quality_disposition`, `latest_report`, `report_history` | Legacy reports are persisted as `legacy_unknown_downgraded`, expose only `low` confidence, and cannot carry an actionable old approval |
 | Historical data rooms | `DataRoom.with_legacy_quality_disposition`, `get_dataroom` | Legacy rooms retain historical prices for audit but expose a named low-confidence downgrade; rebuild and export are rejected |
@@ -37,8 +37,11 @@ explicitly emit `measured` or `unmeasured` status. In `DurableAVMRepository`, le
 pickled cases lacking an explicit status marker are migrated on retrieval to
 `quality_score_status = 'legacy_unknown'`, and that marker is written back to the
 case. When valued, legacy cases with `legacy_unknown` status receive a named
-`legacy_quality_unknown_discount` and conservative `low` confidence rather than being
-treated as a perfect measurement. Historical reports and data rooms are also migrated
+`legacy_quality_unknown_discount` and conservative `low` confidence even when a
+high-confidence margin was already persisted; the service saves that downgraded
+margin before entering the formula or approved production executor. This prevents
+the existing-margin fast path from bypassing the legacy disposition. Historical
+reports and data rooms are also migrated
 on read: their prices remain available for audit, but the report and valuation card are
 marked `legacy_unknown_downgraded`, all exposed confidence is `low`, and any old finance
 approval is retained only under `legacy_finance_approval`. New finance approval, data-room
@@ -49,7 +52,8 @@ rebuild, and data-room export require recomputation with measured quality.
 The task-scoped search covered `modules/avm`, `apps/api/app/routes/avm.py`,
 `infra/db/migrations`, `packages/openapi-client`, `shared/infrastructure/persistence`,
 `shared/infrastructure/persistence/model_ready.py`, and tests. The AVM quality paths
-no longer contain `quality_score`/`data_quality_score` fallbacks to `1.0`; the remaining
+no longer contain `quality_score`/`data_quality_score` fallbacks to `1.0`; the existing
+margin production-entry path is covered for persisted legacy data. The remaining
 `1.0` values in the searched tree belong to unrelated bounded defaults or historical
 migrations. The governance checker was run to ensure the AVM dataclass exemption is no
 longer live.
@@ -57,8 +61,9 @@ longer live.
 ## Verification
 
 - `pytest -q modules/avm/tests/test_deal_outcome_and_calibration.py tests/integration/test_avm_valuation.py tests/integration/test_avm_deal_outcome.py tests/integration/test_operator_canonical_wiring.py tests/ops/test_avm_quality_nullable_migration.py` — passed, including `test_legacy_report_and_dataroom_are_downgraded_on_every_read_path`.
+- `pytest -q tests/integration/test_avm_valuation.py -k 'persisted_legacy_margin'` — passed, including the persisted-margin value-entry regression.
 - `pytest -q tests/ops/test_avm_quality_nullable_migration.py tests/contract/test_openapi_artifact_and_client.py -k 'avm_quality or generated_client_matches_the_artifact or artifact_is_checked_in_and_matches_the_live_app'` — passed.
-- `python delivery_toolchain/governance/check_measurement_defaults.py` — passed: 36 known (dataclass 10, mapper 8, sql 18), 36 exempted with an owner; next expiry 2026-10-31.
+- `uv run python delivery_toolchain/governance/check_measurement_defaults.py` — passed: 23 known (dataclass 10, mapper 8, sql 5), 23 exempted with an owner; next expiry 2026-10-31.
 
 The repository's default CPython 3.14 environment cannot install the pinned
 `pgserver==0.1.4` wheel. Verification used the available CPython 3.12
