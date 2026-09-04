@@ -830,3 +830,55 @@ def test_regression_platform_admin_without_tenant_is_denied(
     saved = address_repo.get_address(addr_id)
     assert saved is not None
     assert saved.revision == 1
+
+
+def test_apply_correction_omitted_geocode_confidence_preserves_existing_zero(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+    audit_log: InMemoryAuditLog,
+) -> None:
+    """Regression test (P1): omitted geocode_confidence does not corrupt existing 0.0 to 1.0."""
+    addr_id = str(uuid4())
+    address_repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei City Xinyi Dist Songgao Rd 1",
+            city="Taipei City",
+            latitude=25.0380,
+            longitude=121.5670,
+            geocode_precision="rooftop",
+            geocode_confidence=0.0,
+            manual_override_flag=False,
+            tenant_id="tenant-alpha",
+            revision=1,
+        )
+    )
+
+    headers = {
+        "x-subject-id": "reviewer-1",
+        "x-roles": "site_reviewer",
+        "x-tenant-id": "tenant-alpha",
+    }
+    payload = {
+        "city": "New Taipei City",
+        "reason": "Updating city boundary",
+        "expected_revision": 1,
+    }
+
+    response = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["address"]["geocode_confidence"] == 0.0
+    assert data["address"]["city"] == "New Taipei City"
+
+    # Verify readback via GET /addresses/{addr_id}
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=headers)
+    assert get_resp.status_code == 200
+    readback = get_resp.json()
+    assert readback["geocode_confidence"] == 0.0
+    assert readback["city"] == "New Taipei City"
+

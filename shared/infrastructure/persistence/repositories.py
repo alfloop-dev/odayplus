@@ -1565,7 +1565,12 @@ def _build_corrected_address(
         longitude=new_lng,
         geocode_precision=updates.get("geocode_precision", "manual"),
         geocode_confidence=float(
-            updates.get("geocode_confidence", existing.geocode_confidence or 1.0)
+            updates.get(
+                "geocode_confidence",
+                existing.geocode_confidence
+                if existing.geocode_confidence is not None
+                else 0.0,
+            )
         ),
         h3_res_8=h3_res_8,
         h3_res_9=h3_res_9,
@@ -2145,7 +2150,9 @@ class DurableAddressLocationRepository:
             latitude=row["latitude"] or 0.0,
             longitude=row["longitude"] or 0.0,
             geocode_precision=row["geocode_precision"],
-            geocode_confidence=row["geocode_confidence"] or 0.0,
+            geocode_confidence=float(row["geocode_confidence"])
+            if row["geocode_confidence"] is not None
+            else 0.0,
             h3_res_8=row["h3_res_8"] or "",
             h3_res_9=row["h3_res_9"] or "",
             h3_res_10=row["h3_res_10"] or "",

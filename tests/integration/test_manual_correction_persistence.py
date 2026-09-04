@@ -497,15 +497,15 @@ def test_rollback_restores_geocode_fields_the_correction_changed_implicitly(
 
 
 def test_rollback_restores_zero_geocode_confidence(tmp_path: Path) -> None:
-    """``geocode_confidence or 1.0`` turns a legitimate 0.0 into 1.0, so 0.0 has
-    to be snapshotted rather than treated as absent."""
+    """When geocode_confidence is omitted from updates, an existing 0.0 must stay 0.0
+    on the applied address and survive rollback without being corrupted to 1.0."""
     for repo in _address_repositories(tmp_path):
         address_id = str(uuid4())
         repo.save_address(  # type: ignore[attr-defined]
             _correction_regression_address(address_id, geocode_confidence=0.0)
         )
 
-        _, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+        applied, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
             address_id,
             updates={"city": "New Taipei City"},
             reason="city was recorded incorrectly",
@@ -513,7 +513,8 @@ def test_rollback_restores_zero_geocode_confidence(tmp_path: Path) -> None:
             tenant_id="tenant-regress",
             expected_revision=1,
         )
-        assert correction.old_value["geocode_confidence"] == 0.0
+        assert applied.geocode_confidence == 0.0
+        assert repo.get_address(address_id).geocode_confidence == 0.0
 
         repo.rollback_correction(  # type: ignore[attr-defined]
             address_id,
@@ -526,6 +527,39 @@ def test_rollback_restores_zero_geocode_confidence(tmp_path: Path) -> None:
         restored = repo.get_address(address_id)  # type: ignore[attr-defined]
         assert restored.geocode_confidence == 0.0
         assert restored.city == "Taipei City"
+
+
+def test_rollback_restores_zero_geocode_confidence_when_updated(tmp_path: Path) -> None:
+    """When geocode_confidence is explicitly updated from 0.0 to 0.85, rollback restores 0.0."""
+    for repo in _address_repositories(tmp_path):
+        address_id = str(uuid4())
+        repo.save_address(  # type: ignore[attr-defined]
+            _correction_regression_address(address_id, geocode_confidence=0.0)
+        )
+
+        applied, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+            address_id,
+            updates={"geocode_confidence": 0.85},
+            reason="geocoding verified",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=1,
+        )
+        assert applied.geocode_confidence == 0.85
+        assert repo.get_address(address_id).geocode_confidence == 0.85
+        assert correction.old_value["geocode_confidence"] == 0.0
+        assert correction.new_value["geocode_confidence"] == 0.85
+
+        repo.rollback_correction(  # type: ignore[attr-defined]
+            address_id,
+            correction_id=correction.correction_id,
+            reason="verification rejected",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+        )
+
+        restored = repo.get_address(address_id)  # type: ignore[attr-defined]
+        assert restored.geocode_confidence == 0.0
 
 
 def test_rollback_preserves_override_flag_that_predates_the_correction(
