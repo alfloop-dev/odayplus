@@ -677,7 +677,7 @@ def new_intervention(
     if not expected_outcome.strip():
         raise InterventionError("expected_outcome (outcome definition) is required")
     return Intervention(
-        intervention_id=intervention_id or f"intervention-{uuid4()}",
+        intervention_id=intervention_id or str(uuid4()),
         store_id=store_id,
         kind=kind,
         status=InterventionStatus.CANDIDATE,

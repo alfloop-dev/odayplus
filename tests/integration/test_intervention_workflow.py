@@ -12,7 +12,9 @@ Covers the acceptance criteria:
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,6 +52,28 @@ EXEC_TIME = datetime(2026, 6, 1, 10, 0, tzinfo=UTC)
 # PRICE_CHANGE default window is 21 + 7 days, so maturity is 28 days after exec.
 MATURE_TIME = EXEC_TIME + timedelta(days=29)
 IMMATURE_TIME = EXEC_TIME + timedelta(days=3)
+
+
+def _seed_store(engine: SqliteEngine, store_id: str = "store-durable-1") -> None:
+    tenant_id = "00000000-0000-0000-0000-000000000001"
+    brand_id = "00000000-0000-0000-0000-000000000002"
+    addr_id = "00000000-0000-0000-0000-000000000003"
+    engine.execute(
+        "INSERT OR IGNORE INTO tenants (tenant_id, tenant_name, status) VALUES (?, ?, ?)",
+        (tenant_id, "Tenant A", "active"),
+    )
+    engine.execute(
+        "INSERT OR IGNORE INTO brands (brand_id, tenant_id, brand_code, brand_name) VALUES (?, ?, ?, ?)",
+        (brand_id, tenant_id, "BRAND-01", "Brand A"),
+    )
+    engine.execute(
+        "INSERT OR IGNORE INTO address_locations (address_id, raw_address) VALUES (?, ?)",
+        (addr_id, "123 Main St"),
+    )
+    engine.execute(
+        "INSERT OR IGNORE INTO stores (store_id, tenant_id, brand_id, store_name, address_id) VALUES (?, ?, ?, ?, ?)",
+        (store_id, tenant_id, brand_id, "Store Durable", addr_id),
+    )
 
 
 def _new_workflow() -> tuple[InterventionWorkflow, InMemoryLabelRegistry]:
@@ -1760,3 +1784,181 @@ def test_api_adjust_production_entry_rejects_pre_activation_and_evaluation_state
     assert len(cases) == 2
     case_ids = {c["intervention_id"] for c in cases}
     assert case_ids == {iid, repl_id}
+
+
+def test_canonical_uuid_generation_for_intervention_and_adjustment() -> None:
+    """ODP-FR-INTV-006: Generated intervention IDs and replacement IDs are valid canonical UUIDs."""
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow, store_id="store-uuid-001")
+    # Verify case ID is valid UUID
+    parsed_case_uuid = UUID(case.intervention_id)
+    assert str(parsed_case_uuid) == case.intervention_id
+
+    _drive_to_approved(workflow, case.intervention_id)
+    adj = workflow.adjust_case(
+        case.intervention_id,
+        actor="ops-tester",
+        reason="canonical uuid test",
+        rollback_plan="restore",
+    )
+    # Verify replacement ID is valid UUID
+    parsed_repl_uuid = UUID(adj.replacement.intervention_id)
+    assert str(parsed_repl_uuid) == adj.replacement.intervention_id
+    assert adj.replacement.intervention_id != case.intervention_id
+
+    # Verify lineage IDs are valid UUIDs
+    assert adj.replacement.predecessor_id == case.intervention_id
+    assert str(UUID(adj.replacement.predecessor_id)) == case.intervention_id
+    assert adj.original.replacement_id == adj.replacement.intervention_id
+    assert str(UUID(adj.original.replacement_id)) == adj.replacement.intervention_id
+
+
+def test_durable_intervention_persistence_sql_table_lineage_and_audit(tmp_path: pytest.TempPathFactory) -> None:
+    """ODP-FR-INTV-006: DurableInterventionRepository persists predecessor_id, replacement_id,
+    and adjustment audit payload directly into the relational SQL interventions table."""
+    db_file = tmp_path / "durable_interventions_sql.db"
+    engine = SqliteEngine(db_file)
+    _seed_store(engine, store_id="store-durable-sql-1")
+    store = SqliteDocumentStore(engine)
+    repo = DurableInterventionRepository(store)
+
+    workflow = InterventionWorkflow(repository=repo)
+    case = workflow.open_case(
+        store_id="store-durable-sql-1",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="alert-durable-sql-001",
+        expected_outcome="recover margin via durable SQL persistence",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops-admin",
+        action_spec={"price_change_pct": -4, "rollback_plan": "revert price"},
+    )
+    _drive_to_approved(workflow, case.intervention_id)
+    case = workflow.execute(case.intervention_id, executor="runner", executed_at=EXEC_TIME)
+
+    adj = workflow.adjust_case(
+        case.intervention_id,
+        actor="ops-lead",
+        reason="market condition changed, adjust strategy",
+        action_spec={"price_change_pct": -8},
+        rollback_plan={"strategy": "reset", "threshold": 0.05},
+    )
+
+    # 1. Query the SQL table rows directly via engine
+    orig_row = engine.query_one(
+        "SELECT * FROM interventions WHERE intervention_id = ?", (case.intervention_id,)
+    )
+    assert orig_row is not None
+    assert orig_row["status"] == "stopped"
+    assert orig_row["replacement_id"] == adj.replacement.intervention_id
+    assert orig_row["store_id"] == "store-durable-sql-1"
+    assert orig_row["intervention_type"] == "PRICE_CHANGE"
+
+    orig_adj = json.loads(orig_row["adjustment_json"])
+    assert orig_adj["predecessor_id"] == case.intervention_id
+    assert orig_adj["replacement_id"] == adj.replacement.intervention_id
+    assert orig_adj["actor"] == "ops-lead"
+    assert orig_adj["reason"] == "market condition changed, adjust strategy"
+    assert orig_adj["policy_version"] == workflow.policy_version
+    assert orig_adj["rollback_plan"] == {"strategy": "reset", "threshold": 0.05}
+
+    repl_row = engine.query_one(
+        "SELECT * FROM interventions WHERE intervention_id = ?", (adj.replacement.intervention_id,)
+    )
+    assert repl_row is not None
+    assert repl_row["status"] == "candidate"
+    assert repl_row["predecessor_id"] == case.intervention_id
+    assert repl_row["store_id"] == "store-durable-sql-1"
+
+    repl_adj = json.loads(repl_row["adjustment_json"])
+    assert repl_adj["predecessor_id"] == case.intervention_id
+    assert repl_adj["replacement_id"] == adj.replacement.intervention_id
+    assert repl_adj["actor"] == "ops-lead"
+    assert repl_adj["reason"] == "market condition changed, adjust strategy"
+
+    # 2. Verify round-trip re-instantiation
+    fresh_engine = SqliteEngine(db_file)
+    fresh_store = SqliteDocumentStore(fresh_engine)
+    fresh_repo = DurableInterventionRepository(fresh_store)
+
+    reloaded_orig = fresh_repo.get(case.intervention_id)
+    assert reloaded_orig is not None
+    assert reloaded_orig.status is InterventionStatus.STOPPED
+    assert reloaded_orig.replacement_id == adj.replacement.intervention_id
+    assert reloaded_orig.adjustment is not None
+    assert reloaded_orig.adjustment.reason == "market condition changed, adjust strategy"
+
+    reloaded_repl = fresh_repo.get(adj.replacement.intervention_id)
+    assert reloaded_repl is not None
+    assert reloaded_repl.status is InterventionStatus.CANDIDATE
+    assert reloaded_repl.predecessor_id == case.intervention_id
+    assert reloaded_repl.adjustment is not None
+
+
+def test_api_production_entry_durable_persistence_roundtrip(tmp_path: pytest.TempPathFactory) -> None:
+    """ODP-FR-INTV-006: API production entry with DurableInterventionRepository verifies
+    end-to-end adjust workflow and SQL persistence round-trip."""
+    db_file = tmp_path / "durable_api_interventions.db"
+    engine = SqliteEngine(db_file)
+    _seed_store(engine, store_id="store-api-durable-01")
+    store = SqliteDocumentStore(engine)
+    repo = DurableInterventionRepository(store)
+
+    app = create_app(intervention_repository=repo)
+    client = TestClient(app, headers=INTERVENTION_HEADERS)
+
+    # 1. Create case via API
+    create_res = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-durable-01",
+            "kind": "PRICE_CHANGE",
+            "expected_outcome": "boost revenue by 10%",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+        },
+    )
+    assert create_res.status_code == 201
+    iid = create_res.json()["intervention_id"]
+    assert str(UUID(iid)) == iid
+
+    # 2. Drive to APPROVED via API
+    client.post(f"/interventions/{iid}/eligibility", json={"eligible": True, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/action", json={"action_spec": {"price_change_pct": -5}, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/conflict-check", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/submit", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/approve", json={"action": "APPROVE", "actor": "sup-hero", "reason": "approved"})
+
+    # 3. Adjust via API
+    adj_res = client.post(
+        f"/interventions/{iid}/adjust",
+        json={
+            "actor": "ops-hero",
+            "reason": "pricing response to competitor discount",
+            "action_spec": {"price_change_pct": -10},
+            "rollback_plan": "revert to base list price",
+        },
+    )
+    assert adj_res.status_code == 200
+    adj_data = adj_res.json()
+    assert adj_data["original_status"] == "STOPPED"
+    assert adj_data["replacement_status"] == "CANDIDATE"
+    repl_id = adj_data["replacement_intervention_id"]
+    assert str(UUID(repl_id)) == repl_id
+
+    # 4. Verify SQL table directly
+    orig_sql = engine.query_one("SELECT * FROM interventions WHERE intervention_id = ?", (iid,))
+    assert orig_sql is not None
+    assert orig_sql["status"] == "stopped"
+    assert orig_sql["replacement_id"] == repl_id
+    adj_audit = json.loads(orig_sql["adjustment_json"])
+    assert adj_audit["reason"] == "pricing response to competitor discount"
+    assert adj_audit["actor"] == "ops-hero"
+    assert adj_audit["rollback_plan"] == "revert to base list price"
+
+    repl_sql = engine.query_one("SELECT * FROM interventions WHERE intervention_id = ?", (repl_id,))
+    assert repl_sql is not None
+    assert repl_sql["status"] == "candidate"
+    assert repl_sql["predecessor_id"] == iid
+

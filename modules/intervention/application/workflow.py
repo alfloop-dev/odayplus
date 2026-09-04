@@ -906,7 +906,7 @@ class InterventionWorkflow:
             raise InterventionError("adjusting an intervention requires a reason")
 
         now = datetime.now(UTC)
-        replacement_id = f"intervention-{uuid4()}"
+        replacement_id = str(uuid4())
         effective_rollback = rollback_plan or original.action_spec.get("rollback_plan")
 
         adjustment_record = AdjustmentRecord(
@@ -958,8 +958,8 @@ class InterventionWorkflow:
             adjustment=adjustment_record,
         )
 
-        self.repository.save(stopped_original)
         self.repository.save(replacement)
+        self.repository.save(stopped_original)
 
         self._audit(
             stopped_original,

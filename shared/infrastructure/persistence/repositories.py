@@ -9,6 +9,7 @@ application tests stay compatible. State lives in ``durable_documents`` via
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -491,12 +492,106 @@ class DurableAdLiftRepository:
 
 
 class DurableInterventionRepository:
-    """Durable mirror of ``InMemoryInterventionRepository``."""
+    """Durable mirror of ``InMemoryInterventionRepository`` with migration-backed relational persistence."""
 
     _C = "intervention.interventions"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @property
+    def table(self) -> str:
+        if str(getattr(self._store.engine, "dialect", "")).lower() == "postgresql":
+            return "operations.interventions"
+        return "interventions"
+
+    def _sync_sql(self, intervention: Intervention) -> None:
+        engine = self._store.engine
+        table = self.table
+        try:
+            if str(getattr(engine, "dialect", "")).lower() == "postgresql":
+                row = engine.query_one("SELECT to_regclass(?) AS regclass", (table,))
+                if not row or not row.get("regclass"):
+                    return
+            else:
+                row = engine.query_one(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                )
+                if not row:
+                    return
+        except Exception:
+            return
+
+        eligibility_status = (
+            "eligible"
+            if intervention.eligibility and intervention.eligibility.eligible
+            else ("ineligible" if intervention.eligibility else "eligible")
+        )
+        action_set_json = json.dumps(intervention.action_spec or {})
+        approved_action_json = json.dumps(
+            intervention.approval.to_dict() if intervention.approval else {}
+        )
+        adjustment_json = (
+            json.dumps(intervention.adjustment.to_dict())
+            if intervention.adjustment
+            else None
+        )
+        obs_start = (
+            intervention.observation_window.opened_at.isoformat()
+            if intervention.observation_window
+            else intervention.planned_start.isoformat()
+        )
+        obs_end = (
+            intervention.observation_window.maturity_time.isoformat()
+            if intervention.observation_window
+            else intervention.effective_window_end().isoformat()
+        )
+
+        try:
+            engine.execute(
+                f"INSERT INTO {table} ("
+                "  intervention_id, store_id, intervention_type, eligibility_status, "
+                "  action_set_json, approved_action_json, start_time, end_time, "
+                "  observation_start_time, observation_end_time, status, "
+                "  predecessor_id, replacement_id, adjustment_json, "
+                "  created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+                "ON CONFLICT(intervention_id) DO UPDATE SET "
+                "  store_id = excluded.store_id, "
+                "  intervention_type = excluded.intervention_type, "
+                "  eligibility_status = excluded.eligibility_status, "
+                "  action_set_json = excluded.action_set_json, "
+                "  approved_action_json = excluded.approved_action_json, "
+                "  start_time = excluded.start_time, "
+                "  end_time = excluded.end_time, "
+                "  observation_start_time = excluded.observation_start_time, "
+                "  observation_end_time = excluded.observation_end_time, "
+                "  status = excluded.status, "
+                "  predecessor_id = excluded.predecessor_id, "
+                "  replacement_id = excluded.replacement_id, "
+                "  adjustment_json = excluded.adjustment_json, "
+                "  updated_at = CURRENT_TIMESTAMP",
+                (
+                    intervention.intervention_id,
+                    intervention.store_id,
+                    intervention.kind.value if hasattr(intervention.kind, "value") else str(intervention.kind),
+                    eligibility_status,
+                    action_set_json,
+                    approved_action_json,
+                    intervention.planned_start.isoformat(),
+                    intervention.planned_end.isoformat(),
+                    obs_start,
+                    obs_end,
+                    intervention.status.value.lower() if hasattr(intervention.status, "value") else str(intervention.status).lower(),
+                    intervention.predecessor_id,
+                    intervention.replacement_id,
+                    adjustment_json,
+                    intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
+                ),
+            )
+        except Exception:
+            pass
 
     def save(self, intervention: Intervention) -> Intervention:
         self._store.put(
@@ -505,6 +600,7 @@ class DurableInterventionRepository:
             intervention,
             group_key=intervention.store_id,
         )
+        self._sync_sql(intervention)
         return intervention
 
     def get(self, intervention_id: str) -> Intervention | None:
@@ -515,6 +611,7 @@ class DurableInterventionRepository:
 
     def list_by_store(self, store_id: str) -> list[Intervention]:
         return self._store.list_by_group(self._C, store_id)
+
 
 
 class DurablePriceOpsRepository:
