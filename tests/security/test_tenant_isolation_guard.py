@@ -104,6 +104,13 @@ def valid_waiver() -> TenantAccessWaiver:
     )
 
 
+def _registry_with(*waivers: TenantAccessWaiver) -> TenantAccessWaiverRegistry:
+    registry = TenantAccessWaiverRegistry()
+    for waiver in waivers:
+        registry.register(waiver)
+    return registry
+
+
 @pytest.fixture
 def sample_site_context_payload() -> dict[str, Any]:
     return {
@@ -298,11 +305,13 @@ def test_guard_unauthenticated_principal_denied() -> None:
 def test_valid_waiver_permits_cross_tenant_access(
     admin_alpha: Principal, valid_waiver: TenantAccessWaiver
 ) -> None:
+    registry = _registry_with(valid_waiver)
     decision = check_tenant_isolation(
         admin_alpha,
         TENANT_BETA,
         resource_type="site_market_context",
         waiver=valid_waiver,
+        waiver_registry=registry,
         on=NOW,
     )
     assert decision.allowed is True
@@ -323,11 +332,13 @@ def test_expired_waiver_is_rejected(
         reason="Routine check",
         expires_at=PAST,
     )
+    registry = _registry_with(expired_waiver)
     decision = check_tenant_isolation(
         admin_alpha,
         TENANT_BETA,
         resource_type="site_market_context",
         waiver=expired_waiver,
+        waiver_registry=registry,
         on=NOW,
     )
     assert decision.allowed is False
@@ -337,11 +348,13 @@ def test_expired_waiver_is_rejected(
 def test_waiver_out_of_scope_is_rejected(
     admin_alpha: Principal, valid_waiver: TenantAccessWaiver
 ) -> None:
+    registry = _registry_with(valid_waiver)
     decision = check_tenant_isolation(
         admin_alpha,
         TENANT_BETA,
         resource_type="unauthorized_module",
         waiver=valid_waiver,
+        waiver_registry=registry,
         on=NOW,
     )
     assert decision.allowed is False
@@ -353,11 +366,13 @@ def test_waiver_wrong_principal_or_target_is_rejected(
 ) -> None:
     # valid_waiver is for admin-alpha-001 targeting TENANT_BETA
     # user_beta (user-beta-001) attempting to access TENANT_ALPHA using this waiver
+    registry = _registry_with(valid_waiver)
     decision = check_tenant_isolation(
         user_beta,
         TENANT_ALPHA,
         resource_type="site_market_context",
         waiver=valid_waiver,
+        waiver_registry=registry,
         on=NOW,
     )
     assert decision.allowed is False
@@ -372,11 +387,13 @@ def test_unbounded_waiver_without_expiry_is_rejected(admin_alpha: Principal) -> 
         reason="Indefinite bypass attempt",
         expires_at=None,
     )
+    registry = _registry_with(unbounded_waiver)
     decision = check_tenant_isolation(
         admin_alpha,
         TENANT_BETA,
         resource_type="site_market_context",
         waiver=unbounded_waiver,
+        waiver_registry=registry,
         on=NOW,
     )
     assert decision.allowed is False
@@ -391,11 +408,13 @@ def test_waiver_missing_signer_or_reason_is_rejected(admin_alpha: Principal) -> 
         reason="Reason provided",
         expires_at=FUTURE,
     )
+    registry = _registry_with(no_signer_waiver)
     decision = check_tenant_isolation(
         admin_alpha,
         TENANT_BETA,
         resource_type="site_market_context",
         waiver=no_signer_waiver,
+        waiver_registry=registry,
         on=NOW,
     )
     assert decision.allowed is False
@@ -413,6 +432,7 @@ def test_market_intelligence_api_tenant_authorization_matrix(
 ) -> None:
     audit_log = InMemoryAuditLog()
     engine = AuthorizationEngine(audit_log=audit_log)
+    registry = _registry_with(valid_waiver)
 
     # 1. Same tenant allow
     res_tenant = authorize_market_intelligence(
@@ -465,6 +485,7 @@ def test_market_intelligence_api_tenant_authorization_matrix(
         principal=admin_alpha,
         auth_engine=engine,
         waiver=valid_waiver,
+        waiver_registry=registry,
     )
     assert res_waiver_tenant == TENANT_BETA
 
@@ -496,6 +517,7 @@ def test_market_data_facade_tenant_authorization_matrix(
 ) -> None:
     import copy
 
+    registry = _registry_with(valid_waiver)
     transport = InMemoryDataPlatformTransport()
     # Seed data
     doc_alpha = copy.deepcopy(sample_site_context_payload)
@@ -513,7 +535,12 @@ def test_market_data_facade_tenant_authorization_matrix(
     client = DataPlatformClient(transport=transport)
     audit_log = InMemoryAuditLog()
     auth_engine = AuthorizationEngine(audit_log=audit_log)
-    facade = MarketDataFacade(client=client, auth_engine=auth_engine, enforce_auth=True)
+    facade = MarketDataFacade(
+        client=client,
+        auth_engine=auth_engine,
+        enforce_auth=True,
+        waiver_registry=registry,
+    )
 
     # 1. Same tenant allow
     ctx = facade.get_site_market_context(
@@ -586,6 +613,7 @@ def test_intake_authorization_tenant_guard_matrix(
     valid_waiver: TenantAccessWaiver,
 ) -> None:
     audit_log = InMemoryAuditLog()
+    registry = _registry_with(valid_waiver)
 
     # 1. Same tenant allow
     authorize_intake_action(
@@ -647,6 +675,7 @@ def test_intake_authorization_tenant_guard_matrix(
         audit_log=audit_log,
         correlation_id="corr-waiver-admin",
         waiver=valid_waiver,
+        waiver_registry=registry,
     )
 
     events = audit_log.list_events()
@@ -670,12 +699,14 @@ def test_untrusted_signer_waiver_is_rejected_fail_closed(
         reason="Malicious cross-tenant bypass attempt",
         expires_at=FUTURE,
     )
+    registry = _registry_with(forged_waiver)
 
     # 1. Pure guard denies forged signer
     decision = check_tenant_isolation(
         admin_alpha,
         TENANT_BETA,
         waiver=forged_waiver,
+        waiver_registry=registry,
         on=NOW,
     )
     assert not decision.allowed
@@ -692,6 +723,7 @@ def test_untrusted_signer_waiver_is_rejected_fail_closed(
             principal=admin_alpha,
             auth_engine=engine,
             waiver=forged_waiver,
+            waiver_registry=registry,
         )
     assert exc_info.value.code == "cross_tenant_access_denied"
 
@@ -708,7 +740,12 @@ def test_untrusted_signer_waiver_is_rejected_fail_closed(
     client = DataPlatformClient(transport=transport)
     facade_audit_log = InMemoryAuditLog()
     facade_engine = AuthorizationEngine(audit_log=facade_audit_log)
-    facade = MarketDataFacade(client=client, auth_engine=facade_engine, enforce_auth=True)
+    facade = MarketDataFacade(
+        client=client,
+        auth_engine=facade_engine,
+        enforce_auth=True,
+        waiver_registry=registry,
+    )
 
     with pytest.raises(MarketDataAuthorizationError) as exc_info:
         facade.get_site_market_context(
@@ -719,6 +756,99 @@ def test_untrusted_signer_waiver_is_rejected_fail_closed(
             waiver=forged_waiver,
         )
     assert exc_info.value.code == "cross_tenant_access_denied"
+
+    # 4. Assisted listing intake denies forged signer
+    with pytest.raises(HTTPException) as exc_info:
+        authorize_intake_action(
+            admin_alpha,
+            "view",
+            resource={"id": "L-forged", "tenantId": TENANT_BETA},
+            audit_log=InMemoryAuditLog(),
+            correlation_id="corr-forged-waiver-intake",
+            waiver=forged_waiver,
+            waiver_registry=registry,
+        )
+    assert exc_info.value.status_code == 403
+
+
+def test_known_authorized_signer_without_registered_waiver_fails_closed(
+    admin_alpha: Principal,
+    sample_site_context_payload: dict[str, Any],
+) -> None:
+    """A caller cannot self-issue a waiver by copying a recognized signer name."""
+    forged_waiver = TenantAccessWaiver(
+        waiver_id="UNREGISTERED-KNOWN-SIGNER-001",
+        principal_id="admin-alpha-001",
+        target_tenant_id=TENANT_BETA,
+        approved_by="security_officer_01",
+        reason="Caller supplied waiver with a known signer name",
+        expires_at=FUTURE,
+    )
+    registry = TenantAccessWaiverRegistry()
+
+    # 1. Shared guard rejects the unregistered waiver object.
+    decision = check_tenant_isolation(
+        admin_alpha,
+        TENANT_BETA,
+        resource_type="site_market_context",
+        waiver=forged_waiver,
+        waiver_registry=registry,
+        on=NOW,
+    )
+    assert not decision.allowed
+    assert "not registered" in decision.reason
+
+    # 2. Market intelligence rejects the same unregistered waiver object.
+    with pytest.raises(MarketIntelligenceAuthorizationError) as exc_info:
+        authorize_market_intelligence(
+            "site_market_context",
+            "site-beta-known-signer",
+            tenant_id=TENANT_BETA,
+            principal=admin_alpha,
+            waiver=forged_waiver,
+            waiver_registry=registry,
+        )
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
+    # 3. Market data facade rejects it before reading the target document.
+    import copy
+
+    transport = InMemoryDataPlatformTransport()
+    doc_beta = copy.deepcopy(sample_site_context_payload)
+    doc_beta["document_id"] = "smc-known-signer-beta-001"
+    doc_beta["tenant_id"] = TENANT_BETA
+    doc_beta["contexts"][0]["identity"]["site_id"] = "site-beta-known-signer"
+    transport.store_document(
+        "emgi.site-market-context.v1", "smc-known-signer-beta-001", doc_beta
+    )
+    facade = MarketDataFacade(
+        client=DataPlatformClient(transport=transport),
+        auth_engine=AuthorizationEngine(audit_log=InMemoryAuditLog()),
+        enforce_auth=True,
+        waiver_registry=registry,
+    )
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-beta-known-signer",
+            period_key="2026-08",
+            tenant_id=TENANT_BETA,
+            principal=admin_alpha,
+            waiver=forged_waiver,
+        )
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
+    # 4. Assisted listing intake rejects it through the shared guard.
+    with pytest.raises(HTTPException) as exc_info:
+        authorize_intake_action(
+            admin_alpha,
+            "view",
+            resource={"id": "L-known-signer", "tenantId": TENANT_BETA},
+            audit_log=InMemoryAuditLog(),
+            correlation_id="corr-known-signer-intake",
+            waiver=forged_waiver,
+            waiver_registry=registry,
+        )
+    assert exc_info.value.status_code == 403
 
 
 def test_dynamic_signer_registration_and_registry_lookup(

@@ -63,6 +63,7 @@ from shared.auth import (
     Role,
     Scope,
     TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -896,7 +897,15 @@ def test_facade_platform_admin_allowed_cross_tenant_with_waiver(
         reason="Security audit",
         expires_at=datetime.now(UTC) + timedelta(days=1),
     )
-    ctx = facade.get_site_market_context(
+    registry = TenantAccessWaiverRegistry()
+    registry.register(waiver)
+    authorized_facade = MarketDataFacade(
+        client=facade.client,
+        auth_engine=facade.auth_engine,
+        enforce_auth=True,
+        waiver_registry=registry,
+    )
+    ctx = authorized_facade.get_site_market_context(
         "site-taipei-001",
         tenant_id="tenant-alpha",
         principal=platform_admin_principal,
@@ -1273,5 +1282,4 @@ def test_t3_transport_explicit_requirement_and_rejection_of_silent_defaults(seed
         principal=expansion_principal,
     )
     assert ctx.identity.site_id == "site-taipei-001"
-
 

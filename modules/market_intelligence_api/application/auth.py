@@ -21,6 +21,7 @@ from shared.auth import (
     Principal,
     ResourceDescriptor,
     TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
     check_tenant_isolation,
 )
 from shared.auth.engine import AuthorizationEngine
@@ -111,6 +112,7 @@ def authorize_market_intelligence(
     classification: DataClassification = DataClassification.CONFIDENTIAL,
     enforce_auth: bool = True,
     waiver: TenantAccessWaiver | str | None = None,
+    waiver_registry: TenantAccessWaiverRegistry | None = None,
 ) -> str | None:
     """Enforce ODayPlus product authorization, tenant isolation, and RBAC rules.
 
@@ -168,6 +170,7 @@ def authorize_market_intelligence(
         resource_type=resource_type,
         resource_id=resource_id,
         waiver=waiver,
+        waiver_registry=waiver_registry,
     )
     if not tenant_decision.allowed:
         if hasattr(engine, "audit_log") and engine.audit_log:

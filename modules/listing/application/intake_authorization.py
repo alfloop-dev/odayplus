@@ -20,6 +20,7 @@ from shared.auth import (
     ResourceDescriptor,
     Role,
     TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
     check_tenant_isolation,
 )
 
@@ -75,7 +76,8 @@ def authorize_intake_action(
     operator_role_id: str | None = None,
     audit_log: Any = None,
     correlation_id: str | None = None,
-    waiver: TenantAccessWaiver | None = None,
+    waiver: TenantAccessWaiver | str | None = None,
+    waiver_registry: TenantAccessWaiverRegistry | None = None,
     tenant_id: str | None = None,
 ) -> None:
     """Enforce deny-by-default assisted intake authorization and segregation."""
@@ -156,7 +158,8 @@ def authorize_intake_action(
     )
     effective_waiver = waiver or (
         resource.get("waiver")
-        if isinstance(resource, dict) and isinstance(resource.get("waiver"), TenantAccessWaiver)
+        if isinstance(resource, dict)
+        and isinstance(resource.get("waiver"), (TenantAccessWaiver, str))
         else None
     )
     res_type = "intake" if (resource and ("url" in resource or "parsedFields" in resource)) else "listing"
@@ -172,6 +175,7 @@ def authorize_intake_action(
         resource_type=res_type,
         resource_id=res_id,
         waiver=effective_waiver,
+        waiver_registry=waiver_registry,
     )
     if not tenant_decision.allowed:
         _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED", decision=tenant_decision)

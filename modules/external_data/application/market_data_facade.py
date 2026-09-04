@@ -65,6 +65,7 @@ from shared.auth import (
     ResourceDescriptor,
     Role,
     TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
     check_tenant_isolation,
 )
 from shared.auth.engine import AuthorizationEngine
@@ -338,6 +339,7 @@ class MarketDataFacade:
         *,
         transport: DataPlatformTransport | None = None,
         enforce_auth: bool = True,
+        waiver_registry: TenantAccessWaiverRegistry | None = None,
     ) -> None:
         if client is not None:
             self._client = client
@@ -350,6 +352,7 @@ class MarketDataFacade:
             )
         self._auth_engine = auth_engine if auth_engine is not None else AuthorizationEngine()
         self._enforce_auth = enforce_auth
+        self._waiver_registry = waiver_registry
 
     @property
     def client(self) -> DataPlatformClient:
@@ -429,6 +432,7 @@ class MarketDataFacade:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 waiver=waiver,
+                waiver_registry=self._waiver_registry,
             )
             if not tenant_decision.allowed:
                 if hasattr(self._auth_engine, "audit_log"):
@@ -547,6 +551,7 @@ class MarketDataFacade:
                 resource_type=resource_type,
                 resource_id=resource_id,
                 waiver=waiver,
+                waiver_registry=self._waiver_registry,
             )
             if not tenant_decision.allowed:
                 access = AccessRequest(
