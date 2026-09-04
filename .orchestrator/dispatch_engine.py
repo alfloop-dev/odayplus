@@ -782,13 +782,16 @@ def helper_owner_is_saturated(
 ) -> bool:
     owner = str(task.get("owner") or "")
     owner_id = normalize_agent_id(owner)
+    dispatchable = (
+        {normalize_agent_id(aid) for aid in dispatchable_agent_ids if normalize_agent_id(aid)}
+        if dispatchable_agent_ids is not None
+        else {normalize_agent_id(aid) for aid in dispatch_loop_agent_ids(config) if normalize_agent_id(aid)}
+    )
     if not owner_id or owner_id not in (config.get("agents", {}) or {}):
         owner_undispatchable = True
     elif not agent_can_take_task(config, owner, task):
         owner_undispatchable = True
-    elif dispatchable_agent_ids is not None and owner_id not in [
-        normalize_agent_id(aid) for aid in dispatchable_agent_ids
-    ]:
+    elif owner_id not in dispatchable:
         owner_undispatchable = True
     elif state is not None and (
         agent_auto_dispatch_block_reason(config, state, owner_id, provider_report)
@@ -1602,33 +1605,11 @@ def dispatch_ready_tasks(
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
 
-    import capacity_controller
-    released_claim_ids = set(
-        capacity_controller.helper_claim_task_ids_to_release(
-            config,
-            tasks,
-            state,
-            task_id_field=task_id_field,
-        )
-    )
-    if released_claim_ids:
-        for task in tasks:
-            if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
-                task.pop("helper_execution_lease", None)
-        if commit_canonical_task_transition(config, status):
-            changed = True
-            for task_id in sorted(released_claim_ids):
-                write_activity_log(
-                    config,
-                    {
-                        "type": "helper_claim_released",
-                        "task_id": task_id,
-                        "message": "Helper execution lease released because its launched run is no longer live.",
-                    },
-                )
-            status = load_status(config)
-            tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
-            task_map = {task.get(task_id_field): task for task in tasks}
+    claims_released = release_dead_helper_claims(config, state, status)
+    if claims_released:
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
@@ -1650,7 +1631,7 @@ def dispatch_ready_tasks(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
 
-    changed = metadata_repaired or review_states_repaired
+    changed = metadata_repaired or review_states_repaired or claims_released
     if reassign_tasks_after_review_churn(
         config,
         state,
@@ -1999,7 +1980,7 @@ def dispatch_ready_tasks(
                     provider_report=provider_report,
                     active_quota_counts=active_quota_counts,
                     pending_quota_counts=pending_quota_counts,
-                    dispatchable_agent_ids=agent_ids,
+                    dispatchable_agent_ids=agent_ids_override if agent_ids_override is not None else None,
                 )
                 if (
                     task_status in claimable_statuses

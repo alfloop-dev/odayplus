@@ -376,15 +376,14 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
     return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
 
 
-def reconcile_capacity_controller(
+def release_dead_helper_claims(
     config: dict[str, Any],
     state: dict[str, Any],
-    provider_report: dict[str, Any] | None = None,
+    status: dict[str, Any] | None = None,
 ) -> bool:
-    """Run the governed capacity Chair and materialize its bounded sidecars."""
-    if provider_report is None:
-        provider_report = load_provider_report(config)
-    status = load_status(config)
+    """Release helper execution leases whose launched run is no longer live."""
+    if status is None:
+        status = load_status(config)
     schema = config.get("schema", {}) or {}
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
@@ -397,21 +396,39 @@ def reconcile_capacity_controller(
             task_id_field=task_id_field,
         )
     )
-    if released_claim_ids:
-        for task in tasks:
-            if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
-                task.pop("helper_execution_lease", None)
-        if not commit_canonical_task_transition(config, status):
-            return False
-        for task_id in sorted(released_claim_ids):
-            write_activity_log(
-                config,
-                {
-                    "type": "helper_claim_released",
-                    "task_id": task_id,
-                    "message": "Helper execution lease released because its launched run is no longer live.",
-                },
-            )
+    if not released_claim_ids:
+        return False
+    for task in tasks:
+        if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
+            task.pop("helper_execution_lease", None)
+    if not commit_canonical_task_transition(config, status):
+        return False
+    for task_id in sorted(released_claim_ids):
+        write_activity_log(
+            config,
+            {
+                "type": "helper_claim_released",
+                "task_id": task_id,
+                "message": "Helper execution lease released because its launched run is no longer live.",
+            },
+        )
+    return True
+
+
+def reconcile_capacity_controller(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    """Run the governed capacity Chair and materialize its bounded sidecars."""
+    if provider_report is None:
+        provider_report = load_provider_report(config)
+    status = load_status(config)
+    schema = config.get("schema", {}) or {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    release_dead_helper_claims(config, state, status)
+    tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
     runnable_task_ids = canonical_dispatchable_task_ids(config, tasks)
     controller, state_changed = capacity_controller.evaluate_chair(
         config, state, tasks, runnable_tasks=runnable_task_ids, provider_report=provider_report
