@@ -63,6 +63,13 @@ class NetworkPlanCandidate:
     capacity_delta: int
     action_counts: dict[NetworkAction, int]
     binding_constraints: tuple[str, ...]
+    # No default: a candidate that does not say which of ODP-FR-NET-002's eight
+    # classes bound it must not be constructible. An empty tuple default would
+    # let a new construction site disclose nothing and still serialize a plan
+    # whose two class arrays are present and well-typed, which reads downstream
+    # as "verified against nothing" rather than as a missing declaration.
+    modelled_constraint_classes: tuple[ConstraintClass, ...]
+    unmodelled_constraint_classes: tuple[ConstraintClass, ...]
 
     @property
     def action_signature(self) -> tuple[tuple[str, str], ...]:
@@ -78,6 +85,8 @@ class NetworkPlanCandidate:
             "capacity_delta": self.capacity_delta,
             "action_counts": {k.value: v for k, v in self.action_counts.items()},
             "binding_constraints": list(self.binding_constraints),
+            "modelled_constraint_classes": [c.value for c in self.modelled_constraint_classes],
+            "unmodelled_constraint_classes": [c.value for c in self.unmodelled_constraint_classes],
         }
 
 
@@ -213,6 +222,8 @@ def _candidate_from_selected(
             counts=counts,
             constraints=constraints,
         ),
+        modelled_constraint_classes=constraints.modelled_classes(),
+        unmodelled_constraint_classes=constraints.unmodelled_classes(),
     )
 
 
@@ -699,6 +710,8 @@ def _candidate(
             counts=counts,
             constraints=constraints,
         ),
+        modelled_constraint_classes=constraints.modelled_classes(),
+        unmodelled_constraint_classes=constraints.unmodelled_classes(),
     )
 
 
@@ -857,6 +870,8 @@ def _candidate_fields_match(
         and actual.capacity_delta == expected.capacity_delta
         and actual.action_counts == expected.action_counts
         and actual.binding_constraints == expected.binding_constraints
+        and actual.modelled_constraint_classes == expected.modelled_constraint_classes
+        and actual.unmodelled_constraint_classes == expected.unmodelled_constraint_classes
     )
 
 
@@ -866,7 +881,8 @@ def _verify_solve_result(
     constraints: NetPlanConstraints,
     solve_result: NetworkPlanSolveResult,
     risk_penalty: float,
-    alternative_limit: int,
+    alternative_limit: int | None,
+    expected_solver_version: str = SOLVER_VERSION,
 ) -> tuple[tuple[str, ...], NetworkPlanCandidate | None]:
     violations: list[str] = []
     feasible_candidates = build_feasible_candidates(
@@ -896,7 +912,7 @@ def _verify_solve_result(
             )
         ):
             violations.append("infeasible_result_metrics_mismatch")
-        if solve_result.solver_version != SOLVER_VERSION:
+        if solve_result.solver_version != expected_solver_version:
             violations.append("solver_version_mismatch")
         expected_diagnostics = tuple(diagnose_infeasible(options_by_entity, constraints))
         if solve_result.diagnostics != expected_diagnostics:
@@ -909,7 +925,7 @@ def _verify_solve_result(
         violations.append("solve_feasibility_flag_mismatch")
     if solve_result.diagnostics:
         violations.append("feasible_result_has_diagnostics")
-    if solve_result.solver_version != SOLVER_VERSION:
+    if solve_result.solver_version != expected_solver_version:
         violations.append("solver_version_mismatch")
 
     selected_by_entity: dict[str, ActionOption] = {}
@@ -957,13 +973,15 @@ def _verify_solve_result(
     if recomputed.objective_value != best_objective:
         violations.append("optimality_claim_mismatch")
 
-    expected_alternatives = tuple(
-        candidate
-        for candidate in ranked_candidates
-        if candidate.action_signature != recomputed.action_signature
-    )[:alternative_limit]
-    if len(solve_result.alternatives) != len(expected_alternatives):
-        violations.append("alternative_count_mismatch")
+    expected_alternatives: tuple[NetworkPlanCandidate, ...] | None = None
+    if alternative_limit is not None:
+        expected_alternatives = tuple(
+            candidate
+            for candidate in ranked_candidates
+            if candidate.action_signature != recomputed.action_signature
+        )[:alternative_limit]
+        if len(solve_result.alternatives) != len(expected_alternatives):
+            violations.append("alternative_count_mismatch")
 
     seen_signatures = {recomputed.action_signature}
     for position, alternative in enumerate(solve_result.alternatives):
@@ -992,9 +1010,9 @@ def _verify_solve_result(
         if alternative.action_signature in seen_signatures:
             violations.append("duplicate_alternative")
         seen_signatures.add(alternative.action_signature)
-        if position >= len(expected_alternatives) or not _candidate_fields_match(
-            alternative,
-            expected_alternatives[position],
+        if expected_alternatives is not None and (
+            position >= len(expected_alternatives)
+            or not _candidate_fields_match(alternative, expected_alternatives[position])
         ):
             violations.append("alternative_content_mismatch")
 
@@ -1007,15 +1025,25 @@ def validate_network_plan_solve_result(
     constraints: NetPlanConstraints,
     solve_result: NetworkPlanSolveResult,
     risk_penalty: float = 100_000.0,
-    alternative_limit: int = DEFAULT_ALTERNATIVE_LIMIT,
+    alternative_limit: int | None = DEFAULT_ALTERNATIVE_LIMIT,
+    expected_solver_version: str = SOLVER_VERSION,
 ) -> tuple[str, ...]:
-    """Independently recompute and validate one persisted solver result."""
+    """Independently recompute and validate one persisted solver result.
+
+    ``alternative_limit=None`` is for an external authoritative solver whose
+    alternatives are optional rather than an exhaustive library contract. Any
+    alternatives it does return are still checked for domain, feasibility,
+    metrics, and uniqueness. The default keeps the strict library contract.
+    """
+    if alternative_limit is not None and alternative_limit < 0:
+        raise ValueError("alternative_limit must be non-negative")
     violations, _ = _verify_solve_result(
         options_by_entity=options_by_entity,
         constraints=constraints,
         solve_result=solve_result,
         risk_penalty=risk_penalty,
         alternative_limit=alternative_limit,
+        expected_solver_version=expected_solver_version,
     )
     return violations
 

@@ -31,7 +31,7 @@ _TAG_SCHEMA_VERSION = "1"
 # values live in ``ModelVersion.monitoring_config`` so a release writes them
 # atomically with the rest of the model contract; the runtime resolves them
 # from MLflow tags without reading the durable registry.
-_GOVERNANCE_TAG_KEYS = (
+_REQUIRED_GOVERNANCE_TAG_KEYS = (
     "release_id",
     "release_revision",
     "approval_id",
@@ -41,6 +41,13 @@ _GOVERNANCE_TAG_KEYS = (
     "model_card_checksum",
     "validation_run_id",
     "validation_status",
+)
+_GOVERNANCE_TAG_KEYS = (
+    *_REQUIRED_GOVERNANCE_TAG_KEYS,
+    "backtest_receipt_id",
+    "backtest_status",
+    "backtest_policy_version_id",
+    "backtest_code_version",
 )
 _LINEAGE_ARTIFACT_ROOT = "oday-lineage/model-versions"
 _STAGE_TO_MLFLOW = {
@@ -343,7 +350,7 @@ class MlflowRegistryAdapter:
 
         tags = self._require_model_version(model_name, version).tags
         missing = sorted(
-            key for key in _GOVERNANCE_TAG_KEYS if not str(tags.get(self._tag(key), "")).strip()
+            key for key in _REQUIRED_GOVERNANCE_TAG_KEYS if not str(tags.get(self._tag(key), "")).strip()
         )
         if missing:
             raise MlflowAliasSynchronizationError(

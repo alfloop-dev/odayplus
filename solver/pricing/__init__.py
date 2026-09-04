@@ -6,6 +6,16 @@ about plan lifecycle, approval or persistence — that orchestration lives in
 optimization independently testable.
 """
 
+from solver.pricing.bandit import (
+    ArmObservation,
+    ArmStatistics,
+    BanditAlgorithm,
+    BanditCandidate,
+    BanditReplayContract,
+    explore_price_candidate,
+    replay_bandit_candidate,
+    select_bandit_arm,
+)
 from solver.pricing.constraints import (
     PRICING_POLICY_ID,
     PRICING_POLICY_KIND,
@@ -60,7 +70,12 @@ __all__ = [
     "VIOLATION_MAX_DECREASE",
     "VIOLATION_MAX_INCREASE",
     "VIOLATION_OFF_LADDER",
+    "ArmObservation",
+    "ArmStatistics",
     "Band",
+    "BanditAlgorithm",
+    "BanditCandidate",
+    "BanditReplayContract",
     "ConstraintViolation",
     "ElasticityFit",
     "OptimizationResult",
@@ -72,6 +87,9 @@ __all__ = [
     "diagnose_infeasible",
     "estimate_elasticity",
     "expected_demand",
+    "explore_price_candidate",
     "optimize_price",
+    "replay_bandit_candidate",
+    "select_bandit_arm",
     "simulate_price",
 ]

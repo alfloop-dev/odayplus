@@ -55,12 +55,14 @@ from branch_drift_alarms import check_branch_drift
 from common import (
     agent_config_for,
     authoritative_status_root,
+    classify_reopen_reason,
     cmdline_is_supervisor_process,
     config_path,
     CONFIG_PATH_ENV_VAR,
     display_name_for,
     execution_context_files,
     generate_task_brief_content,
+    is_control_plane_recovery_reason,
     is_github_cli_auth_failure,
     is_task_brief_stale,
     isoformat_utc,
@@ -80,6 +82,7 @@ from common import (
     selected_shared_files,
     shell_quote,
     spawn_background_process,
+    substantive_review_reopen_count,
     summarize_failure_reason,
     supervisor_lock_path,
     supervisor_pid_path,
@@ -91,6 +94,14 @@ from common import (
     write_activity_log,
     write_failure_evidence,
     write_json,
+    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+    REOPEN_CATEGORY_OWNER_RESUME,
+    REOPEN_CATEGORY_SUBSTANTIVE_REVIEW,
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_OWNER_RESUME,
+    REOPEN_REASON_REVIEW_FINDING,
+    REOPEN_REASON_STALE_REVIEW_SHA,
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
 )
 from coordination_file_watcher import sync_coordination_files
 from dispatch_policy import (
@@ -250,6 +261,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "mark_provider_dispatch_paused",
 "maybe_reassign_task_after_worker_failure",
 "reassign_tasks_after_review_churn",
+"substantive_review_reopen_count",
+"is_control_plane_recovery_reason",
+"classify_reopen_reason",
 "maybe_trigger_retry_or_fallback",
 "normalized_mapping_values",
 "parse_quota_retry_hint",
@@ -375,22 +389,27 @@ def reconcile_capacity_controller(
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
     tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
-    expired_claim_ids = set(
-        capacity_controller.expired_helper_claim_task_ids(tasks, task_id_field=task_id_field)
+    released_claim_ids = set(
+        capacity_controller.helper_claim_task_ids_to_release(
+            config,
+            tasks,
+            state,
+            task_id_field=task_id_field,
+        )
     )
-    if expired_claim_ids:
+    if released_claim_ids:
         for task in tasks:
-            if str(task.get(task_id_field) or task.get("id") or "") in expired_claim_ids:
+            if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
                 task.pop("helper_execution_lease", None)
         if not commit_canonical_task_transition(config, status):
             return False
-        for task_id in sorted(expired_claim_ids):
+        for task_id in sorted(released_claim_ids):
             write_activity_log(
                 config,
                 {
-                    "type": "helper_claim_expired",
+                    "type": "helper_claim_released",
                     "task_id": task_id,
-                    "message": "Expired helper execution lease released back to its canonical owner.",
+                    "message": "Helper execution lease released because its launched run is no longer live.",
                 },
             )
     runnable_task_ids = canonical_dispatchable_task_ids(config, tasks)
@@ -1951,6 +1970,87 @@ def worker_workspace_task_id(request: DeliveryRequest) -> str | None:
 
 
 
+def bind_helper_execution_claim(
+    config: dict[str, Any],
+    request: DeliveryRequest,
+    worker_run_id: str,
+) -> bool:
+    """Bind a helper claim to the run that was actually launched.
+
+    Helper claims are allocated before delivery, while the worker run id is
+    minted by the delivery adapter. Bind only the exact claim generation and
+    role snapshot carried by this dispatch event; never replace an existing
+    run binding or mutate the canonical owner/reviewer fields.
+    """
+    if str(request.reason or "").strip() != REASON_HELPER_CLAIM:
+        return True
+    metadata = request.metadata if isinstance(request.metadata, dict) else {}
+    dispatched_task = metadata.get("task")
+    if not isinstance(dispatched_task, dict):
+        return False
+    dispatched_claim = dispatched_task.get("helper_execution_lease")
+    if not isinstance(dispatched_claim, dict) or not dispatched_claim:
+        return False
+    task_id = str(request.task_id or dispatched_task.get("id") or "").strip()
+    run_id = str(worker_run_id or "").strip()
+    claimed_by = normalize_agent_id(str(dispatched_claim.get("claimed_by") or ""))
+    try:
+        generation = int(dispatched_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if not task_id or not run_id or not claimed_by:
+        return False
+
+    status = load_status(config)
+    task_map = task_index_from_status(config, status)
+    task = task_map.get(task_id)
+    if not isinstance(task, dict):
+        return False
+    schema = config.get("schema", {}) or {}
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    for field in (owner_field, reviewer_field):
+        dispatched_identity = dispatched_task.get(
+            field,
+            dispatched_task.get("owner" if field == owner_field else "reviewer"),
+        )
+        if normalize_agent_id(str(task.get(field) or "")) != normalize_agent_id(str(dispatched_identity or "")):
+            return False
+
+    current_claim = task.get("helper_execution_lease")
+    if not isinstance(current_claim, dict) or not current_claim:
+        return False
+    try:
+        current_generation = int(current_claim.get("generation"))
+    except (TypeError, ValueError):
+        return False
+    if current_generation != generation:
+        return False
+    if normalize_agent_id(str(current_claim.get("claimed_by") or "")) != claimed_by:
+        return False
+    original_owner = str(current_claim.get("original_owner") or "").strip()
+    if original_owner and normalize_agent_id(str(task.get(owner_field) or "")) != normalize_agent_id(original_owner):
+        return False
+    existing_run_id = str(current_claim.get("run_id") or "").strip()
+    if existing_run_id and existing_run_id != run_id:
+        return False
+    expires_at = parse_iso_timestamp(str(current_claim.get("lease_expires_at") or ""))
+    if expires_at is None or expires_at <= datetime.now(UTC):
+        return False
+    if existing_run_id == run_id:
+        dispatched_claim["run_id"] = run_id
+        return True
+
+    current_claim["run_id"] = run_id
+    if not commit_canonical_task_transition(config, status):
+        current_claim.pop("run_id", None)
+        return False
+    # Keep the immutable dispatch snapshot equally specific. The lifecycle
+    # poller uses it to reject a later generation/run handoff.
+    dispatched_claim["run_id"] = run_id
+    return True
+
+
 def _branch_checked_out_in_root(repo_root: Path, branch: str) -> bool:
     for record in _git_worktree_records(repo_root):
         path_value = record.get("worktree")
@@ -2166,6 +2266,33 @@ def start_worker_for_request(
         "next_retry_at": None,
         "last_error": None,
     }
+    if request.reason == REASON_HELPER_CLAIM and not bind_helper_execution_claim(
+        config,
+        request,
+        worker_run_id,
+    ):
+        worker = state["workers"][worker_run_id]
+        worker["status"] = "failed"
+        worker["last_event_at"] = utc_now()
+        worker["last_error"] = (
+            "Helper claim binding failed closed: canonical claim generation, owner, "
+            "or run binding changed before worker launch."
+        )
+        terminate_worker_pid(worker.get("pid"))
+        save_runtime_state(config, state)
+        write_activity_log(
+            config,
+            {
+                "type": "worker_failed",
+                "task_id": request.task_id,
+                "target_agent": display_name_for(config, agent["id"]),
+                "provider": request.provider,
+                "message": worker["last_error"],
+                "queue_event_id": event_id_for_log,
+                "worker_run_id": worker_run_id,
+            },
+        )
+        return False, worker["last_error"], result.as_dict()
     record_worker_runtime_measurement(
         config,
         state,
@@ -2726,6 +2853,8 @@ WORKER_RUNTIME_METRIC_COUNTERS = (
     "queue_leases_started",
     "marker_updates",
     "lease_refreshes",
+    "helper_claim_renewals",
+    "helper_claim_releases",
     "missing_process_workers_failed",
     "expired_lease_workers_failed",
     "supersede_deferrals",
@@ -3999,7 +4128,7 @@ def consume_human_continuation_approvals(
         task.pop("human_continuation_approval", None)
 
         try:
-            reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0))
+            reopen_count = substantive_review_reopen_count(task)
             reassigned_count = max(
                 0,
                 int(task.get("review_churn_reassigned_at_count", 0) or 0),
@@ -4740,8 +4869,12 @@ def worker_can_be_preempted(
     task = task_map.get(task_id) or {}
     task_status = str(task.get("status") or "").lower()
 
-    # Finalize workers are read-only on repo (immutable approved head)
-    if dispatch_reason == REASON_OWNED_FINALIZE or task_status == "review_approved":
+    # Finalize workers are read-only on repo (immutable approved head),
+    # and review workers are read-only reviewers. Both are safe to preempt when clean.
+    if (
+        dispatch_reason in {REASON_REVIEW_READY, REASON_OWNED_FINALIZE}
+        or task_status in {"review", "review_approved"}
+    ):
         return worker_worktree_is_clean(config, worker)
 
     # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,

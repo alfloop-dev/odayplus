@@ -1,0 +1,78 @@
+{
+  "storeId": "STORE-101",
+  "status": "netplanreview",
+  "netPlanScenarios": [
+    {
+      "id": "SCENARIO-E2E-HTTP-001",
+      "name": "NetPlan E2E Scenario SCENARIO-E2E-HTTP-001",
+      "isSystemRecommendation": true,
+      "modelledConstraintClasses": [
+        "CAPITAL",
+        "CONSTRUCTION",
+        "EQUIPMENT",
+        "LABOUR",
+        "COVERAGE",
+        "DILUTION"
+      ],
+      "unmodelledConstraintClasses": [
+        "LEASE",
+        "SEQUENCING"
+      ],
+      "modelled_constraint_classes": [
+        "CAPITAL",
+        "CONSTRUCTION",
+        "EQUIPMENT",
+        "LABOUR",
+        "COVERAGE",
+        "DILUTION"
+      ],
+      "unmodelled_constraint_classes": [
+        "LEASE",
+        "SEQUENCING"
+      ],
+      "blockedConstraintClasses": [],
+      "acknowledgeableConstraintClasses": [
+        "LEASE",
+        "SEQUENCING"
+      ],
+      "disclosurePolicyVersionId": "netplan-constraint-disclosure-policy-v1:tenant-e2e-disclosure",
+      "disclosureUndeclared": false
+    },
+    {
+      "id": "SCENARIO-E2E-HTTP-001:alternative:1",
+      "name": "NetPlan E2E Scenario SCENARIO-E2E-HTTP-001 alternative 1",
+      "isSystemRecommendation": false,
+      "modelledConstraintClasses": [
+        "CAPITAL",
+        "CONSTRUCTION",
+        "EQUIPMENT",
+        "LABOUR",
+        "COVERAGE",
+        "DILUTION"
+      ],
+      "unmodelledConstraintClasses": [
+        "LEASE",
+        "SEQUENCING"
+      ],
+      "modelled_constraint_classes": [
+        "CAPITAL",
+        "CONSTRUCTION",
+        "EQUIPMENT",
+        "LABOUR",
+        "COVERAGE",
+        "DILUTION"
+      ],
+      "unmodelled_constraint_classes": [
+        "LEASE",
+        "SEQUENCING"
+      ],
+      "blockedConstraintClasses": [],
+      "acknowledgeableConstraintClasses": [
+        "LEASE",
+        "SEQUENCING"
+      ],
+      "disclosurePolicyVersionId": "netplan-constraint-disclosure-policy-v1:tenant-e2e-disclosure",
+      "disclosureUndeclared": false
+    }
+  ]
+}

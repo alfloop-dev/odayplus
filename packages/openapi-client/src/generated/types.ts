@@ -243,6 +243,18 @@ export type ClosePayload = {
   reason?: string;
 };
 
+/** CommentCreateRequest */
+export type CommentCreateRequest = {
+  content: string;
+  targetId: string;
+  targetType: "task" | "decision" | "approval";
+};
+
+/** CommentEditRequest */
+export type CommentEditRequest = {
+  content: string;
+};
+
 /** ComparePayload */
 export type ComparePayload = {
   cell_ids?: string[];
@@ -268,6 +280,19 @@ export type ConflictError = {
   retry_with_etag?: string | null;
   retryable: boolean;
 };
+
+/** The hard-constraint classes a network plan must honour (ODP-FR-NET-002).
+
+The solver does not model all of them. That is not by itself a defect --
+a plan built without a construction-capacity figure cannot honour one --
+but reporting such a plan as simply "feasible" is, because "feasible under
+the constraints we modelled" and "feasible under all eight" are different
+claims that read identically.
+
+``NetPlanConstraints.modelled_classes`` and the matching field on the solve
+result keep those two apart, so a reader can tell which question the answer
+is an answer to. */
+export type ConstraintClass = "CAPITAL" | "LEASE" | "CONSTRUCTION" | "EQUIPMENT" | "LABOUR" | "COVERAGE" | "DILUTION" | "SEQUENCING";
 
 /** CorrectionReceipt */
 export type CorrectionReceipt = {
@@ -1011,6 +1036,58 @@ export type NetworkListingMergePayload = {
   targetListingId: string;
 };
 
+/** NetworkRebalanceCounts */
+export type NetworkRebalanceCounts = {
+  pendingApprovals?: number;
+  stores?: number;
+};
+
+/** NetworkRebalanceMetadata */
+export type NetworkRebalanceMetadata = {
+  avm?: Record<string, unknown> | null;
+  canonicalPackage?: string | null;
+  canonicalZipSha256?: string | null;
+  netPlan?: Record<string, unknown> | null;
+  screenLabels?: string[];
+  serviceVersion?: string | null;
+};
+
+/** NetworkRebalanceModels */
+export type NetworkRebalanceModels = {
+  avm?: Record<string, unknown> | null;
+  netPlan?: Record<string, unknown> | null;
+};
+
+/** NetworkRebalanceMutationResponse */
+export type NetworkRebalanceMutationResponse = {
+  auditEvent?: Record<string, unknown> | null;
+  correlationId?: string | null;
+  store: RebalanceStore;
+};
+
+/** NetworkRebalanceReviewResponse */
+export type NetworkRebalanceReviewResponse = {
+  approval?: Record<string, unknown> | null;
+  auditEvent?: Record<string, unknown> | null;
+  correlationId?: string | null;
+  store: RebalanceStore;
+};
+
+/** NetworkRebalanceSnapshotResponse */
+export type NetworkRebalanceSnapshotResponse = {
+  auditEvents?: Record<string, unknown>[];
+  correlationId?: string | null;
+  counts?: NetworkRebalanceCounts;
+  governApprovals?: Record<string, unknown>[];
+  metadata?: NetworkRebalanceMetadata | Record<string, unknown> | null;
+  models?: NetworkRebalanceModels | Record<string, unknown> | null;
+  selectedScenario?: RebalanceScenario | null;
+  selectedStore?: RebalanceStore | null;
+  selectedStoreId?: string | null;
+  source?: string | null;
+  stores: RebalanceStore[];
+};
+
 /** NetworkScoringActorPayload */
 export type NetworkScoringActorPayload = {
   actorName?: string | null;
@@ -1078,6 +1155,10 @@ export type PriceOpsActivationPayload = {
 /** PriceOpsActorPayload */
 export type PriceOpsActorPayload = {
   actor?: string;
+  exploration_algorithm?: string;
+  exploration_gate_id?: string | null;
+  exploration_history?: unknown[][] | null;
+  exploration_seed?: number | null;
   occurred_at?: string | null;
   reason?: string;
 };
@@ -1111,6 +1192,42 @@ export type PriceOpsEvaluationPayload = {
   outcome_window_start?: string | null;
 };
 
+/** PriceOpsExplorationCandidatesPayload */
+export type PriceOpsExplorationCandidatesPayload = {
+  algorithm?: string;
+  at?: string | null;
+  history?: unknown[][] | null;
+  items: PriceOpsPlanItemPayload[];
+  scope_brand_id?: string | null;
+  scope_sku_group?: string | null;
+  scope_store_group?: string | null;
+  seed?: number | null;
+  tenant_id: string;
+};
+
+/** PriceOpsExplorationGateRegisterPayload */
+export type PriceOpsExplorationGateRegisterPayload = {
+  approval_decision_id: string;
+  approval_id: string;
+  approved_by: string;
+  budget_limit: number;
+  decision_policy_version_id: string;
+  effective_from: string;
+  effective_to: string;
+  gate_id?: string | null;
+  rollback_condition: string;
+  scope_brand_id?: string | null;
+  scope_sku_group?: string | null;
+  scope_store_group?: string | null;
+  tenant_id: string;
+};
+
+/** PriceOpsExplorationGateRevokePayload */
+export type PriceOpsExplorationGateRevokePayload = {
+  reason: string;
+  revoked_at?: string | null;
+};
+
 /** PriceOpsObservationPayload */
 export type PriceOpsObservationPayload = {
   actor?: string;
@@ -1130,6 +1247,7 @@ export type PriceOpsPlanItemPayload = {
   applicable_max_price?: number | null;
   applicable_min_price?: number | null;
   baseline_demand: number;
+  brand_id?: string | null;
   confidence?: number | null;
   current_price: number;
   elasticity_value?: number | null;
@@ -1144,6 +1262,8 @@ export type PriceOpsPlanItemPayload = {
   prediction_origin_time?: string | null;
   price_demand_observations?: Record<string, number>[] | null;
   price_ladder_step?: number;
+  sku_group?: string | null;
+  store_group?: string | null;
   store_id: string;
   unit_cost: number;
 };
@@ -1151,6 +1271,10 @@ export type PriceOpsPlanItemPayload = {
 /** PriceOpsPlanPayload */
 export type PriceOpsPlanPayload = {
   created_at?: string | null;
+  exploration_algorithm?: string;
+  exploration_gate_id?: string | null;
+  exploration_history?: unknown[][] | null;
+  exploration_seed?: number | null;
   idempotency_key?: string | null;
   items: PriceOpsPlanItemPayload[];
   plan_id?: string | null;
@@ -1219,10 +1343,96 @@ export type RebalanceActorPayload = {
   simulateUnavailable?: boolean;
 };
 
+/** RebalanceScenario */
+export type RebalanceScenario = {
+  acknowledgeableConstraintClasses: ConstraintClass[];
+  actions?: unknown[] | null;
+  bindingConstraints?: string[];
+  blockedConstraintClasses: ConstraintClass[];
+  capacityDelta?: number | null;
+  diagnostics?: unknown[];
+  disclosurePolicyVersionId?: string | null;
+  disclosureUndeclared?: boolean;
+  evidenceIds?: string[];
+  expectedGrossMargin?: number | null;
+  id: string;
+  inv?: string | null;
+  investmentTwd?: number | null;
+  isInfeasible?: boolean;
+  isStale?: boolean;
+  isSystemRecommendation?: boolean;
+  modelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  name: string;
+  payback?: string | null;
+  rationale?: string | null;
+  risk?: number | string | null;
+  roi?: string | null;
+  roiPct?: number | null;
+  score?: number | null;
+  selected?: boolean;
+  solverStatus?: string | null;
+  solverVersion?: string | null;
+  time?: string | null;
+  unmodelledConstraintClasses: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
+};
+
+/** RebalanceStore */
+export type RebalanceStore = {
+  approvalStatus?: string | null;
+  avm?: Record<string, unknown> | null;
+  avmConf?: string | null;
+  avmEvidenceId?: string | null;
+  avmJob?: Record<string, unknown> | null;
+  avmModelVersion?: string | null;
+  avmP10?: number | null;
+  avmP50?: number | null;
+  avmP90?: number | null;
+  avmRequestId?: string | null;
+  avmReserve?: string | null;
+  avmSnapshotId?: string | null;
+  canonicalAvmCaseId?: string | null;
+  canonicalNetPlanScenarioIds?: string[] | null;
+  evidence?: Record<string, unknown>[] | null;
+  executionBoundary?: string | null;
+  healthNote?: string | null;
+  id: string;
+  lightHistory?: string[] | null;
+  monthlyRevenueLabel?: string | null;
+  monthlyRevenueTwd?: number | null;
+  netPlanJob?: Record<string, unknown> | null;
+  netPlanModelVersion?: string | null;
+  netPlanOptionId?: string | null;
+  netPlanScenarios?: RebalanceScenario[];
+  netPlanSnapshotId?: string | null;
+  ownerName?: string | null;
+  ownerRoleId?: string | null;
+  relatedApprovalId?: string | null;
+  relocationExecuted?: boolean | null;
+  runtimeState?: Record<string, unknown> | null;
+  selectedScenarioEvidenceId?: string | null;
+  selectedScenarioId?: string | null;
+  selectedScenarioOwner?: Record<string, unknown> | null;
+  sourceIssueId?: string | null;
+  status: string;
+  statusLabel?: string | null;
+  storeId: string;
+  storeName: string;
+  summary?: string | null;
+  trend?: number[] | null;
+  utilizationLabel?: string | null;
+  utilizationPct?: number | null;
+};
+
 /** RebalanceSubmitPayload */
 export type RebalanceSubmitPayload = {
+  acknowledgedClasses?: (ConstraintClass | string)[] | null;
+  acknowledgementActorId?: string | null;
+  acknowledgementReason?: string | null;
   actorName?: string | null;
   actorRoleId?: string;
+  approvalReceiptId?: string | null;
   reason: string;
   simulateUnavailable?: boolean;
 };
@@ -1814,6 +2024,8 @@ export const API_PATHS = {
   "/api/v1/operator/approvals": ["GET"],
   "/api/v1/operator/approvals/{approval_id}/decision": ["POST"],
   "/api/v1/operator/bootstrap": ["GET"],
+  "/api/v1/operator/comments": ["GET", "POST"],
+  "/api/v1/operator/comments/{comment_id}": ["PATCH"],
   "/api/v1/operator/evidence/{evidence_id}/purpose": ["POST"],
   "/api/v1/operator/governance/decisions": ["POST"],
   "/api/v1/operator/governance/evidence-package": ["POST"],
@@ -1904,11 +2116,15 @@ export const API_PATHS = {
   "/api/v1/platform/dashboards/provisioned": ["GET"],
   "/api/v1/platform/metrics/export": ["GET"],
   "/api/v1/platform/observability": ["GET"],
+  "/api/v1/priceops/exploration-candidates": ["POST"],
+  "/api/v1/priceops/exploration-gates": ["GET", "POST"],
+  "/api/v1/priceops/exploration-gates/{gate_id}/revoke": ["POST"],
   "/api/v1/priceops/optimizer-jobs": ["POST"],
   "/api/v1/priceops/optimizer-jobs/{job_id}": ["GET"],
   "/api/v1/priceops/plans": ["GET", "POST"],
   "/api/v1/priceops/plans/{plan_id}": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/activate": ["POST"],
+  "/api/v1/priceops/plans/{plan_id}/activation-receipt": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/approve": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/comparison": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/decision-writeback": ["POST"],

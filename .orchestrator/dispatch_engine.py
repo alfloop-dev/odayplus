@@ -6,7 +6,12 @@ from __future__ import annotations
 from typing import Any
 
 import worker_workspace
-from dispatch_policy import REASON_HELPER_CLAIM, worker_logical_dispatch_agent_id
+from common import parse_iso_timestamp as parse_runtime_timestamp
+from dispatch_policy import (
+    REASON_HELPER_CLAIM,
+    task_priority_rank,
+    worker_logical_dispatch_agent_id,
+)
 
 
 def _supervisor_module():
@@ -386,6 +391,7 @@ def repository_has_merge_queue(slug: str | None, base: str) -> bool | None:
     return present
 
 
+@_entrypoint
 def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
     """Enqueue a reviewed, CI-green PR for merge.
 
@@ -483,19 +489,20 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         "at": utc_now(),
         "attempts": previous_attempts + 1,
     }
-    write_activity_log(
-        config,
-        {
-            "type": "merge_route_applied",
-            "task_id": str(task.get("id") or ""),
-            "message": (
-                f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
-                f"(scope {scope}; repository has no merge queue)."
-                if route == "merged"
-                else f"PR #{pr_number} enqueued for merge (scope {scope})."
-            ),
-        },
-    )
+    if config and (config.get("paths") or {}).get("activity_log"):
+        write_activity_log(
+            config,
+            {
+                "type": "merge_route_applied",
+                "task_id": str(task.get("id") or ""),
+                "message": (
+                    f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
+                    f"(scope {scope}; repository has no merge queue)."
+                    if route == "merged"
+                    else f"PR #{pr_number} enqueued for merge (scope {scope})."
+                ),
+            },
+        )
     return route, f"scope={scope}"
 
 
@@ -651,10 +658,23 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
         eligible = task_status in {"todo", "in_progress"} and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
     elif reason == REASON_HELPER_CLAIM:
         claim = task.get("helper_execution_lease") or {}
+        dispatched_task = (event.get("metadata") or {}).get("task") or event.get("task") or {}
+        dispatched_claim = dispatched_task.get("helper_execution_lease") or {}
+        try:
+            dispatched_gen = int(dispatched_claim.get("generation")) if "generation" in dispatched_claim else None
+            current_gen = int(claim.get("generation")) if "generation" in claim else None
+        except (TypeError, ValueError):
+            dispatched_gen = None
+            current_gen = None
         eligible = (
             task_status in {"todo", "in_progress"}
             and normalize_agent_id(str(claim.get("claimed_by") or "")) == normalize_agent_id(target_agent)
             and helper_claim_is_live(claim)
+            and (dispatched_gen is None or current_gen is None or dispatched_gen == current_gen)
+            and (
+                not dispatched_claim.get("claimed_by")
+                or normalize_agent_id(str(dispatched_claim.get("claimed_by") or "")) == normalize_agent_id(str(claim.get("claimed_by") or ""))
+            )
             and dependencies_satisfied(task, task_map, dependency_done_statuses)
         )
 
@@ -1007,7 +1027,9 @@ def higher_priority_ready_task_exists(
 ) -> bool:
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return False
-    current_priority = dispatch_reason_priority(worker.get("request_snapshot", {}).get("reason"))
+    current_priority = dispatch_reason_priority(
+        worker.get("request_snapshot", {}).get("reason") or worker.get("reason")
+    )
     if current_priority is None:
         return False
 
@@ -1022,6 +1044,8 @@ def higher_priority_ready_task_exists(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     current_task = task_map.get(current_task_id)
+    current_task_rank = task_priority_rank(current_task)
+    current_key = (current_task_rank, current_priority)
     higher_priority_task_ids: set[str] = set()
     slot_count = len(logical_worker_slot_ids(config, logical_agent_id))
     urgent_priority_cutoff = dispatch_reason_priority(REASON_OWNED_FINALIZE)
@@ -1033,7 +1057,7 @@ def higher_priority_ready_task_exists(
             continue
         task_status = str(task.get("status") or "").lower()
         candidate_priority = None
-        if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+        if task_status in review_statuses and normalize_agent_id(str(task.get(reviewer_field) or "")) == normalize_agent_id(agent_name):
             if is_sidecar_review_of_current_parent(
                 task,
                 current_task,
@@ -1053,14 +1077,17 @@ def higher_priority_ready_task_exists(
                 dependencies_done_statuses=dependency_done_statuses,
             )
 
-        if candidate_priority is not None and candidate_priority < current_priority:
-            if (
-                slot_count
-                and urgent_priority_cutoff is not None
-                and candidate_priority > urgent_priority_cutoff
-            ):
-                continue
-            higher_priority_task_ids.add(str(task_id))
+        if candidate_priority is not None:
+            candidate_task_rank = task_priority_rank(task)
+            if (candidate_task_rank, candidate_priority) < current_key:
+                if (
+                    slot_count
+                    and urgent_priority_cutoff is not None
+                    and candidate_priority > urgent_priority_cutoff
+                    and candidate_task_rank >= current_task_rank
+                ):
+                    continue
+                higher_priority_task_ids.add(str(task_id))
 
     if not higher_priority_task_ids:
         return False
@@ -1084,9 +1111,18 @@ def higher_priority_ready_task_exists(
         event_id = str(other.get("queue_event_id") or "")
         if event_id:
             active_event_ids.add(event_id)
-        other_priority = dispatch_reason_priority(other.get("request_snapshot", {}).get("reason"))
+        other_priority = dispatch_reason_priority(
+            other.get("request_snapshot", {}).get("reason") or other.get("reason")
+        )
         other_task_id = str(other.get("task_id") or "")
-        if str(run_id) != current_run_id and other_priority is not None and other_priority < current_priority and other_task_id:
+        other_task = task_map.get(other_task_id)
+        other_task_rank = task_priority_rank(other_task)
+        if (
+            str(run_id) != current_run_id
+            and other_priority is not None
+            and (other_task_rank, other_priority) < current_key
+            and other_task_id
+        ):
             served_higher_priority_task_ids.add(other_task_id)
 
     queue_records = (effective_state.get("queue", {}) or {}).get("events", {}) or {}
@@ -1107,7 +1143,13 @@ def higher_priority_ready_task_exists(
         occupied_count += 1
         event_priority = dispatch_reason_priority(str(event.get("reason") or ""))
         event_task_id = str(event.get("task_id") or "")
-        if event_priority is not None and event_priority < current_priority and event_task_id:
+        event_task = task_map.get(event_task_id)
+        event_task_rank = task_priority_rank(event_task)
+        if (
+            event_priority is not None
+            and (event_task_rank, event_priority) < current_key
+            and event_task_id
+        ):
             served_higher_priority_task_ids.add(event_task_id)
 
     agent_capacity = agent_dispatch_capacity(config, logical_agent_id)
@@ -1198,6 +1240,42 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
             "dependency gate is not satisfied."
         )
 
+    if reason == REASON_HELPER_CLAIM:
+        dispatched_task = (event.get("metadata") or {}).get("task") or event.get("task") or {}
+        dispatched_claim = dispatched_task.get("helper_execution_lease")
+        if not isinstance(dispatched_claim, dict) or not dispatched_claim:
+            return f"Skipped stale queued wake event for {task_id}: event carries no helper execution lease."
+        current_claim = task.get("helper_execution_lease")
+        if not isinstance(current_claim, dict) or not current_claim:
+            return f"Skipped stale queued wake event for {task_id}: task has no active helper execution lease."
+        if not helper_claim_is_live(current_claim):
+            return f"Skipped stale queued wake event for {task_id}: task helper execution lease has expired."
+        try:
+            dispatched_gen = int(dispatched_claim.get("generation"))
+            current_gen = int(current_claim.get("generation"))
+        except (TypeError, ValueError):
+            return f"Skipped stale queued wake event for {task_id}: invalid helper claim generation."
+        if dispatched_gen != current_gen:
+            return f"Skipped stale queued wake event for {task_id}: helper claim generation mismatch (queued {dispatched_gen}, current {current_gen})."
+        if normalize_agent_id(str(dispatched_claim.get("claimed_by") or "")) != normalize_agent_id(str(current_claim.get("claimed_by") or "")):
+            return f"Skipped stale queued wake event for {task_id}: helper claimant mismatch."
+        if normalize_agent_id(str(current_claim.get("claimed_by") or "")) != normalize_agent_id(target):
+            return f"Skipped stale queued wake event for {task_id}: task is claimed by another helper."
+        if task_status not in {"todo", "in_progress"}:
+            return f"Skipped stale queued wake event for {task_id}: task status {task_status} is not eligible for helper execution."
+
+        if expected_key is None:
+            if task_status in {"todo", "in_progress"} and dependency_ready:
+                return None
+            return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
+
+        queued_key = str(event.get("event_key") or "")
+        if queued_key and queued_key != expected_key:
+            if task_status in {"todo", "in_progress"} and dependency_ready:
+                return None
+            return f"Skipped stale queued wake event for {task_id}: task state changed after the wake-up was queued."
+        return None
+
     if expected_key is None:
         if (
             reason == REASON_OWNED_READY
@@ -1253,6 +1331,12 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
         "reviewer": task.get("reviewer"),
         "branch_head": branch_head,
     }
+    if reason == REASON_HELPER_CLAIM:
+        claim = task.get("helper_execution_lease") or {}
+        signature["helper_claim"] = {
+            "claimed_by": normalize_agent_id(str(claim.get("claimed_by") or "")),
+            "generation": int(claim.get("generation", 0) or 0),
+        }
     if reason != REASON_OWNED_FINALIZE:
         signature.update(
             {
@@ -1929,33 +2013,43 @@ def dispatch_ready_tasks(
                 max_helper = min(int(helper_settings.get("max_claims_per_tick", 4)), chair_max or 0)
                 if helper_dispatches >= max_helper:
                     continue
-                now = datetime.now(UTC)
-                generation = int((task.get("helper_execution_lease") or {}).get("generation", 0) or 0) + 1
-                task["helper_execution_lease"] = {
-                    "claimed_by": target_agent,
-                    "original_owner": task.get(owner_field),
-                    "claimed_at": now.isoformat().replace("+00:00", "Z"),
-                    "lease_expires_at": (
-                        now + timedelta(seconds=float(helper_settings.get("lease_seconds", 1800)))
-                    ).isoformat().replace("+00:00", "Z"),
-                    "reason": "owner_capacity_saturated_or_dispatch_sla_exceeded",
-                    "generation": generation,
-                }
-                if not commit_canonical_task_transition(config, status):
-                    task.pop("helper_execution_lease", None)
-                    continue
-                dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
-                write_activity_log(
-                    config,
-                    {
-                        "type": "helper_claim_leased",
-                        "task_id": task.get(task_id_field),
+                existing_claim = task.get("helper_execution_lease") or {}
+                existing_claim_live = helper_claim_is_live(existing_claim)
+                existing_claimant = normalize_agent_id(str(existing_claim.get("claimed_by") or ""))
+
+                # If this task already has a live claim for this exact agent:
+                # Retain the same generation and validity rather than incrementing generation and re-writing.
+                if not (existing_claim_live and existing_claimant == normalize_agent_id(target_agent)):
+                    now = datetime.now(UTC)
+                    generation = int(existing_claim.get("generation", 0) or 0) + 1
+                    task["helper_execution_lease"] = {
                         "claimed_by": target_agent,
-                        "owner": task.get(owner_field),
-                        "lease_expires_at": task["helper_execution_lease"]["lease_expires_at"],
-                        "message": "Idle capacity leased existing canonical work without changing owner.",
-                    },
-                )
+                        "original_owner": task.get(owner_field),
+                        "claimed_at": now.isoformat().replace("+00:00", "Z"),
+                        "lease_expires_at": (
+                            now + timedelta(seconds=float(helper_settings.get("lease_seconds", 1800)))
+                        ).isoformat().replace("+00:00", "Z"),
+                        "reason": "owner_capacity_saturated_or_dispatch_sla_exceeded",
+                        "generation": generation,
+                    }
+                    if not commit_canonical_task_transition(config, status):
+                        if existing_claim:
+                            task["helper_execution_lease"] = existing_claim
+                        else:
+                            task.pop("helper_execution_lease", None)
+                        continue
+                    dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "helper_claim_leased",
+                            "task_id": task.get(task_id_field),
+                            "claimed_by": target_agent,
+                            "owner": task.get(owner_field),
+                            "lease_expires_at": task["helper_execution_lease"]["lease_expires_at"],
+                            "message": "Idle capacity leased existing canonical work without changing owner.",
+                        },
+                    )
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
                 pending_event_keys.add(event["key"])
