@@ -26,11 +26,15 @@ from shared.audit.worm import LocalAppendOnlyWormSink
 from shared.infrastructure.persistence import DurableAuditLog, DurableLearningHubRepository
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.postgresql import PostgresEngine
-from tests.integration._learninghub_fixtures import prepare_candidate
+from tests.integration._learninghub_fixtures import (
+    model_performance_policy_for_model,
+    prepare_candidate,
+)
 
 
 class _PostgresProcessInterrupted(BaseException):
     """Simulates a worker process dying mid-saga."""
+
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("INTAKE_TEST_DATABASE_URL"),
@@ -155,8 +159,7 @@ def test_postgresql16_release_advisory_lock_cas_saga_restart_and_worm(
             (model_name,),
         )
         restarted_engine.execute(
-            "DELETE FROM durable_documents "
-            "WHERE collection = ? AND doc_id = ?",
+            "DELETE FROM durable_documents WHERE collection = ? AND doc_id = ?",
             ("learninghub.release_revisions", model_name),
         )
         restarted_engine.close()
@@ -242,6 +245,7 @@ def test_postgresql16_full_mlflow_release_and_lease_fenced_recovery(
     tracking_uri = f"sqlite:///{tmp_path / 'mlflow.sqlite3'}"
     worm_root = tmp_path / "postgres-learninghub-release-worm"
     model_name = f"forecast_revenue_interval_{uuid4().hex}"
+    policy = model_performance_policy_for_model(model_name)
     engine_a, repository_a = _repository(database_url)
     engine_b, repository_b = _repository(database_url)
     registry_a = MlflowRegistryAdapter(repository_a, tracking_uri=tracking_uri)
@@ -280,8 +284,8 @@ def test_postgresql16_full_mlflow_release_and_lease_fenced_recovery(
         )
 
     try:
-        v1 = prepare_candidate(service_a, "1.0.0", model_name=model_name)
-        v2 = prepare_candidate(service_a, "1.1.0", model_name=model_name)
+        v1 = prepare_candidate(service_a, "1.0.0", model_name=model_name, decision_policy=policy)
+        v2 = prepare_candidate(service_a, "1.1.0", model_name=model_name, decision_policy=policy)
         for version in (v1.version, v2.version):
             card = repository_a.get_model_card(model_name, version)
             validation_run_ids.append(card.validation_run_id)
@@ -289,18 +293,20 @@ def test_postgresql16_full_mlflow_release_and_lease_fenced_recovery(
         decision = release(service_a, version=v1.version, revision=0)
 
         assert repository_a.get_alias(model_name, ModelAlias.PRODUCTION).version == v1.version
-        assert registry_a.get_by_alias(
-            model_name=model_name,
-            alias=ModelAlias.PRODUCTION,
-        ).version == v1.version
+        assert (
+            registry_a.get_by_alias(
+                model_name=model_name,
+                alias=ModelAlias.PRODUCTION,
+            ).version
+            == v1.version
+        )
         promoted_tags = registry_a._require_model_version(model_name, v1.version).tags
         assert promoted_tags["oday.model_version.release_id"] == decision.release_id
         assert promoted_tags["oday.model_version.approval_id"] == "approval-pg-1.0.0"
         assert promoted_tags["oday.model_version.release_approved_by"] == "reviewer-a"
         assert promoted_tags["oday.model_version.requested_by"] == "ml-owner"
         assert (
-            promoted_tags["oday.model_version.model_card_checksum"]
-            == decision.model_card_checksum
+            promoted_tags["oday.model_version.model_card_checksum"] == decision.model_card_checksum
         )
         assert promoted_tags["oday.model_version.validation_status"] == "PASSED"
         assert repository_b.get_release_saga(decision.release_id).state is (
@@ -346,10 +352,13 @@ def test_postgresql16_full_mlflow_release_and_lease_fenced_recovery(
         assert recovered[0].fence_token == orphaned.fence_token + 1
         assert repository_b.get_release_decision(orphaned.release_id) is None
         assert repository_b.get_alias(model_name, ModelAlias.PRODUCTION).version == v1.version
-        assert registry_b.get_by_alias(
-            model_name=model_name,
-            alias=ModelAlias.PRODUCTION,
-        ).version == v1.version
+        assert (
+            registry_b.get_by_alias(
+                model_name=model_name,
+                alias=ModelAlias.PRODUCTION,
+            ).version
+            == v1.version
+        )
         compensated_tags = registry_b._require_model_version(model_name, v2.version).tags
         assert compensated_tags["oday.model_version.release_id"] == ""
         assert compensated_tags["oday.model_version.approval_id"] == ""
@@ -357,9 +366,7 @@ def test_postgresql16_full_mlflow_release_and_lease_fenced_recovery(
         assert repository_b.get_model_version(model_name, v2.version).stage is ModelStage.DEV
 
         with pytest.raises(LearningHubReleaseFenced):
-            repository_a.save_release_saga(
-                orphaned.evolve(state=ReleaseSagaState.ALIASES_APPLIED)
-            )
+            repository_a.save_release_saga(orphaned.evolve(state=ReleaseSagaState.ALIASES_APPLIED))
         assert service_b.audit_log.verify_chain().ok
     finally:
         engine_a.close()
@@ -373,9 +380,7 @@ def test_postgresql16_full_mlflow_release_and_lease_fenced_recovery(
             ReleaseSagaState.COMPENSATED,
         }
         assert restarted_repository.get_release_revision(model_name) == 2
-        assert (
-            restarted_repository.get_alias(model_name, ModelAlias.PRODUCTION).version == "1.0.0"
-        )
+        assert restarted_repository.get_alias(model_name, ModelAlias.PRODUCTION).version == "1.0.0"
     finally:
         restarted_engine.execute(
             "DELETE FROM durable_documents WHERE group_key = ?",

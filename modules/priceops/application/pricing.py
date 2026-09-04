@@ -10,7 +10,7 @@ repository.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,10 +23,7 @@ from models.shared_ml.production_runtime import (
 from modules.priceops.domain.exploration import (
     ActivationReceipt,
     ExplorationDecision,
-    ExplorationGate,
-    ExplorationGrant,
     ExplorationNotAuthorizedError,
-    PriceScope,
 )
 from modules.priceops.domain.pricing import (
     DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
@@ -69,12 +66,14 @@ from modules.priceops.infrastructure.oss_optimizer import (
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
 from shared.governance.vocabularies import EvidenceLevel
 from solver.pricing.bandit import (
-    BanditAlgorithm,
-    BanditCandidate,
     explore_price_candidate,
 )
 from solver.pricing.demand import simulate_price
-from solver.pricing.optimizer import STATUS_INFEASIBLE, STATUS_OPTIMAL
+from solver.pricing.optimizer import (
+    STATUS_INFEASIBLE,
+    STATUS_OPTIMAL,
+    OptimizationResult,
+)
 
 # Label maturity horizon when the caller does not supply one explicitly.
 DEFAULT_LABEL_MATURITY_DAYS = 28
@@ -212,7 +211,6 @@ class PriceOpsService:
 
         if exploration_gate_id is not None:
             # Authorize exploration gate fail-closed
-            scope = PriceScope(tenant_id=plan.tenant_id)
             gate = self.repository.get_gate(exploration_gate_id, tenant_id=plan.tenant_id)
             if gate is None:
                 raise ExplorationNotAuthorizedError(
@@ -271,7 +269,7 @@ class PriceOpsService:
             # Build item optimizations with explored prices
             item_optimizations_list: list[ItemOptimization] = []
             pairs_list: list[tuple[PricingPlanItem, OptimizationResult]] = []
-            for item, candidate in zip(plan.items, bandit_candidates):
+            for item, candidate in zip(plan.items, bandit_candidates, strict=False):
                 opt_res = optimize_item(item)
                 # If explored price differs, wrap into optimization result
                 if abs(candidate.explored_price - item.constraints.current_price) > 1e-9:

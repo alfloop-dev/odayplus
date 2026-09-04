@@ -11,22 +11,17 @@ Verifies that:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.api.app.routes.priceops import create_priceops_router
 from modules.priceops.application import (
     ExplorationService,
     PriceOpsService,
     authorize_exploration,
 )
 from modules.priceops.domain import (
-    ActivationReceipt,
     ExplorationBudgetExceededError,
-    ExplorationGateExpiredError,
-    ExplorationGateRevokedError,
     ExplorationNotAuthorizedError,
     PriceConstraints,
     PriceElasticityEstimate,
@@ -34,11 +29,8 @@ from modules.priceops.domain import (
     PricingPlanItem,
 )
 from modules.priceops.infrastructure import InMemoryPriceOpsRepository
-from shared.audit import InMemoryAuditLog
 from solver.pricing.bandit import (
     BanditAlgorithm,
-    BanditReplayContract,
-    replay_bandit_candidate,
 )
 
 TENANT_ID = "tenant-coffee-001"
@@ -163,7 +155,7 @@ def test_gate_expiry_revocation_and_budget_depletion() -> None:
     now = datetime.now(UTC)
 
     # 1. Expired Gate
-    expired_gate = explore_service.register_gate(
+    explore_service.register_gate(
         tenant_id=TENANT_ID,
         budget_limit=100.0,
         effective_from=now - timedelta(days=10),

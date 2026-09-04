@@ -41,13 +41,10 @@ else:
         authorize_exploration,
     )
     from modules.priceops.domain import (
-        ActivationReceipt,
         ExplorationBudgetExceededError,
-        ExplorationDecision,
         ExplorationGate,
         ExplorationGateExpiredError,
         ExplorationGateRevokedError,
-        ExplorationGrant,
         ExplorationNotAuthorizedError,
         InvalidScenarioError,
         PriceConstraints,

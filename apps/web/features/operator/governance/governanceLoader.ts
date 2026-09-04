@@ -30,6 +30,60 @@ import type {
 import { operatorSecurityHeaders } from "../operatorSecurityHeaders";
 
 const GOVERNANCE_API_BASE = "/api/v1/operator/governance";
+const COMMENTS_API_BASE = "/api/v1/operator/comments";
+
+export type CommentTargetType = "task" | "decision" | "approval";
+
+export type DecisionCommentHistoryEntry = {
+  action: "created" | "edited" | string;
+  actorId: string;
+  occurredAt: string;
+  content?: string;
+  previousContent?: string;
+  idempotencyKey?: string;
+};
+
+export type DecisionComment = {
+  id: string;
+  tenantId: string;
+  targetType: CommentTargetType;
+  targetId: string;
+  content: string;
+  createdBy: string;
+  createdAt: string;
+  updatedBy?: string | null;
+  updatedAt?: string | null;
+  edited: boolean;
+  editCount: number;
+  correlationId?: string | null;
+  history: DecisionCommentHistoryEntry[];
+};
+
+async function commentsFetch<T>(
+  path: string,
+  options: RequestInit & { correlationId?: string; roleId?: string } = {},
+): Promise<{ ok: true; status: number; data: T } | { ok: false; status: number; data: null }> {
+  const { correlationId, roleId, ...fetchOptions } = options;
+  try {
+    const res = await fetch(`${COMMENTS_API_BASE}${path}`, {
+      ...fetchOptions,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Correlation-Id": correlationId ?? newCorrelationId(),
+        ...operatorSecurityHeaders(roleId),
+        ...(fetchOptions.headers ?? {}),
+      },
+    });
+    if (!res.ok) return { ok: false, status: res.status, data: null };
+    return { ok: true, status: res.status, data: (await res.json()) as T };
+  } catch {
+    return { ok: false, status: 0, data: null };
+  }
+}
+
+function newCommentIdempotencyKey(): string {
+  return `ik-comment-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
 
 /** A single status-board row (Data Quality / Model / Connector / SLA / Users). */
 export type GovernanceStatusRow = {
@@ -236,4 +290,59 @@ export async function exportEvidencePackage(params: {
   });
   if (!result.ok || !result.data) return null;
   return result.data.package;
+}
+
+/** Fetch comments attached to one canonical task, decision, or approval. */
+export async function fetchDecisionComments(params: {
+  targetType: CommentTargetType;
+  targetId: string;
+  roleId?: string;
+}): Promise<DecisionComment[] | null> {
+  const query = new URLSearchParams({
+    targetType: params.targetType,
+    targetId: params.targetId,
+  });
+  const result = await commentsFetch<{ items?: DecisionComment[] }>(`?${query.toString()}`, {
+    method: "GET",
+    roleId: params.roleId,
+  });
+  return result.ok && result.data ? result.data.items ?? [] : null;
+}
+
+/** Create an attached comment; the API derives tenant and actor from auth. */
+export async function createDecisionComment(params: {
+  targetType: CommentTargetType;
+  targetId: string;
+  content: string;
+  roleId?: string;
+}): Promise<DecisionComment | null> {
+  const result = await commentsFetch<{ comment?: DecisionComment }>("", {
+    method: "POST",
+    roleId: params.roleId,
+    headers: { "Idempotency-Key": newCommentIdempotencyKey() },
+    body: JSON.stringify({
+      targetType: params.targetType,
+      targetId: params.targetId,
+      content: params.content,
+    }),
+  });
+  return result.ok && result.data?.comment ? result.data.comment : null;
+}
+
+/** Edit a comment without exposing target or decision fields to the client. */
+export async function editDecisionComment(params: {
+  commentId: string;
+  content: string;
+  roleId?: string;
+}): Promise<DecisionComment | null> {
+  const result = await commentsFetch<{ comment?: DecisionComment }>(
+    `/${encodeURIComponent(params.commentId)}`,
+    {
+      method: "PATCH",
+      roleId: params.roleId,
+      headers: { "Idempotency-Key": newCommentIdempotencyKey() },
+      body: JSON.stringify({ content: params.content }),
+    },
+  );
+  return result.ok && result.data?.comment ? result.data.comment : null;
 }

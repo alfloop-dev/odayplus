@@ -9,7 +9,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION_POLICY = REPO_ROOT / "infra/db/migrations/000014_decision_policy_registry.sql"
-MIGRATION_GATE = REPO_ROOT / "infra/db/migrations/000017_price_exploration_gate.sql"
+MIGRATION_GATE = REPO_ROOT / "infra/db/migrations/000020_price_exploration_gate.sql"
 
 live = pytest.mark.requires_live_env
 

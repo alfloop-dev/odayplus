@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-MIGRATION = Path("infra/db/migrations/000017_price_exploration_gate.sql")
+MIGRATION = Path("infra/db/migrations/000020_price_exploration_gate.sql")
 
 
 def _sql() -> str:

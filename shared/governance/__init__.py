@@ -25,6 +25,20 @@ from shared.governance.model_performance import (
     MODEL_PERFORMANCE_METRIC_THRESHOLDS,
     default_model_performance_drift_policy,
 )
+from shared.governance.netplan_disclosure import (
+    NETPLAN_ACKNOWLEDGEABLE_CONSTRAINT_CLASSES,
+    NETPLAN_ACKNOWLEDGEMENT_ROLES,
+    NETPLAN_DISCLOSURE_POLICY_ID,
+    NETPLAN_DISCLOSURE_POLICY_KIND,
+    NETPLAN_DISCLOSURE_POLICY_LABEL,
+    NETPLAN_DISCLOSURE_POLICY_VERSION,
+    NETPLAN_REQUIRED_CONSTRAINT_CLASSES,
+    DisclosureEvaluation,
+    NetPlanDisclosurePolicyError,
+    default_netplan_disclosure_policy,
+    evaluate_disclosure,
+    role_is_authorized,
+)
 
 __all__ = [
     "DecisionPolicy",
@@ -39,6 +53,18 @@ __all__ = [
     "MODEL_PERFORMANCE_DRIFT_POLICY_TENANT_ID",
     "MODEL_PERFORMANCE_DRIFT_POLICY_VERSION",
     "MODEL_PERFORMANCE_METRIC_THRESHOLDS",
+    "NETPLAN_ACKNOWLEDGEABLE_CONSTRAINT_CLASSES",
+    "NETPLAN_ACKNOWLEDGEMENT_ROLES",
+    "NETPLAN_DISCLOSURE_POLICY_ID",
+    "NETPLAN_DISCLOSURE_POLICY_KIND",
+    "NETPLAN_DISCLOSURE_POLICY_LABEL",
+    "NETPLAN_DISCLOSURE_POLICY_VERSION",
+    "NETPLAN_REQUIRED_CONSTRAINT_CLASSES",
+    "DisclosureEvaluation",
+    "NetPlanDisclosurePolicyError",
     "default_model_performance_drift_policy",
+    "default_netplan_disclosure_policy",
+    "evaluate_disclosure",
     "resolve_policy",
+    "role_is_authorized",
 ]

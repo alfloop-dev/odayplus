@@ -166,7 +166,9 @@ describe("GovernanceWorkspace high-risk failures", () => {
     fireEvent.click(screen.getByRole("button", { name: "退回修改" }));
 
     expect(screen.getByRole("alert")).toHaveTextContent("退回或駁回理由需至少 10 個字");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Governance now also reads the attached comments sidecar for the
+    // selected approval.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("renders dense decision, audit, evidence package and status surfaces", async () => {

@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from solver.pricing.bandit import (
     BanditAlgorithm,
-    BanditCandidate,
     BanditReplayContract,
     explore_price_candidate,
     replay_bandit_candidate,
-    select_bandit_arm,
 )
 from solver.pricing.constraints import PriceConstraints
-from solver.pricing.demand import simulate_price
 from solver.pricing.optimizer import build_safe_action_set
 
 
