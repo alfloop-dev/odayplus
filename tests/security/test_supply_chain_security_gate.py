@@ -465,4 +465,3 @@ def test_pip_audit_gate_does_not_pass_on_transport_failure() -> None:
 def test_pip_audit_gate_is_wired_into_makefile() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert "delivery_toolchain/security/pip_audit_gate.py" in makefile
-
