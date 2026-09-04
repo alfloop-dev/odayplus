@@ -641,7 +641,6 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
-    reviewer_field = schema.get("reviewer_field", "reviewer")
     target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
@@ -762,13 +761,11 @@ def dispatch_priority_for_task(
     )
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
-    reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
     tmap = task_map if task_map is not None else {str(task.get("id") or ""): task}
 
     norm_target = normalize_agent_id(agent_name or "")
     task_owner = normalize_agent_id(str(task.get(owner_field) or ""))
-    task_reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
 
     if is_task_review_dispatch_eligible(
         config,
