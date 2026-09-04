@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -301,7 +299,7 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch) -> None:
     assert report_data["rollback"]["probe_removed"] is True
 
     # Verify all commands executed with finite timeouts
-    for cmd, timeout, check in executed_commands:
+    for _cmd, timeout, _check in executed_commands:
         assert timeout > 0
 
 

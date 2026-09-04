@@ -305,7 +305,7 @@ def run(
             diag = f"{diag}\n{output}"
 
         if check:
-            raise RuntimeError(diag)
+            raise RuntimeError(diag) from exc
 
         completed = subprocess.CompletedProcess(
             args=command,
@@ -323,7 +323,7 @@ def run(
         cmd_str = " ".join(sanitize_command(command, secret_values=secret_values))
         diag = sanitize_text(f"{type(exc).__name__}: {exc}", secret_values=secret_values)
         if check:
-            raise RuntimeError(f"command failed to start: {cmd_str}\n{diag}")
+            raise RuntimeError(f"command failed to start: {cmd_str}\n{diag}") from exc
         completed = subprocess.CompletedProcess(
             args=command,
             returncode=1,
