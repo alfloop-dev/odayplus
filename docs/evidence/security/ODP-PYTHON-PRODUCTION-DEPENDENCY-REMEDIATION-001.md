@@ -129,3 +129,9 @@ local 環境；此輸出不能取代上述針對實際 pinned production 版本�
 - `uv run --frozen python delivery_toolchain/security/generate_sbom.py --check`：通過；兩份 SBOM 的 components/dependencies/properties 與 lockfiles 一致。
 - focused security、OSS license/notice、Evidently/OSS flow 與 smoke regression：全部通過；smoke 為 `3 passed`。
 - `make ci`：本次只執行一次。ruff、npm audit（`found 0 vulnerabilities`）與 Python `pip-audit --local`（`No known vulnerabilities found`）通過；完整 `tests/security` 已實際跑到 `260 passed`，其後在測試內再次呼叫 npm audit 時因 registry endpoint 長時間無回應而中止。這不是 Python dependency assertion 失敗，也不代表已完成全綠 full CI；PR 需由遠端 CI 在 npm endpoint 可用時提供最終結果。
+
+## 9. PR CI 失敗分流與修復邊界
+
+- PR #1194 的完整 CI run `33860234193` 已完成 Python product 測試，結果為 `4871 passed, 1 failed, 23 skipped`；唯一失敗是 `tests/security/test_supply_chain_security_gate.py::test_npm_audit_passes`。失敗輸出為 npm registry `POST https://registry.npmjs.org/-/npm/v1/security/audits/quick` 回覆 `503 Service Unavailable`；同一 run 的 `npm ci` 安裝稽核仍為 `found 0 vulnerabilities`。因此這不是本 task 的 Python dependency、lockfile 或 SBOM assertion 失敗。
+- 隨後 head `a8385cf` 的 run `33865579581` 在 review gate 重新開啟後被取消：product 尚未進入 security step，E2E 也在 `npm ci` 期間取消。該 run 不視為成功的 full CI，也不被本文件用來宣稱驗收通過。
+- 修復邊界維持不變：本 task 不修改 `.github/workflows/ci.yml`、`Makefile`、npm manifest/lockfile 或 audit routing；npm registry/共用 npm audit gate 的修復由相應的共用 gate task 處理。本 task 僅重新提交已完成的 Python dependency、lockfile、SBOM 與中文 residual-risk evidence，等待遠端 CI 在服務可用時提供新 run 的結果。
