@@ -1155,6 +1155,10 @@ export type PriceOpsActivationPayload = {
 /** PriceOpsActorPayload */
 export type PriceOpsActorPayload = {
   actor?: string;
+  exploration_algorithm?: string;
+  exploration_gate_id?: string | null;
+  exploration_history?: unknown[][] | null;
+  exploration_seed?: number | null;
   occurred_at?: string | null;
   reason?: string;
 };
@@ -1243,6 +1247,7 @@ export type PriceOpsPlanItemPayload = {
   applicable_max_price?: number | null;
   applicable_min_price?: number | null;
   baseline_demand: number;
+  brand_id?: string | null;
   confidence?: number | null;
   current_price: number;
   elasticity_value?: number | null;
@@ -1257,6 +1262,8 @@ export type PriceOpsPlanItemPayload = {
   prediction_origin_time?: string | null;
   price_demand_observations?: Record<string, number>[] | null;
   price_ladder_step?: number;
+  sku_group?: string | null;
+  store_group?: string | null;
   store_id: string;
   unit_cost: number;
 };
@@ -1264,6 +1271,10 @@ export type PriceOpsPlanItemPayload = {
 /** PriceOpsPlanPayload */
 export type PriceOpsPlanPayload = {
   created_at?: string | null;
+  exploration_algorithm?: string;
+  exploration_gate_id?: string | null;
+  exploration_history?: unknown[][] | null;
+  exploration_seed?: number | null;
   idempotency_key?: string | null;
   items: PriceOpsPlanItemPayload[];
   plan_id?: string | null;

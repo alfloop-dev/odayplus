@@ -15,6 +15,7 @@ from modules.priceops.domain.exploration import (
     ExplorationGrant,
     ExplorationNotAuthorizedError,
     PriceScope,
+    validate_gate_scope,
 )
 from modules.priceops.domain.pricing import PricingPlanItem
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
@@ -46,7 +47,7 @@ def authorize_exploration(
         raise ExplorationNotAuthorizedError(
             f"Exploration gate {gate.gate_id} was revoked at {gate.revoked_at.isoformat()}"
         )
-    if not (gate.effective_from <= now < gate.effective_to):
+    if not gate.is_valid_at(now):
         raise ExplorationNotAuthorizedError(
             f"Exploration gate {gate.gate_id} is outside validity window [{gate.effective_from.isoformat()}, {gate.effective_to.isoformat()}) at {now.isoformat()}"
         )
@@ -72,6 +73,15 @@ class StandardBanditPriceExplorer:
         seed: int | None = None,
     ) -> list[BanditCandidate]:
         """Generate bandit exploration candidates within grant scope and budget."""
+        if not scope.matches(grant):
+            raise ExplorationNotAuthorizedError(
+                f"requested scope {scope.to_dict()} does not match exploration gate {grant.gate_id}"
+            )
+        validate_gate_scope(grant, tenant_id=scope.tenant_id, items=items)
+        # A gate decision must be replayable even when a caller omits the
+        # optional seed.  The interactive/offline API remains convenient, but
+        # its decision contract is never backed by ambient process entropy.
+        effective_seed = seed if seed is not None else 0
         candidates: list[BanditCandidate] = []
         for item in items:
             candidate = explore_price_candidate(
@@ -84,7 +94,7 @@ class StandardBanditPriceExplorer:
                 store_id=item.store_id,
                 algorithm=algorithm,
                 history=history,
-                seed=seed,
+                seed=effective_seed,
             )
             candidates.append(candidate)
         return candidates

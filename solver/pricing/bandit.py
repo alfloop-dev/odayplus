@@ -14,11 +14,14 @@ Key properties:
 
 from __future__ import annotations
 
+import json
 import math
 import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from hashlib import sha256
+from types import MappingProxyType
 from typing import Any
 from uuid import uuid4
 
@@ -98,7 +101,21 @@ class BanditReplayContract:
     elasticity: float
     confidence: float
     history: tuple[tuple[float, float], ...] = ()
-    hyperparameters: dict[str, Any] = field(default_factory=dict)
+    hyperparameters: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # ``frozen=True`` protects attributes, but a plain dict would still let
+        # a caller mutate the replay inputs after a receipt was created.
+        object.__setattr__(
+            self,
+            "history",
+            tuple((float(price), float(reward)) for price, reward in self.history),
+        )
+        object.__setattr__(
+            self,
+            "hyperparameters",
+            MappingProxyType(dict(self.hyperparameters)),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -312,8 +329,31 @@ def explore_price_candidate(
     violations = constraints.violations(chosen_price)
     hard_satisfied = len([v for v in violations if v.is_hard]) == 0
 
+    resolved_candidate_id = candidate_id
+    if resolved_candidate_id is None and seed is not None:
+        candidate_payload = {
+            "constraints": constraints.to_dict(),
+            "baseline_demand": baseline_demand,
+            "elasticity": elasticity,
+            "confidence": confidence,
+            "gate_id": gate_id,
+            "sku_id": sku_id,
+            "store_id": store_id,
+            "algorithm": str(algorithm).upper(),
+            "history": list(history or ()),
+            "seed": seed,
+            "epsilon": epsilon,
+            "ucb_c": ucb_c,
+        }
+        digest = sha256(
+            json.dumps(candidate_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:16]
+        resolved_candidate_id = f"bandit-candidate-{digest}"
+    if resolved_candidate_id is None:
+        resolved_candidate_id = f"bandit-candidate-{uuid4()}"
+
     return BanditCandidate(
-        candidate_id=candidate_id or f"bandit-candidate-{uuid4()}",
+        candidate_id=resolved_candidate_id,
         gate_id=gate_id,
         sku_id=sku_id,
         store_id=store_id,
@@ -338,8 +378,28 @@ def replay_bandit_candidate(
     candidate_id: str | None = None,
 ) -> BanditCandidate:
     """Deterministically replay a bandit decision using an immutable replay contract."""
+    if abs(contract.baseline_price - constraints.current_price) > 1e-9:
+        raise ValueError(
+            "replay contract baseline_price does not match the immutable pricing input"
+        )
+    if abs(contract.unit_cost - constraints.unit_cost) > 1e-9:
+        raise ValueError(
+            "replay contract unit_cost does not match the immutable pricing input"
+        )
     epsilon = float(contract.hyperparameters.get("epsilon", 0.1))
     ucb_c = float(contract.hyperparameters.get("ucb_c", 1.414))
+    replay_id = candidate_id
+    if replay_id is None:
+        replay_payload = {
+            **contract.to_dict(),
+            "gate_id": gate_id,
+            "sku_id": sku_id,
+            "store_id": store_id,
+        }
+        digest = sha256(
+            json.dumps(replay_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:16]
+        replay_id = f"bandit-replay-{digest}"
     return explore_price_candidate(
         constraints=constraints,
         baseline_demand=contract.baseline_demand,
@@ -351,7 +411,7 @@ def replay_bandit_candidate(
         algorithm=contract.algorithm,
         history=contract.history,
         seed=contract.seed,
-        candidate_id=candidate_id,
+        candidate_id=replay_id,
         epsilon=epsilon,
         ucb_c=ucb_c,
     )

@@ -23,7 +23,9 @@ from models.shared_ml.production_runtime import (
 from modules.priceops.domain.exploration import (
     ActivationReceipt,
     ExplorationDecision,
+    ExplorationGate,
     ExplorationNotAuthorizedError,
+    validate_gate_scope,
 )
 from modules.priceops.domain.pricing import (
     DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
@@ -66,6 +68,7 @@ from modules.priceops.infrastructure.oss_optimizer import (
 from modules.priceops.infrastructure.repositories import InMemoryPriceOpsRepository
 from shared.governance.vocabularies import EvidenceLevel
 from solver.pricing.bandit import (
+    BanditReplayContract,
     explore_price_candidate,
 )
 from solver.pricing.demand import simulate_price
@@ -89,6 +92,16 @@ class MissingRollbackPlanError(RuntimeError):
 
 class ApprovalBlockedError(RuntimeError):
     """Raised when approval would violate hard PriceOps safety gates."""
+
+
+def _gate_scope_snapshot(gate: ExplorationGate) -> dict[str, Any]:
+    """Return the immutable scope fields bound into optimization metadata."""
+    return {
+        "tenant_id": gate.tenant_id,
+        "brand_id": gate.scope_brand_id,
+        "store_group": gate.scope_store_group,
+        "sku_group": gate.scope_sku_group,
+    }
 
 
 @dataclass(frozen=True)
@@ -165,6 +178,44 @@ class PriceOpsService:
         )
         return self.repository.save_plan(plan)
 
+    def _validate_exploration_gate(
+        self,
+        plan: PricingPlan,
+        gate_id: str,
+        *,
+        at: datetime,
+        require_budget: bool,
+    ) -> ExplorationGate:
+        """Resolve and validate the exact gate for every repriced item.
+
+        Gate authorization happens before invoking either the deterministic or
+        production optimizer.  That ordering matters: an invalid gate must
+        not reach a production solver and a valid gate must cover the concrete
+        plan resources, not just the tenant or a caller-provided scope.
+        """
+        gate = self.repository.get_gate(gate_id, tenant_id=plan.tenant_id)
+        if gate is None:
+            raise ExplorationNotAuthorizedError(
+                f"Exploration gate {gate_id} not found for tenant {plan.tenant_id}"
+            )
+        if gate.revoked_at is not None:
+            raise ExplorationNotAuthorizedError(
+                f"Exploration gate {gate.gate_id} is revoked at {gate.revoked_at.isoformat()}"
+            )
+        if not gate.is_valid_at(at):
+            raise ExplorationNotAuthorizedError(
+                f"Exploration gate {gate.gate_id} is outside validity window "
+                f"[{gate.effective_from.isoformat()}, {gate.effective_to.isoformat()}) "
+                f"at {at.isoformat()}"
+            )
+        if require_budget and gate.remaining_budget <= 0:
+            raise ExplorationNotAuthorizedError(
+                f"Exploration gate {gate.gate_id} budget is exhausted "
+                f"({gate.budget_consumed} >= {gate.budget_limit})"
+            )
+        validate_gate_scope(gate, tenant_id=plan.tenant_id, items=plan.items)
+        return gate
+
     # -- simulation -------------------------------------------------------
     def simulate(
         self,
@@ -209,6 +260,18 @@ class PriceOpsService:
         }
         solver_version = PRICEOPS_SOLVER_VERSION
 
+        gate: ExplorationGate | None = None
+        if exploration_gate_id is not None:
+            # Resolve the gate and validate every plan item before entering a
+            # production solver.  This keeps the bandit and production paths
+            # under one authorization boundary.
+            gate = self._validate_exploration_gate(
+                plan,
+                exploration_gate_id,
+                at=now,
+                require_budget=True,
+            )
+
         if self.production_required:
             executor = self.production_optimizer or PriceOpsProductionOptimizer()
             execution = executor.optimize(plan)
@@ -219,26 +282,9 @@ class PriceOpsService:
             pairs = tuple((item, optimize_item(item)) for item in plan.items)
             solver_version = PRICEOPS_SOLVER_VERSION
 
-        if exploration_gate_id is not None:
-            # Authorize exploration gate fail-closed
-            gate = self.repository.get_gate(exploration_gate_id, tenant_id=plan.tenant_id)
-            if gate is None:
-                raise ExplorationNotAuthorizedError(
-                    f"Exploration gate {exploration_gate_id} not found for tenant {plan.tenant_id}"
-                )
-            if gate.revoked_at is not None:
-                raise ExplorationNotAuthorizedError(
-                    f"Exploration gate {gate.gate_id} is revoked at {gate.revoked_at.isoformat()}"
-                )
-            if not (gate.effective_from <= now < gate.effective_to):
-                raise ExplorationNotAuthorizedError(
-                    f"Exploration gate {gate.gate_id} is outside validity window [{gate.effective_from.isoformat()}, {gate.effective_to.isoformat()})"
-                )
-            if gate.remaining_budget <= 0:
-                raise ExplorationNotAuthorizedError(
-                    f"Exploration gate {gate.gate_id} budget is exhausted ({gate.budget_consumed} >= {gate.budget_limit})"
-                )
-
+        if gate is not None:
+            effective_seed = exploration_seed if exploration_seed is not None else 0
+            effective_history = tuple(exploration_history or ())
             bandit_candidates = [
                 explore_price_candidate(
                     constraints=item.constraints,
@@ -250,10 +296,33 @@ class PriceOpsService:
                     store_id=item.store_id,
                     algorithm=exploration_algorithm,
                     history=exploration_history,
-                    seed=exploration_seed,
+                    seed=effective_seed,
                 )
                 for item in plan.items
             ]
+
+            if len(bandit_candidates) != len(plan.items):
+                raise ExplorationNotAuthorizedError(
+                    f"exploration gate {gate.gate_id} produced an incomplete candidate set"
+                )
+            unsafe_candidates = [
+                candidate.sku_id
+                for candidate in bandit_candidates
+                if not candidate.hard_constraints_satisfied
+            ]
+            if unsafe_candidates:
+                raise ExplorationNotAuthorizedError(
+                    "bandit produced hard-constraint-violating candidates: "
+                    + ", ".join(unsafe_candidates)
+                )
+            total_exploration_cost = sum(
+                candidate.estimated_exploration_cost for candidate in bandit_candidates
+            )
+            if not gate.has_budget(total_exploration_cost):
+                raise ExplorationNotAuthorizedError(
+                    f"Exploration gate {gate.gate_id} budget would be exceeded: "
+                    f"{gate.budget_consumed + total_exploration_cost} > {gate.budget_limit}"
+                )
 
             # Record exploration decisions and deduct budget
             for candidate in bandit_candidates:
@@ -274,11 +343,28 @@ class PriceOpsService:
 
             solver_metadata["exploration_enabled"] = True
             solver_metadata["gate_id"] = gate.gate_id
+            solver_metadata["gate_scope"] = _gate_scope_snapshot(gate)
+            solver_metadata["decision_policy_version_id"] = gate.decision_policy_version_id
+            solver_metadata["exploration_algorithm"] = str(exploration_algorithm).upper()
+            solver_metadata["exploration_seed"] = effective_seed
+            solver_metadata["replay_contracts"] = [
+                BanditReplayContract(
+                    seed=effective_seed,
+                    algorithm=str(exploration_algorithm).upper(),
+                    baseline_price=item.constraints.current_price,
+                    unit_cost=item.constraints.unit_cost,
+                    baseline_demand=item.baseline_demand,
+                    elasticity=item.elasticity.elasticity_value,
+                    confidence=item.elasticity.confidence,
+                    history=effective_history,
+                ).to_dict()
+                for item in plan.items
+            ]
             solver_metadata["bandit_candidates"] = [c.to_dict() for c in bandit_candidates]
 
             # Update pairs with explored prices
             updated_pairs: list[tuple[PricingPlanItem, OptimizationResult]] = []
-            for (item, opt_res), candidate in zip(pairs, bandit_candidates, strict=False):
+            for (item, opt_res), candidate in zip(pairs, bandit_candidates, strict=True):
                 if abs(candidate.explored_price - item.constraints.current_price) > 1e-9:
                     sim_explored = simulate_price(
                         price=candidate.explored_price,
@@ -602,26 +688,70 @@ class PriceOpsService:
             )
         now = executed_at or datetime.now(UTC)
 
-        # Re-validate exploration gate fail-closed at activation time
+        # Re-validate the same authorization boundary immediately before any
+        # execution records are written.  In particular, a gate that was
+        # revoked or whose scope no longer covers the concrete plan must not
+        # reach the price treatment path.
         exploration_enabled = bool(optimization.solver_metadata.get("exploration_enabled", False))
         gate_id = optimization.solver_metadata.get("gate_id")
         if exploration_enabled or gate_id is not None:
-            if not gate_id:
+            if not exploration_enabled or not gate_id:
                 raise ExplorationNotAuthorizedError(
-                    f"plan {plan_id} has exploration enabled but no gate_id in optimization metadata"
+                    f"plan {plan_id} has inconsistent exploration gate metadata"
                 )
-            gate = self.repository.get_gate(gate_id, tenant_id=plan.tenant_id)
-            if gate is None:
+            gate = self._validate_exploration_gate(
+                plan,
+                str(gate_id),
+                at=now,
+                require_budget=False,
+            )
+            if optimization.solver_metadata.get("gate_scope") != _gate_scope_snapshot(gate):
                 raise ExplorationNotAuthorizedError(
-                    f"Exploration gate {gate_id} not found for tenant {plan.tenant_id} at activation"
+                    f"plan {plan_id} exploration gate scope changed after optimization"
                 )
-            if gate.revoked_at is not None:
+            if (
+                optimization.solver_metadata.get("decision_policy_version_id")
+                != gate.decision_policy_version_id
+            ):
                 raise ExplorationNotAuthorizedError(
-                    f"Exploration gate {gate.gate_id} is revoked at {gate.revoked_at.isoformat()} at activation time"
+                    f"plan {plan_id} exploration policy changed after optimization"
                 )
-            if not (gate.effective_from <= now < gate.effective_to):
+            candidates = optimization.solver_metadata.get("bandit_candidates")
+            if not isinstance(candidates, list) or len(candidates) != len(optimization.items):
                 raise ExplorationNotAuthorizedError(
-                    f"Exploration gate {gate.gate_id} is outside validity window [{gate.effective_from.isoformat()}, {gate.effective_to.isoformat()}) at activation time {now.isoformat()}"
+                    f"plan {plan_id} has no complete bandit candidate set at activation"
+                )
+            item_optimizations = {item.item_id: item for item in optimization.items}
+            candidate_item_ids: list[str] = []
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    raise ExplorationNotAuthorizedError(
+                        f"plan {plan_id} has malformed bandit candidate metadata"
+                    )
+                candidate_id = str(candidate.get("sku_id") or "")
+                item_optimization = item_optimizations.get(candidate_id)
+                explored_price = candidate.get("explored_price")
+                if not isinstance(explored_price, (int, float)):
+                    raise ExplorationNotAuthorizedError(
+                        f"plan {plan_id} has malformed bandit candidate pricing metadata"
+                    )
+                candidate_item_ids.append(candidate_id)
+                if (
+                    not candidate_id
+                    or item_optimization is None
+                    or candidate.get("gate_id") != gate.gate_id
+                    or candidate.get("hard_constraints_satisfied") is not True
+                    or abs(
+                        explored_price - item_optimization.result.recommended_price
+                    )
+                    > 1e-9
+                ):
+                    raise ExplorationNotAuthorizedError(
+                        f"plan {plan_id} bandit candidate is not bound to its authorized gate"
+                    )
+            if set(candidate_item_ids) != set(item_optimizations):
+                raise ExplorationNotAuthorizedError(
+                    f"plan {plan_id} bandit candidates do not cover every plan item"
                 )
 
         corr = correlation_id or plan.correlation_id
@@ -673,17 +803,36 @@ class PriceOpsService:
         )
         self.repository.save_handoff(handoff)
 
+        receipt_policy_version = (
+            gate.decision_policy_version_id
+            if exploration_enabled
+            else str(
+                optimization.solver_metadata.get(
+                    "decision_policy_version_id", PRICEOPS_POLICY_VERSION
+                )
+            )
+        )
+        guardrails = {
+            "negative_impact_threshold": DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
+            "stop_conditions": dict(rollback_plan.trigger_conditions),
+        }
+        if exploration_enabled:
+            guardrails.update(
+                {
+                    "gate_rollback_condition": gate.rollback_condition,
+                    "gate_effective_to": gate.effective_to.isoformat(),
+                    "gate_scope": _gate_scope_snapshot(gate),
+                }
+            )
+
         receipt = ActivationReceipt(
             receipt_id=f"pricing-activation-receipt-{uuid4()}",
             plan_id=plan.plan_id,
-            policy_version=PRICEOPS_POLICY_VERSION,
+            policy_version=receipt_policy_version,
             actor=executor,
-            exploration_enabled=bool(optimization.solver_metadata.get("exploration_enabled", False)),
+            exploration_enabled=exploration_enabled,
             experiment_id=optimization.solver_metadata.get("gate_id"),
-            guardrails={
-                "negative_impact_threshold": DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
-                "stop_conditions": dict(rollback_plan.trigger_conditions),
-            },
+            guardrails=guardrails,
             rollback_target=rollback_plan.rollback_plan_id,
             activated_at=now,
             execution_id=execution.execution_id,

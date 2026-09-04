@@ -10,6 +10,7 @@ Verifies that:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -45,6 +46,7 @@ def _make_item(
     current_price: float = 20.0,
     baseline_demand: float = 100.0,
     elasticity: float = -1.5,
+    brand_id: str | None = BRAND_ID,
 ) -> PricingPlanItem:
     return PricingPlanItem(
         item_id=item_id,
@@ -63,6 +65,7 @@ def _make_item(
             elasticity_value=elasticity,
             confidence=0.9,
         ),
+        brand_id=brand_id,
     )
 
 
@@ -215,6 +218,18 @@ def test_gate_expiry_revocation_and_budget_depletion() -> None:
         budget_consumed=50.0,
         algorithm="THOMPSON_SAMPLING",
     )
+    with pytest.raises(ExplorationBudgetExceededError):
+        explore_service.record_decision(
+            decision_id="dec-rec-negative",
+            gate_id=funded_gate.gate_id,
+            tenant_id=TENANT_ID,
+            sku_id="sku-negative",
+            store_id="store-1",
+            baseline_price=20.0,
+            explored_price=22.0,
+            budget_consumed=-1.0,
+            algorithm="THOMPSON_SAMPLING",
+        )
     # Further recording exceeds budget
     with pytest.raises(ExplorationBudgetExceededError):
         explore_service.record_decision(
@@ -266,8 +281,10 @@ def test_activation_receipt_binds_audit_metadata() -> None:
     assert receipt.actor == "pricing_operator_01"
     assert receipt.exploration_enabled is True
     assert receipt.experiment_id == gate.gate_id
+    assert receipt.policy_version == gate.decision_policy_version_id
     assert receipt.rollback_target == activation.rollback_plan.rollback_plan_id
     assert "stop_conditions" in receipt.guardrails
+    assert receipt.guardrails["gate_rollback_condition"] == gate.rollback_condition
 
     # Verify receipt persisted
     persisted = repo.get_activation_receipt(plan.plan_id)
@@ -309,6 +326,85 @@ def test_activate_fails_if_gate_revoked_before_activation() -> None:
     stored_plan = repo.get_plan(plan.plan_id)
     assert stored_plan is not None
     assert stored_plan.status.value != "ACTIVE"
+
+
+def test_scoped_gate_is_checked_before_the_production_entry_point(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gate id alone cannot authorize a plan outside its concrete scope."""
+    import modules.priceops.application.pricing as pricing_application
+
+    repo = InMemoryPriceOpsRepository()
+    service = PriceOpsService(repository=repo)
+    explore_service = ExplorationService(repository=repo)
+    now = datetime.now(UTC)
+    gate = explore_service.register_gate(
+        tenant_id=TENANT_ID,
+        budget_limit=500.0,
+        effective_from=now - timedelta(days=1),
+        effective_to=now + timedelta(days=7),
+        approved_by="pricing_director",
+        approval_decision_id="dec-scope-1",
+        approval_id="appr-scope-1",
+        rollback_condition="margin_loss > 0.05",
+        decision_policy_version_id="policy-scope-v1",
+        scope_brand_id=BRAND_ID,
+    )
+    item = _make_item(item_id="out-of-scope", brand_id="brand-not-authorized")
+    plan = service.create_plan(
+        tenant_id=TENANT_ID,
+        items=[item],
+        correlation_id="corr-scope-1",
+    )
+    solver_calls = 0
+
+    def unexpected_solver_call(_item: PricingPlanItem) -> Any:
+        nonlocal solver_calls
+        solver_calls += 1
+        raise AssertionError("the solver must not run before gate scope validation")
+
+    monkeypatch.setattr(pricing_application, "optimize_item", unexpected_solver_call)
+    with pytest.raises(ExplorationNotAuthorizedError, match="scope"):
+        service.optimize(plan.plan_id, exploration_gate_id=gate.gate_id)
+
+    assert solver_calls == 0
+    assert repo.get_optimization(plan.plan_id) is None
+
+
+def test_activation_rechecks_current_gate_scope_before_writing_execution() -> None:
+    repo = InMemoryPriceOpsRepository()
+    service = PriceOpsService(repository=repo)
+    explore_service = ExplorationService(repository=repo)
+    now = datetime.now(UTC)
+    gate = explore_service.register_gate(
+        tenant_id=TENANT_ID,
+        budget_limit=500.0,
+        effective_from=now - timedelta(days=1),
+        effective_to=now + timedelta(days=7),
+        approved_by="pricing_director",
+        approval_decision_id="dec-scope-2",
+        approval_id="appr-scope-2",
+        rollback_condition="margin_loss > 0.05",
+        decision_policy_version_id="policy-scope-v2",
+        scope_brand_id=BRAND_ID,
+    )
+    plan = service.create_plan(
+        tenant_id=TENANT_ID,
+        items=[_make_item(item_id="scope-drift")],
+        correlation_id="corr-scope-2",
+    )
+    service.simulate(plan.plan_id)
+    service.optimize(plan.plan_id, exploration_gate_id=gate.gate_id, exploration_seed=7)
+    service.submit_for_approval(plan.plan_id, actor="analyst", reason="ready")
+    service.approve(plan.plan_id, actor_id="manager", reason="approved")
+
+    # Model a gate registry update between optimization and execution.  The
+    # activation path must validate the current gate, not trust old metadata.
+    repo.save_gate(replace(gate, scope_brand_id="brand-no-longer-authorized"))
+    with pytest.raises(ExplorationNotAuthorizedError, match="scope"):
+        service.activate(plan.plan_id, executor="pricing_operator_01")
+
+    assert repo.get_execution(plan.plan_id) is None
 
 
 def test_production_required_with_exploration() -> None:
@@ -447,6 +543,7 @@ def test_priceops_exploration_api_endpoints() -> None:
                     "item_id": "item-api-1",
                     "store_id": "store-api-1",
                     "machine_type": "espresso-auto",
+                    "brand_id": BRAND_ID,
                     "unit_cost": 10.0,
                     "current_price": 20.0,
                     "baseline_demand": 100.0,
@@ -502,4 +599,3 @@ def test_priceops_exploration_api_endpoints() -> None:
         },
     )
     assert cand_fail_resp.status_code == 422
-

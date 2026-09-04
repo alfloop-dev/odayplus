@@ -39,6 +39,23 @@ class PriceScope:
     store_id: str | None = None
     sku_id: str | None = None
 
+    @classmethod
+    def from_plan_item(cls, tenant_id: str, item: Any) -> PriceScope:
+        """Build the scope from the item that will actually be repriced.
+
+        Scope information must come from the plan aggregate.  A request-level
+        scope is useful for selecting a gate, but cannot authenticate a plan
+        item by itself.
+        """
+        return cls(
+            tenant_id=tenant_id,
+            brand_id=getattr(item, "brand_id", None),
+            store_group=getattr(item, "store_group", None),
+            sku_group=getattr(item, "sku_group", None),
+            store_id=getattr(item, "store_id", None),
+            sku_id=getattr(item, "item_id", None),
+        )
+
     def matches(self, gate: ExplorationGate | ExplorationGrant) -> bool:
         """Check if this scope matches the authorized gate scope."""
         if self.tenant_id != gate.tenant_id:
@@ -249,6 +266,32 @@ class ActivationReceipt:
         }
 
 
+def validate_gate_scope(
+    gate: ExplorationGate | ExplorationGrant,
+    *,
+    tenant_id: str,
+    items: Sequence[Any],
+) -> None:
+    """Fail closed when any repriced item falls outside the authorized gate.
+
+    The same check is intentionally used before optimization and immediately
+    before activation.  This closes the gap where candidate generation was
+    scoped correctly but a later production entry point could still execute a
+    different plan under the same gate id.
+    """
+    if tenant_id != gate.tenant_id:
+        raise ExplorationNotAuthorizedError(
+            f"Exploration gate {gate.gate_id} is not authorized for tenant {tenant_id}"
+        )
+    for item in items:
+        item_scope = PriceScope.from_plan_item(tenant_id, item)
+        if not item_scope.matches(gate):
+            raise ExplorationNotAuthorizedError(
+                f"item {getattr(item, 'item_id', '<unknown>')} is outside "
+                f"exploration gate {gate.gate_id} scope"
+            )
+
+
 class BanditPriceExplorer(Protocol):
     """Protocol for generating bandit price exploration candidates."""
 
@@ -277,4 +320,5 @@ __all__ = [
     "ExplorationGrant",
     "ExplorationNotAuthorizedError",
     "PriceScope",
+    "validate_gate_scope",
 ]

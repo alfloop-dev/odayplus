@@ -5767,6 +5767,57 @@
             "title": "Actor",
             "type": "string"
           },
+          "exploration_algorithm": {
+            "default": "THOMPSON_SAMPLING",
+            "title": "Exploration Algorithm",
+            "type": "string"
+          },
+          "exploration_gate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exploration Gate Id"
+          },
+          "exploration_history": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exploration History"
+          },
+          "exploration_seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exploration Seed"
+          },
           "occurred_at": {
             "anyOf": [
               {
@@ -6276,6 +6327,17 @@
             "title": "Baseline Demand",
             "type": "number"
           },
+          "brand_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brand Id"
+          },
           "confidence": {
             "anyOf": [
               {
@@ -6393,6 +6455,28 @@
             "title": "Price Ladder Step",
             "type": "number"
           },
+          "sku_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sku Group"
+          },
+          "store_group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Store Group"
+          },
           "store_id": {
             "minLength": 1,
             "title": "Store Id",
@@ -6425,6 +6509,57 @@
               }
             ],
             "title": "Created At"
+          },
+          "exploration_algorithm": {
+            "default": "THOMPSON_SAMPLING",
+            "title": "Exploration Algorithm",
+            "type": "string"
+          },
+          "exploration_gate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exploration Gate Id"
+          },
+          "exploration_history": {
+            "anyOf": [
+              {
+                "items": {
+                  "maxItems": 2,
+                  "minItems": 2,
+                  "prefixItems": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "number"
+                    }
+                  ],
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exploration History"
+          },
+          "exploration_seed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exploration Seed"
           },
           "idempotency_key": {
             "anyOf": [

@@ -222,6 +222,10 @@ class InMemoryPriceOpsRepository:
             raise ExplorationGateExpiredError(
                 f"Gate {gate.gate_id} is outside active window at {decision.created_at}"
             )
+        if decision.budget_consumed < 0:
+            raise ExplorationBudgetExceededError(
+                f"Gate {gate.gate_id} cannot consume a negative budget"
+            )
         new_consumed = round(gate.budget_consumed + decision.budget_consumed, 4)
         if new_consumed > gate.budget_limit + 1e-6:
             raise ExplorationBudgetExceededError(

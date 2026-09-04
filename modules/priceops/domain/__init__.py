@@ -9,6 +9,7 @@ from modules.priceops.domain.exploration import (
     ExplorationGrant,
     ExplorationNotAuthorizedError,
     PriceScope,
+    validate_gate_scope,
 )
 from modules.priceops.domain.pricing import (
     DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
@@ -102,6 +103,7 @@ __all__ = [
     "PriceConstraints",
     "PriceElasticityEstimate",
     "PriceScope",
+    "validate_gate_scope",
     "PriceTreatment",
     "PricingEffectEvaluation",
     "PricingExecution",

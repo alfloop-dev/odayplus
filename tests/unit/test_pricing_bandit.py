@@ -100,6 +100,50 @@ def test_deterministic_offline_replay_reproducibility() -> None:
     assert candidate1.estimated_exploration_cost == candidate2.estimated_exploration_cost
     assert candidate1.to_dict() == candidate2.to_dict()
 
+    # The replay path is deterministic even when a caller does not provide an
+    # id: the candidate id is derived from the immutable contract and inputs.
+    candidate3 = replay_bandit_candidate(
+        contract,
+        constraints=constraints,
+        gate_id="gate-test",
+        sku_id="sku-test",
+        store_id="store-test",
+    )
+    candidate4 = replay_bandit_candidate(
+        contract,
+        constraints=constraints,
+        gate_id="gate-test",
+        sku_id="sku-test",
+        store_id="store-test",
+    )
+    assert candidate3.to_dict() == candidate4.to_dict()
+
+    candidate5 = explore_price_candidate(
+        constraints=constraints,
+        baseline_demand=80.0,
+        elasticity=-1.2,
+        confidence=0.85,
+        gate_id="gate-test",
+        sku_id="sku-test",
+        store_id="store-test",
+        algorithm="THOMPSON_SAMPLING",
+        history=history,
+        seed=1337,
+    )
+    candidate6 = explore_price_candidate(
+        constraints=constraints,
+        baseline_demand=80.0,
+        elasticity=-1.2,
+        confidence=0.85,
+        gate_id="gate-test",
+        sku_id="sku-test",
+        store_id="store-test",
+        algorithm="THOMPSON_SAMPLING",
+        history=history,
+        seed=1337,
+    )
+    assert candidate5.to_dict() == candidate6.to_dict()
+
 
 def test_bandit_explores_higher_reward_arms() -> None:
     constraints = PriceConstraints(

@@ -67,6 +67,9 @@ else:
         item_id: str | None = None
         store_id: str = Field(min_length=1)
         machine_type: str = Field(min_length=1)
+        brand_id: str | None = None
+        store_group: str | None = None
+        sku_group: str | None = None
         unit_cost: float
         current_price: float
         baseline_demand: float
@@ -91,6 +94,10 @@ else:
         plan_id: str | None = None
         created_at: str | None = None
         idempotency_key: str | None = None
+        exploration_gate_id: str | None = None
+        exploration_algorithm: str = "THOMPSON_SAMPLING"
+        exploration_seed: int | None = None
+        exploration_history: list[tuple[float, float]] | None = None
 
 
     class PriceOpsOptimizerJobPayload(BaseModel):
@@ -103,6 +110,13 @@ else:
         actor: str = Field(default="system", min_length=1)
         reason: str = ""
         occurred_at: str | None = None
+        # Exploration is opt-in.  Keeping these fields on the optimize command
+        # makes the production entry point carry the same gate as the bandit
+        # decision; omitted fields always select the deterministic path.
+        exploration_gate_id: str | None = None
+        exploration_algorithm: str = "THOMPSON_SAMPLING"
+        exploration_seed: int | None = None
+        exploration_history: list[tuple[float, float]] | None = None
 
 
     class PriceOpsScenarioSimulationPayload(BaseModel):
@@ -343,6 +357,10 @@ else:
                             correlation_id=request.state.correlation_id,
                             items=[_item_from_payload(item) for item in plan.items],
                             plan_id=plan.plan_id,
+                            exploration_gate_id=plan.exploration_gate_id,
+                            exploration_algorithm=plan.exploration_algorithm,
+                            exploration_seed=plan.exploration_seed,
+                            exploration_history=plan.exploration_history,
                         )
                         for plan in body.plans
                     ]
@@ -545,6 +563,10 @@ else:
                     actor=body.actor,
                     reason=body.reason or "constrained price optimization",
                     optimized_at=_parse_time(body.occurred_at),
+                    exploration_gate_id=body.exploration_gate_id,
+                    exploration_algorithm=body.exploration_algorithm,
+                    exploration_seed=body.exploration_seed,
+                    exploration_history=body.exploration_history,
                 ),
                 active_audit_log,
                 request,
@@ -848,18 +870,29 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
-            candidates = explore_service.explorer.generate_candidates(
-                scope=scope,
-                grant=grant,
-                items=domain_items,
-                algorithm=body.algorithm,
-                history=body.history,
-                seed=body.seed,
-            )
+            try:
+                candidates = explore_service.explorer.generate_candidates(
+                    scope=scope,
+                    grant=grant,
+                    items=domain_items,
+                    algorithm=body.algorithm,
+                    history=body.history,
+                    seed=body.seed,
+                )
+            except ExplorationNotAuthorizedError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "EXPLORATION_NOT_AUTHORIZED",
+                        "message": str(exc),
+                        "exploration_enabled": False,
+                    },
+                ) from exc
             return {
                 "exploration_enabled": True,
                 "grant": grant.to_dict(),
                 "algorithm": body.algorithm,
+                "mode": "shadow",
                 "candidates": [c.to_dict() for c in candidates],
             }
 
@@ -895,6 +928,9 @@ else:
             item_id=item.item_id,
             store_id=item.store_id,
             machine_type=item.machine_type,
+            brand_id=item.brand_id,
+            store_group=item.store_group,
+            sku_group=item.sku_group,
             constraints=PriceConstraints(
                 unit_cost=item.unit_cost,
                 current_price=item.current_price,
