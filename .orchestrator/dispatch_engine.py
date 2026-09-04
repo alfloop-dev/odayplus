@@ -704,7 +704,9 @@ def is_task_review_dispatch_eligible(
 
     A task is review-ready only when in genuine review status, has not been approved
     (no approved_head, not in finalize statuses), has not been queued/routed to merge
-    (no merge_route), has independent owner/reviewer, and the target agent matches the reviewer.
+    (no merge_route), has independent owner/reviewer, the target agent matches the reviewer,
+    the review submission is valid with matching exact remote head, and all required CI
+    checks on that exact head have concluded with terminal success.
     """
     if not isinstance(task, dict) or not task:
         return False
@@ -740,6 +742,33 @@ def is_task_review_dispatch_eligible(
         return False
     if not review_is_independent(config, task_owner, target_agent):
         return False
+
+    # Review submission & exact head integrity check
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict):
+        return False
+    submitted_sha = str(submission.get("remote_sha") or "").strip()
+    if not submitted_sha:
+        return False
+
+    task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
+    try:
+        current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+    except Exception:
+        return False
+    if not current_head or current_head != submitted_sha:
+        return False
+
+    # Exact head required CI terminal success check
+    try:
+        pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+    except Exception:
+        return False
+    if ci_status != "success":
+        return False
+    if str(pr_status or "").strip().upper() == "MERGED":
+        return False
+
     return True
 
 
@@ -1958,6 +1987,65 @@ def dispatch_ready_tasks(
             ):
                 reason = "review_ready_dispatch"
                 priority = 0
+            elif task_status in review_statuses and norm_task_reviewer == norm_target and norm_task_owner != norm_target:
+                submission = task.get("review_submission")
+                submitted_sha = (
+                    str(submission.get("remote_sha") or "").strip()
+                    if isinstance(submission, dict)
+                    else ""
+                )
+                current_head = None
+                try:
+                    current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+                except Exception:
+                    current_head = None
+
+                pr_status = None
+                ci_status = "unknown"
+                try:
+                    pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                except Exception:
+                    pass
+
+                msg = None
+                if not submission or not submitted_sha:
+                    msg = (
+                        f"Task {task_id} is in review but has no verified review submission; "
+                        "review dispatch suppressed until owner publishes via task_finalize.sh."
+                    )
+                elif not current_head:
+                    msg = (
+                        f"Cannot verify branch HEAD for task {task_id}; "
+                        "review dispatch suppressed until remote task branch resolves."
+                    )
+                elif current_head != submitted_sha:
+                    msg = (
+                        f"Task {task_id} remote HEAD ({current_head[:8]}) drifted from submitted review SHA "
+                        f"({submitted_sha[:8]}); re-submission via task_finalize.sh required before review dispatch."
+                    )
+                elif ci_status == "pending":
+                    msg = f"PR for task {task_id} has CI checks pending; review dispatch deferred until required CI succeeds."
+                elif ci_status == "failure":
+                    msg = f"PR for task {task_id} has CI failure ({ci_status}); review dispatch suppressed until CI is repaired."
+                elif ci_status not in {"success"}:
+                    msg = f"PR CI status for task {task_id} is unresolved ({ci_status}); review dispatch deferred until conclusive."
+
+                if msg and task.get("next") != msg and "merge group" not in str(task.get("next") or "").lower():
+                    task["next"] = msg
+                    if not commit_canonical_task_transition(config, status):
+                        return changed
+                    try:
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "review_dispatch_suppressed",
+                                "task_id": task_id,
+                                "message": msg,
+                            },
+                        )
+                    except Exception:
+                        pass
+                continue
             elif task_status in finalize_statuses and norm_task_owner == norm_target:
                 approved_head = task.get("approved_head")
                 current_head = None

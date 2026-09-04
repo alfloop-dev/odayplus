@@ -1516,32 +1516,50 @@ def test_stale_wake_for_review_ready_skipped_when_task_approved_or_merge_routed(
         "status": "review",
         "owner": "Claude",
         "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 101,
+            "branch": "task/TASK-WAKE-001",
+            "base_branch": "dev",
+            "remote_sha": "a" * 40,
+        },
         "depends_on": [],
     }
     task_map = {task["id"]: task}
-    event = supervisor.build_dispatch_event(task, "Codex", REASON_REVIEW_READY, task_map)
-    event["event_key"] = event["key"]
-    event["target_display_name"] = "Codex"
 
-    # Positive: while in review without approval or merge_route, wake is not stale
-    assert supervisor.stale_dispatch_skip_message(cfg, event, task_map) is None
+    # Positive: while in review with CI success and without approval or merge_route, wake is not stale
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        event = supervisor.build_dispatch_event(task, "Codex", REASON_REVIEW_READY, task_map)
+        event["event_key"] = event["key"]
+        event["target_display_name"] = "Codex"
+        assert supervisor.stale_dispatch_skip_message(cfg, event, task_map) is None
 
     # Case 1: Task becomes review_approved
     task["status"] = "review_approved"
     task["approved_head"] = "1111111122222222333333334444444455555555"
-    assert supervisor.current_dispatch_event_key(cfg, event, task_map) is None
-    skip_msg = supervisor.stale_dispatch_skip_message(cfg, event, task_map)
-    assert skip_msg is not None
-    assert "no longer eligible" in skip_msg
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert supervisor.current_dispatch_event_key(cfg, event, task_map) is None
+        skip_msg = supervisor.stale_dispatch_skip_message(cfg, event, task_map)
+        assert skip_msg is not None
+        assert "no longer eligible" in skip_msg
 
     # Case 2: Task has merge_route=queued
     task["status"] = "review"
     task.pop("approved_head", None)
     task["merge_route"] = {"head": "1111111122222222333333334444444455555555", "route": "queued"}
-    assert supervisor.current_dispatch_event_key(cfg, event, task_map) is None
-    skip_msg = supervisor.stale_dispatch_skip_message(cfg, event, task_map)
-    assert skip_msg is not None
-    assert "no longer eligible" in skip_msg
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert supervisor.current_dispatch_event_key(cfg, event, task_map) is None
+        skip_msg = supervisor.stale_dispatch_skip_message(cfg, event, task_map)
+        assert skip_msg is not None
+        assert "no longer eligible" in skip_msg
 
 
 def test_reconcile_runtime_on_boot_completes_stale_review_event_when_approved_or_merge_routed() -> None:
@@ -1615,11 +1633,17 @@ def test_genuine_review_state_dispatches_reviewer() -> None:
     state = {"workers": {}, "queue": {"events": {}}}
     queued_events: list[dict] = []
 
-    assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
-    assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
-    assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-GENUINE-REV-001": task}) == 0
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-GENUINE-REV-001": task}) == 0
 
     with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
         mock.patch.object(supervisor, "load_status", return_value=status),
         mock.patch.object(supervisor, "load_event_queue", return_value=[]),
         mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
@@ -1637,4 +1661,288 @@ def test_genuine_review_state_dispatches_reviewer() -> None:
     assert queued_events[0]["task_id"] == "TASK-GENUINE-REV-001"
     assert queued_events[0]["target_agent"] == "Codex"
     assert queued_events[0]["reason"] == "review_ready_dispatch"
+
+
+def test_review_dispatch_suppressed_when_ci_is_pending() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-CI-PENDING-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 102,
+            "branch": "task/TASK-CI-PENDING-001",
+            "base_branch": "dev",
+            "remote_sha": "b" * 40,
+        },
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="b" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "pending")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-CI-PENDING-001": task}) is None
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert len(queued_events) == 0
+    assert task["status"] == "review"
+    assert "CI checks pending" in task.get("next", "")
+
+
+def test_review_dispatch_suppressed_when_ci_is_failure() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-CI-FAIL-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 103,
+            "branch": "task/TASK-CI-FAIL-001",
+            "base_branch": "dev",
+            "remote_sha": "c" * 40,
+        },
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="c" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "failure")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-CI-FAIL-001": task}) is None
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert len(queued_events) == 0
+    assert task["status"] == "review"
+    assert "CI failure" in task.get("next", "")
+
+
+def test_review_dispatch_suppressed_when_head_has_drifted() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-DRIFT-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 104,
+            "branch": "task/TASK-DRIFT-001",
+            "base_branch": "dev",
+            "remote_sha": "d" * 40,
+        },
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="e" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-DRIFT-001": task}) is None
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert len(queued_events) == 0
+    assert task["status"] == "review"
+    assert "drifted" in task.get("next", "")
+
+
+def test_review_dispatch_suppressed_when_remote_head_is_missing() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-MISSING-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 105,
+            "branch": "task/TASK-MISSING-001",
+            "base_branch": "dev",
+            "remote_sha": "f" * 40,
+        },
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=None),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-MISSING-001": task}) is None
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert len(queued_events) == 0
+    assert task["status"] == "review"
+    assert "Cannot verify branch HEAD" in task.get("next", "")
+
+
+def test_review_dispatch_suppressed_when_merge_group_failed_retains_reason() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-MG-FAIL-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "next": "Merge group run 999 failed on gh-readonly-queue/dev/pr-106-abc; reviewer recovery handoff dispatched to Codex.",
+        "review_submission": {
+            "pr_number": 106,
+            "branch": "task/TASK-MG-FAIL-001",
+            "base_branch": "dev",
+            "remote_sha": "9" * 40,
+        },
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="9" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "failure")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-MG-FAIL-001": task}) is None
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert len(queued_events) == 0
+    assert task["status"] == "review"
+    assert "Merge group run 999 failed" in task["next"]
+
+
+def test_stale_wake_for_review_ready_skipped_when_ci_is_pending_or_failed() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-WAKE-CI-001",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 107,
+            "branch": "task/TASK-WAKE-CI-001",
+            "base_branch": "dev",
+            "remote_sha": "8" * 40,
+        },
+        "depends_on": [],
+    }
+    task_map = {task["id"]: task}
+
+    # Positive: while CI is success, wake is not stale
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="8" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        event = supervisor.build_dispatch_event(task, "Codex", REASON_REVIEW_READY, task_map)
+        event["event_key"] = event["key"]
+        event["target_display_name"] = "Codex"
+        assert supervisor.stale_dispatch_skip_message(cfg, event, task_map) is None
+
+    # Case 1: CI becomes pending
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="8" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "pending")),
+    ):
+        assert supervisor.current_dispatch_event_key(cfg, event, task_map) is None
+        skip_msg = supervisor.stale_dispatch_skip_message(cfg, event, task_map)
+        assert skip_msg is not None
+        assert "no longer eligible" in skip_msg
+
+    # Case 2: CI becomes failure
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="8" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "failure")),
+    ):
+        assert supervisor.current_dispatch_event_key(cfg, event, task_map) is None
+        skip_msg = supervisor.stale_dispatch_skip_message(cfg, event, task_map)
+        assert skip_msg is not None
+        assert "no longer eligible" in skip_msg
 

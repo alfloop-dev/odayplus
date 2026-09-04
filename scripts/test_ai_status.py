@@ -277,7 +277,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         # unpatched probe would shell out to `gh`/`git` for a task id that has
         # no branch, making this unit test environment-dependent.
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False), \
-             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")):
             ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
 
         task = ai_status.get_task(self.state, "REG-002")
@@ -290,6 +291,34 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
+
+    def test_approve_rejects_pending_or_failing_ci(self) -> None:
+        # CI Pending
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "pending")):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(self.state, ["REG-002", "Approve while pending"])
+            self.assertIn("required CI status is 'pending'", str(cm.exception))
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
+        # CI Failure
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "failure")):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(self.state, ["REG-002", "Approve while failing"])
+            self.assertIn("required CI status is 'failure'", str(cm.exception))
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
+        # CI Unknown / Unresolved
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=(None, "unknown")):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(self.state, ["REG-002", "Approve while unknown"])
+            self.assertIn("required CI status is 'unknown'", str(cm.exception))
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
 
     def test_done_requires_owner_and_review_approved(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
@@ -520,7 +549,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         """B23: restore_approved must refuse when the downgrade was a reviewer rejection."""
         self.state["tasks"][0]["status"] = "review"
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
-             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")):
             ai_status.command_approve(self.state, ["REG-002", "Approve first"])
 
         task = ai_status.get_task(self.state, "REG-002")
@@ -4025,7 +4055,8 @@ class StatusCheckEmissionTests(unittest.TestCase):
         }
         mock_changed = mock.Mock(returncode=0, stdout=f"{remote_sha}\trefs/heads/task/{task_id}\n")
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
-             mock.patch("subprocess.run", return_value=mock_changed):
+             mock.patch("subprocess.run", return_value=mock_changed), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")):
             ai_status.command_approve(state_approve, [task_id, "Approved new head"])
             task = ai_status.get_task(state_approve, task_id)
             self.assertEqual(task["approved_head"], remote_sha)

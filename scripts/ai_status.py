@@ -7286,6 +7286,21 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             "No approval was recorded."
         )
 
+    # Required CI terminal success check on exact head
+    try:
+        pr_status, ci_status = task_pr_ci_status(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: unable to check PR CI status ({exc}). "
+            "Integrity gate failed closed; no approval was recorded."
+        ) from exc
+    if ci_status != "success":
+        raise SystemExit(
+            f"Cannot approve task {task_id}: required CI status is '{ci_status}' "
+            f"(exact head {approved_sha[:8]} must have all required CI terminal success before approval). "
+            "No approval was recorded."
+        )
+
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
