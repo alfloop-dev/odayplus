@@ -355,7 +355,7 @@ def reconcile_merge_group_runs(
 
         task_id = str(task.get("id") or "")
         task_status = str(task.get("status") or "").lower()
-        if task_status in {"done", "cancelled", "superseded"}:
+        if task_status != "review_approved":
             write_activity_log(config, {
                 "type": "merge_group_failure_stale",
                 "task_id": task_id,
@@ -365,7 +365,7 @@ def reconcile_merge_group_runs(
                 "pr_number": pr_number,
                 "conclusion": conclusion,
                 "url": html_url,
-                "message": f"Merge group run {run_id} failed for PR #{pr_number} on {queue_ref}, but task {task_id} is already {task_status}.",
+                "message": f"Merge group run {run_id} failed for PR #{pr_number} on {queue_ref}, but task {task_id} is in status '{task_status}' (expected 'review_approved').",
             })
             non_mutating_seen.append(run_key)
             continue

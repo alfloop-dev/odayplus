@@ -3408,24 +3408,73 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertIn("merge_group_failure_ambiguous", log_types)
 
     def test_reconcile_merge_group_stale_event_produces_no_handoff(self) -> None:
+        for non_approved_status in ("done", "cancelled", "superseded", "review", "todo"):
+            with self.subTest(status=non_approved_status):
+                bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
+                run_stale = {
+                    "id": 50001,
+                    "head_branch": "gh-readonly-queue/dev/pr-756-8eabc973",
+                    "head_sha": "8eabc973",
+                    "conclusion": "failure",
+                    "status": "completed",
+                }
+                status_obj = {
+                    "tasks": [
+                        {
+                            "id": "ODP-TEST-MG-001",
+                            "status": non_approved_status,
+                            "owner": "Codex",
+                            "reviewer": "Claude2",
+                            "pr_number": 756,
+                        }
+                    ],
+                    "handoffs": [],
+                }
+
+                with (
+                    mock.patch("github_reconciliation.write_activity_log") as write_log,
+                    mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
+                ):
+                    changed = github_reconciliation.reconcile_merge_group_runs(
+                        self.config, bus_state, status_obj, "o/r", [run_stale]
+                    )
+
+                self.assertFalse(changed)
+                commit_trans.assert_not_called()
+                self.assertEqual(len(status_obj["handoffs"]), 0)
+                self.assertEqual(status_obj["tasks"][0]["status"], non_approved_status)
+                self.assertEqual(write_log.call_args.args[1]["type"], "merge_group_failure_stale")
+                self.assertIn("merge_group_run:50001", bus_state["processed_merge_group_run_ids"])
+
+    def test_reconcile_merge_group_stale_in_progress_preserves_task_and_handoffs(self) -> None:
+        """A task reopened to in_progress must not be force-transitioned or have handoffs wiped."""
         run_stale = {
-            "id": 50001,
-            "head_branch": "gh-readonly-queue/dev/pr-756-8eabc973",
+            "id": 50002,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
             "head_sha": "8eabc973",
             "conclusion": "failure",
             "status": "completed",
         }
-        status_done = {
+        existing_handoff = {
+            "task_id": "ODP-TEST-MG-001",
+            "from": "Claude2",
+            "to": "Codex",
+            "message": "rework needed after review",
+            "status": "pending",
+            "created_at": "2026-09-04T10:00:00Z",
+        }
+        status_in_progress = {
             "tasks": [
                 {
                     "id": "ODP-TEST-MG-001",
-                    "status": "done",
+                    "status": "in_progress",
                     "owner": "Codex",
                     "reviewer": "Claude2",
                     "pr_number": 756,
+                    "next": "implementing reviewer feedback",
                 }
             ],
-            "handoffs": [],
+            "handoffs": [existing_handoff],
         }
 
         with (
@@ -3433,14 +3482,68 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
         ):
             changed = github_reconciliation.reconcile_merge_group_runs(
-                self.config, self.bus_state, status_done, "o/r", [run_stale]
+                self.config, self.bus_state, status_in_progress, "o/r", [run_stale]
             )
 
         self.assertFalse(changed)
         commit_trans.assert_not_called()
-        self.assertEqual(len(status_done["handoffs"]), 0)
-        self.assertEqual(status_done["tasks"][0]["status"], "done")
         self.assertEqual(write_log.call_args.args[1]["type"], "merge_group_failure_stale")
+        # Task remains in_progress
+        self.assertEqual(status_in_progress["tasks"][0]["status"], "in_progress")
+        self.assertEqual(status_in_progress["tasks"][0]["next"], "implementing reviewer feedback")
+        # Existing reviewer->owner handoff must remain pending and untouched
+        self.assertEqual(len(status_in_progress["handoffs"]), 1)
+        self.assertEqual(status_in_progress["handoffs"][0]["status"], "pending")
+        self.assertEqual(status_in_progress["handoffs"][0]["from"], "Claude2")
+        self.assertEqual(status_in_progress["handoffs"][0]["to"], "Codex")
+        self.assertIn("merge_group_run:50002", self.bus_state["processed_merge_group_run_ids"])
+
+    def test_reconcile_merge_group_stale_blocked_preserves_task_and_handoffs(self) -> None:
+        """A blocked task must not be mutated by stale merge_group failure runs."""
+        run_stale = {
+            "id": 50003,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
+            "head_sha": "8eabc973",
+            "conclusion": "failure",
+            "status": "completed",
+        }
+        existing_handoff = {
+            "task_id": "ODP-TEST-MG-001",
+            "from": "Codex",
+            "to": "Human/Ops",
+            "message": "waiting for environment access",
+            "status": "pending",
+            "created_at": "2026-09-04T10:00:00Z",
+        }
+        status_blocked = {
+            "tasks": [
+                {
+                    "id": "ODP-TEST-MG-001",
+                    "status": "blocked",
+                    "owner": "Codex",
+                    "reviewer": "Claude2",
+                    "pr_number": 756,
+                    "next": "waiting for unblock",
+                }
+            ],
+            "handoffs": [existing_handoff],
+        }
+
+        with (
+            mock.patch("github_reconciliation.write_activity_log") as write_log,
+            mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config, self.bus_state, status_blocked, "o/r", [run_stale]
+            )
+
+        self.assertFalse(changed)
+        commit_trans.assert_not_called()
+        self.assertEqual(write_log.call_args.args[1]["type"], "merge_group_failure_stale")
+        self.assertEqual(status_blocked["tasks"][0]["status"], "blocked")
+        self.assertEqual(len(status_blocked["handoffs"]), 1)
+        self.assertEqual(status_blocked["handoffs"][0]["status"], "pending")
+        self.assertIn("merge_group_run:50003", self.bus_state["processed_merge_group_run_ids"])
 
     def test_reconcile_merge_group_in_progress_waits_for_completion(self) -> None:
         run_in_progress = {
