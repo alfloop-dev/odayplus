@@ -209,7 +209,7 @@ class LeaseAdmissibilityChecker(Protocol):
         planning_period_end: date,
     ) -> LeaseAdmissibilityResult:
         """Evaluate feasibility of KEEP/IMPROVE/EXIT on an existing store.
-        
+
         Fail-Closed rule: If store is None or required penalty/expiry is None,
         returns UNMEASURED.
         """
@@ -224,7 +224,7 @@ class LeaseAdmissibilityChecker(Protocol):
         max_overlap_days: int = 60,
     ) -> LeaseAdmissibilityResult:
         """Evaluate feasibility of MOVE from an existing store to a candidate site.
-        
+
         Dual-side feasibility requirements:
         1. Source store must allow break clause with measured termination penalty.
         2. Destination site must have available_from and signing_deadline within plan period.
@@ -240,7 +240,7 @@ class LeaseAdmissibilityChecker(Protocol):
         planning_period_end: date,
     ) -> LeaseAdmissibilityResult:
         """Evaluate feasibility of OPEN on a candidate site.
-        
+
         Fail-Closed rule: If site is None or signing_deadline is expired/missing,
         returns UNMEASURED or INFEASIBLE_WINDOW.
         """

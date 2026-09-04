@@ -18,7 +18,6 @@ from delivery_toolchain.governance.check_requirement_members import (
     MANIFEST_PATH,
     REPO_ROOT,
     check,
-    is_ai_decider,
     resolve_decision_ref,
 )
 from shared.governance.netplan_disclosure import (
@@ -74,9 +73,22 @@ class TestNet002LeaseRequirementGovernance:
         lease = next(m for m in req["members"] if m["name"] == "LEASE")
         disp = lease["disposition"]
 
-        decider = disp.get("decider")
-        if decider:
-            assert not is_ai_decider(decider), f"AI decider {decider!r} is forbidden on LEASE disposition"
+        # BLOCKED_BY_EVIDENCE is a handback, not a signed amendment. Keeping
+        # all ruling fields absent prevents either an AI or a human signer
+        # from being smuggled into an unsigned disposition under another
+        # state; the governance checker then remains the authoritative gate
+        # for any future DECIDED record.
+        for ruling_field in (
+            "formal_decision_ref",
+            "decider",
+            "decision_date",
+            "scope",
+            "risk_owner",
+            "expiry",
+        ):
+            assert not disp.get(ruling_field), (
+                f"unsigned LEASE handback must not carry ruling field {ruling_field!r}"
+            )
 
     def test_governance_document_mirrors_lease_disposition(self) -> None:
         policy_path = REPO_ROOT / "docs" / "governance" / "ODP_REQUIREMENT_DISPOSITIONS.md"
