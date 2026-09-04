@@ -3054,6 +3054,16 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             "reviewer": "Claude2",
             "pr_number": 756,
             "approved_head": "8eabc9734a000000000000000000000000000000",
+            # An approved task reached the merge queue through task_finalize.sh, so it
+            # carries the verified submission that pins the reviewed commit. Recovery
+            # after a merge_group failure is dispatched from these same facts.
+            "review_submission": {
+                "pr_number": 756,
+                "branch": "task/odp-test-mg-001",
+                "remote_sha": "8eabc9734a000000000000000000000000000000",
+                "base_branch": "dev",
+                "verified_at": "2026-09-04T00:00:00Z",
+            },
             "next": "waiting for merge queue",
         }
         self.status = {"tasks": [self.task], "handoffs": []}
@@ -3341,11 +3351,36 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(handoff["to"], "Claude2")
         self.assertEqual(handoff["reason"], "merge_group_failure")
 
-        # Dispatch engine must evaluate priority 0 (REASON_REVIEW_READY) for reviewer Claude2
-        priority = dispatch_engine.dispatch_priority_for_task(
-            self.config, self.task, "Claude2"
-        )
+        # Dispatch engine must evaluate priority 0 (REASON_REVIEW_READY) for reviewer
+        # Claude2. Reviewer recovery goes through the same single exact-head CI
+        # readiness predicate as any other review dispatch: the merge_group run that
+        # failed ran on the queue ref, not on the PR head, so the PR head keeps its
+        # successful required CI and still matches the verified submission SHA.
+        head_sha = self.task["review_submission"]["remote_sha"]
+        with (
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=head_sha),
+            mock.patch.object(
+                ai_status, "task_pr_ci_status", return_value=("OPEN", "success")
+            ),
+        ):
+            priority = dispatch_engine.dispatch_priority_for_task(
+                self.config, self.task, "Claude2"
+            )
         self.assertEqual(priority, 0)
+
+        # That predicate stays fail-closed on the recovery path too: pending required
+        # CI on the exact head must not consume the reviewer slot.
+        with (
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=head_sha),
+            mock.patch.object(
+                ai_status, "task_pr_ci_status", return_value=("OPEN", "pending")
+            ),
+        ):
+            self.assertIsNone(
+                dispatch_engine.dispatch_priority_for_task(
+                    self.config, self.task, "Claude2"
+                )
+            )
 
     def test_fetch_merge_group_runs_propagates_offline(self) -> None:
         with mock.patch("github_bus.gh_json", side_effect=github_bus.GitHubBusOffline("gh offline")):
