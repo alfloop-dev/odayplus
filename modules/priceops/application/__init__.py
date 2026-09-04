@@ -1,5 +1,10 @@
 """PriceOps application service exports."""
 
+from modules.priceops.application.exploration import (
+    ExplorationService,
+    StandardBanditPriceExplorer,
+    authorize_exploration,
+)
 from modules.priceops.application.pricing import (
     DEFAULT_LABEL_MATURITY_DAYS,
     ActivationResult,
@@ -17,10 +22,13 @@ __all__ = [
     "ApprovalBlockedError",
     "ActivationResult",
     "EvaluationResult",
+    "ExplorationService",
     "InvalidScenarioError",
     "MissingRollbackPlanError",
     "PlanNotFoundError",
     "PriceOpsService",
+    "StandardBanditPriceExplorer",
     "UnavailableSimulationResultError",
+    "authorize_exploration",
 ]
 

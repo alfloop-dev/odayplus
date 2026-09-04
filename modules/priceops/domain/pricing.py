@@ -216,6 +216,13 @@ class PricingPlanItem:
     baseline_demand: float
     elasticity: PriceElasticityEstimate
     source_snapshot_ids: tuple[str, ...] = ()
+    # Exploration gates may be narrower than a tenant.  Keep the attributes
+    # on the plan item so the production optimize and activate paths can
+    # validate the gate against the resource that will actually be repriced,
+    # rather than trusting a caller-supplied scope.
+    brand_id: str | None = None
+    store_group: str | None = None
+    sku_group: str | None = None
 
     @classmethod
     def create(
@@ -228,6 +235,9 @@ class PricingPlanItem:
         elasticity: PriceElasticityEstimate,
         source_snapshot_ids: tuple[str, ...] = (),
         item_id: str | None = None,
+        brand_id: str | None = None,
+        store_group: str | None = None,
+        sku_group: str | None = None,
     ) -> PricingPlanItem:
         applicable_min, applicable_max = _bounded_applicable_range(
             constraints, elasticity
@@ -249,6 +259,9 @@ class PricingPlanItem:
             baseline_demand=baseline_demand,
             elasticity=elasticity,
             source_snapshot_ids=source_snapshot_ids,
+            brand_id=brand_id,
+            store_group=store_group,
+            sku_group=sku_group,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -260,6 +273,9 @@ class PricingPlanItem:
             "baseline_demand": self.baseline_demand,
             "elasticity": self.elasticity.to_dict(),
             "source_snapshot_ids": list(self.source_snapshot_ids),
+            "brand_id": self.brand_id,
+            "store_group": self.store_group,
+            "sku_group": self.sku_group,
         }
 
 
