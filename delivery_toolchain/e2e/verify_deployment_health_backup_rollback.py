@@ -18,9 +18,16 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from delivery_toolchain.release.release_receipts import redact, redact_secrets
-
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.release_receipts import (  # noqa: E402
+    _is_sensitive_key,
+    redact,
+    redact_secrets,
+)
+
 COMPOSE_FILE = "infra/docker/docker-compose.e2e.yml"
 DB_PATH = "/data/product-e2e.sqlite3"
 BACKUP_PATH = "/storage/backups/product-e2e.sqlite3.backup"
@@ -46,13 +53,39 @@ def sanitize_command(command: Sequence[str], *, secret_values: Sequence[str] = (
     return [str(redact(arg, secret_values=secret_values)) for arg in command]
 
 
-def collect_env_secrets(env: Mapping[str, str]) -> list[str]:
+IGNORED_SECRET_VALUES = frozenset(
+    {
+        "true",
+        "false",
+        "none",
+        "null",
+        "disabled",
+        "enabled",
+        "default",
+        "undefined",
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+    }
+)
+
+
+def collect_env_secrets(env: Mapping[str, str], *, min_length: int = 8) -> list[str]:
     secrets: list[str] = []
     for k, v in env.items():
-        if v and len(v) >= 4:
-            k_upper = k.upper()
-            if any(s in k_upper for s in ("SECRET", "TOKEN", "PASSWORD", "KEY", "AUTH", "DSN", "CREDENTIAL")):
-                secrets.append(v)
+        if not v or len(v) < min_length:
+            continue
+        v_stripped = v.strip()
+        if v_stripped.lower() in IGNORED_SECRET_VALUES:
+            continue
+        if v_stripped.isdigit():
+            continue
+        if (v_stripped.startswith("/") or v_stripped.startswith("./")) and not any(
+            s in v_stripped.lower() for s in ("secret", "token", "password", "key", "cred")
+        ):
+            continue
+        if _is_sensitive_key(k):
+            secrets.append(v)
     return secrets
 
 
@@ -218,8 +251,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "remote_staging_rollout": "not configured because ODP_STAGING_DEPLOY_URL/host variables are placeholders",
         }
         report["result"] = "passed"
-        write_report(diagnostics_dir, report, secret_values=env_secrets)
-        print(json.dumps(report, indent=2, sort_keys=True))
+        final_report = write_report(diagnostics_dir, report, secret_values=env_secrets)
+        print(json.dumps(final_report, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
         report["result"] = "failed"
@@ -543,7 +576,7 @@ def write_report(
     report: dict[str, Any],
     *,
     secret_values: Sequence[str] = (),
-) -> None:
+) -> dict[str, Any]:
     redacted_report, _ = redact_secrets(report, secret_values=secret_values)
     redacted_report["secret_values_redacted"] = True
     redacted_report["report_sha256"] = sha256_json(redacted_report)
@@ -551,6 +584,7 @@ def write_report(
         json.dumps(redacted_report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    return redacted_report
 
 
 def sha256_json(payload: dict[str, Any]) -> str:

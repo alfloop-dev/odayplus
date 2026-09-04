@@ -2,11 +2,28 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from delivery_toolchain.e2e import verify_deployment_health_backup_rollback as vdr
+
+
+def test_entrypoint_subprocess_help_executes_from_repo_root() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py",
+            "--help",
+        ],
+        cwd=vdr.ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    assert "Run E2E deployment health" in result.stdout
 
 
 def test_sanitize_text_redacts_tokens_and_secrets() -> None:
@@ -28,11 +45,21 @@ def test_collect_env_secrets() -> None:
         "ODP_E2E_API_PORT": "8099",
         "API_SECRET_KEY": "super_secret_token_123",
         "DATABASE_PASSWORD": "db_secret_password_456",
+        "AUTH_TYPE": "none",
+        "KEY_ENABLED": "true",
+        "GIT_AUTHOR_NAME": "Lupin",
+        "SECRET_NAME": "secret-name-not-value",
+        "CONFIG_PATH": "/var/log/app.log",
     }
     secrets = vdr.collect_env_secrets(env)
     assert "super_secret_token_123" in secrets
     assert "db_secret_password_456" in secrets
     assert "8099" not in secrets
+    assert "none" not in secrets
+    assert "true" not in secrets
+    assert "Lupin" not in secrets
+    assert "secret-name-not-value" not in secrets
+    assert "/var/log/app.log" not in secrets
 
 
 def test_run_rejects_non_positive_timeout() -> None:
@@ -217,7 +244,11 @@ def test_write_report_redacts_secrets_and_hashes(tmp_path: Path) -> None:
         "secret_token": "Bearer super-secret-12345",
         "result": "passed",
     }
-    vdr.write_report(diagnostics_dir, report)
+    redacted = vdr.write_report(diagnostics_dir, report)
+    assert redacted["secret_values_redacted"] is True
+    assert "super-secret-12345" not in json.dumps(redacted)
+    assert "report_sha256" in redacted
+
     report_file = diagnostics_dir / vdr.REPORT_NAME
     assert report_file.exists()
 
@@ -225,9 +256,10 @@ def test_write_report_redacts_secrets_and_hashes(tmp_path: Path) -> None:
     assert content["secret_values_redacted"] is True
     assert "super-secret-12345" not in json.dumps(content)
     assert "report_sha256" in content
+    assert content["report_sha256"] == redacted["report_sha256"]
 
 
-def test_main_full_drill_success(tmp_path: Path, monkeypatch) -> None:
+def test_main_full_drill_success(tmp_path: Path, monkeypatch, capsys) -> None:
     diagnostics_dir = tmp_path / "diag"
     executed_commands: list[tuple[list[str], float, bool]] = []
 
@@ -297,6 +329,14 @@ def test_main_full_drill_success(tmp_path: Path, monkeypatch) -> None:
     report_data = json.loads(report_file.read_text(encoding="utf-8"))
     assert report_data["result"] == "passed"
     assert report_data["rollback"]["probe_removed"] is True
+
+    # Verify stdout was redacted and contains digest and redaction marker
+    captured = capsys.readouterr()
+    stdout_report = json.loads(captured.out)
+    assert stdout_report["result"] == "passed"
+    assert stdout_report["secret_values_redacted"] is True
+    assert "report_sha256" in stdout_report
+    assert stdout_report["report_sha256"] == report_data["report_sha256"]
 
     # Verify all commands executed with finite timeouts
     for _cmd, timeout, _check in executed_commands:
