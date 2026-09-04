@@ -92,16 +92,38 @@ def test_a_fully_modelled_solve_needs_neither_block_nor_signature() -> None:
     assert not evaluation.requires_acknowledgement
 
 
-def test_a_class_outside_the_required_set_neither_blocks_nor_needs_signing() -> None:
-    """Reported separately rather than dropped, so the full disclosure stays visible."""
+def test_a_policy_missing_required_classes_is_refused() -> None:
+    """A policy cannot silently shrink the governed requirement set."""
+    with pytest.raises(NetPlanDisclosurePolicyError, match="missing required classes"):
+        evaluate_disclosure(
+            _policy(required_classes=["CAPITAL"], acknowledgeable_classes=[]),
+            unmodelled_classes=["LEASE", "SEQUENCING"],
+        )
+
+
+def test_a_policy_with_an_unknown_required_class_is_refused() -> None:
+    with pytest.raises(NetPlanDisclosurePolicyError, match="unknown classes.*MYSTERY"):
+        required_classes(
+            _policy(required_classes=[*NETPLAN_REQUIRED_CONSTRAINT_CLASSES, "MYSTERY"])
+        )
+
+
+def test_an_unknown_solver_class_is_refused_rather_than_not_required() -> None:
+    """A newly named class must not disappear into the policy's irrelevant bucket."""
+    with pytest.raises(NetPlanDisclosurePolicyError, match="unknown.*MYSTERY"):
+        evaluate_disclosure(_policy(), unmodelled_classes=["MYSTERY"])
+
+
+def test_a_class_outside_the_required_set_is_not_a_valid_policy_shape() -> None:
+    """The old not_required branch cannot be reached by a valid NetPlan policy."""
     evaluation = evaluate_disclosure(
-        _policy(required_classes=["CAPITAL"], acknowledgeable_classes=[]),
-        unmodelled_classes=["LEASE", "SEQUENCING"],
+        _policy(),
+        unmodelled_classes=[],
     )
 
     assert evaluation.blocking == ()
     assert evaluation.acknowledgeable == ()
-    assert set(evaluation.not_required) == {"LEASE", "SEQUENCING"}
+    assert evaluation.not_required == ()
 
 
 def test_class_names_are_compared_case_insensitively_after_trimming() -> None:
