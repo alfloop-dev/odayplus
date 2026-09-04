@@ -13856,6 +13856,46 @@ class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
             poll_interval=600.0,
         )
 
+    def test_main_wires_cli_poll_interval_to_once_run(self) -> None:
+        config = load_test_config()
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "supervisor.py",
+                    "--config",
+                    "/tmp/pantheon-test-config.json",
+                    "--poll-interval",
+                    "600",
+                    "--no-watch",
+                    "--once",
+                ],
+            ),
+            mock.patch.object(supervisor, "resolve_path", return_value=Path("/tmp/pantheon-test-config.json")),
+            mock.patch.object(supervisor, "authoritative_status_root", return_value=None),
+            mock.patch.object(supervisor, "load_config", return_value=config),
+            mock.patch.object(supervisor, "acquire_singleton_lock", return_value=True),
+            mock.patch.object(supervisor, "terminate_other_supervisors"),
+            mock.patch.object(supervisor.atexit, "register"),
+            mock.patch.object(supervisor, "install_termination_logging"),
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(supervisor, "bootstrap_supervisor_runtime_state"),
+            mock.patch.object(supervisor, "console_log"),
+            mock.patch.object(supervisor, "run_once", return_value=False) as run_once,
+        ):
+            self.assertEqual(supervisor.main(), 0)
+
+        run_once.assert_called_once_with(
+            config,
+            watch=False,
+            replay=False,
+            quiet=False,
+            verbose=False,
+            once=True,
+            poll_interval=600.0,
+        )
+
 
 class RunSupervisorShellGuardTests(unittest.TestCase):
     def _script(self) -> Path:
