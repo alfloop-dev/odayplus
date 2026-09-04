@@ -12,7 +12,7 @@ def test_ci_baseline_includes_security_gate() -> None:
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "audit:security" in (ROOT / "package.json").read_text(encoding="utf-8")
-    assert "delivery_toolchain/security/dependency_audit.py" in makefile
+    assert "npm run audit:security" in makefile
     assert "security: bootstrap dependency-audit" in makefile
     assert "npm run build --workspaces --if-present" in makefile
     assert "ci: bootstrap lint security test smoke node-check" in makefile
