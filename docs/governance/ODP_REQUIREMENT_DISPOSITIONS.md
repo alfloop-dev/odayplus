@@ -262,6 +262,29 @@ stateDiagram-v2
 
 ---
 
+### 4.9 `ODP-FR-AVM-001`：AVM 估值組成
+
+#### 成員：`DEPRECIATION`（資產折舊）
+- **處置狀態**：`IMPLEMENTATION_READY`
+- **負責人 (Assigned To)**: `AVM Domain Lead / Finance Analytics Lead`
+- **目標交付批次 (Target Phase)**: `Batch 1 (ODP Remediation Plan) — AVM 估值`
+- **契約文件 (Contract Ref)**: [`docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md`](../design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md)
+- **處置證據 (Evidence Ref)**: [`docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md`](../evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md)
+- **驗收標準 (Acceptance Criteria)**: `modules/avm/tests/test_avm_depreciation_contract.py` 的八條 `xfail(strict=True)` 契約規格（C-1 基數判別、C-2 輸入欄位、C-3 直線折舊計算、C-4 evidence 與版本欄位、C-5 缺席 fail-closed、L-1／L-2 舊估值卡、L-4 校準分版本、R-1 逐位元回滾）。`strict=True` 使實作落地後這些規格會以 XPASS 判紅，強迫實作者回來移除標記——本狀態因此帶有機械式到期機制。
+- **工程處置 (Engineering Disposition)**:
+  修復計畫第 1 批要求先回答「AVM 資產折舊與 `site_economics` 門市現金流折舊是否同一概念」。判定為**不是**，四項證據：被量測的對象不同（format catalog 的全新機型組合 vs. 已使用 N 個月的特定門市設備）、輸出去向不同（稅盾，從未調低任何資產帳面價值 vs. 直接進 asset lens）、時鐘原點相反（開店月往後 vs. 投入使用日往回）、殘值語意不同（期末退場現金流入 vs. 折舊下限）。因此採 **AVM-specific model**，且**連直線折舊純函式都不抽出共用**——為三行算式建立 `modules/avm` → `modules/site_economics` 依賴，換到的是「兩邊折舊政策一致」的假象。要對齊的是參數（`useful_life_months` 與 `residual_value_ratio` 的 catalog 假設），不是程式碼。
+- **為何不是其他狀態**:
+  - 不是 `VERIFIED`：`modules/avm` 內沒有任何折舊計算，且依 §3.1 `absent` 不得冒充 `VERIFIED`。
+  - 不是 `DECIDED`：沒有任何人類裁決「不納入折舊」。要通過 `DECIDED` 閘就必須編造 `decider`，正是 §3.2 禁止的 AI 自簽豁免。本處置不攜帶任何法定裁決欄位。
+  - 不是 `BLOCKED_BY_EVIDENCE`：判定已做出、驗收標準已可執行，實作現在就能開始。欠的是工，不是證據——把它記成阻塞會讓一份寫完的契約看起來像在等別人。
+- **仍屬人類治理、本次不代簽**:
+  1. 契約 R-4 的三個回滾門檻（數值／結構／校準）由財務 owner 填入，**門檻未填不得 cutover**；
+  2. `ODP-FR-AVM-001` 的 canonical 需求 bytes 依 [`ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md`](../evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md) 仍為 `BLOCKED_BY_EVIDENCE`，manifest `_source_provenance` 已記錄。本處置只宣稱「依目前轉錄內容」成立。
+- **轉為 `VERIFIED` 的條件**: 八條 xfail 標記被實作而非改寫地移除且全數通過、`status` 轉為 `satisfied` 且 `evidence` 指向可解析符號、R-4 門檻已填。
+- **回歸測試**: `tests/governance/test_avm001_disposition.py`（含三條負向測試：冒充 `VERIFIED`、AI 簽署的 `DECIDED`、移除 `disposition` 區塊，checker 均須拒絕）。
+
+---
+
 ## 5. 自動化檢驗與 CI 整合
 
 所有登錄於 `delivery_toolchain/governance/set_valued_requirements.json` 的需求成員均由 `delivery_toolchain/governance/check_requirement_members.py` 於 CI 流程中機械式驗證：

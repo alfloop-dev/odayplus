@@ -39,6 +39,12 @@ DEFAULT_OWNED_STATUSES = ["in_progress", "todo"]
 DEFAULT_SIDECAR_ONLY_AGENTS: list[str] = []
 DEFAULT_DISABLED_AGENTS: list[str] = []
 DEFAULT_DEPENDENCY_DONE_STATUSES = ["done"]
+# An `in_progress` task whose owner has no live runner is orphaned work, not
+# work in flight, so the helper lease has to be able to reach it. Named here so
+# the dispatch loop can tell "the operator narrowed this" apart from "the
+# operator never set it" -- `ready_dispatch_settings` applies it via
+# `setdefault`, which an explicit runtime value silently wins over.
+DEFAULT_HELPER_CLAIMABLE_STATUSES = ["todo", "in_progress"]
 DEFAULT_WORKER_TERMINAL_STATUSES = ["review", "done", "review_approved"]
 DEFAULT_ACTIVE_WORKER_STATUSES = [
     "running",
@@ -96,7 +102,7 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
     helper = dict(settings.get("helper_execution_lease", {}) or {})
     helper.setdefault("enabled", True)
-    helper.setdefault("claimable_statuses", ["todo"])
+    helper.setdefault("claimable_statuses", list(DEFAULT_HELPER_CLAIMABLE_STATUSES))
     helper.setdefault("dispatch_sla_seconds", 600)
     helper.setdefault("lease_seconds", 1800)
     helper.setdefault("max_claims_per_tick", 4)

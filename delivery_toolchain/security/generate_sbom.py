@@ -362,9 +362,22 @@ def generate_sbom() -> dict[str, Any]:
 
     # 2. Parse Python dependencies from uv.lock
     prod_roots, dev_roots = _get_python_scopes()
+    venv_site_packages = [
+        str(p)
+        for p in (
+            list(ROOT.glob(".venv/lib/python*/site-packages"))
+            + list(ROOT.glob(".venv/Lib/site-packages"))
+        )
+        if p.is_dir()
+    ]
+    dists = (
+        list(md.distributions(path=venv_site_packages))
+        if venv_site_packages
+        else list(md.distributions())
+    )
     installed_dists = {
         re.sub(r"[-_.]+", "-", dist.metadata.get("Name") or "").lower(): dist
-        for dist in md.distributions()
+        for dist in dists
         if dist.metadata.get("Name")
     }
 
