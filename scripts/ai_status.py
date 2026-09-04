@@ -63,22 +63,10 @@ if str(DELIVERY_GIT_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GIT_DIR))
 
 import common as orchestrator_common
-from common import (
-    CONTROL_PLANE_RECOVERY_REASONS,
-    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
-    REOPEN_CATEGORY_OWNER_RESUME,
-    REOPEN_CATEGORY_SUBSTANTIVE_REVIEW,
-    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
-    REOPEN_REASON_OWNER_RESUME,
-    REOPEN_REASON_REVIEW_FINDING,
-    REOPEN_REASON_STALE_REVIEW_SHA,
-    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
-    SUBSTANTIVE_REVIEW_REASONS,
-    classify_reopen_reason,
-    is_control_plane_recovery_reason,
-    substantive_review_reopen_count,
-)
 from check_task_delivery_identity import validate_delivery_identity
+from common import (
+    classify_reopen_reason,
+)
 from multi_repo_registry import (
     cross_repo_delivery_requirements,
     repository_local_path,

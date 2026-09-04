@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from common import parse_iso_timestamp as parse_runtime_timestamp
 import worker_workspace
+from common import parse_iso_timestamp as parse_runtime_timestamp
 from dispatch_policy import (
     REASON_HELPER_CLAIM,
     task_priority_rank,
