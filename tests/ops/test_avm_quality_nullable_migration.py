@@ -7,8 +7,8 @@ from pathlib import Path
 
 from shared.infrastructure.persistence.engine import SqliteEngine
 
-POSTGRES_MIGRATION = Path("infra/db/migrations/000018_avm_quality_score_nullable.sql")
-SQLITE_MIGRATION = Path("infra/db/migrations/000018_avm_quality_score_nullable_sqlite.sql")
+POSTGRES_MIGRATION = Path("infra/db/migrations/000021_avm_quality_score_nullable.sql")
+SQLITE_MIGRATION = Path("infra/db/migrations/000021_avm_quality_score_nullable_sqlite.sql")
 
 
 def test_postgres_and_sqlite_migrations_share_nullable_legacy_contract() -> None:
@@ -111,3 +111,66 @@ def test_sqlite_migration_preserves_legacy_values_and_accepts_null_rows(tmp_path
         assert unmeasured["quality_score_status"] == "unmeasured"
     finally:
         reopened.close()
+
+
+def test_sqlite_engine_enforces_foreign_keys_and_rejects_orphan_child_inserts_on_fresh_and_restart(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "fk-enforcement.sqlite3"
+
+    # 1. Fresh engine check: foreign_keys must be enabled (1)
+    engine = SqliteEngine(database_path)
+    try:
+        fk_status = engine.query_one("PRAGMA foreign_keys")
+        assert fk_status is not None and fk_status["foreign_keys"] == 1
+
+        # Valid snapshot insertion succeeds
+        engine.execute(
+            """INSERT INTO data_snapshots(
+                snapshot_id, source_id, storage_uri, schema_version,
+                created_by_run_id, quality_score, quality_score_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            ("snap-valid-1", "src-1", "gs://valid", "v1", "run-1", 0.95, "measured"),
+        )
+
+        # Child insertion referencing valid snapshot succeeds
+        engine.execute(
+            """INSERT INTO pois(
+                poi_id, source_poi_id, poi_name, poi_category, snapshot_id
+            ) VALUES (?, ?, ?, ?, ?)""",
+            ("poi-valid-1", "src-p1", "Coffee Shop", "cafe", "snap-valid-1"),
+        )
+
+        # Orphan child insertion referencing non-existent snapshot must be rejected
+        import pytest
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
+            engine.execute(
+                """INSERT INTO pois(
+                    poi_id, source_poi_id, poi_name, poi_category, snapshot_id
+                ) VALUES (?, ?, ?, ?, ?)""",
+                ("poi-orphan-1", "src-p2", "Ghost Cafe", "cafe", "snap-nonexistent"),
+            )
+    finally:
+        engine.close()
+
+    # 2. Restart engine check: restarted engine must retain foreign_keys=1 and enforce FKs
+    restarted = SqliteEngine(database_path)
+    try:
+        fk_status = restarted.query_one("PRAGMA foreign_keys")
+        assert fk_status is not None and fk_status["foreign_keys"] == 1
+
+        # Readback of existing data
+        valid_poi = restarted.query_one("SELECT poi_id, snapshot_id FROM pois WHERE poi_id = ?", ("poi-valid-1",))
+        assert valid_poi is not None and valid_poi["snapshot_id"] == "snap-valid-1"
+
+        # Orphan child insertion on restarted engine must also be rejected
+        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
+            restarted.execute(
+                """INSERT INTO pois(
+                    poi_id, source_poi_id, poi_name, poi_category, snapshot_id
+                ) VALUES (?, ?, ?, ?, ?)""",
+                ("poi-orphan-2", "src-p3", "Ghost Cafe 2", "cafe", "snap-nonexistent-2"),
+            )
+    finally:
+        restarted.close()
+

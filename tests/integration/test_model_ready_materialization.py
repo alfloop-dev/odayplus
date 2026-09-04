@@ -32,7 +32,14 @@ from shared.infrastructure.persistence.repositories import DurableLearningHubRep
 FEATURE_TIME = datetime(2026, 6, 27, tzinfo=UTC)
 
 
-def _row(entity_id: str, *, quality: float = 1.0, training: bool = True, **extra: object) -> dict:
+def _row(
+    entity_id: str,
+    *,
+    quality: float = 1.0,
+    confidence: float = 1.0,
+    training: bool = True,
+    **extra: object,
+) -> dict:
     row = {
         "view_name": "forecast_training_view",
         "view_version": "v1",
@@ -41,6 +48,7 @@ def _row(entity_id: str, *, quality: float = 1.0, training: bool = True, **extra
         "prediction_origin_time": "2026-06-27T00:00:00Z",
         "source_snapshot_ids": ["txn-20260626", "machine-20260626"],
         "data_quality_score": quality,
+        "confidence": confidence,
         "is_training_eligible": training,
     }
     row.update(extra)

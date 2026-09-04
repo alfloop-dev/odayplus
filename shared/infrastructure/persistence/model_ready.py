@@ -176,7 +176,11 @@ def build_lineage_manifest(
 ) -> LineageManifest:
     """Derive the lineage/quality header for a built :class:`DatasetSnapshot`."""
     records = snapshot.records
-    quality_scores = [record.data_quality_score for record in records]
+    quality_scores = [
+        record.data_quality_score
+        for record in records
+        if record.data_quality_score is not None
+    ]
     excluded = sum(1 for record in records if record.exclusion_reason)
     mean_quality = sum(quality_scores) / len(quality_scores) if quality_scores else 1.0
     return LineageManifest(

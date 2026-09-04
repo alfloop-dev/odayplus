@@ -277,7 +277,8 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         # unpatched probe would shell out to `gh`/`git` for a task id that has
         # no branch, making this unit test environment-dependent.
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude", "REVIEW_NOTES_ZH": "審查通過||交回 owner 收尾"}, clear=False), \
-             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")):
             ai_status.command_approve(self.state, ["REG-002", "Review passed. Owner should finalize."])
 
         task = ai_status.get_task(self.state, "REG-002")
@@ -290,6 +291,34 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
         self.assertIn("finalize", pending[0]["message"].lower())
+
+    def test_approve_rejects_pending_or_failing_ci(self) -> None:
+        # CI Pending
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "pending")):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(self.state, ["REG-002", "Approve while pending"])
+            self.assertIn("required CI status is 'pending'", str(cm.exception))
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
+        # CI Failure
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "failure")):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(self.state, ["REG-002", "Approve while failing"])
+            self.assertIn("required CI status is 'failure'", str(cm.exception))
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
+
+        # CI Unknown / Unresolved
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=(None, "unknown")):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(self.state, ["REG-002", "Approve while unknown"])
+            self.assertIn("required CI status is 'unknown'", str(cm.exception))
+        self.assertEqual(ai_status.get_task(self.state, "REG-002")["status"], "review")
 
     def test_done_requires_owner_and_review_approved(self) -> None:
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
@@ -436,11 +465,92 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ai_status.command_reopen(self.state, ["REG-002", "Owner resumed work"])
         self.assertEqual(task["review_reopen_count"], 2)
 
+    def test_control_plane_recovery_reopen_does_not_increment_churn_count(self) -> None:
+        """Control-plane recovery reopens (stale review SHA, lease mismatch, recovery) do not count as churn."""
+        task = self.state["tasks"][0]
+        # 1. Stale review SHA
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Stale review SHA detected", "stale_review_sha"])
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["review_reopen_count"], 0)
+        self.assertEqual(task["last_reopened_reason"], "stale_review_sha")
+        self.assertEqual(task["last_reopen_category"], "control_plane_recovery")
+        self.assertFalse(task["review_reopen_history"][0]["is_churn"])
+        self.assertEqual(task["review_reopen_history"][0]["reason"], "stale_review_sha")
+
+        # 2. Worktree lease mismatch via --reason flag
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Worktree lease expired", "--reason", "worktree_lease_mismatch"])
+        self.assertEqual(task["review_reopen_count"], 0)
+        self.assertEqual(task["last_reopened_reason"], "worktree_lease_mismatch")
+        self.assertFalse(task["review_reopen_history"][1]["is_churn"])
+
+        # 3. Control plane recovery via --reason=... flag
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "CI recovery requeue", "--reason=control_plane_recovery"])
+        self.assertEqual(task["review_reopen_count"], 0)
+        self.assertEqual(task["last_reopened_reason"], "control_plane_recovery")
+        self.assertFalse(task["review_reopen_history"][2]["is_churn"])
+
+    def test_mixed_reopens_track_substantive_churn_count_separately(self) -> None:
+        """Mixed sequence of substantive rejections and control-plane recoveries."""
+        task = self.state["tasks"][0]
+        # First substantive rejection
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Defect in domain scoring logic", "review_finding"])
+        self.assertEqual(task["review_reopen_count"], 1)
+        self.assertTrue(task["review_reopen_history"][0]["is_churn"])
+
+        # Two control-plane recoveries
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Stale review SHA on dev", "stale_review_sha"])
+        self.assertEqual(task["review_reopen_count"], 1)
+
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Worktree lease conflict", "worktree_lease_mismatch"])
+        self.assertEqual(task["review_reopen_count"], 1)
+
+        # Second substantive rejection
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Missing unit tests for edge case", "review_finding"])
+        self.assertEqual(task["review_reopen_count"], 2)
+        self.assertEqual([h["count"] for h in task["review_reopen_history"]], [1, 1, 1, 2])
+        self.assertEqual([h["is_churn"] for h in task["review_reopen_history"]], [True, False, False, True])
+
+    def test_substantive_reasons_containing_lease_substring_are_not_misclassified(self) -> None:
+        """Reasons containing 'lease' as a substring (e.g. please_fix_scoring, release_gate_failure) must be substantive."""
+        task = self.state["tasks"][0]
+        # 1. please_fix_scoring
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Please fix the scoring logic", "please_fix_scoring"])
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["review_reopen_count"], 1)
+        self.assertEqual(task["last_reopened_reason"], "please_fix_scoring")
+        self.assertEqual(task["last_reopen_category"], "substantive_review")
+        self.assertTrue(task["review_reopen_history"][0]["is_churn"])
+        self.assertEqual(task["review_reopen_history"][0]["reason"], "please_fix_scoring")
+
+        # 2. release_gate_failure
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Release gate check failed on branch", "release_gate_failure"])
+        self.assertEqual(task["review_reopen_count"], 2)
+        self.assertEqual(task["last_reopened_reason"], "release_gate_failure")
+        self.assertEqual(task["last_reopen_category"], "substantive_review")
+        self.assertTrue(task["review_reopen_history"][1]["is_churn"])
+        self.assertEqual(task["review_reopen_history"][1]["reason"], "release_gate_failure")
+
     def test_restore_approved_refuses_when_reviewer_reopened(self) -> None:
         """B23: restore_approved must refuse when the downgrade was a reviewer rejection."""
         self.state["tasks"][0]["status"] = "review"
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
-             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+             mock.patch.object(ai_status, "resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")):
             ai_status.command_approve(self.state, ["REG-002", "Approve first"])
 
         task = ai_status.get_task(self.state, "REG-002")
@@ -3945,7 +4055,8 @@ class StatusCheckEmissionTests(unittest.TestCase):
         }
         mock_changed = mock.Mock(returncode=0, stdout=f"{remote_sha}\trefs/heads/task/{task_id}\n")
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
-             mock.patch("subprocess.run", return_value=mock_changed):
+             mock.patch("subprocess.run", return_value=mock_changed), \
+             mock.patch.object(ai_status, "task_pr_ci_status", return_value=("OPEN", "success")):
             ai_status.command_approve(state_approve, [task_id, "Approved new head"])
             task = ai_status.get_task(state_approve, task_id)
             self.assertEqual(task["approved_head"], remote_sha)
@@ -6375,6 +6486,116 @@ class TaskPrLookupScopeTests(unittest.TestCase):
             self.assertEqual(ai_status.task_pr_ci_status("T-2", max_age_seconds=0), (None, "unknown"))
 
         self.assertEqual([call[2] for call in calls], ["task/T-2", "task-T-2"])
+
+    def test_ci_status_excludes_pending_task_review_gate(self) -> None:
+        def fake_run(args, *, cwd=None):
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {
+                        "__typename": "CheckRun",
+                        "name": "orchestrator",
+                        "workflowName": "orchestrator",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                    },
+                    {
+                        "__typename": "CheckRun",
+                        "name": "product",
+                        "workflowName": "product",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                    },
+                    {
+                        "__typename": "StatusContext",
+                        "context": "task-review-gate",
+                        "state": "PENDING",
+                    },
+                ],
+            }
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], 100)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TASK-REV-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("OPEN", "success"))
+
+    def test_ci_status_fails_closed_when_only_task_review_gate_present(self) -> None:
+        def fake_run(args, *, cwd=None):
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {
+                        "__typename": "StatusContext",
+                        "context": "task-review-gate",
+                        "state": "PENDING",
+                    },
+                ],
+            }
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], 101)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TASK-ONLY-GATE-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("OPEN", "none"))
+
+    def test_ci_status_handles_superseded_runs(self) -> None:
+        def fake_run(args, *, cwd=None):
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {
+                        "__typename": "CheckRun",
+                        "name": "product",
+                        "workflowName": "product",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE",
+                        "completedAt": "2026-09-04T10:00:00Z",
+                    },
+                    {
+                        "__typename": "CheckRun",
+                        "name": "product",
+                        "workflowName": "product",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "completedAt": "2026-09-04T10:15:00Z",
+                    },
+                    {
+                        "__typename": "StatusContext",
+                        "context": "task-review-gate",
+                        "state": "PENDING",
+                    },
+                ],
+            }
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], 102)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TASK-SUPERSEDED-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("OPEN", "success"))
+
+    def test_ci_status_fails_closed_on_unrecognized_or_malformed_checks(self) -> None:
+        def fake_run(args, *, cwd=None):
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {"__typename": "UnknownType", "name": "weird-check"},
+                ],
+            }
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], 103)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TASK-MALFORMED-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("OPEN", "failure"))
 
 
 class TaskBranchNameTests(unittest.TestCase):

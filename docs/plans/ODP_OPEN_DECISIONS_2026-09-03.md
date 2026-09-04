@@ -115,7 +115,7 @@
 | 16 | `INTV-006` Adjust | 先問實務：現在要調整的介入人是怎麼做的 |
 | 17 | `LH-003` Backtest 當發布閘 | 低。Shadow／Canary／Rollback／Champion-Challenger 已覆蓋大部分 |
 | 18 | `OPS-002` 留言 | 純缺功能。價值在把討論與決策綁在一起，不在提供溝通管道 |
-| 19 | merge queue 批次 | `DECIDED`：方向是不做；仍須補決策連結、decider、日期、適用期限與 reopen trigger 才算可稽核結案 |
+| 19 | merge queue 批次 | **更正（2026-09-03）：`BLOCKED_BY_EVIDENCE`，不是 `DECIDED`。** `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 查證後確認查無權威裁決——本欄先前的「已裁決不做」轉述自一個可調的組態預設值（`min_entries_to_merge: 1`），該預設值由 AI 代理人在實作 commit 內設定，無人類簽署。已阻擋至 Human/Ops；在裁決做成前不得補簽 decider 與日期。見 [`docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md`](../evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md) |
 
 ---
 

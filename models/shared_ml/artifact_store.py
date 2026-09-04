@@ -140,6 +140,7 @@ class ArtifactKind(StrEnum):
     METRICS = "metrics"
     FEATURE_SPEC = "feature_spec"
     VALIDATION_REPORT = "validation_report"
+    BACKTEST_REPORT = "backtest_report"
     OTHER = "other"
 
 

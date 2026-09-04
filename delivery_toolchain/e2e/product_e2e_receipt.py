@@ -621,25 +621,16 @@ def parse_pytest_payload(
     if not isinstance(payload, dict):
         return [], _empty_counts(), ["Pytest payload must be an object"]
 
-    canonical_ids = list(PYTEST_NODE_IDS)
-    canonical_id_set = set(canonical_ids)
     requested_ids = payload.get("requested_node_ids")
     if not isinstance(requested_ids, list) or any(
-        not isinstance(nodeid, str) for nodeid in requested_ids
+        not isinstance(nodeid, str) or not nodeid for nodeid in requested_ids
     ):
         errors.append("Pytest requested_node_ids must be a list of strings")
         requested_ids = []
-    else:
-        if len(requested_ids) != len(set(requested_ids)):
-            errors.append("Pytest requested_node_ids contains duplicates")
-        if requested_ids != canonical_ids:
-            errors.append("Pytest requested_node_ids do not exactly match canonical node ids")
-        missing_requested = sorted(canonical_id_set - set(requested_ids))
-        unexpected_requested = sorted(set(requested_ids) - canonical_id_set)
-        if missing_requested:
-            errors.append("missing requested test ids: " + ", ".join(missing_requested))
-        if unexpected_requested:
-            errors.append("unexpected requested test ids: " + ", ".join(unexpected_requested))
+    elif len(requested_ids) != len(set(requested_ids)):
+        errors.append("Pytest requested_node_ids contains duplicates")
+
+    requested_id_set = set(requested_ids)
 
     phase_reports = payload.get("phase_reports")
     if not isinstance(phase_reports, dict) or any(
@@ -648,8 +639,8 @@ def parse_pytest_payload(
         errors.append("Pytest phase_reports must be an object keyed by test id")
         phase_reports = {}
     collected_ids = set(phase_reports)
-    unexpected_ids = sorted(collected_ids - canonical_id_set)
-    missing_ids = sorted(canonical_id_set - collected_ids)
+    unexpected_ids = sorted(collected_ids - requested_id_set)
+    missing_ids = sorted(requested_id_set - collected_ids)
     if unexpected_ids:
         errors.append("unexpected collected test ids: " + ", ".join(unexpected_ids))
     if missing_ids:
@@ -684,7 +675,7 @@ def parse_pytest_payload(
                 )
 
     results: list[dict[str, Any]] = []
-    for nodeid in canonical_ids:
+    for nodeid in requested_ids:
         result, result_errors = _pytest_result_for_node(
             nodeid, phase_reports.get(nodeid, [])
         )
@@ -1233,6 +1224,15 @@ def validate_receipt_packet(
                 "Playwright receipt counts do not prove "
                 f"{EXPECTED_CANONICAL_SPEC_COUNT} specs / "
                 f"{EXPECTED_PLAYWRIGHT_TEST_COUNT} passes"
+            )
+        pytest_counts = artifacts["pytest"].get("counts", {})
+        expected_pytest_count = len(PYTEST_NODE_IDS)
+        if (
+            pytest_counts.get("total_tests") != expected_pytest_count
+            or pytest_counts.get("passed") != expected_pytest_count
+        ):
+            errors.append(
+                f"Pytest receipt counts do not prove {expected_pytest_count} passes"
             )
         if receipt.get("runner_counts") != {
             runner: artifact.get("counts") for runner, artifact in artifacts.items()

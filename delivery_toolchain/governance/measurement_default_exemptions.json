@@ -6,62 +6,6 @@
   "_expiry_note": "An expiry date is not a deadline for the check; it is a date on which the owner has to say something. Renewing an entry on the day it fires without a changed reason is a decision to keep the defect, and should be visible as one. Removing an entry is only correct in the same commit as the fix -- the stale-exemption check refuses an entry whose field no longer violates, which is what stops the file drifting into a list of debts that were quietly paid or quietly forgotten.",
   "exemptions": [
     {
-      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.average_confidence",
-      "layer": "dataclass",
-      "owner": "Antigravity5",
-      "reason": "A candidate site with no confidence data is scored as a fully evidenced one, and the score feeds an expansion decision.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.data_quality_score",
-      "layer": "dataclass",
-      "owner": "Antigravity5",
-      "reason": "Same shape; a site scored from partial data is indistinguishable from one scored from complete data.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.from_mapping.average_confidence",
-      "layer": "mapper",
-      "owner": "Antigravity5",
-      "reason": "_first_present(data, 'average_confidence', 'confidence', default=1.0) hides the substitution behind a helper: neither key present still yields a perfect score. ODP-FR-SITE-004's feasibility rules are the existing exit for insufficient data, and this fallback is what stops a candidate reaching them.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/sitescore/domain/scoring.py::SiteScoreFeatureInput.from_mapping.data_quality_score",
-      "layer": "mapper",
-      "owner": "Antigravity5",
-      "reason": "Same helper, same effect on the quality dimension. Fix with the field above so the two dimensions do not get different answers about what absence means.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/learninghub/domain/dataset_snapshot.py::ModelReadyRecord.data_quality_score",
-      "layer": "dataclass",
-      "owner": "Codex2",
-      "reason": "Records entering a training snapshot without a quality score are treated as clean. Related to ODP-FR-LH-004: the blocked-feature gate is also unreachable through the API, so neither check stops a low-quality record reaching training.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/learninghub/domain/dataset_snapshot.py::ModelReadyRecord.confidence",
-      "layer": "dataclass",
-      "owner": "Codex2",
-      "reason": "Same record, same effect on the confidence dimension.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/learninghub/domain/dataset_snapshot.py::model_ready_record_from_mapping.data_quality_score",
-      "layer": "mapper",
-      "owner": "Codex2",
-      "reason": "The row mapper restores 1.0 for a row the view left null, so snapshot admission never sees the absence it would have to refuse. This is the second of the four points on the lineage the batch has to accept together: source, view, mapper, admission.",
-      "expires": "2026-12-31"
-    },
-    {
-      "field": "modules/learninghub/domain/dataset_snapshot.py::model_ready_record_from_mapping.confidence",
-      "layer": "mapper",
-      "owner": "Codex2",
-      "reason": "Same mapper, confidence dimension. This one compounds: a dirty batch admitted here is carried by every number the trained model produces afterwards, with no way back to the record that caused it.",
-      "expires": "2026-12-31"
-    },
-    {
       "field": "shared/domain/models.py::Poi.confidence",
       "layer": "dataclass",
       "owner": "Claude2",

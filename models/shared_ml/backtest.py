@@ -93,3 +93,190 @@ def run_rolling_backtest(
         }
         
     return results
+
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
+
+if TYPE_CHECKING:
+    from shared.governance.decision_policy import DecisionPolicy
+
+from models.shared_ml.validation import (
+    MetricThreshold,
+    ValidationRuleFailure,
+    ValidationStatus,
+    effective_thresholds,
+)
+
+
+@dataclass(frozen=True)
+class BacktestReceipt:
+    """Auditable, immutable receipt of a model candidate backtest evaluation.
+
+    Binds the model version, dataset snapshot, code version (git SHA), and
+    governing DecisionPolicy version. Required for FULL and CANARY release admission.
+    """
+
+    receipt_id: str
+    model_name: str
+    model_version: str
+    dataset_snapshot_id: str
+    code_version: str
+    decision_policy_version_id: str
+    status: ValidationStatus = ValidationStatus.PASSED
+    metrics: Mapping[str, float] = field(default_factory=dict)
+    baseline_metrics: Mapping[str, float] = field(default_factory=dict)
+    thresholds: Sequence[MetricThreshold] = ()
+    failed_rules: Sequence[ValidationRuleFailure] = ()
+    horizon_metrics: Mapping[str | int, Mapping[str, float]] = field(default_factory=dict)
+    calibration_summary: Mapping[str, Any] = field(default_factory=dict)
+    requested_by: str = "system"
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    audit_event_id: str | None = None
+    report_artifact_uri: str | None = None
+    report_sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        required = {
+            "receipt_id": self.receipt_id,
+            "model_name": self.model_name,
+            "model_version": self.model_version,
+            "dataset_snapshot_id": self.dataset_snapshot_id,
+            "code_version": self.code_version,
+            "decision_policy_version_id": self.decision_policy_version_id,
+        }
+        missing = [k for k, v in required.items() if not str(v or "").strip()]
+        if missing:
+            raise ValueError(f"backtest receipt requires {', '.join(missing)}")
+
+    @property
+    def passed(self) -> bool:
+        return self.status is ValidationStatus.PASSED
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "receipt_id": self.receipt_id,
+            "model_name": self.model_name,
+            "model_version": self.model_version,
+            "dataset_snapshot_id": self.dataset_snapshot_id,
+            "code_version": self.code_version,
+            "decision_policy_version_id": self.decision_policy_version_id,
+            "status": self.status.value if hasattr(self.status, "value") else str(self.status),
+            "passed": self.passed,
+            "metrics": dict(self.metrics),
+            "baseline_metrics": dict(self.baseline_metrics),
+            "thresholds": [
+                threshold.to_dict() if hasattr(threshold, "to_dict") else threshold
+                for threshold in self.thresholds
+            ],
+            "failed_rules": [
+                failure.to_dict() if hasattr(failure, "to_dict") else failure
+                for failure in self.failed_rules
+            ],
+            "horizon_metrics": {
+                str(k): dict(v) for k, v in self.horizon_metrics.items()
+            },
+            "calibration_summary": dict(self.calibration_summary),
+            "requested_by": self.requested_by,
+            "created_at": self.created_at.isoformat(),
+        }
+        if self.audit_event_id is not None:
+            data["audit_event_id"] = self.audit_event_id
+        if self.report_artifact_uri is not None:
+            data["report_artifact_uri"] = self.report_artifact_uri
+        if self.report_sha256 is not None:
+            data["report_sha256"] = self.report_sha256
+        return data
+
+
+def evaluate_backtest_run(
+    *,
+    model_name: str,
+    model_version: str,
+    dataset_snapshot_id: str,
+    code_version: str,
+    metrics: Mapping[str, float],
+    baseline_metrics: Mapping[str, float] | None = None,
+    thresholds: Sequence[MetricThreshold] = (),
+    decision_policy: DecisionPolicy | None = None,
+    horizon_metrics: Mapping[str | int, Mapping[str, float]] | None = None,
+    calibration_summary: Mapping[str, Any] | None = None,
+    requested_by: str = "system",
+    receipt_id: str | None = None,
+    report_artifact_uri: str | None = None,
+    report_sha256: str | None = None,
+) -> BacktestReceipt:
+    effective = effective_thresholds(
+        thresholds,
+        decision_policy,
+        model_name=model_name,
+    )
+    baseline = dict(baseline_metrics or {})
+    failures: list[ValidationRuleFailure] = []
+    worst_status = ValidationStatus.PASSED
+
+    for threshold in effective:
+        if threshold.metric_name not in metrics:
+            failures.append(
+                ValidationRuleFailure(
+                    rule_name=f"backtest:{threshold.metric_name}",
+                    severity=ValidationStatus.FAILED,
+                    message=f"backtest metric {threshold.metric_name} missing from evaluation inputs",
+                )
+            )
+            worst_status = ValidationStatus.FAILED
+            continue
+        baseline_val = float(baseline[threshold.metric_name]) if threshold.metric_name in baseline else None
+        status, message = threshold.evaluate(
+            float(metrics[threshold.metric_name]),
+            baseline_value=baseline_val,
+        )
+        if status is ValidationStatus.PASSED:
+            continue
+        failures.append(
+            ValidationRuleFailure(
+                rule_name=f"backtest:{threshold.metric_name}",
+                severity=status,
+                message=message or f"backtest metric {threshold.metric_name} threshold breached",
+            )
+        )
+        if status is ValidationStatus.FAILED:
+            worst_status = ValidationStatus.FAILED
+        elif worst_status is ValidationStatus.PASSED:
+            worst_status = ValidationStatus.WARNING
+
+    policy_version_id = decision_policy.policy_version_id if decision_policy else None
+    if not policy_version_id:
+        raise ValueError("backtest evaluation requires a governing DecisionPolicy")
+
+    return BacktestReceipt(
+        receipt_id=receipt_id or f"backtest-{uuid4()}",
+        model_name=model_name,
+        model_version=model_version,
+        dataset_snapshot_id=dataset_snapshot_id,
+        code_version=code_version,
+        decision_policy_version_id=policy_version_id,
+        status=worst_status,
+        metrics=dict(metrics),
+        baseline_metrics=baseline,
+        thresholds=tuple(effective),
+        failed_rules=tuple(failures),
+        horizon_metrics=dict(horizon_metrics or {}),
+        calibration_summary=dict(calibration_summary or {}),
+        requested_by=requested_by,
+        report_artifact_uri=report_artifact_uri,
+        report_sha256=report_sha256,
+    )
+
+
+__all__ = [
+    "BacktestReceipt",
+    "calculate_mae",
+    "calculate_mape",
+    "calculate_rmse",
+    "evaluate_backtest_run",
+    "run_rolling_backtest",
+]

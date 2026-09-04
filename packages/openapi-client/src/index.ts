@@ -278,6 +278,13 @@ export type NetPlanScenarioDetail = {
   unmodelledConstraintClasses: ConstraintClass[];
   modelled_constraint_classes: ConstraintClass[];
   unmodelled_constraint_classes: ConstraintClass[];
+  // How the submit gate's policy splits the unmodelled set. Optional on the
+  // type because an older payload may omit it; a consumer that finds it absent
+  // must treat every unmodelled class as blocking rather than guessing.
+  blockedConstraintClasses?: ConstraintClass[];
+  acknowledgeableConstraintClasses?: ConstraintClass[];
+  disclosurePolicyVersionId?: string | null;
+  disclosureUndeclared?: boolean;
   solverStatus?: string;
   solverVersion?: string;
   isSystemRecommendation?: boolean;

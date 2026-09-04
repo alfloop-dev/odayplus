@@ -50,6 +50,61 @@ class WatcherBookkeepingTests(unittest.TestCase):
         self.assertIn("僅讀取 exact approved head 的 PR、CI 與 receipt 證據，不得重跑測試", finalize_message)
         self.assertNotIn("delivery_toolchain/git/task_finalize.sh 推送", finalize_message)
 
+    def test_nonmutating_owner_dispatch_prohibits_empty_pr_and_recommends_supersede(self) -> None:
+        base = {
+            "schema": {},
+            "branch_workflow": {"dev_branch": "dev", "task_branch_prefix": "task/"},
+            "agents": {
+                "antigravity4": {"id": "antigravity4", "display_name": "Antigravity4", "wake_template": ".orchestrator/templates/wakeup.txt"},
+            },
+        }
+        for flag in (False, "false"):
+            with self.subTest(mutates_canonical=flag):
+                nonmutating_event = {
+                    "task_id": "ODP-NONMUTATING-001",
+                    "reason": "owned_ready_dispatch",
+                    "context_files": ["AI_COLLABORATION_GUIDE.md"],
+                    "task": {"artifacts": [], "mutates_canonical": flag},
+                }
+                message = watch_events.render_wakeup_message(base, nonmutating_event, "antigravity4")
+                self.assertIn("non-mutating", message)
+                self.assertIn("mutates_canonical=false", message)
+                self.assertIn("明確禁止建立空 PR", message)
+                self.assertIn("commit", message)
+                self.assertIn("task_finalize.sh", message)
+                self.assertIn("不必要的測試", message)
+                self.assertIn("supersede", message)
+                self.assertIn('supersede ODP-NONMUTATING-001 "<checkpoint message>"', message)
+                self.assertIn("不執行 `./delivery_toolchain/git/task_start.sh`", message)
+                self.assertNotIn("delivery_toolchain/git/task_finalize.sh 推送", message)
+                self.assertNotIn("不得直接 handoff／re_review", message)
+                self.assertNotIn("優先使用 `./delivery_toolchain/git/task_start.sh", message)
+
+        in_progress_nonmutating_event = {
+            "task_id": "ODP-NONMUTATING-002",
+            "reason": "owned_in_progress_dispatch",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {"artifacts": [], "mutates_canonical": False},
+        }
+        in_progress_message = watch_events.render_wakeup_message(base, in_progress_nonmutating_event, "antigravity4")
+        self.assertIn("non-mutating", in_progress_message)
+        self.assertIn("明確禁止建立空 PR", in_progress_message)
+        self.assertIn("supersede", in_progress_message)
+        self.assertNotIn("delivery_toolchain/git/task_finalize.sh 推送", in_progress_message)
+
+        mutating_event = {
+            "task_id": "ODP-MUTATING-001",
+            "reason": "owned_ready_dispatch",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {"artifacts": [], "mutates_canonical": True},
+        }
+        mutating_message = watch_events.render_wakeup_message(base, mutating_event, "antigravity4")
+        self.assertIn("delivery_toolchain/git/task_finalize.sh 推送", mutating_message)
+        self.assertIn("./delivery_toolchain/git/task_start.sh", mutating_message)
+        self.assertIn("不得直接 handoff／re_review", mutating_message)
+        self.assertNotIn("mutates_canonical=false", mutating_message)
+        self.assertNotIn("supersede", mutating_message)
+
     def test_run_scan_is_noop_when_runtime_enqueue_disabled(self) -> None:
         config = {
             "schema": {

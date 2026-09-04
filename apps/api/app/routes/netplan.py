@@ -88,6 +88,7 @@ else:
         audit_log: InMemoryAuditLog | None = None,
         production_executor: NetPlanProductionExecutor | None = None,
         approval_verifier: ManagementApprovalReceiptVerifier | None = None,
+        policy_repository: Any = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import runtime_binding_guard
@@ -106,6 +107,7 @@ else:
                 repository=active_repository,
                 production_executor=production_executor,
                 approval_verifier=approval_verifier,
+                policy_repository=policy_repository,
                 runtime_mode=runtime_mode,
             )
         except ProductionExecutionConfigurationError as exc:

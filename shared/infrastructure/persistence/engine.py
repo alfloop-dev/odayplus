@@ -33,7 +33,7 @@ _SCHEMA_FILES = (
     "000006_durable_outbox.sql",
     "000007_job_lease_columns.sql",
     "000017_durable_operator_comments.sql",
-    "000018_avm_quality_score_nullable_sqlite.sql",
+    "000021_avm_quality_score_nullable_sqlite.sql",
 )
 
 
@@ -88,6 +88,13 @@ class SqliteEngine:
                     statement = statement.strip()
                     if not statement:
                         continue
+                    if statement.upper().startswith("PRAGMA FOREIGN_KEYS"):
+                        # SQLite PRAGMA foreign_keys is a no-op inside an open transaction.
+                        # Commit any pending transaction before and after toggling foreign_keys.
+                        self._conn.commit()
+                        self._conn.execute(statement)
+                        self._conn.commit()
+                        continue
                     try:
                         self._conn.execute(statement)
                     except sqlite3.OperationalError as exc:
@@ -96,6 +103,7 @@ class SqliteEngine:
                             continue
                         raise exc
             self._conn.commit()
+            self._conn.execute("PRAGMA foreign_keys=ON")
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
