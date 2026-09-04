@@ -19,6 +19,9 @@ from shared.auth import (
     Principal,
     ResourceDescriptor,
     Role,
+    TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
+    check_tenant_isolation,
 )
 
 _SCOPE_AXIS_KEYS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -36,6 +39,33 @@ def _resource_scope_value(resource: dict[str, Any], keys: tuple[str, ...]) -> An
             value = source.get(key)
             if value is not None:
                 return value
+    return None
+
+
+# A collection request addresses a query scope, not an object.  It is audited
+# and waiver-matched under its own resource type so that a waiver written for a
+# single listing can never silently authorize an entire cross-tenant collection.
+COLLECTION_RESOURCE_TYPE = "listing_collection"
+
+
+def _target_resource_tenant(resource: dict[str, Any]) -> str | None:
+    """Return the tenant the target resource itself declares, else ``None``.
+
+    Only the accessed object is consulted.  The caller's own tenant is never
+    consulted here, so a target resource that carries no tenant (an intake
+    payload, a scope-only envelope, an object missing ``tenantId``) resolves to
+    ``None`` and is denied by the shared guard.
+    """
+    value = _resource_scope_value(resource, ("tenant_id", "tenantId"))
+    if isinstance(value, str):
+        value = value.strip()
+    return value or None
+
+
+def _declared_query_scope_tenant(tenant_id: str | None) -> str | None:
+    """Return the explicitly declared tenant query scope of a collection request."""
+    if isinstance(tenant_id, str) and tenant_id.strip():
+        return tenant_id.strip()
     return None
 
 
@@ -73,8 +103,30 @@ def authorize_intake_action(
     operator_role_id: str | None = None,
     audit_log: Any = None,
     correlation_id: str | None = None,
+    waiver: TenantAccessWaiver | str | None = None,
+    waiver_registry: TenantAccessWaiverRegistry | None = None,
+    tenant_id: str | None = None,
+    collection_scope: dict[str, Any] | None = None,
 ) -> None:
-    """Enforce deny-by-default assisted intake authorization and segregation."""
+    """Enforce deny-by-default assisted intake authorization and segregation.
+
+    Tenant evidence comes from exactly one of two mutually exclusive sources,
+    which are never allowed to substitute for one another:
+
+    ``resource``
+        The envelope of a single target object.  Its tenant is read from the
+        object itself; ``tenant_id`` is *not* a fallback for it.  A target that
+        declares no tenant fails closed even when the caller supplies its own
+        tenant, so a tenant-less object can never be authorized as though it
+        belonged to the principal.
+    ``tenant_id`` (with ``resource=None``)
+        The declared query scope of a collection request, which has no object
+        envelope to read a tenant from.  A missing query scope fails closed.
+
+    ``collection_scope`` carries the brand/region/area/heat-zone filters of a
+    collection request so those axes are still enforced without dressing the
+    filters up as a target resource.
+    """
     def map_action_to_enum(action_str: str) -> Action:
         mapping = {
             "view": Action.VIEW,
@@ -94,22 +146,28 @@ def authorize_intake_action(
         }
         return mapping.get(action_str, Action.UPDATE)
 
-    def _raise_and_audit(status_code: int, detail: str) -> None:
-        if audit_log is not None:
-            resource_id = None
-            res_type = "listing"
-            tenant_id = None
-            if resource is not None:
-                resource_id = resource.get("id") or resource.get("listingId") or resource.get("listing_id")
-                if "url" in resource or "parsedFields" in resource:
-                    res_type = "intake"
-                tenant_id = resource.get("tenantId") or resource.get("tenant_id")
+    # Resolve the request shape once, before any decision or audit record, so
+    # that the allow path, the deny path, and the audit trail can never disagree
+    # about which tenant was actually evaluated.
+    is_collection_request = resource is None
+    if is_collection_request:
+        target_tenant = _declared_query_scope_tenant(tenant_id)
+        res_type = COLLECTION_RESOURCE_TYPE
+        res_id = None
+        scope_subject = collection_scope
+    else:
+        target_tenant = _target_resource_tenant(resource)
+        res_type = "intake" if ("url" in resource or "parsedFields" in resource) else "listing"
+        res_id = resource.get("id") or resource.get("listingId") or resource.get("listing_id")
+        scope_subject = resource
 
+    def _raise_and_audit(status_code: int, detail: str, *, decision: Decision | None = None) -> None:
+        if audit_log is not None:
             action_enum = map_action_to_enum(action)
             desc = ResourceDescriptor(
                 type=res_type,
-                resource_id=resource_id,
-                tenant_id=tenant_id or principal.tenant_id,
+                resource_id=res_id,
+                tenant_id=target_tenant,
             )
             access = AccessRequest(
                 principal=principal,
@@ -120,11 +178,11 @@ def authorize_intake_action(
                     attributes={"correlation_id": correlation_id or "unknown"}
                 ),
             )
-            decision = Decision.deny(
+            dec = decision or Decision.deny(
                 reason=detail,
                 policy_id="intake_authorization",
             )
-            event = build_security_event(access, decision)
+            event = build_security_event(access, dec)
             audit_log.record(event)
         raise HTTPException(status_code=status_code, detail=detail)
 
@@ -132,15 +190,32 @@ def authorize_intake_action(
     if not principal.authenticated:
         _raise_and_audit(status_code=401, detail="AUTHENTICATION_REQUIRED")
 
-    # 2. Tenant Isolation
-    if resource is not None:
-        resource_tenant = _resource_scope_value(resource, ("tenant_id", "tenantId"))
-        if resource_tenant and principal.tenant_id != resource_tenant:
-            _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED")
+    # 2. Tenant Isolation (shared fail-closed guard)
+    effective_waiver = waiver or (
+        resource.get("waiver")
+        if isinstance(resource, dict)
+        and isinstance(resource.get("waiver"), (TenantAccessWaiver, str))
+        else None
+    )
+
+    tenant_decision = check_tenant_isolation(
+        principal=principal,
+        resource_tenant_id=target_tenant,
+        resource_type=res_type,
+        resource_id=res_id,
+        waiver=effective_waiver,
+        waiver_registry=waiver_registry,
+    )
+    if not tenant_decision.allowed:
+        _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED", decision=tenant_decision)
 
     # 3. Brand/Region/Area/HeatZone scope
-    if resource is not None:
-        if not intake_resource_in_scope(principal, resource):
+    #
+    # Collection requests are checked against their declared filters; target
+    # requests against the object envelope.  Either way the principal's own
+    # restrictions must contain the subject.
+    if scope_subject is not None:
+        if not intake_resource_in_scope(principal, scope_subject):
             _raise_and_audit(status_code=403, detail="SCOPE_DENIED")
 
     # 4. Role mapping and matrix rules
@@ -307,6 +382,30 @@ def authorize_intake_action(
     else:
         # Default deny-by-default for unknown actions
         _raise_and_audit(status_code=403, detail="ROLE_DENIED")
+
+    # Mandatory immutable audit recording for all authorized intake actions
+    if audit_log is not None:
+        action_enum = map_action_to_enum(action)
+        desc = ResourceDescriptor(
+            type=res_type,
+            resource_id=res_id,
+            tenant_id=target_tenant,
+        )
+        access = AccessRequest(
+            principal=principal,
+            action=action_enum,
+            resource=desc,
+            environment=Environment(
+                source_ip=None,
+                attributes={"correlation_id": correlation_id or "unknown"},
+            ),
+        )
+        decision = (
+            tenant_decision
+            if "cross_tenant_waiver" in tenant_decision.obligations
+            else Decision.allow("authorized")
+        )
+        audit_log.record(build_security_event(access, decision))
 
 
 
