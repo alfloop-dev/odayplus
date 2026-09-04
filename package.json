@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "audit:security": "npm audit --omit=dev --audit-level=high",
+    "audit:security": "python3 delivery_toolchain/security/npm_audit_gate.py",
     "build": "npm run build --workspaces --if-present",
     "bundle:budget": "npm run bundle:budget --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",

@@ -48,11 +48,6 @@ smoke: bootstrap
 	$(UV) run pytest tests/smoke
 
 dependency-audit:
-	@if [[ -f package-lock.json ]]; then \
-		npm run audit:security; \
-	else \
-		printf "Skipping dependency audit: package-lock.json is not present yet.\n"; \
-	fi
 	$(UV) run --with pip-audit pip-audit --local
 
 

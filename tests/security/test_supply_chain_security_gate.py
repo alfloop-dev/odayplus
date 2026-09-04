@@ -30,11 +30,18 @@ def test_postcss_advisory_resolved() -> None:
     ), f"PostCSS version {version} is vulnerable"
 
 
-def test_npm_audit_passes() -> None:
-    res = subprocess.run(
-        ["npm", "audit", "--omit=dev", "--audit-level=high"], cwd=ROOT, capture_output=True, text=True
+def test_npm_audit_passes(monkeypatch) -> None:
+    gate = _audit_gate()
+    monkeypatch.setattr(
+        gate,
+        "run_npm_audit",
+        lambda cwd=gate.ROOT, timeout=1.0: gate.classify_audit_output(_report_json(), ""),
     )
-    assert res.returncode == 0, f"npm audit failed with output:\n{res.stdout}\n{res.stderr}"
+    outcome = gate.audit_with_retry(attempts=1, backoff=0, sleep=lambda _s: None)
+    assert outcome.has_report
+    code, verdict = gate.evaluate(outcome, "high")
+    assert code == gate.EXIT_OK, f"clean audit report must pass the gate: {verdict}"
+    assert "PASS" in verdict
 
 
 def test_pip_audit_passes() -> None:
@@ -252,3 +259,308 @@ def test_leaked_test_secrets_rejected_negative() -> None:
     finally:
         shutil.rmtree(test_dir, ignore_errors=True)
         shutil.rmtree(non_test_dir, ignore_errors=True)
+
+
+# --- npm audit gate: registry transport failure must stay distinct from findings ---
+# Regression cover for ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001. arborist only
+# reaches POST /-/npm/v1/security/audits/quick after the bulk advisory endpoint
+# throws, so that endpoint's "Invalid package tree" body is a registry response,
+# not a verdict on package-lock.json. The gate must never read it as either a
+# pass or a lockfile defect.
+
+
+def _audit_gate():
+    sys.path.insert(0, str(ROOT))
+    from delivery_toolchain.security import npm_audit_gate
+
+    return npm_audit_gate
+
+
+def _report_json(**counts: int) -> str:
+    levels = {"info": 0, "low": 0, "moderate": 0, "high": 0, "critical": 0}
+    levels.update(counts)
+    levels["total"] = sum(levels.values())
+    return json.dumps(
+        {"auditReportVersion": 2, "vulnerabilities": {}, "metadata": {"vulnerabilities": levels}}
+    )
+
+
+# The two registry bodies observed on PR #1164 (runs 33829112721 and 33832485313)
+# against an unchanged lockfile, plus the retirement notice for the same endpoint.
+QUICK_ENDPOINT_400 = json.dumps(
+    {
+        "message": "400 Bad Request - POST https://registry.npmjs.org/-/npm/v1/security/audits/quick",
+        "method": "POST",
+        "uri": "https://registry.npmjs.org/-/npm/v1/security/audits/quick",
+        "statusCode": 400,
+        "body": "Invalid package tree, run  npm install  to rebuild your package-lock.json",
+    }
+)
+REGISTRY_503 = json.dumps(
+    {
+        "message": "503 Service Unavailable",
+        "method": "POST",
+        "uri": "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk",
+        "statusCode": 503,
+        "body": "Service Unavailable",
+    }
+)
+
+
+def test_npm_audit_gate_fails_closed_on_high_severity_findings() -> None:
+    gate = _audit_gate()
+    outcome = gate.classify_audit_output(_report_json(high=2), "")
+    assert outcome.has_report
+    code, verdict = gate.evaluate(outcome, "high")
+    assert code == gate.EXIT_VULNERABLE, f"high findings must fail the gate, got {verdict}"
+    assert "VULNERABILITIES FOUND" in verdict
+
+
+def test_npm_audit_gate_fails_closed_on_critical_severity_findings() -> None:
+    gate = _audit_gate()
+    code, _ = gate.evaluate(gate.classify_audit_output(_report_json(critical=1), ""), "high")
+    assert code == gate.EXIT_VULNERABLE, "critical findings must fail at a 'high' threshold"
+
+
+def test_npm_audit_gate_ignores_findings_below_threshold() -> None:
+    gate = _audit_gate()
+    code, _ = gate.evaluate(gate.classify_audit_output(_report_json(low=3, moderate=1), ""), "high")
+    assert code == gate.EXIT_OK, "findings below the threshold must not fail a 'high' gate"
+
+
+def test_npm_audit_gate_does_not_pass_on_registry_transport_failure() -> None:
+    """A registry error yields no vulnerability data, so the gate must stay closed."""
+    gate = _audit_gate()
+    for body in (QUICK_ENDPOINT_400, REGISTRY_503):
+        outcome = gate.classify_audit_output(body, "")
+        assert not outcome.has_report, f"registry error must not be read as a report: {body}"
+        code, verdict = gate.evaluate(outcome, "high")
+        assert code == gate.EXIT_AUDIT_UNAVAILABLE, (
+            f"transport failure must not exit 0 or masquerade as findings, got {code}: {verdict}"
+        )
+        assert code != gate.EXIT_OK
+        assert "AUDIT UNAVAILABLE" in verdict
+
+
+def test_npm_audit_gate_transport_failure_is_not_reported_as_a_lockfile_defect() -> None:
+    """The 400 body blames package-lock.json; the gate must not repeat that claim."""
+    gate = _audit_gate()
+    _, verdict = gate.evaluate(gate.classify_audit_output(QUICK_ENDPOINT_400, ""), "high")
+    assert "registry" in verdict.lower()
+    assert "rebuild your package-lock.json" not in verdict
+
+
+def test_npm_audit_gate_rejects_unparsable_output() -> None:
+    gate = _audit_gate()
+    outcome = gate.classify_audit_output("npm notice This endpoint is being retired.", "")
+    assert not outcome.has_report
+    assert gate.evaluate(outcome, "high")[0] == gate.EXIT_AUDIT_UNAVAILABLE
+
+
+def test_npm_audit_gate_rejects_report_without_severity_counts() -> None:
+    gate = _audit_gate()
+    outcome = gate.classify_audit_output(json.dumps({"auditReportVersion": 2}), "")
+    assert not outcome.has_report, "a report with no severity counts proves nothing"
+
+
+def test_npm_audit_gate_retries_transport_failures_before_giving_up(monkeypatch) -> None:
+    gate = _audit_gate()
+    attempts: list[int] = []
+    transport = gate.AuditOutcome(gate.UNAVAILABLE, None, "registry error (statusCode=503)")
+    healthy = gate.classify_audit_output(_report_json(), "")
+
+    def fake_run(cwd=gate.ROOT, timeout=1.0):
+        attempts.append(1)
+        return transport if len(attempts) < 3 else healthy
+
+    monkeypatch.setattr(gate, "run_npm_audit", fake_run)
+    outcome = gate.audit_with_retry(attempts=3, backoff=0, sleep=lambda _s: None)
+
+    assert len(attempts) == 3, "the gate must retry a transient registry failure"
+    assert outcome.has_report
+    assert gate.evaluate(outcome, "high")[0] == gate.EXIT_OK
+
+
+def test_npm_audit_gate_stops_retrying_once_a_report_arrives(monkeypatch) -> None:
+    gate = _audit_gate()
+    attempts: list[int] = []
+
+    def fake_run(cwd=gate.ROOT, timeout=1.0):
+        attempts.append(1)
+        return gate.classify_audit_output(_report_json(high=1), "")
+
+    monkeypatch.setattr(gate, "run_npm_audit", fake_run)
+    outcome = gate.audit_with_retry(attempts=3, backoff=0, sleep=lambda _s: None)
+
+    assert len(attempts) == 1, "a delivered report must not be retried away"
+    assert gate.evaluate(outcome, "high")[0] == gate.EXIT_VULNERABLE
+
+
+def test_npm_audit_gate_exhausted_retries_stay_closed(monkeypatch) -> None:
+    gate = _audit_gate()
+    transport = gate.AuditOutcome(gate.UNAVAILABLE, None, "registry error (statusCode=400)")
+    monkeypatch.setattr(gate, "run_npm_audit", lambda cwd=gate.ROOT, timeout=1.0: transport)
+
+    outcome = gate.audit_with_retry(attempts=3, backoff=0, sleep=lambda _s: None)
+    code, verdict = gate.evaluate(outcome, "high")
+
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE, "an unreachable registry must never pass the gate"
+    assert code != gate.EXIT_OK, verdict
+
+
+def test_npm_audit_gate_is_wired_into_the_release_gate() -> None:
+    package_json = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    assert "npm_audit_gate.py" in package_json["scripts"]["audit:security"]
+    deploy_workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert "npm_audit_gate.py" in deploy_workflow
+    assert "--receipt" in deploy_workflow
+    assert "npm-audit-receipt.json" in deploy_workflow
+
+
+def test_npm_audit_gate_omits_dev_dependencies() -> None:
+    """The gate audits the production tree only, matching the original command."""
+    source = (ROOT / "delivery_toolchain/security/npm_audit_gate.py").read_text(encoding="utf-8")
+    assert '"--omit=dev"' in source
+
+
+def test_npm_audit_gate_rejects_lowering_threshold_to_critical() -> None:
+    """ODP_NPM_AUDIT_LEVEL must not lower the production threshold from high to critical."""
+    gate = _audit_gate()
+    import pytest
+
+    with pytest.raises(ValueError, match="cannot be lowered"):
+        gate.validate_threshold("critical")
+
+    outcome = gate.classify_audit_output(_report_json(high=1), "")
+    code, verdict = gate.evaluate(outcome, "critical")
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+    assert "invalid severity threshold" in verdict
+
+
+def test_npm_audit_gate_rejects_critical_env_var(monkeypatch) -> None:
+    gate = _audit_gate()
+    monkeypatch.setenv("ODP_NPM_AUDIT_LEVEL", "critical")
+    code = gate.main([])
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+
+
+def test_npm_audit_gate_writes_redacted_receipt(tmp_path: Path) -> None:
+    gate = _audit_gate()
+    receipt_file = tmp_path / "npm-audit-receipt.json"
+    outcome = gate.classify_audit_output(_report_json(moderate=1), "")
+    code, verdict = gate.evaluate(outcome, "high")
+    gate.write_audit_receipt(receipt_file, outcome, code, verdict, "high")
+
+    assert receipt_file.exists()
+    data = json.loads(receipt_file.read_text(encoding="utf-8"))
+    assert data["secret_values_redacted"] is True
+    assert data["status"] == "passed"
+    assert data["result"] == "pass"
+    assert data["exit_code"] == gate.EXIT_OK
+    assert data["threshold"] == "high"
+    assert data["omit_dev"] is True
+    assert data["outcome_kind"] == "report"
+    assert data["counts"]["moderate"] == 1
+
+
+def test_npm_audit_gate_redacts_sensitive_registry_details(tmp_path: Path) -> None:
+    """Registry errors containing credentials or tokens must be redacted from receipts and verdicts."""
+    gate = _audit_gate()
+    sensitive_error = json.dumps(
+        {
+            "message": (
+                "503 Service Unavailable from "
+                "https://deploy-agent:super_secret_password_123@registry.internal.corp/npm/?token=secret_query_token_999 "
+                "with auth header Bearer secret_bearer_token_888"
+            ),
+            "method": "POST",
+            "uri": "https://deploy-agent:super_secret_password_123@registry.internal.corp/npm/?token=secret_query_token_999",
+            "statusCode": 503,
+            "body": (
+                "Gateway Error: failed to connect with certificate:\n"
+                "-----BEGIN RSA PRIVATE KEY-----\n"  # pragma: allowlist-secret
+                "MIIEowIBAAKCAQEA0secretkeybody\n"
+                "-----END RSA PRIVATE KEY-----"  # pragma: allowlist-secret
+            ),
+        }
+    )
+    outcome = gate.classify_audit_output(sensitive_error, "")
+    assert not outcome.has_report
+
+    code, verdict = gate.evaluate(outcome, "high")
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+    assert "super_secret_password_123" not in verdict
+    assert "secret_query_token_999" not in verdict
+    assert "secret_bearer_token_888" not in verdict
+    assert "MIIEowIBAAKCAQEA0" not in verdict
+    assert "[REDACTED]" in verdict
+
+    receipt_file = tmp_path / "sensitive-npm-audit-receipt.json"
+    gate.write_audit_receipt(receipt_file, outcome, code, verdict, "high")
+
+    assert receipt_file.exists()
+    receipt_text = receipt_file.read_text(encoding="utf-8")
+
+    # Absolute negative assertions: no raw secret string anywhere in the receipt artifact
+    assert "super_secret_password_123" not in receipt_text
+    assert "secret_query_token_999" not in receipt_text
+    assert "secret_bearer_token_888" not in receipt_text
+    assert "MIIEowIBAAKCAQEA0" not in receipt_text
+
+    # Positive assertions: redacted placeholders present
+    assert "https://deploy-agent:[REDACTED]@registry.internal.corp" in receipt_text
+    assert "?token=[REDACTED]" in receipt_text
+    assert "Bearer [REDACTED]" in receipt_text
+    assert "[REDACTED]" in receipt_text
+
+    data = json.loads(receipt_text)
+    assert data["secret_values_redacted"] is True
+    assert data["status"] == "failed"
+    assert data["result"] == "fail"
+    assert "super_secret_password_123" not in data["detail"]
+    assert "super_secret_password_123" not in data["verdict"]
+
+
+def test_npm_audit_gate_receipt_distinguishes_unavailable_from_vulnerabilities(
+    tmp_path: Path,
+) -> None:
+    gate = _audit_gate()
+    unavail_receipt = tmp_path / "unavail.json"
+    unavail_outcome = gate.classify_audit_output(QUICK_ENDPOINT_400, "")
+    code_u, verdict_u = gate.evaluate(unavail_outcome, "high")
+    gate.write_audit_receipt(unavail_receipt, unavail_outcome, code_u, verdict_u, "high")
+    data_u = json.loads(unavail_receipt.read_text(encoding="utf-8"))
+    assert data_u["status"] == "failed"
+    assert data_u["result"] == "fail"
+    assert data_u["exit_code"] == gate.EXIT_AUDIT_UNAVAILABLE
+    assert data_u["outcome_kind"] == "unavailable"
+
+    vuln_receipt = tmp_path / "vuln.json"
+    vuln_outcome = gate.classify_audit_output(_report_json(high=1), "")
+    code_v, verdict_v = gate.evaluate(vuln_outcome, "high")
+    gate.write_audit_receipt(vuln_receipt, vuln_outcome, code_v, verdict_v, "high")
+    data_v = json.loads(vuln_receipt.read_text(encoding="utf-8"))
+    assert data_v["status"] == "failed"
+    assert data_v["result"] == "fail"
+    assert data_v["exit_code"] == gate.EXIT_VULNERABLE
+    assert data_v["outcome_kind"] == "report"
+
+
+def test_ci_does_not_execute_live_npm_audit_in_makefile() -> None:
+    """PR and merge CI do not execute live npm audit directly."""
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    lines = makefile.splitlines()
+    in_dep_audit = False
+    dep_audit_lines = []
+    for line in lines:
+        if line.startswith("dependency-audit:"):
+            in_dep_audit = True
+            continue
+        if in_dep_audit:
+            if line.startswith(("\t", " ")):
+                dep_audit_lines.append(line)
+            else:
+                break
+    dep_audit_body = "\n".join(dep_audit_lines)
+    assert "npm run audit:security" not in dep_audit_body
+    assert "npm audit" not in dep_audit_body
