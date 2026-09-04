@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from common import (
+    REOPEN_REASON_REVIEW_FINDING,
     ROOT,
     agent_config_for,
     config_path,
@@ -1625,12 +1626,19 @@ def sync_archive_housekeeping_auto_merge(
     return changed
 
 
-def run_ai_status(command: str, target: str, message: str, *, actor: str | None = None) -> None:
+def run_ai_status(
+    command: str,
+    target: str,
+    message: str,
+    *,
+    actor: str | None = None,
+    extra_args: list[str] | None = None,
+) -> None:
     env = os.environ.copy()
     if actor:
         env["AI_NAME"] = actor
     proc = subprocess.run(
-        ["python3", "scripts/ai_status.py", command, target, message],
+        ["python3", "scripts/ai_status.py", command, target, message, *(extra_args or [])],
         cwd=str(ROOT),
         capture_output=True,
         text=True,
@@ -2160,7 +2168,16 @@ def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: d
                     detail = f"GitHub PR requested changes via PR #{number} by @{actor}."
                     if body:
                         detail += f" {body}"
-                    run_ai_status("reopen", task["id"], detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
+                    # A CHANGES_REQUESTED review is a substantive finding by definition.
+                    # Tag it explicitly so the relayed review body -- which is arbitrary
+                    # reviewer prose -- can never influence how the reopen is classified.
+                    run_ai_status(
+                        "reopen",
+                        task["id"],
+                        detail,
+                        actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None,
+                        extra_args=[f"--reason={REOPEN_REASON_REVIEW_FINDING}"],
+                    )
                     write_activity_log(config, {"type": "github_review_changes_requested", "task_id": task["id"], "message": detail, "github_pr": number})
                     changed = True
                 elif state_value == "COMMENTED":
