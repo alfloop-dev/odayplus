@@ -1381,6 +1381,11 @@ def test_e2e_selected_alternative_uses_one_approval_subject_end_to_end(
             "restated binding constraints",
             lambda row: row.update({"bindingConstraints": ["max_budget"]}),
         ),
+        # The approval title and the evidence trail are copied off the row, so
+        # a rename or a rewritten evidence list mislabels the record an
+        # approver reads and re-derives the decision from.
+        ("renamed row", lambda row: row.update({"name": "NetPlan primary plan"})),
+        ("rewritten evidence", lambda row: row.update({"evidenceIds": ["EV-FORGED"]})),
     ],
 )
 def test_e2e_tampered_projection_row_cannot_reach_govern_or_a_durable_receipt(

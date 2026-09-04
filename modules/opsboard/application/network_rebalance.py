@@ -1364,6 +1364,8 @@ class NetworkRebalanceService:
         candidate: Any,
         *,
         actions: Sequence[Any],
+        expected_name: str,
+        expected_evidence_ids: tuple[str, ...],
         source: str,
     ) -> None:
         """Refuse a row whose plan content differs from the candidate it names.
@@ -1373,6 +1375,11 @@ class NetworkRebalanceService:
         that empties or rewrites the actions, so an approval built from a row
         checked on identity alone can carry a different plan than the durable
         NetPlan acknowledgement and ApprovalRecord bound to the same candidate.
+
+        The name and evidence ids are reconciled for the same reason as the
+        actions: both are copied verbatim onto the Govern approval, where they
+        are what an approver reads to decide which plan they are approving and
+        what to re-derive it from.
         """
         expected_actions = cls._normalise_actions(
             [action.to_dict() for action in actions],
@@ -1410,6 +1417,19 @@ class NetworkRebalanceService:
         if tuple(str(item) for item in raw_binding) != expected_binding:
             raise NetworkRebalancePolicyError(
                 f"{source} binding constraints do not match the canonical candidate"
+            )
+
+        if str(row.get("name") or "") != expected_name:
+            raise NetworkRebalancePolicyError(
+                f"{source} is named {row.get('name')!r} but the canonical candidate "
+                f"is {expected_name!r}"
+            )
+        raw_evidence = row.get("evidenceIds")
+        if raw_evidence is None or isinstance(raw_evidence, (str, bytes, Mapping)):
+            raise NetworkRebalancePolicyError(f"{source} is missing evidenceIds")
+        if tuple(str(item) for item in raw_evidence) != expected_evidence_ids:
+            raise NetworkRebalancePolicyError(
+                f"{source} evidence ids do not match the canonical solve"
             )
 
     @classmethod
@@ -1522,6 +1542,7 @@ class NetworkRebalanceService:
         # taken from here.
         candidate: Any = solve.result
         candidate_actions = tuple(getattr(solve.result, "selected_actions", ()))
+        expected_name = str(canonical_scenario.scenario_name)
         if row_id != canonical_id:
             prefix = f"{canonical_id}:alternative:"
             if not row_id.startswith(prefix):
@@ -1542,6 +1563,7 @@ class NetworkRebalanceService:
             alternative = alternatives[index]
             candidate = alternative
             candidate_actions = tuple(getattr(alternative, "actions", ()))
+            expected_name = f"{canonical_scenario.scenario_name} alternative {index + 1}"
             expected_row_modelled, expected_row_unmodelled = (
                 self._validate_constraint_partition(
                     getattr(alternative, "modelled_constraint_classes", None),
@@ -1572,6 +1594,8 @@ class NetworkRebalanceService:
             row,
             candidate,
             actions=candidate_actions,
+            expected_name=expected_name,
+            expected_evidence_ids=(canonical_id,),
             source=row_source,
         )
         return _CanonicalRowBinding(
