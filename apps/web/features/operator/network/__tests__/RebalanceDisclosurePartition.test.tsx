@@ -196,7 +196,24 @@ describe("readConstraintDisclosure", () => {
     });
 
     expect(reading.undeclared).toBe(true);
+    expect(reading.defect).toBe("unverified");
     expect(reading.modelled).toEqual([]);
+  });
+
+  /**
+   * When the payload is visibly broken *and* the server flagged it, the payload
+   * is what the operator can act on. Reporting "the server said no" would send
+   * them to ask the server why, about a row that names four of eight classes.
+   */
+  it("names the payload's own defect ahead of the server's verdict", () => {
+    const reading = readConstraintDisclosure({
+      modelledConstraintClasses: MODELLED_ONLY_CAPITAL,
+      unmodelledConstraintClasses: [],
+      disclosureUndeclared: true,
+    });
+
+    expect(reading.undeclared).toBe(true);
+    expect(reading.defect).toBe("incomplete");
   });
 });
 
@@ -262,6 +279,29 @@ describe("RebalancePanel constraint disclosure", () => {
     expect(
       screen.getByTestId("scenario-modelled-classes-move"),
     ).toHaveTextContent("（未申報）");
+  });
+
+  /**
+   * The chart is handed the payload rather than the panel's reading of it, so
+   * that it can name which classes are missing -- and `disclosureUndeclared`
+   * carries the panel's verdict alongside, so it can never end up the more
+   * permissive of the two.
+   */
+  it("passes the panel's verdict down to the chart with the payload", () => {
+    renderPanel([
+      scenario({
+        unmodelledConstraintClasses: [],
+        unmodelled_constraint_classes: [],
+      }),
+    ]);
+
+    const section = screen.getByTestId("gantt-constraint-disclosure");
+    expect(section).toHaveAttribute("data-disclosure-undeclared", "true");
+    expect(section).toHaveAttribute("data-disclosure-defect", "incomplete");
+    expect(screen.getByTestId("gantt-disclosure-defect")).toHaveTextContent(
+      "SEQUENCING",
+    );
+    expect(screen.queryByTestId("gantt-modelled-CAPITAL")).not.toBeInTheDocument();
   });
 
   it("blocks submission on a partial disclosure and says why", () => {

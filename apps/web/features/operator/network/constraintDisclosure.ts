@@ -31,7 +31,11 @@ export type ConstraintDisclosureDefect =
   | "incomplete"
   | "overlapping"
   | "repeated"
-  | "unknown-class";
+  | "unknown-class"
+  // The payload parses as a whole partition and the server still refused it --
+  // it could not reconcile the row against the canonical solve, which is a
+  // reason the payload cannot show on its face.
+  | "unverified";
 
 export type ConstraintDisclosureReading = {
   /** Classes the solve bound. Empty whenever `undeclared` is true. */
@@ -109,14 +113,6 @@ export function readConstraintDisclosure(
     return UNDECLARED("malformed");
   }
 
-  // The server says so directly when it could not reconcile the row. Honoured
-  // first, but never relied upon: an older API, a dropped field or a surface
-  // that never classified would send nothing, and the checks below reach the
-  // same verdict from the payload alone.
-  if (source?.disclosureUndeclared) {
-    return UNDECLARED("absent");
-  }
-
   if (rawModelled.length === 0 && rawUnmodelled.length === 0) {
     return UNDECLARED("absent");
   }
@@ -146,6 +142,14 @@ export function readConstraintDisclosure(
     return UNDECLARED("incomplete", [...missing]);
   }
 
+  // The server's own verdict, checked last rather than first. It is not weaker
+  // -- it closes the payload either way -- but the payload's own defect is the
+  // one an operator can act on, so a payload that is visibly broken is reported
+  // as broken rather than as "the server said no".
+  if (source?.disclosureUndeclared) {
+    return UNDECLARED("unverified");
+  }
+
   return {
     modelled: rawModelled,
     unmodelled: rawUnmodelled,
@@ -162,6 +166,7 @@ const DEFECT_LABELS: Record<ConstraintDisclosureDefect, string> = {
   overlapping: "下列類別同時被列為已建模與未建模",
   repeated: "下列類別被重複列出",
   "unknown-class": "出現非 ODP-FR-NET-002 的類別名稱",
+  unverified: "伺服器無法將此列與正式求解結果對應，揭露內容不可採信",
 };
 
 /** One sentence naming why a disclosure could not be read, for the operator. */

@@ -141,12 +141,6 @@ export function RebalancePanel({
     () => classifyDisclosure(selectedScenario),
     [selectedScenario]
   );
-  // Both halves come from the validated reading. Taking the modelled list
-  // straight off the row was the fail-open: a row disclosing only CAPITAL was
-  // rejected as undeclared everywhere else on this screen and still handed
-  // "已建模: CAPITAL" to the Gantt chart underneath.
-  const selectedModelled = selectedDisclosure.modelled;
-  const selectedUnmodelled = selectedDisclosure.unmodelled;
   const selectedBlocked = selectedDisclosure.blocked;
   const selectedHasBlocked = selectedBlocked.length > 0 || selectedDisclosure.undeclared;
   const selectedAcknowledgeable = selectedDisclosure.acknowledgeable;
@@ -445,8 +439,15 @@ export function RebalancePanel({
                 objectiveScore={selectedScenario?.score}
                 actions={selectedScenario?.actions || selectedScenario?.selected_actions}
                 bindingConstraints={selectedScenario?.bindingConstraints || selectedScenario?.binding_constraints || (selectedScenario?.diagnostics?.map((d) => d.violated_constraint) ?? [])}
-                modelledConstraintClasses={selectedModelled}
-                unmodelledConstraintClasses={selectedUnmodelled}
+                // The payload as it arrived, not this component's reading of
+                // it. The chart partitions the eight classes itself, so handing
+                // it the emptied lists would only cost it the ability to say
+                // *which* part of the disclosure is missing -- while
+                // `disclosureUndeclared` still guarantees it cannot end up more
+                // permissive than the panel around it.
+                modelledConstraintClasses={selectedScenario?.modelledConstraintClasses || selectedScenario?.modelled_constraint_classes}
+                unmodelledConstraintClasses={selectedScenario?.unmodelledConstraintClasses || selectedScenario?.unmodelled_constraint_classes}
+                disclosureUndeclared={selectedDisclosure.undeclared}
                 dependencies={selectedScenario?.dependencies}
                 diagnostics={selectedScenario?.diagnostics}
               />

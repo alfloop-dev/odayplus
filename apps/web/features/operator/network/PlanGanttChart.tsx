@@ -70,6 +70,11 @@ export interface PlanGanttProps {
   modelled_constraint_classes?: string[];
   unmodelledConstraintClasses?: string[];
   unmodelled_constraint_classes?: string[];
+  // A verdict the class lists cannot carry: the server could not reconcile this
+  // row against the canonical solve. Honoured as a closing signal only -- the
+  // chart never reads its absence as permission, because it partitions the
+  // eight classes itself.
+  disclosureUndeclared?: boolean;
   dependencies?: PlanGanttDependency[];
   diagnostics?: NetPlanDiagnostic[];
   quarters?: string[];
@@ -196,6 +201,7 @@ export function PlanGanttChart({
   modelled_constraint_classes,
   unmodelledConstraintClasses,
   unmodelled_constraint_classes,
+  disclosureUndeclared: declaredUndeclared,
   dependencies,
   diagnostics,
   quarters: customQuarters,
@@ -231,12 +237,14 @@ export function PlanGanttChart({
         modelled_constraint_classes,
         unmodelledConstraintClasses,
         unmodelled_constraint_classes,
+        disclosureUndeclared: declaredUndeclared,
       }),
     [
       modelledConstraintClasses,
       modelled_constraint_classes,
       unmodelledConstraintClasses,
       unmodelled_constraint_classes,
+      declaredUndeclared,
     ]
   );
   const effectiveModelled = disclosure.modelled;
