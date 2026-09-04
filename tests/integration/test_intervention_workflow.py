@@ -19,6 +19,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from modules.intervention import (
+    ACTIVE_INTERVENTION_STATUSES,
     AdjustmentOutcome,
     AdjustmentRecord,
     CloseDisposition,
@@ -1114,7 +1115,7 @@ def test_adjust_terminal_interventions_rejected() -> None:
     stopped = workflow.stop(case.intervention_id, actor="ops", reason="cancel")
     assert stopped.status is InterventionStatus.STOPPED
 
-    with pytest.raises(InterventionError, match="cannot adjust terminal intervention in status STOPPED"):
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status STOPPED"):
         workflow.adjust_case(stopped.intervention_id, actor="ops", reason="try adjust")
 
     # 2. ROLLED_BACK case
@@ -1132,7 +1133,7 @@ def test_adjust_terminal_interventions_rejected() -> None:
     rb = workflow.rollback(case2.intervention_id, actor="ops", reason="adverse")
     assert rb.status is InterventionStatus.ROLLED_BACK
 
-    with pytest.raises(InterventionError, match="cannot adjust terminal intervention in status ROLLED_BACK"):
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status ROLLED_BACK"):
         workflow.adjust_case(rb.intervention_id, actor="ops", reason="try adjust")
 
     # 3. REJECTED case
@@ -1152,7 +1153,7 @@ def test_adjust_terminal_interventions_rejected() -> None:
     rejected = workflow.reject(case3.intervention_id, actor="sup", reason="bad")
     assert rejected.status is InterventionStatus.REJECTED
 
-    with pytest.raises(InterventionError, match="cannot adjust terminal intervention in status REJECTED"):
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status REJECTED"):
         workflow.adjust_case(rejected.intervention_id, actor="ops", reason="try adjust")
 
 
@@ -1170,8 +1171,11 @@ def test_adjust_stale_version_and_empty_reason_rejected() -> None:
         created_by="ops",
     )
 
+    _drive_to_approved(workflow, case.intervention_id)
+    approved = workflow.get(case.intervention_id)
+
     # Stale version check
-    with pytest.raises(InterventionError, match="stale update: expected version 99, current is 1"):
+    with pytest.raises(InterventionError, match=f"stale update: expected version 99, current is {approved.version}"):
         workflow.adjust_case(
             case.intervention_id,
             actor="ops",
@@ -1330,7 +1334,7 @@ def test_api_adjust_production_entry_success_and_rejections() -> None:
         },
     )
     assert terminal_adj.status_code == 422
-    assert "cannot adjust terminal intervention in status STOPPED" in terminal_adj.json()["detail"]
+    assert "cannot adjust on intervention in status STOPPED" in terminal_adj.json()["detail"]
 
     # 8. Query replacement case from API
     repl_get = client.get(f"/interventions/{repl_id}")
@@ -1462,3 +1466,261 @@ def test_durable_intervention_repository_persists_adjust_lineage(tmp_path: pytes
     assert case.intervention_id in case_ids
     assert adj_outcome.replacement.intervention_id in case_ids
 
+
+def test_active_intervention_statuses_allowlist_definition() -> None:
+    """ODP-FR-INTV-006: ACTIVE_INTERVENTION_STATUSES contains APPROVED, EXECUTING, OBSERVING only."""
+    assert ACTIVE_INTERVENTION_STATUSES == frozenset(
+        {
+            InterventionStatus.APPROVED,
+            InterventionStatus.EXECUTING,
+            InterventionStatus.OBSERVING,
+        }
+    )
+    # Ensure pre-activation, evaluation, completed, and terminal states are excluded
+    non_active = {
+        InterventionStatus.CANDIDATE,
+        InterventionStatus.ELIGIBILITY_CHECKING,
+        InterventionStatus.ELIGIBLE,
+        InterventionStatus.INELIGIBLE,
+        InterventionStatus.ACTION_PROPOSED,
+        InterventionStatus.CONFLICT_CHECKING,
+        InterventionStatus.PENDING_APPROVAL,
+        InterventionStatus.REJECTED,
+        InterventionStatus.EVALUATING,
+        InterventionStatus.COMPLETED,
+        InterventionStatus.CLOSED,
+        InterventionStatus.STOPPED,
+        InterventionStatus.ROLLED_BACK,
+    }
+    for status in non_active:
+        assert status not in ACTIVE_INTERVENTION_STATUSES
+
+
+def test_adjust_workflow_rejects_pre_activation_and_evaluation_states_without_lineage_or_audit() -> None:
+    """ODP-FR-INTV-006: Adjust rejects CANDIDATE, ELIGIBLE, PENDING_APPROVAL, EVALUATING, COMPLETED, etc.
+    and guarantees no replacement, no lineage, and no audit write on rejection.
+    """
+    repo = InMemoryInterventionRepository()
+    workflow = InterventionWorkflow(repository=repo)
+
+    # 1. CANDIDATE
+    cand = workflow.open_case(
+        store_id="s-cand",
+        kind=InterventionKind.PRICE_CHANGE,
+        trigger_ref="t-cand",
+        expected_outcome="outcome",
+        planned_start=START,
+        planned_end=END,
+        created_by="ops",
+    )
+    events_before = len(workflow.audit_log.list_events())
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status CANDIDATE"):
+        workflow.adjust_case(cand.intervention_id, actor="ops", reason="try adjust on candidate")
+
+    # Assert no mutation
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.CANDIDATE
+    assert workflow.get(cand.intervention_id).replacement_id is None
+    assert workflow.get(cand.intervention_id).adjustment is None
+    assert len(workflow.list_all()) == 1
+    assert len(workflow.audit_log.list_events()) == events_before
+
+    # 2. ELIGIBLE
+    workflow.check_eligibility(cand.intervention_id, eligible=True, actor="ops")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.ELIGIBLE
+    events_before = len(workflow.audit_log.list_events())
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status ELIGIBLE"):
+        workflow.adjust_case(cand.intervention_id, actor="ops", reason="try adjust on eligible")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.ELIGIBLE
+    assert len(workflow.list_all()) == 1
+    assert len(workflow.audit_log.list_events()) == events_before
+
+    # 3. ACTION_PROPOSED
+    workflow.propose_action(cand.intervention_id, action_spec={"pct": -5}, actor="ops")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.ACTION_PROPOSED
+    events_before = len(workflow.audit_log.list_events())
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status ACTION_PROPOSED"):
+        workflow.adjust_case(cand.intervention_id, actor="ops", reason="try adjust on action proposed")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.ACTION_PROPOSED
+    assert len(workflow.list_all()) == 1
+    assert len(workflow.audit_log.list_events()) == events_before
+
+    # 4. CONFLICT_CHECKING
+    workflow.check_conflict(cand.intervention_id, actor="ops")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.CONFLICT_CHECKING
+    events_before = len(workflow.audit_log.list_events())
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status CONFLICT_CHECKING"):
+        workflow.adjust_case(cand.intervention_id, actor="ops", reason="try adjust on conflict checking")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.CONFLICT_CHECKING
+    assert len(workflow.list_all()) == 1
+    assert len(workflow.audit_log.list_events()) == events_before
+
+    # 5. PENDING_APPROVAL
+    workflow.submit_for_approval(cand.intervention_id, actor="ops")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.PENDING_APPROVAL
+    events_before = len(workflow.audit_log.list_events())
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status PENDING_APPROVAL"):
+        workflow.adjust_case(cand.intervention_id, actor="ops", reason="try adjust on pending approval")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.PENDING_APPROVAL
+    assert len(workflow.list_all()) == 1
+    assert len(workflow.audit_log.list_events()) == events_before
+
+    # 6. EVALUATING (immature evaluation)
+    workflow.approve(cand.intervention_id, actor="sup", reason="approved")
+    workflow.execute(cand.intervention_id, executor="runner", executed_at=EXEC_TIME)
+    workflow.collect_outcome(
+        cand.intervention_id,
+        actor="analyst",
+        incremental_revenue=10000.0,
+        incremental_gross_margin=4000.0,
+        has_control_group=False,
+        pretrend_status=PretrendStatus.INCONCLUSIVE,
+        treatment_store_count=1,
+        control_store_count=0,
+        evaluation_method=EvaluationMethod.BEFORE_AFTER,
+    )
+    workflow.evaluate_effect(cand.intervention_id, actor="analyst", now=IMMATURE_TIME)
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.EVALUATING
+    events_before = len(workflow.audit_log.list_events())
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status EVALUATING"):
+        workflow.adjust_case(cand.intervention_id, actor="ops", reason="try adjust on evaluating")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.EVALUATING
+    assert len(workflow.list_all()) == 1
+    assert len(workflow.audit_log.list_events()) == events_before
+
+    # 7. COMPLETED
+    workflow.evaluate_effect(cand.intervention_id, actor="analyst", now=MATURE_TIME)
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.COMPLETED
+    events_before = len(workflow.audit_log.list_events())
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status COMPLETED"):
+        workflow.adjust_case(cand.intervention_id, actor="ops", reason="try adjust on completed")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.COMPLETED
+    assert len(workflow.list_all()) == 1
+    assert len(workflow.audit_log.list_events()) == events_before
+
+    # 8. CLOSED
+    workflow.close_case(
+        cand.intervention_id,
+        actor="ops-mgr",
+        disposition=CloseDisposition.KEEP,
+        reason="closed after completion",
+    )
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.CLOSED
+    events_before = len(workflow.audit_log.list_events())
+    with pytest.raises(InterventionError, match="cannot adjust on intervention in status CLOSED"):
+        workflow.adjust_case(cand.intervention_id, actor="ops", reason="try adjust on closed")
+    assert workflow.get(cand.intervention_id).status is InterventionStatus.CLOSED
+    assert len(workflow.list_all()) == 1
+    assert len(workflow.audit_log.list_events()) == events_before
+
+
+def test_adjust_workflow_allowed_active_states() -> None:
+    """ODP-FR-INTV-006: Adjust succeeds from APPROVED, EXECUTING, and OBSERVING."""
+    # Test APPROVED
+    repo1 = InMemoryInterventionRepository()
+    wf1 = InterventionWorkflow(repository=repo1)
+    case1 = _open_case(wf1, store_id="s-appr")
+    _drive_to_approved(wf1, case1.intervention_id)
+    assert wf1.get(case1.intervention_id).status is InterventionStatus.APPROVED
+    adj1 = wf1.adjust_case(case1.intervention_id, actor="ops", reason="adjust from approved")
+    assert adj1.original.status is InterventionStatus.STOPPED
+    assert adj1.replacement.status is InterventionStatus.CANDIDATE
+    assert adj1.replacement.predecessor_id == case1.intervention_id
+
+    # Test EXECUTING
+    case_exec = case1.with_transition(
+        to_status=InterventionStatus.EXECUTING,
+        actor="ops",
+        action="execute",
+        reason="executing",
+    )
+    wf1.repository.save(case_exec)
+    adj_exec = wf1.adjust_case(case_exec.intervention_id, actor="ops", reason="adjust from executing")
+    assert adj_exec.original.status is InterventionStatus.STOPPED
+    assert adj_exec.replacement.status is InterventionStatus.CANDIDATE
+
+    # Test OBSERVING
+    repo2 = InMemoryInterventionRepository()
+    wf2 = InterventionWorkflow(repository=repo2)
+    case2 = _open_case(wf2, store_id="s-obs")
+    _drive_to_approved(wf2, case2.intervention_id)
+    wf2.execute(case2.intervention_id, executor="runner", executed_at=EXEC_TIME)
+    assert wf2.get(case2.intervention_id).status is InterventionStatus.OBSERVING
+    adj2 = wf2.adjust_case(case2.intervention_id, actor="ops", reason="adjust from observing")
+    assert adj2.original.status is InterventionStatus.STOPPED
+    assert adj2.replacement.status is InterventionStatus.CANDIDATE
+    assert adj2.replacement.predecessor_id == case2.intervention_id
+
+
+def test_api_adjust_production_entry_rejects_pre_activation_and_evaluation_states_without_lineage() -> None:
+    """ODP-FR-INTV-006: API rejects adjusting non-active states (CANDIDATE, PENDING_APPROVAL, EVALUATING, COMPLETED)
+    and verifies rejection leaves case unmodified without creating replacement lineage.
+    """
+    app = create_app()
+    client = TestClient(app, headers=INTERVENTION_HEADERS)
+
+    # 1. Create CANDIDATE intervention
+    created = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-adj-reg",
+            "kind": "PRICE_CHANGE",
+            "expected_outcome": "boost margin",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+        },
+    )
+    assert created.status_code == 201
+    iid = created.json()["intervention_id"]
+
+    # Attempt adjust on CANDIDATE
+    cand_adj = client.post(
+        f"/interventions/{iid}/adjust",
+        json={"actor": "ops-hero", "reason": "adjust on candidate"},
+    )
+    assert cand_adj.status_code == 422
+    assert "cannot adjust on intervention in status CANDIDATE" in cand_adj.json()["detail"]
+
+    # Verify no replacement was created in list
+    cases = client.get("/interventions", params={"store_id": "store-api-adj-reg"}).json()["items"]
+    assert len(cases) == 1
+    assert cases[0]["status"] == "CANDIDATE"
+    assert cases[0]["replacement_id"] is None
+
+    # Drive to PENDING_APPROVAL
+    client.post(f"/interventions/{iid}/eligibility", json={"eligible": True, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/action", json={"action_spec": {"pct": -5}, "actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/conflict-check", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/submit", json={"actor": "ops-hero"})
+
+    # Attempt adjust on PENDING_APPROVAL
+    pending_adj = client.post(
+        f"/interventions/{iid}/adjust",
+        json={"actor": "ops-hero", "reason": "adjust on pending approval"},
+    )
+    assert pending_adj.status_code == 422
+    assert "cannot adjust on intervention in status PENDING_APPROVAL" in pending_adj.json()["detail"]
+
+    # Verify still only 1 case
+    cases = client.get("/interventions", params={"store_id": "store-api-adj-reg"}).json()["items"]
+    assert len(cases) == 1
+    assert cases[0]["status"] == "PENDING_APPROVAL"
+
+    # Drive to APPROVED -> Adjust should SUCCEED
+    client.post(f"/interventions/{iid}/approve", json={"action": "APPROVE", "actor": "sup-hero", "reason": "approved"})
+    appr_adj = client.post(
+        f"/interventions/{iid}/adjust",
+        json={"actor": "ops-hero", "reason": "adjust on approved"},
+    )
+    assert appr_adj.status_code == 200
+    adj_data = appr_adj.json()
+    assert adj_data["original_status"] == "STOPPED"
+    assert adj_data["replacement_status"] == "CANDIDATE"
+    repl_id = adj_data["replacement_intervention_id"]
+    assert repl_id != iid
+
+    # Now there are 2 cases
+    cases = client.get("/interventions", params={"store_id": "store-api-adj-reg"}).json()["items"]
+    assert len(cases) == 2
+    case_ids = {c["intervention_id"] for c in cases}
+    assert case_ids == {iid, repl_id}

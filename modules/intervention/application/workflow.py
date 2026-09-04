@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from modules.intervention.domain.lifecycle import (
+    ACTIVE_INTERVENTION_STATUSES,
     POLICY_VERSION,
     AdjustmentRecord,
     ApprovalRecord,
@@ -899,10 +900,7 @@ class InterventionWorkflow:
         version, and rollback specifications.
         """
         original = self._require(intervention_id)
-        if original.is_terminal:
-            raise InterventionError(
-                f"cannot adjust terminal intervention in status {original.status.value}"
-            )
+        self._require_status(original, ACTIVE_INTERVENTION_STATUSES, "adjust")
         self._check_version(original, expected_version)
         if not reason.strip():
             raise InterventionError("adjusting an intervention requires a reason")
@@ -1018,11 +1016,7 @@ class InterventionWorkflow:
             actor=actor,
             reason=reason,
             correlation_id=correlation_id,
-            allowed={
-                InterventionStatus.APPROVED,
-                InterventionStatus.EXECUTING,
-                InterventionStatus.OBSERVING,
-            },
+            allowed=ACTIVE_INTERVENTION_STATUSES,
         )
 
     def rollback(

@@ -14,6 +14,7 @@ from modules.intervention.application.workflow import (
     LabelRegistryHook,
 )
 from modules.intervention.domain.lifecycle import (
+    ACTIVE_INTERVENTION_STATUSES,
     FEATURE_VERSION,
     POLICY_VERSION,
     AdjustmentRecord,
@@ -54,6 +55,7 @@ from modules.intervention.workers.observation_worker import (
 )
 
 __all__ = [
+    "ACTIVE_INTERVENTION_STATUSES",
     "FEATURE_VERSION",
     "IROMI_BREAKEVEN",
     "POLICY_VERSION",

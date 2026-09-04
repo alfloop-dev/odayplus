@@ -117,6 +117,18 @@ ACTIVE_CONFLICT_STATUSES = frozenset(
     }
 )
 
+# Active intervention statuses that are approved / executing / observing and thus
+# permitted to be stopped or adjusted (ODP-FR-INTV-006). Pre-activation (CANDIDATE,
+# ELIGIBLE, PENDING_APPROVAL, etc.), evaluation, completed, and terminal states
+# are not active interventions.
+ACTIVE_INTERVENTION_STATUSES = frozenset(
+    {
+        InterventionStatus.APPROVED,
+        InterventionStatus.EXECUTING,
+        InterventionStatus.OBSERVING,
+    }
+)
+
 
 class PretrendStatus(StrEnum):
     PASS = "PASS"
@@ -759,6 +771,7 @@ def can_claim_causal(level: EvidenceLevel) -> bool:
 
 __all__ = [
     "ACTIVE_CONFLICT_STATUSES",
+    "ACTIVE_INTERVENTION_STATUSES",
     "CAUSAL_CLAIM_MIN_RANK",
     "DEFAULT_WINDOWS",
     "EFFECT_CLAIM_MIN_RANK",
