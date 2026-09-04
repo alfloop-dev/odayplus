@@ -122,13 +122,15 @@
         {
           "name": "LEASE",
           "status": "absent",
-          "note": "Needs a per-option admissibility check (can this lease be signed or broken in the plan window, and at what penalty). No such data source is wired to the solver. Reported through ConstraintClass.LEASE in unmodelled_constraint_classes on every solve.",
+          "note": "Per-option lease availability windows and early termination cost schedules are absent across candidate site feeds and core.stores schemas per ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md. No decorative constraint is wired. ConstraintClass.LEASE is reported in unmodelled_constraint_classes on every solve, displayed in Operator UI, and requires explicit acknowledgement/policy governance. Formal handback HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
-            "evidence_needed": "Per-option lease admissibility and penalty schedule data source verification (Batch 0)",
-            "evidence_owner": "Data Operations Lead",
+            "evidence_needed": "Store lease contract master data (lease_expiry_date, break clauses, termination penalties in core.store_leases/CLM) and automated candidate site lease feed with freshness SLA and signing deadlines",
+            "evidence_owner": "Store Operations Lead / Real Estate Finance Lead / Data Platform Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Awaiting Batch 0 data source audit before scheduling solver integration or formal waiver."
+            "rationale": "Batch 0 audit confirmed production system lacks per-store lease expiry/penalties and automated candidate listing feed. Wiring fake constraints or treating None as 0.0 violates fail-closed principles. Maintained in unmodelled_constraint_classes; handback package HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per ODP_NET002_LEASE_DISPOSITION_2026-09-03.md.",
+            "formal_handback_ref": "docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md#2-人類授權移交單human-authority-handback-package",
+            "reopen_trigger": "Store lease contract master table (core.store_leases or CLM) is deployed with per-store lease_expiry_date and early termination penalty formula, and candidate site partner feed is contracted with signing deadline and fitout grace days."
           }
         },
         {
