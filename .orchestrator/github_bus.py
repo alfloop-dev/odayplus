@@ -1291,8 +1291,23 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
 
 
 AUTO_MERGE_PR_FIELDS = (
-    "number,state,isDraft,autoMergeRequest,baseRefName,headRefName,url,mergeStateStatus,isInMergeQueue,mergeQueueEntry"
+    "number,state,isDraft,autoMergeRequest,baseRefName,headRefName,url,mergeStateStatus"
 )
+
+PR_MERGE_QUEUE_GRAPHQL_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      isInMergeQueue
+      mergeQueueEntry {
+        position
+        state
+        enqueuedAt
+      }
+    }
+  }
+}
+"""
 
 # Auto-merge cannot be armed on a PR GitHub already knows it cannot merge; the
 # mutation is rejected outright. Every other merge state -- BLOCKED on required
@@ -1306,6 +1321,36 @@ def auto_merge_request_present(pr: Any) -> bool:
     """Return true only for GitHub's object-shaped auto-merge readback."""
 
     return isinstance(pr, dict) and isinstance(pr.get("autoMergeRequest"), dict)
+
+
+def fetch_pr_merge_queue_status(repo: str, number: int) -> dict[str, Any] | None:
+    """Query GitHub GraphQL API for the PR's merge queue status.
+
+    `gh pr view --json` does not support `isInMergeQueue` or `mergeQueueEntry`;
+    GraphQL repository.pullRequest is the canonical source for queue enrollment.
+    """
+
+    owner, _, name = repo.partition("/")
+    if not owner or not name:
+        return None
+    data = gh_json(
+        [
+            "api",
+            "graphql",
+            "-F",
+            f"owner={owner}",
+            "-F",
+            f"name={name}",
+            "-F",
+            f"number={number}",
+            "-f",
+            f"query={PR_MERGE_QUEUE_GRAPHQL_QUERY}",
+        ]
+    )
+    if not isinstance(data, dict):
+        return None
+    pr_data = ((data.get("data") or {}).get("repository") or {}).get("pullRequest")
+    return pr_data if isinstance(pr_data, dict) else None
 
 
 def is_in_merge_queue(pr: Any) -> bool:
@@ -1538,8 +1583,9 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
         if auto_merge_request_present(pr):
             return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
 
-        if is_in_merge_queue(pr):
-            queued = merge_queue_record(number, expected_base, url, pr)
+        queue_info = pr if is_in_merge_queue(pr) else fetch_pr_merge_queue_status(repo, number)
+        if is_in_merge_queue(queue_info):
+            queued = merge_queue_record(number, expected_base, url, queue_info)
             return _record_auto_merge(config, entry, task_id, queued, log_type="github_auto_merge_queued")
 
         if merge_state in AUTO_MERGE_BLOCKING_MERGE_STATES:
@@ -1570,11 +1616,12 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
         readback_number = readback.get("number") if isinstance(readback, dict) else None
         readback_state = str(readback.get("state") or "").upper() if isinstance(readback, dict) else ""
         if readback_number == number:
-            if is_in_merge_queue(readback):
-                queued = merge_queue_record(number, expected_base, url, readback)
-                return _record_auto_merge(config, entry, task_id, queued, log_type="github_auto_merge_queued")
             if auto_merge_request_present(readback) or readback_state == "MERGED":
                 return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
+            readback_queue_info = readback if is_in_merge_queue(readback) else fetch_pr_merge_queue_status(repo, number)
+            if is_in_merge_queue(readback_queue_info):
+                queued = merge_queue_record(number, expected_base, url, readback_queue_info)
+                return _record_auto_merge(config, entry, task_id, queued, log_type="github_auto_merge_queued")
 
         return _record_auto_merge(
             config,

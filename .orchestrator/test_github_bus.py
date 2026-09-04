@@ -2077,17 +2077,57 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         readback: dict | None = None,
     ):
         bus_state = bus_state if bus_state is not None else self._bus_state()
+        view_calls = 0
+        run_gh_calls = []
+
+        def fake_run_gh(args, **kwargs):
+            run_gh_calls.append(args)
+            if run_gh_side_effect is not None:
+                if isinstance(run_gh_side_effect, BaseException):
+                    raise run_gh_side_effect
+                if callable(run_gh_side_effect):
+                    return run_gh_side_effect(args, **kwargs)
+                return run_gh_side_effect
+            return subprocess.CompletedProcess(["gh"], 0, "", "")
+
+        def fake_gh_json(args, **kwargs):
+            nonlocal view_calls
+            if args[:2] == ["pr", "view"]:
+                view_calls += 1
+                cur = pr if view_calls == 1 else (readback if readback is not None else pr)
+                if cur is None:
+                    return None
+                res = dict(cur)
+                res.pop("isInMergeQueue", None)
+                res.pop("mergeQueueEntry", None)
+                return res
+            if args[:2] == ["api", "graphql"]:
+                target = readback if (run_gh_calls and readback is not None) else pr
+                if target is None:
+                    return None
+                return {
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "number": target.get("number", 700),
+                                "isInMergeQueue": bool(target.get("isInMergeQueue")),
+                                "mergeQueueEntry": target.get("mergeQueueEntry"),
+                            }
+                        }
+                    }
+                }
+            return None
+
         with (
             mock.patch.object(
                 github_bus,
                 "gh_json",
-                side_effect=[pr, readback if readback is not None else pr],
+                side_effect=fake_gh_json,
             ) as gh_json,
             mock.patch.object(
                 github_bus,
                 "run_gh",
-                side_effect=run_gh_side_effect,
-                return_value=subprocess.CompletedProcess(["gh"], 0, "", ""),
+                side_effect=fake_run_gh,
             ) as run_gh,
             mock.patch.object(github_bus, "write_activity_log") as log,
         ):
@@ -2100,6 +2140,102 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
     @staticmethod
     def _gh_calls(run_gh) -> list[list[str]]:
         return [call.args[0] for call in run_gh.call_args_list]
+
+    def test_auto_merge_pr_fields_compatibility_with_gh_cli(self) -> None:
+        """AUTO_MERGE_PR_FIELDS must contain only valid fields recognized by `gh pr view --json`."""
+        declared_fields = [f.strip() for f in github_bus.AUTO_MERGE_PR_FIELDS.split(",") if f.strip()]
+
+        # Verify that forbidden/non-CLI fields are never included in AUTO_MERGE_PR_FIELDS
+        self.assertNotIn("isInMergeQueue", declared_fields)
+        self.assertNotIn("mergeQueueEntry", declared_fields)
+
+        # Expected safe schema
+        expected_fields = {
+            "number",
+            "state",
+            "isDraft",
+            "autoMergeRequest",
+            "baseRefName",
+            "headRefName",
+            "url",
+            "mergeStateStatus",
+        }
+        self.assertEqual(set(declared_fields), expected_fields)
+
+        # If gh CLI is present on the system, verify against `gh pr view --help` JSON FIELDS
+        gh_bin = github_bus.resolve_gh_binary()
+        if gh_bin and Path(gh_bin).exists():
+            proc = subprocess.run([gh_bin, "pr", "view", "--help"], capture_output=True, text=True, check=False)
+            if proc.returncode == 0 and "JSON FIELDS" in proc.stdout:
+                _, _, fields_section = proc.stdout.partition("JSON FIELDS\n")
+                fields_text, _, _ = fields_section.partition("\n\n")
+                available_fields = {
+                    field.strip().rstrip(",")
+                    for line in fields_text.splitlines()
+                    for field in line.split()
+                    if field.strip().rstrip(",")
+                }
+                for field in declared_fields:
+                    self.assertIn(
+                        field,
+                        available_fields,
+                        f"Field '{field}' in AUTO_MERGE_PR_FIELDS is not supported by gh pr view --json",
+                    )
+                self.assertNotIn("isInMergeQueue", available_fields)
+                self.assertNotIn("mergeQueueEntry", available_fields)
+
+    def test_merge_queue_graphql_query_and_fetcher_schema(self) -> None:
+        """fetch_pr_merge_queue_status queries the expected GraphQL schema and parses responses."""
+        self.assertIn("isInMergeQueue", github_bus.PR_MERGE_QUEUE_GRAPHQL_QUERY)
+        self.assertIn("mergeQueueEntry", github_bus.PR_MERGE_QUEUE_GRAPHQL_QUERY)
+        self.assertIn("position", github_bus.PR_MERGE_QUEUE_GRAPHQL_QUERY)
+        self.assertIn("state", github_bus.PR_MERGE_QUEUE_GRAPHQL_QUERY)
+        self.assertIn("enqueuedAt", github_bus.PR_MERGE_QUEUE_GRAPHQL_QUERY)
+
+        # Successful query parsing
+        mock_payload = {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "number": 1181,
+                        "isInMergeQueue": True,
+                        "mergeQueueEntry": {
+                            "position": 1,
+                            "state": "AWAITING_CHECKS",
+                            "enqueuedAt": "2026-09-04T02:00:00Z",
+                        },
+                    }
+                }
+            }
+        }
+        with mock.patch.object(github_bus, "gh_json", return_value=mock_payload) as gh_json_mock:
+            status = github_bus.fetch_pr_merge_queue_status("alfloop-dev/odayplus", 1181)
+            self.assertEqual(
+                status,
+                {
+                    "number": 1181,
+                    "isInMergeQueue": True,
+                    "mergeQueueEntry": {
+                        "position": 1,
+                        "state": "AWAITING_CHECKS",
+                        "enqueuedAt": "2026-09-04T02:00:00Z",
+                    },
+                },
+            )
+            args = gh_json_mock.call_args[0][0]
+            self.assertEqual(args[:2], ["api", "graphql"])
+            self.assertIn("owner=alfloop-dev", args)
+            self.assertIn("name=odayplus", args)
+            self.assertIn("number=1181", args)
+
+        # Invalid repo format returns None without executing gh_json
+        with mock.patch.object(github_bus, "gh_json") as gh_json_mock:
+            self.assertIsNone(github_bus.fetch_pr_merge_queue_status("invalid-repo", 1181))
+            gh_json_mock.assert_not_called()
+
+        # Malformed or error payload returns None
+        with mock.patch.object(github_bus, "gh_json", return_value={"errors": [{"message": "Not found"}]}):
+            self.assertIsNone(github_bus.fetch_pr_merge_queue_status("alfloop-dev/odayplus", 1181))
 
     def test_draft_pr_is_undrafted_then_armed(self) -> None:
         """GitHub refuses auto-merge when the publisher leaves an adopted PR as draft."""
@@ -2116,7 +2252,6 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertIn("--auto", calls[1])
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
         self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_enabled")
-        self.assertEqual(gh_json.call_count, 2)
 
     def test_ready_pr_is_armed_without_being_touched_first(self) -> None:
         changed, entry, run_gh, _, gh_json = self._arm(
@@ -2128,7 +2263,6 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         calls = self._gh_calls(run_gh)
         self.assertEqual([call[:2] for call in calls], [["pr", "merge"]])
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
-        self.assertEqual(gh_json.call_count, 2)
 
     def test_arming_is_not_repeated_once_github_reports_it(self) -> None:
         """The bus re-reads every approved PR each poll; a second call must be a no-op."""
@@ -2238,7 +2372,6 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
 
         self.assertTrue(first_changed)
         self.assertEqual([call[:2] for call in self._gh_calls(first_run_gh)], [["pr", "merge"]])
-        self.assertEqual(first_gh_json.call_count, 2)
         expected_view = [
             "pr",
             "view",
@@ -2248,7 +2381,10 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
             "--json",
             github_bus.AUTO_MERGE_PR_FIELDS,
         ]
-        self.assertEqual([call.args[0] for call in first_gh_json.call_args_list], [expected_view, expected_view])
+        view_calls = [c.args[0] for c in first_gh_json.call_args_list if c.args[0][:2] == ["pr", "view"]]
+        self.assertEqual(view_calls, [expected_view, expected_view])
+        graphql_calls = [c.args[0] for c in first_gh_json.call_args_list if c.args[0][:2] == ["api", "graphql"]]
+        self.assertEqual(len(graphql_calls), 2)
         self.assertEqual(entry["auto_merge"]["state"], "failed")
         self.assertTrue(entry["auto_merge"]["retryable"])
         self.assertEqual(entry["auto_merge"]["failure_code"], "auto_merge_unconfirmed_readback")
@@ -2265,7 +2401,8 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
 
         self.assertTrue(second_changed)
         self.assertEqual([call[:2] for call in self._gh_calls(second_run_gh)], [["pr", "merge"]])
-        self.assertEqual(second_gh_json.call_count, 2)
+        second_view_calls = [c.args[0] for c in second_gh_json.call_args_list if c.args[0][:2] == ["pr", "view"]]
+        self.assertEqual(second_view_calls, [expected_view, expected_view])
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
         self.assertEqual(second_log.call_args.args[1]["type"], "github_auto_merge_enabled")
 
@@ -2277,7 +2414,6 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(self._gh_calls(run_gh)[0][:2], ["pr", "merge"])
-        self.assertEqual(gh_json.call_count, 2)
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
         self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_enabled")
 
@@ -2298,7 +2434,6 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(self._gh_calls(run_gh)[0][:2], ["pr", "merge"])
-        self.assertEqual(gh_json.call_count, 2)
         self.assertEqual(entry["auto_merge"]["state"], "queued")
         self.assertTrue(entry["auto_merge"]["is_in_merge_queue"])
         self.assertEqual(entry["auto_merge"]["queue_state"], "AWAITING_CHECKS")
@@ -2327,7 +2462,6 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(self._gh_calls(run_gh)[0][:2], ["pr", "merge"])
-        self.assertEqual(gh_json.call_count, 2)
         self.assertEqual(entry["auto_merge"]["state"], "queued")
         self.assertEqual(entry["auto_merge"]["queue_state"], "UNMERGEABLE")
         self.assertEqual(entry["auto_merge"]["queue_position"], 3)
@@ -2353,7 +2487,6 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
 
         self.assertTrue(first_changed)
         self.assertEqual(self._gh_calls(first_run_gh), [])
-        self.assertEqual(first_gh_json.call_count, 1)
         self.assertEqual(entry["auto_merge"]["state"], "queued")
         self.assertEqual(first_log.call_args.args[1]["type"], "github_auto_merge_queued")
 
@@ -2364,7 +2497,6 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         )
         self.assertFalse(second_changed)
         self.assertEqual(self._gh_calls(second_run_gh), [])
-        self.assertEqual(second_gh_json.call_count, 1)
         self.assertEqual(second_log.call_count, 0)
 
     def test_merge_queue_movement_and_state_transition_are_audited(self) -> None:
@@ -2504,7 +2636,13 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         view_readbacks = iter([viewed, armed])
 
         def fake_gh_json(args: list[str]):
-            return [listed] if args[:2] == ["pr", "list"] else next(view_readbacks)
+            if args[:2] == ["pr", "list"]:
+                return [listed]
+            if args[:2] == ["pr", "view"]:
+                return next(view_readbacks)
+            if args[:2] == ["api", "graphql"]:
+                return {"data": {"repository": {"pullRequest": {"number": 812, "isInMergeQueue": False, "mergeQueueEntry": None}}}}
+            return None
 
         bus_state: dict = {}
         with (
