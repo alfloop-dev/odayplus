@@ -13816,6 +13816,9 @@ class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
     def test_main_wires_cli_poll_interval_to_supervisor_cycle(self) -> None:
         config = load_test_config()
         with (
+            # main() exports the selected config for worker inheritance; do not
+            # leak that process-level override into later ai_status tests.
+            mock.patch.dict(os.environ),
             mock.patch.object(
                 sys,
                 "argv",
@@ -13859,6 +13862,7 @@ class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
     def test_main_wires_cli_poll_interval_to_once_run(self) -> None:
         config = load_test_config()
         with (
+            mock.patch.dict(os.environ),
             mock.patch.object(
                 sys,
                 "argv",
