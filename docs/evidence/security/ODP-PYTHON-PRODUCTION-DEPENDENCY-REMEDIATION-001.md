@@ -134,4 +134,12 @@ local 環境；此輸出不能取代上述針對實際 pinned production 版本�
 
 - PR #1194 的完整 CI run `33860234193` 已完成 Python product 測試，結果為 `4871 passed, 1 failed, 23 skipped`；唯一失敗是 `tests/security/test_supply_chain_security_gate.py::test_npm_audit_passes`。失敗輸出為 npm registry `POST https://registry.npmjs.org/-/npm/v1/security/audits/quick` 回覆 `503 Service Unavailable`；同一 run 的 `npm ci` 安裝稽核仍為 `found 0 vulnerabilities`。因此這不是本 task 的 Python dependency、lockfile 或 SBOM assertion 失敗。
 - 隨後 head `a8385cf` 的 run `33865579581` 在 review gate 重新開啟後被取消：product 尚未進入 security step，E2E 也在 `npm ci` 期間取消。該 run 不視為成功的 full CI，也不被本文件用來宣稱驗收通過。
-- 修復邊界維持不變：本 task 不修改 `.github/workflows/ci.yml`、`Makefile`、npm manifest/lockfile 或 audit routing；npm registry/共用 npm audit gate 的修復由相應的共用 gate task 處理。本 task 僅重新提交已完成的 Python dependency、lockfile、SBOM 與中文 residual-risk evidence，等待遠端 CI 在服務可用時提供新 run 的結果。
+- #1183 已於本次 owner dispatch 前合併至 `dev`，目前基底為 `origin/dev`=`5fe790edc453`；其中新增的 `delivery_toolchain/security/npm_audit_gate.py` 將 registry transport failure 與 vulnerability report 分離，並在無 advisory report 時 fail-closed。本 task 以一般 `git merge origin/dev` 組合該基底，產生 merge commit `e5109d9f`，無衝突且保留全部既有 task commits。
+- 修復邊界維持不變：本 task 不修改 `.github/workflows/ci.yml`、`Makefile`、npm manifest/lockfile 或 audit routing；npm registry/共用 npm audit gate 的修復由相應的共用 gate task 處理。本 task 僅提交 Python dependency、lockfile、SBOM 與中文 residual-risk evidence，並在新基底完成 focused regression；正式 PR 重送後由遠端 CI 提供唯一一次新的 full PR CI 結果。
+
+## 10. 新基底組合後的 owner dispatch 驗證
+
+- `uv lock --check`：通過。
+- `uv run --frozen python delivery_toolchain/security/generate_sbom.py --check`：通過；兩份 SBOM 的 components/dependencies/properties 一致，且其核心 payload 完全相同。
+- `uv run --frozen --with pip-audit pip-audit --local`：`No known vulnerabilities found`；此結果仍受第 5、7 節所述 `--local` 空稽核限制，不取代 pinned-version residual-risk evidence。
+- focused compatibility regression（security supply-chain、OSS license/notice、Evidently、OSS execution flow、smoke）：`72 passed`。
