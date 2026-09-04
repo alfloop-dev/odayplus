@@ -17,7 +17,11 @@ repo 內沒有 `ODP-FR-AVM-001` 的條文原文。目前唯一的來源是 FR �
 
 所以本文的判定只能宣稱**依目前轉錄內容**成立。取得原始規格版本、位置與內容雜湊之前，不得把這份轉錄當成 canonical source——這是修復計畫對第 1 批明寫的條件，不是本文自加的保留。
 
-本 task 一併把 `ODP-FR-AVM-001` 登記進 `delivery_toolchain/governance/set_valued_requirements.json`，六個成員中 `DEPRECIATION` 記為 `absent` 並指回本文。登記的作用是讓「這個成員缺席」變成機器會檢查的事實，不是宣稱裁決已完成。
+這個保留已經是登記在案的狀態，不只是本文的措辭：`ODP-FR-AVM-001` 的 canonical source 在 [`ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md`](../evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md) 為 `BLOCKED_BY_EVIDENCE`，manifest 的 `_source_provenance.records` 也記著同一件事。
+
+本 task 一併把 `ODP-FR-AVM-001` 登記進 `delivery_toolchain/governance/set_valued_requirements.json`，六個成員中 `DEPRECIATION` 記為 `absent`，處置為 `IMPLEMENTATION_READY` 並指回本文。登記的作用是讓「這個成員缺席」變成機器會檢查的事實，不是宣稱裁決已完成——`absent` 與 `IMPLEMENTATION_READY` 一起讀才是完整的話：**契約寫完了，缺口沒關。**
+
+處置的政策登錄在 [Requirement Dispositions §4.9](../governance/ODP_REQUIREMENT_DISPOSITIONS.md)，選這個狀態而不選 `VERIFIED`／`DECIDED`／`BLOCKED_BY_EVIDENCE` 的理由、四項證據在當前基準的複查結果，以及轉為 `VERIFIED` 的條件，記在 [處置證據](../evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md)；回歸測試是 `tests/governance/test_avm001_disposition.py`。
 
 ---
 
@@ -180,7 +184,7 @@ AVM_DEPRECIATION_LEGACY_VERSION = "avm-depreciation-absent-v0"
 
 asset lens 的 `evidence` 新增 `depreciation` 區塊，內容為 C-3 的每一個中間量：`basis`、`in_service_date`、`effective_date`、`elapsed_months`、`useful_life_months`、`residual_value_ratio`、`residual`、`accumulated_depreciation`、`equipment_value_after_depreciation`、`method`、`version`。
 
-`generate_data_room` 的 `valuation_card`（`valuation.py:534`）新增 `depreciation_version`、`depreciation_applied`、`equipment_depreciation_basis`。
+`generate_data_room` 的 `valuation_card`（`valuation.py:535`）新增 `depreciation_version`、`depreciation_applied`、`equipment_depreciation_basis`。
 
 ### C-5 缺席處置：fail closed
 
