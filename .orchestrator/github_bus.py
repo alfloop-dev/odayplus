@@ -1291,7 +1291,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
 
 
 AUTO_MERGE_PR_FIELDS = (
-    "number,state,isDraft,autoMergeRequest,baseRefName,headRefName,url,mergeStateStatus"
+    "number,state,isDraft,autoMergeRequest,baseRefName,headRefName,url,mergeStateStatus,isInMergeQueue,mergeQueueEntry"
 )
 
 # Auto-merge cannot be armed on a PR GitHub already knows it cannot merge; the
@@ -1306,6 +1306,58 @@ def auto_merge_request_present(pr: Any) -> bool:
     """Return true only for GitHub's object-shaped auto-merge readback."""
 
     return isinstance(pr, dict) and isinstance(pr.get("autoMergeRequest"), dict)
+
+
+def is_in_merge_queue(pr: Any) -> bool:
+    """Return true if GitHub reports the PR is currently enrolled in a merge queue."""
+
+    if not isinstance(pr, dict):
+        return False
+    return bool(pr.get("isInMergeQueue")) or isinstance(pr.get("mergeQueueEntry"), dict)
+
+
+def merge_queue_entry(pr: Any) -> dict[str, Any] | None:
+    """Extract merge queue entry details if present."""
+
+    if not isinstance(pr, dict):
+        return None
+    entry = pr.get("mergeQueueEntry")
+    if isinstance(entry, dict):
+        return entry
+    return None
+
+
+def merge_queue_record(
+    number: int,
+    expected_base: str,
+    url: str | None,
+    pr_or_readback: dict[str, Any],
+) -> dict[str, Any]:
+    """Construct the bus state record for a PR enrolled in GitHub's Merge Queue."""
+
+    mq_entry = merge_queue_entry(pr_or_readback) or {}
+    queue_state = mq_entry.get("state")
+    queue_position = mq_entry.get("position")
+
+    msg_parts = [f"PR #{number} is in the merge queue for `{expected_base}`"]
+    if queue_position is not None:
+        msg_parts.append(f"at position {queue_position}")
+    if queue_state:
+        msg_parts.append(f"({queue_state})")
+    message = " ".join(msg_parts) + "."
+
+    record: dict[str, Any] = {
+        "state": "queued",
+        "number": number,
+        "message": message,
+        "url": url,
+        "is_in_merge_queue": True,
+        "queue_state": queue_state,
+        "queue_position": queue_position,
+    }
+    if mq_entry.get("enqueuedAt"):
+        record["enqueued_at"] = mq_entry.get("enqueuedAt")
+    return record
 
 
 def task_pr_auto_merge_enabled(config: dict[str, Any]) -> bool:
@@ -1356,14 +1408,19 @@ def _record_auto_merge(
         return False
     entry["auto_merge"] = {**record, "updated_at": utc_now()}
     if log_type:
+        log_entry: dict[str, Any] = {
+            "type": log_type,
+            "task_id": task_id,
+            "message": record.get("message") or record.get("state"),
+            "github_url": record.get("url"),
+        }
+        if "queue_state" in record:
+            log_entry["queue_state"] = record.get("queue_state")
+        if "queue_position" in record:
+            log_entry["queue_position"] = record.get("queue_position")
         write_activity_log(
             config,
-            {
-                "type": log_type,
-                "task_id": task_id,
-                "message": record.get("message") or record.get("state"),
-                "github_url": record.get("url"),
-            },
+            log_entry,
         )
     return True
 
@@ -1481,6 +1538,10 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
         if auto_merge_request_present(pr):
             return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
 
+        if is_in_merge_queue(pr):
+            queued = merge_queue_record(number, expected_base, url, pr)
+            return _record_auto_merge(config, entry, task_id, queued, log_type="github_auto_merge_queued")
+
         if merge_state in AUTO_MERGE_BLOCKING_MERGE_STATES:
             return _record_auto_merge(
                 config,
@@ -1503,13 +1564,17 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
         # the mutation was accepted by the CLI.  It is not proof that GitHub
         # persisted an auto-merge request: queue admission and eventual
         # consistency can still leave the PR unarmed.  Read back this exact PR
-        # before recording `enabled`, otherwise the next poll reports a false
+        # before recording `enabled` or `queued`, otherwise the next poll reports a false
         # positive and has no reason to retry the mutation.
         readback = gh_json(["pr", "view", str(number), "--repo", repo, "--json", AUTO_MERGE_PR_FIELDS])
         readback_number = readback.get("number") if isinstance(readback, dict) else None
         readback_state = str(readback.get("state") or "").upper() if isinstance(readback, dict) else ""
-        if readback_number == number and (auto_merge_request_present(readback) or readback_state == "MERGED"):
-            return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
+        if readback_number == number:
+            if is_in_merge_queue(readback):
+                queued = merge_queue_record(number, expected_base, url, readback)
+                return _record_auto_merge(config, entry, task_id, queued, log_type="github_auto_merge_queued")
+            if auto_merge_request_present(readback) or readback_state == "MERGED":
+                return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
 
         return _record_auto_merge(
             config,
@@ -1520,7 +1585,8 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
                 "number": number,
                 "message": (
                     f"Auto-merge command returned success for PR #{number}, but the same-PR "
-                    "readback did not confirm `autoMergeRequest` or a merged state; retrying."
+                    "readback did not confirm `autoMergeRequest`, merge queue enrollment, "
+                    "or a merged state; retrying."
                 ),
                 "url": url,
                 "retryable": True,

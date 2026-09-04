@@ -2281,6 +2281,153 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         self.assertEqual(entry["auto_merge"]["state"], "enabled")
         self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_enabled")
 
+    def test_merge_queue_readback_accepts_queued_pr_awaiting_checks(self) -> None:
+        changed, entry, run_gh, log, gh_json = self._arm(
+            self._pr(isDraft=False),
+            readback=self._pr(
+                isDraft=False,
+                autoMergeRequest=None,
+                isInMergeQueue=True,
+                mergeQueueEntry={
+                    "position": 1,
+                    "state": "AWAITING_CHECKS",
+                    "enqueuedAt": "2026-09-04T02:00:00Z",
+                },
+            ),
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(self._gh_calls(run_gh)[0][:2], ["pr", "merge"])
+        self.assertEqual(gh_json.call_count, 2)
+        self.assertEqual(entry["auto_merge"]["state"], "queued")
+        self.assertTrue(entry["auto_merge"]["is_in_merge_queue"])
+        self.assertEqual(entry["auto_merge"]["queue_state"], "AWAITING_CHECKS")
+        self.assertEqual(entry["auto_merge"]["queue_position"], 1)
+        self.assertEqual(
+            entry["auto_merge"]["message"],
+            "PR #700 is in the merge queue for `dev` at position 1 (AWAITING_CHECKS).",
+        )
+        self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_queued")
+        self.assertEqual(log.call_args.args[1]["queue_state"], "AWAITING_CHECKS")
+        self.assertEqual(log.call_args.args[1]["queue_position"], 1)
+
+    def test_merge_queue_readback_accepts_unmergeable_queue_state(self) -> None:
+        changed, entry, run_gh, log, gh_json = self._arm(
+            self._pr(isDraft=False),
+            readback=self._pr(
+                isDraft=False,
+                autoMergeRequest=None,
+                isInMergeQueue=True,
+                mergeQueueEntry={
+                    "position": 3,
+                    "state": "UNMERGEABLE",
+                },
+            ),
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(self._gh_calls(run_gh)[0][:2], ["pr", "merge"])
+        self.assertEqual(gh_json.call_count, 2)
+        self.assertEqual(entry["auto_merge"]["state"], "queued")
+        self.assertEqual(entry["auto_merge"]["queue_state"], "UNMERGEABLE")
+        self.assertEqual(entry["auto_merge"]["queue_position"], 3)
+        self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_queued")
+        self.assertEqual(log.call_args.args[1]["queue_state"], "UNMERGEABLE")
+        self.assertEqual(log.call_args.args[1]["queue_position"], 3)
+
+    def test_pr_already_in_merge_queue_skips_gh_merge_call(self) -> None:
+        bus_state = self._bus_state()
+        queued_pr = self._pr(
+            isDraft=False,
+            autoMergeRequest=None,
+            isInMergeQueue=True,
+            mergeQueueEntry={
+                "position": 1,
+                "state": "AWAITING_CHECKS",
+            },
+        )
+        first_changed, entry, first_run_gh, first_log, first_gh_json = self._arm(
+            queued_pr,
+            bus_state=bus_state,
+        )
+
+        self.assertTrue(first_changed)
+        self.assertEqual(self._gh_calls(first_run_gh), [])
+        self.assertEqual(first_gh_json.call_count, 1)
+        self.assertEqual(entry["auto_merge"]["state"], "queued")
+        self.assertEqual(first_log.call_args.args[1]["type"], "github_auto_merge_queued")
+
+        # Second poll with unchanged merge queue status is quiet and makes no gh merge calls
+        second_changed, entry, second_run_gh, second_log, second_gh_json = self._arm(
+            queued_pr,
+            bus_state=bus_state,
+        )
+        self.assertFalse(second_changed)
+        self.assertEqual(self._gh_calls(second_run_gh), [])
+        self.assertEqual(second_gh_json.call_count, 1)
+        self.assertEqual(second_log.call_count, 0)
+
+    def test_merge_queue_movement_and_state_transition_are_audited(self) -> None:
+        bus_state = self._bus_state()
+        # Initial poll: position 2, AWAITING_CHECKS
+        self._arm(
+            self._pr(
+                isDraft=False,
+                isInMergeQueue=True,
+                mergeQueueEntry={"position": 2, "state": "AWAITING_CHECKS"},
+            ),
+            bus_state=bus_state,
+        )
+        self.assertEqual(bus_state["tasks"][self.TASK_ID]["auto_merge"]["queue_position"], 2)
+
+        # Movement: advances to position 1
+        changed, entry, _, log, _ = self._arm(
+            self._pr(
+                isDraft=False,
+                isInMergeQueue=True,
+                mergeQueueEntry={"position": 1, "state": "AWAITING_CHECKS"},
+            ),
+            bus_state=bus_state,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(entry["auto_merge"]["queue_position"], 1)
+        self.assertEqual(log.call_args.args[1]["queue_position"], 1)
+
+        # State transition: becomes MERGEABLE
+        changed, entry, _, log, _ = self._arm(
+            self._pr(
+                isDraft=False,
+                isInMergeQueue=True,
+                mergeQueueEntry={"position": 1, "state": "MERGEABLE"},
+            ),
+            bus_state=bus_state,
+        )
+        self.assertTrue(changed)
+        self.assertEqual(entry["auto_merge"]["queue_state"], "MERGEABLE")
+        self.assertEqual(log.call_args.args[1]["queue_state"], "MERGEABLE")
+
+    def test_merge_queue_without_entry_detail_records_cleanly(self) -> None:
+        changed, entry, run_gh, log, _ = self._arm(
+            self._pr(isDraft=False),
+            readback=self._pr(
+                isDraft=False,
+                autoMergeRequest=None,
+                isInMergeQueue=True,
+                mergeQueueEntry=None,
+            ),
+        )
+
+        self.assertTrue(changed)
+        self.assertEqual(entry["auto_merge"]["state"], "queued")
+        self.assertTrue(entry["auto_merge"]["is_in_merge_queue"])
+        self.assertIsNone(entry["auto_merge"]["queue_state"])
+        self.assertIsNone(entry["auto_merge"]["queue_position"])
+        self.assertEqual(
+            entry["auto_merge"]["message"],
+            "PR #700 is in the merge queue for `dev`.",
+        )
+        self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_queued")
+
     def test_offline_propagates_for_bus_backoff(self) -> None:
         """Offline is the bus's own signal; swallowing it would hide the outage."""
 
