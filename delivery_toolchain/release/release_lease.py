@@ -227,6 +227,19 @@ def load_private_key(
     """
 
     material = _read_key_material(key_path=key_path, env_var=env_var, kind="private")
+    return load_private_key_material(material)
+
+
+def load_private_key_material(material: bytes) -> Ed25519PrivateKey:
+    """Parse private-key bytes that an authorised issuer kept only in memory.
+
+    ``load_private_key`` remains the file/environment convenience API for
+    offline issuance. The live Supervisor issuer obtains its key from the
+    governed Secret Manager reference and must neither materialise it on disk
+    nor inject it into a child environment, so it needs this bytes-only parser.
+    Callers own the lifetime of ``material`` and must never log or persist it.
+    """
+
     if HEX_KEY_PATTERN.fullmatch(material.decode("utf-8", "ignore").strip()):
         return Ed25519PrivateKey.from_private_bytes(
             bytes.fromhex(material.decode("utf-8").strip())
@@ -1068,6 +1081,7 @@ __all__ = [
     "generate_keypair",
     "load_lease",
     "load_private_key",
+    "load_private_key_material",
     "load_public_key",
     "public_key_id",
     "sign_lease",
