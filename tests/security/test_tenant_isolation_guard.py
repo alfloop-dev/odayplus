@@ -24,7 +24,10 @@ from modules.external_data.infrastructure.data_platform_client import (
     DataPlatformClient,
     InMemoryDataPlatformTransport,
 )
-from modules.listing.application.intake_authorization import authorize_intake_action
+from modules.listing.application.intake_authorization import (
+    COLLECTION_RESOURCE_TYPE,
+    authorize_intake_action,
+)
 from modules.market_intelligence_api.application.auth import (
     MarketIntelligenceAuthorizationError,
     authorize_market_intelligence,
@@ -684,6 +687,208 @@ def test_intake_authorization_tenant_guard_matrix(
     assert waiver_events[0].outcome == "allow"
     assert waiver_events[0].actor == "admin-alpha-001"
     assert waiver_events[0].resource == "listing/L-102"
+
+
+def test_intake_collection_scope_never_substitutes_for_target_resource_tenant(
+    user_alpha: Principal,
+    admin_alpha: Principal,
+    valid_waiver: TenantAccessWaiver,
+) -> None:
+    """Collection query scope and target resource tenant are separate tenant sources.
+
+    A collection request has no object envelope, so its tenant is the explicitly
+    declared query scope.  A target resource request must read its tenant from
+    the accessed object, and the caller's query scope must never be able to
+    stand in for a target that declares no tenant of its own.
+    """
+    audit_log = InMemoryAuditLog()
+
+    # (a) Collection request, same tenant: allowed, and audited under the
+    #     collection resource type rather than as a phantom listing.
+    authorize_intake_action(
+        user_alpha,
+        "view",
+        resource=None,
+        tenant_id=TENANT_ALPHA,
+        audit_log=audit_log,
+        correlation_id="corr-collection-same-tenant",
+    )
+    allow_events = audit_log.list_events(correlation_id="corr-collection-same-tenant")
+    assert len(allow_events) == 1
+    assert allow_events[0].outcome == "allow"
+    assert allow_events[0].actor == "user-alpha-001"
+    assert allow_events[0].resource == COLLECTION_RESOURCE_TYPE
+
+    # (b) Collection request against another tenant is denied.
+    with pytest.raises(HTTPException) as exc_info:
+        authorize_intake_action(
+            user_alpha,
+            "view",
+            resource=None,
+            tenant_id=TENANT_BETA,
+            audit_log=audit_log,
+            correlation_id="corr-collection-cross-tenant",
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "TENANT_SCOPE_DENIED"
+    cross_events = audit_log.list_events(correlation_id="corr-collection-cross-tenant")
+    assert len(cross_events) == 1
+    assert cross_events[0].outcome == "deny"
+
+    # (c) Collection request with no declared query scope fails closed instead of
+    #     silently borrowing the principal's own tenant.
+    for missing_scope in (None, "", "   "):
+        with pytest.raises(HTTPException) as exc_info:
+            authorize_intake_action(
+                user_alpha,
+                "view",
+                resource=None,
+                tenant_id=missing_scope,
+                audit_log=audit_log,
+                correlation_id="corr-collection-no-scope",
+            )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "TENANT_SCOPE_DENIED"
+
+    no_scope_events = audit_log.list_events(correlation_id="corr-collection-no-scope")
+    assert len(no_scope_events) == 3
+    assert all(event.outcome == "deny" for event in no_scope_events)
+    assert all(
+        "Resource tenant missing" in (event.metadata.get("reason") or "")
+        for event in no_scope_events
+    )
+
+    # (d) PLATFORM_ADMIN gets no collection-wide default: denied on its own
+    #     tenant by role, and denied across tenants by the shared guard.
+    with pytest.raises(HTTPException) as exc_info:
+        authorize_intake_action(
+            admin_alpha,
+            "view",
+            resource=None,
+            tenant_id=TENANT_ALPHA,
+            audit_log=audit_log,
+            correlation_id="corr-collection-admin-own-tenant",
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "ROLE_DENIED"
+
+    with pytest.raises(HTTPException) as exc_info:
+        authorize_intake_action(
+            admin_alpha,
+            "view",
+            resource=None,
+            tenant_id=TENANT_BETA,
+            audit_log=audit_log,
+            correlation_id="corr-collection-admin-cross-tenant",
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "TENANT_SCOPE_DENIED"
+
+    # (e) A target resource without a tenant stays denied even when the caller
+    #     hands in its own tenant as query scope.  This holds for an identified
+    #     object, for a bare intake payload, and for a scope envelope that
+    #     carries every axis except the tenant.
+    tenantless_targets = [
+        {"id": "L-101", "owner": "user-alpha-001"},
+        {"url": "https://example.test/listing/1", "parsedFields": {}},
+        {"scope": {"heat_zone_id": None, "brand_id": None}},
+    ]
+    for index, target in enumerate(tenantless_targets):
+        with pytest.raises(HTTPException) as exc_info:
+            authorize_intake_action(
+                user_alpha,
+                "view",
+                resource=target,
+                tenant_id=TENANT_ALPHA,
+                audit_log=audit_log,
+                correlation_id=f"corr-tenantless-target-{index}",
+            )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "TENANT_SCOPE_DENIED"
+
+        events = audit_log.list_events(correlation_id=f"corr-tenantless-target-{index}")
+        assert len(events) == 1
+        assert events[0].outcome == "deny"
+        # The denial reason must be the missing resource tenant, not a
+        # cross-tenant comparison against a borrowed tenant.
+        assert "Resource tenant missing" in (events[0].metadata.get("reason") or "")
+
+    # A listing-scoped waiver authorizes a listing, never a whole collection.
+    registry = _registry_with(valid_waiver)
+    admin_manager = Principal(
+        subject_id="admin-alpha-001",
+        roles=frozenset({Role.PLATFORM_ADMIN, Role.SITE_REVIEWER}),
+        scope=Scope(tenant_id=TENANT_ALPHA, clearance=DataClassification.HIGHLY_RESTRICTED),
+        authenticated=True,
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        authorize_intake_action(
+            admin_manager,
+            "view",
+            resource=None,
+            tenant_id=TENANT_BETA,
+            waiver=valid_waiver,
+            waiver_registry=registry,
+            audit_log=audit_log,
+            correlation_id="corr-collection-waiver-out-of-scope",
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "TENANT_SCOPE_DENIED"
+
+
+def test_intake_collection_scope_filters_are_enforced_without_forging_a_resource(
+    user_alpha: Principal,
+) -> None:
+    """Collection filters are still scope-checked, and cannot smuggle in a tenant."""
+    zone_restricted = Principal(
+        subject_id="user-alpha-001",
+        roles=frozenset({Role.EXPANSION_USER, Role.SITE_REVIEWER}),
+        scope=Scope(
+            tenant_id=TENANT_ALPHA,
+            heat_zone_ids=frozenset({"hz-permitted"}),
+            clearance=DataClassification.CONFIDENTIAL,
+        ),
+        authenticated=True,
+    )
+    audit_log = InMemoryAuditLog()
+
+    authorize_intake_action(
+        zone_restricted,
+        "view",
+        resource=None,
+        collection_scope={"heatZoneId": "hz-permitted"},
+        tenant_id=TENANT_ALPHA,
+        audit_log=audit_log,
+        correlation_id="corr-collection-scope-allow",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        authorize_intake_action(
+            zone_restricted,
+            "view",
+            resource=None,
+            collection_scope={"heatZoneId": "hz-forbidden"},
+            tenant_id=TENANT_ALPHA,
+            audit_log=audit_log,
+            correlation_id="corr-collection-scope-deny",
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "SCOPE_DENIED"
+
+    # A tenant declared inside a collection filter is not tenant evidence: the
+    # query scope is the only admissible source for a collection request.
+    with pytest.raises(HTTPException) as exc_info:
+        authorize_intake_action(
+            user_alpha,
+            "view",
+            resource=None,
+            collection_scope={"tenantId": TENANT_ALPHA},
+            tenant_id=None,
+            audit_log=audit_log,
+            correlation_id="corr-collection-filter-tenant",
+        )
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "TENANT_SCOPE_DENIED"
 
 
 def test_untrusted_signer_waiver_is_rejected_fail_closed(
