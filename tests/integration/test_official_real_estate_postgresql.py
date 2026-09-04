@@ -93,6 +93,22 @@ CREATE TABLE IF NOT EXISTS core.tenants (
     tenant_name VARCHAR(255) NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS core.brands (
+    brand_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID REFERENCES core.tenants(tenant_id),
+    brand_code  VARCHAR(100) NOT NULL,
+    brand_name  VARCHAR(255) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS core.stores (
+    store_id    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id   UUID NOT NULL REFERENCES core.tenants(tenant_id),
+    store_name  VARCHAR(255) NOT NULL DEFAULT '',
+    store_format_code TEXT,
+    opened_on DATE,
+    address_id UUID
+);
+
 CREATE TABLE IF NOT EXISTS workflow.decisions (
     decision_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     entity_type       VARCHAR(100) NOT NULL,
@@ -100,6 +116,15 @@ CREATE TABLE IF NOT EXISTS workflow.decisions (
     policy_version_id VARCHAR(100) NOT NULL,
     created_by        VARCHAR(255) NOT NULL,
     created_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS workflow.approvals (
+    approval_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    decision_id     UUID NOT NULL REFERENCES workflow.decisions(decision_id),
+    approver_id     VARCHAR(255) NOT NULL,
+    approval_status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    approved_at     TIMESTAMP WITH TIME ZONE,
+    created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS core.work_orders (
@@ -173,7 +198,7 @@ def _create_model_view_prerequisites(database: Any) -> None:
             """
             CREATE SCHEMA IF NOT EXISTS core;
             CREATE SCHEMA data_plane;
-            CREATE TABLE core.stores (
+            CREATE TABLE IF NOT EXISTS core.stores (
                 store_id UUID PRIMARY KEY,
                 tenant_id UUID NOT NULL,
                 store_format_code TEXT,

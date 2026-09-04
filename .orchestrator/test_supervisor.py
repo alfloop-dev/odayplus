@@ -34,10 +34,13 @@ os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
+import common
+import github_bus
 import runtime_state
 import supervisor
 import watch_events
 import worker_failure_policy
+import worker_workspace
 
 
 def tearDownModule() -> None:
@@ -8484,6 +8487,261 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(event["type"], "review_churn_reassigned")
         self.assertNotEqual(event["from_owner_pool"], event["to_owner_pool"])
 
+    def test_review_churn_ignores_control_plane_recovery_reopens(self) -> None:
+        """Control-plane recovery reopens (stale SHA, lease mismatch) do not trigger owner reassignment."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        # Task has 1 substantive review finding and 3 control-plane recovery reopens
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-CONTROL-PLANE-RECOVERY",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 1,
+                    "review_reopen_history": [
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "stale_review_sha",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T02:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "worktree_lease_mismatch",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T02:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "control_plane_recovery",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                    ],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_review_churn_reassigns_when_substantive_findings_reach_threshold_despite_recovery_reopens(self) -> None:
+        """Owner reassignment triggers when substantive review findings reach threshold, even with recovery reopens interleaved."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        # Task has 2 substantive findings interleaved with control plane recoveries
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-MIXED-CHURN",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 2,
+                    "review_reopen_history": [
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "stale_review_sha",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 2,
+                            "at": "2026-08-27T02:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                    ],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 2)
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+
+    def test_substantive_review_reopen_count_reads_durable_counter_and_handles_truncated_history(self) -> None:
+        """substantive_review_reopen_count reads durable review_reopen_count, never dropping to 0 from recoveries."""
+        # 1. review_reopen_count is 4, but history only contains 20 recovery entries (no churn)
+        task_with_recoveries = {
+            "id": "T-001",
+            "review_reopen_count": 4,
+            "review_reopen_history": [
+                {"count": 4, "is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"}
+                for _ in range(20)
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_with_recoveries), 4)
+
+        # 2. review_reopen_count is 0 with recovery history
+        task_zero = {
+            "id": "T-002",
+            "review_reopen_count": 0,
+            "review_reopen_history": [
+                {"count": 0, "is_churn": False, "category": "control_plane_recovery", "reason": "worktree_lease_mismatch"}
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_zero), 0)
+
+        # 3. Fallback when review_reopen_count key is missing
+        task_legacy = {
+            "id": "T-003",
+            "review_reopen_history": [
+                {"is_churn": True, "category": "substantive_review", "reason": "review_finding"},
+                {"is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"},
+                {"is_churn": True, "category": "substantive_review", "reason": "please_fix_scoring"},
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_legacy), 2)
+
+    def test_review_churn_multi_epoch_rotation_with_recoveries_does_not_wipe_epoch_failed_owners(self) -> None:
+        """Multi-epoch failover (e.g. 4 substantive findings) succeeds and does not reset failed owners on recoveries."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex", "Claude2"],
+                    "Codex": ["Claude2", "Antigravity"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+
+        # Task already reassigned at 2 reopens (Antigravity -> Codex), now at review_reopen_count=2 with 10 recovery reopens
+        task = {
+            "id": "P3-MULTI-EPOCH",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "review_reopen_count": 2,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+            "review_reopen_history": [
+                {"count": 2, "is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"}
+                for _ in range(10)
+            ],
+        }
+        status = {"tasks": [task]}
+
+        # While reopen_count is 2 and raw_last_reassigned is 2, no reassignment happens and epoch_failed_owners is NOT wiped
+        with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual(task["review_churn_epoch_failed_owners"], ["Antigravity"])
+
+        # Now 2 more substantive findings occur -> review_reopen_count becomes 4
+        task["review_reopen_count"] = 4
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        # Must rotate to Claude2 (not bouncing back to Antigravity)
+        self.assertEqual(kwargs["new_owner"], "Claude2")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 4)
+        self.assertIn("Antigravity", kwargs["task_updates"]["review_churn_epoch_failed_owners"])
+        self.assertIn("Codex", kwargs["task_updates"]["review_churn_epoch_failed_owners"])
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+
     def _escalation_config(self, **churn_overrides) -> dict:
         churn = {
             "enabled": True,
@@ -10013,6 +10271,47 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         write_json.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_preempted_synced")
 
+    def test_sync_preempted_review_task_keeps_review(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "agents": {
+                "antigravity": {"id": "antigravity", "display_name": "Antigravity"},
+            },
+        }
+        worker = {
+            "task_id": "BP5-REV-001",
+            "agent_id": "antigravity",
+            "provider": "antigravity",
+            "request_snapshot": {"reason": "review_ready_dispatch"},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "BP5-REV-001",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Antigravity",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_json") as write_json,
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-15T16:09:52Z"),
+        ):
+            synced = supervisor.sync_preempted_task_status(config, worker)
+
+        self.assertTrue(synced)
+        task = status["tasks"][0]
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["last_update"], "2026-04-15T16:09:52Z")
+        self.assertIn("task remains review", task["next"])
+        write_json.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_preempted_synced")
+
     def test_reassigns_finalize_task_to_new_owner_after_repeated_failure(self) -> None:
         config = {
             **self.config,
@@ -10774,6 +11073,258 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
         self.assertEqual(worker["status"], "superseded")
         terminate_worker_pid.assert_called_once_with(5555)
         sync_preempted.assert_called_once_with(config, worker)
+
+    def test_clean_review_worker_can_be_preempted_and_preserves_review(self) -> None:
+        """Review workers on clean worktrees are safe to preempt and remain review."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+        worker = {
+            "run_id": "run-review-1",
+            "task_id": "REV-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-review-1",
+            "pid": 5555,
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        state = {
+            "queue": {"events": {"evt-review-1": {"status": "started", "run_id": "run-review-1"}}},
+            "workers": {"run-review-1": worker},
+        }
+        task_map = {
+            "REV-001": {
+                "id": "REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "priority": "P2",
+                "depends_on": [],
+            },
+            "P0-TASK-001": {
+                "id": "P0-TASK-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+        ):
+            self.assertTrue(
+                supervisor.worker_can_be_preempted(config, worker, task_map, state)
+            )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
+            mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True) as sync_preempted,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(5555)
+        sync_preempted.assert_called_once_with(config, worker)
+
+    def test_odp_tenant_p0_ci_repair_preempts_lower_priority_review_worker(self) -> None:
+        """ODP-TENANT regression: P0 CI repair preempts lower priority (P2/P3) review worker occupying single quota slot."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        now_iso = supervisor.utc_now()
+        review_worker = {
+            "run_id": "run-p2-review-1",
+            "task_id": "ODP-TENANT-REV-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p2-rev-1",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        state = {
+            "queue": {"events": {"evt-p2-rev-1": {"status": "started", "run_id": "run-p2-review-1"}}},
+            "workers": {"run-p2-review-1": review_worker},
+        }
+        task_map = {
+            "ODP-TENANT-REV-001": {
+                "id": "ODP-TENANT-REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "priority": "P2",
+                "depends_on": [],
+            },
+            "ODP-TENANT-P0-REPAIR": {
+                "id": "ODP-TENANT-P0-REPAIR",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        # 1. higher_priority_ready_task_exists returns True because P0 repair outranks P2 review
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(config, review_worker, task_map, state)
+            )
+
+        # 2. worker_can_be_preempted returns True for clean review worker
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+        ):
+            self.assertTrue(
+                supervisor.worker_can_be_preempted(config, review_worker, task_map, state)
+            )
+
+        # 3. poll_workers supersedes the review worker and syncs preempted status
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
+            mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True) as sync_preempted,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(review_worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(5555)
+        sync_preempted.assert_called_once_with(config, review_worker)
+
+        # 4. In next tick, ready dispatcher dispatches P0 CI repair
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            dispatch_state = {"workers": {}, "queue": {"events": {}}}
+            dispatched = supervisor.dispatch_ready_tasks(config, dispatch_state)
+
+        self.assertTrue(dispatched)
+        queue_delivery_event.assert_called_once()
+        dispatched_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(dispatched_event["task_id"], "ODP-TENANT-P0-REPAIR")
+        self.assertEqual(dispatched_event["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
+    def test_p0_in_progress_worker_does_not_preempt_same_priority_p0_review_or_finalize(self) -> None:
+        """P0 in-progress worker does NOT preempt same priority P0 review or P0 finalize tasks."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        now_iso = supervisor.utc_now()
+        # Case A: P0 review worker vs P0 in_progress candidate
+        review_worker = {
+            "run_id": "run-p0-review",
+            "task_id": "P0-REV-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p0-rev",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        state_rev = {
+            "queue": {"events": {"evt-p0-rev": {"status": "started", "run_id": "run-p0-review"}}},
+            "workers": {"run-p0-review": review_worker},
+        }
+        task_map_rev = {
+            "P0-REV-001": {
+                "id": "P0-REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "priority": "P0",
+                "depends_on": [],
+            },
+            "P0-REPAIR-001": {
+                "id": "P0-REPAIR-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "depends_on": [],
+            },
+        }
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(config, review_worker, task_map_rev, state_rev)
+            )
+
+        # Case B: P0 finalize worker vs P0 in_progress candidate
+        finalize_worker = {
+            "run_id": "run-p0-finalize",
+            "task_id": "P0-FINAL-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p0-fin",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        state_fin = {
+            "queue": {"events": {"evt-p0-fin": {"status": "started", "run_id": "run-p0-finalize"}}},
+            "workers": {"run-p0-finalize": finalize_worker},
+        }
+        task_map_fin = {
+            "P0-FINAL-001": {
+                "id": "P0-FINAL-001",
+                "status": "review_approved",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "approved_head": "1111111122222222333333334444444455555555",
+                "depends_on": [],
+            },
+            "P0-REPAIR-001": {
+                "id": "P0-REPAIR-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "depends_on": [],
+            },
+        }
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(config, finalize_worker, task_map_fin, state_fin)
+            )
 
     def test_lawfully_preempted_task_redispatched_by_ready_dispatcher(self) -> None:
         """Lawfully preempted task is returned to todo and redispatched by the existing ready dispatcher."""
@@ -18694,6 +19245,197 @@ class WorkerPromptContractTests(unittest.TestCase):
                 self.assertIn("uv run", rendered)
                 self.assertIn("不自行掃描主機", rendered)
 
+
+class ReopenReasonClassificationTests(unittest.TestCase):
+    """Reopen classification must come from --reason, never from the message prose.
+
+    Guards ODP-ORCH-REVIEW-CHURN-CAUSE-001: keyword sniffing the free-form message
+    misclassified reopens in both directions -- it downgraded real review findings to
+    control-plane recovery (switching the churn failover safety net off) and it failed
+    to recognise real recovery notes that used different wording.
+    """
+
+    # Verbatim prose from the only production control-plane recovery reopen on record
+    # (ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001 review_reopen_history[1]).
+    REAL_RECOVERY_MESSAGE = (
+        "Reviewer recovery: PR #1164 now points to 890afc62 after an owner timeout anchor, "
+        "while prior review submission remains pinned to 31fdfa89 and blocks reviewer worktree "
+        "lease. Return to owner via canonical reopen; preserve existing PR, collect current CI, "
+        "update remote review submission for the exact new head, then return for independent "
+        "review. No duplicate broad tests."
+    )
+
+    def _classify(self, message: str, raw_reason: str | None = None):
+        return common.classify_reopen_reason(
+            raw_reason=raw_reason,
+            actor="Claude",
+            owner="Antigravity",
+            reviewer="Claude",
+            message=message,
+        )
+
+    def test_substantive_finding_quoting_control_plane_terms_still_counts_as_churn(self) -> None:
+        """A review body that merely mentions recovery vocabulary is still a real finding."""
+        for message in (
+            "Review rejected: the lease mismatch branch never fires",
+            "GitHub PR requested changes via PR #1178 by @rev. B1 stale review sha handling is wrong",
+            "Reopen: the control plane recovery path is untested, please fix",
+            "head mismatch is handled but the worktree lease conflict path is not",
+            "CI repair helper swallows errors; unsealed handoff is never detected",
+        ):
+            with self.subTest(message=message):
+                reason, category, is_churn = self._classify(message)
+                self.assertEqual(reason, "review_finding")
+                self.assertEqual(category, "substantive_review")
+                self.assertTrue(is_churn, "substantive finding must keep counting towards churn failover")
+
+    def test_recovery_prose_without_reason_fails_safe_to_review_finding(self) -> None:
+        """Real recovery wording alone is not enough -- absent --reason we fail safe to churn."""
+        reason, category, is_churn = self._classify(self.REAL_RECOVERY_MESSAGE)
+        self.assertEqual(reason, "review_finding")
+        self.assertEqual(category, "substantive_review")
+        self.assertTrue(is_churn)
+
+    def test_recovery_prose_with_explicit_reason_is_not_churn(self) -> None:
+        """The structured --reason path is what exempts a recovery from churn."""
+        for raw_reason, expected in (
+            ("stale_review_sha", "stale_review_sha"),
+            ("worktree_lease_mismatch", "worktree_lease_mismatch"),
+            ("control_plane_recovery", "control_plane_recovery"),
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                reason, category, is_churn = self._classify(self.REAL_RECOVERY_MESSAGE, raw_reason)
+                self.assertEqual(reason, expected)
+                self.assertEqual(category, "control_plane_recovery")
+                self.assertFalse(is_churn)
+
+    def test_free_form_reason_text_is_not_a_recovery_declaration(self) -> None:
+        """--reason must carry a documented identifier, not prose that merely mentions one.
+
+        Otherwise the message-prose hole simply reappears in the --reason field.
+        """
+        for raw_reason in (
+            "the lease mismatch branch never fires",
+            "defect in head mismatch handling",
+            "fix the stale review sha bug",
+            "please_fix_scoring",
+            "release_gate_failure",
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                _reason, category, is_churn = self._classify("m", raw_reason)
+                self.assertEqual(category, "substantive_review")
+                self.assertTrue(is_churn)
+
+    def test_documented_recovery_identifiers_and_aliases_are_honoured(self) -> None:
+        """Every documented identifier (and its alias spellings) still exempts churn."""
+        for raw_reason, expected in (
+            ("stale_review_sha", "stale_review_sha"),
+            ("stale-review-sha", "stale_review_sha"),
+            ("head_mismatch", "stale_review_sha"),
+            ("worktree_lease_mismatch", "worktree_lease_mismatch"),
+            ("lease_expired", "worktree_lease_mismatch"),
+            ("control_plane_recovery", "control_plane_recovery"),
+            ("ci_repair", "control_plane_recovery"),
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                reason, category, is_churn = self._classify("m", raw_reason)
+                self.assertEqual(reason, expected)
+                self.assertEqual(category, "control_plane_recovery")
+                self.assertFalse(is_churn)
+
+    def test_explicit_review_finding_reason_counts_as_churn(self) -> None:
+        reason, category, is_churn = self._classify("anything at all", "review_finding")
+        self.assertEqual(reason, "review_finding")
+        self.assertEqual(category, "substantive_review")
+        self.assertTrue(is_churn)
+
+    def test_owner_resume_is_never_churn(self) -> None:
+        reason, category, is_churn = common.classify_reopen_reason(
+            raw_reason=None,
+            actor="Antigravity",
+            owner="Antigravity",
+            reviewer="Claude",
+            message="stale review sha, resuming my own work",
+        )
+        self.assertEqual(reason, "owner_resume")
+        self.assertEqual(category, "owner_resume")
+        self.assertFalse(is_churn)
+
+
+class GitHubBusReopenReasonTests(unittest.TestCase):
+    """The CHANGES_REQUESTED relay must tag its reopen explicitly.
+
+    The relayed detail embeds the reviewer's PR body verbatim, so it must never be
+    the thing that decides how the reopen is classified.
+    """
+
+    def test_changes_requested_relay_passes_review_finding_reason(self) -> None:
+        self.assertEqual(github_bus.REOPEN_REASON_REVIEW_FINDING, "review_finding")
+        source = Path(github_bus.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "run_ai_status"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "reopen"
+        ]
+        self.assertTrue(calls, "expected at least one run_ai_status('reopen', ...) call")
+
+        tagged = [
+            call
+            for call in calls
+            if any(
+                kw.arg == "extra_args"
+                and "--reason=" in ast.unparse(kw.value)
+                # the reason may be spelled as the literal or via the shared constant
+                and (
+                    "review_finding" in ast.unparse(kw.value)
+                    or "REOPEN_REASON_REVIEW_FINDING" in ast.unparse(kw.value)
+                )
+                for kw in call.keywords
+            )
+        ]
+        self.assertEqual(
+            len(tagged), 1, "CHANGES_REQUESTED relay must pass --reason=review_finding exactly once"
+        )
+
+    def test_seeded_collaboration_guide_documents_reopen_reasons(self) -> None:
+        """Workers must be told the --reason enum, or the structured path goes unused."""
+        guide = worker_workspace._generated_collaboration_guide({})
+        self.assertIn("--reason=<reason>", guide)
+        for reason in (
+            "review_finding",
+            "stale_review_sha",
+            "worktree_lease_mismatch",
+            "control_plane_recovery",
+        ):
+            self.assertIn(reason, guide)
+        self.assertIn("never parsed", guide)
+
+    def test_run_ai_status_forwards_extra_args(self) -> None:
+        recorded: dict[str, Any] = {}
+
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            recorded["cmd"] = cmd
+            return _Proc()
+
+        with mock.patch.object(github_bus.subprocess, "run", side_effect=fake_run):
+            github_bus.run_ai_status(
+                "reopen", "TASK-1", "detail", actor="Claude", extra_args=["--reason=review_finding"]
+            )
+
+        self.assertEqual(recorded["cmd"][-1], "--reason=review_finding")
+        self.assertEqual(recorded["cmd"][-2], "detail")
 
 if __name__ == "__main__":
     unittest.main()
