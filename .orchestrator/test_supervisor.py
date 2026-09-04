@@ -14379,6 +14379,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             )
 
         self.assertTrue(changed)
+        self.assertEqual(task["status"], "review")
+        self.assertIsNone(task.get("approved_head"))
         self.assertEqual(len(status["handoffs"]), 1)
         self.assertEqual(status["handoffs"][0]["to"], "Claude2")
         self.assertEqual(status["handoffs"][0]["from"], "Antigravity5")

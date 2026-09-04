@@ -3,12 +3,20 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+THIS_DIR = Path(__file__).resolve().parent
+SCRIPTS_DIR = THIS_DIR.parent / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+import ai_status
 import common
+import dispatch_engine
 import github_bus
 import github_cloud_relay
 import github_reconciliation
@@ -3184,8 +3192,9 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(handoff["reason"], "merge_group_failure")
         self.assertEqual(handoff["run_id"], 31321422749)
 
-        # 3. Product task must not be automatically reopened, requeued, merged, or content-mutated
-        self.assertEqual(self.task["status"], "review_approved")
+        # 3. Product task canonically transitions to review status with approved_head cleared
+        self.assertEqual(self.task["status"], "review")
+        self.assertIsNone(self.task.get("approved_head"))
         self.assertIn("reviewer recovery handoff dispatched", self.task["next"])
 
         # 4. Bus state records correlation and marks run processed
@@ -3198,6 +3207,89 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(task_bus["pr_number"], 756)
 
         commit_trans.assert_called_once_with(self.config, self.status)
+
+    def test_reconcile_merge_group_failure_stale_snapshot_reject_does_not_mark_run_processed(self) -> None:
+        run_fixture = {
+            "id": 31321422749,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
+            "head_sha": "8eabc9734a000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+            "html_url": "https://github.com/o/r/actions/runs/31321422749",
+            "event": "merge_group",
+            "name": "CI",
+        }
+
+        with (
+            mock.patch("github_reconciliation.write_activity_log"),
+            mock.patch("status_transition.commit_canonical_task_transition", return_value=False) as commit_trans,
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config,
+                self.bus_state,
+                self.status,
+                "o/r",
+                [run_fixture],
+            )
+
+        # When commit fails closed due to stale snapshot, return False and do NOT mark run processed
+        self.assertFalse(changed)
+        commit_trans.assert_called_once()
+        self.assertNotIn(
+            "merge_group_run:31321422749",
+            self.bus_state.get("processed_merge_group_run_ids", []),
+        )
+        self.assertNotIn(
+            "last_merge_group_failure",
+            self.bus_state.get("tasks", {}).get("ODP-TEST-MG-001", {}),
+        )
+
+    def test_reconcile_merge_group_failure_normalize_handoffs_preserves_reviewer_recovery(self) -> None:
+        run_fixture = {
+            "id": 31321422749,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
+            "head_sha": "8eabc9734a000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+            "html_url": "https://github.com/o/r/actions/runs/31321422749",
+            "event": "merge_group",
+            "name": "CI",
+        }
+
+        with (
+            mock.patch("github_reconciliation.write_activity_log"),
+            mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config,
+                self.bus_state,
+                self.status,
+                "o/r",
+                [run_fixture],
+            )
+
+        self.assertTrue(changed)
+        # Execute the real normalize_handoffs function (not a mock)
+        ai_status.normalize_handoffs(self.status)
+
+        # The pending reviewer recovery handoff must be preserved (not marked done)
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(len(self.status["handoffs"]), 1)
+        handoff = self.status["handoffs"][0]
+        self.assertEqual(handoff["status"], "pending")
+        self.assertEqual(handoff["to"], "Claude2")
+        self.assertEqual(handoff["reason"], "merge_group_failure")
+
+        # Dispatch engine must evaluate priority 0 (REASON_REVIEW_READY) for reviewer Claude2
+        priority = dispatch_engine.dispatch_priority_for_task(
+            self.config, self.task, "Claude2"
+        )
+        self.assertEqual(priority, 0)
+
+    def test_fetch_merge_group_runs_propagates_offline(self) -> None:
+        with mock.patch("github_bus.gh_json", side_effect=github_bus.GitHubBusOffline("gh offline")):
+            with self.assertRaises(github_bus.GitHubBusOffline):
+                github_reconciliation.fetch_merge_group_runs("o/r")
 
     def test_reconcile_merge_group_success_has_no_side_effects(self) -> None:
         run_fixture = {

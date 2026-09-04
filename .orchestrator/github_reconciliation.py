@@ -244,21 +244,27 @@ def correlate_merge_group_task(
     return None, "unmatched"
 
 
+def _record_seen_run_ids(bus_state: dict[str, Any], new_keys: list[str], max_ids: int = 2000) -> None:
+    current = bus_state.setdefault("processed_merge_group_run_ids", [])
+    seen = set(current)
+    for k in new_keys:
+        if k not in seen:
+            current.append(k)
+            seen.add(k)
+    bus_state["processed_merge_group_run_ids"] = current[-max_ids:]
+
+
 def fetch_merge_group_runs(repo: str, limit: int = 30) -> list[dict[str, Any]]:
     """Fetch merge_group workflow runs from GitHub via gh_json."""
     from github_bus import gh_json
 
-    try:
-        data = gh_json(["api", f"repos/{repo}/actions/runs?event=merge_group&per_page={limit}"])
-        if isinstance(data, dict):
-            runs = data.get("workflow_runs", [])
-            return runs if isinstance(runs, list) else []
-        if isinstance(data, list):
-            return data
-        return []
-    except Exception as exc:
-        print(f"Warning: failed to fetch merge_group runs for {repo}: {exc}", file=sys.stderr)
-        return []
+    data = gh_json(["api", f"repos/{repo}/actions/runs?event=merge_group&per_page={limit}"])
+    if isinstance(data, dict):
+        runs = data.get("workflow_runs", [])
+        return runs if isinstance(runs, list) else []
+    if isinstance(data, list):
+        return data
+    return []
 
 
 def reconcile_merge_group_runs(
@@ -282,8 +288,10 @@ def reconcile_merge_group_runs(
     if not isinstance(runs, list) or not runs:
         return False
 
+    seen = set(bus_state.get("processed_merge_group_run_ids", []))
+    non_mutating_seen: list[str] = []
+    mutating_failures: list[tuple[str, str, dict[str, Any]]] = []
     changed = False
-    seen = set(bus_state.setdefault("processed_merge_group_run_ids", []))
 
     for run in runs:
         if not isinstance(run, dict):
@@ -305,14 +313,14 @@ def reconcile_merge_group_runs(
         if status_val in {"in_progress", "queued", "waiting", "requested", "pending"} and not conclusion:
             continue
 
-        seen.add(run_key)
-
         if conclusion in SUCCESS_CONCLUSIONS:
             # Success run: mark as processed, no failure side effects
+            non_mutating_seen.append(run_key)
             continue
 
         if conclusion not in FAILURE_CONCLUSIONS:
             # Non-failure / unrecognized completed conclusion
+            non_mutating_seen.append(run_key)
             continue
 
         # Failure processing
@@ -327,6 +335,7 @@ def reconcile_merge_group_runs(
                 "url": html_url,
                 "message": f"Merge group run {run_id} failed on ref '{queue_ref}', but could not parse a valid PR number.",
             })
+            non_mutating_seen.append(run_key)
             continue
 
         task, match_status = correlate_merge_group_task(status, pr_number, bus_state)
@@ -341,6 +350,7 @@ def reconcile_merge_group_runs(
                 "url": html_url,
                 "message": f"Merge group run {run_id} failed for PR #{pr_number} ({queue_ref}), but task correlation was {match_status}.",
             })
+            non_mutating_seen.append(run_key)
             continue
 
         task_id = str(task.get("id") or "")
@@ -357,6 +367,7 @@ def reconcile_merge_group_runs(
                 "url": html_url,
                 "message": f"Merge group run {run_id} failed for PR #{pr_number} on {queue_ref}, but task {task_id} is already {task_status}.",
             })
+            non_mutating_seen.append(run_key)
             continue
 
         existing_handoffs = status.get("handoffs", []) or []
@@ -371,6 +382,7 @@ def reconcile_merge_group_runs(
             for h in existing_handoffs
         )
         if already_handed_off:
+            non_mutating_seen.append(run_key)
             continue
 
         log_entry = {
@@ -390,8 +402,7 @@ def reconcile_merge_group_runs(
         }
         write_activity_log(config, log_entry)
 
-        task_entry = bus_state.setdefault("tasks", {}).setdefault(task_id, {})
-        task_entry["last_merge_group_failure"] = {
+        failure_record = {
             "run_id": run_id,
             "queue_ref": queue_ref,
             "head_sha": head_sha,
@@ -410,6 +421,12 @@ def reconcile_merge_group_runs(
             f"Merge group failed for PR #{pr_number} in run {run_id} (ref {queue_ref}, head {head_sha[:8] if head_sha else 'unknown'}). "
             f"Reviewer recovery handoff: inspect failure and coordinate remediation."
         )
+
+        for h in status.get("handoffs", []):
+            if h.get("task_id") == task_id and h.get("status") != "done":
+                h["status"] = "done"
+                h["resolved_at"] = now_ts
+
         handoff_entry = {
             "task_id": task_id,
             "from": handoff_from,
@@ -424,16 +441,34 @@ def reconcile_merge_group_runs(
             "pr_number": pr_number,
         }
         status.setdefault("handoffs", []).append(handoff_entry)
+
+        task["status"] = "review"
+        task.pop("approved_head", None)
+        task.pop("waiting_for", None)
         task["next"] = (
             f"Merge group run {run_id} failed on {queue_ref}; reviewer recovery handoff dispatched to {handoff_to}."
         )
         task["last_update"] = now_ts
+
+        mutating_failures.append((run_key, task_id, failure_record))
         changed = True
 
-    bus_state["processed_merge_group_run_ids"] = list(seen)
     if changed:
-        commit_canonical_task_transition(config, status)
-    return changed
+        committed = commit_canonical_task_transition(config, status)
+        if not committed:
+            _record_seen_run_ids(bus_state, non_mutating_seen)
+            return False
+
+        _record_seen_run_ids(bus_state, non_mutating_seen + [item[0] for item in mutating_failures])
+        for _, task_id, failure_record in mutating_failures:
+            task_entry = bus_state.setdefault("tasks", {}).setdefault(task_id, {})
+            task_entry["last_merge_group_failure"] = failure_record
+        return True
+
+    if non_mutating_seen:
+        _record_seen_run_ids(bus_state, non_mutating_seen)
+
+    return False
 
 
 def poll_merge_group_runs(
