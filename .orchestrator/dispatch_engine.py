@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 import worker_workspace
+from common import parse_iso_timestamp as parse_runtime_timestamp
 from dispatch_policy import (
     REASON_HELPER_CLAIM,
     task_priority_rank,
@@ -390,6 +391,7 @@ def repository_has_merge_queue(slug: str | None, base: str) -> bool | None:
     return present
 
 
+@_entrypoint
 def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
     """Enqueue a reviewed, CI-green PR for merge.
 
@@ -487,19 +489,20 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         "at": utc_now(),
         "attempts": previous_attempts + 1,
     }
-    write_activity_log(
-        config,
-        {
-            "type": "merge_route_applied",
-            "task_id": str(task.get("id") or ""),
-            "message": (
-                f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
-                f"(scope {scope}; repository has no merge queue)."
-                if route == "merged"
-                else f"PR #{pr_number} enqueued for merge (scope {scope})."
-            ),
-        },
-    )
+    if config and (config.get("paths") or {}).get("activity_log"):
+        write_activity_log(
+            config,
+            {
+                "type": "merge_route_applied",
+                "task_id": str(task.get("id") or ""),
+                "message": (
+                    f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
+                    f"(scope {scope}; repository has no merge queue)."
+                    if route == "merged"
+                    else f"PR #{pr_number} enqueued for merge (scope {scope})."
+                ),
+            },
+        )
     return route, f"scope={scope}"
 
 

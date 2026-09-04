@@ -21,6 +21,11 @@ CI_UNRESOLVED,
     PR_NOT_MERGED,
     READY,
 )
+from common import (
+    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
+)
 
 
 STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
@@ -422,11 +427,24 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
         task["last_update"] = timestamp
         task["next"] = message
         task.pop("approved_head", None)
+        task["last_reopened_by"] = "Supervisor"
+        task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+        task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+        task["last_reopened_at"] = timestamp
         for handoff in status.get("handoffs", ()) or []:
             if handoff.get("task_id") == task_id and handoff.get("status") != "done":
                 handoff["status"] = "done"
                 handoff["resolved_at"] = timestamp
-        sv.write_activity_log(config, {"type": "review_submission_repaired", "task_id": task_id, "message": message})
+        sv.write_activity_log(
+            config,
+            {
+                "type": "review_submission_repaired",
+                "task_id": task_id,
+                "message": message,
+                "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+                "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+            },
+        )
         changed = True
     if changed:
         if not commit_canonical_task_transition(config, status):
@@ -457,6 +475,11 @@ def reject_unsealed_worker_handoff(
     if not task_id or not any(item is task for item in status.get("tasks", []) or []):
         return False
     timestamp = sv.utc_now()
+    reopen_reason = (
+        REOPEN_REASON_WORKTREE_LEASE_MISMATCH
+        if "lease" in str(reason).lower()
+        else REOPEN_REASON_CONTROL_PLANE_RECOVERY
+    )
     message = (
         f"Owner closeout seal rejected ({reason}: {detail}). The task returned to in_progress; "
         "only the same owner may resume the recorded worktree, clean it, and resubmit the existing PR."
@@ -473,6 +496,10 @@ def reject_unsealed_worker_handoff(
     }
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
+    task["last_reopened_by"] = "Supervisor"
+    task["last_reopened_reason"] = reopen_reason
+    task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+    task["last_reopened_at"] = timestamp
     for handoff in status.get("handoffs", []) or []:
         if handoff.get("task_id") == task_id and handoff.get("status") != "done":
             handoff["status"] = "done"
@@ -486,6 +513,8 @@ def reject_unsealed_worker_handoff(
             "task_id": task_id,
             "worker_run_id": worker_run_id,
             "reason": reason,
+            "reopen_reason": reopen_reason,
+            "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "detail": detail,
             "message": message,
         },
@@ -522,6 +551,10 @@ def requeue_task_for_ci_repair(
     task["next"] = message
     task.pop("ci_pending_since_ts", None)
     task.pop("ci_pending_since", None)
+    task["last_reopened_by"] = "Supervisor"
+    task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+    task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+    task["last_reopened_at"] = sv.utc_now()
     task["ci_repair_last_requeued_ts"] = (
         datetime.now(UTC).timestamp() if now_ts is None else now_ts
     )
@@ -537,6 +570,8 @@ def requeue_task_for_ci_repair(
             "type": "ci_repair_requeued",
             "task_id": task_id,
             "message": message,
+            "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+            "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "approval_cleared": clear_approval,
         },
     )
