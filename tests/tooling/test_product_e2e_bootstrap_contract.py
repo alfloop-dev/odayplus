@@ -20,6 +20,7 @@ import yaml
 
 from delivery_toolchain.e2e.check_chromium_prerequisites import (
     check_chromium_prerequisites,
+    main,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -48,9 +49,13 @@ def test_prerequisites_check_script_exists_and_executable() -> None:
 
 
 def test_prerequisites_check_passes_in_ready_env() -> None:
-    ok, message = check_chromium_prerequisites(REPO_ROOT)
-    assert ok is True, f"Prerequisites check failed unexpectedly: {message}"
-    assert "Chromium browser and Playwright dependencies verified successfully." in message
+    mock_result = MagicMock(returncode=0, stdout="", stderr="")
+    with patch("shutil.which", side_effect=lambda cmd: f"/usr/bin/{cmd}"):
+        with patch("subprocess.run", return_value=mock_result) as mock_run:
+            ok, message = check_chromium_prerequisites(REPO_ROOT)
+            assert ok is True, f"Prerequisites check failed unexpectedly: {message}"
+            assert "Chromium browser and Playwright dependencies verified successfully." in message
+            mock_run.assert_called_once()
 
 
 def test_prerequisites_fail_closed_when_node_missing() -> None:
@@ -126,5 +131,23 @@ def test_ci_workflow_uses_unified_bootstrap_target() -> None:
     install_step = next((s for s in steps if s.get("name") == "Install product E2E dependencies"), None)
     assert install_step is not None, "Install product E2E dependencies step must exist in product-e2e-gate"
     assert install_step.get("run") == "make product-e2e-bootstrap"
+
+
+def test_main_succeeds_when_prerequisites_met() -> None:
+    with patch("sys.argv", ["check_chromium_prerequisites.py", "--quiet"]):
+        with patch(
+            "delivery_toolchain.e2e.check_chromium_prerequisites.check_chromium_prerequisites",
+            return_value=(True, "all good"),
+        ):
+            assert main() == 0
+
+
+def test_main_fails_when_prerequisites_missing() -> None:
+    with patch("sys.argv", ["check_chromium_prerequisites.py", "--quiet"]):
+        with patch(
+            "delivery_toolchain.e2e.check_chromium_prerequisites.check_chromium_prerequisites",
+            return_value=(False, "missing libs"),
+        ):
+            assert main() == 1
 
 
