@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import copy
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -78,6 +79,29 @@ class NetworkRebalanceRuntimeUnavailable(NetworkRebalanceError):
             "retryAfterSeconds": self.retry_after_seconds,
             "message": str(self),
         }
+
+
+@dataclass(frozen=True)
+class _CanonicalRowBinding:
+    """One Operator row reconciled against the canonical candidate it names.
+
+    Every field here is read off the durable solve, never off the projection
+    row. A caller that goes on to write a Govern approval therefore quotes what
+    the solver produced rather than what the console handed back, so a tampered
+    or stale projection cannot be laundered into the approval record by passing
+    a reconciliation that only checked the row's identifiers.
+    """
+
+    scenario: Any
+    solve: Any
+    candidate_id: str
+    modelled_classes: list[str]
+    unmodelled_classes: list[str]
+    actions: tuple[Any, ...]
+    action_signature: tuple[tuple[str, str], ...]
+
+    def action_payload(self) -> list[dict[str, Any]]:
+        return [action.to_dict() for action in self.actions]
 
 
 GovernApprovalWriter = Callable[[dict[str, Any]], dict[str, Any]]
@@ -909,11 +933,16 @@ class NetworkRebalanceService:
         # governance clock, and a copy in this module would keep approving on
         # rules the registry had already retired.
         canonical_scenario = None
+        binding: _CanonicalRowBinding | None = None
         selected_candidate_id = str(scenario.get("id") or "").strip() or None
         if self._require_canonical:
-            canonical_scenario, _solve, modelled, unmodelled = (
-                self._canonical_disclosure_for_row(store, scenario, require_solved=True)
+            binding = self._canonical_disclosure_for_row(
+                store, scenario, require_solved=True
             )
+            canonical_scenario = binding.scenario
+            modelled = binding.modelled_classes
+            unmodelled = binding.unmodelled_classes
+            selected_candidate_id = binding.candidate_id
         else:
             modelled, unmodelled = self._declared_disclosure(scenario)
         policy = self._require_disclosure_policy()
@@ -953,6 +982,8 @@ class NetworkRebalanceService:
                 selected_candidate_id=selected_candidate_id,
             )
             ack_classes = [str(item) for item in acknowledgement.acknowledged_classes]
+            if binding is not None:
+                self._require_acknowledgement_subject(acknowledgement, binding)
 
         # The Operator request is the production submission boundary. Do not
         # create a Govern approval while the canonical scenario is still merely
@@ -997,7 +1028,21 @@ class NetworkRebalanceService:
             "requestedBy": actor_name or "Expansion Manager",
             "requiredRoleIds": ["opsLead", "auditPm"],
             "selectedCandidateId": selected_candidate_id,
-            "selectedActions": _copy(scenario.get("actions", [])),
+            # Quoted from the canonical candidate, not from the projection row.
+            # The row has already been reconciled against it, so the two agree
+            # here by construction -- writing the canonical side keeps that true
+            # for any future row field the reconciliation has not yet learned to
+            # check, instead of making the approval trust the console again.
+            "selectedActions": (
+                binding.action_payload()
+                if binding is not None
+                else _copy(scenario.get("actions", []))
+            ),
+            "selectedActionSignature": (
+                [list(item) for item in binding.action_signature]
+                if binding is not None
+                else None
+            ),
             "modelledConstraintClasses": modelled,
             "unmodelledConstraintClasses": unmodelled,
             "blockedConstraintClasses": list(evaluation.blocking),
@@ -1214,6 +1259,159 @@ class NetworkRebalanceService:
             )
         return modelled_names, unmodelled_names
 
+    # Every economic field the solver attaches to an action. Comparing only the
+    # (entity, action) signature would accept a row that keeps the right moves
+    # but restates their margin, cost or risk -- which is what the operator is
+    # actually reading when they decide to submit.
+    _ACTION_NUMERIC_FIELDS = (
+        "expected_gross_margin",
+        "budget_cost",
+        "risk_score",
+        "construction_days",
+        "equipment_units",
+        "labour_headcount",
+        "coverage_delta",
+    )
+    _ACTION_TEXT_FIELDS = ("dilution_zone_id", "period_key")
+    _ACTION_SEQUENCE_FIELDS = ("source_snapshot_ids", "notes")
+
+    # Row aggregate -> the canonical candidate attribute it claims to restate.
+    _ROW_AGGREGATE_FIELDS = (
+        ("score", "objective_value"),
+        ("expectedGrossMargin", "expected_gross_margin"),
+        ("investmentTwd", "budget_usage"),
+        ("risk", "average_risk"),
+        ("capacityDelta", "capacity_delta"),
+    )
+
+    @classmethod
+    def _normalise_action(cls, raw: Any, *, source: str) -> tuple[Any, ...]:
+        """One action reduced to a comparable value, or a refusal."""
+        if hasattr(raw, "to_dict"):
+            raw = raw.to_dict()
+        if not isinstance(raw, Mapping):
+            raise NetworkRebalancePolicyError(f"{source} is not an action record")
+        entity_id = str(raw.get("entity_id", "") or "").strip()
+        action = str(raw.get("action", "") or "").strip().upper()
+        if not entity_id or not action:
+            raise NetworkRebalancePolicyError(
+                f"{source} does not name both an entity and an action"
+            )
+        values: list[Any] = [entity_id, action]
+        for field_name in cls._ACTION_NUMERIC_FIELDS:
+            value = raw.get(field_name)
+            if value is None:
+                values.append(None)
+                continue
+            try:
+                values.append(round(float(value), 9))
+            except (TypeError, ValueError) as exc:
+                raise NetworkRebalancePolicyError(
+                    f"{source}.{field_name} is not a number"
+                ) from exc
+        try:
+            values.append(int(raw.get("capacity_delta", 0) or 0))
+        except (TypeError, ValueError) as exc:
+            raise NetworkRebalancePolicyError(
+                f"{source}.capacity_delta is not an integer"
+            ) from exc
+        for field_name in cls._ACTION_TEXT_FIELDS:
+            values.append(str(raw.get(field_name, "") or ""))
+        for field_name in cls._ACTION_SEQUENCE_FIELDS:
+            sequence = raw.get(field_name) or ()
+            if isinstance(sequence, (str, bytes)) or not isinstance(sequence, Sequence):
+                raise NetworkRebalancePolicyError(
+                    f"{source}.{field_name} is not a sequence"
+                )
+            values.append(tuple(str(item) for item in sequence))
+        return tuple(values)
+
+    @classmethod
+    def _normalise_actions(cls, raw: Any, *, source: str) -> tuple[tuple[Any, ...], ...]:
+        """An action list reduced to an order-insensitive comparable value.
+
+        ``None`` and a non-sequence are refusals rather than an empty plan: a
+        row that carries no action list has not said this candidate does
+        nothing, it has failed to say what the candidate does, and the two must
+        not reconcile against a canonical candidate that happens to be empty.
+        """
+        if raw is None:
+            raise NetworkRebalancePolicyError(f"{source} declares no actions")
+        if isinstance(raw, (str, bytes, Mapping)) or not isinstance(raw, Sequence):
+            raise NetworkRebalancePolicyError(f"{source} actions are not a sequence")
+        normalised = [
+            cls._normalise_action(item, source=f"{source} action {index}")
+            for index, item in enumerate(raw, start=1)
+        ]
+        # Sorted by repr because the tuples mix floats with ``None`` for the
+        # resource fields a caller did not declare, and those do not order
+        # against each other.
+        return tuple(sorted(normalised, key=repr))
+
+    @staticmethod
+    def _action_signature(actions: Sequence[Any]) -> tuple[tuple[str, str], ...]:
+        """The (entity, action) pairs, in the spelling the NetPlan receipt uses."""
+        return tuple(
+            sorted(
+                (str(action.entity_id), str(action.action.value)) for action in actions
+            )
+        )
+
+    @classmethod
+    def _reconcile_row_candidate(
+        cls,
+        row: Mapping[str, Any],
+        candidate: Any,
+        *,
+        actions: Sequence[Any],
+        source: str,
+    ) -> None:
+        """Refuse a row whose plan content differs from the candidate it names.
+
+        The disclosure partition and the candidate id are only the row's claim
+        about *which* plan it is. They stay identical under a projection edit
+        that empties or rewrites the actions, so an approval built from a row
+        checked on identity alone can carry a different plan than the durable
+        NetPlan acknowledgement and ApprovalRecord bound to the same candidate.
+        """
+        expected_actions = cls._normalise_actions(
+            [action.to_dict() for action in actions],
+            source=f"canonical {source}",
+        )
+        row_actions = cls._normalise_actions(row.get("actions"), source=source)
+        if row_actions != expected_actions:
+            raise NetworkRebalancePolicyError(
+                f"{source} actions do not match the canonical candidate they name; "
+                "the plan shown in the console is not the plan that would be approved"
+            )
+
+        for row_field, candidate_field in cls._ROW_AGGREGATE_FIELDS:
+            if row_field not in row or row[row_field] is None:
+                raise NetworkRebalancePolicyError(f"{source} is missing {row_field}")
+            expected = getattr(candidate, candidate_field)
+            try:
+                actual = float(row[row_field])
+            except (TypeError, ValueError) as exc:
+                raise NetworkRebalancePolicyError(
+                    f"{source}.{row_field} is not a number"
+                ) from exc
+            if round(actual, 9) != round(float(expected), 9):
+                raise NetworkRebalancePolicyError(
+                    f"{source}.{row_field} is {row[row_field]!r} but the canonical "
+                    f"candidate reports {expected!r}"
+                )
+
+        expected_binding = tuple(
+            str(item) for item in getattr(candidate, "binding_constraints", ())
+        )
+        raw_binding = row.get("bindingConstraints")
+        if raw_binding is None or isinstance(raw_binding, (str, bytes, Mapping)):
+            raise NetworkRebalancePolicyError(f"{source} is missing bindingConstraints")
+        if tuple(str(item) for item in raw_binding) != expected_binding:
+            raise NetworkRebalancePolicyError(
+                f"{source} binding constraints do not match the canonical candidate"
+            )
+
     @classmethod
     def _row_constraint_partition(
         cls, scenario: dict[str, Any], *, source: str
@@ -1248,7 +1446,7 @@ class NetworkRebalanceService:
         row: dict[str, Any],
         *,
         require_solved: bool = False,
-    ) -> tuple[Any, Any, list[str], list[str]]:
+    ) -> _CanonicalRowBinding:
         """Bind one Operator row to the durable scenario and solve it represents.
 
         Projection rows are a convenience for the console, not an authority. In
@@ -1256,6 +1454,14 @@ class NetworkRebalanceService:
         the canonical NetPlan repository remains correct. Submission therefore
         validates the selected row against the canonical solve and constraints,
         including alternatives, before policy evaluation or acknowledgement.
+
+        The reconciliation covers the row's plan content -- its actions and the
+        impact figures restated from them -- and not only its candidate id and
+        disclosure partition. Those identifiers survive a projection edit that
+        rewrites the actions, and the durable NetPlan acknowledgement and
+        ApprovalRecord are bound to the canonical candidate's actions, so an
+        identity-only check lets the Govern approval and the NetPlan record
+        describe two different plans under one candidate id.
         """
         if self._netplan_repository is None:
             raise NetworkRebalancePolicyError(
@@ -1311,6 +1517,11 @@ class NetworkRebalanceService:
         row_id = str(row.get("id") or "").strip()
         expected_row_modelled = actual_modelled
         expected_row_unmodelled = actual_unmodelled
+        # The canonical candidate this row claims to be: the primary plan, or
+        # one enumerated alternative. Everything the approval later quotes is
+        # taken from here.
+        candidate: Any = solve.result
+        candidate_actions = tuple(getattr(solve.result, "selected_actions", ()))
         if row_id != canonical_id:
             prefix = f"{canonical_id}:alternative:"
             if not row_id.startswith(prefix):
@@ -1329,6 +1540,8 @@ class NetworkRebalanceService:
                     f"selected Operator alternative {row_id!r} is absent from canonical solve {canonical_id}"
                 )
             alternative = alternatives[index]
+            candidate = alternative
+            candidate_actions = tuple(getattr(alternative, "actions", ()))
             expected_row_modelled, expected_row_unmodelled = (
                 self._validate_constraint_partition(
                     getattr(alternative, "modelled_constraint_classes", None),
@@ -1344,8 +1557,9 @@ class NetworkRebalanceService:
                     f"canonical solve {canonical_id} alternative {index + 1} has a divergent disclosure"
                 )
 
+        row_source = f"Operator scenario {row_id or '<missing>'}"
         row_modelled, row_unmodelled = self._row_constraint_partition(
-            row, source=f"Operator scenario {row_id or '<missing>'}"
+            row, source=row_source
         )
         if (row_modelled, row_unmodelled) != (
             expected_row_modelled,
@@ -1354,7 +1568,21 @@ class NetworkRebalanceService:
             raise NetworkRebalancePolicyError(
                 f"Operator scenario {row_id!r} disclosure does not match canonical solve {canonical_id}"
             )
-        return canonical_scenario, solve, expected_row_modelled, expected_row_unmodelled
+        self._reconcile_row_candidate(
+            row,
+            candidate,
+            actions=candidate_actions,
+            source=row_source,
+        )
+        return _CanonicalRowBinding(
+            scenario=canonical_scenario,
+            solve=solve,
+            candidate_id=row_id,
+            modelled_classes=expected_row_modelled,
+            unmodelled_classes=expected_row_unmodelled,
+            actions=candidate_actions,
+            action_signature=self._action_signature(candidate_actions),
+        )
 
     def _canonical_netplan_service(self) -> NetPlanService:
         if self._netplan_repository is None:
@@ -1393,6 +1621,49 @@ class NetworkRebalanceService:
             raise NetworkRebalancePolicyError(
                 f"netplan constraint disclosure policy could not be resolved: {exc}"
             ) from exc
+
+    @staticmethod
+    def _require_acknowledgement_subject(
+        acknowledgement: Any,
+        binding: _CanonicalRowBinding,
+    ) -> None:
+        """Refuse to publish an approval the durable receipt does not cover.
+
+        ``NetPlanService`` resolves the acknowledgement subject from the
+        canonical solve independently of this module. Comparing the two here is
+        the point at which the Govern approval about to be written is shown to
+        describe the same candidate, the same actions and the same problem hash
+        as the receipt a later ``decide`` will re-verify. Without it the two
+        derivations can drift apart silently and the divergence only surfaces
+        as an approval that cannot be executed.
+        """
+        recorded_candidate = str(
+            getattr(acknowledgement, "selected_candidate_id", "") or ""
+        )
+        if recorded_candidate != binding.candidate_id:
+            raise NetworkRebalancePolicyError(
+                f"disclosure acknowledgement was recorded against candidate "
+                f"{recorded_candidate!r}, not the submitted "
+                f"{binding.candidate_id!r}"
+            )
+        recorded_signature = tuple(
+            (str(entity_id), str(action))
+            for entity_id, action in getattr(
+                acknowledgement, "selected_action_signature", ()
+            )
+        )
+        if recorded_signature != binding.action_signature:
+            raise NetworkRebalancePolicyError(
+                "disclosure acknowledgement was recorded against a different set of "
+                "actions than the submitted candidate carries"
+            )
+        recorded_hash = str(getattr(acknowledgement, "solver_problem_hash", "") or "")
+        expected_hash = str(getattr(binding.solve, "problem_hash", "") or "")
+        if recorded_hash != expected_hash:
+            raise NetworkRebalancePolicyError(
+                "disclosure acknowledgement was recorded against a different solve "
+                "than the one being submitted"
+            )
 
     def _acknowledge_unmodelled_classes(
         self,
@@ -1519,9 +1790,9 @@ class NetworkRebalanceService:
                     raise NetworkRebalancePolicyError(
                         "canonical disclosure view has no owning store"
                     )
-                _canonical, _solve, modelled, unmodelled = (
-                    self._canonical_disclosure_for_row(store, scenario)
-                )
+                binding = self._canonical_disclosure_for_row(store, scenario)
+                modelled = binding.modelled_classes
+                unmodelled = binding.unmodelled_classes
             except NetworkRebalancePolicyError:
                 # A projection row that cannot be reconciled with the canonical
                 # solve is rendered as entirely unverifiable. Keeping even a

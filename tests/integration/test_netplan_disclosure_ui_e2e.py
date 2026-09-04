@@ -1334,6 +1334,240 @@ def test_e2e_selected_alternative_uses_one_approval_subject_end_to_end(
         engine.close()
 
 
+@pytest.mark.parametrize(
+    ("tamper_label", "tamper"),
+    [
+        # The reported fail-open: the row keeps its candidate id and its full
+        # eight-class partition, and claims the alternative selects nothing.
+        ("emptied actions", lambda row: row.update({"actions": []})),
+        # Same moves, restated economics. The signature survives, so a check
+        # built only on (entity, action) pairs would pass this.
+        (
+            "restated action margin",
+            lambda row: row["actions"][0].update(
+                {"expected_gross_margin": row["actions"][0]["expected_gross_margin"] + 500_000.0}
+            ),
+        ),
+        # One extra move appended: the plan the operator reads is larger than
+        # the plan the NetPlan receipt is bound to.
+        (
+            "appended action",
+            lambda row: row["actions"].append(
+                {
+                    "entity_id": "CAND-ZZZ",
+                    "action": "OPEN",
+                    "expected_gross_margin": 9_000_000.0,
+                    "budget_cost": 0.0,
+                    "risk_score": 0.1,
+                    "capacity_delta": 40,
+                    "construction_days": None,
+                    "equipment_units": None,
+                    "labour_headcount": None,
+                    "coverage_delta": None,
+                    "dilution_zone_id": "",
+                    "period_key": "",
+                    "source_snapshot_ids": [],
+                    "notes": [],
+                }
+            ),
+        ),
+        # The aggregate impact figures the console renders beside the actions.
+        ("restated score", lambda row: row.update({"score": row["score"] + 1_000_000.0})),
+        (
+            "restated investment",
+            lambda row: row.update({"investmentTwd": row["investmentTwd"] / 2}),
+        ),
+        (
+            "restated binding constraints",
+            lambda row: row.update({"bindingConstraints": ["max_budget"]}),
+        ),
+    ],
+)
+def test_e2e_tampered_projection_row_cannot_reach_govern_or_a_durable_receipt(
+    tmp_path: Path,
+    tamper_label: str,
+    tamper: Any,
+) -> None:
+    """A projection edit that keeps the row's identity must not reach approval.
+
+    The candidate id and the disclosure partition say *which* canonical plan a
+    row claims to be; they survive untouched when the row's plan content is
+    rewritten. The durable NetPlan acknowledgement and ApprovalRecord are bound
+    to the canonical candidate's actions, so a submit gate that reconciles only
+    the identifiers publishes a Govern approval describing one plan while the
+    NetPlan record describes another, under a single candidate id.
+
+    Every case here leaves the eight-class partition and the candidate id
+    exactly as the solver produced them.
+    """
+    scenario, repo, netplan_service, rebalance_service, engine = _canonical_surface(
+        f"SCENARIO-E2E-TAMPER-{tamper_label.replace(' ', '-').upper()}",
+        _fully_modelled_constraints(),
+        database_path=tmp_path / "netplan-disclosure-tamper-e2e.sqlite3",
+    )
+    assert engine is not None
+    try:
+        client = _mount_operator_api(rebalance_service)
+        solved = client.post(
+            "/api/v1/operator/network-rebalance/stores/STORE-101/netplan/solve",
+            headers={"Idempotency-Key": "idem-tamper-solve"},
+            json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+        )
+        assert solved.status_code == 200, solved.text
+        rows = solved.json()["store"]["netPlanScenarios"]
+        assert len(rows) >= 2
+        alternative_id = rows[1]["id"]
+
+        selected = client.post(
+            f"/api/v1/operator/network-rebalance/stores/STORE-101/scenarios/{alternative_id}/select",
+            headers={"Idempotency-Key": "idem-tamper-select"},
+            json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+        )
+        assert selected.status_code == 200, selected.text
+
+        solve = repo.get_solve(scenario.scenario_id)
+        assert solve is not None
+        verifier = _attach_verifier(
+            netplan_service,
+            scenario,
+            solve,
+            receipt_id="receipt-e2e-tamper",
+            selected_candidate_id=alternative_id,
+        )
+        rebalance_service.netplan_approval_verifier = verifier
+
+        store = rebalance_service._store("STORE-101")
+        row = next(
+            item for item in store["netPlanScenarios"] if item["id"] == alternative_id
+        )
+        untouched_partition = (
+            list(row["modelledConstraintClasses"]),
+            list(row["unmodelledConstraintClasses"]),
+        )
+        tamper(row)
+        assert row["id"] == alternative_id, "the tamper must not change the row identity"
+        assert (
+            list(row["modelledConstraintClasses"]),
+            list(row["unmodelledConstraintClasses"]),
+        ) == untouched_partition, "the tamper must not change the disclosure partition"
+
+        submitted = client.post(
+            "/api/v1/operator/network-rebalance/stores/STORE-101/submit-review",
+            headers={"Idempotency-Key": f"idem-tamper-submit-{tamper_label}"},
+            json={
+                "actorRoleId": "expansionManager",
+                "actorName": "王若寧",
+                "reason": "替代方案已由 Operator 提交 Govern 審核",
+                "acknowledgedClasses": ["LEASE", "SEQUENCING"],
+                "acknowledgementReason": "替代方案的租約與時序暴露已由具權限網路規劃主管確認。",
+                "acknowledgementActorId": APPROVAL_PRINCIPAL,
+                "approvalReceiptId": "receipt-e2e-tamper",
+            },
+        )
+        assert submitted.status_code == 422, submitted.text
+
+        # Nothing partial may survive the refusal: no Govern approval, no
+        # durable signature, and the canonical scenario still SOLVED so a later
+        # decide cannot find something to approve.
+        assert repo.list_disclosure_acknowledgements(scenario.scenario_id) == []
+        assert repo.get_scenario(scenario.scenario_id).status.value == "solved"
+
+        snapshot = client.get("/api/v1/operator/network-rebalance")
+        assert snapshot.status_code == 200, snapshot.text
+        store_payload = next(
+            item for item in snapshot.json()["stores"] if item["storeId"] == "STORE-101"
+        )
+        assert store_payload["status"] == "netplanreview"
+        assert not store_payload.get("relatedApprovalId")
+        # The console must not present the tampered row as verified either: a
+        # row that cannot be reconciled is unverifiable, not fully modelled.
+        tampered_view = next(
+            item
+            for item in store_payload["netPlanScenarios"]
+            if item["id"] == alternative_id
+        )
+        assert tampered_view["disclosureUndeclared"] is True
+        assert tampered_view["modelledConstraintClasses"] == []
+    finally:
+        engine.close()
+
+
+def test_e2e_untampered_alternative_approval_quotes_the_canonical_actions(
+    tmp_path: Path,
+) -> None:
+    """The Govern approval carries the canonical candidate's actions and signature.
+
+    The companion to the tamper cases above: the reconciliation is only
+    meaningful if the approval that survives it is provably derived from the
+    canonical solve rather than copied from the row it was reconciled against.
+    """
+    scenario, repo, netplan_service, rebalance_service, engine = _canonical_surface(
+        "SCENARIO-E2E-CANONICAL-QUOTE-001",
+        _fully_modelled_constraints(),
+        database_path=tmp_path / "netplan-disclosure-canonical-quote.sqlite3",
+    )
+    assert engine is not None
+    try:
+        client = _mount_operator_api(rebalance_service)
+        solved = client.post(
+            "/api/v1/operator/network-rebalance/stores/STORE-101/netplan/solve",
+            headers={"Idempotency-Key": "idem-quote-solve"},
+            json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+        )
+        assert solved.status_code == 200, solved.text
+        alternative = solved.json()["store"]["netPlanScenarios"][1]
+
+        selected = client.post(
+            f"/api/v1/operator/network-rebalance/stores/STORE-101/scenarios/{alternative['id']}/select",
+            headers={"Idempotency-Key": "idem-quote-select"},
+            json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+        )
+        assert selected.status_code == 200, selected.text
+
+        solve = repo.get_solve(scenario.scenario_id)
+        assert solve is not None
+        index = int(alternative["id"].rsplit(":", 1)[1]) - 1
+        canonical_actions = solve.result.alternatives[index].actions
+        rebalance_service.netplan_approval_verifier = _attach_verifier(
+            netplan_service,
+            scenario,
+            solve,
+            receipt_id="receipt-e2e-quote",
+            selected_candidate_id=alternative["id"],
+        )
+
+        submitted = client.post(
+            "/api/v1/operator/network-rebalance/stores/STORE-101/submit-review",
+            headers={"Idempotency-Key": "idem-quote-submit"},
+            json={
+                "actorRoleId": "expansionManager",
+                "actorName": "王若寧",
+                "reason": "替代方案已由 Operator 提交 Govern 審核",
+                "acknowledgedClasses": ["LEASE", "SEQUENCING"],
+                "acknowledgementReason": "替代方案的租約與時序暴露已由具權限網路規劃主管確認。",
+                "acknowledgementActorId": APPROVAL_PRINCIPAL,
+                "approvalReceiptId": "receipt-e2e-quote",
+            },
+        )
+        assert submitted.status_code == 200, submitted.text
+        approval = submitted.json()["governApproval"]
+        assert approval["selectedActions"] == [
+            action.to_dict() for action in canonical_actions
+        ]
+        expected_signature = sorted(
+            [action.entity_id, action.action.value] for action in canonical_actions
+        )
+        assert approval["selectedActionSignature"] == expected_signature
+
+        acknowledgement = repo.list_disclosure_acknowledgements(scenario.scenario_id)[0]
+        assert [
+            list(item) for item in acknowledgement.selected_action_signature
+        ] == expected_signature
+        assert acknowledgement.solver_problem_hash == solve.problem_hash
+    finally:
+        engine.close()
+
+
 def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared() -> None:
     """The HTTP boundary reports and refuses a doubly-empty disclosure.
 
