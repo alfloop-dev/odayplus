@@ -189,13 +189,11 @@
         },
         {
           "name": "BACKTEST",
-          "status": "absent",
-          "note": "run_rolling_backtest exists in models/shared_ml/backtest.py and is used by the training pipeline, but modules/learninghub references it nowhere. It is not a release mode, so a release cannot be gated on a backtest result.",
+          "status": "satisfied",
+          "evidence": "models/shared_ml/backtest.py::BacktestReceipt",
+          "note": "Backtest is connected as a versioned release admission gate for FULL and CANARY releases, binding model version, dataset snapshot, code version (git SHA), and DecisionPolicy thresholds.",
           "disposition": {
-            "state": "OPEN",
-            "assigned_to": "ML Platform Lead",
-            "next_review_date": "2026-10-01",
-            "rationale": "Rolling backtest exists in training pipeline but is not connected as a LearningHub release gate (Batch 6)."
+            "state": "VERIFIED"
           }
         }
       ]
@@ -290,12 +288,28 @@
         {
           "name": "PARTIAL",
           "status": "absent",
-          "note": "JobStatus in shared/governance/vocabularies.py now carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics.",
+          "note": "JobStatus in shared/governance/vocabularies.py now carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics. The Batch 5b producer trace under ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 closed the tree-level question against every registered job type and named the partial-shaped outcomes that are deliberately not mapped onto JobStatus.",
           "disposition": {
-            "state": "OPEN",
-            "assigned_to": "Platform Infrastructure Lead",
+            "state": "BLOCKED_BY_EVIDENCE",
+            "previous_state": "OPEN",
+            "history": [
+              {
+                "state": "OPEN",
+                "date": "2026-09-03",
+                "note": "Gap registered by the disposition registry: the vocabulary carries PARTIAL, no producer was found."
+              },
+              {
+                "state": "BLOCKED_BY_EVIDENCE",
+                "date": "2026-09-03",
+                "note": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 finished the static producer trace. What is left is not more code reading."
+              }
+            ],
+            "evidence_needed": "Two things, neither of which the tree can answer. (1) A live production queue/scheduler/worker receipt inventory, to say whether any deployed job has ever reported JobStatus.PARTIAL; the repo trace only establishes that no code path writes it. (2) A product decision on whether the partial-shaped command outcomes that do exist -- batch intake 207 per-row receipts, XLSX partial commit, external ingestion accepted/quarantined counts -- should become durable jobs carrying member-level receipts and a member retry contract.",
+            "evidence_owner": "Platform Infrastructure Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b)."
+            "assigned_to": "Platform Infrastructure Lead",
+            "evidence_ref": "docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md",
+            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b). The producer trace walked the default registry (forecast, external-fetch, assisted-listing-intake) and every module worker entry point and found no PARTIAL write. The partial-shaped outcomes that do exist are synchronous command receipts, not queue jobs; wiring them onto JobStatus to complete the member count would be the fake implementation this gate exists to prevent."
           }
         }
       ]
@@ -332,25 +346,29 @@
         {
           "name": "BRAND_TRANSFER",
           "status": "absent",
-          "note": "Two hits in the whole tree and neither is an implementation: a view name in tests/data/test_pit_snapshot.py, and a hard-coded brand_transfer_confidence of 0.76 in a sample payload in services/signal-store/client.py, which no product module imports.",
+          "note": "core.brands holds static metadata only; brand_transfer_view.sql is a synthetic mock view (cross join with fixed 0.15 transfer_ratio and 1.0 confidence) unconsumed by SiteScore; no producer in repo. Evidence request ER-SITE001-BRAND-TRANSFER-001 and formal handback HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
-            "evidence_needed": "Historical brand customer migration dataset existence verification (Batch 0)",
-            "evidence_owner": "Market Intelligence Lead",
+            "evidence_needed": "External consumer panel feed (e.g. receipt/panel provider) or cross-brand POS loyalty dataset confirmation with versioned schema, producer SLA, and feature specification",
+            "evidence_owner": "Market Intelligence Lead / Commercial Strategy Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Awaiting Batch 0 data confirmation before converting to implementation or formal amendment."
+            "rationale": "Repo contains only static brand metadata and synthetic cross-join mock view; no real producer exists. Handback package HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops and Architecture Board for data ingestion contract or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
+            "formal_handback_ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#2-member-1brand-transfer既有品牌客群移轉處置",
+            "reopen_trigger": "External consumer panel feed or cross-brand POS loyalty dataset is contracted and ingested into raw data platform with versioned schema, verified producer SLA, and formal feature extraction specification approved by Commercial Strategy Lead."
           }
         },
         {
           "name": "FORMAT_CONVERSION",
           "status": "absent",
-          "note": "modules/site_economics/domain/formats.py::TargetFormatRegistry picks a store format by area. That is choosing a format, not converting an existing store from one to another; the simulator has no conversion path.",
+          "note": "PostgreSQL (000001) and SQLite (000004) schemas maintain static store_format_code with no format conversion event or renovation history tables; TargetFormatRegistry only selects format by area (new store selection, not conversion); simulator.py only models greenfield new stores. Production-path conversion hits are Listing-to-Candidate conversion or Evidence Level migration notes. Evidence request ER-SITE001-FORMAT-CONVERSION-001 and formal handback HB-SITE001-FORMAT-CONVERSION-001 submitted per docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
-            "evidence_needed": "Active store format conversion operational workflow and data confirmation (Batch 0)",
-            "evidence_owner": "Retail Operations Lead",
+            "evidence_needed": "Active store format conversion operational workflow playbook, brownfield financial simulation parameters (downtime loss, capex schedules), and conversion event schema confirmation",
+            "evidence_owner": "Retail Operations Lead / Site Economics Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Awaiting Batch 0 confirmation that store conversion events exist in production."
+            "rationale": "Repo contains only static store format codes and greenfield simulation logic; no format conversion event tracking or remodeling financial model exists in repo. Handback package HB-SITE001-FORMAT-CONVERSION-001 submitted to Human/Ops and Architecture Board for operational playbook confirmation or formal amendment per ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md.",
+            "formal_handback_ref": "docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md#3-member-2format-conversion店型轉換業務事件處置",
+            "reopen_trigger": "Store Operations formally approves a brownfield format conversion playbook with remodeling cost schedules and downtime impact parameters; schema migration introduces store format transition event tables and tracking with authoritative owner sign-off."
           }
         }
       ]
@@ -395,6 +413,105 @@
           "note": "Performance drift compares observed metrics against baseline_metrics using absolute/relative degradation thresholds and governed decision policies.",
           "disposition": {
             "state": "VERIFIED"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-INT-001",
+      "statement": "整合層必須支援 Batch、CDC、API、File 與 Event 來源攝取模式。",
+      "member_count": 5,
+      "members": [
+        {
+          "name": "BATCH",
+          "status": "satisfied",
+          "evidence": "apps/data_platform/source.py::MongoSource",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "API",
+          "status": "satisfied",
+          "evidence": "modules/external_data/connectors/provider_registry.py::PROVIDER_REGISTRY",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "FILE",
+          "status": "satisfied",
+          "evidence": "modules/external_data/application/xlsx_import.py::XlsxCommitReceipt",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "EVENT",
+          "status": "absent",
+          "note": "The machine_status_event schema contract declares integration_mode=event_stream and envelope=event, but in production core.machine_status_events is populated via batch watermark reads of device_log (store.py:394-401). No event broker/stream consumer currently exists in production.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Platform Infrastructure Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Schema contract declares event_stream mode but production ingestion path executes via device_log batch ingestion; reconcile contract or implement event consumer."
+          }
+        },
+        {
+          "name": "CDC",
+          "status": "absent",
+          "note": "Audited in ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md and ODP_INT001_CDC_DISPOSITION_2026-09-03.md. No production upstream requires CDC for change log, ordering, latency, or delete semantics; downstream data plane has no delete propagation path; change stream credentials require expanded cluster-level privileges. Maintained as absent; handback submitted for formal human requirement amendment / waiver governance.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Data Platform Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "No production upstream requires CDC; downstream sink has no delete path; credential boundary expansion unapproved. AI cannot self-sign waivers; pending human governance amendment/waiver authorization.",
+            "formal_handback_ref": "docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-FCT-004",
+      "statement": "系統必須提供成長階段、轉折機率、異常證據與根因候選。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "TRAJECTORY_CLASS",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.trajectory_class",
+          "note": "ForecastOutput carries trajectory_class ('growing', 'mature', 'declining', 'plateau') per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "TURNING_POINT_PROBABILITY",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.turning_point_probability",
+          "note": "ForecastOutput carries turning_point_probability per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ANOMALY_EVIDENCE",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::Alert.evidence_json",
+          "note": "Alert carries structured anomaly evidence in evidence_json per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ROOT_CAUSE_CANDIDATE",
+          "status": "absent",
+          "note": "No automated root-cause deduction producer exists in the current production tree. Keep the schema field explicitly marked RESERVED (unproduced), with designated Owner (ForecastOps / Platform Ops) and Target Milestone (Wave 5+). Do not synthesize a fake producer.",
+          "disposition": {
+            "state": "IMPLEMENTATION_READY",
+            "assigned_to": "ForecastOps / Platform Ops",
+            "target_phase": "Wave 5+",
+            "rationale": "Full-tree lineage trace confirms no automated root-cause producer exists. The compatible WorkOrder, presentation, and database contracts are explicitly marked RESERVED (unproduced), and the real producer work is assigned to ForecastOps / Platform Ops for Wave 5+; do not manufacture a fake heuristic producer."
           }
         }
       ]

@@ -151,6 +151,11 @@ export type RootCauseCategory =
   | "Competitor"
   | "External Shock";
 
+/**
+ * @reserved Reserved presentation contract for future root-cause candidate engine (ODP-FR-FCT-004).
+ * `causeCandidate` and this evidence card currently have no automated backend producer (unproduced).
+ * Owner: ForecastOps / Platform Ops. Target Milestone: Wave 5+.
+ */
 export type RootCauseEvidenceCardContract = {
   causeCandidate: RootCauseCategory;
   evidenceStrength: number;
@@ -243,6 +248,16 @@ export type ValuationRangeChartContract = {
   dataQuality?: DataQuality;
 };
 
+export type ConstraintClass =
+  | "CAPITAL"
+  | "LEASE"
+  | "CONSTRUCTION"
+  | "EQUIPMENT"
+  | "LABOUR"
+  | "COVERAGE"
+  | "DILUTION"
+  | "SEQUENCING";
+
 export type NetPlanAction = "OPEN" | "KEEP" | "IMPROVE" | "MOVE" | "EXIT" | "HOLD";
 
 export type InfeasibilityDiagnosis = {
@@ -261,6 +276,10 @@ export type NetPlanScenarioCardContract = {
   expectedGrossMargin: Interval;
   risk: RiskLevel;
   bindingConstraints: string[];
+  modelledConstraintClasses: ConstraintClass[];
+  unmodelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
   solverStatus: JobStatus;
   alternativePlanAvailable: boolean;
   approvalStatus: DecisionStatus;

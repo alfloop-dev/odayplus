@@ -38,17 +38,38 @@ WHAT IT ENFORCES
    * Every absent member must carry a structured ``disposition`` object with one
      of five valid states: ``OPEN``, ``BLOCKED_BY_EVIDENCE``, ``DECIDED``,
      ``IMPLEMENTATION_READY``, ``VERIFIED``.
-   * ``DECIDED`` (Waiver / Risk Acceptance / Formal Amendment) MUST provide all 6
+   * ``DECIDED`` (Waiver / Risk Acceptance / Formal Amendment) MUST provide all 7
      statutory fields:
      - ``formal_decision_ref``: link to formal governance/amendment doc.
      - ``decider``: authorized human role/authority. AI self-signed waivers are
        strictly forbidden and rejected.
+     - ``decision_date``: ISO date the ruling was made; a decision nobody dated
+       cannot be aged, superseded, or traced back to the meeting that made it.
      - ``scope``: explicit applicability boundary.
      - ``risk_owner``: designated human risk owner.
      - ``expiry``: ISO date (YYYY-MM-DD); expired waivers fail CI automatically.
      - ``reopen_trigger``: objective observable condition to re-evaluate.
+   * A ``note`` is an index entry, NOT an amendment. A member whose note (or
+     disposition rationale) asserts a non-implementation ruling -- "decided not
+     to do", "not pursued", "已裁決", "決定不做" -- while its disposition state is
+     anything other than ``DECIDED`` is refused. Prose cannot close a MUST.
+   * The statutory fields are validated wherever they appear, not only under
+     ``DECIDED``. A waiver parked on a ``VERIFIED`` or ``OPEN`` member used to
+     escape every gate -- its decider was never checked and its expiry never
+     came due. Carrying any field that names a ruling already taken -- who,
+     when, over what, whose risk, until when, recorded where -- now requires
+     carrying all seven, correctly, whatever the state says. ``reopen_trigger``
+     is the one statutory field that is not such a signal: it names the future
+     observation that would change the answer, which a handback needs for the
+     same reason a waiver does.
    * ``BLOCKED_BY_EVIDENCE`` MUST provide ``evidence_needed``, ``evidence_owner``,
-     and ``next_review_date``.
+     and ``next_review_date``. It is the state for a gap handed back to human
+     governance *undecided*, so it is judged as a handback and not as a
+     half-written waiver.
+   * A handback is a governance act and must be as auditable as a ruling: a
+     member whose prose says a gap was handed back must carry a resolvable
+     ``formal_handback_ref``. Otherwise "submitted to Human/Ops" becomes the
+     free pass that "decided not to do" no longer is.
    * ``IMPLEMENTATION_READY`` MUST provide ``assigned_to`` and ``target_phase``
      (or ``acceptance_criteria``).
    * ``OPEN`` MUST provide ``rationale`` (or ``note``) and tracking metadata.
@@ -113,17 +134,117 @@ def is_ai_decider(decider: str) -> bool:
 
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# The fields a formal ruling must carry to be auditable: who decided, when they
+# decided, over what, who owns the residual risk, when it lapses, and what
+# observation reopens it. Named once so the DECIDED gate and the disguised-waiver
+# gate below cannot drift apart.
+STATUTORY_DECISION_FIELDS = (
+    "formal_decision_ref",
+    "decider",
+    "decision_date",
+    "scope",
+    "risk_owner",
+    "expiry",
+    "reopen_trigger",
+)
 
-def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
-    """Return why reference is not a valid formal decision ref, or None when valid.
+# Which of those fields betray a ruling when found under a state that is not
+# ``DECIDED``. Six of the seven name a decision already taken -- they cannot be
+# written truthfully unless somebody ruled. ``reopen_trigger`` names a future
+# observation, and a gap handed back to human governance undecided needs one for
+# exactly the same reason a waiver does: BRAND_TRANSFER and FORMAT_CONVERSION
+# each say which contracted data feed would unblock them. Reading it as a waiver
+# signal made the honest shape -- BLOCKED_BY_EVIDENCE plus an unsigned handback,
+# the shape this whole check steers gaps towards -- fail as an incomplete waiver
+# missing a decider and an expiry, which is the one thing an undecided gap must
+# not be asked to invent.
+WAIVER_SIGNAL_FIELDS = tuple(f for f in STATUTORY_DECISION_FIELDS if f != "reopen_trigger")
 
-    A formal decision reference must be one of:
+# Prose that asserts a requirement will not be implemented. Matching it does not
+# make the claim false; it makes the claim answerable -- either the statutory
+# fields are there or the sentence is an unauthorised amendment. The phrases are
+# deliberately narrow: "it is not a release mode" describes an absence and must
+# not match, "DECIDED 2026-09-02: not pursued" rules on one and must. The
+# Chinese forms carry their verb for the same reason -- 裁決不存在 ("no such
+# decision exists") is the honest note an audit produces, not a claim.
+NONIMPLEMENTATION_CLAIM_PATTERN = re.compile(
+    r"""(
+      decided [\s_-]* not [\s_-]* (to [\s_-]*)?
+        (do|doing|implement|implementing|pursue|pursuing|build|building|model|modell?ing)
+    | \bDECIDED\s+\d{4}-\d{2}-\d{2}
+    | formally\s+decided
+    | not\s+pursued
+    | (will|would)\s+not\s+be\s+(implemented|built|modell?ed|delivered|done)
+    | won.t\s+be\s+(implemented|built|delivered|done)
+    | (formally|permanently)\s+waived
+    | waiver\s+granted
+    | de-?scoped
+    | 已裁決不 | 裁決不做 | 裁決不實作 | 裁定不做 | 裁定不實作
+    | 決定不做 | 決定不實作 | 已決定不 | 不予實作 | 不再實作
+    | 正式豁免 | 已豁免
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def find_nonimplementation_claim(*texts: Any) -> str | None:
+    """Return the phrase by which *texts* claims a requirement will not be met."""
+    for text in texts:
+        if not isinstance(text, str) or not text.strip():
+            continue
+        match = NONIMPLEMENTATION_CLAIM_PATTERN.search(text)
+        if match:
+            return match.group(0).strip()
+    return None
+
+
+# Prose that asserts a gap was handed back to human governance. The handback is
+# the sanctioned way out of a MUST an AI may not waive, which is exactly why it
+# needs a ref: an unbacked "submitted to Human/Ops" parks a requirement forever
+# on a submission nobody can find. Narrow on purpose -- "awaiting Batch 0 data
+# source audit before scheduling solver integration or formal waiver" describes
+# what is still owed and must keep passing; a package id or a submission verb
+# claims an act already performed and must not.
+HANDBACK_CLAIM_PATTERN = re.compile(
+    r"""(
+      (?-i:\bHB-[A-Z0-9]+(-[A-Z0-9]+)+\b)
+    | (formal\s+)? hand[\s-]?back (\s+package)? (\s+[\w#-]+)?
+        \s+ (submitted|filed|raised|sent|issued)
+    | handed\s+back\s+to
+    | 已移交 | 移交單 | 移交至 | 已提報
+    )""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def find_handback_claim(*texts: Any) -> str | None:
+    """Return the phrase by which *texts* claims a gap was handed back, if any."""
+    for text in texts:
+        if not isinstance(text, str) or not text.strip():
+            continue
+        match = HANDBACK_CLAIM_PATTERN.search(text)
+        if match:
+            return match.group(0).strip()
+    return None
+
+
+def resolve_decision_ref(
+    repo_root: Path, reference: str, field: str = "formal_decision_ref"
+) -> str | None:
+    """Return why reference is not a valid formal governance ref, or None when valid.
+
+    Used for the ruling's ``formal_decision_ref`` and for the handback's
+    ``formal_handback_ref``: both name a governance act, and both are worthless
+    unless a reviewer can open what they point at. *field* names which one is
+    being judged so the message says so.
+
+    A formal reference must be one of:
     1. A resolvable repo doc path strictly within repo boundary, e.g. 'docs/.../file.md' or 'docs/.../file.md#anchor'
     2. A valid URL starting with 'http://', 'https://', or 'github://'
     3. A formal PR or RFC reference, e.g. 'PR #123' or 'RFC-123'
     """
     if not isinstance(reference, str) or not reference.strip():
-        return "formal_decision_ref must be a non-empty string"
+        return f"{field} must be a non-empty string"
     ref = reference.strip()
 
     # Check URL
@@ -142,7 +263,7 @@ def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
 
     # Reject attempts to escape repository boundary via absolute path or parent traversals
     if raw_path.startswith("/") or raw_path.startswith("../") or "/../" in raw_path or raw_path == "..":
-        return f"formal_decision_ref {reference!r} must be repo-relative and cannot escape repository boundary"
+        return f"{field} {reference!r} must be repo-relative and cannot escape repository boundary"
 
     valid_doc_extensions = (".md", ".rst", ".json", ".txt", ".adoc")
     is_doc_path = (
@@ -151,7 +272,7 @@ def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
         or "/" in raw_path
     )
     if not is_doc_path:
-        return f"formal_decision_ref {reference!r} is not a valid document path, URL, or PR/RFC reference"
+        return f"{field} {reference!r} is not a valid document path, URL, or PR/RFC reference"
 
     def _is_valid_repo_file(base: Path, rel_path: str) -> bool:
         try:
@@ -165,7 +286,7 @@ def resolve_decision_ref(repo_root: Path, reference: str) -> str | None:
     if not _is_valid_repo_file(repo_root, raw_path):
         if _is_valid_repo_file(REPO_ROOT, raw_path):
             return None
-        return f"formal_decision_ref target file does not exist within repository: {raw_path!r}"
+        return f"{field} target file does not exist within repository: {raw_path!r}"
 
     return None
 
@@ -185,6 +306,27 @@ def check_expiry(expiry_val: Any, reference_date: date | None = None) -> tuple[b
         return False, f"invalid ISO expiry date: {expiry_val!r} (expected valid calendar date in YYYY-MM-DD)"
     if exp_date < reference_date:
         return False, f"waiver expired on {exp_date.isoformat()} (reference date: {reference_date.isoformat()})"
+    return True, None
+
+
+def check_decision_date(value: Any, reference_date: date | None = None) -> tuple[bool, str | None]:
+    """Check an ISO decision date is well formed and not dated in the future."""
+    if reference_date is None:
+        reference_date = datetime.now(UTC).date()
+    if not value or not isinstance(value, str):
+        return False, "missing or non-string decision date"
+    raw = value.strip()
+    if not DATE_PATTERN.match(raw):
+        return False, f"invalid ISO decision date format: {value!r} (expected YYYY-MM-DD)"
+    try:
+        decided = date.fromisoformat(raw)
+    except (ValueError, TypeError):
+        return False, f"invalid ISO decision date: {value!r} (expected valid calendar date in YYYY-MM-DD)"
+    if decided > reference_date:
+        return False, (
+            f"decision_date {decided.isoformat()} is in the future "
+            f"(reference date: {reference_date.isoformat()})"
+        )
     return True, None
 
 
@@ -261,6 +403,112 @@ def resolve(repo_root: Path, reference: str) -> str | None:
     return None
 
 
+def validate_handback_claim(
+    requirement: str,
+    member_name: str,
+    handback_ref: Any,
+    repo_root: Path,
+    *texts: Any,
+) -> list[Failure]:
+    """Hold a claimed handback to a reference a reviewer can open.
+
+    A handback is the sanctioned exit from a MUST that no AI may waive: the gap
+    goes back to human governance undecided. That makes it the next thing worth
+    forging, and the cheapest forgery is prose -- "formal handback
+    HB-SITE001-BRAND-TRANSFER-001 submitted to Human/Ops" with nothing behind
+    it. The member then sits in ``BLOCKED_BY_EVIDENCE`` indefinitely on a
+    submission nobody can find, which is the same escape "decided not to do"
+    used before it was closed.
+    """
+    failures: list[Failure] = []
+
+    has_ref = isinstance(handback_ref, str) and handback_ref.strip()
+    if has_ref:
+        ref_err = resolve_decision_ref(repo_root, handback_ref, field="formal_handback_ref")
+        if ref_err:
+            failures.append(Failure(requirement, member_name, f"invalid formal_handback_ref: {ref_err}"))
+        return failures
+
+    claim = find_handback_claim(*texts)
+    if claim:
+        failures.append(
+            Failure(
+                requirement,
+                member_name,
+                f"note claims a handback to human governance ({claim!r}) but carries no "
+                "'formal_handback_ref': a submission nobody can open is not a handback. Record the "
+                "package location, or drop the claim",
+            )
+        )
+    return failures
+
+
+def validate_statutory_decision_fields(
+    requirement: str,
+    member_name: str,
+    disposition: dict[str, Any],
+    reference_date: date | None,
+    repo_root: Path,
+    context: str,
+) -> list[Failure]:
+    """Hold a formal ruling to its statutory fields, wherever it is recorded.
+
+    *context* names what is being judged so the message reads the same whether
+    the ruling declared itself ``DECIDED`` or was found parked on another state.
+    Every present field is judged even when others are missing: a waiver that is
+    both undated and expired should say both things in one run.
+    """
+    failures: list[Failure] = []
+
+    missing = [
+        field
+        for field in STATUTORY_DECISION_FIELDS
+        if not isinstance(disposition.get(field), str) or not str(disposition.get(field)).strip()
+    ]
+    if missing:
+        failures.append(
+            Failure(
+                requirement,
+                member_name,
+                f"{context} missing required statutory field(s): {', '.join(missing)}",
+            )
+        )
+
+    decision_ref = disposition.get("formal_decision_ref")
+    if isinstance(decision_ref, str) and decision_ref.strip():
+        ref_err = resolve_decision_ref(repo_root, decision_ref)
+        if ref_err:
+            failures.append(Failure(requirement, member_name, f"invalid formal_decision_ref: {ref_err}"))
+
+    decider = disposition.get("decider")
+    if isinstance(decider, str) and decider.strip() and is_ai_decider(decider):
+        failures.append(
+            Failure(
+                requirement,
+                member_name,
+                f"AI decider {decider!r} is forbidden from signing requirement waivers or amendments; "
+                "must be an authorized human governance authority",
+            )
+        )
+
+    decision_date = disposition.get("decision_date")
+    if decision_date is not None:
+        valid_decision_date, decision_date_err = check_decision_date(decision_date, reference_date)
+        if not valid_decision_date:
+            failures.append(Failure(requirement, member_name, f"invalid decision_date: {decision_date_err}"))
+
+    # No decided-before-expiry comparison: a valid decision_date is on or before
+    # the reference date and a valid expiry is on or after it, so an inverted
+    # pair is already two failures. A third message would be unreachable.
+    expiry = disposition.get("expiry")
+    if expiry is not None:
+        valid_expiry, expiry_err = check_expiry(expiry, reference_date)
+        if not valid_expiry:
+            failures.append(Failure(requirement, member_name, f"invalid or expired waiver: {expiry_err}"))
+
+    return failures
+
+
 def validate_disposition_schema(
     requirement: str,
     member_name: str,
@@ -268,6 +516,7 @@ def validate_disposition_schema(
     disposition: Any,
     reference_date: date | None = None,
     repo_root: Path = REPO_ROOT,
+    claim_text: str = "",
 ) -> list[Failure]:
     """Validate structured disposition object for schema, fields, and policy gates."""
     failures: list[Failure] = []
@@ -281,6 +530,25 @@ def validate_disposition_schema(
                     "absent member declares no 'disposition' block; an un-dispositioned gap is refused",
                 )
             )
+            return failures
+        # A satisfied member needs no disposition -- unless its note rules part
+        # of the requirement out, which deleting the block would otherwise be
+        # the cheapest way to hide.
+        claim = find_nonimplementation_claim(claim_text)
+        if claim:
+            failures.append(
+                Failure(
+                    requirement,
+                    member_name,
+                    f"note claims a non-implementation decision ({claim!r}) while the member carries no "
+                    "disposition at all: a note is an index entry, not a requirement amendment. Record the "
+                    "ruling as a disposition with the statutory fields signed by an authorized human, or "
+                    "drop the claim",
+                )
+            )
+        failures.extend(
+            validate_handback_claim(requirement, member_name, None, repo_root, claim_text)
+        )
         return failures
 
     if not isinstance(disposition, dict):
@@ -403,69 +671,17 @@ def validate_disposition_schema(
 
     # State-specific statutory requirements
     if state == "DECIDED":
-        # Required 6 statutory fields (strictly canonical named fields, no aliases)
-        decision_ref = disposition.get("formal_decision_ref")
-        decider = disposition.get("decider")
-        scope = disposition.get("scope")
-        risk_owner = disposition.get("risk_owner")
-        expiry = disposition.get("expiry")
-        reopen_trigger = disposition.get("reopen_trigger")
-
-        missing: list[str] = []
-        if not decision_ref or not isinstance(decision_ref, str) or not decision_ref.strip():
-            missing.append("formal_decision_ref")
-        if not decider or not isinstance(decider, str) or not decider.strip():
-            missing.append("decider")
-        if not scope or not isinstance(scope, str) or not scope.strip():
-            missing.append("scope")
-        if not risk_owner or not isinstance(risk_owner, str) or not risk_owner.strip():
-            missing.append("risk_owner")
-        if not expiry or not isinstance(expiry, str) or not expiry.strip():
-            missing.append("expiry")
-        if not reopen_trigger or not isinstance(reopen_trigger, str) or not reopen_trigger.strip():
-            missing.append("reopen_trigger")
-
-        if missing:
-            failures.append(
-                Failure(
-                    requirement,
-                    member_name,
-                    f"DECIDED disposition missing required statutory field(s): {', '.join(missing)}",
-                )
+        # Strictly canonical named fields, no aliases.
+        failures.extend(
+            validate_statutory_decision_fields(
+                requirement,
+                member_name,
+                disposition,
+                reference_date,
+                repo_root,
+                context="DECIDED disposition",
             )
-        else:
-            # Validate formal decision reference
-            ref_err = resolve_decision_ref(repo_root, str(decision_ref))
-            if ref_err:
-                failures.append(
-                    Failure(
-                        requirement,
-                        member_name,
-                        f"invalid formal_decision_ref: {ref_err}",
-                    )
-                )
-
-            # AI decider check
-            if is_ai_decider(str(decider)):
-                failures.append(
-                    Failure(
-                        requirement,
-                        member_name,
-                        f"AI decider {decider!r} is forbidden from signing requirement waivers or amendments; "
-                        "must be an authorized human governance authority",
-                    )
-                )
-
-            # Expiry check
-            valid_expiry, expiry_err = check_expiry(expiry, reference_date)
-            if not valid_expiry:
-                failures.append(
-                    Failure(
-                        requirement,
-                        member_name,
-                        f"invalid or expired waiver: {expiry_err}",
-                    )
-                )
+        )
 
     elif state == "BLOCKED_BY_EVIDENCE":
         evidence_needed = disposition.get("evidence_needed")
@@ -551,6 +767,56 @@ def validate_disposition_schema(
                     )
                 )
 
+    # A ruling recorded anywhere but under DECIDED. Two shapes, one root: the
+    # statutory gate only ever looked at members that volunteered for it. Only
+    # the fields that name a decision already taken count as the signal --
+    # a lone reopen_trigger is a handback's re-evaluation condition, not a
+    # ruling, and reading it as one refused the honest shape.
+    if state != "DECIDED":
+        carried = [
+            field
+            for field in WAIVER_SIGNAL_FIELDS
+            if isinstance(disposition.get(field), str) and str(disposition.get(field)).strip()
+        ]
+        claim = find_nonimplementation_claim(
+            claim_text, disposition.get("rationale"), disposition.get("note")
+        )
+        if carried:
+            # Statutory fields are a waiver wherever they sit. Judge them there,
+            # so an expiry parked on a VERIFIED member still comes due.
+            failures.extend(
+                validate_statutory_decision_fields(
+                    requirement,
+                    member_name,
+                    disposition,
+                    reference_date,
+                    repo_root,
+                    context=f"disposition state {state!r} carrying decision fields ({', '.join(carried)}) is",
+                )
+            )
+        elif claim:
+            failures.append(
+                Failure(
+                    requirement,
+                    member_name,
+                    f"note claims a non-implementation decision ({claim!r}) while the disposition state is "
+                    f"{state!r}: a note is an index entry, not a requirement amendment. Record a DECIDED "
+                    "disposition carrying the statutory fields signed by an authorized human, or drop the claim",
+                )
+            )
+
+    failures.extend(
+        validate_handback_claim(
+            requirement,
+            member_name,
+            disposition.get("formal_handback_ref"),
+            repo_root,
+            claim_text,
+            disposition.get("rationale"),
+            disposition.get("note"),
+        )
+    )
+
     return failures
 
 
@@ -633,11 +899,20 @@ def check(
                     if problem:
                         failures.append(Failure(requirement, name, problem))
 
-                if disposition is not None:
-                    disp_failures = validate_disposition_schema(
-                        requirement, name, status, disposition, reference_date, repo_root=repo_root
+                # Called even when the block is absent: a satisfied member may
+                # legitimately omit it, but its note is still judged.
+                failures.extend(
+                    validate_disposition_schema(
+                        requirement,
+                        name,
+                        status,
+                        disposition,
+                        reference_date,
+                        repo_root=repo_root,
+                        claim_text=member.get("note", ""),
                     )
-                    failures.extend(disp_failures)
+                )
+                if disposition is not None:
                     disp_state = disposition.get("state", "VERIFIED")
                     if disp_state in tally["dispositions"]:
                         tally["dispositions"][disp_state] += 1
@@ -658,7 +933,13 @@ def check(
 
                 # Validate disposition block
                 disp_failures = validate_disposition_schema(
-                    requirement, name, status, disposition, reference_date, repo_root=repo_root
+                    requirement,
+                    name,
+                    status,
+                    disposition,
+                    reference_date,
+                    repo_root=repo_root,
+                    claim_text=member.get("note", ""),
                 )
                 failures.extend(disp_failures)
                 if isinstance(disposition, dict):
@@ -706,7 +987,10 @@ def main(argv: list[str] | None = None) -> int:
                     state = disp.get("state", "UNSET")
                     print(f"    {gap['name']} [{state}]: {gap.get('note', '')}")
                     if state == "DECIDED":
-                        print(f"        Decider: {disp.get('decider')}, Expiry: {disp.get('expiry')}, Ref: {disp.get('formal_decision_ref')}")
+                        print(
+                            f"        Decider: {disp.get('decider')}, Decided: {disp.get('decision_date')}, "
+                            f"Expiry: {disp.get('expiry')}, Ref: {disp.get('formal_decision_ref')}"
+                        )
                     elif state == "BLOCKED_BY_EVIDENCE":
                         print(f"        Evidence Needed: {disp.get('evidence_needed')}, Owner: {disp.get('evidence_owner')}")
         print()

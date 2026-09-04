@@ -42,6 +42,10 @@ from modules.netplan import (
     run_netplan_solver_batch,
 )
 from shared.auth import Role
+from shared.governance import (
+    InMemoryDecisionPolicyRepository,
+    default_netplan_disclosure_policy,
+)
 from solver.netplan import (
     NETPLAN_POLICY_VERSION,
     STATUS_FEASIBLE,
@@ -60,6 +64,9 @@ MOMENT = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 APPROVAL_SOURCE = "management-approval-system"
 APPROVAL_PRINCIPAL = "principal://network-strategy-director"
 APPROVAL_ROLE = "network-strategy-director"
+# The tenant every scenario in this file is created under; the lifecycle
+# disclosure fixture is registered for it.
+NETPLAN_TENANT_ID = "tenant-1"
 
 
 def _stores() -> tuple[ExistingStoreInput, ...]:
@@ -197,6 +204,37 @@ def _approval_receipt(
     return receipt
 
 
+def _lifecycle_policy_repository() -> InMemoryDecisionPolicyRepository:
+    """A disclosure policy that requires only what these fixtures model.
+
+    The scenarios in this file are built through `build_scenario_options`,
+    which carries no construction, equipment, labour, coverage or dilution
+    figures, so they can only ever bind CAPITAL. These tests are about the
+    approval *lifecycle* -- receipt readback, execution revalidation, status
+    history -- and pinning them to the shipped policy would make every one of
+    them a test of the disclosure gate instead.
+
+    This is a fixture, not a default. The shipped policy requires all eight
+    classes and is exercised in
+    `tests/integration/test_netplan_constraint_disclosure_approval.py`.
+    """
+    base = default_netplan_disclosure_policy(NETPLAN_TENANT_ID)
+    return InMemoryDecisionPolicyRepository(
+        [
+            replace(
+                base,
+                effective_from=datetime(2020, 1, 1, tzinfo=UTC),
+                parameters={
+                    "required_classes": ["CAPITAL"],
+                    "acknowledgeable_classes": [],
+                    "authorized_acknowledgement_roles": [],
+                },
+                change_reason="lifecycle fixture: capital-only scenarios",
+            )
+        ]
+    )
+
+
 def _approval_verifier(
     receipt: ManagementApprovalReceipt,
     *,
@@ -281,9 +319,10 @@ def _pending_authoritative_service(
     service = NetPlanService(
         repository=repository,
         approval_verifier=_approval_verifier(authority_receipt),
+        policy_repository=_lifecycle_policy_repository(),
     )
     scenario = service.create_scenario(
-        tenant_id="tenant-1",
+        tenant_id=NETPLAN_TENANT_ID,
         scenario_name=baseline.baseline_name,
         planning_horizon="2026Q3",
         existing_stores=_stores(),
@@ -433,9 +472,10 @@ def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
     service = NetPlanService(
         repository=repository,
         approval_verifier=_approval_verifier(authority_receipt),
+        policy_repository=_lifecycle_policy_repository(),
     )
     scenario = service.create_scenario(
-        tenant_id="tenant-1",
+        tenant_id=NETPLAN_TENANT_ID,
         scenario_name="2026 Q3 expansion",
         planning_horizon="2026Q3",
         existing_stores=_stores(),
@@ -643,6 +683,7 @@ def test_execution_api_revalidates_solve_after_authentic_approval(
         create_app(
             netplan_repository=repository,
             netplan_approval_verifier=_approval_verifier(authority_receipt),
+            netplan_policy_repository=_lifecycle_policy_repository(),
         ),
         headers=auth_headers(Role.EXECUTIVE),
     )
@@ -670,6 +711,7 @@ def test_out_of_order_decision_and_execution_leave_no_persisted_records(
         create_app(
             netplan_repository=repository,
             netplan_approval_verifier=_approval_verifier(authority_receipt),
+            netplan_policy_repository=_lifecycle_policy_repository(),
         ),
         headers=auth_headers(Role.EXECUTIVE),
     )

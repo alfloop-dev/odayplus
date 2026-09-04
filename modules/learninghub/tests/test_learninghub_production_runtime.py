@@ -66,6 +66,8 @@ def _rows() -> list[dict[str, Any]]:
             "feature_snapshot_time": NOW.isoformat(),
             "prediction_origin_time": NOW.isoformat(),
             "source_snapshot_ids": ["pos-live-001"],
+            "data_quality_score": 0.98,
+            "confidence": 0.95,
             "features": {"event_time": NOW.isoformat(), "revenue_lag_7d": 92_000.0},
             "labels": {"w4_revenue": 410_000.0},
             "label_maturity_time": NOW.isoformat(),
