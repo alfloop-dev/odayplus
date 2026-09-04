@@ -87,16 +87,47 @@ The historical `docs/evidence/runtime/ODP-DEV-ROLLOUT-001/` files were not edite
 deleted. Their hashes remain matched after base composition and are recorded in the audit; this
 current evidence explicitly supersedes their false deployment claims without rewriting them.
 
-## 4. Required next authority action
+## 4. 本輪 build artifact 不是最終候選
 
-1. Reconcile the canonical release gate registry to the hosted `1edb2f834cbf` manifest while
-   preserving its staged gate decision rules.
-2. Have the Supervisor issue a signed, durable lease bound to manifest digest
-   `sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7`, target `dev`,
-   and action `deploy`.
-3. Dispatch the existing `Runtime Release` deploy phase with the four exact refs and lease;
-   then collect live Cloud Run URL/revision, job execution, authenticated smoke,
-   provider-off/16-source, default-deny egress, and exact manifest-binding receipts.
+承接 gate registry reconciliation 的 board task 為 `ODP-DEV-STAGED-GATE-RECONCILIATION-001`，
+其目前狀態為 HARD HOLD：明文不得對 `1edb2f83` 產生或宣稱最終 candidate gate receipt，必須等
+PR [#1183](https://github.com/alfloop-dev/odayplus/pull/1183)
+(`task/ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001`) 合併後，改用當時最新的 `origin/dev` 才能
+bind exact artifact。本輪查核時 #1183 仍為 `OPEN`、未合併。
 
-Until those actions complete, this task remains blocked and must not be reported as a
-successful live rollout.
+因此本輪 run 33844319992 產出的 manifest `sha256:c9ff71c7…` 與四個 image digest **確定不會是最終
+admitted release**，屬預先被取代的 artifact。基於此，本輪刻意 **不再重跑第三次 build**：對
+`1edb2f83` 再 build 一次只會消耗 hosted 資源而不可能成為可部署候選。既有 build evidence 原樣保留、
+未重做，也未被改寫。
+
+## 5. 修正後的 unblock 順序
+
+先前 audit 的 `unblock_requirements` 第一項要求把 registry reconcile 到 `1edb2f83`。該項在得知
+上述 HARD HOLD 後已確認為錯誤方向，現已更正並保留 `superseded_unblock_requirements` 以留下可稽核
+的更正紀錄。正確順序為：
+
+1. 合併 PR #1183，解除 `ODP-DEV-STAGED-GATE-RECONCILIATION-001` 的 HARD HOLD。
+2. 取當時最新 `origin/dev` head 作為 deploy candidate；**不得** reconcile 到 `1edb2f83`，
+   run 33844319992 的 artifact 不得沿用。
+3. 對該新 exact SHA 重跑唯一 `Runtime Release` build phase 一次，產生新的 build-once manifest。
+4. 由 `ODP-DEV-STAGED-GATE-RECONCILIATION-001` 依既有 staged dev admission 規則，把 registry 從
+   `ebc4fca5c2dd…` / `no-go` reconcile 到新 candidate 與其 manifest digest。
+5. 由 Supervisor issuer 對 target `dev`、action `deploy`、該新 manifest digest 簽發並持久記錄
+   Ed25519 lease。
+6. 以新的 exact image refs 與該 lease dispatch 既有 `Runtime Release` deploy phase。
+7. 收集部署後 Cloud Run URL/revision、migration/worker/scheduler execution、authenticated smoke、
+   provider-off/16-source、default-deny egress 與 exact manifest binding 收據。
+
+## 6. 授權缺口目前無人承接
+
+第 5 步（簽發 lease）在看板上**沒有任何 task 承接**：worker 無私鑰，而
+`ODP-DEV-STAGED-GATE-RECONCILIATION-001` 的驗收第 8 條明寫「本 task 不簽 lease 不 dispatch
+deploy」。本 task 因此以 open blocker 承載這個 P0 授權缺口，終態為 `blocked`。
+
+驗收 3-8（live readback、jobs one-shot、authenticated smoke、contract、provider-off、
+default-deny egress 等部署後行為）**全數未成立**。build 成功不等於 rollout 成功，evidence PR 也
+不能取代部署完成。本 task 不得以 `done` 結案：那會讓「dev 從未部署」隨 task 進入 archive 而在看板
+上消失。
+
+歷史 `docs/evidence/runtime/ODP-DEV-ROLLOUT-001/` 收據仍未被編輯、搬移或刪除，其 sha256 與 audit
+完全相符；本 evidence 僅明確標示其部署宣稱已被 live reconciliation 推翻。
