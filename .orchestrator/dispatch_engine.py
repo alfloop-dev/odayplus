@@ -670,7 +670,6 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
             task_status in {"todo", "in_progress"}
             and normalize_agent_id(str(claim.get("claimed_by") or "")) == normalize_agent_id(target_agent)
             and helper_claim_is_live(claim)
-            and (dispatched_claim == {} or helper_claim_is_live(dispatched_claim))
             and (dispatched_gen is None or current_gen is None or dispatched_gen == current_gen)
             and (
                 not dispatched_claim.get("claimed_by")
@@ -1246,8 +1245,6 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
         dispatched_claim = dispatched_task.get("helper_execution_lease")
         if not isinstance(dispatched_claim, dict) or not dispatched_claim:
             return f"Skipped stale queued wake event for {task_id}: event carries no helper execution lease."
-        if not helper_claim_is_live(dispatched_claim):
-            return f"Skipped stale queued wake event for {task_id}: event helper execution lease has expired."
         current_claim = task.get("helper_execution_lease")
         if not isinstance(current_claim, dict) or not current_claim:
             return f"Skipped stale queued wake event for {task_id}: task has no active helper execution lease."
@@ -1339,7 +1336,6 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
         signature["helper_claim"] = {
             "claimed_by": normalize_agent_id(str(claim.get("claimed_by") or "")),
             "generation": int(claim.get("generation", 0) or 0),
-            "lease_expires_at": str(claim.get("lease_expires_at") or ""),
         }
     if reason != REASON_OWNED_FINALIZE:
         signature.update(
@@ -2037,6 +2033,10 @@ def dispatch_ready_tasks(
                         "generation": generation,
                     }
                     if not commit_canonical_task_transition(config, status):
+                        if existing_claim:
+                            task["helper_execution_lease"] = existing_claim
+                        else:
+                            task.pop("helper_execution_lease", None)
                         continue
                     dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
                     write_activity_log(
