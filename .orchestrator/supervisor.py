@@ -4869,8 +4869,12 @@ def worker_can_be_preempted(
     task = task_map.get(task_id) or {}
     task_status = str(task.get("status") or "").lower()
 
-    # Finalize workers are read-only on repo (immutable approved head)
-    if dispatch_reason == REASON_OWNED_FINALIZE or task_status == "review_approved":
+    # Finalize workers are read-only on repo (immutable approved head),
+    # and review workers are read-only reviewers. Both are safe to preempt when clean.
+    if (
+        dispatch_reason in {REASON_REVIEW_READY, REASON_OWNED_FINALIZE}
+        or task_status in {"review", "review_approved"}
+    ):
         return worker_worktree_is_clean(config, worker)
 
     # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
