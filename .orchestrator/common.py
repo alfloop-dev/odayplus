@@ -1000,6 +1000,138 @@ def agent_config_for(config: dict[str, Any], agent_id: str) -> dict[str, Any]:
     return {"id": normalized, "display_name": agent_id, "provider": normalized, "adapter": "file_inbox"}
 
 
+REOPEN_REASON_REVIEW_FINDING = "review_finding"
+REOPEN_REASON_STALE_REVIEW_SHA = "stale_review_sha"
+REOPEN_REASON_WORKTREE_LEASE_MISMATCH = "worktree_lease_mismatch"
+REOPEN_REASON_CONTROL_PLANE_RECOVERY = "control_plane_recovery"
+REOPEN_REASON_OWNER_RESUME = "owner_resume"
+
+REOPEN_CATEGORY_SUBSTANTIVE_REVIEW = "substantive_review"
+REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY = "control_plane_recovery"
+REOPEN_CATEGORY_OWNER_RESUME = "owner_resume"
+
+CONTROL_PLANE_RECOVERY_REASONS = frozenset({
+    REOPEN_REASON_STALE_REVIEW_SHA,
+    "stale_review",
+    "stale_sha",
+    "head_mismatch",
+    "stale_head",
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
+    "lease_mismatch",
+    "worktree_lease_conflict",
+    "lease_conflict",
+    "lease_expired",
+    "worktree_conflict",
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    "control_plane",
+    "recovery",
+    "ci_repair",
+    "repair_unsubmitted",
+    "unsealed_handoff",
+    "infra_recovery",
+    "infrastructure_recovery",
+})
+
+SUBSTANTIVE_REVIEW_REASONS = frozenset({
+    REOPEN_REASON_REVIEW_FINDING,
+    "substantive_finding",
+    "reviewer_finding",
+    "changes_requested",
+    "code_defect",
+    "review_rejection",
+    "finding",
+    "rejection",
+})
+
+
+def is_control_plane_recovery_reason(reason: str | None) -> bool:
+    if not reason:
+        return False
+    normalized = str(reason).lower().strip().replace("-", "_")
+    if normalized in CONTROL_PLANE_RECOVERY_REASONS:
+        return True
+    return any(k in normalized for k in ("stale", "lease", "recovery", "control_plane", "unsealed"))
+
+
+def classify_reopen_reason(
+    raw_reason: str | None,
+    actor: str,
+    owner: str | None,
+    reviewer: str | None,
+    message: str = "",
+) -> tuple[str, str, bool]:
+    """Classify a reopen action into (normalized_reason, category, is_churn).
+
+    Returns:
+        normalized_reason: Canonical reason identifier.
+        category: High-level category (substantive_review, control_plane_recovery, owner_resume).
+        is_churn: True if this reopen counts towards review churn / owner rotation threshold.
+    """
+    norm_actor = normalize_agent_id(actor)
+    norm_owner = normalize_agent_id(owner) if owner else ""
+    norm_reviewer = normalize_agent_id(reviewer) if reviewer else ""
+
+    if raw_reason:
+        normalized = str(raw_reason).lower().strip().replace("-", "_")
+        if is_control_plane_recovery_reason(normalized):
+            if "stale" in normalized or "head" in normalized:
+                reason = REOPEN_REASON_STALE_REVIEW_SHA
+            elif "lease" in normalized or "worktree" in normalized:
+                reason = REOPEN_REASON_WORKTREE_LEASE_MISMATCH
+            else:
+                reason = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+            return reason, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
+        elif normalized in SUBSTANTIVE_REVIEW_REASONS:
+            is_churn = bool(norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer)
+            return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, is_churn
+        else:
+            is_churn = bool(norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer)
+            return normalized, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, is_churn
+
+    msg_lower = (message or "").lower()
+    if any(k in msg_lower for k in ("stale review sha", "stale review reference", "stale sha", "head mismatch", "stale branch")):
+        return REOPEN_REASON_STALE_REVIEW_SHA, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
+    elif any(k in msg_lower for k in ("worktree lease mismatch", "lease mismatch", "worktree lease conflict", "lease conflict", "lease expired")):
+        return REOPEN_REASON_WORKTREE_LEASE_MISMATCH, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
+    elif any(k in msg_lower for k in ("control-plane recovery", "control plane recovery", "ci repair", "unsubmitted review")):
+        return REOPEN_REASON_CONTROL_PLANE_RECOVERY, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
+
+    if norm_actor and norm_owner and norm_actor == norm_owner and norm_owner != norm_reviewer:
+        return REOPEN_REASON_OWNER_RESUME, REOPEN_CATEGORY_OWNER_RESUME, False
+    elif norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer:
+        return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, True
+    elif norm_actor and norm_owner and norm_actor == norm_owner:
+        return REOPEN_REASON_OWNER_RESUME, REOPEN_CATEGORY_OWNER_RESUME, False
+    else:
+        return REOPEN_REASON_REVIEW_FINDING, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, False
+
+
+def substantive_review_reopen_count(snapshot: dict[str, Any]) -> int:
+    """Return the count of substantive reviewer findings (excluding control-plane recovery)."""
+    raw_count = 0
+    try:
+        raw_count = max(0, int(snapshot.get("review_reopen_count", 0) or 0))
+    except (TypeError, ValueError):
+        raw_count = 0
+
+    history = snapshot.get("review_reopen_history")
+    if isinstance(history, list) and history:
+        has_structured = any(
+            isinstance(item, dict) and ("is_churn" in item or "reason" in item or "category" in item)
+            for item in history
+        )
+        if has_structured:
+            churn_entries = [
+                item for item in history
+                if isinstance(item, dict)
+                and item.get("is_churn", True)
+                and str(item.get("category", "")).lower() != "control_plane_recovery"
+                and not is_control_plane_recovery_reason(item.get("reason"))
+            ]
+            return len(churn_entries)
+    return raw_count
+
+
 def render_template(path: Path, variables: dict[str, Any]) -> str:
     text = path.read_text(encoding="utf-8")
     for key, value in variables.items():

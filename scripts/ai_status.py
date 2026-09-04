@@ -63,6 +63,21 @@ if str(DELIVERY_GIT_DIR) not in sys.path:
     sys.path.insert(0, str(DELIVERY_GIT_DIR))
 
 import common as orchestrator_common
+from common import (
+    CONTROL_PLANE_RECOVERY_REASONS,
+    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+    REOPEN_CATEGORY_OWNER_RESUME,
+    REOPEN_CATEGORY_SUBSTANTIVE_REVIEW,
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_OWNER_RESUME,
+    REOPEN_REASON_REVIEW_FINDING,
+    REOPEN_REASON_STALE_REVIEW_SHA,
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
+    SUBSTANTIVE_REVIEW_REASONS,
+    classify_reopen_reason,
+    is_control_plane_recovery_reason,
+    substantive_review_reopen_count,
+)
 from check_task_delivery_identity import validate_delivery_identity
 from multi_repo_registry import (
     cross_repo_delivery_requirements,
@@ -6287,8 +6302,21 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
 
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
-        raise SystemExit("Usage: reopen <task-id> <message>")
+        raise SystemExit("Usage: reopen <task-id> <message> [reason]")
     task_id, message = args[0], args[1]
+    raw_reason: str | None = None
+    i = 2
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("--reason="):
+            raw_reason = arg.split("=", 1)[1].strip()
+        elif arg == "--reason" and i + 1 < len(args):
+            raw_reason = args[i + 1].strip()
+            i += 1
+        elif not arg.startswith("--") and raw_reason is None:
+            raw_reason = arg.strip()
+        i += 1
+
     actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
@@ -6301,6 +6329,15 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     reviewer = canonical_agent_name(task.get("reviewer"))
     if actor not in {owner, reviewer}:
         raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can reopen {task_id}")
+
+    reason, category, is_churn = classify_reopen_reason(
+        raw_reason=raw_reason,
+        actor=actor,
+        owner=owner,
+        reviewer=reviewer,
+        message=message,
+    )
+
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
@@ -6308,15 +6345,26 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
     task["last_reopened_by"] = actor
+    task["last_reopened_reason"] = reason
+    task["last_reopen_category"] = category
+    task["last_reopened_at"] = timestamp
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
+
     if actor == reviewer and owner and owner != reviewer:
         try:
-            review_reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0)) + 1
+            current_reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0))
         except (TypeError, ValueError):
-            review_reopen_count = 1
-        task["review_reopen_count"] = review_reopen_count
-        task["last_review_reopen_at"] = timestamp
+            current_reopen_count = 0
+
+        if is_churn:
+            review_reopen_count = current_reopen_count + 1
+            task["review_reopen_count"] = review_reopen_count
+            task["last_review_reopen_at"] = timestamp
+        else:
+            review_reopen_count = current_reopen_count
+            task["review_reopen_count"] = current_reopen_count
+
         raw_history = task.get("review_reopen_history")
         review_reopen_history = list(raw_history) if isinstance(raw_history, list) else []
         review_reopen_history.append(
@@ -6326,6 +6374,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 "by": reviewer,
                 "owner": owner,
                 "message": message,
+                "reason": reason,
+                "category": category,
+                "is_churn": is_churn,
             }
         )
         task["review_reopen_history"] = review_reopen_history[-20:]
@@ -6346,8 +6397,10 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             "type": "reopen",
             "task_id": task_id,
             "message": message,
+            "reason": reason,
+            "category": category,
             "review_reopen_count": task.get("review_reopen_count", 0),
-            "review_churn": actor == reviewer and owner != reviewer,
+            "review_churn": is_churn,
         }
     )
 

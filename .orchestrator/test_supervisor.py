@@ -8484,6 +8484,162 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(event["type"], "review_churn_reassigned")
         self.assertNotEqual(event["from_owner_pool"], event["to_owner_pool"])
 
+    def test_review_churn_ignores_control_plane_recovery_reopens(self) -> None:
+        """Control-plane recovery reopens (stale SHA, lease mismatch) do not trigger owner reassignment."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        # Task has 1 substantive review finding and 3 control-plane recovery reopens
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-CONTROL-PLANE-RECOVERY",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 1,
+                    "review_reopen_history": [
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "stale_review_sha",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T02:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "worktree_lease_mismatch",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T02:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "control_plane_recovery",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                    ],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_review_churn_reassigns_when_substantive_findings_reach_threshold_despite_recovery_reopens(self) -> None:
+        """Owner reassignment triggers when substantive review findings reach threshold, even with recovery reopens interleaved."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        # Task has 2 substantive findings interleaved with control plane recoveries
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-MIXED-CHURN",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 2,
+                    "review_reopen_history": [
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "stale_review_sha",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 2,
+                            "at": "2026-08-27T02:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                    ],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 2)
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+
     def _escalation_config(self, **churn_overrides) -> dict:
         churn = {
             "enabled": True,

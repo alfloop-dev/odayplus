@@ -436,6 +436,63 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             ai_status.command_reopen(self.state, ["REG-002", "Owner resumed work"])
         self.assertEqual(task["review_reopen_count"], 2)
 
+    def test_control_plane_recovery_reopen_does_not_increment_churn_count(self) -> None:
+        """Control-plane recovery reopens (stale review SHA, lease mismatch, recovery) do not count as churn."""
+        task = self.state["tasks"][0]
+        # 1. Stale review SHA
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Stale review SHA detected", "stale_review_sha"])
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["review_reopen_count"], 0)
+        self.assertEqual(task["last_reopened_reason"], "stale_review_sha")
+        self.assertEqual(task["last_reopen_category"], "control_plane_recovery")
+        self.assertFalse(task["review_reopen_history"][0]["is_churn"])
+        self.assertEqual(task["review_reopen_history"][0]["reason"], "stale_review_sha")
+
+        # 2. Worktree lease mismatch via --reason flag
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Worktree lease expired", "--reason", "worktree_lease_mismatch"])
+        self.assertEqual(task["review_reopen_count"], 0)
+        self.assertEqual(task["last_reopened_reason"], "worktree_lease_mismatch")
+        self.assertFalse(task["review_reopen_history"][1]["is_churn"])
+
+        # 3. Control plane recovery via --reason=... flag
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "CI recovery requeue", "--reason=control_plane_recovery"])
+        self.assertEqual(task["review_reopen_count"], 0)
+        self.assertEqual(task["last_reopened_reason"], "control_plane_recovery")
+        self.assertFalse(task["review_reopen_history"][2]["is_churn"])
+
+    def test_mixed_reopens_track_substantive_churn_count_separately(self) -> None:
+        """Mixed sequence of substantive rejections and control-plane recoveries."""
+        task = self.state["tasks"][0]
+        # First substantive rejection
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Defect in domain scoring logic", "review_finding"])
+        self.assertEqual(task["review_reopen_count"], 1)
+        self.assertTrue(task["review_reopen_history"][0]["is_churn"])
+
+        # Two control-plane recoveries
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Stale review SHA on dev", "stale_review_sha"])
+        self.assertEqual(task["review_reopen_count"], 1)
+
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Worktree lease conflict", "worktree_lease_mismatch"])
+        self.assertEqual(task["review_reopen_count"], 1)
+
+        # Second substantive rejection
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Missing unit tests for edge case", "review_finding"])
+        self.assertEqual(task["review_reopen_count"], 2)
+        self.assertEqual([h["count"] for h in task["review_reopen_history"]], [1, 1, 1, 2])
+        self.assertEqual([h["is_churn"] for h in task["review_reopen_history"]], [True, False, False, True])
+
     def test_restore_approved_refuses_when_reviewer_reopened(self) -> None:
         """B23: restore_approved must refuse when the downgrade was a reviewer rejection."""
         self.state["tasks"][0]["status"] = "review"
