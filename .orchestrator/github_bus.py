@@ -38,6 +38,7 @@ from cross_repo_issue_mapper import (
 )
 from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
+from github_reconciliation import poll_merge_group_runs
 from multi_repo_registry import (
     coordination_enabled,
     repository_slug,
@@ -91,6 +92,7 @@ def default_bus_state() -> dict[str, Any]:
         "last_error": None,
         "processed_review_ids": [],
         "processed_comment_ids": [],
+        "processed_merge_group_run_ids": [],
         "poll_cursors": {
             "pr_reviews": 0,
             "issue_comments": 0,
@@ -109,6 +111,7 @@ def load_bus_state(config: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("tasks", {})
     merged.setdefault("processed_review_ids", [])
     merged.setdefault("processed_comment_ids", [])
+    merged.setdefault("processed_merge_group_run_ids", [])
     merged.setdefault("poll_cursors", {})
     merged["poll_cursors"].setdefault("pr_reviews", 0)
     merged["poll_cursors"].setdefault("issue_comments", 0)
@@ -126,6 +129,7 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
                 entry.get("ops_issue"),
                 entry.get("last_review_hash"),
                 entry.get("last_issue_hash"),
+                entry.get("last_merge_group_failure"),
             )
         ):
             pruned_tasks[task_id] = entry
@@ -139,6 +143,7 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     state["last_sync_at"] = utc_now()
     state["processed_review_ids"] = state.get("processed_review_ids", [])[-MAX_PROCESSED_IDS:]
     state["processed_comment_ids"] = state.get("processed_comment_ids", [])[-MAX_PROCESSED_IDS:]
+    state["processed_merge_group_run_ids"] = state.get("processed_merge_group_run_ids", [])[-MAX_PROCESSED_IDS:]
     write_json(config_path(config, "github_bus_state"), state)
 
 
@@ -2503,6 +2508,8 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
         changed = sync_coordination_outbound(config, bus_state, runtime_state) or changed
         status = load_status(config)
         changed = poll_pr_reviews(config, bus_state, status, repo) or changed
+        status = load_status(config)
+        changed = poll_merge_group_runs(config, bus_state, status, repo) or changed
         status = load_status(config)
         changed = poll_issue_comments(config, bus_state, status, repo) or changed
         status = load_status(config)

@@ -575,7 +575,7 @@
     "max_active_workers_per_task": 1,
     "helper_execution_lease": {
       "enabled": true,
-      "claimable_statuses": ["todo"],
+      "claimable_statuses": ["todo", "in_progress"],
       "dispatch_sla_seconds": 600,
       "lease_seconds": 1800,
       "max_claims_per_tick": 4,

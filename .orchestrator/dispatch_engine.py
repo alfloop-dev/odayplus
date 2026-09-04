@@ -8,6 +8,7 @@ from typing import Any
 import worker_workspace
 from common import parse_iso_timestamp as parse_runtime_timestamp
 from dispatch_policy import (
+    DEFAULT_HELPER_CLAIMABLE_STATUSES,
     REASON_HELPER_CLAIM,
     task_priority_rank,
     worker_logical_dispatch_agent_id,
@@ -772,16 +773,72 @@ def helper_owner_is_saturated(
     task: dict[str, Any],
     agent_loads: dict[str, list[int]],
     helper_settings: dict[str, Any],
+    *,
+    state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+    active_quota_counts: dict[str, int] | None = None,
+    pending_quota_counts: dict[str, int] | None = None,
+    dispatchable_agent_ids: list[str] | set[str] | None = None,
+    now: datetime | None = None,
 ) -> bool:
+    """Decide whether the owner is genuinely unable to take its own task back.
+
+    A helper lease is a last resort, so this asks the same questions the owner
+    dispatch lane asks -- agent exists, may take this task, is not paused or
+    provider-blocked, has slot and quota headroom -- rather than reading the
+    board's "working" label, which stays set on a task whose runner has died.
+
+    `dispatchable_agent_ids` must be a *complete* set of agents the dispatch
+    loop may use, not this tick's rotation subset: an owner missing from a
+    partial list would be read as undispatchable and lose its task to a helper
+    while perfectly healthy. Pass `None` (the caller default) to have the full
+    set resolved here.
+    """
     owner = str(task.get("owner") or "")
-    owner_load = len(agent_loads.get(owner, []))
-    if owner_load >= agent_dispatch_capacity(config, owner):
-        return True
+    owner_id = normalize_agent_id(owner)
+    dispatchable = (
+        {normalize_agent_id(aid) for aid in dispatchable_agent_ids if normalize_agent_id(aid)}
+        if dispatchable_agent_ids is not None
+        else {normalize_agent_id(aid) for aid in dispatch_loop_agent_ids(config) if normalize_agent_id(aid)}
+    )
+    if not owner_id or owner_id not in (config.get("agents", {}) or {}):
+        owner_undispatchable = True
+    elif not agent_can_take_task(config, owner, task):
+        owner_undispatchable = True
+    elif owner_id not in dispatchable:
+        owner_undispatchable = True
+    elif state is not None and (
+        agent_auto_dispatch_block_reason(config, state, owner_id, provider_report)
+        or agent_dispatch_paused(config, state, owner_id)
+        or account_pool_dispatch_block_reason(config, owner_id, runtime_state=state)
+    ):
+        owner_undispatchable = True
+    else:
+        owner_display = display_name_for(config, owner_id) or owner
+        owner_load = len(agent_loads.get(owner_display, agent_loads.get(owner, [])))
+        owner_capacity = agent_dispatch_capacity(config, owner_id)
+        quota_limit = account_pool_effective_concurrency(config, state, owner_id) if state else None
+        quota_group = agent_quota_group_id(config, owner_id)
+        quota_used = (
+            (active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0))
+            if (quota_group and active_quota_counts is not None and pending_quota_counts is not None)
+            else 0
+        )
+        owner_saturated = (owner_load >= owner_capacity) or bool(
+            quota_limit and quota_group and quota_used >= quota_limit
+        )
+        owner_undispatchable = owner_saturated
+
+    current_time = now or datetime.now(UTC)
     last_update = parse_iso_timestamp(str(task.get("last_update") or ""))
-    if last_update is None:
-        return not helper_settings.get("require_owner_saturated", True)
-    age = (datetime.now(UTC) - last_update).total_seconds()
-    return age >= float(helper_settings.get("dispatch_sla_seconds", 600))
+    sla_seconds = float(helper_settings.get("dispatch_sla_seconds", 600))
+    sla_exceeded = (
+        last_update is None
+        or (current_time - last_update).total_seconds() >= sla_seconds
+    )
+    if helper_settings.get("require_owner_saturated", True):
+        return owner_undispatchable and sla_exceeded
+    return owner_undispatchable or sla_exceeded
 
 @_entrypoint
 
@@ -1197,6 +1254,54 @@ def worker_matches_current_assignment(
         )
     return False
 
+
+def _owner_status_promotion_is_only_drift(
+    config: dict[str, Any],
+    event: dict[str, Any],
+    task: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> bool:
+    """True when the only drift since queueing is the owner starting the task.
+
+    An orphaned `in_progress` task has to stay wake-able, but the exemption for
+    it must not be written as "re-derive eligibility now". `ready_dispatch_signature`
+    deliberately freezes owner, reviewer, status, `depends_on` and the branch
+    head at queue time; re-deriving eligibility exempts *all* of those
+    components at once, so a reviewer swap or a `depends_on` rewrite would stop
+    invalidating an already queued wake and the worker would run under a stale
+    authority snapshot (R8/R12).
+
+    So only the `status` component is allowed to move, and only forwards:
+    `todo -> in_progress` (the owner picked the task up after the wake was
+    queued). Every other component is proven unchanged by rolling `status` back
+    to what the event carried and requiring the rebuilt key to reproduce the
+    queued key exactly. Anything else -- including a status the snapshot spells
+    differently -- fails closed and stales the wake.
+    """
+    reason = str(event.get("reason") or "")
+    if reason not in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}:
+        return False
+
+    queued_key = str(event.get("event_key") or "")
+    if not queued_key:
+        return False
+
+    queued_task = (event.get("metadata") or {}).get("task") or event.get("task") or {}
+    queued_status = str(queued_task.get("status") or "").strip().lower()
+    if str(task.get("status") or "").strip().lower() != "in_progress":
+        return False
+    if queued_status not in {"todo", "in_progress"}:
+        return False
+
+    target = str(
+        event.get("target_display_name")
+        or display_name_for(config, str(event.get("target_agent") or ""))
+    )
+    probe = dict(task)
+    probe["status"] = queued_status
+    rebuilt_key = str(build_dispatch_event(probe, target, reason, task_map).get("key") or "")
+    return bool(rebuilt_key) and rebuilt_key == queued_key
+
 @_entrypoint
 
 def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
@@ -1277,22 +1382,16 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
         return None
 
     if expected_key is None:
-        if (
-            reason == REASON_OWNED_READY
-            and task_status == "in_progress"
-            and owner == target
-            and dependency_ready
+        if owner == target and dependency_ready and _owner_status_promotion_is_only_drift(
+            config, event, task, task_map
         ):
             return None
         return f"Skipped stale queued wake event for {task_id}: task is no longer eligible for {reason}."
 
     queued_key = str(event.get("event_key") or "")
     if queued_key and queued_key != expected_key:
-        if (
-            reason == REASON_OWNED_READY
-            and task_status == "in_progress"
-            and owner == target
-            and dependency_ready
+        if owner == target and dependency_ready and _owner_status_promotion_is_only_drift(
+            config, event, task, task_map
         ):
             return None
         return f"Skipped stale queued wake event for {task_id}: task state changed after the wake-up was queued."
@@ -1534,6 +1633,75 @@ def default_max_dispatches_per_tick(config: dict[str, Any]) -> int:
 
 @_entrypoint
 
+def report_narrowed_helper_claimable_statuses(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    settings: dict[str, Any] | None = None,
+) -> bool:
+    """Name the statuses an explicit runtime config keeps out of helper claims.
+
+    `ready_dispatch_settings` seeds `claimable_statuses` with `setdefault`, so a
+    value already present in the control plane's `config.json` wins outright --
+    and that file is deliberately not in the repository. Widening the default
+    here therefore reaches every test and no production tick, which is exactly
+    the shape of a green suite sitting over a feature that never shipped.
+
+    An explicit operator value is the operator's, so this does not repair the
+    gap. It reports it once per configuration change, so the difference between
+    "helper claims are off for orphaned tasks" and "helper claims are broken"
+    is legible from the activity log instead of from reading two files.
+    """
+    settings = settings if settings is not None else ready_dispatch_settings(config)
+    helper_settings = settings.get("helper_execution_lease", {}) or {}
+    if not helper_settings.get("enabled", True):
+        return False
+
+    configured = {
+        str(value).strip().lower()
+        for value in (helper_settings.get("claimable_statuses") or [])
+    }
+    missing = sorted(
+        {str(value).strip().lower() for value in DEFAULT_HELPER_CLAIMABLE_STATUSES} - configured
+    )
+    signature = ",".join(missing)
+
+    dispatch_state = state.setdefault("ready_dispatcher", {})
+    if dispatch_state.get("helper_claimable_status_gap", "") == signature:
+        return False
+    previous = dispatch_state.get("helper_claimable_status_gap")
+    dispatch_state["helper_claimable_status_gap"] = signature
+
+    if missing:
+        write_activity_log(
+            config,
+            {
+                "type": "helper_claim_statuses_narrowed",
+                "message": (
+                    "Runtime config pins ready_dispatcher.helper_execution_lease."
+                    f"claimable_statuses to {sorted(configured)}, so a helper lease can "
+                    f"never reach a task in {missing}. Add it to the control plane's "
+                    ".orchestrator/config.json to turn on orphaned-task recovery."
+                ),
+                "detail": {"configured": sorted(configured), "missing": missing},
+            },
+        )
+    elif previous:
+        write_activity_log(
+            config,
+            {
+                "type": "helper_claim_statuses_narrowed_cleared",
+                "message": (
+                    "Runtime config now allows every default helper-claimable status: "
+                    f"{sorted(configured)}."
+                ),
+                "detail": {"configured": sorted(configured)},
+            },
+        )
+    return True
+
+
+@_entrypoint
+
 def dispatch_ready_tasks(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1561,6 +1729,17 @@ def dispatch_ready_tasks(
 
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
+
+    claims_released, claims_committed = release_dead_helper_claims(config, state, status)
+    if not claims_committed:
+        # The leases are already popped out of the in-memory `status`; carrying
+        # that unpersisted view into the dispatch loop would hand out slots
+        # against leases that are still live on disk. Abort the tick instead.
+        return metadata_repaired or review_states_repaired
+    if claims_released:
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
@@ -1582,7 +1761,9 @@ def dispatch_ready_tasks(
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
 
-    changed = metadata_repaired or review_states_repaired
+    changed = metadata_repaired or review_states_repaired or claims_released
+    if report_narrowed_helper_claimable_statuses(config, state, settings):
+        changed = True
     if reassign_tasks_after_review_churn(
         config,
         state,
@@ -1916,23 +2097,45 @@ def dispatch_ready_tasks(
             if reason is None and helper_settings.get("enabled", True):
                 claimable_statuses = {
                     str(value).lower()
-                    for value in helper_settings.get("claimable_statuses", ["todo"])
+                    for value in helper_settings.get("claimable_statuses", ["todo", "in_progress"])
                 }
                 claim = task.get("helper_execution_lease") or {}
                 claimed_by = normalize_agent_id(str(claim.get("claimed_by") or ""))
                 existing_claim_live = helper_claim_is_live(claim)
                 independent = norm_target not in {norm_task_owner, norm_task_reviewer}
                 owner_saturated = helper_owner_is_saturated(
-                    config, task, agent_loads, helper_settings
+                    config,
+                    task,
+                    agent_loads,
+                    helper_settings,
+                    state=state,
+                    provider_report=provider_report,
+                    active_quota_counts=active_quota_counts,
+                    pending_quota_counts=pending_quota_counts,
+                    # Truthy, matching how `agent_sequence` above resolves the
+                    # override: an empty list means "no subset given", not "no
+                    # agent is dispatchable". Reading it as the latter made
+                    # every owner look undispatchable to the saturation check.
+                    dispatchable_agent_ids=agent_ids_override or None,
                 )
                 if (
                     task_status in claimable_statuses
+                    and task_status not in {"review", "review_approved", "blocked", "done"}
+                    and not task_is_human_gate(task)
+                    and not bool(task.get("non_dispatchable"))
+                    and not is_human_gate_agent(str(task.get("waiting_for") or ""))
+                    and not is_human_gate_agent(str(task_owner or ""))
                     and dependencies_satisfied(task, task_map, dependency_done_statuses)
                     and independent
-                    and (not existing_claim_live or claimed_by == norm_target)
                     and (
-                        owner_saturated
-                        or not helper_settings.get("require_owner_saturated", True)
+                        (existing_claim_live and claimed_by == norm_target)
+                        or (
+                            (not existing_claim_live)
+                            and (
+                                owner_saturated
+                                or not helper_settings.get("require_owner_saturated", True)
+                            )
+                        )
                     )
                 ):
                     reason = REASON_HELPER_CLAIM
