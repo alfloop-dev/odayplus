@@ -380,8 +380,16 @@ def release_dead_helper_claims(
     config: dict[str, Any],
     state: dict[str, Any],
     status: dict[str, Any] | None = None,
-) -> bool:
-    """Release helper execution leases whose launched run is no longer live."""
+) -> tuple[bool, bool]:
+    """Release helper execution leases whose launched run is no longer live.
+
+    Returns ``(released, committed)``. One boolean cannot separate "nothing to
+    release" from "the canonical commit failed", and callers must treat the
+    second as fatal for the tick: the leases have already been popped out of
+    the in-memory ``status`` (and out of every ``tasks`` list derived from it),
+    so continuing would compute capacity and dispatch against a lease-free view
+    that was never persisted.
+    """
     if status is None:
         status = load_status(config)
     schema = config.get("schema", {}) or {}
@@ -397,12 +405,12 @@ def release_dead_helper_claims(
         )
     )
     if not released_claim_ids:
-        return False
+        return False, True
     for task in tasks:
         if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
             task.pop("helper_execution_lease", None)
     if not commit_canonical_task_transition(config, status):
-        return False
+        return False, False
     for task_id in sorted(released_claim_ids):
         write_activity_log(
             config,
@@ -412,7 +420,7 @@ def release_dead_helper_claims(
                 "message": "Helper execution lease released because its launched run is no longer live.",
             },
         )
-    return True
+    return True, True
 
 
 def reconcile_capacity_controller(
@@ -427,7 +435,13 @@ def reconcile_capacity_controller(
     schema = config.get("schema", {}) or {}
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
-    release_dead_helper_claims(config, state, status)
+    _released, claims_committed = release_dead_helper_claims(config, state, status)
+    if not claims_committed:
+        # Pre-refactor behaviour: a rejected CAS or a failed pipeline sync
+        # aborts the reconcile. `status` no longer carries the leases we just
+        # popped, so letting the Chair size capacity from it would be sizing
+        # against a release that never reached disk.
+        return False
     tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
     runnable_task_ids = canonical_dispatchable_task_ids(config, tasks)
     controller, state_changed = capacity_controller.evaluate_chair(

@@ -1186,3 +1186,246 @@ def test_helper_owner_is_saturated_unit_cases() -> None:
     ) is True
 
 
+
+def _promotion_event_and_task() -> tuple[dict, dict, dict[str, dict]]:
+    """A wake queued while the task was `todo`, consumed after the owner started it."""
+    task = {
+        "id": "TASK-PROMOTION-001",
+        "status": "todo",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+    }
+    task_map = {task["id"]: task}
+    event = supervisor.build_dispatch_event(task, "Claude", REASON_OWNED_READY, task_map)
+    event["event_key"] = event["key"]
+    event["target_display_name"] = "Claude"
+    task["status"] = "in_progress"
+    return event, task, task_map
+
+
+def test_owner_starting_task_after_wake_is_queued_is_not_stale() -> None:
+    cfg = _base_test_config()
+    with mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None):
+        event, _task, task_map = _promotion_event_and_task()
+        assert supervisor.stale_dispatch_skip_message(cfg, event, task_map) is None
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("reviewer", "Antigravity7"),
+        ("owner", "Antigravity7"),
+        ("depends_on", ["TASK-PROMOTION-DEP-001"]),
+    ],
+)
+def test_authority_change_during_status_promotion_still_stales_wake(field: str, value: object) -> None:
+    """R8/R12: only `status` may drift; owner/reviewer/dependency edges may not.
+
+    Re-deriving eligibility inside the exemption would exempt every signature
+    component at once, so a wake queued before a reviewer swap or a `depends_on`
+    rewrite would still fire under the pre-change authority snapshot.
+    """
+    cfg = _base_test_config()
+    with mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None):
+        event, task, task_map = _promotion_event_and_task()
+        task_map["TASK-PROMOTION-DEP-001"] = {
+            "id": "TASK-PROMOTION-DEP-001",
+            "status": "done",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+        }
+        task[field] = value
+        message = supervisor.stale_dispatch_skip_message(cfg, event, task_map) or ""
+
+    assert "no longer eligible" in message or "task state changed" in message, message
+
+
+def test_status_demotion_after_wake_is_queued_is_stale() -> None:
+    """`in_progress -> todo` is a reset, not a promotion, and must not be exempt."""
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-DEMOTION-001",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+    }
+    task_map = {task["id"]: task}
+    with mock.patch.object(supervisor, "resolve_task_progress_head", return_value=None):
+        event = supervisor.build_dispatch_event(task, "Claude", REASON_OWNED_IN_PROGRESS, task_map)
+        event["event_key"] = event["key"]
+        event["target_display_name"] = "Claude"
+        task["status"] = "todo"
+        message = supervisor.stale_dispatch_skip_message(cfg, event, task_map) or ""
+
+    assert "no longer eligible" in message or "task state changed" in message, message
+
+
+def _dead_lease_fixture() -> tuple[dict, dict, dict]:
+    task = {
+        "id": "TASK-DEAD-LEASE-ABORT-001",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+        "helper_execution_lease": {
+            "claimed_by": "Codex",
+            "original_owner": "Claude",
+            "run_id": "run-codex-dead",
+            "generation": 1,
+            "lease_expires_at": (datetime.now(UTC) + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    }
+    status = {"tasks": [task]}
+    state = {
+        "workers": {
+            "run-codex-dead": {
+                "run_id": "run-codex-dead",
+                "task_id": task["id"],
+                "status": "failed",
+                "request_snapshot": {"reason": "helper_claim_dispatch"},
+            }
+        },
+        "queue": {"events": {}},
+    }
+    return task, status, state
+
+
+def test_release_dead_helper_claims_reports_commit_failure_separately_from_no_op() -> None:
+    """One boolean cannot say whether nothing needed releasing or the write failed."""
+    cfg = _base_test_config()
+    _task, status, state = _dead_lease_fixture()
+
+    with (
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=False),
+    ):
+        assert supervisor.release_dead_helper_claims(cfg, state, status) == (False, False)
+
+    clean_status = {"tasks": [{"id": "TASK-NO-LEASE-001", "status": "todo", "owner": "Claude"}]}
+    with (
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+    ):
+        assert supervisor.release_dead_helper_claims(cfg, {"workers": {}}, clean_status) == (False, True)
+
+
+def test_dispatch_aborts_when_dead_lease_release_fails_to_commit() -> None:
+    """The leases are already popped in memory; dispatching on that view leaks slots."""
+    cfg = _base_test_config()
+    _task, status, state = _dead_lease_fixture()
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=False),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7", "claude"])
+
+    assert changed is False
+    assert queued_events == []
+
+
+def test_capacity_reconcile_aborts_when_dead_lease_release_fails_to_commit() -> None:
+    """Pre-refactor behaviour: the Chair must not size capacity off an uncommitted release."""
+    cfg = _base_test_config()
+    _task, status, state = _dead_lease_fixture()
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_provider_report", return_value={}),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=False),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor.capacity_controller, "evaluate_chair") as evaluate_chair,
+    ):
+        assert supervisor.reconcile_capacity_controller(cfg, state) is False
+
+    evaluate_chair.assert_not_called()
+
+
+def test_narrowed_claimable_statuses_are_reported_once_per_config_change() -> None:
+    """A default the live config overrides must not fail silently.
+
+    `ready_dispatch_settings` seeds `claimable_statuses` with `setdefault`, so an
+    explicit value in the control plane's gitignored `config.json` wins and the
+    whole helper-claim path for `in_progress` never executes -- with every test
+    still green. This is the signal that tells those two states apart.
+    """
+    cfg = _base_test_config()
+    cfg["ready_dispatcher"]["helper_execution_lease"]["claimable_statuses"] = ["todo"]
+    state: dict = {}
+    entries: list[dict] = []
+
+    with mock.patch.object(
+        supervisor, "write_activity_log", side_effect=lambda _c, entry: entries.append(entry)
+    ):
+        assert dispatch_engine.report_narrowed_helper_claimable_statuses(cfg, state) is True
+        # Debounced: an unchanged configuration is not re-reported every tick.
+        assert dispatch_engine.report_narrowed_helper_claimable_statuses(cfg, state) is False
+
+    assert len(entries) == 1
+    assert entries[0]["type"] == "helper_claim_statuses_narrowed"
+    assert entries[0]["detail"]["missing"] == ["in_progress"]
+
+    cfg["ready_dispatcher"]["helper_execution_lease"]["claimable_statuses"] = ["todo", "in_progress"]
+    with mock.patch.object(
+        supervisor, "write_activity_log", side_effect=lambda _c, entry: entries.append(entry)
+    ):
+        assert dispatch_engine.report_narrowed_helper_claimable_statuses(cfg, state) is True
+
+    assert entries[-1]["type"] == "helper_claim_statuses_narrowed_cleared"
+
+
+def test_default_claimable_statuses_are_not_reported_as_narrowed() -> None:
+    cfg = _base_test_config()
+    state: dict = {}
+    with mock.patch.object(supervisor, "write_activity_log") as write_log:
+        assert dispatch_engine.report_narrowed_helper_claimable_statuses(cfg, state) is False
+    write_log.assert_not_called()
+
+
+def test_empty_agent_override_does_not_make_every_owner_undispatchable() -> None:
+    """`[]` means "no subset given", the same as it does for the rotation list.
+
+    Reading it as "no agent is dispatchable" made `helper_owner_is_saturated`
+    return True for every healthy owner, handing idle owners' tasks to helpers.
+    """
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-EMPTY-OVERRIDE-001",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=[])
+
+    assert [evt["reason"] for evt in queued_events] == ["owned_in_progress_dispatch"]
+    assert queued_events[0]["target_agent"] == "Claude"
+    assert "helper_execution_lease" not in task
