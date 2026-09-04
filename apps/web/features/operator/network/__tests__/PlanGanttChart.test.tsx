@@ -576,11 +576,16 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
             payback: "2.0 年",
             risk: "中",
             time: "2026Q2",
+            // A solve that supplied only max_budget leaves the other seven
+            // classes unbound, and says so about each of them. Naming four of
+            // the eight would be the partial disclosure the console now reads
+            // as undeclared -- correctly, but it would stop this test from
+            // being about blocked classes.
             modelledConstraintClasses: ["CAPITAL"],
-            unmodelledConstraintClasses: ["CONSTRUCTION", "LEASE", "SEQUENCING"],
+            unmodelledConstraintClasses: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
             modelled_constraint_classes: ["CAPITAL"],
-            unmodelled_constraint_classes: ["CONSTRUCTION", "LEASE", "SEQUENCING"],
-            blockedConstraintClasses: ["CONSTRUCTION"],
+            unmodelled_constraint_classes: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
+            blockedConstraintClasses: ["CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
             acknowledgeableConstraintClasses: ["LEASE", "SEQUENCING"],
             disclosurePolicyVersionId: "netplan-constraint-disclosure-policy-v1:tenant-demo",
             score: 75.0,
@@ -621,7 +626,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
 
     // 1. Verify card badges on both primary and alternative scenarios
     expect(screen.getByTestId("scenario-modelled-classes-SCENARIO-BLOCKED")).toHaveTextContent("已建模: CAPITAL");
-    expect(screen.getByTestId("scenario-unmodelled-classes-SCENARIO-BLOCKED")).toHaveTextContent("未建模: CONSTRUCTION, LEASE, SEQUENCING");
+    expect(screen.getByTestId("scenario-unmodelled-classes-SCENARIO-BLOCKED")).toHaveTextContent("未建模: LEASE, CONSTRUCTION, EQUIPMENT, LABOUR, COVERAGE, DILUTION, SEQUENCING");
     expect(screen.getByTestId("scenario-blocked-badge-SCENARIO-BLOCKED")).toHaveTextContent("不可豁免阻擋");
 
     expect(screen.getByTestId("scenario-modelled-classes-SCENARIO-ACK-OK")).toHaveTextContent("已建模: CAPITAL, CONSTRUCTION, EQUIPMENT, LABOUR, COVERAGE, DILUTION");
@@ -777,9 +782,9 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
             payback: "2.4 年",
             risk: "中",
             time: "2026Q3",
-            modelledConstraintClasses: ["CAPITAL"],
+            modelledConstraintClasses: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
             unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
-            modelled_constraint_classes: ["CAPITAL"],
+            modelled_constraint_classes: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
             unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
             score: 61.0,
           },
@@ -864,7 +869,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     );
 
     expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent(
-      "未申報硬限制建模範圍"
+      "未完整申報硬限制建模範圍"
     );
     expect(screen.queryByTestId("rebalance-acknowledgement-section")).toBeNull();
     expect(
@@ -932,7 +937,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     );
 
     expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent(
-      "未申報硬限制建模範圍"
+      "未完整申報硬限制建模範圍"
     );
     expect(
       screen.getByTestId("scenario-blocked-badge-SCENARIO-NOFLAG")
@@ -965,7 +970,7 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(disclosure).toBeInTheDocument();
     expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "true");
     expect(screen.getByTestId("gantt-disclosure-undeclared")).toHaveTextContent(
-      "未申報硬限制建模範圍"
+      "未完整申報硬限制建模範圍"
     );
 
     // The sentence that turned a missing disclosure into a verified one.
@@ -979,13 +984,24 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
   });
 
   it("18. PlanGanttChart still reads a fully modelled plan as fully modelled", () => {
-    // The counterpart to 17: "no unmodelled classes" is a real result when the
-    // plan did name what it bound, and must not be relabelled as undeclared.
+    // The counterpart to 17: "no unmodelled classes" is a real result and must
+    // not be relabelled as undeclared -- but only when the plan accounted for
+    // every class. This fixture used to name three of the eight and still be
+    // read as a clean bill of health, which is the reading 18a now pins shut.
     render(
       <PlanGanttChart
         scenarioId="SCENARIO-GANTT-COMPLETE"
         scenarioName="NetPlan 全數建模案"
-        modelledConstraintClasses={["CAPITAL", "LEASE", "SEQUENCING"]}
+        modelledConstraintClasses={[
+          "CAPITAL",
+          "LEASE",
+          "CONSTRUCTION",
+          "EQUIPMENT",
+          "LABOUR",
+          "COVERAGE",
+          "DILUTION",
+          "SEQUENCING",
+        ]}
         unmodelledConstraintClasses={[]}
       />
     );
@@ -995,6 +1011,31 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(screen.queryByTestId("gantt-disclosure-undeclared")).toBeNull();
     expect(screen.getByTestId("gantt-unmodelled-classes")).toHaveTextContent(
       "無未建模限制 (全部已建模)"
+    );
+  });
+
+  it("18a. PlanGanttChart does not read a partial disclosure as fully modelled", () => {
+    // The shape that got through: one class named, seven unmentioned, and an
+    // empty unmodelled list read as "nothing outstanding". The chart said
+    // "無未建模限制 (全部已建模)" about a solve that had answered one of the
+    // eight questions ODP-FR-NET-002 asks.
+    render(
+      <PlanGanttChart
+        scenarioId="SCENARIO-GANTT-PARTIAL"
+        scenarioName="NetPlan 部分申報案"
+        modelledConstraintClasses={["CAPITAL"]}
+        unmodelledConstraintClasses={[]}
+      />
+    );
+
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "true");
+    expect(disclosure).toHaveAttribute("data-disclosure-defect", "incomplete");
+    expect(disclosure).not.toHaveTextContent("無未建模限制 (全部已建模)");
+    // The single class it did name is not restated as a verification claim.
+    expect(screen.queryByTestId("gantt-modelled-CAPITAL")).toBeNull();
+    expect(screen.getByTestId("gantt-modelled-undeclared")).toHaveTextContent(
+      "未申報 (無法判定)"
     );
   });
   it("19. RebalancePanel drives the payload a production CP-SAT solve returns over HTTP", () => {

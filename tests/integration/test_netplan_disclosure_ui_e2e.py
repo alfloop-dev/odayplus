@@ -18,11 +18,13 @@ from modules.netplan import (
     ConstraintClass,
     FixedManagementApprovalReceiptVerifier,
     InMemoryNetPlanRepository,
+    InvalidNetPlanTransitionError,
     ManagementApprovalReceipt,
     ManagementBaselineInput,
     NetPlanConstraintDisclosureError,
     NetPlanProductionExecutor,
     NetPlanScenario,
+    NetPlanScenarioStatus,
     NetPlanService,
     NetworkAction,
     compute_solver_problem_hash,
@@ -1642,6 +1644,499 @@ def test_e2e_undisclosed_scenario_is_refused_over_http_and_reported_undeclared()
     )
     if engine is not None:
         engine.close()
+
+
+# --------------------------------------------------------------------------
+# Partial disclosures on the legacy / fixture-mode submit and read paths.
+#
+# The canonical path reconciles every row against the durable solve, so a
+# tampered subset there is caught by the reconciliation. The fixture-mode path
+# has no canonical solve to compare against and read the two lists at face
+# value -- and, until this, only refused the row that named *nothing*. A row
+# saying `modelled=[CAPITAL], unmodelled=[]` was accepted as a plan with no
+# outstanding exposure, so the policy found nothing to block, nothing to have
+# signed, and opened a Govern approval on a solve that had answered one of the
+# eight questions ODP-FR-NET-002 asks.
+# --------------------------------------------------------------------------
+
+_PARTITION_DEFECTS = (
+    pytest.param(
+        ["CAPITAL"],
+        [],
+        "omits required constraint classes",
+        id="silent about seven of the eight classes",
+    ),
+    pytest.param(
+        ["CAPITAL", "LEASE"],
+        [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING",
+        ],
+        "overlap between modelled and unmodelled",
+        id="one class claimed as both bound and unbound",
+    ),
+    pytest.param(
+        ["CAPITAL", "CAPITAL"],
+        [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING",
+        ],
+        "repeats constraint class",
+        id="one class named twice",
+    ),
+    pytest.param(
+        ["CAPITAL", "WEATHER"],
+        [
+            "LEASE",
+            "CONSTRUCTION",
+            "EQUIPMENT",
+            "LABOUR",
+            "COVERAGE",
+            "DILUTION",
+            "SEQUENCING",
+        ],
+        "unknown constraint class",
+        id="a class the requirement does not define",
+    ),
+)
+
+
+def _rebalance_service_with_disclosure(
+    modelled: list[str], unmodelled: list[str]
+) -> NetworkRebalanceService:
+    """A fixture-mode Operator surface carrying one hand-written disclosure."""
+    policy_repo = InMemoryDecisionPolicyRepository(
+        [default_netplan_disclosure_policy(tenant_id=TENANT_ID)]
+    )
+    service = NetworkRebalanceService(
+        netplan_policy_repository=policy_repo,
+        tenant_id=TENANT_ID,
+    )
+
+    def _actor(step: str) -> dict[str, str]:
+        return {
+            "actor_role_id": "expansionManager",
+            "actor_name": "王若寧",
+            "idempotency_key": f"idem-partition-{step}",
+            "correlation_id": f"corr-partition-{step}",
+        }
+
+    service.request_avm(store_id="RB-801", **_actor("avm-request"))
+    service.complete_avm(store_id="RB-801", **_actor("avm-complete"))
+    service.solve_netplan(store_id="RB-801", **_actor("solve"))
+    service.select_scenario(store_id="RB-801", scenario_id="move", **_actor("select"))
+
+    store = service._store("RB-801")
+    for scenario in store["netPlanScenarios"]:
+        scenario["modelledConstraintClasses"] = list(modelled)
+        scenario["modelled_constraint_classes"] = list(modelled)
+        scenario["unmodelledConstraintClasses"] = list(unmodelled)
+        scenario["unmodelled_constraint_classes"] = list(unmodelled)
+    return service
+
+
+@pytest.mark.parametrize(("modelled", "unmodelled", "expected"), _PARTITION_DEFECTS)
+def test_e2e_incomplete_partition_is_refused_at_the_operator_submit_boundary(
+    modelled: list[str], unmodelled: list[str], expected: str
+) -> None:
+    """Anything short of a whole partition refuses, and creates no approval.
+
+    The four cases are one rule seen four ways: a disclosure is a statement
+    about all eight classes, so a missing class, a class on both sides, a
+    repeat and an unknown name are all the same failure -- the row does not say
+    what this solve was verified against. Reading any of them as "no exposure"
+    is the inference that turns an unanswered question into a clean bill of
+    health.
+    """
+    service = _rebalance_service_with_disclosure(modelled, unmodelled)
+
+    with pytest.raises(NetworkRebalancePolicyError) as exc:
+        service.submit_review(
+            store_id="RB-801",
+            reason="submit a plan whose disclosure is not a partition",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-partition-submit",
+            correlation_id="corr-partition-submit",
+        )
+    assert expected in str(exc.value)
+    # The refusal has to be the absence of an approval, not an approval with a
+    # note attached. Govern reads this list.
+    assert service._state["governApprovals"] == []
+    assert service.snapshot(selected_store_id="RB-801")["stores"][0]["status"] == (
+        "netplanreview"
+    )
+
+
+@pytest.mark.parametrize(
+    ("modelled", "unmodelled"),
+    [pytest.param(case.values[0], case.values[1], id=case.id) for case in _PARTITION_DEFECTS],
+)
+def test_e2e_incomplete_partition_reads_as_undeclared_and_projects_no_classes(
+    modelled: list[str], unmodelled: list[str]
+) -> None:
+    """The read path agrees with the gate, and echoes back none of the subset.
+
+    Two claims. The snapshot must mark the row unverifiable, because a console
+    that classified it more generously than the gate would draw a live submit
+    button over a plan the server rejects. And it must project *empty* class
+    lists: echoing `modelled=[CAPITAL]` from a row the server just refused to
+    believe hands the console a verification claim about CAPITAL that nothing
+    established -- which is what the console then rendered as a badge.
+    """
+    service = _rebalance_service_with_disclosure(modelled, unmodelled)
+
+    row = service.snapshot(selected_store_id="RB-801")["stores"][0]["netPlanScenarios"][0]
+    assert row["disclosureUndeclared"] is True
+    assert row["modelledConstraintClasses"] == []
+    assert row["unmodelledConstraintClasses"] == []
+    assert row["modelled_constraint_classes"] == []
+    assert row["unmodelled_constraint_classes"] == []
+    assert row["blockedConstraintClasses"] == []
+    assert row["acknowledgeableConstraintClasses"] == []
+    assert row["disclosurePolicyVersionId"] is None
+
+
+def test_e2e_incomplete_partition_cannot_be_repaired_by_naming_acknowledgements() -> None:
+    """A signature does not supply a disclosure the solve never made.
+
+    The acknowledgement path is the one route by which an unmodelled class
+    reaches Govern, so it is worth checking against a plan that never said which
+    classes those are. The classes named here are exactly the two the policy
+    permits waiving -- the submission that would have looked most legitimate.
+    """
+    service = _rebalance_service_with_disclosure(["CAPITAL"], [])
+
+    with pytest.raises(NetworkRebalancePolicyError) as exc:
+        service.submit_review(
+            store_id="RB-801",
+            reason="submit a partial disclosure with a signature attached",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-partition-ack",
+            correlation_id="corr-partition-ack",
+            acknowledged_classes=["LEASE", "SEQUENCING"],
+            acknowledgement_reason="租約與時序風險由商務處承擔",
+            acknowledgement_actor_id=APPROVAL_PRINCIPAL,
+            approval_receipt_id=RECEIPT_ID,
+        )
+    assert "omits required constraint classes" in str(exc.value)
+    assert service._state["governApprovals"] == []
+
+
+def test_e2e_partial_disclosure_is_refused_over_http_and_reported_undeclared() -> None:
+    """The same rule at the HTTP boundary the console actually talks to."""
+    _scenario, _repo, _netplan_service, rebalance_service, engine = _canonical_surface(
+        "SCENARIO-E2E-HTTP-PARTIAL-001",
+        _fully_modelled_constraints(),
+    )
+    try:
+        client = _mount_operator_api(rebalance_service)
+        solve_response = client.post(
+            "/api/v1/operator/network-rebalance/stores/STORE-101/netplan/solve",
+            headers={"Idempotency-Key": "idem-http-partial-solve"},
+            json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+        )
+        assert solve_response.status_code == 200, solve_response.text
+        scenario_id = solve_response.json()["store"]["netPlanScenarios"][0]["id"]
+
+        select_response = client.post(
+            f"/api/v1/operator/network-rebalance/stores/STORE-101/scenarios/{scenario_id}/select",
+            headers={"Idempotency-Key": "idem-http-partial-select"},
+            json={"actorRoleId": "expansionManager", "actorName": "王若寧"},
+        )
+        assert select_response.status_code == 200, select_response.text
+
+        # Not the doubly-empty shape that was already refused: one class named,
+        # seven unmentioned, which is what an empty unmodelled list next to a
+        # populated modelled list amounts to.
+        for row in rebalance_service._store("STORE-101")["netPlanScenarios"]:
+            row["modelledConstraintClasses"] = ["CAPITAL"]
+            row["modelled_constraint_classes"] = ["CAPITAL"]
+            row["unmodelledConstraintClasses"] = []
+            row["unmodelled_constraint_classes"] = []
+
+        snapshot = client.get(
+            "/api/v1/operator/network-rebalance?selectedStoreId=STORE-101",
+        )
+        assert snapshot.status_code == 200, snapshot.text
+        for row in snapshot.json()["stores"][0]["netPlanScenarios"]:
+            assert row["disclosureUndeclared"] is True, row["id"]
+            assert row["modelledConstraintClasses"] == []
+            assert row["unmodelledConstraintClasses"] == []
+
+        refused = client.post(
+            "/api/v1/operator/network-rebalance/stores/STORE-101/submit-review",
+            headers={"Idempotency-Key": "idem-http-partial-submit"},
+            json={
+                "actorRoleId": "expansionManager",
+                "actorName": "王若寧",
+                "reason": "submit a partial disclosure over HTTP",
+            },
+        )
+        assert refused.status_code == 422, refused.text
+        assert rebalance_service._state["governApprovals"] == []
+        assert (
+            client.get("/api/v1/operator/network-rebalance").json()["stores"][0]["status"]
+            == "netplanreview"
+        )
+    finally:
+        if engine is not None:
+            engine.close()
+
+
+# --------------------------------------------------------------------------
+# Submission atomicity.
+#
+# One submission is three writes in two stores: the NetPlan lifecycle advances
+# to PENDING_APPROVAL, the disclosure receipt becomes durable, and Govern gains
+# an approval. Performed as three independent calls, a failure in the second or
+# third left the first standing -- a signature with no submission behind it, or
+# a scenario stranded in PENDING_APPROVAL that the Operator surface could never
+# retry, because the retry demands a SOLVED scenario.
+# --------------------------------------------------------------------------
+
+
+class _FailingAcknowledgementRepository:
+    """A NetPlan repository that refuses exactly one write.
+
+    Wrapping rather than subclassing, because what is being tested is the
+    caller's behaviour when a durable write fails -- not any particular
+    repository's. Every other call is delegated untouched, so the scenario, the
+    solve and the receipts are the real ones.
+    """
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+        self.attempted_acknowledgements = 0
+
+    def save_disclosure_acknowledgement(self, acknowledgement: Any) -> Any:
+        self.attempted_acknowledgements += 1
+        raise RuntimeError("durable acknowledgement store is unavailable")
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def _submitted_canonical_surface(
+    scenario_id: str,
+    *,
+    govern_approval_writer: Any | None = None,
+) -> tuple[NetPlanScenario, Any, NetPlanService, NetworkRebalanceService]:
+    """A canonical surface solved and selected, one `submit_review` from Govern."""
+    scenario, repo, service, rebalance_service, _engine = _canonical_surface(
+        scenario_id,
+        _fully_modelled_constraints(),
+    )
+    rebalance_service._govern_approval_writer = govern_approval_writer
+    rebalance_service.solve_netplan(
+        store_id="STORE-101",
+        actor_role_id="expansionManager",
+        actor_name="王若寧",
+        idempotency_key=f"idem-{scenario_id}-solve",
+        correlation_id=f"corr-{scenario_id}-solve",
+    )
+    rebalance_service.select_scenario(
+        store_id="STORE-101",
+        scenario_id=scenario.scenario_id,
+        actor_role_id="expansionManager",
+        actor_name="王若寧",
+        idempotency_key=f"idem-{scenario_id}-select",
+        correlation_id=f"corr-{scenario_id}-select",
+    )
+    solve = repo.get_solve(scenario.scenario_id)
+    assert solve is not None
+    rebalance_service.netplan_approval_verifier = _attach_verifier(
+        service, scenario, solve, receipt_id=RECEIPT_ID
+    )
+    return scenario, repo, service, rebalance_service
+
+
+_ACK_SUBMISSION = {
+    "acknowledged_classes": ["LEASE", "SEQUENCING"],
+    "acknowledgement_reason": "租約與時序風險已由授權主管線下承擔並記錄。",
+    "acknowledgement_actor_id": APPROVAL_PRINCIPAL,
+    "approval_receipt_id": RECEIPT_ID,
+}
+
+
+def test_e2e_failed_govern_write_leaves_no_half_submitted_lifecycle() -> None:
+    """A Govern write that fails rolls the NetPlan lifecycle back.
+
+    The Govern writer is an opaque callable into another bounded context, so
+    this service cannot reverse it -- which is exactly why it goes last, and why
+    everything before it has to be reversible. Without the rollback the scenario
+    sat in PENDING_APPROVAL with no Govern approval to act on it, and the
+    Operator retry could never succeed: `submit_review` requires a SOLVED
+    canonical scenario, so the store was stuck for good.
+    """
+
+    def _refuse(approval: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("govern approval store is unavailable")
+
+    scenario, repo, service, rebalance_service = _submitted_canonical_surface(
+        "SCENARIO-E2E-ATOMIC-GOVERN-001",
+        govern_approval_writer=_refuse,
+    )
+
+    with pytest.raises(RuntimeError, match="govern approval store is unavailable"):
+        rebalance_service.submit_review(
+            store_id="STORE-101",
+            reason="submit while Govern is unavailable",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-atomic-govern-submit",
+            correlation_id="corr-atomic-govern-submit",
+            **_ACK_SUBMISSION,
+        )
+
+    # The lifecycle is back where it started, so the operator can retry.
+    persisted = repo.get_scenario(scenario.scenario_id)
+    assert persisted.status is NetPlanScenarioStatus.SOLVED
+    # No transition was left in the history either: the compensation restores
+    # the scenario, it does not append a second event describing the first.
+    assert all(
+        entry.to_status is not NetPlanScenarioStatus.PENDING_APPROVAL
+        for entry in persisted.status_history
+    )
+    assert rebalance_service._state["governApprovals"] == []
+    assert rebalance_service._store("STORE-101")["status"] == "netplanreview"
+    assert rebalance_service._store("STORE-101").get("relatedApprovalId") is None
+
+    # A receipt is immutable once written -- deleting signatures to tidy up
+    # would be a worse property than the one it bought -- so the sealed receipt
+    # survives. What matters is that it authorises nothing: an approval needs a
+    # scenario in PENDING_APPROVAL, and the compensation put it back to SOLVED.
+    with pytest.raises(InvalidNetPlanTransitionError):
+        service.decide(
+            scenario_id=scenario.scenario_id,
+            decision="approved",
+            reason="approve on the strength of an orphaned receipt",
+            actor_id=APPROVAL_PRINCIPAL,
+            approval_receipt_id=RECEIPT_ID,
+            decided_at=MOMENT,
+        )
+
+
+def test_e2e_failed_receipt_write_leaves_neither_receipt_nor_lifecycle() -> None:
+    """A receipt that cannot be stored takes the whole submission with it.
+
+    This is the fully atomic case: the only durable effect that had landed is
+    the lifecycle transition, and it is reversible, so a refusal here leaves the
+    system byte-for-byte where it was. No approval reaches Govern citing a
+    receipt that does not exist.
+    """
+    scenario, repo, _service, rebalance_service = _submitted_canonical_surface(
+        "SCENARIO-E2E-ATOMIC-RECEIPT-001",
+        govern_approval_writer=None,
+    )
+    written_approvals: list[dict[str, Any]] = []
+    rebalance_service._govern_approval_writer = lambda approval: (
+        written_approvals.append(approval) or approval
+    )
+    failing = _FailingAcknowledgementRepository(repo)
+    rebalance_service._netplan_repository = failing
+
+    with pytest.raises(RuntimeError, match="durable acknowledgement store is unavailable"):
+        rebalance_service.submit_review(
+            store_id="STORE-101",
+            reason="submit while the receipt store is unavailable",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-atomic-receipt-submit",
+            correlation_id="corr-atomic-receipt-submit",
+            **_ACK_SUBMISSION,
+        )
+
+    assert failing.attempted_acknowledgements == 1
+    assert repo.list_disclosure_acknowledgements(scenario.scenario_id) == []
+    assert repo.get_scenario(scenario.scenario_id).status is NetPlanScenarioStatus.SOLVED
+    # The Govern writer is sequenced after the receipt, so it was never reached.
+    # An approval naming a receipt that does not exist is the shape this
+    # ordering exists to make impossible.
+    assert written_approvals == []
+    assert rebalance_service._state["governApprovals"] == []
+    assert rebalance_service._store("STORE-101")["status"] == "netplanreview"
+
+
+def test_e2e_submission_retries_cleanly_after_a_failed_govern_write() -> None:
+    """The rollback is not just tidy, it is what makes the retry work.
+
+    A partial submission that left the canonical scenario in PENDING_APPROVAL
+    was unrecoverable through the product: `submit_review` reconciles the row
+    against a canonical solve it requires to be SOLVED, so every retry refused
+    with a message about lifecycle state rather than about the Govern outage
+    that actually happened.
+    """
+    attempts: list[dict[str, Any]] = []
+
+    def _fail_once(approval: dict[str, Any]) -> dict[str, Any]:
+        attempts.append(approval)
+        if len(attempts) == 1:
+            raise RuntimeError("govern approval store is unavailable")
+        return approval
+
+    scenario, repo, service, rebalance_service = _submitted_canonical_surface(
+        "SCENARIO-E2E-ATOMIC-RETRY-001",
+        govern_approval_writer=_fail_once,
+    )
+
+    with pytest.raises(RuntimeError):
+        rebalance_service.submit_review(
+            store_id="STORE-101",
+            reason="first submission, Govern unavailable",
+            actor_role_id="expansionManager",
+            actor_name="王若寧",
+            idempotency_key="idem-atomic-retry-first",
+            correlation_id="corr-atomic-retry-first",
+            **_ACK_SUBMISSION,
+        )
+
+    result = rebalance_service.submit_review(
+        store_id="STORE-101",
+        reason="second submission, Govern recovered",
+        actor_role_id="expansionManager",
+        actor_name="王若寧",
+        idempotency_key="idem-atomic-retry-second",
+        correlation_id="corr-atomic-retry-second",
+        **_ACK_SUBMISSION,
+    )
+
+    assert result["store"]["status"] == "pendingapproval"
+    approval = result["governApproval"]
+    assert repo.get_scenario(scenario.scenario_id).status is (
+        NetPlanScenarioStatus.PENDING_APPROVAL
+    )
+
+    # The approval names the receipt the successful attempt wrote, not the one
+    # the failed attempt left behind. `_find_valid_acknowledgement` takes the
+    # most recent signature covering this solve, so the decision and the
+    # approval have to agree about which one that is.
+    stored = repo.list_disclosure_acknowledgements(scenario.scenario_id)
+    assert len(stored) == 2, "the first attempt's sealed receipt is immutable, not deleted"
+    newest = max(stored, key=lambda item: item.acknowledged_at)
+    assert approval["disclosureAcknowledgementId"] == newest.acknowledgement_id
+
+    decided = service.decide(
+        scenario_id=scenario.scenario_id,
+        decision="approved",
+        reason="治理中心核准：未建模之 LEASE 與 SEQUENCING 已由授權主管具名簽核。",
+        actor_id=APPROVAL_PRINCIPAL,
+        approval_receipt_id=RECEIPT_ID,
+        decided_at=MOMENT,
+    )
+    assert decided.decision == "approved"
+    assert decided.disclosure_acknowledgement_id == newest.acknowledgement_id
 
 
 def _write_disclosure_contract_fixture() -> None:

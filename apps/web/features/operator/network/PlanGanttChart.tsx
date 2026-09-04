@@ -1,6 +1,10 @@
 "use client";
 
 import React, { useId, useMemo, useState } from "react";
+import {
+  describeDisclosureDefect,
+  readConstraintDisclosure,
+} from "./constraintDisclosure";
 import styles from "./planGanttChart.module.css";
 import type { NetPlanDiagnostic } from "../types";
 
@@ -212,25 +216,34 @@ export function PlanGanttChart({
     [bindingConstraints, binding_constraints]
   );
 
-  const effectiveModelled = useMemo(() => {
-    const raw = modelledConstraintClasses || modelled_constraint_classes;
-    if (raw && raw.length > 0) return Array.from(new Set(raw.map((c) => String(c))));
-    return [];
-  }, [modelledConstraintClasses, modelled_constraint_classes]);
-
-  const effectiveUnmodelled = useMemo(() => {
-    const raw = unmodelledConstraintClasses || unmodelled_constraint_classes;
-    if (raw && raw.length > 0) return Array.from(new Set(raw.map((c) => String(c))));
-    return [];
-  }, [unmodelledConstraintClasses, unmodelled_constraint_classes]);
-
-  // Naming no bound class and no unbound class is not a clean bill of health;
-  // it is the absence of a disclosure. Derived here rather than taken as a
-  // prop because this chart also renders alternative plans, which reach it
-  // straight off the scenario row -- and an alternative whose disclosure is
-  // missing has to read as unverifiable on the same terms as the primary.
-  const disclosureUndeclared =
-    effectiveModelled.length === 0 && effectiveUnmodelled.length === 0;
+  // A disclosure is read as a whole or not at all. Naming no bound class and no
+  // unbound class is not a clean bill of health -- and neither is naming one of
+  // the eight and going quiet about the other seven, which is the shape this
+  // chart used to render as "無未建模限制 (全部已建模)". Derived here rather than
+  // taken as a prop because this chart also renders alternative plans, which
+  // reach it straight off the scenario row: an alternative whose disclosure
+  // does not partition the eight ODP-FR-NET-002 classes has to read as
+  // unverifiable on the same terms as the primary.
+  const disclosure = useMemo(
+    () =>
+      readConstraintDisclosure({
+        modelledConstraintClasses,
+        modelled_constraint_classes,
+        unmodelledConstraintClasses,
+        unmodelled_constraint_classes,
+      }),
+    [
+      modelledConstraintClasses,
+      modelled_constraint_classes,
+      unmodelledConstraintClasses,
+      unmodelled_constraint_classes,
+    ]
+  );
+  const effectiveModelled = disclosure.modelled;
+  const effectiveUnmodelled = disclosure.unmodelled;
+  const disclosureUndeclared = disclosure.undeclared;
+  const disclosureDefect = disclosure.defect;
+  const disclosureDefectDescription = describeDisclosureDefect(disclosure);
 
   // Discover and sort all backend-provided quarters
   const quarters = useMemo(() => {
@@ -432,6 +445,7 @@ export function PlanGanttChart({
         className={styles.constraintDisclosureSection}
         data-testid="gantt-constraint-disclosure"
         data-disclosure-undeclared={disclosureUndeclared ? "true" : "false"}
+        data-disclosure-defect={disclosureDefect ?? "none"}
         aria-label="ODP-FR-NET-002 硬限制揭露與驗證狀態"
       >
         <div className={styles.disclosureHeader}>
@@ -449,11 +463,12 @@ export function PlanGanttChart({
             data-testid="gantt-disclosure-undeclared"
             role="alert"
           >
-            <strong>未申報硬限制建模範圍 (Disclosure undeclared)</strong>
+            <strong>未完整申報硬限制建模範圍 (Disclosure undeclared)</strong>
             <p>
-              本方案未說明求解驗證了哪些硬限制類別，也未列出任何未建模類別。
+              本方案未完整說明 ODP-FR-NET-002 八類硬限制中，哪些已由求解器驗證、哪些未驗證。
               未申報不等於全部已驗證：此方案的 ODP-FR-NET-002 符合性無法判定，不得送審。
             </p>
+            <p data-testid="gantt-disclosure-defect">{disclosureDefectDescription}</p>
           </div>
         ) : null}
 

@@ -90,6 +90,37 @@ class ScenarioBuildRequest:
 
 
 @dataclass(frozen=True)
+class PreparedConstraintDisclosureAcknowledgement:
+    """A validated, sealed acknowledgement that has not been stored yet.
+
+    A disclosure receipt is immutable once written -- the in-memory repository
+    and the ``trg_netplan_disclosure_ack_immutable`` trigger both refuse to
+    rewrite one -- so the write is the point of no return. A caller that has to
+    perform other writes around it (the Operator submit path advances the
+    NetPlan lifecycle and creates a Govern approval) therefore needs the
+    validation and the write separated: everything that can refuse should refuse
+    before anything durable exists, so a refusal leaves nothing behind.
+
+    Holding the sealed receipt rather than the arguments to build one matters:
+    ``acknowledgement_id`` and ``acknowledged_at`` are fixed here, so the Govern
+    approval payload can name the receipt it is about to be authorised by, and
+    the id it names is the id that gets stored.
+    """
+
+    acknowledgement: ConstraintDisclosureAcknowledgement
+    scenario: NetPlanScenario
+    selected_candidate_id: str
+
+    @property
+    def acknowledgement_id(self) -> str:
+        return self.acknowledgement.acknowledgement_id
+
+    @property
+    def acknowledged_classes(self) -> tuple[ConstraintClass, ...]:
+        return self.acknowledgement.acknowledged_classes
+
+
+@dataclass(frozen=True)
 class _ApprovalSubject:
     """One canonical candidate that can be submitted and approved.
 
@@ -339,7 +370,7 @@ class NetPlanService:
             occurred_at=occurred_at,
         )
 
-    def acknowledge_unmodelled_constraints(
+    def prepare_unmodelled_constraint_acknowledgement(
         self,
         scenario_id: str,
         *,
@@ -349,8 +380,8 @@ class NetPlanService:
         approval_receipt_id: str,
         acknowledged_at: datetime | None = None,
         selected_candidate_id: str | None = None,
-    ) -> ConstraintDisclosureAcknowledgement:
-        """Record a named authority accepting named unmodelled-constraint exposure.
+    ) -> PreparedConstraintDisclosureAcknowledgement:
+        """Validate and seal an acknowledgement without storing it.
 
         This is the only way a plan with an unmodelled required class reaches
         approval, and everything it checks is checked because the alternative
@@ -368,6 +399,12 @@ class NetPlanService:
         - A class must be both acknowledgeable under the policy *and* actually
           unmodelled in this solve. Signing for exposure the plan does not
           carry means the signer was shown something other than this plan.
+
+        Every one of those refusals happens here, before anything is written.
+        `commit_unmodelled_constraint_acknowledgement` performs the one durable
+        write, so a caller sequencing this alongside other writes can order the
+        irrevocable step wherever it needs to and know that reaching it means the
+        signature itself has nothing left to object to.
         """
         cleaned_reason = str(reason or "").strip()
         if not cleaned_reason:
@@ -452,14 +489,76 @@ class NetPlanService:
             selected_action_signature=subject.action_signature,
             selected_baseline_content_hash=verification.receipt.baseline_content_hash,
         ).sealed()
-        # Keep a direct service caller on the same subject even when the later
-        # submit call does not repeat the candidate id. The acknowledgement is
-        # already bound to this candidate; dropping the selection here would
-        # make the next lifecycle step silently fall back to the primary.
-        self.repository.save_scenario(
-            replace(scenario, selected_candidate_id=subject.candidate_id)
+        return PreparedConstraintDisclosureAcknowledgement(
+            acknowledgement=acknowledgement,
+            scenario=scenario,
+            selected_candidate_id=subject.candidate_id,
         )
-        return self.repository.save_disclosure_acknowledgement(acknowledgement)
+
+    def pin_prepared_candidate(
+        self,
+        prepared: PreparedConstraintDisclosureAcknowledgement,
+    ) -> NetPlanScenario:
+        """Record the candidate a prepared receipt was taken against.
+
+        The receipt names one candidate. A later lifecycle step that does not
+        repeat the candidate id would otherwise fall back to the primary, which
+        would approve a plan the signature was not given for. Callers that
+        advance the lifecycle themselves pass the candidate through that
+        transition instead and do not need this.
+        """
+        return self.repository.save_scenario(
+            replace(
+                prepared.scenario,
+                selected_candidate_id=prepared.selected_candidate_id,
+            )
+        )
+
+    def commit_unmodelled_constraint_acknowledgement(
+        self,
+        prepared: PreparedConstraintDisclosureAcknowledgement,
+    ) -> ConstraintDisclosureAcknowledgement:
+        """Store a prepared receipt, and nothing else.
+
+        Deliberately narrow. An earlier version of this write also re-saved the
+        scenario to pin the selected candidate, which is correct for a direct
+        caller and wrong for one that has already advanced the lifecycle: the
+        re-save carried the *pre-transition* scenario and would silently roll
+        PENDING_APPROVAL back to SOLVED. Callers that sequence their own
+        lifecycle writes select the candidate through that transition instead.
+        """
+        return self.repository.save_disclosure_acknowledgement(prepared.acknowledgement)
+
+    def acknowledge_unmodelled_constraints(
+        self,
+        scenario_id: str,
+        *,
+        actor_id: str,
+        reason: str,
+        acknowledged_classes: Sequence[ConstraintClass | str],
+        approval_receipt_id: str,
+        acknowledged_at: datetime | None = None,
+        selected_candidate_id: str | None = None,
+    ) -> ConstraintDisclosureAcknowledgement:
+        """Validate, seal and store one acknowledgement in a single call.
+
+        The direct entry point, for callers whose only write is this one. The
+        selected candidate is pinned here so that a later lifecycle step which
+        does not repeat the candidate id does not silently fall back to the
+        primary; a caller doing its own lifecycle writes uses the prepare/commit
+        pair instead and pins the candidate through its own transition.
+        """
+        prepared = self.prepare_unmodelled_constraint_acknowledgement(
+            scenario_id,
+            actor_id=actor_id,
+            reason=reason,
+            acknowledged_classes=acknowledged_classes,
+            approval_receipt_id=approval_receipt_id,
+            acknowledged_at=acknowledged_at,
+            selected_candidate_id=selected_candidate_id,
+        )
+        self.pin_prepared_candidate(prepared)
+        return self.commit_unmodelled_constraint_acknowledgement(prepared)
 
     def decide(
         self,
@@ -1088,5 +1187,6 @@ __all__ = [
     "NetPlanConstraintDisclosureError",
     "NetPlanNotFoundError",
     "NetPlanService",
+    "PreparedConstraintDisclosureAcknowledgement",
     "ScenarioBuildRequest",
 ]

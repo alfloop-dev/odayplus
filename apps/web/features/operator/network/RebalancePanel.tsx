@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import styles from "../networkFindAreas.module.css";
 import type { RebalanceQueueRow } from "../networkFindAreasViewModel";
+import {
+  describeDisclosureDefect,
+  readConstraintDisclosure,
+} from "./constraintDisclosure";
 import { PlanGanttChart } from "./PlanGanttChart";
 
 type RebalanceAction = "request-avm" | "complete-avm" | "solve-netplan" | "select-scenario" | "submit-review";
@@ -43,6 +47,14 @@ const lightTone: Record<string, string> = {
  * classification -- an older payload, or a surface with no policy registered --
  * every unmodelled class is treated as blocking: offering an acknowledgement
  * the server will refuse is worse than offering none.
+ *
+ * The policy split is only consulted once the disclosure itself has been read
+ * as a complete ODP-FR-NET-002 partition. A payload that does not account for
+ * all eight classes has not said which of them this solve is exposed on, so
+ * there is nothing for the policy to classify -- and a blocked/acknowledgeable
+ * split computed over a subset would describe a smaller exposure than the plan
+ * actually carries. `readConstraintDisclosure` makes that call; everything
+ * here is downstream of it.
  */
 function classifyDisclosure(scenario: {
   modelledConstraintClasses?: unknown[] | null;
@@ -55,36 +67,41 @@ function classifyDisclosure(scenario: {
 } | undefined): {
   blocked: string[];
   acknowledgeable: string[];
+  modelled: string[];
   unmodelled: string[];
   undeclared: boolean;
+  defectDescription: string;
 } {
-  const rawUnmodelled =
-    scenario?.unmodelledConstraintClasses ?? scenario?.unmodelled_constraint_classes ?? [];
-  const unmodelled = Array.from(new Set(rawUnmodelled.map((item) => String(item))));
-  const rawModelled =
-    scenario?.modelledConstraintClasses ?? scenario?.modelled_constraint_classes ?? [];
-  // A scenario that declared nothing has not said it bound everything. Its
-  // empty unmodelled set is an absence, not a measurement, so it is never
-  // rendered as "fully modelled".
-  //
-  // The server reaches the same conclusion and sends `disclosureUndeclared`,
-  // but the console does not need the flag to arrive to stay closed: a payload
-  // naming no modelled and no unmodelled class is undisclosed on its face, and
-  // an older API, a dropped field or a surface that never classified would
-  // otherwise turn that silence into an enabled submit button here.
-  if (scenario?.disclosureUndeclared || (rawModelled.length === 0 && unmodelled.length === 0)) {
-    return { blocked: [], acknowledgeable: [], unmodelled, undeclared: true };
+  const reading = readConstraintDisclosure(scenario);
+  if (reading.undeclared) {
+    return {
+      blocked: [],
+      acknowledgeable: [],
+      modelled: [],
+      unmodelled: [],
+      undeclared: true,
+      defectDescription: describeDisclosureDefect(reading),
+    };
   }
   const rawBlocked = scenario?.blockedConstraintClasses;
   const rawAcknowledgeable = scenario?.acknowledgeableConstraintClasses;
   if (rawBlocked == null || rawAcknowledgeable == null) {
-    return { blocked: unmodelled, acknowledgeable: [], unmodelled, undeclared: false };
+    return {
+      blocked: reading.unmodelled,
+      acknowledgeable: [],
+      modelled: reading.modelled,
+      unmodelled: reading.unmodelled,
+      undeclared: false,
+      defectDescription: "",
+    };
   }
   return {
     blocked: rawBlocked.map((item) => String(item)),
     acknowledgeable: rawAcknowledgeable.map((item) => String(item)),
-    unmodelled,
+    modelled: reading.modelled,
+    unmodelled: reading.unmodelled,
     undeclared: false,
+    defectDescription: "",
   };
 }
 
@@ -120,15 +137,15 @@ export function RebalancePanel({
     (scenario) => scenario.id === selected.selectedScenarioId
   );
 
-  const selectedModelled = useMemo(() => {
-    const raw = selectedScenario?.modelledConstraintClasses || selectedScenario?.modelled_constraint_classes;
-    return raw && raw.length > 0 ? Array.from(new Set(raw.map((c) => String(c)))) : [];
-  }, [selectedScenario]);
-
   const selectedDisclosure = useMemo(
     () => classifyDisclosure(selectedScenario),
     [selectedScenario]
   );
+  // Both halves come from the validated reading. Taking the modelled list
+  // straight off the row was the fail-open: a row disclosing only CAPITAL was
+  // rejected as undeclared everywhere else on this screen and still handed
+  // "已建模: CAPITAL" to the Gantt chart underneath.
+  const selectedModelled = selectedDisclosure.modelled;
   const selectedUnmodelled = selectedDisclosure.unmodelled;
   const selectedBlocked = selectedDisclosure.blocked;
   const selectedHasBlocked = selectedBlocked.length > 0 || selectedDisclosure.undeclared;
@@ -169,7 +186,8 @@ export function RebalancePanel({
     selected,
     isAcknowledgementSatisfied,
     selectedHasBlocked,
-    selectedBlocked
+    selectedBlocked,
+    selectedDisclosure.undeclared
   );
   const actionBusy = busyAction?.startsWith(`${selected.id}:`) ?? false;
   const avmP50 = typeof selected.avmP50 === "number" ? selected.avmP50 : null;
@@ -326,9 +344,8 @@ export function RebalancePanel({
                 {selected.netPlanScenarios.map((scenario) => {
                   const scenarioId = scenario.id ?? scenario.name;
                   const scenarioBusy = busyAction === `${selected.id}:select-scenario:${scenarioId}`;
-                  const cardModelled =
-                    scenario.modelledConstraintClasses || scenario.modelled_constraint_classes || [];
                   const cardDisclosure = classifyDisclosure(scenario);
+                  const cardModelled = cardDisclosure.modelled;
                   const cardUnmodelled = cardDisclosure.unmodelled;
                   const cardBlocked = cardDisclosure.blocked;
                   const cardHasBlocked = cardBlocked.length > 0 || cardDisclosure.undeclared;
@@ -372,7 +389,7 @@ export function RebalancePanel({
                         {cardHasBlocked ? (
                           <span className={styles.scenarioBlockedBadge} data-testid={`scenario-blocked-badge-${scenarioId}`}>
                             {cardDisclosure.undeclared
-                              ? "未申報建模範圍"
+                              ? "揭露不完整 / 未申報建模範圍"
                               : `不可豁免阻擋: ${cardBlocked.join(", ")}`}
                           </span>
                         ) : cardNeedsAck ? (
@@ -443,13 +460,16 @@ export function RebalancePanel({
               <div>
                 <strong>
                   {selectedDisclosure.undeclared
-                    ? "本方案未申報硬限制建模範圍 (Disclosure undeclared)"
+                    ? "本方案未完整申報硬限制建模範圍 (Disclosure undeclared)"
                     : `存在未建模且不可豁免之硬限制 (Blocked: ${selectedBlocked.join(", ")})`}
                 </strong>
                 {selectedDisclosure.undeclared ? (
-                  <p>
-                    求解結果未說明驗證了哪些硬限制類別。未申報不等於全部已驗證，因此無法送審；
-                    請重新求解並取得完整的硬限制揭露。
+                  <p data-testid="rebalance-disclosure-defect">
+                    求解結果未完整說明 ODP-FR-NET-002 八類硬限制的建模狀態
+                    {selectedDisclosure.defectDescription
+                      ? `（${selectedDisclosure.defectDescription}）`
+                      : ""}
+                    。未申報不等於全部已驗證，因此無法送審；請重新求解並取得完整的硬限制揭露。
                   </p>
                 ) : (
                   <p>
@@ -613,7 +633,8 @@ function primaryCta(
   row: RebalanceQueueRow,
   isAckSatisfied: boolean = true,
   hasBlocked: boolean = false,
-  blockedClasses: string[] = []
+  blockedClasses: string[] = [],
+  undeclared: boolean = false
 ): {
   action: Exclude<RebalanceAction, "select-scenario"> | null;
   disabled: boolean;
@@ -643,7 +664,13 @@ function primaryCta(
         action: "submit-review",
         disabled: true,
         label: "送審（無法送審）",
-        note: `方案包含未建模且不可豁免之限制 (${blockedClasses.join(", ")})，無法送審。`,
+        // An undeclared disclosure has no blocked class list to name -- it is
+        // blocked precisely because nothing established which classes are at
+        // stake. Printing an empty parenthesis would read as "blocked by
+        // nothing", which is the sentence this branch exists to avoid.
+        note: undeclared
+          ? "方案未完整申報 ODP-FR-NET-002 八類硬限制的建模狀態，符合性無法判定，無法送審。"
+          : `方案包含未建模且不可豁免之限制 (${blockedClasses.join(", ")})，無法送審。`,
       };
     }
     if (!isAckSatisfied) {

@@ -16,6 +16,7 @@ then delegates valuation and optimization to their application services.
 from __future__ import annotations
 
 import copy
+import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from modules.netplan.application.planning import (
     NetPlanApprovalError,
     NetPlanConstraintDisclosureError,
     NetPlanService,
+    PreparedConstraintDisclosureAcknowledgement,
 )
 from modules.netplan.domain import InvalidNetPlanTransitionError, NetPlanScenarioStatus
 from shared.governance.decision_policy import (
@@ -43,6 +45,8 @@ from shared.governance.netplan_disclosure import (
     evaluate_disclosure,
 )
 from solver.netplan import ConstraintClass
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class NetworkRebalanceError(RuntimeError):
@@ -959,7 +963,7 @@ class NetworkRebalanceService:
                 f"missing cap and re-solve"
             )
 
-        acknowledgement = None
+        prepared_acknowledgement = None
         ack_classes: list[str] = []
         if not evaluation.acknowledgeable and acknowledged_classes:
             # Accepting the submission and dropping the named classes would
@@ -971,7 +975,12 @@ class NetworkRebalanceService:
                 "acknowledged against it"
             )
         if evaluation.acknowledgeable:
-            acknowledgement = self._acknowledge_unmodelled_classes(
+            # Prepared, not written. Every refusal the signature can raise
+            # happens here, while a refusal still costs nothing; the one
+            # irrevocable write is deferred into `_commit_submission` so it
+            # shares a failure boundary with the lifecycle transition and the
+            # Govern approval it exists to authorise.
+            prepared_acknowledgement = self._prepare_unmodelled_acknowledgement(
                 store=store,
                 policy=policy,
                 evaluation=evaluation,
@@ -981,28 +990,21 @@ class NetworkRebalanceService:
                 approval_receipt_id=approval_receipt_id,
                 selected_candidate_id=selected_candidate_id,
             )
-            ack_classes = [str(item) for item in acknowledgement.acknowledged_classes]
+            ack_classes = [
+                str(item) for item in prepared_acknowledgement.acknowledged_classes
+            ]
             if binding is not None:
-                self._require_acknowledgement_subject(acknowledgement, binding)
-
-        # The Operator request is the production submission boundary. Do not
-        # create a Govern approval while the canonical scenario is still merely
-        # SOLVED: a later NetPlan decision must observe the same lifecycle state
-        # that the Operator response claims to have submitted. The acknowledgement
-        # above is intentionally written first, so every failed submission still
-        # leaves no partial signature behind.
-        if canonical_scenario is not None:
-            try:
-                self._canonical_netplan_service().submit_for_approval(
-                    canonical_scenario.scenario_id,
-                    actor=actor_name or actor_role_id,
-                    reason=reason,
-                    selected_candidate_id=selected_candidate_id,
+                self._require_acknowledgement_subject(
+                    prepared_acknowledgement.acknowledgement, binding
                 )
-            except (InvalidNetPlanTransitionError, NetPlanApprovalError) as exc:
-                raise NetworkRebalancePolicyError(
-                    f"canonical NetPlan scenario could not be submitted for approval: {exc}"
-                ) from exc
+        # The sealed receipt, whether or not it has been stored yet. Its id and
+        # timestamp are already fixed, so the approval payload below can name
+        # the receipt that authorises it and be naming the one that gets stored.
+        acknowledgement = (
+            prepared_acknowledgement.acknowledgement
+            if prepared_acknowledgement is not None
+            else None
+        )
 
         approval_id = store.get("relatedApprovalId") or f"APR-NET-{store_id}"
         approval = {
@@ -1092,10 +1094,13 @@ class NetworkRebalanceService:
         }
         approval["evidenceIds"] = [item for item in approval["evidenceIds"] if item]
 
-        written_approval = (
-            self._govern_approval_writer(_copy(approval))
-            if self._govern_approval_writer is not None
-            else _copy(approval)
+        written_approval = self._commit_submission(
+            canonical_scenario=canonical_scenario,
+            prepared_acknowledgement=prepared_acknowledgement,
+            approval=approval,
+            actor=actor_name or actor_role_id,
+            reason=reason,
+            selected_candidate_id=selected_candidate_id,
         )
         self._upsert_local_approval(written_approval)
 
@@ -1175,30 +1180,40 @@ class NetworkRebalanceService:
 
     @classmethod
     def _declared_disclosure(cls, scenario: dict[str, Any]) -> tuple[list[str], list[str]]:
-        """Both halves of this scenario's constraint disclosure, or a refusal.
+        """This scenario's disclosure as a complete partition, or a refusal.
 
-        Read as a pair because the remaining fail-open lives in the pair rather
-        than in either half. A row carrying ``[]`` for both halves has named no
-        class it bound and no class it left unbound: it has disclosed nothing.
-        Taken one key at a time both lists look well-formed, and the empty
-        unmodelled set then reads as "the solve bound everything" -- the
-        strongest possible claim, inferred from a row that made no claim at all.
+        Read as a pair because the fail-open lives in the pair rather than in
+        either half. A row carrying ``[]`` for both halves has named no class it
+        bound and no class it left unbound: it has disclosed nothing. Taken one
+        key at a time both lists look well-formed, and the empty unmodelled set
+        then reads as "the solve bound everything" -- the strongest possible
+        claim, inferred from a row that made no claim at all.
+
+        Rejecting only the doubly-empty row was still fail-open, because a row
+        naming *some* classes is under exactly the same suspicion. ODP-FR-NET-002
+        has eight classes and every solve either bound a class or did not, so a
+        truthful disclosure names all eight exactly once. A row disclosing
+        ``modelled=[CAPITAL], unmodelled=[]`` has said nothing about the other
+        seven, and reading its empty unmodelled set as "no exposure" turns seven
+        unanswered questions into a clean bill of health -- the same inference
+        the doubly-empty check was written to stop, one class short of invisible.
+        So the whole partition is required here: a missing class, a class named
+        on both sides, a repeat, or a name the enum does not know all refuse.
 
         This is the same refusal ``NetPlanService._require_disclosed_classes``
-        already makes over the solve record. It is restated here because the
-        Operator submit path is a second entrance to the same Govern approval
-        and does not go through that check: a gate only one entrance passes
-        through is not a gate.
+        already makes over the solve record, and the same one
+        ``_row_constraint_partition`` makes over a canonical row. It is restated
+        here because the fixture-mode and legacy-payload Operator submit path is
+        a third entrance to the same Govern approval and goes through neither: a
+        gate only some entrances pass through is not a gate.
         """
         modelled = cls._declared_constraint_classes(scenario, "modelled")
         unmodelled = cls._declared_constraint_classes(scenario, "unmodelled")
-        if not modelled and not unmodelled:
-            raise NetworkRebalancePolicyError(
-                f"selected scenario {scenario.get('id') or scenario.get('name')!r} declares "
-                "neither modelled nor unmodelled constraint classes; an undisclosed solve "
-                "cannot be submitted for approval"
-            )
-        return modelled, unmodelled
+        return cls._validate_constraint_partition(
+            modelled,
+            unmodelled,
+            source=f"selected scenario {scenario.get('id') or scenario.get('name')!r}",
+        )
 
     @staticmethod
     def _normalise_constraint_classes(values: Any, *, source: str) -> list[str]:
@@ -1689,7 +1704,7 @@ class NetworkRebalanceService:
                 "than the one being submitted"
             )
 
-    def _acknowledge_unmodelled_classes(
+    def _prepare_unmodelled_acknowledgement(
         self,
         *,
         store: dict[str, Any],
@@ -1700,8 +1715,8 @@ class NetworkRebalanceService:
         acknowledgement_actor_id: str | None,
         approval_receipt_id: str | None,
         selected_candidate_id: str | None,
-    ) -> Any:
-        """Sign for this solve's acknowledgeable exposure, or refuse to submit.
+    ) -> PreparedConstraintDisclosureAcknowledgement:
+        """Validate and seal this solve's signature, or refuse to submit.
 
         The signature is produced by ``NetPlanService``, not here, because that
         is where authority is taken from the verified management approval
@@ -1710,6 +1725,11 @@ class NetworkRebalanceService:
         is the failure the whole acknowledgement path exists to prevent -- so
         ``actorRoleId`` on the submit payload is recorded as the requester and
         never consulted for authority.
+
+        Nothing is stored. A receipt is immutable once written, so storing it
+        here -- before the lifecycle transition and the Govern approval it
+        authorises had their chance to fail -- is what left orphan signatures
+        behind. `_commit_submission` performs the write.
         """
         named = [
             str(item).strip().upper() for item in (acknowledged_classes or []) if str(item).strip()
@@ -1763,7 +1783,7 @@ class NetworkRebalanceService:
             )
         service = self._canonical_netplan_service()
         try:
-            return service.acknowledge_unmodelled_constraints(
+            return service.prepare_unmodelled_constraint_acknowledgement(
                 scenario_id=scenario_id,
                 actor_id=actor_id,
                 reason=cleaned_reason,
@@ -1773,6 +1793,114 @@ class NetworkRebalanceService:
             )
         except NetPlanConstraintDisclosureError as exc:
             raise NetworkRebalancePolicyError(str(exc)) from exc
+
+    def _commit_submission(
+        self,
+        *,
+        canonical_scenario: Any | None,
+        prepared_acknowledgement: PreparedConstraintDisclosureAcknowledgement | None,
+        approval: dict[str, Any],
+        actor: str,
+        reason: str,
+        selected_candidate_id: str | None,
+    ) -> dict[str, Any]:
+        """Land the whole submission, or leave nothing that can act on its own.
+
+        A submission is three writes in two stores: the canonical NetPlan
+        lifecycle moves to PENDING_APPROVAL, the disclosure receipt becomes
+        durable, and Govern gains an approval. Performed as three independent
+        calls, a failure in the second or third left the first standing: a
+        signature with no submission behind it, or a scenario stuck in
+        PENDING_APPROVAL that the Operator surface could never retry, because
+        the retry demands a SOLVED scenario.
+
+        There is no transaction spanning both stores, so the guarantee is built
+        out of ordering plus compensation:
+
+        - Everything that can refuse has already refused. The row was
+          reconciled against the canonical solve, the policy was evaluated, and
+          the signature was validated and sealed, all before this method is
+          entered. What remains are writes, not decisions.
+        - The lifecycle transition goes first because it is the only durable
+          effect that can be taken back, and it is taken back on any later
+          failure.
+        - The Govern write goes last because it is the one this service cannot
+          reverse: the writer is an opaque callable into another bounded
+          context, and inventing a retraction for it would be a governance
+          action, not a rollback.
+
+        That leaves exactly one residue: a Govern write that fails after the
+        receipt is durable. The receipt survives because receipts are immutable
+        by design -- both the in-memory store and
+        ``trg_netplan_disclosure_ack_immutable`` refuse to rewrite one, and a
+        path that deleted signatures to tidy up would be a worse property than
+        the one it bought. What matters is that the surviving receipt authorises
+        nothing: `NetPlanService.decide` will only approve a scenario in
+        PENDING_APPROVAL, the compensation has put it back to SOLVED, and a
+        later successful submission is answered by its own newer receipt. Every
+        surface that acts on a submission -- the scenario lifecycle, the Govern
+        queue, the Operator store -- is left exactly as it was.
+        """
+        compensations: list[tuple[str, Callable[[], Any]]] = []
+        service = (
+            self._canonical_netplan_service()
+            if canonical_scenario is not None or prepared_acknowledgement is not None
+            else None
+        )
+        try:
+            if canonical_scenario is not None:
+                assert service is not None
+                try:
+                    service.submit_for_approval(
+                        canonical_scenario.scenario_id,
+                        actor=actor,
+                        reason=reason,
+                        selected_candidate_id=selected_candidate_id,
+                    )
+                except (InvalidNetPlanTransitionError, NetPlanApprovalError) as exc:
+                    raise NetworkRebalancePolicyError(
+                        f"canonical NetPlan scenario could not be submitted for approval: {exc}"
+                    ) from exc
+                compensations.append(
+                    (
+                        f"netplan scenario {canonical_scenario.scenario_id}",
+                        lambda: service.repository.save_scenario(canonical_scenario),
+                    )
+                )
+            if prepared_acknowledgement is not None:
+                assert service is not None
+                if canonical_scenario is None:
+                    # No lifecycle transition carried the candidate id, so the
+                    # receipt's subject has to be pinned here or a later
+                    # decision would silently fall back to the primary.
+                    before = prepared_acknowledgement.scenario
+                    service.pin_prepared_candidate(prepared_acknowledgement)
+                    compensations.append(
+                        (
+                            f"netplan scenario {before.scenario_id}",
+                            lambda: service.repository.save_scenario(before),
+                        )
+                    )
+                service.commit_unmodelled_constraint_acknowledgement(
+                    prepared_acknowledgement
+                )
+            if self._govern_approval_writer is not None:
+                return self._govern_approval_writer(_copy(approval))
+            return _copy(approval)
+        except BaseException:
+            for label, undo in reversed(compensations):
+                try:
+                    undo()
+                except Exception:  # pragma: no cover - compensation is best effort
+                    # Never mask the failure that triggered the rollback. A
+                    # compensation that cannot run leaves a state an operator
+                    # has to see reported as the original refusal, not as a
+                    # second error about the cleanup.
+                    _LOGGER.exception(
+                        "failed to roll back %s after an incomplete NetPlan submission",
+                        label,
+                    )
+            raise
 
     def _optional_disclosure_policy(self) -> DecisionPolicy | None:
         """The policy if one resolves, else ``None``.
@@ -1807,6 +1935,13 @@ class NetworkRebalanceService:
         here too. The console and the gate have to agree about which scenarios
         are unverifiable; a read path that classified them as fully modelled
         would put a live submit button on a plan the server rejects.
+
+        Both branches project the classes they validated rather than the ones the
+        row happened to carry, and project *nothing* when validation failed. A
+        row whose partition does not parse still has two well-formed-looking
+        lists on it, and echoing them through would let the console read
+        ``modelled=[CAPITAL]`` as a verification claim about CAPITAL made by a
+        solve whose disclosure the server just refused to believe.
         """
         if self._require_canonical:
             try:
@@ -1837,6 +1972,10 @@ class NetworkRebalanceService:
                 modelled, unmodelled = self._declared_disclosure(scenario)
             except NetworkRebalancePolicyError:
                 return {
+                    "modelledConstraintClasses": [],
+                    "unmodelledConstraintClasses": [],
+                    "modelled_constraint_classes": [],
+                    "unmodelled_constraint_classes": [],
                     "blockedConstraintClasses": [],
                     "acknowledgeableConstraintClasses": [],
                     "disclosurePolicyVersionId": None,
@@ -1849,32 +1988,20 @@ class NetworkRebalanceService:
             evaluation = evaluate_disclosure(policy, unmodelled_classes=unmodelled)
         except NetPlanDisclosurePolicyError:
             return {
-                **(
-                    {
-                        "modelledConstraintClasses": modelled,
-                        "unmodelledConstraintClasses": unmodelled,
-                        "modelled_constraint_classes": modelled,
-                        "unmodelled_constraint_classes": unmodelled,
-                    }
-                    if self._require_canonical
-                    else {}
-                ),
+                "modelledConstraintClasses": list(modelled),
+                "unmodelledConstraintClasses": list(unmodelled),
+                "modelled_constraint_classes": list(modelled),
+                "unmodelled_constraint_classes": list(unmodelled),
                 "blockedConstraintClasses": list(unmodelled),
                 "acknowledgeableConstraintClasses": [],
                 "disclosurePolicyVersionId": None,
                 "disclosureUndeclared": False,
             }
         return {
-            **(
-                {
-                    "modelledConstraintClasses": modelled,
-                    "unmodelledConstraintClasses": unmodelled,
-                    "modelled_constraint_classes": modelled,
-                    "unmodelled_constraint_classes": unmodelled,
-                }
-                if self._require_canonical
-                else {}
-            ),
+            "modelledConstraintClasses": list(modelled),
+            "unmodelledConstraintClasses": list(unmodelled),
+            "modelled_constraint_classes": list(modelled),
+            "unmodelled_constraint_classes": list(unmodelled),
             "blockedConstraintClasses": list(evaluation.blocking),
             "acknowledgeableConstraintClasses": list(evaluation.acknowledgeable),
             "disclosurePolicyVersionId": evaluation.policy_version_id,
