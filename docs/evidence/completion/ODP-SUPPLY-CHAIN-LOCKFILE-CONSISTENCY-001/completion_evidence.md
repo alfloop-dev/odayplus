@@ -4,8 +4,8 @@
 - **Task ID**: `ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001`
 - **Title**: 修正 production npm audit 的無效 package tree
 - **Owner**: Antigravity3
-- **Reviewer**: Claude2
-- **Base Commit**: `efdfea1a0c31` (`origin/dev`, composed via base-advance merge)
+- **Reviewer**: Codex
+- **Base Commit**: `3fbc85bab88a` (`origin/dev`, composed via base-advance merge)
 - **Environment for every command below**: this repository checkout, npm `10.9.8`,
   node available on `PATH`, Python via `uv run --frozen` unless a command is
   written with an explicit interpreter.
@@ -106,18 +106,25 @@ distinction the old gate lacked:
   non-zero merely because findings exist. When a report is present the gate
   evaluates `metadata.vulnerabilities` at or above the threshold, so
   high/critical advisories always fail.
+- **Enforced threshold floor.** The gate validates that the threshold cannot be
+  lowered below `high` (preventing `ODP_NPM_AUDIT_LEVEL=critical` from bypassing
+  high-severity production advisories).
 - **Bounded retry for transport failures only.** Three attempts with linear
   backoff; a delivered report is never retried away.
 - **Fail-closed on exhaustion.** If no attempt yields a report, the gate exits
   `2` with `AUDIT UNAVAILABLE`. A registry outage means there is no
   vulnerability data, so the gate stays closed rather than reporting a pass.
+- **Redacted receipt emission.** When `--receipt <path>` is supplied, the gate
+  atomically writes a redacted JSON receipt recording execution status, exit code,
+  severity counts, threshold, and outcome kind.
+- **Architectural separation between CI and Runtime Release.** PR and merge CI
+  do not execute live `npm audit` calls over the network; CI validates deterministic
+  classifiers and workflow wiring. Live production audit is isolated exclusively to
+  the Runtime Release (`deploy-dev.yml`) build-phase egress probe where it executes
+  once and writes `npm-audit-receipt.json`.
 
 Exit codes are distinct so the two states can never be conflated again:
 `0` clean, `1` vulnerabilities at or above threshold, `2` audit unavailable.
-
-`package.json` `scripts.audit:security` now invokes this gate, so
-`make dependency-audit` → `make security` → `make ci` all reach it. The
-Makefile targets are unchanged.
 
 `delivery_toolchain/security/generate_sbom.py` retains the fix from the earlier
 revision: distribution discovery is pinned to `.venv/lib/python*/site-packages`
@@ -129,16 +136,16 @@ environment; it is orthogonal to the npm audit gate and does not affect it.
 | # | Command | Result |
 | --- | --- | --- |
 | 1 | `npm ci --dry-run` | exit `0` |
-| 2 | `npm audit --omit=dev --audit-level=high` | exit `0`, `found 0 vulnerabilities` (when network is available) |
+| 2 | `python3 delivery_toolchain/security/npm_audit_gate.py` | exit `0`, `PASS: no production vulnerabilities at or above 'high'` |
 | 3 | `python3 delivery_toolchain/security/generate_sbom.py --check` | exit `0`, `SBOM at docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json is valid and up to date.` |
 | 4 | `uv run python delivery_toolchain/security/generate_sbom.py --check` | exit `0`, `SBOM at docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json is valid and up to date.` |
-| 5 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py -k npm_audit_gate -q` | `12 passed` |
-| 6 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py tests/security/test_release_security_gate.py -q` | exit `0`; 28 collected, 28 passed (25 supply-chain + 3 release-gate) |
+| 5 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py tests/security/test_release_security_gate.py -q` | exit `0`; 33 collected, 33 passed |
+| 6 | `uv run --frozen pytest tests/ops/test_deploy_workflow_contract.py -q` | exit `0`; 77 collected, 77 passed |
 | 7 | `uv run --frozen ruff check delivery_toolchain/security/npm_audit_gate.py tests/security/test_supply_chain_security_gate.py` | `All checks passed!` |
 | 8 | `uv run python delivery_toolchain/governance/check_code_boundaries.py` | exit `0`, `Code boundary checks passed for 1098 files.` |
 
 ### Regression tests added
-`tests/security/test_supply_chain_security_gate.py` gains twelve cases that pin
+`tests/security/test_supply_chain_security_gate.py` gains regression cases that pin
 the gate's behaviour, using the **actual registry bodies observed on PR #1164**
 as fixtures:
 
@@ -154,26 +161,32 @@ as fixtures:
 - `test_npm_audit_gate_exhausted_retries_stay_closed`
 - `test_npm_audit_gate_is_wired_into_the_release_gate`
 - `test_npm_audit_gate_omits_dev_dependencies`
+- `test_npm_audit_gate_rejects_lowering_threshold_to_critical`
+- `test_npm_audit_gate_rejects_critical_env_var`
+- `test_npm_audit_gate_writes_redacted_receipt`
+- `test_npm_audit_gate_receipt_distinguishes_unavailable_from_vulnerabilities`
+- `test_ci_does_not_execute_live_npm_audit_in_makefile`
 
-The fourth and tenth are the anti-fake-gate cases: they assert that a `400`
+The transport failure and retry exhaustion cases assert that a `400`
 `Invalid package tree` body, a `503`, and exhausted retries each produce
 `EXIT_AUDIT_UNAVAILABLE` and explicitly **not** `EXIT_OK`.
 
 ## Safety Invariants
 - Audit threshold unchanged (`high`, production scope `--omit=dev`).
+- No threshold downgrade to `critical` permitted.
 - No gate skipped, waived or made conditional; no `continue-on-error` added.
 - A registry non-200 is **not** treated as success — it is a distinct
   fail-closed exit code.
 - Deterministic test execution: `test_npm_audit_passes` in pytest evaluates
   the audit gate logic with deterministic fixture/mock outcome rather than making
   direct live network requests, preventing merge-queue timeouts.
-- Live audit execution is performed exclusively by `make dependency-audit`
-  (`npm run audit:security`) and the release egress probe.
+- Live audit execution is performed exclusively by the Runtime Release build-phase
+  egress probe and produces a redacted receipt.
 - No production dependency version and no `package-lock.json` entry changed.
 
 ## Residual Risk
 If the npm registry is unavailable for the full retry budget, the gate fails
-with `AUDIT UNAVAILABLE` (exit `2`) and the build/release stays red. That is deliberate:
+with `AUDIT UNAVAILABLE` (exit `2`) and the release stays red. That is deliberate:
 without advisory data the gate cannot assert that production dependencies are
 clean. The distinct exit code and message make this state self-identifying, so
 it is no longer mistaken for a lockfile defect.

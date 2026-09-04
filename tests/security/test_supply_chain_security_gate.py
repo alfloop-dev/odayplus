@@ -410,12 +410,99 @@ def test_npm_audit_gate_exhausted_retries_stay_closed(monkeypatch) -> None:
 
 def test_npm_audit_gate_is_wired_into_the_release_gate() -> None:
     package_json = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-    assert "npm_audit_gate.py" in package_json["scripts"]["audit:security"], (
-        "make dependency-audit runs 'npm run audit:security'; it must reach the hardened gate"
-    )
+    assert "npm_audit_gate.py" in package_json["scripts"]["audit:security"]
+    deploy_workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert "npm_audit_gate.py" in deploy_workflow
+    assert "--receipt" in deploy_workflow
+    assert "npm-audit-receipt.json" in deploy_workflow
 
 
 def test_npm_audit_gate_omits_dev_dependencies() -> None:
     """The gate audits the production tree only, matching the original command."""
     source = (ROOT / "delivery_toolchain/security/npm_audit_gate.py").read_text(encoding="utf-8")
     assert '"--omit=dev"' in source
+
+
+def test_npm_audit_gate_rejects_lowering_threshold_to_critical() -> None:
+    """ODP_NPM_AUDIT_LEVEL must not lower the production threshold from high to critical."""
+    gate = _audit_gate()
+    import pytest
+
+    with pytest.raises(ValueError, match="cannot be lowered"):
+        gate.validate_threshold("critical")
+
+    outcome = gate.classify_audit_output(_report_json(high=1), "")
+    code, verdict = gate.evaluate(outcome, "critical")
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+    assert "invalid severity threshold" in verdict
+
+
+def test_npm_audit_gate_rejects_critical_env_var(monkeypatch) -> None:
+    gate = _audit_gate()
+    monkeypatch.setenv("ODP_NPM_AUDIT_LEVEL", "critical")
+    code = gate.main([])
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+
+
+def test_npm_audit_gate_writes_redacted_receipt(tmp_path: Path) -> None:
+    gate = _audit_gate()
+    receipt_file = tmp_path / "npm-audit-receipt.json"
+    outcome = gate.classify_audit_output(_report_json(moderate=1), "")
+    code, verdict = gate.evaluate(outcome, "high")
+    gate.write_audit_receipt(receipt_file, outcome, code, verdict, "high")
+
+    assert receipt_file.exists()
+    data = json.loads(receipt_file.read_text(encoding="utf-8"))
+    assert data["secret_values_redacted"] is True
+    assert data["status"] == "passed"
+    assert data["result"] == "pass"
+    assert data["exit_code"] == gate.EXIT_OK
+    assert data["threshold"] == "high"
+    assert data["omit_dev"] is True
+    assert data["outcome_kind"] == "report"
+    assert data["counts"]["moderate"] == 1
+
+
+def test_npm_audit_gate_receipt_distinguishes_unavailable_from_vulnerabilities(
+    tmp_path: Path,
+) -> None:
+    gate = _audit_gate()
+    unavail_receipt = tmp_path / "unavail.json"
+    unavail_outcome = gate.classify_audit_output(QUICK_ENDPOINT_400, "")
+    code_u, verdict_u = gate.evaluate(unavail_outcome, "high")
+    gate.write_audit_receipt(unavail_receipt, unavail_outcome, code_u, verdict_u, "high")
+    data_u = json.loads(unavail_receipt.read_text(encoding="utf-8"))
+    assert data_u["status"] == "failed"
+    assert data_u["result"] == "fail"
+    assert data_u["exit_code"] == gate.EXIT_AUDIT_UNAVAILABLE
+    assert data_u["outcome_kind"] == "unavailable"
+
+    vuln_receipt = tmp_path / "vuln.json"
+    vuln_outcome = gate.classify_audit_output(_report_json(high=1), "")
+    code_v, verdict_v = gate.evaluate(vuln_outcome, "high")
+    gate.write_audit_receipt(vuln_receipt, vuln_outcome, code_v, verdict_v, "high")
+    data_v = json.loads(vuln_receipt.read_text(encoding="utf-8"))
+    assert data_v["status"] == "failed"
+    assert data_v["result"] == "fail"
+    assert data_v["exit_code"] == gate.EXIT_VULNERABLE
+    assert data_v["outcome_kind"] == "report"
+
+
+def test_ci_does_not_execute_live_npm_audit_in_makefile() -> None:
+    """PR and merge CI do not execute live npm audit directly."""
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    lines = makefile.splitlines()
+    in_dep_audit = False
+    dep_audit_lines = []
+    for line in lines:
+        if line.startswith("dependency-audit:"):
+            in_dep_audit = True
+            continue
+        if in_dep_audit:
+            if line.startswith(("\t", " ")):
+                dep_audit_lines.append(line)
+            else:
+                break
+    dep_audit_body = "\n".join(dep_audit_lines)
+    assert "npm run audit:security" not in dep_audit_body
+    assert "npm audit" not in dep_audit_body

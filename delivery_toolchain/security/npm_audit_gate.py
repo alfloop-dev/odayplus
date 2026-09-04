@@ -30,13 +30,16 @@ vulnerability data, so the gate stays closed.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,9 +80,19 @@ class AuditOutcome:
         return self.kind == REPORT
 
 
-def severities_at_or_above(threshold: str) -> tuple[str, ...]:
+def validate_threshold(threshold: str) -> str:
     if threshold not in SEVERITY_ORDER:
         raise ValueError(f"unknown severity threshold: {threshold!r}")
+    if SEVERITY_ORDER.index(threshold) > SEVERITY_ORDER.index(DEFAULT_THRESHOLD):
+        raise ValueError(
+            f"production audit threshold cannot be lowered to {threshold!r}; "
+            f"must be '{DEFAULT_THRESHOLD}' or stricter"
+        )
+    return threshold
+
+
+def severities_at_or_above(threshold: str) -> tuple[str, ...]:
+    threshold = validate_threshold(threshold)
     return SEVERITY_ORDER[SEVERITY_ORDER.index(threshold) :]
 
 
@@ -171,6 +184,14 @@ def audit_with_retry(
 
 def evaluate(outcome: AuditOutcome, threshold: str = DEFAULT_THRESHOLD) -> tuple[int, str]:
     """Map an outcome onto an exit code and a human-readable verdict."""
+    try:
+        valid_threshold = validate_threshold(threshold)
+    except ValueError as exc:
+        return (
+            EXIT_AUDIT_UNAVAILABLE,
+            f"AUDIT UNAVAILABLE: invalid severity threshold: {exc}",
+        )
+
     if not outcome.has_report:
         return (
             EXIT_AUDIT_UNAVAILABLE,
@@ -179,21 +200,64 @@ def evaluate(outcome: AuditOutcome, threshold: str = DEFAULT_THRESHOLD) -> tuple
         )
 
     counts = outcome.counts or {}
-    blocking = severities_at_or_above(threshold)
+    blocking = severities_at_or_above(valid_threshold)
     failing = {level: counts.get(level, 0) for level in blocking if counts.get(level, 0)}
     if failing:
         summary = ", ".join(f"{count} {level}" for level, count in failing.items())
         return (
             EXIT_VULNERABLE,
-            f"VULNERABILITIES FOUND at or above '{threshold}' in production dependencies: "
+            f"VULNERABILITIES FOUND at or above '{valid_threshold}' in production dependencies: "
             f"{summary}. Run 'npm audit --omit=dev' for details.",
         )
 
     total = counts.get("total", sum(counts.get(level, 0) for level in SEVERITY_ORDER))
     return (
         EXIT_OK,
-        f"PASS: no production vulnerabilities at or above '{threshold}' "
+        f"PASS: no production vulnerabilities at or above '{valid_threshold}' "
         f"({total} finding(s) below the threshold).",
+    )
+
+
+def build_audit_receipt(
+    outcome: AuditOutcome,
+    code: int,
+    verdict: str,
+    threshold: str = DEFAULT_THRESHOLD,
+) -> dict[str, Any]:
+    """Construct a redacted, schema-compliant audit receipt dictionary."""
+    return {
+        "schema_version": 1,
+        "receipt_kind": "npm_audit",
+        "gate": "npm_audit_gate",
+        "secret_values_redacted": True,
+        "status": "passed" if code == EXIT_OK else "failed",
+        "result": "pass" if code == EXIT_OK else "fail",
+        "exit_code": code,
+        "threshold": threshold,
+        "omit_dev": True,
+        "outcome_kind": outcome.kind,
+        "counts": outcome.counts,
+        "detail": outcome.detail,
+        "verdict": verdict,
+        "candidate_sha": os.environ.get("ODAY_RELEASE_SHA", ""),
+        "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+
+
+def write_audit_receipt(
+    path: Path,
+    outcome: AuditOutcome,
+    code: int,
+    verdict: str,
+    threshold: str = DEFAULT_THRESHOLD,
+) -> None:
+    """Write the redacted audit receipt atomically to disk."""
+    receipt = build_audit_receipt(outcome, code, verdict, threshold)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -211,19 +275,61 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def main() -> int:
-    threshold = os.environ.get("ODP_NPM_AUDIT_LEVEL", DEFAULT_THRESHOLD)
-    if threshold not in SEVERITY_ORDER:
-        print(f"Invalid ODP_NPM_AUDIT_LEVEL={threshold!r}", file=sys.stderr)
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Production npm audit security gate.")
+    parser.add_argument(
+        "--receipt",
+        type=Path,
+        default=None,
+        help="Path to write the redacted audit receipt JSON.",
+    )
+    parser.add_argument(
+        "--threshold",
+        default=os.environ.get("ODP_NPM_AUDIT_LEVEL", DEFAULT_THRESHOLD),
+        help=f"Severity threshold (default: {DEFAULT_THRESHOLD}). Cannot be lowered below 'high'.",
+    )
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=_env_int("ODP_NPM_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS),
+        help=f"Retry attempts (default: {DEFAULT_ATTEMPTS}).",
+    )
+    parser.add_argument(
+        "--backoff",
+        type=float,
+        default=_env_float("ODP_NPM_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS),
+        help=f"Backoff seconds between retries (default: {DEFAULT_BACKOFF_SECONDS}).",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=_env_float("ODP_NPM_AUDIT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
+        help=f"Timeout seconds per attempt (default: {DEFAULT_TIMEOUT_SECONDS}).",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        threshold = validate_threshold(args.threshold)
+    except ValueError as exc:
+        print(f"Invalid threshold configuration: {exc}", file=sys.stderr)
+        if args.receipt:
+            outcome = AuditOutcome(UNAVAILABLE, None, f"invalid threshold configuration: {exc}")
+            write_audit_receipt(
+                args.receipt, outcome, EXIT_AUDIT_UNAVAILABLE, str(exc), args.threshold
+            )
         return EXIT_AUDIT_UNAVAILABLE
 
     outcome = audit_with_retry(
-        attempts=_env_int("ODP_NPM_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS),
-        backoff=_env_float("ODP_NPM_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS),
-        timeout=_env_float("ODP_NPM_AUDIT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
+        attempts=args.attempts,
+        backoff=args.backoff,
+        timeout=args.timeout,
     )
     code, verdict = evaluate(outcome, threshold)
     print(verdict, file=sys.stderr if code else sys.stdout)
+
+    if args.receipt:
+        write_audit_receipt(args.receipt, outcome, code, verdict, threshold)
+
     return code
 
 
