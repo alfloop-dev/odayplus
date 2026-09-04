@@ -6946,7 +6946,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
             mock.patch.object(supervisor, "start_worker_for_request") as mock_start,
-            mock.patch.object(supervisor, "write_activity_log") as mock_log,
+            mock.patch.object(supervisor, "write_activity_log"),
         ):
             supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
 
@@ -7044,7 +7044,6 @@ class PollWorkersRecoveryTests(unittest.TestCase):
                 self.assertEqual(len(start_calls), 1)
 
     def test_dispatch_rollback_on_commit_failure(self) -> None:
-        now = datetime.now(UTC).replace(microsecond=0)
         task1 = {
             "id": "TASK-FAIL-COMMIT-1",
             "status": "todo",
