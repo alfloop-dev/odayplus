@@ -1068,7 +1068,7 @@ class MarketDataFacade:
                 waiver=waiver,
             )
             for obs in doc.listing_observations:
-                if obs.listing_obs_id == listing_id:
+                if obs.listing_obs_id == listing_id or obs.source_listing_id == listing_id:
                     return obs
 
             raise DataPlatformDocumentNotFoundError(
