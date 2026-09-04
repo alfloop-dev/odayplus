@@ -200,13 +200,16 @@ stateDiagram-v2
 ### 4.5 `ODP-FR-SHARED-001`：工作狀態回報
 
 #### 成員：`PARTIAL`（部分成功狀態）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（自 `OPEN` 轉入；靜態 producer 查證已完成）
-- **前一狀態 (Previous State)**: `OPEN`
-- **待確認證據 (Evidence Needed)**: 兩項，都不是讀 code 能回答的。(1) live production queue／scheduler／worker receipt inventory，用來判定已部署的 job 是否曾回報過 `JobStatus.PARTIAL`；repo trace 只能證明「沒有任何程式路徑會寫入」。(2) 產品裁決：現存的 partial-shaped command outcome（批次 intake 的 207 逐列 receipt、XLSX 部分 commit、external ingestion 的 accepted／quarantined counts）是否應升格為帶 member receipt 與 member retry contract 的 durable job。
-- **證據負責人 (Evidence Owner)**: `Platform Infrastructure Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已移交人類治理授權）
+- **Formal Handback Ref**: `docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md#3-人類授權移交單human-authority-handback-package`
+- **Evidence Request Ref**: `docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`
+- **Handback Package ID**: `HB-SHARED001-PARTIAL-001`
+- **待確認證據 (Evidence Needed)**: 兩項非代碼庫可獨立判定之證據。(1) live production queue／scheduler／worker receipt inventory，用以判定已部署 job 是否曾回報過 `JobStatus.PARTIAL`；(2) 產品裁決：現存 partial-shaped command outcomes（批次房源寫入之 207 逐列收據、XLSX 局部提交、外部資料攝取之 accepted/quarantined counts）是否應昇格為具備 itemized receipt 與 member retry contract 之 durable queue jobs。
+- **證據／風險負責人 (Evidence & Risk Owner)**: `Platform Infrastructure Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **證據文件 (Evidence Ref)**: [`docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`](../evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md)
-- **理由 (Rationale)**: `JobStatus` 詞彙已納入 `PARTIAL`，但系統中尚未有會產出部分成功狀態的長任務；不強行假實作。`ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001` 走完 default registry（`forecast`、`external-fetch`、`assisted-listing-intake`）與所有 module worker entry point，皆無 `JobStatus.PARTIAL` write，因此「缺口是否存在」這一題已經關閉；為了把六個成員湊滿而硬接任一 command receipt，正是本閘要防的假實作。
+- **重啟條件 (Reopen Trigger)**: (1) Production worker registry 新增具備可達 `JobStatus.PARTIAL` 狀態轉移之多工作項目批次任務 handler；或 (2) 同步指令操作（批次房源寫入/外部資料攝取）正式排程昇格為具備成員明細收據與成員級重試契約之 durable jobs；或 (3) 線上執行期隊列/worker 審計日誌出現回報 `PARTIAL` 之部署任務。
+- **裁決理由 (Rationale)**:
+  `JobStatus` 詞彙與 `JobDeliveryState` 交付狀態已完成型別分離，但代碼庫中現行 default worker registry 與所有模組 worker entry points 皆無任何寫入 `JobStatus.PARTIAL` 的生產者。批次房源 207 收據、XLSX commit 與外部資料攝取隔離計數皆屬同步指令或資料層品質標記，而非隊列任務成果；隊列的 `RETRYING` 與 `DEAD_LETTER` 亦屬傳遞狀態而非業務成果。嚴禁為湊齊成員而進行偽實作。已建立結構化人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Platform Infrastructure Lead`，待批次長任務規格確立後轉為 `IMPLEMENTATION_READY` 或由人類授權人簽署正式修訂／豁免。
 
 ---
 
