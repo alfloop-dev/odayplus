@@ -129,6 +129,7 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
                 entry.get("ops_issue"),
                 entry.get("last_review_hash"),
                 entry.get("last_issue_hash"),
+                entry.get("last_merge_group_failure"),
             )
         ):
             pruned_tasks[task_id] = entry

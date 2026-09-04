@@ -58,7 +58,7 @@ SUCCESS_CONCLUSIONS = frozenset({
 })
 
 MERGE_GROUP_QUEUE_REF_PATTERN = re.compile(
-    r"(?:^|/)(?:gh-readonly-queue/[^/]+/)?pr-(?P<pr>\d+)-[0-9a-fA-F]+",
+    r"^(?:(?:refs/heads/)?gh-readonly-queue/[^/]+/)?pr-(?P<pr>\d+)-[0-9a-fA-F]+$",
     re.IGNORECASE,
 )
 
@@ -173,7 +173,7 @@ def parse_merge_group_pr_number(queue_ref: str | None) -> int | None:
     raw = queue_ref.strip()
     if not raw:
         return None
-    match = MERGE_GROUP_QUEUE_REF_PATTERN.search(raw)
+    match = MERGE_GROUP_QUEUE_REF_PATTERN.fullmatch(raw)
     if not match:
         return None
     try:
@@ -444,6 +444,11 @@ def reconcile_merge_group_runs(
 
         task["status"] = "review"
         task.pop("approved_head", None)
+        # A successful task-review-gate status may still be attached to the
+        # exact merge-group head.  Recovery requires a fresh reviewer decision,
+        # so remove the local receipt before the canonical transition and
+        # overwrite GitHub's status with the pending review state below.
+        task.pop("review_gate_sha", None)
         task.pop("waiting_for", None)
         task["next"] = (
             f"Merge group run {run_id} failed on {queue_ref}; reviewer recovery handoff dispatched to {handoff_to}."
@@ -463,6 +468,20 @@ def reconcile_merge_group_runs(
         for _, task_id, failure_record in mutating_failures:
             task_entry = bus_state.setdefault("tasks", {}).setdefault(task_id, {})
             task_entry["last_merge_group_failure"] = failure_record
+        for _, task_id, _ in mutating_failures:
+            recovered_task = next(
+                (
+                    candidate
+                    for candidate in status.get("tasks", []) or []
+                    if isinstance(candidate, dict) and str(candidate.get("id") or "") == task_id
+                ),
+                None,
+            )
+            if recovered_task is not None:
+                # This must happen after the CAS-backed transition succeeds:
+                # a stale snapshot must never emit a recovery gate for a task
+                # state that was not committed.
+                runtime_ai_status.emit_task_review_status_check(recovered_task, "review")
         return True
 
     if non_mutating_seen:

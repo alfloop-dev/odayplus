@@ -3072,8 +3072,37 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(parse("pr-100-abc1234"), 100)
         self.assertIsNone(parse("gh-readonly-queue/dev/pr-invalid-abc"))
         self.assertIsNone(parse("refs/heads/feature/test-branch"))
+        # A PR-shaped suffix in an arbitrary branch must never be attributed to
+        # a merge queue run.
+        self.assertIsNone(parse("refs/heads/feature/pr-756-deadbeef"))
+        self.assertIsNone(parse("gh-readonly-queue/dev/pr-756-deadbeef/extra"))
         self.assertIsNone(parse(""))
         self.assertIsNone(parse(None))
+
+    def test_save_bus_state_retains_merge_group_failure_audit_record(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-github-bus-state-") as tmp:
+            state_path = Path(tmp) / "github-bus-state.json"
+            config = {"paths": {"github_bus_state": str(state_path)}}
+            state = {
+                "tasks": {
+                    "ODP-TEST-MG-001": {
+                        "last_merge_group_failure": {
+                            "run_id": 31321422749,
+                            "queue_ref": "gh-readonly-queue/dev/pr-756-8eabc973",
+                            "head_sha": "8eabc973",
+                            "pr_number": 756,
+                        }
+                    }
+                }
+            }
+
+            github_bus.save_bus_state(config, state)
+
+            saved = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                saved["tasks"]["ODP-TEST-MG-001"]["last_merge_group_failure"]["run_id"],
+                31321422749,
+            )
 
     def test_correlate_merge_group_task(self) -> None:
         correlate = github_reconciliation.correlate_merge_group_task
@@ -3161,6 +3190,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         with (
             mock.patch("github_reconciliation.write_activity_log") as write_log,
             mock.patch("status_transition.commit_canonical_task_transition", return_value=True) as commit_trans,
+            mock.patch("github_reconciliation.runtime_ai_status.emit_task_review_status_check") as emit_gate,
         ):
             changed = github_reconciliation.reconcile_merge_group_runs(
                 self.config,
@@ -3207,6 +3237,32 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertEqual(task_bus["pr_number"], 756)
 
         commit_trans.assert_called_once_with(self.config, self.status)
+        emit_gate.assert_called_once_with(self.task, "review")
+
+    def test_reconcile_merge_group_failure_clears_and_reemits_pending_review_gate(self) -> None:
+        self.task["review_gate_sha"] = self.task["approved_head"]
+        run_fixture = {
+            "id": 31321422750,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
+            "head_sha": "8eabc9734a000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+        }
+
+        with (
+            mock.patch("github_reconciliation.write_activity_log"),
+            mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+            mock.patch("github_reconciliation.runtime_ai_status.emit_task_review_status_check") as emit_gate,
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config, self.bus_state, self.status, "o/r", [run_fixture]
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(self.task["status"], "review")
+        self.assertNotIn("approved_head", self.task)
+        self.assertNotIn("review_gate_sha", self.task)
+        emit_gate.assert_called_once_with(self.task, "review")
 
     def test_reconcile_merge_group_failure_stale_snapshot_reject_does_not_mark_run_processed(self) -> None:
         run_fixture = {
@@ -3619,4 +3675,3 @@ class MergeGroupReconciliationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
