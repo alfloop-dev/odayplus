@@ -209,10 +209,6 @@ def authorize_intake_action(
     if not tenant_decision.allowed:
         _raise_and_audit(status_code=403, detail="TENANT_SCOPE_DENIED", decision=tenant_decision)
 
-
-
-
-
     # 3. Brand/Region/Area/HeatZone scope
     #
     # Collection requests are checked against their declared filters; target
