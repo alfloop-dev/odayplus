@@ -4808,6 +4808,23 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
 def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
     return dispatch_ops.current_dispatch_event_key(config, event, task_map)
 
+def is_task_review_dispatch_eligible(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+    *,
+    review_statuses: set[str] | None = None,
+    finalize_statuses: set[str] | None = None,
+) -> bool:
+    return dispatch_ops.is_task_review_dispatch_eligible(
+        config,
+        task,
+        target_agent,
+        review_statuses=review_statuses,
+        finalize_statuses=finalize_statuses,
+    )
+
+
 def dispatch_priority_for_task(
     config: dict[str, Any],
     task: dict[str, Any],
