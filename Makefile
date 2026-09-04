@@ -5,6 +5,17 @@ PYTEST_MARK_EXPR ?= not requires_live_env
 LOCAL_CONFIG := .orchestrator/config.json
 LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 
+# Keep the registry calls bounded at the shared security entry point. The
+# wrappers still validate these values and fail closed if an override is
+# invalid; exposing them here makes the CI/Make invocation auditable.
+NPM_AUDIT_TIMEOUT_SECONDS ?= 300
+NPM_AUDIT_ATTEMPTS ?= 3
+NPM_AUDIT_BACKOFF_SECONDS ?= 5
+PIP_AUDIT_SOCKET_TIMEOUT_SECONDS ?= 15
+PIP_AUDIT_PROCESS_TIMEOUT_SECONDS ?= 300
+PIP_AUDIT_ATTEMPTS ?= 3
+PIP_AUDIT_BACKOFF_SECONDS ?= 5
+
 .PHONY: help bootstrap boundary-check lint test smoke dependency-audit security node-check api-contract api-contract-refresh release-gate-registry task-dependency-check product-e2e-gate product-release-gate ci clean
 
 help:
@@ -45,11 +56,18 @@ smoke: bootstrap
 
 dependency-audit: bootstrap
 	@if [[ -f package-lock.json ]]; then \
+		ODP_NPM_AUDIT_TIMEOUT_SECONDS="$(NPM_AUDIT_TIMEOUT_SECONDS)" \
+		ODP_NPM_AUDIT_ATTEMPTS="$(NPM_AUDIT_ATTEMPTS)" \
+		ODP_NPM_AUDIT_BACKOFF_SECONDS="$(NPM_AUDIT_BACKOFF_SECONDS)" \
 		npm run audit:security; \
 	else \
 		printf "Skipping dependency audit: package-lock.json is not present yet.\n"; \
 	fi
-	$(UV) run python delivery_toolchain/security/pip_audit_gate.py
+	ODP_PIP_AUDIT_BACKOFF_SECONDS="$(PIP_AUDIT_BACKOFF_SECONDS)" \
+	$(UV) run python delivery_toolchain/security/pip_audit_gate.py \
+		--socket-timeout "$(PIP_AUDIT_SOCKET_TIMEOUT_SECONDS)" \
+		--process-timeout "$(PIP_AUDIT_PROCESS_TIMEOUT_SECONDS)" \
+		--attempts "$(PIP_AUDIT_ATTEMPTS)"
 
 
 security: bootstrap dependency-audit

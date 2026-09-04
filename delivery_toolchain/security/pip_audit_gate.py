@@ -39,8 +39,9 @@ EXIT_AUDIT_UNAVAILABLE = 2
 DEFAULT_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 5.0
 DEFAULT_SOCKET_TIMEOUT = 15.0
-DEFAULT_PROCESS_TIMEOUT = 180.0
+DEFAULT_PROCESS_TIMEOUT = 300.0
 DEFAULT_SERVICE = "pypi"
+DEFAULT_INSTALLATION_PATH = ".venv/lib/python3.12/site-packages"
 
 REPORT = "report"
 UNAVAILABLE = "unavailable"
@@ -154,7 +155,7 @@ def run_pip_audit(
         "pip-audit",
         "pip-audit",
         "--path",
-        ".venv/lib/python3.12/site-packages",
+        DEFAULT_INSTALLATION_PATH,
         "--format",
         "json",
         "--timeout",
@@ -239,7 +240,8 @@ def evaluate(outcome: AuditOutcome) -> tuple[int, str]:
         return (
             EXIT_VULNERABLE,
             f"VULNERABILITIES FOUND in Python dependencies: {summary}. "
-            "Run 'uv run --with pip-audit pip-audit --path .venv/lib/python3.12/site-packages' for details.",
+            "Run 'uv run --with pip-audit pip-audit --path "
+            f"{DEFAULT_INSTALLATION_PATH}' for details.",
         )
 
     return (

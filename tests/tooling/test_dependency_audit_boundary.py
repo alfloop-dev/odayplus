@@ -51,6 +51,14 @@ def test_makefile_wires_both_audit_gates_without_bypass() -> None:
     assert "delivery_toolchain/security/pip_audit_gate.py" in makefile
     assert "security: bootstrap dependency-audit" in makefile
     assert "delivery_toolchain/security/dependency_audit.py" not in makefile
+    for variable in (
+        "NPM_AUDIT_TIMEOUT_SECONDS",
+        "PIP_AUDIT_SOCKET_TIMEOUT_SECONDS",
+        "PIP_AUDIT_PROCESS_TIMEOUT_SECONDS",
+    ):
+        assert variable in makefile
+    assert "--socket-timeout" in makefile
+    assert "--process-timeout" in makefile
 
 
 def test_audit_gates_have_finite_defaults() -> None:
@@ -78,6 +86,33 @@ def test_npm_audit_fails_closed_on_timeout() -> None:
     assert code == npm_audit_gate.EXIT_AUDIT_UNAVAILABLE
     assert "AUDIT UNAVAILABLE" in verdict
     assert "timed out after 30s" in verdict
+
+
+def test_npm_audit_invocation_uses_process_timeout(monkeypatch) -> None:
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {
+                    "auditReportVersion": 2,
+                    "metadata": {"vulnerabilities": {"high": 0, "critical": 0}},
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(npm_audit_gate.subprocess, "run", fake_run)
+    outcome = npm_audit_gate.run_npm_audit(cwd=ROOT, timeout=41)
+
+    assert outcome.has_report
+    assert len(calls) == 1
+    cmd, kwargs = calls[0]
+    assert cmd == ["npm", "audit", "--omit=dev", "--json"]
+    assert kwargs["timeout"] == 41
 
 
 def test_npm_audit_accurately_attributes_404_retired_endpoint() -> None:
@@ -246,7 +281,7 @@ def test_pip_audit_invocation_uses_socket_and_process_timeouts() -> None:
     assert len(calls) == 1
     cmd, kwargs = calls[0]
     assert "--path" in cmd
-    assert ".venv/lib/python3.12/site-packages" in cmd
+    assert pip_audit_gate.DEFAULT_INSTALLATION_PATH in cmd
     assert "--timeout" in cmd
     assert "19" in cmd
     assert kwargs["timeout"] == 47
