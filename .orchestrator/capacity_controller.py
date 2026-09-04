@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from common import display_name_for, normalize_agent_id
+
 THIS_DIR = Path(__file__).resolve().parent
 ROOT_DIR = THIS_DIR.parent
 SCRIPTS_DIR = ROOT_DIR / "scripts"
@@ -281,6 +283,170 @@ def expired_helper_claim_task_ids(
             if task_id:
                 expired.append(task_id)
     return expired
+
+
+def helper_claim_task_ids_to_release(
+    config: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    runtime_state: dict[str, Any],
+    *,
+    task_id_field: str = "id",
+    now: datetime | None = None,
+) -> list[str]:
+    """Return helper claims that no longer have a live runtime owner.
+
+    A claim is created before the worker process exists, so an unbound claim
+    (one without ``run_id``) remains governed by its normal expiry. Once a
+    claim is bound to a run, however, the run is the authority for liveness:
+    terminal workers, stale-heartbeat workers, and missing/mismatched runs
+    must not keep the canonical claim reserved until its original 30-minute
+    timeout. A fresh matching worker is deliberately retained for the
+    lifecycle poller to renew; capacity cleanup must not race that renewal.
+
+    This is cleanup classification only. It does not assign work or create a
+    replacement claim; the existing lifecycle and ready dispatcher do that.
+    """
+    current = (now or datetime.now(UTC)).astimezone(UTC)
+    worker_runtime = config.get("worker_runtime", {}) or {}
+    stale_after = max(
+        60,
+        int(worker_runtime.get("heartbeat_stale_seconds", 300))
+        + int(worker_runtime.get("heartbeat_grace_seconds", 60)),
+    )
+    ready_settings = config.get("ready_dispatcher", {}) or {}
+    terminal_statuses = {
+        str(value).lower()
+        for value in ready_settings.get(
+            "worker_terminal_statuses", ["review", "done", "review_approved"]
+        )
+    }
+    active_statuses = {
+        str(value).lower()
+        for value in ready_settings.get(
+            "active_worker_statuses", ACTIVE_WORKER_STATUSES
+        )
+    }
+    workers = list((runtime_state.get("workers", {}) or {}).values())
+    release: list[str] = []
+
+    for task in tasks:
+        claim = task.get("helper_execution_lease")
+        if not isinstance(claim, dict) or not claim:
+            continue
+        task_id = str(task.get(task_id_field) or task.get("id") or "").strip()
+        if not task_id:
+            continue
+        task_status = str(task.get("status") or "").lower()
+        claim_run_id = str(claim.get("run_id") or "").strip()
+        if task_status in terminal_statuses:
+            release.append(task_id)
+            continue
+
+        # The pre-launch window is intentionally protected by the claim's
+        # expiry. There is no runtime run to prove that the claim is stale yet.
+        if not claim_run_id:
+            # A worker record without a binding is a failed launch handshake,
+            # not a live pre-launch claim. Release it only if it matches the current
+            # generation and claimant (stale older-generation runs must not clear a new lease).
+            current_gen = None
+            try:
+                current_gen = int(claim.get("generation"))
+            except (TypeError, ValueError):
+                pass
+            failed_unbound = False
+            for worker in workers:
+                if _worker_task_id(worker, task_id_field) != task_id:
+                    continue
+                req = worker.get("request_snapshot") or {}
+                if str(req.get("reason") or "") != "helper_claim_dispatch":
+                    continue
+                d_claim = (req.get("metadata", {}) or {}).get("task", {}).get("helper_execution_lease") or {}
+                try:
+                    d_gen = int(d_claim.get("generation"))
+                except (TypeError, ValueError):
+                    d_gen = None
+                if d_gen is not None and current_gen is not None:
+                    if d_gen == current_gen:
+                        failed_unbound = True
+                        break
+                elif d_gen is None:
+                    failed_unbound = True
+                    break
+            if failed_unbound:
+                release.append(task_id)
+                continue
+            expires_at = _parse_iso(claim.get("lease_expires_at"))
+            if expires_at is None or expires_at <= current:
+                release.append(task_id)
+            continue
+
+        matching_worker = next(
+            (
+                worker
+                for worker in workers
+                if str(worker.get("task_id") or "").strip() == task_id
+                and str(worker.get("run_id") or "").strip() == claim_run_id
+            ),
+            None,
+        )
+        if not isinstance(matching_worker, dict):
+            release.append(task_id)
+            continue
+        request_snapshot = matching_worker.get("request_snapshot") or {}
+        dispatched_task = (request_snapshot.get("metadata") or {}).get("task") or {}
+        dispatched_claim = dispatched_task.get("helper_execution_lease") or {}
+        if str(request_snapshot.get("reason") or "") != "helper_claim_dispatch":
+            release.append(task_id)
+            continue
+        try:
+            dispatched_generation = int(dispatched_claim.get("generation"))
+            current_generation = int(claim.get("generation"))
+        except (TypeError, ValueError):
+            release.append(task_id)
+            continue
+        if dispatched_generation < current_generation:
+            # Stale/older generation worker must NOT clear a newer generation lease
+            continue
+        if (
+            str(dispatched_task.get(task_id_field) or dispatched_task.get("id") or "").strip()
+            != task_id
+            or dispatched_generation != current_generation
+            or normalize_agent_id(str(claim.get("claimed_by") or ""))
+            != normalize_agent_id(
+                display_name_for(
+                    config,
+                    str(
+                        matching_worker.get("logical_agent_id")
+                        or matching_worker.get("agent_id")
+                        or ""
+                    ),
+                )
+            )
+        ):
+            release.append(task_id)
+            continue
+        schema = config.get("schema", {}) or {}
+        owner_field = schema.get("assignee_field", "owner")
+        reviewer_field = schema.get("reviewer_field", "reviewer")
+        for field, fallback in (
+            (owner_field, "owner"),
+            (reviewer_field, "reviewer"),
+        ):
+            if normalize_agent_id(str(task.get(field) or "")) != normalize_agent_id(
+                str(dispatched_task.get(field, dispatched_task.get(fallback)) or "")
+            ):
+                release.append(task_id)
+                break
+        else:
+            if str(matching_worker.get("status") or "").lower() not in active_statuses:
+                release.append(task_id)
+                continue
+            heartbeat = _parse_iso(matching_worker.get("last_heartbeat_at"))
+            if heartbeat is None or (current - heartbeat).total_seconds() > stale_after:
+                release.append(task_id)
+        continue
+
+    return release
 
 
 def evaluate_chair(

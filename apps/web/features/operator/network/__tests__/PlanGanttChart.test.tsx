@@ -8,8 +8,42 @@ import {
   type PlanGanttDependency,
 } from "../PlanGanttChart";
 import { RebalancePanel } from "../RebalancePanel";
-import type { NetPlanDiagnostic } from "../../types";
+import type { ConstraintClass, NetPlanDiagnostic } from "../../types";
 import type { RebalanceQueueRow } from "../../networkFindAreasViewModel";
+// Asserted against the live FastAPI response by
+// tests/integration/test_netplan_disclosure_ui_e2e.py -- see fixtures/README.md.
+import rawApiPayload from "./fixtures/netplanDisclosureApiPayload.json";
+
+// Narrowed once, here, rather than at each use. JSON widens the class names to
+// `string`, so each list is re-typed against the console's own union: a class
+// the backend renames becomes a compile error in this file rather than an
+// assertion that quietly stops matching anything. Field-by-field rather than
+// one cast over the whole object, so a field disappearing from the fixture is
+// caught here too.
+const asConstraintClasses = (values: string[]): ConstraintClass[] =>
+  values as ConstraintClass[];
+
+const apiPayload = {
+  storeId: rawApiPayload.storeId,
+  status: rawApiPayload.status as RebalanceQueueRow["status"],
+  netPlanScenarios: rawApiPayload.netPlanScenarios.map((scenario) => ({
+    id: scenario.id,
+    name: scenario.name,
+    isSystemRecommendation: scenario.isSystemRecommendation,
+    modelledConstraintClasses: asConstraintClasses(scenario.modelledConstraintClasses),
+    unmodelledConstraintClasses: asConstraintClasses(scenario.unmodelledConstraintClasses),
+    modelled_constraint_classes: asConstraintClasses(scenario.modelled_constraint_classes),
+    unmodelled_constraint_classes: asConstraintClasses(
+      scenario.unmodelled_constraint_classes
+    ),
+    blockedConstraintClasses: asConstraintClasses(scenario.blockedConstraintClasses),
+    acknowledgeableConstraintClasses: asConstraintClasses(
+      scenario.acknowledgeableConstraintClasses
+    ),
+    disclosurePolicyVersionId: scenario.disclosurePolicyVersionId,
+    disclosureUndeclared: scenario.disclosureUndeclared,
+  })),
+};
 
 afterEach(cleanup);
 
@@ -414,6 +448,10 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
             payback: "1.2 年",
             risk: "低",
             time: "2026Q1",
+            modelledConstraintClasses: ["CAPITAL"],
+            unmodelledConstraintClasses: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL"],
+            unmodelled_constraint_classes: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
             policy_id: "pol-gov-network-2026",
             policy_version: "v2.0",
             score: 88.5,
@@ -437,6 +475,10 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
             payback: "—",
             risk: "高",
             time: "—",
+            modelledConstraintClasses: ["CAPITAL"],
+            unmodelledConstraintClasses: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL"],
+            unmodelled_constraint_classes: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
             // Notice: actions is missing/empty!
           },
         ],
@@ -483,5 +525,634 @@ describe("NetPlan Quarterly Gantt Chart Component (PlanGanttChart)", () => {
     expect(screen.getByTestId("gantt-empty-state")).toHaveTextContent("尚無規劃實體或季度行動資料");
     expect(screen.queryByTestId("gantt-bar-STORE-REB-01-2026Q1")).not.toBeInTheDocument();
     expect(screen.getByTestId("gantt-policy-id")).toHaveTextContent("—");
+  });
+
+  it("11. PlanGanttChart renders constraint disclosure section with modelled and unmodelled badges", () => {
+    render(
+      <PlanGanttChart
+        scenarioId="SCENARIO-DISCLOSURE-01"
+        scenarioName="NetPlan 限制揭露測試案"
+        modelledConstraintClasses={["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"]}
+        unmodelledConstraintClasses={["LEASE", "SEQUENCING"]}
+      />
+    );
+
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toBeInTheDocument();
+    expect(disclosure).toHaveTextContent("ODP-FR-NET-002 硬限制揭露");
+
+    const modelledGroup = screen.getByTestId("gantt-modelled-classes");
+    expect(modelledGroup).toBeInTheDocument();
+    expect(screen.getByTestId("gantt-modelled-CAPITAL")).toHaveTextContent("✓ CAPITAL");
+    expect(screen.getByTestId("gantt-modelled-CONSTRUCTION")).toHaveTextContent("✓ CONSTRUCTION");
+    expect(screen.getByTestId("gantt-modelled-EQUIPMENT")).toHaveTextContent("✓ EQUIPMENT");
+    expect(screen.getByTestId("gantt-modelled-LABOUR")).toHaveTextContent("✓ LABOUR");
+    expect(screen.getByTestId("gantt-modelled-COVERAGE")).toHaveTextContent("✓ COVERAGE");
+    expect(screen.getByTestId("gantt-modelled-DILUTION")).toHaveTextContent("✓ DILUTION");
+
+    const unmodelledGroup = screen.getByTestId("gantt-unmodelled-classes");
+    expect(unmodelledGroup).toBeInTheDocument();
+    expect(screen.getByTestId("gantt-unmodelled-LEASE")).toHaveTextContent("⚠️ LEASE");
+    expect(screen.getByTestId("gantt-unmodelled-SEQUENCING")).toHaveTextContent("⚠️ SEQUENCING");
+  });
+
+  it("12. RebalancePanel renders disclosure badges on all scenarios and blocks submission if blocked classes exist", () => {
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-BLOCKED",
+        storeId: "STORE-REB-BLOCKED",
+        storeName: "新竹巨城店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未建模硬限制阻擋測試",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-BLOCKED",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-BLOCKED",
+            name: "方案 1: 缺少工程預算約束 (Blocked)",
+            roi: "15.0%",
+            inv: "1.2M",
+            payback: "2.0 年",
+            risk: "中",
+            time: "2026Q2",
+            // A solve that supplied only max_budget leaves the other seven
+            // classes unbound, and says so about each of them. Naming four of
+            // the eight would be the partial disclosure the console now reads
+            // as undeclared -- correctly, but it would stop this test from
+            // being about blocked classes.
+            modelledConstraintClasses: ["CAPITAL"],
+            unmodelledConstraintClasses: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL"],
+            unmodelled_constraint_classes: ["LEASE", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION", "SEQUENCING"],
+            blockedConstraintClasses: ["CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            acknowledgeableConstraintClasses: ["LEASE", "SEQUENCING"],
+            disclosurePolicyVersionId: "netplan-constraint-disclosure-policy-v1:tenant-demo",
+            score: 75.0,
+          },
+          {
+            id: "SCENARIO-ACK-OK",
+            name: "方案 2: 僅缺少租約與時序 (Ack OK)",
+            roi: "18.0%",
+            inv: "1.0M",
+            payback: "1.8 年",
+            risk: "低",
+            time: "2026Q2",
+            modelledConstraintClasses: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
+            blockedConstraintClasses: [],
+            acknowledgeableConstraintClasses: ["LEASE", "SEQUENCING"],
+            disclosurePolicyVersionId: "netplan-constraint-disclosure-policy-v1:tenant-demo",
+            score: 82.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    // 1. Verify card badges on both primary and alternative scenarios
+    expect(screen.getByTestId("scenario-modelled-classes-SCENARIO-BLOCKED")).toHaveTextContent("已建模: CAPITAL");
+    expect(screen.getByTestId("scenario-unmodelled-classes-SCENARIO-BLOCKED")).toHaveTextContent("未建模: LEASE, CONSTRUCTION, EQUIPMENT, LABOUR, COVERAGE, DILUTION, SEQUENCING");
+    expect(screen.getByTestId("scenario-blocked-badge-SCENARIO-BLOCKED")).toHaveTextContent("不可豁免阻擋");
+
+    expect(screen.getByTestId("scenario-modelled-classes-SCENARIO-ACK-OK")).toHaveTextContent("已建模: CAPITAL, CONSTRUCTION, EQUIPMENT, LABOUR, COVERAGE, DILUTION");
+    expect(screen.getByTestId("scenario-unmodelled-classes-SCENARIO-ACK-OK")).toHaveTextContent("未建模: LEASE, SEQUENCING");
+    expect(screen.getByTestId("scenario-ack-required-badge-SCENARIO-ACK-OK")).toHaveTextContent("需具名確認");
+
+    // 2. Selected scenario is SCENARIO-BLOCKED -> Verify blocker alert is rendered
+    expect(screen.getByTestId("rebalance-blocked-alert")).toBeInTheDocument();
+    expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent("CONSTRUCTION");
+
+    // 3. Verify primary action button is DISABLED and cannot submit
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    expect(primaryButton).toHaveTextContent("送審（無法送審）");
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("13. RebalancePanel requires non-empty reason and actor to acknowledge unmodelled classes and submit", () => {
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-ACK",
+        storeId: "STORE-REB-ACK",
+        storeName: "台南成功店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未建模具名確認送審測試",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-ACK-ONLY",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-ACK-ONLY",
+            name: "方案 A: 推薦遷移案 (Ack Required)",
+            roi: "22.5%",
+            inv: "850K",
+            payback: "1.5 年",
+            risk: "低",
+            time: "2026Q1",
+            modelledConstraintClasses: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
+            blockedConstraintClasses: [],
+            acknowledgeableConstraintClasses: ["LEASE", "SEQUENCING"],
+            disclosurePolicyVersionId: "netplan-constraint-disclosure-policy-v1:tenant-demo",
+            score: 91.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    // 1. Verify acknowledgement form is rendered
+    expect(screen.getByTestId("rebalance-acknowledgement-section")).toBeInTheDocument();
+    expect(screen.getByTestId("ack-class-item-LEASE")).toHaveTextContent("租約可行性、檔期條件與解約金未於求解器內驗證");
+    expect(screen.getByTestId("ack-class-item-SEQUENCING")).toHaveTextContent("多期排程與工程工期先後次序未於模型內限制");
+
+    const reasonInput = screen.getByTestId("acknowledgement-reason-input");
+    const actorIdInput = screen.getByTestId("acknowledgement-actor-id-input");
+    const receiptInput = screen.getByTestId("acknowledgement-receipt-input");
+    const actorInput = screen.getByTestId("acknowledgement-actor-input");
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+
+    // The panel shows which policy version produced this classification, so a
+    // reader can tell what rules the split in front of them came from.
+    expect(screen.getByTestId("acknowledgement-policy-version")).toHaveTextContent(
+      "netplan-constraint-disclosure-policy-v1:tenant-demo"
+    );
+
+    // There is no "authorised role" field to type into. Authority is read off
+    // the management approval receipt named below, never off the submission.
+    expect(screen.queryByTestId("acknowledgement-actor-role-input")).toBeNull();
+
+    // 1. Nothing is pre-ticked: a pre-filled acknowledgement would be a
+    //    signature nobody chose to give.
+    expect(screen.getByTestId("ack-class-LEASE")).not.toBeChecked();
+    expect(screen.getByTestId("ack-class-SEQUENCING")).not.toBeChecked();
+
+    // 2. Initially reason is empty -> CTA is disabled
+    expect(primaryButton).toBeDisabled();
+    expect(primaryButton).toHaveTextContent("送審（需具名確認）");
+
+    // 3. Typing whitespace only -> CTA remains disabled
+    fireEvent.change(reasonInput, { target: { value: "    " } });
+    expect(primaryButton).toBeDisabled();
+
+    fireEvent.change(reasonInput, { target: { value: "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。" } });
+    fireEvent.change(actorInput, { target: { value: "張策略長" } });
+
+    // 4. A reason alone is not enough: the principal and the receipt that
+    //    establishes their authority are both required.
+    expect(primaryButton).toBeDisabled();
+    fireEvent.change(actorIdInput, { target: { value: "principal://network-planning-authority" } });
+    expect(primaryButton).toBeDisabled();
+    fireEvent.change(receiptInput, { target: { value: "receipt-ops-77" } });
+
+    // 5. Still disabled while any disclosed class is unticked.
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(screen.getByTestId("ack-class-LEASE"));
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(screen.getByTestId("ack-class-SEQUENCING"));
+
+    expect(primaryButton).not.toBeDisabled();
+    expect(primaryButton).toHaveTextContent("送審（Rebalance Review）");
+
+    // 6. Submit review -> verify full payload passed to onSubmitReview
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).toHaveBeenCalledTimes(1);
+    expect(submitReviewMock).toHaveBeenCalledWith("STORE-REB-ACK", {
+      reason: "Move scenario selected for Govern approval; relocation remains unexecuted.",
+      actorName: "張策略長",
+      acknowledgedClasses: ["LEASE", "SEQUENCING"],
+      acknowledgementReason: "租約條件已由商務處完成線下簽核；Q1-Q2 時序排程已與工程團隊確認。",
+      acknowledgementActorId: "principal://network-planning-authority",
+      approvalReceiptId: "receipt-ops-77",
+    });
+  });
+
+  it("14. RebalancePanel treats an unclassified disclosure as blocking rather than waivable", () => {
+    // A payload from a surface with no disclosure policy registered -- or from
+    // an older server -- carries the unmodelled set but no split. Guessing that
+    // LEASE and SEQUENCING are the waivable ones would put a signature form in
+    // front of an operator that the server is going to refuse, and would hold a
+    // copy of a versioned governance rule in the console to do it.
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-UNCLASSIFIED",
+        storeId: "STORE-REB-UNCLASSIFIED",
+        storeName: "桃園藝文店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未分類揭露",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-UNCLASSIFIED",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-UNCLASSIFIED",
+            name: "方案 A: 未附政策分類",
+            roi: "12.0%",
+            inv: "600K",
+            payback: "2.4 年",
+            risk: "中",
+            time: "2026Q3",
+            modelledConstraintClasses: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelledConstraintClasses: ["LEASE", "SEQUENCING"],
+            modelled_constraint_classes: ["CAPITAL", "CONSTRUCTION", "EQUIPMENT", "LABOUR", "COVERAGE", "DILUTION"],
+            unmodelled_constraint_classes: ["LEASE", "SEQUENCING"],
+            score: 61.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    expect(screen.getByTestId("scenario-blocked-badge-SCENARIO-UNCLASSIFIED")).toHaveTextContent(
+      "LEASE, SEQUENCING"
+    );
+    expect(screen.queryByTestId("rebalance-acknowledgement-section")).toBeNull();
+    expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent(
+      "本介面未註冊揭露政策"
+    );
+
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("15. RebalancePanel refuses a scenario that declared no disclosure at all", () => {
+    // An undeclared scenario has an empty unmodelled set for the same reason a
+    // silent instrument reads zero: nothing was measured. Rendering it as
+    // "fully modelled" is the fail-open the disclosure contract exists to stop.
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-UNDECLARED",
+        storeId: "STORE-REB-UNDECLARED",
+        storeName: "高雄夢時代店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未申報揭露",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-UNDECLARED",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-UNDECLARED",
+            name: "方案 A: 未申報建模範圍",
+            roi: "9.0%",
+            inv: "400K",
+            payback: "3.0 年",
+            risk: "高",
+            time: "2026Q4",
+            modelledConstraintClasses: [],
+            unmodelledConstraintClasses: [],
+            modelled_constraint_classes: [],
+            unmodelled_constraint_classes: [],
+            blockedConstraintClasses: [],
+            acknowledgeableConstraintClasses: [],
+            disclosureUndeclared: true,
+            score: 40.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent(
+      "未完整申報硬限制建模範圍"
+    );
+    expect(screen.queryByTestId("rebalance-acknowledgement-section")).toBeNull();
+    expect(
+      screen.getByTestId("scenario-modelled-classes-SCENARIO-UNDECLARED")
+    ).toHaveTextContent("（未申報）");
+    expect(
+      screen.getByTestId("scenario-blocked-badge-SCENARIO-UNDECLARED")
+    ).toHaveTextContent("未申報建模範圍");
+    expect(
+      screen.queryByTestId("scenario-fully-modelled-badge-SCENARIO-UNDECLARED")
+    ).toBeNull();
+
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+  });
+  it("16. RebalancePanel stays closed on an empty disclosure even without the server flag", () => {
+    // The server now sends disclosureUndeclared for this payload, but the
+    // console must not depend on the flag arriving to stay shut: an older API,
+    // a dropped field or a surface that never classified would otherwise turn
+    // a scenario that named no class at all into an enabled submit button.
+    const mockRows: RebalanceQueueRow[] = [
+      {
+        id: "STORE-REB-NOFLAG",
+        storeId: "STORE-REB-NOFLAG",
+        storeName: "台南西門店",
+        status: "netplanreview",
+        statusLabel: "NetPlan 評估中",
+        summary: "未申報揭露（無伺服器旗標）",
+        tone: "watch",
+        selectedScenarioId: "SCENARIO-NOFLAG",
+        netPlanScenarios: [
+          {
+            id: "SCENARIO-NOFLAG",
+            name: "方案 A: 未申報建模範圍",
+            roi: "9.0%",
+            inv: "400K",
+            payback: "3.0 年",
+            risk: "高",
+            time: "2026Q4",
+            modelledConstraintClasses: [],
+            unmodelledConstraintClasses: [],
+            modelled_constraint_classes: [],
+            unmodelled_constraint_classes: [],
+            blockedConstraintClasses: [],
+            acknowledgeableConstraintClasses: [],
+            score: 40.0,
+          },
+        ],
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={mockRows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    expect(screen.getByTestId("rebalance-blocked-alert")).toHaveTextContent(
+      "未完整申報硬限制建模範圍"
+    );
+    expect(
+      screen.getByTestId("scenario-blocked-badge-SCENARIO-NOFLAG")
+    ).toHaveTextContent("未申報建模範圍");
+    expect(
+      screen.queryByTestId("scenario-fully-modelled-badge-SCENARIO-NOFLAG")
+    ).toBeNull();
+    expect(screen.queryByTestId("rebalance-acknowledgement-section")).toBeNull();
+
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+  });
+
+  it("17. PlanGanttChart shows an undeclared disclosure rather than hiding it", () => {
+    // The section used to be rendered only when at least one class was named,
+    // so a plan that disclosed nothing showed no disclosure panel at all --
+    // indistinguishable, on screen, from a plan with nothing to disclose.
+    render(
+      <PlanGanttChart
+        scenarioId="SCENARIO-GANTT-UNDECLARED"
+        scenarioName="NetPlan 未申報揭露案"
+        modelledConstraintClasses={[]}
+        unmodelledConstraintClasses={[]}
+      />
+    );
+
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toBeInTheDocument();
+    expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "true");
+    expect(screen.getByTestId("gantt-disclosure-undeclared")).toHaveTextContent(
+      "未完整申報硬限制建模範圍"
+    );
+
+    // The sentence that turned a missing disclosure into a verified one.
+    expect(disclosure).not.toHaveTextContent("全部已建模");
+    expect(screen.getByTestId("gantt-unmodelled-undeclared")).toHaveTextContent(
+      "未申報 (無法判定)"
+    );
+    expect(screen.getByTestId("gantt-modelled-undeclared")).toHaveTextContent(
+      "未申報 (無法判定)"
+    );
+  });
+
+  it("18. PlanGanttChart still reads a fully modelled plan as fully modelled", () => {
+    // The counterpart to 17: "no unmodelled classes" is a real result and must
+    // not be relabelled as undeclared -- but only when the plan accounted for
+    // every class. This fixture used to name three of the eight and still be
+    // read as a clean bill of health, which is the reading 18a now pins shut.
+    render(
+      <PlanGanttChart
+        scenarioId="SCENARIO-GANTT-COMPLETE"
+        scenarioName="NetPlan 全數建模案"
+        modelledConstraintClasses={[
+          "CAPITAL",
+          "LEASE",
+          "CONSTRUCTION",
+          "EQUIPMENT",
+          "LABOUR",
+          "COVERAGE",
+          "DILUTION",
+          "SEQUENCING",
+        ]}
+        unmodelledConstraintClasses={[]}
+      />
+    );
+
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "false");
+    expect(screen.queryByTestId("gantt-disclosure-undeclared")).toBeNull();
+    expect(screen.getByTestId("gantt-unmodelled-classes")).toHaveTextContent(
+      "無未建模限制 (全部已建模)"
+    );
+  });
+
+  it("18a. PlanGanttChart does not read a partial disclosure as fully modelled", () => {
+    // The shape that got through: one class named, seven unmentioned, and an
+    // empty unmodelled list read as "nothing outstanding". The chart said
+    // "無未建模限制 (全部已建模)" about a solve that had answered one of the
+    // eight questions ODP-FR-NET-002 asks.
+    render(
+      <PlanGanttChart
+        scenarioId="SCENARIO-GANTT-PARTIAL"
+        scenarioName="NetPlan 部分申報案"
+        modelledConstraintClasses={["CAPITAL"]}
+        unmodelledConstraintClasses={[]}
+      />
+    );
+
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "true");
+    expect(disclosure).toHaveAttribute("data-disclosure-defect", "incomplete");
+    expect(disclosure).not.toHaveTextContent("無未建模限制 (全部已建模)");
+    // The single class it did name is not restated as a verification claim.
+    expect(screen.queryByTestId("gantt-modelled-CAPITAL")).toBeNull();
+    expect(screen.getByTestId("gantt-modelled-undeclared")).toHaveTextContent(
+      "未申報 (無法判定)"
+    );
+  });
+  it("19. RebalancePanel drives the payload a production CP-SAT solve returns over HTTP", () => {
+    // The rows are built from the fixture the Python E2E asserts the FastAPI
+    // response against, not from a literal typed here. That is what makes this
+    // a test of the console against the real contract rather than against
+    // someone's recollection of it: if the backend stops sending a field, the
+    // Python test fails; if the console stops handling what is sent, this one
+    // does.
+    const rows: RebalanceQueueRow[] = [
+      {
+        id: apiPayload.storeId,
+        storeId: apiPayload.storeId,
+        storeName: "台北信義店",
+        status: apiPayload.status,
+        statusLabel: "NetPlan 三案",
+        summary: "production CP-SAT solve",
+        tone: "watch",
+        selectedScenarioId: apiPayload.netPlanScenarios[0].id,
+        // Only the presentation fields are supplied here. Everything the
+        // disclosure turns on comes from the fixture untouched.
+        netPlanScenarios: apiPayload.netPlanScenarios.map((scenario) => ({
+          ...scenario,
+          roi: "12.0%",
+          inv: "420K",
+          payback: "2.4 年",
+          risk: "中",
+          time: "2026Q3",
+          score: 830000,
+        })),
+      },
+    ];
+
+    const submitReviewMock = vi.fn();
+
+    render(
+      <RebalancePanel
+        rows={rows}
+        onRequestAvm={vi.fn()}
+        onCompleteAvm={vi.fn()}
+        onSolveNetPlan={vi.fn()}
+        onSelectScenario={vi.fn()}
+        onSubmitReview={submitReviewMock}
+      />
+    );
+
+    const [primary, alternative] = apiPayload.netPlanScenarios;
+
+    // Both the recommendation and the alternative disclose. An operator reads
+    // these rows side by side, and an alternative that arrived unclassified
+    // would be the one that looked clean.
+    for (const scenario of [primary, alternative]) {
+      expect(
+        screen.getByTestId(`scenario-modelled-classes-${scenario.id}`)
+      ).toHaveTextContent("CAPITAL");
+      expect(
+        screen.getByTestId(`scenario-unmodelled-classes-${scenario.id}`)
+      ).toHaveTextContent("LEASE, SEQUENCING");
+      expect(
+        screen.getByTestId(`scenario-ack-required-badge-${scenario.id}`)
+      ).toHaveTextContent("需具名確認");
+      expect(
+        screen.queryByTestId(`scenario-fully-modelled-badge-${scenario.id}`)
+      ).toBeNull();
+      expect(screen.queryByTestId(`scenario-blocked-badge-${scenario.id}`)).toBeNull();
+    }
+
+    // The six classes the production formulation bound, shown for the selected
+    // plan rather than summarised as a count.
+    const disclosure = screen.getByTestId("gantt-constraint-disclosure");
+    expect(disclosure).toHaveAttribute("data-disclosure-undeclared", "false");
+    for (const cls of primary.modelledConstraintClasses) {
+      expect(screen.getByTestId(`gantt-modelled-${cls}`)).toHaveTextContent(cls);
+    }
+    for (const cls of primary.unmodelledConstraintClasses) {
+      expect(screen.getByTestId(`gantt-unmodelled-${cls}`)).toHaveTextContent(cls);
+    }
+
+    // The two structurally unmodellable classes are offered for signature, and
+    // the policy version that permits it is named on screen.
+    const ackSection = screen.getByTestId("rebalance-acknowledgement-section");
+    expect(ackSection).toBeInTheDocument();
+    expect(screen.getByTestId("acknowledgement-policy-version")).toHaveTextContent(
+      primary.disclosurePolicyVersionId
+    );
+
+    // Nothing is pre-ticked, so the CTA starts closed.
+    const primaryButton = screen.getByTestId("rebalance-primary-action");
+    expect(primaryButton).toBeDisabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).not.toHaveBeenCalled();
+
+    for (const cls of primary.acknowledgeableConstraintClasses) {
+      fireEvent.click(screen.getByTestId(`ack-class-${cls}`));
+    }
+    fireEvent.change(screen.getByTestId("acknowledgement-receipt-input"), {
+      target: { value: "receipt-e2e-001" },
+    });
+    fireEvent.change(screen.getByTestId("acknowledgement-actor-id-input"), {
+      target: { value: "principal://network-planning-authority" },
+    });
+    fireEvent.change(screen.getByTestId("acknowledgement-reason-input"), {
+      target: { value: "租約條件已由商務處完成線下簽核；時序排程已與工程團隊確認。" },
+    });
+
+    expect(primaryButton).toBeEnabled();
+    fireEvent.click(primaryButton);
+    expect(submitReviewMock).toHaveBeenCalledTimes(1);
+
+    const [, submitted] = submitReviewMock.mock.calls[0];
+    expect(submitted.acknowledgedClasses).toEqual(
+      primary.acknowledgeableConstraintClasses
+    );
+    expect(submitted.approvalReceiptId).toBe("receipt-e2e-001");
+    expect(submitted.acknowledgementActorId).toBe(
+      "principal://network-planning-authority"
+    );
+    expect(submitted.acknowledgementReason).toContain("線下簽核");
   });
 });

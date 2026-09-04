@@ -85,7 +85,10 @@ def test_production_netplan_executes_all_three_oss_contracts(
 
     solve = service.solve(scenario_id)
 
-    assert calls == {"ortools": 1, "cvxpy": 1, "pymoo": 1}
+    # The authoritative CP-SAT solve is followed by three no-good solves so
+    # the production result exposes three real alternatives without falling
+    # back to the library exhaustive solver.
+    assert calls == {"ortools": 4, "cvxpy": 1, "pymoo": 1}
     engines = solve.execution_metadata["engines"]
     assert engines["authoritative"]["library"] == "ortools"
     assert engines["robust"]["library"] == "cvxpy"

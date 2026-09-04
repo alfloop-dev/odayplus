@@ -14,7 +14,7 @@
 //                intake detail's promotion section.
 
 import { useRef, useState } from "react";
-import type { JobReceipt, JobStatus, PromotionStatus } from "@oday-plus/openapi-client";
+import type { JobDeliveryState, JobReceipt, JobStatus, PromotionStatus } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import type { IntakeTone } from "./intakeTypes";
 
@@ -38,30 +38,38 @@ export type ScoreReplayInput = {
 export const SITE_SCORE_JOB_LABEL: Record<JobStatus, string> = {
   QUEUED: "已排入佇列",
   RUNNING: "評分執行中",
-  RETRYING: "自動重試中",
   SUCCEEDED: "評分完成",
   FAILED: "評分失敗",
   CANCELLED: "已取消",
+  PARTIAL: "部分完成",
+};
+
+export const SITE_SCORE_DELIVERY_LABEL: Record<JobDeliveryState, string> = {
+  RETRYING: "自動重試中",
   DEAD_LETTER: "進入死信佇列",
 };
 
-export function siteScoreJobTone(status: JobStatus): IntakeTone {
+export function siteScoreJobTone(status: JobStatus, deliveryState?: JobDeliveryState | null): IntakeTone {
+  if (deliveryState === "DEAD_LETTER") return "risk";
+  if (deliveryState === "RETRYING") return "watch";
   if (status === "SUCCEEDED") return "good";
-  if (status === "FAILED" || status === "DEAD_LETTER") return "risk";
-  if (status === "RETRYING" || status === "CANCELLED") return "watch";
+  if (status === "FAILED") return "risk";
+  if (status === "CANCELLED") return "watch";
   return "info";
 }
 
 /** Text marker so job state never depends on colour alone (VDC-003). */
-export function siteScoreJobMark(status: JobStatus): string {
+export function siteScoreJobMark(status: JobStatus, deliveryState?: JobDeliveryState | null): string {
+  if (deliveryState === "DEAD_LETTER") return "✕";
+  if (deliveryState === "RETRYING") return "…";
   if (status === "SUCCEEDED") return "✓";
-  if (status === "FAILED" || status === "DEAD_LETTER") return "✕";
+  if (status === "FAILED") return "✕";
   if (status === "CANCELLED") return "⊘";
   return "…";
 }
 
 /** Job states a steward/manager may replay from the durable checkpoint. */
-const REPLAYABLE: readonly JobStatus[] = ["FAILED", "DEAD_LETTER"];
+const REPLAYABLE: readonly JobStatus[] = ["FAILED"];
 
 export type SiteScoreJobStatusProps = {
   /**
@@ -111,7 +119,9 @@ export function SiteScoreJobStatus({
   }
 
   const scoreFailed = promotionStatus === "SCORE_FAILED";
-  const replayable = Boolean(job && (REPLAYABLE.includes(job.status) || scoreFailed));
+  const replayable = Boolean(
+    job && (REPLAYABLE.includes(job.status) || job.delivery_state === "DEAD_LETTER" || scoreFailed),
+  );
   const showReplayControls = replayable && canReplay && Boolean(onReplay);
 
   async function handleReplay() {
@@ -151,9 +161,10 @@ export function SiteScoreJobStatus({
           <span
             className={styles.chip}
             data-testid="sitescore-job-state"
-            data-tone={siteScoreJobTone(job.status)}
+            data-tone={siteScoreJobTone(job.status, job.delivery_state)}
           >
-            {siteScoreJobMark(job.status)} {job.status} · {SITE_SCORE_JOB_LABEL[job.status]}
+            {siteScoreJobMark(job.status, job.delivery_state)} {job.status} · {SITE_SCORE_JOB_LABEL[job.status]}
+            {job.delivery_state ? ` · ${job.delivery_state} · ${SITE_SCORE_DELIVERY_LABEL[job.delivery_state]}` : ""}
           </span>
         ) : null}
       </div>
@@ -161,7 +172,7 @@ export function SiteScoreJobStatus({
       {/* Live status summary for screen readers — announces state changes. */}
       <div aria-live="polite" className={styles.srSummary} data-testid="sitescore-sr-summary">
         {job
-          ? `評分工作 ${job.job_id} 狀態 ${job.status}（第 ${job.attempt} 次嘗試）。`
+          ? `評分工作 ${job.job_id} outcome ${job.status}${job.delivery_state ? `、delivery ${job.delivery_state}` : ""}（第 ${job.attempt} 次嘗試）。`
           : "評分工作尚未由伺服器交易確認，尚無工作編號。"}
       </div>
 

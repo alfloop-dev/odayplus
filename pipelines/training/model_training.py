@@ -12,6 +12,7 @@ from models.shared_ml import (
     ArtifactKind,
     ArtifactRecord,
     ArtifactStore,
+    BacktestReceipt,
     MetricThreshold,
     ModelVersion,
     SegmentMetric,
@@ -26,6 +27,7 @@ from models.shared_ml.oss_estimators import (
 )
 from modules.learninghub import LearningHubService
 from pipelines.features import FeaturePipelineArtifact
+from shared.governance import DecisionPolicy
 
 
 class TrainingPipelineError(ValueError):
@@ -42,13 +44,17 @@ class TrainingPipelineResult:
     run_id: str
     created_by: str
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    backtest_receipt: BacktestReceipt | None = None
+    backtest_report_artifact: ArtifactRecord | None = None
 
     @property
     def accepted(self) -> bool:
-        return self.validation_run.passed
+        return self.validation_run.passed and (
+            self.backtest_receipt is None or self.backtest_receipt.passed
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "model_version": self.model_version.to_dict(),
             "validation_run": self.validation_run.to_dict(),
             "model_artifact": self.model_artifact.to_dict(),
@@ -59,6 +65,11 @@ class TrainingPipelineResult:
             "created_at": self.created_at.isoformat(),
             "accepted": self.accepted,
         }
+        if self.backtest_receipt is not None:
+            data["backtest_receipt"] = self.backtest_receipt.to_dict()
+        if self.backtest_report_artifact is not None:
+            data["backtest_report_artifact"] = self.backtest_report_artifact.to_dict()
+        return data
 
 
 class TrainingPipelineRunner:
@@ -95,6 +106,7 @@ class TrainingPipelineRunner:
         actor: str = "system",
         run_id: str | None = None,
         git_sha: str | None = None,
+        decision_policy: DecisionPolicy | None = None,
     ) -> TrainingPipelineResult:
         snapshot = self.service.repository.get_dataset_snapshot(
             feature_artifact.dataset_snapshot_id
@@ -188,6 +200,7 @@ class TrainingPipelineRunner:
             segment_metrics=segments,
             segment_thresholds=segment_thresholds,
             calibration_summary=calibration,
+            decision_policy=decision_policy,
         )
         validation_payload = {
             "artifact_type": "validation_report",
@@ -226,6 +239,38 @@ class TrainingPipelineRunner:
             run_id=run,
             git_sha=git_sha,
         )
+        backtest_receipt = None
+        backtest_record = None
+        if decision_policy is not None:
+            backtest_receipt = self.service.evaluate_backtest(
+                model_name=model_name,
+                model_version=model_version,
+                dataset_snapshot_id=snapshot.dataset_snapshot_id,
+                code_version=git_sha or "unversioned-dev",
+                metrics=metrics,
+                baseline_metrics=baseline_metrics,
+                thresholds=thresholds or (),
+                decision_policy=decision_policy,
+                calibration_summary=calibration,
+                requested_by=actor,
+            )
+            backtest_payload = {
+                "artifact_type": "backtest_report",
+                "backtest_receipt": backtest_receipt.to_dict(),
+            }
+            backtest_record = self.artifact_store.put_artifact(
+                model_name=model_name,
+                version=model_version,
+                kind=ArtifactKind.BACKTEST_REPORT,
+                data=_canonical_json_bytes(backtest_payload),
+                content_type="application/json",
+                metadata={
+                    "backtest_receipt_id": backtest_receipt.receipt_id,
+                    "dataset_snapshot_id": snapshot.dataset_snapshot_id,
+                    "run_id": run,
+                },
+            )
+
         return TrainingPipelineResult(
             model_version=version,
             validation_run=validation,
@@ -235,6 +280,8 @@ class TrainingPipelineRunner:
             run_id=run,
             created_by=actor,
             created_at=model_record.created_at,
+            backtest_receipt=backtest_receipt,
+            backtest_report_artifact=backtest_record,
         )
 
 

@@ -93,19 +93,25 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
     await expect(page.getByTestId("rebalance-selection-RB-801")).toContainText(
       "EV-SEL-",
     );
+    // The fixture scenarios were never solved against a construction, equipment,
+    // labour, coverage or dilution cap, and this surface has no NetPlan
+    // disclosure policy registered, so every unmodelled class is treated as
+    // blocking and the journey stops here (ODP-FR-NET-002). Until
+    // ODP-NETPLAN-DISCLOSURE-UI-E2E-001 this reached Govern: the console
+    // displayed the disclosure and then submitted anyway.
+    await expect(page.getByTestId("rebalance-blocked-alert")).toContainText(
+      "CONSTRUCTION",
+    );
+    // No acknowledgement form is offered for a plan the server would refuse.
+    await expect(
+      page.getByTestId("rebalance-acknowledgement-section"),
+    ).toHaveCount(0);
     await expect(page.getByTestId("rebalance-primary-action")).toContainText(
-      "送審",
+      "送審（無法送審）",
     );
-
-    await page.getByTestId("rebalance-primary-action").click();
-    await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText(
-      "Govern approval APR-NET-RB-801",
-    );
+    await expect(page.getByTestId("rebalance-primary-action")).toBeDisabled();
     await expect(page.getByTestId("rebalance-boundary-RB-801")).toContainText(
       "relocationExecuted=false",
-    );
-    await expect(page.getByTestId("rebalance-primary-action")).toContainText(
-      "等待 Govern 核准中",
     );
 
     await page.reload();
@@ -114,7 +120,7 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
     ).toBeVisible();
     await page.getByTestId("network-tab-6").click();
     await expect(page.getByTestId("rebalance-primary-action")).toContainText(
-      "等待 Govern 核准中",
+      "送審（無法送審）",
       { timeout: 15_000 },
     );
     await expect(page.getByTestId("rebalance-selection-RB-801")).toContainText(
@@ -132,13 +138,38 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
       (item: { id: string }) => item.id === "RB-801",
     );
     expect(store).toMatchObject({
-      status: "pendingapproval",
+      status: "netplanreview",
       selectedScenarioId: "move",
-      relatedApprovalId: "APR-NET-RB-801",
+      relatedApprovalId: null,
       relocationExecuted: false,
     });
     expect(store.selectedScenarioOwner.actorName).toBe("Expansion Manager");
     expect(store.selectedScenarioEvidenceId).toMatch(/^EV-SEL-/);
+
+    const selectedScenario = store.netPlanScenarios.find(
+      (item: { id: string }) => item.id === "move",
+    );
+    expect(selectedScenario.modelledConstraintClasses).toEqual(["CAPITAL"]);
+    expect(selectedScenario.blockedConstraintClasses).toEqual(
+      selectedScenario.unmodelledConstraintClasses,
+    );
+    expect(selectedScenario.acknowledgeableConstraintClasses).toEqual([]);
+
+    // The submit endpoint refuses on the same grounds the console renders, so a
+    // caller bypassing the disabled button gains nothing.
+    const refused = await networkApi.post(
+      "/api/v1/operator/network-rebalance/stores/RB-801/submit-review",
+      {
+        headers: { "idempotency-key": "e2e-r4-008-blocked-submit" },
+        data: {
+          actorRoleId: "expansionManager",
+          reason:
+            "Attempting to submit a plan with unmodelled hard constraints",
+        },
+      },
+    );
+    expect(refused.status()).toBe(422);
+    expect(JSON.stringify(await refused.json())).toContain("disclosure policy");
     await networkApi.dispose();
 
     const opsApi = await apiContext(OPS_HEADERS);
@@ -149,7 +180,7 @@ test.describe("ODP-OC-R4-008 Network Rebalance", () => {
       approvalBody.items.some(
         (item: { id: string }) => item.id === "APR-NET-RB-801",
       ),
-    ).toBe(true);
+    ).toBe(false);
     await opsApi.dispose();
   });
 });

@@ -33,9 +33,9 @@ export function IntakeStageTimeline({
   mode = "stages",
 }: IntakeStageTimelineProps) {
   const steps = stageSteps(record);
-  const activeJob = jobs.find((j) => j.status === "RUNNING" || j.status === "RETRYING" || j.status === "DEAD_LETTER") ?? jobs[0];
-  const isDlq = activeJob?.status === "DEAD_LETTER" || record.stage === "FAILED";
-  const jobBadge = jobStatusBadgeColors(activeJob?.status);
+  const activeJob = jobs.find((j) => j.status === "RUNNING" || j.delivery_state === "RETRYING" || j.delivery_state === "DEAD_LETTER") ?? jobs[0];
+  const isDlq = activeJob?.delivery_state === "DEAD_LETTER" || record.stage === "FAILED";
+  const jobBadge = jobStatusBadgeColors(activeJob?.status, activeJob?.delivery_state);
   const isCancelled = (record.stage as string) === "CANCELLED";
 
   return (
@@ -216,7 +216,7 @@ export function IntakeStageTimeline({
                 color: jobBadge.foreground,
               }}
             >
-              {activeJob.status}
+              {activeJob.status}{activeJob.delivery_state ? ` · ${activeJob.delivery_state}` : ""}
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: "8px", fontSize: "11px", color: "#475569" }}>
@@ -288,11 +288,11 @@ export function IntakeStageTimeline({
   );
 }
 
-export function jobStatusBadgeColors(status: string | undefined): {
+export function jobStatusBadgeColors(status: string | undefined, deliveryState?: string | null): {
   background: string;
   foreground: string;
 } {
-  return status === "DEAD_LETTER" || status === "FAILED"
+  return deliveryState === "DEAD_LETTER" || status === "FAILED"
     ? { background: "#991b1b", foreground: "#ffffff" }
     : { background: "#334155", foreground: "#ffffff" };
 }

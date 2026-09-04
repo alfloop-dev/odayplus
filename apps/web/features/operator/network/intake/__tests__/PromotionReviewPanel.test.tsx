@@ -648,16 +648,15 @@ describe("PromotionReviewPanel — lost response, receipts and conflicts (accept
   });
 });
 
-describe("SiteScoreJobStatus — every job state distinct, ID only from receipts", () => {
-  it("renders all seven canonical job states distinctly", () => {
+describe("SiteScoreJobStatus — outcome and delivery distinct, ID only from receipts", () => {
+  it("renders all canonical outcome states distinctly", () => {
     const statuses: JobReceipt["status"][] = [
       "QUEUED",
       "RUNNING",
-      "RETRYING",
       "SUCCEEDED",
       "FAILED",
       "CANCELLED",
-      "DEAD_LETTER",
+      "PARTIAL",
     ];
     const { rerender } = render(<SiteScoreJobStatus job={job("QUEUED")} />);
     for (const status of statuses) {
@@ -674,12 +673,26 @@ describe("SiteScoreJobStatus — every job state distinct, ID only from receipts
     expect(screen.queryByTestId("sitescore-job-id")).toBeNull();
   });
 
+  it("renders delivery state separately from outcome", () => {
+    render(<SiteScoreJobStatus job={job("RUNNING", { delivery_state: "RETRYING" })} />);
+    expect(screen.getByTestId("sitescore-job-state").textContent).toContain("RUNNING");
+    expect(screen.getByTestId("sitescore-job-state").textContent).toContain("RETRYING");
+    expect(screen.getByTestId("sitescore-sr-summary").textContent).toContain("delivery RETRYING");
+  });
+
   it("exposes attempt, checkpoint, version and correlation from the receipt", () => {
-    render(<SiteScoreJobStatus job={job("RETRYING", { attempt: 3, checkpoint: "SCORE_QUEUED" })} />);
+    render(<SiteScoreJobStatus job={job("RUNNING", { attempt: 3, checkpoint: "SCORE_QUEUED", delivery_state: "RETRYING" })} />);
     expect(screen.getByTestId("sitescore-job-attempt").textContent).toContain("3");
     expect(screen.getByTestId("sitescore-job-checkpoint").textContent).toBe("SCORE_QUEUED");
     expect(screen.getByTestId("sitescore-job-version").textContent).toContain('W/"3"');
     expect(screen.getByTestId("sitescore-job-correlation").textContent).toBe("CORR-9001");
+  });
+
+  it("replays a failed outcome carrying a dead-letter delivery state", () => {
+    render(<SiteScoreJobStatus canReplay job={job("FAILED", { delivery_state: "DEAD_LETTER" })} onReplay={vi.fn()} />);
+    expect(screen.getByTestId("sitescore-replay-controls")).not.toBeNull();
+    expect(screen.getByTestId("sitescore-job-state").textContent).toContain("FAILED");
+    expect(screen.getByTestId("sitescore-job-state").textContent).toContain("DEAD_LETTER");
   });
 
   it("requires reason and risk ack before replay is enabled", () => {

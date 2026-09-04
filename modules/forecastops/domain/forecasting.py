@@ -199,7 +199,7 @@ class StoreDayObservation:
     machine_cycles: int = 0
     site_score_baseline_p50: float | None = None
     active_intervention_ids: tuple[str, ...] = ()
-    data_quality_score: float = 1.0
+    data_quality_score: float | None = None
     source_snapshot_ids: tuple[str, ...] = ()
 
     @classmethod
@@ -221,8 +221,8 @@ class StoreDayObservation:
             active_intervention_ids=tuple(
                 str(value) for value in data.get("active_intervention_ids", ())
             ),
-            data_quality_score=_bounded(
-                _first_present(data, "data_quality_score", "data_quality", default=1.0)
+            data_quality_score=_optional_bounded_float(
+                _first_present(data, "data_quality_score", "data_quality", default=None)
             ),
             source_snapshot_ids=tuple(str(value) for value in data.get("source_snapshot_ids", ())),
         )
@@ -324,7 +324,7 @@ class ForecastOutput:
     model_name: str = "trailing_average"
     model_metadata: dict[str, Any] = field(default_factory=dict)
     data_staleness_days: int | None = None
-    data_quality_score: float = 1.0
+    data_quality_score: float | None = None
 
     def with_version(self, *, forecast_version: int, forecast_output_id: str) -> ForecastOutput:
         return ForecastOutput(
@@ -929,7 +929,7 @@ def _forecast_one(
 ) -> ForecastOutput:
     observations = forecast_input.observations
     data_staleness_days: int | None = None
-    data_quality_score = 1.0
+    data_quality_score: float | None = None
     if not observations:
         actual = 0.0
         baseline = None
@@ -945,7 +945,12 @@ def _forecast_one(
             (_utc_datetime(prediction_origin_time).date() - latest.business_date).days,
             0,
         )
-        data_quality_score = latest.data_quality_score
+        if any(observation.data_quality_score is None for observation in observations):
+            data_quality_score = None
+        else:
+            data_quality_score = min(
+                float(observation.data_quality_score) for observation in observations
+            )
         source_snapshot_ids = tuple(
             snapshot_id
             for observation in observations
@@ -1256,3 +1261,11 @@ def _optional_float(value: Any) -> float | None:
 
 def _bounded(value: Any, lower: float = 0.0, upper: float = 1.0) -> float:
     return max(lower, min(upper, float(value)))
+
+
+def _optional_bounded_float(
+    value: Any, lower: float = 0.0, upper: float = 1.0
+) -> float | None:
+    if value is None:
+        return None
+    return _bounded(value, lower=lower, upper=upper)

@@ -37,14 +37,21 @@ class GuardrailBreach:
     observed: float
     status: ValidationStatus
     detail: str
+    baseline_value: float | None = None
+    degradation: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "metric_name": self.metric_name,
             "observed": self.observed,
             "status": self.status.value,
             "detail": self.detail,
         }
+        if self.baseline_value is not None:
+            data["baseline_value"] = self.baseline_value
+        if self.degradation is not None:
+            data["degradation"] = self.degradation
+        return data
 
 
 @dataclass(frozen=True)
@@ -84,6 +91,7 @@ class ReleaseMonitorAssessment:
 def evaluate_guardrails(
     observed_metrics: Mapping[str, float],
     guardrails: Sequence[MetricThreshold],
+    baseline_metrics: Mapping[str, float] | None = None,
 ) -> tuple[GuardrailBreach, ...]:
     """Return one breach per guardrail whose observed metric fails its threshold.
 
@@ -97,14 +105,31 @@ def evaluate_guardrails(
         if guardrail.metric_name not in observed_metrics:
             continue
         value = float(observed_metrics[guardrail.metric_name])
-        status, detail = guardrail.evaluate(value)
+        baseline_value = (
+            float(baseline_metrics[guardrail.metric_name])
+            if baseline_metrics and guardrail.metric_name in baseline_metrics
+            else None
+        )
+        status, detail = guardrail.evaluate(value, baseline_value=baseline_value)
         if status is ValidationStatus.FAILED:
+            higher = (
+                guardrail.higher_is_better
+                if guardrail.higher_is_better is not None
+                else (guardrail.min_value is not None or guardrail.warning_min_value is not None or guardrail.max_value is None)
+            )
+            deg = (
+                ((baseline_value - value) if higher else (value - baseline_value))
+                if baseline_value is not None
+                else None
+            )
             breaches.append(
                 GuardrailBreach(
                     metric_name=guardrail.metric_name,
                     observed=value,
                     status=status,
                     detail=detail or f"{guardrail.metric_name} breached guardrail",
+                    baseline_value=baseline_value,
+                    degradation=deg,
                 )
             )
     return tuple(breaches)

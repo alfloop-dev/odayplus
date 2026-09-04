@@ -5,6 +5,8 @@ from datetime import date, datetime, time
 from typing import Any
 from uuid import uuid4
 
+from shared.governance.vocabularies import EvidenceLevel
+
 
 @dataclass(frozen=True)
 class Tenant:
@@ -142,7 +144,15 @@ class MachineStatusEvent:
 
 @dataclass(frozen=True)
 class WorkOrder:
-    """Maintenance and repair work orders."""
+    """Maintenance and repair work orders.
+
+    Notes on root_cause (ODP-FR-FCT-004 disposition):
+        `root_cause` is RESERVED (unproduced). In the current release, no automated
+        root-cause deduction or attribution engine produces this field. It is retained
+        as an optional manual/field maintenance annotation (e.g. from ops work orders)
+        and reserved for future automated root-cause pipelines.
+        Owner: ForecastOps / Platform Ops. Target Milestone: Wave 5+.
+    """
     work_order_id: str = field(default_factory=lambda: str(uuid4()))
     store_id: str = ""
     machine_id: str | None = None
@@ -153,6 +163,8 @@ class WorkOrder:
     status: str = "open"  # open/in_progress/resolved/cancelled
     severity: str = "medium"  # low/medium/high/critical
     cost_amount: float = 0.0
+    # RESERVED (unproduced): no automated root-cause writer exists in the
+    # current release. Owner: ForecastOps / Platform Ops; Target: Wave 5+.
     root_cause: str | None = None
 
 
@@ -422,8 +434,13 @@ class InterventionOutcome:
     # default -- the previous "medium" stored an unassessed outcome as
     # medium-strength evidence. `causal_candidate` was a dead value: nothing
     # produced or tested for it, and the concept it named is carried by
-    # CAUSAL_MIN_EVIDENCE = L3 in modules/adlift/domain/incrementality.py.
-    evidence_level: str | None = None
+    # CAUSAL_MIN_EVIDENCE = L3 in shared/governance/evidence.py.
+    #
+    # Typed as the ladder rather than `str | None`: a plain string is what let
+    # "medium" and "pending" sit in this field looking like evidence claims, and
+    # this record is the persistence shape, so whatever lands here is what a
+    # reader downstream will believe.
+    evidence_level: EvidenceLevel | None = None
     side_effect_json: dict[str, Any] = field(default_factory=dict)
     label_maturity_time: datetime = field(default_factory=datetime.now)
 

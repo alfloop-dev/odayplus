@@ -205,6 +205,14 @@ class HeatZoneV3ShadowRunner:
                     active_listing_count=inp.active_listing_count,
                     existing_store_count=inp.own_store_count,
                     average_confidence=inp.confidence,
+                    # v3 composes quality as confidence * coverage_ratio; the
+                    # v2 baseline composes it as average_confidence *
+                    # data_quality_score. Carry coverage across so the
+                    # synthesized baseline reports the same composite the v3
+                    # input measured. Leaving it unset makes every synthesized
+                    # baseline fail closed at confidence 0.0 no matter what the
+                    # input measured, which silently flattens the comparison.
+                    data_quality_score=inp.coverage_ratio,
                     admin_city=inp.county,
                     admin_district=inp.district,
                     cell_latitude=inp.centroid_lat or 0.0,

@@ -1,5 +1,5 @@
 import type { AuditMeta, Confidence, DataQuality, FieldVisibility, Interval } from "./common.ts";
-import type { DecisionStatus, FourLight, JobStatus, ModelStatus, RiskLevel } from "./status.ts";
+import type { DecisionStatus, EvidenceLevel, FourLight, JobStatus, ModelStatus, RiskLevel } from "./status.ts";
 
 /**
  * Frontend domain contracts for the shared UI and ui-domain packages.
@@ -151,6 +151,11 @@ export type RootCauseCategory =
   | "Competitor"
   | "External Shock";
 
+/**
+ * @reserved Reserved presentation contract for future root-cause candidate engine (ODP-FR-FCT-004).
+ * `causeCandidate` and this evidence card currently have no automated backend producer (unproduced).
+ * Owner: ForecastOps / Platform Ops. Target Milestone: Wave 5+.
+ */
 export type RootCauseEvidenceCardContract = {
   causeCandidate: RootCauseCategory;
   evidenceStrength: number;
@@ -192,7 +197,7 @@ export type InterventionTimelineContract = {
   executionStatus: string;
   observationWindow: { startsAt: string; endsAt: string };
   outcomeStatus: DecisionStatus;
-  evidenceLevel: "high" | "medium" | "low" | "insufficient";
+  evidenceLevel: EvidenceLevel | null;
   nodes: Array<TimelineEvent & { step: InterventionTimelineStep }>;
   audit?: AuditMeta;
 };
@@ -221,7 +226,7 @@ export type AdLiftReportCardContract = {
   incrementalRevenue: Interval;
   incrementalGrossMargin: Interval;
   iromi: Interval;
-  evidenceLevel: "high" | "medium" | "low" | "insufficient";
+  evidenceLevel: EvidenceLevel | "INSUFFICIENT_EVIDENCE" | null;
   continueStopRecommendation: "CONTINUE" | "STOP" | "INVESTIGATE";
   contaminationWarnings: string[];
   dataQuality?: DataQuality;
@@ -243,6 +248,16 @@ export type ValuationRangeChartContract = {
   dataQuality?: DataQuality;
 };
 
+export type ConstraintClass =
+  | "CAPITAL"
+  | "LEASE"
+  | "CONSTRUCTION"
+  | "EQUIPMENT"
+  | "LABOUR"
+  | "COVERAGE"
+  | "DILUTION"
+  | "SEQUENCING";
+
 export type NetPlanAction = "OPEN" | "KEEP" | "IMPROVE" | "MOVE" | "EXIT" | "HOLD";
 
 export type InfeasibilityDiagnosis = {
@@ -261,6 +276,10 @@ export type NetPlanScenarioCardContract = {
   expectedGrossMargin: Interval;
   risk: RiskLevel;
   bindingConstraints: string[];
+  modelledConstraintClasses: ConstraintClass[];
+  unmodelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
   solverStatus: JobStatus;
   alternativePlanAvailable: boolean;
   approvalStatus: DecisionStatus;

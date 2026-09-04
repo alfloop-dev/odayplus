@@ -441,8 +441,13 @@ describe("IntakeProcessingDetail production composition", () => {
   });
 
   it("uses deterministic WCAG-AA job badge colors for hydrated states", () => {
-    for (const status of ["COMPLETED", "RUNNING", "RETRYING", "FAILED", "DEAD_LETTER"]) {
-      const colors = jobStatusBadgeColors(status);
+    for (const [status, deliveryState] of [
+      ["RUNNING", null],
+      ["FAILED", null],
+      ["RUNNING", "RETRYING"],
+      ["FAILED", "DEAD_LETTER"],
+    ] as const) {
+      const colors = jobStatusBadgeColors(status, deliveryState);
       expect(contrastRatio(colors.background, colors.foreground)).toBeGreaterThanOrEqual(4.5);
     }
   });

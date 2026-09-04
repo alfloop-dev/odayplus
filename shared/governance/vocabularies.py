@@ -53,7 +53,22 @@ class JobStatus(StrEnum):
     PARTIAL = "partial"  # some work completed and some did not; neither succeeded nor failed
 
 
+class JobDeliveryState(StrEnum):
+    """Infrastructure delivery state of a queued job.
+
+    Carried alongside JobStatus rather than inside it, separating queue delivery
+    mechanics (such as retries and dead-lettering) from the domain outcome of the
+    work itself (queued, running, succeeded, failed, cancelled, partial).
+
+    Authority: ODP-FR-SHARED-001.
+    """
+
+    RETRYING = "retrying"  # delivery attempt failed, queued for retry
+    DEAD_LETTER = "dead_letter"  # retry budget exhausted or poison message, moved to DLQ
+
+
 __all__ = [
     "EvidenceLevel",
+    "JobDeliveryState",
     "JobStatus",
 ]

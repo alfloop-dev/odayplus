@@ -56,14 +56,16 @@ import type {
   AssignmentRequest,
   SlaPauseRequest,
   SlaReceipt,
+  JobDeliveryState,
   JobReceipt,
+  JobStatus,
   PromotionDecisionReceipt,
   PromotionRequest,
   RetryRequest,
   ReviewDecisionRequest,
 } from "./generated/types";
 
-export type { ErrorEnvelope };
+export type { ErrorEnvelope, JobDeliveryState, JobReceipt, JobStatus };
 
 export type HealthResponse = {
   status: string;
@@ -233,6 +235,16 @@ export type HeatZoneScore = {
   [key: string]: unknown;
 };
 
+export type ConstraintClass =
+  | "CAPITAL"
+  | "LEASE"
+  | "CONSTRUCTION"
+  | "EQUIPMENT"
+  | "LABOUR"
+  | "COVERAGE"
+  | "DILUTION"
+  | "SEQUENCING";
+
 /**
  * A NetPlan scenario as served by `GET /netplan/scenarios` (the list/compare
  * endpoint). Mirrors `NetPlanScenario.to_dict()` in
@@ -248,6 +260,36 @@ export type NetPlanScenarioSummary = {
   solver_version?: string;
   model_version?: string;
   correlation_id?: string;
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
+  [key: string]: unknown;
+};
+
+export type NetPlanScenarioDetail = {
+  id: string;
+  name?: string;
+  score?: number;
+  expectedGrossMargin?: number;
+  investmentTwd?: number;
+  risk?: number;
+  capacityDelta?: number;
+  bindingConstraints?: string[];
+  modelledConstraintClasses: ConstraintClass[];
+  unmodelledConstraintClasses: ConstraintClass[];
+  modelled_constraint_classes: ConstraintClass[];
+  unmodelled_constraint_classes: ConstraintClass[];
+  // How the submit gate's policy splits the unmodelled set. Optional on the
+  // type because an older payload may omit it; a consumer that finds it absent
+  // must treat every unmodelled class as blocking rather than guessing.
+  blockedConstraintClasses?: ConstraintClass[];
+  acknowledgeableConstraintClasses?: ConstraintClass[];
+  disclosurePolicyVersionId?: string | null;
+  disclosureUndeclared?: boolean;
+  solverStatus?: string;
+  solverVersion?: string;
+  isSystemRecommendation?: boolean;
+  isStale?: boolean;
+  isInfeasible?: boolean;
   [key: string]: unknown;
 };
 

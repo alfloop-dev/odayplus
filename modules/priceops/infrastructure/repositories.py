@@ -9,7 +9,17 @@ plan carries the full audit trail.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
+from modules.priceops.domain.exploration import (
+    ActivationReceipt,
+    ExplorationBudgetExceededError,
+    ExplorationDecision,
+    ExplorationGate,
+    ExplorationGateExpiredError,
+    ExplorationGateRevokedError,
+    PriceScope,
+)
 from modules.priceops.domain.pricing import (
     ApprovalRecord,
     DecisionWritebackRecord,
@@ -38,6 +48,11 @@ class InMemoryPriceOpsRepository:
     _handoffs: dict[str, InterventionTreatmentHandoff] = field(default_factory=dict)
     _label_entries: dict[str, LabelRegistryEntry] = field(default_factory=dict)
     _evaluations: dict[str, PricingEffectEvaluation] = field(default_factory=dict)
+    _decision_writebacks: dict[str, DecisionWritebackRecord] = field(default_factory=dict)
+    _scenario_simulations: dict[str, PlanScenarioSimulation] = field(default_factory=dict)
+    _gates: dict[str, ExplorationGate] = field(default_factory=dict)
+    _exploration_decisions: dict[str, ExplorationDecision] = field(default_factory=dict)
+    _activation_receipts: dict[str, ActivationReceipt] = field(default_factory=dict)
 
     def save_plan(self, plan: PricingPlan) -> PricingPlan:
         self._plans[plan.plan_id] = plan
@@ -125,29 +140,136 @@ class InMemoryPriceOpsRepository:
     def save_decision_writeback(
         self, decision: DecisionWritebackRecord
     ) -> DecisionWritebackRecord:
-        if not hasattr(self, "_decision_writebacks"):
-            self._decision_writebacks = {}
         self._decision_writebacks[decision.decision_id] = decision
         return decision
 
     def list_decision_writebacks(self, plan_id: str) -> list[DecisionWritebackRecord]:
-        if not hasattr(self, "_decision_writebacks"):
-            self._decision_writebacks = {}
         return [d for d in self._decision_writebacks.values() if d.plan_id == plan_id]
 
     def save_scenario_simulation(
         self, scenario: PlanScenarioSimulation
     ) -> PlanScenarioSimulation:
-        if not hasattr(self, "_scenario_simulations"):
-            self._scenario_simulations = {}
         self._scenario_simulations[scenario.scenario_id] = scenario
         return scenario
 
     def get_scenario_simulation(self, scenario_id: str) -> PlanScenarioSimulation | None:
-        if not hasattr(self, "_scenario_simulations"):
-            self._scenario_simulations = {}
         return self._scenario_simulations.get(scenario_id)
+
+    # -- Gate and Exploration persistence (ODP-FR-PRICE-006) -------------
+    def save_gate(self, gate: ExplorationGate) -> ExplorationGate:
+        self._gates[gate.gate_id] = gate
+        return gate
+
+    def get_gate(self, gate_id: str, tenant_id: str | None = None) -> ExplorationGate | None:
+        gate = self._gates.get(gate_id)
+        if gate is not None and tenant_id is not None and gate.tenant_id != tenant_id:
+            return None
+        return gate
+
+    def find_active_gate(
+        self, scope: PriceScope, at: datetime | None = None
+    ) -> ExplorationGate | None:
+        now = at or datetime.now(UTC)
+        for gate in self._gates.values():
+            if scope.matches(gate) and gate.is_valid_at(now) and gate.remaining_budget > 0:
+                return gate
+        return None
+
+    def list_gates(self, tenant_id: str | None = None) -> list[ExplorationGate]:
+        if tenant_id is not None:
+            return [g for g in self._gates.values() if g.tenant_id == tenant_id]
+        return list(self._gates.values())
+
+    def revoke_gate(
+        self, gate_id: str, tenant_id: str, revoked_at: datetime | None = None
+    ) -> ExplorationGate:
+        gate = self.get_gate(gate_id, tenant_id=tenant_id)
+        if gate is None:
+            raise LookupError(f"Gate {gate_id} not found for tenant {tenant_id}")
+        if gate.revoked_at is not None:
+            raise ExplorationGateRevokedError(f"Gate {gate_id} is already revoked at {gate.revoked_at}")
+        now = revoked_at or datetime.now(UTC)
+        revoked = ExplorationGate(
+            gate_id=gate.gate_id,
+            tenant_id=gate.tenant_id,
+            budget_limit=gate.budget_limit,
+            budget_consumed=gate.budget_consumed,
+            effective_from=gate.effective_from,
+            effective_to=gate.effective_to,
+            approved_by=gate.approved_by,
+            approval_decision_id=gate.approval_decision_id,
+            approval_id=gate.approval_id,
+            rollback_condition=gate.rollback_condition,
+            decision_policy_version_id=gate.decision_policy_version_id,
+            scope_brand_id=gate.scope_brand_id,
+            scope_store_group=gate.scope_store_group,
+            scope_sku_group=gate.scope_sku_group,
+            revoked_at=now,
+            created_at=gate.created_at,
+        )
+        self._gates[gate_id] = revoked
+        return revoked
+
+    def record_exploration_decision(
+        self, decision: ExplorationDecision
+    ) -> ExplorationDecision:
+        gate = self._gates.get(decision.gate_id)
+        if gate is None or gate.tenant_id != decision.tenant_id:
+            raise LookupError(f"Gate {decision.gate_id} not found for tenant {decision.tenant_id}")
+        if gate.revoked_at is not None:
+            raise ExplorationGateRevokedError(f"Gate {gate.gate_id} is revoked")
+        if not gate.is_valid_at(decision.created_at):
+            raise ExplorationGateExpiredError(
+                f"Gate {gate.gate_id} is outside active window at {decision.created_at}"
+            )
+        if decision.budget_consumed < 0:
+            raise ExplorationBudgetExceededError(
+                f"Gate {gate.gate_id} cannot consume a negative budget"
+            )
+        new_consumed = round(gate.budget_consumed + decision.budget_consumed, 4)
+        if new_consumed > gate.budget_limit + 1e-6:
+            raise ExplorationBudgetExceededError(
+                f"Gate {gate.gate_id} budget exceeded: consumed {new_consumed} > limit {gate.budget_limit}"
+            )
+
+        # Update gate budget consumed atomically
+        updated_gate = ExplorationGate(
+            gate_id=gate.gate_id,
+            tenant_id=gate.tenant_id,
+            budget_limit=gate.budget_limit,
+            budget_consumed=new_consumed,
+            effective_from=gate.effective_from,
+            effective_to=gate.effective_to,
+            approved_by=gate.approved_by,
+            approval_decision_id=gate.approval_decision_id,
+            approval_id=gate.approval_id,
+            rollback_condition=gate.rollback_condition,
+            decision_policy_version_id=gate.decision_policy_version_id,
+            scope_brand_id=gate.scope_brand_id,
+            scope_store_group=gate.scope_store_group,
+            scope_sku_group=gate.scope_sku_group,
+            revoked_at=gate.revoked_at,
+            created_at=gate.created_at,
+        )
+        self._gates[gate.gate_id] = updated_gate
+        self._exploration_decisions[decision.decision_id] = decision
+        return decision
+
+    def list_exploration_decisions(
+        self, gate_id: str | None = None
+    ) -> list[ExplorationDecision]:
+        if gate_id is not None:
+            return [d for d in self._exploration_decisions.values() if d.gate_id == gate_id]
+        return list(self._exploration_decisions.values())
+
+    def save_activation_receipt(
+        self, receipt: ActivationReceipt
+    ) -> ActivationReceipt:
+        self._activation_receipts[receipt.plan_id] = receipt
+        return receipt
+
+    def get_activation_receipt(self, plan_id: str) -> ActivationReceipt | None:
+        return self._activation_receipts.get(plan_id)
 
 
 __all__ = ["InMemoryPriceOpsRepository"]
-

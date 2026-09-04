@@ -35,6 +35,8 @@ from datetime import UTC, datetime
 from typing import Any
 
 from shared.audit.events import AuditEvent, InMemoryAuditLog
+from shared.governance.evidence import coerce_evidence_level, meets_causal_threshold
+from shared.governance.vocabularies import EvidenceLevel
 
 # ---------------------------------------------------------------------------
 # Error hierarchy
@@ -136,14 +138,25 @@ def _judge_effectiveness(
     status: str,
     observed_lift: float | None,
     target_lift: float,
-    evidence_level: str,
+    evidence_level: EvidenceLevel | str | None,
 ) -> str:
-    """Classify effectiveness: PENDING | EFFECTIVE | INEFFECTIVE | INCONCLUSIVE."""
+    """Classify effectiveness: PENDING | EFFECTIVE | INEFFECTIVE | INCONCLUSIVE.
+
+    "Evidence strong enough to call the lift real" is asked of
+    shared.governance.evidence, which holds the single CAUSAL_MIN_EVIDENCE
+    threshold, rather than spelled out here as a list of the weak rungs.
+    Listing them inverts the rule: a rung added to the ladder would then be
+    silently promoted to sufficient by this function's omission of it.
+
+    Unrated is inconclusive, not effective: a campaign whose evidence nobody
+    assessed has not been shown to work, and before ADR-0004 it defaulted to
+    "medium" and closed as if it had.
+    """
     if status not in _OUTCOME_STAGES or observed_lift is None:
         return "PENDING"
     if observed_lift <= 0:
         return "INEFFECTIVE"
-    if evidence_level == "low" or observed_lift < target_lift:
+    if not meets_causal_threshold(evidence_level) or observed_lift < target_lift:
         return "INCONCLUSIVE"
     return "EFFECTIVE"
 
@@ -153,7 +166,7 @@ def _closeout_gate(action: dict[str, Any]) -> dict[str, Any]:
         status=action.get("status", "DRAFT"),
         observed_lift=action.get("observedLift"),
         target_lift=float(action.get("targetLift") or 0),
-        evidence_level=action.get("evidenceLevel", "medium"),
+        evidence_level=action.get("evidenceLevel"),
     )
     if outcome == "EFFECTIVE":
         return {
@@ -284,7 +297,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 2.0,
         "observedLift": 2.6,
-        "evidenceLevel": "high",
+        "evidenceLevel": "L3",
         "rationale": "對照組配對通過 pre-trend 檢定；調價後晚餐營收顯著高於基準。",
         "rollbackPlan": "回復價目表 pb-2026.06.19，30 分鐘內生效，觀察 48 小時。",
         "growthOutcome": None,
@@ -309,7 +322,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 3.0,
         "observedLift": -1.4,
-        "evidenceLevel": "medium",
+        "evidenceLevel": "L2",
         "rationale": "下調外送費後訂單量未提升，宵夜營收較基準下滑。",
         "rollbackPlan": "回復外送費結構 fs-2026.06.17，先 canary 12 小時再全量。",
         "growthOutcome": None,
@@ -333,7 +346,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 1.5,
         "observedLift": 0.6,
-        "evidenceLevel": "low",
+        "evidenceLevel": "L1",
         "rationale": "觀察期營收微幅上升但未達標，對照組樣本不足以判定因果。",
         "rollbackPlan": "回復加價包設定 cfg-2026.06.24；維持既有午餐主力價。",
         "growthOutcome": None,
@@ -357,7 +370,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 2.5,
         "observedLift": None,
-        "evidenceLevel": "medium",
+        "evidenceLevel": None,
         "rationale": "活動執行中，觀察窗尚未成熟，暫無成效判定。",
         "rollbackPlan": "停用加點推薦模組設定 cfg-2026.07.05。",
         "growthOutcome": None,
@@ -381,7 +394,7 @@ _SEED_ACTIONS: list[dict[str, Any]] = [
         "observationWindowDays": 14,
         "targetLift": 2.0,
         "observedLift": None,
-        "evidenceLevel": "low",
+        "evidenceLevel": None,
         "rationale": "草稿：待補齊對照組與 pre-trend 檢定後送審。",
         "rollbackPlan": "草稿階段無執行，無需 rollback。",
         "growthOutcome": None,
@@ -564,7 +577,7 @@ class GrowthService:
                 a.get("status", "DRAFT"),
                 a.get("observedLift"),
                 float(a.get("targetLift") or 0),
-                a.get("evidenceLevel", "medium"),
+                a.get("evidenceLevel"),
             )
             == "EFFECTIVE"
         )
@@ -657,7 +670,7 @@ class GrowthService:
             "budget": budget,
             "targetLift": target_lift,
             "observedLift": None,
-            "evidenceLevel": "low",
+            "evidenceLevel": None,
             "rationale": rationale,
             "rollbackPlan": rollback_plan,
             "growthOutcome": None,
@@ -1140,7 +1153,7 @@ class GrowthService:
         outcome: str,
         required_action: str,
         observed_lift: float | None = None,
-        evidence_level: str = "medium",
+        evidence_level: EvidenceLevel | str | None = None,
         rationale: str = "",
         actor_role_id: str = "opsLead",
         actor_name: str = "Operator",
@@ -1165,10 +1178,15 @@ class GrowthService:
                 f"current status: {action['status']}"
             )
 
+        # The write boundary for this action's evidence claim. An unrecognised
+        # rung is refused here rather than stored, and omitting the field leaves
+        # the existing claim alone instead of overwriting it with a default.
+        rated_evidence_level = coerce_evidence_level(evidence_level, field="evidenceLevel")
+
         if observed_lift is not None:
             action["observedLift"] = observed_lift
-        if evidence_level:
-            action["evidenceLevel"] = evidence_level
+        if rated_evidence_level is not None:
+            action["evidenceLevel"] = rated_evidence_level.value
         if rationale:
             action["rationale"] = rationale
         action["growthOutcome"] = outcome
@@ -1211,7 +1229,9 @@ class GrowthService:
                 "outcome": outcome,
                 "requiredAction": required_action,
                 "observedLift": observed_lift,
-                "evidenceLevel": evidence_level,
+                "evidenceLevel": (
+                    rated_evidence_level.value if rated_evidence_level is not None else None
+                ),
                 "newStatus": action["status"],
                 "idempotencyKey": idempotency_key,
             },

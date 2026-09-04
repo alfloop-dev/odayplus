@@ -12,7 +12,7 @@ from models.shared_ml.artifact_store import (
     compute_content_digest,
     make_artifact_id,
 )
-from models.shared_ml.backtest import run_rolling_backtest
+from models.shared_ml.backtest import BacktestReceipt, evaluate_backtest_run, run_rolling_backtest
 from models.shared_ml.drift import calculate_psi, monitor_drift
 from models.shared_ml.feature_registry import (
     FeatureLineageEvent,
@@ -83,6 +83,8 @@ from models.shared_ml.validation import (
     ValidationRuleFailure,
     ValidationRun,
     ValidationStatus,
+    effective_thresholds,
+    thresholds_from_decision_policy,
     validate_model_candidate,
 )
 
@@ -122,7 +124,11 @@ __all__ = [
     "inspect_oss_capability",
     "inspect_oss_stack",
     "require_oss_capability",
+    "thresholds_from_decision_policy",
+    "effective_thresholds",
     "validate_model_candidate",
+    "BacktestReceipt",
+    "evaluate_backtest_run",
     "run_rolling_backtest",
     "calculate_psi",
     "monitor_drift",

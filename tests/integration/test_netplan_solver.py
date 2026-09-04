@@ -42,6 +42,10 @@ from modules.netplan import (
     run_netplan_solver_batch,
 )
 from shared.auth import Role
+from shared.governance import (
+    InMemoryDecisionPolicyRepository,
+    default_netplan_disclosure_policy,
+)
 from solver.netplan import (
     NETPLAN_POLICY_VERSION,
     STATUS_FEASIBLE,
@@ -59,7 +63,10 @@ from tests.integration._authz import auth_headers
 MOMENT = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
 APPROVAL_SOURCE = "management-approval-system"
 APPROVAL_PRINCIPAL = "principal://network-strategy-director"
-APPROVAL_ROLE = "network-strategy-director"
+APPROVAL_ROLE = "network-planning-authority"
+# The tenant every scenario in this file is created under; the lifecycle
+# disclosure fixture is registered for it.
+NETPLAN_TENANT_ID = "tenant-1"
 
 
 def _stores() -> tuple[ExistingStoreInput, ...]:
@@ -197,6 +204,55 @@ def _approval_receipt(
     return receipt
 
 
+def _lifecycle_policy_repository() -> InMemoryDecisionPolicyRepository:
+    """Use the shipped disclosure contract while covering the old test date."""
+    base = default_netplan_disclosure_policy(NETPLAN_TENANT_ID)
+    return InMemoryDecisionPolicyRepository(
+        [
+            replace(
+                base,
+                effective_from=datetime(2020, 1, 1, tzinfo=UTC),
+                change_reason="lifecycle fixture: use the shipped disclosure contract",
+            )
+        ]
+    )
+
+
+def _lifecycle_options() -> dict[str, tuple[ActionOption, ...]]:
+    """Add explicit resource declarations to the legacy lifecycle inputs."""
+    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
+    return {
+        entity_id: tuple(
+            replace(
+                option,
+                construction_days=0.0,
+                equipment_units=0.0,
+                labour_headcount=0.0,
+                coverage_delta=0.0,
+                dilution_zone_id=(
+                    "lifecycle-zone"
+                    if option.action is NetworkAction.OPEN
+                    else option.dilution_zone_id
+                ),
+            )
+            for option in entity_options
+        )
+        for entity_id, entity_options in options.items()
+    }
+
+
+def _lifecycle_constraints() -> NetPlanConstraints:
+    """Bind every solver-expressible class; LEASE/SEQUENCING need an ack."""
+    return replace(
+        _constraints(),
+        max_construction_days=1000.0,
+        max_equipment_units=1000.0,
+        max_labour_headcount=1000.0,
+        min_coverage_delta=0.0,
+        max_open_per_dilution_zone=2,
+    )
+
+
 def _approval_verifier(
     receipt: ManagementApprovalReceipt,
     *,
@@ -240,14 +296,15 @@ def _pending_authoritative_service(
     solve_alternative_limit: int = 3,
     receipt_alternative_limit: int = 3,
     submit_for_approval: bool = True,
+    acknowledge: bool = True,
 ) -> tuple[
     InMemoryNetPlanRepository,
     NetPlanService,
     str,
     ManagementApprovalReceipt,
 ]:
-    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
-    constraints = _constraints()
+    options = _lifecycle_options()
+    constraints = _lifecycle_constraints()
     solved = solve_network_plan(
         options_by_entity=options,
         constraints=constraints,
@@ -281,9 +338,10 @@ def _pending_authoritative_service(
     service = NetPlanService(
         repository=repository,
         approval_verifier=_approval_verifier(authority_receipt),
+        policy_repository=_lifecycle_policy_repository(),
     )
     scenario = service.create_scenario(
-        tenant_id="tenant-1",
+        tenant_id=NETPLAN_TENANT_ID,
         scenario_name=baseline.baseline_name,
         planning_horizon="2026Q3",
         existing_stores=_stores(),
@@ -293,11 +351,21 @@ def _pending_authoritative_service(
         correlation_id="corr-lifecycle-verification",
         created_at=MOMENT,
     )
+    repository.save_scenario(replace(scenario, options_by_entity=options))
     service.solve(
         scenario.scenario_id,
         solved_at=MOMENT,
         alternative_limit=solve_alternative_limit,
     )
+    if acknowledge:
+        service.acknowledge_unmodelled_constraints(
+            scenario.scenario_id,
+            actor_id=APPROVAL_PRINCIPAL,
+            reason="lease pipeline confirmed offline; Q3 build order agreed with construction",
+            acknowledged_classes=("LEASE", "SEQUENCING"),
+            approval_receipt_id=authority_receipt.receipt_id,
+            acknowledged_at=MOMENT,
+        )
     if submit_for_approval:
         service.submit_for_approval(
             scenario.scenario_id,
@@ -408,8 +476,8 @@ def test_infeasible_scenario_reports_structured_diagnosis_without_relaxing() -> 
 
 
 def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
-    options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
-    constraints = _constraints()
+    options = _lifecycle_options()
+    constraints = _lifecycle_constraints()
     solved = solve_network_plan(options_by_entity=options, constraints=constraints)
     approved_plan = _management_baseline(
         actions_by_entity={
@@ -433,9 +501,10 @@ def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
     service = NetPlanService(
         repository=repository,
         approval_verifier=_approval_verifier(authority_receipt),
+        policy_repository=_lifecycle_policy_repository(),
     )
     scenario = service.create_scenario(
-        tenant_id="tenant-1",
+        tenant_id=NETPLAN_TENANT_ID,
         scenario_name="2026 Q3 expansion",
         planning_horizon="2026Q3",
         existing_stores=_stores(),
@@ -445,9 +514,18 @@ def test_service_lifecycle_tracks_approval_execution_and_outcome() -> None:
         correlation_id="corr-netplan-1",
         created_at=MOMENT,
     )
+    repository.save_scenario(replace(scenario, options_by_entity=options))
 
     solve = service.solve(scenario.scenario_id, solved_at=MOMENT)
     assert solve.result.solver_status == STATUS_OPTIMAL
+    service.acknowledge_unmodelled_constraints(
+        scenario.scenario_id,
+        actor_id=APPROVAL_PRINCIPAL,
+        reason="lease pipeline confirmed offline; Q3 build order agreed with construction",
+        acknowledged_classes=("LEASE", "SEQUENCING"),
+        approval_receipt_id=authority_receipt.receipt_id,
+        acknowledged_at=MOMENT,
+    )
     service.submit_for_approval(scenario.scenario_id, actor="network-planner", occurred_at=MOMENT)
     approval = service.decide(
         scenario.scenario_id,
@@ -569,6 +647,7 @@ def test_decision_lifecycle_binds_authoritative_alternative_limit(surface: str) 
         _pending_authoritative_service(
             solve_alternative_limit=1,
             receipt_alternative_limit=3,
+            acknowledge=False,
         )
     )
     solve = repository.get_solve(scenario_id)
@@ -643,6 +722,7 @@ def test_execution_api_revalidates_solve_after_authentic_approval(
         create_app(
             netplan_repository=repository,
             netplan_approval_verifier=_approval_verifier(authority_receipt),
+            netplan_policy_repository=_lifecycle_policy_repository(),
         ),
         headers=auth_headers(Role.EXECUTIVE),
     )
@@ -670,6 +750,7 @@ def test_out_of_order_decision_and_execution_leave_no_persisted_records(
         create_app(
             netplan_repository=repository,
             netplan_approval_verifier=_approval_verifier(authority_receipt),
+            netplan_policy_repository=_lifecycle_policy_repository(),
         ),
         headers=auth_headers(Role.EXECUTIVE),
     )
@@ -1940,5 +2021,3 @@ def test_netplan_api_runtime_error_does_not_leak_raw_message(monkeypatch) -> Non
     assert "secret_ortools_internal_pointer" not in response.text
     assert correlation_id in response.text
     assert "NetPlan execution failed" in response.json()["detail"]
-
-

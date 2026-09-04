@@ -21,6 +21,11 @@ CI_UNRESOLVED,
     PR_NOT_MERGED,
     READY,
 )
+from common import (
+    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
+)
 
 
 STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
@@ -248,12 +253,17 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
 def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     sv = _supervisor_module()
     from dispatch import worker_logical_dispatch_agent_id
-    from dispatch_policy import REASON_OWNED_FINALIZE, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY
+    from dispatch_policy import (
+        REASON_OWNED_FINALIZE,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_READY,
+        REASON_REVIEW_READY,
+    )
 
     if not config.get("paths", {}).get("status_file"):
         return False
 
-    dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or "").strip()
+    dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or worker.get("reason") or "").strip()
     task_id = str(worker.get("task_id") or "").strip()
     target_agent = sv.display_name_for(
         config,
@@ -266,8 +276,17 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
     task = _task_index_from_status(config, status).get(task_id)
     if not task:
         return False
-    if str(task.get("owner") or "").strip() != target_agent:
-        return False
+
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+
+    if dispatch_reason == REASON_REVIEW_READY:
+        if str(task.get(reviewer_field) or "").strip() != target_agent:
+            return False
+    else:
+        if str(task.get(owner_field) or "").strip() != target_agent:
+            return False
 
     task_status = str(task.get("status") or "").lower()
     timestamp = sv.utc_now()
@@ -278,15 +297,22 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
             return False
         task["status"] = "todo"
         message = (
-            f"Supervisor preempted {task_id} to free {target_agent} for higher-priority review/finalize work; "
+            f"Supervisor preempted {task_id} to free {target_agent} for higher-priority work; "
             "task returned to todo until a fresh run restarts it."
         )
     elif dispatch_reason == REASON_OWNED_FINALIZE:
         if task_status != "review_approved":
             return False
         message = (
-            f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority review work; "
+            f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority work; "
             "task remains review_approved."
+        )
+    elif dispatch_reason == REASON_REVIEW_READY:
+        if task_status != "review":
+            return False
+        message = (
+            f"Supervisor paused review on {task_id} to free {target_agent} for higher-priority work; "
+            "task remains review."
         )
     else:
         return False
@@ -422,11 +448,24 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
         task["last_update"] = timestamp
         task["next"] = message
         task.pop("approved_head", None)
+        task["last_reopened_by"] = "Supervisor"
+        task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+        task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+        task["last_reopened_at"] = timestamp
         for handoff in status.get("handoffs", ()) or []:
             if handoff.get("task_id") == task_id and handoff.get("status") != "done":
                 handoff["status"] = "done"
                 handoff["resolved_at"] = timestamp
-        sv.write_activity_log(config, {"type": "review_submission_repaired", "task_id": task_id, "message": message})
+        sv.write_activity_log(
+            config,
+            {
+                "type": "review_submission_repaired",
+                "task_id": task_id,
+                "message": message,
+                "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+                "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+            },
+        )
         changed = True
     if changed:
         if not commit_canonical_task_transition(config, status):
@@ -457,6 +496,11 @@ def reject_unsealed_worker_handoff(
     if not task_id or not any(item is task for item in status.get("tasks", []) or []):
         return False
     timestamp = sv.utc_now()
+    reopen_reason = (
+        REOPEN_REASON_WORKTREE_LEASE_MISMATCH
+        if "lease" in str(reason).lower()
+        else REOPEN_REASON_CONTROL_PLANE_RECOVERY
+    )
     message = (
         f"Owner closeout seal rejected ({reason}: {detail}). The task returned to in_progress; "
         "only the same owner may resume the recorded worktree, clean it, and resubmit the existing PR."
@@ -473,6 +517,10 @@ def reject_unsealed_worker_handoff(
     }
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
+    task["last_reopened_by"] = "Supervisor"
+    task["last_reopened_reason"] = reopen_reason
+    task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+    task["last_reopened_at"] = timestamp
     for handoff in status.get("handoffs", []) or []:
         if handoff.get("task_id") == task_id and handoff.get("status") != "done":
             handoff["status"] = "done"
@@ -486,6 +534,8 @@ def reject_unsealed_worker_handoff(
             "task_id": task_id,
             "worker_run_id": worker_run_id,
             "reason": reason,
+            "reopen_reason": reopen_reason,
+            "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "detail": detail,
             "message": message,
         },
@@ -522,6 +572,10 @@ def requeue_task_for_ci_repair(
     task["next"] = message
     task.pop("ci_pending_since_ts", None)
     task.pop("ci_pending_since", None)
+    task["last_reopened_by"] = "Supervisor"
+    task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
+    task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
+    task["last_reopened_at"] = sv.utc_now()
     task["ci_repair_last_requeued_ts"] = (
         datetime.now(UTC).timestamp() if now_ts is None else now_ts
     )
@@ -537,6 +591,8 @@ def requeue_task_for_ci_repair(
             "type": "ci_repair_requeued",
             "task_id": task_id,
             "message": message,
+            "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+            "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "approval_cleared": clear_approval,
         },
     )

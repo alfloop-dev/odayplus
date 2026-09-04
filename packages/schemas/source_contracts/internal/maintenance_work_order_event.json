@@ -23,6 +23,6 @@
     {"name": "status", "type": "string", "required": true, "enum": ["open", "in_progress", "resolved", "cancelled"], "description": "Work order status."},
     {"name": "severity", "type": "string", "required": false, "enum": ["low", "medium", "high", "critical"], "description": "Severity."},
     {"name": "cost_amount", "type": "number", "required": false, "minimum": 0, "invalid_code": "invalid_amount", "description": "Repair cost."},
-    {"name": "root_cause", "type": "string", "required": false, "description": "Root cause."}
+    {"name": "root_cause", "type": "string", "required": false, "description": "Optional manual/field maintenance annotation only; no automated root-cause producer exists in the current release (ODP-FR-FCT-004)."}
   ]
 }

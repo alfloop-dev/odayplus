@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from enum import Enum
 from typing import Any
 
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.jobs.queue import (
     NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES,
+    JobDeliveryState,
     JobRecord,
     JobRequest,
     JobStatus,
@@ -25,6 +27,9 @@ class JobFenceRejectedError(ValueError):
     """Raised when a job write/checkpoint fails due to stale fence_token or version."""
 
     pass
+
+
+_LEGACY_RETRYING_STATUS_VALUES = (JobDeliveryState.RETRYING.value, "RETRYING")
 
 
 class DurableJobQueue:
@@ -39,6 +44,7 @@ class DurableJobQueue:
             params: list[str] = [
                 JobStatus.QUEUED.value,
                 JobStatus.RUNNING.value,
+                *_LEGACY_RETRYING_STATUS_VALUES,
                 *(f"%{suffix}" for suffix in NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES),
             ]
             if tenant_id is not None:
@@ -50,7 +56,7 @@ class DurableJobQueue:
             # tenant_clause is one of two fixed SQL fragments; the value is bound.
             row = self._engine.query_one(
                 "SELECT COUNT(*) as count FROM durable_jobs "
-                "WHERE (status = ? OR status = ?) "
+                "WHERE status IN (?, ?, ?, ?) "
                 "AND job_type NOT LIKE ? AND job_type NOT LIKE ?" + tenant_clause,  # nosec B608
                 tuple(params),
             )
@@ -66,16 +72,17 @@ class DurableJobQueue:
         with self._engine.lock:
             result = self._engine.execute(
                 "INSERT INTO durable_jobs("
-                "  job_id, job_type, status, correlation_id, idempotency_key, "
+                "  job_id, job_type, status, delivery_state, correlation_id, idempotency_key, "
                 "  payload_json, created_at, fence_token, version, locked_by, "
                 "  heartbeat_at, lease_expires_at, attempts, error_message, "
                 "  leased_until, max_retries"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT DO NOTHING",
                 (
                     record.job_id,
                     record.job_type,
                     record.status.value,
+                    record.delivery_state.value if record.delivery_state else None,
                     record.correlation_id,
                     record.idempotency_key,
                     json.dumps(record.payload),
@@ -117,11 +124,12 @@ class DurableJobQueue:
                 # Find the oldest eligible job
                 row = self._engine.query_one(
                     "SELECT * FROM durable_jobs "
-                    "WHERE (status = ? OR (status = ? AND leased_until < ?)) "
+                    "WHERE (status IN (?, ?, ?) OR (status = ? AND leased_until < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
                     "ORDER BY created_at ASC LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
                         now_str,
                         *(f"%{suffix}" for suffix in NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES),
@@ -137,8 +145,9 @@ class DurableJobQueue:
                 # Check if it has exceeded max_retries
                 if current_attempts >= max_retries:
                     self._engine.execute(
-                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
-                        (JobStatus.FAILED.value, job_id),
+                        "UPDATE durable_jobs SET status = ?, delivery_state = ?, "
+                        "leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.FAILED.value, JobDeliveryState.DEAD_LETTER.value, job_id),
                     )
                     continue
 
@@ -147,8 +156,17 @@ class DurableJobQueue:
                 leased_until_str = leased_until_dt.isoformat()
 
                 self._engine.execute(
-                    "UPDATE durable_jobs SET status = ?, attempts = ?, leased_until = ? WHERE job_id = ?",
-                    (JobStatus.RUNNING.value, new_attempts, leased_until_str, job_id),
+                    "UPDATE durable_jobs SET status = ?, attempts = ?, leased_until = ?, "
+                    "delivery_state = CASE WHEN status IN (?, ?) THEN ? "
+                    "ELSE delivery_state END WHERE job_id = ?",
+                    (
+                        JobStatus.RUNNING.value,
+                        new_attempts,
+                        leased_until_str,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
+                        JobDeliveryState.RETRYING.value,
+                        job_id,
+                    ),
                 )
 
                 updated_row = self._engine.query_one(
@@ -172,7 +190,8 @@ class DurableJobQueue:
                 if row["status"] != JobStatus.RUNNING.value or row["leased_until"] != token_str:
                     return False
             self._engine.execute(
-                "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
+                "UPDATE durable_jobs SET status = ?, delivery_state = NULL, "
+                "leased_until = NULL WHERE job_id = ?",
                 (JobStatus.SUCCEEDED.value, job_id),
             )
             return True
@@ -201,13 +220,15 @@ class DurableJobQueue:
                 max_retries = row["max_retries"]
                 if attempts < max_retries:
                     self._engine.execute(
-                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
-                        (JobStatus.QUEUED.value, job_id),
+                        "UPDATE durable_jobs SET status = ?, delivery_state = ?, "
+                        "leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.QUEUED.value, JobDeliveryState.RETRYING.value, job_id),
                     )
                 else:
                     self._engine.execute(
-                        "UPDATE durable_jobs SET status = ?, leased_until = NULL WHERE job_id = ?",
-                        (JobStatus.FAILED.value, job_id),
+                        "UPDATE durable_jobs SET status = ?, delivery_state = ?, "
+                        "leased_until = NULL WHERE job_id = ?",
+                        (JobStatus.FAILED.value, JobDeliveryState.DEAD_LETTER.value, job_id),
                     )
             return True
 
@@ -225,7 +246,7 @@ class DurableJobQueue:
                 updated = self._engine.query_one(
                     "WITH candidate AS ("
                     "  SELECT job_id FROM durable_jobs "
-                    "  WHERE (status = ? OR (status = ? AND lease_expires_at IS NOT NULL "
+                    "  WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "    AND lease_expires_at < ?)) "
                     "  AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
                     "  ORDER BY created_at "
@@ -233,7 +254,9 @@ class DurableJobQueue:
                     "  LIMIT 1"
                     ") "
                     "UPDATE durable_jobs AS jobs SET "
-                    "  status = ?, fence_token = jobs.fence_token + 1, "
+                    "  status = ?, delivery_state = COALESCE(jobs.delivery_state, "
+                    "CASE WHEN jobs.status IN (?, ?) THEN ? ELSE NULL END), "
+                    "  fence_token = jobs.fence_token + 1, "
                     "  version = jobs.version + 1, locked_by = ?, heartbeat_at = ?, "
                     "  lease_expires_at = ?, attempts = jobs.attempts + 1 "
                     "FROM candidate "
@@ -241,10 +264,13 @@ class DurableJobQueue:
                     "RETURNING jobs.*",
                     (
                         JobStatus.QUEUED.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
                         now_str,
                         *receipt_patterns,
                         JobStatus.RUNNING.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
+                        JobDeliveryState.RETRYING.value,
                         worker_id,
                         heartbeat,
                         lease_expires,
@@ -255,12 +281,13 @@ class DurableJobQueue:
             while True:
                 row = self._engine.query_one(
                     "SELECT * FROM durable_jobs "
-                    "WHERE (status = ? OR (status = ? AND lease_expires_at IS NOT NULL "
+                    "WHERE (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?)) "
                     "AND job_type NOT LIKE ? AND job_type NOT LIKE ? "
                     "ORDER BY created_at LIMIT 1",
                     (
                         JobStatus.QUEUED.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
                         now_str,
                         *receipt_patterns,
@@ -271,20 +298,23 @@ class DurableJobQueue:
                 record = self._row_to_record(row)
                 result = self._engine.execute(
                     "UPDATE durable_jobs SET "
-                    "status = ?, fence_token = fence_token + 1, version = version + 1, "
+                    "status = ?, delivery_state = ?, fence_token = fence_token + 1, "
+                    "version = version + 1, "
                     "locked_by = ?, heartbeat_at = ?, lease_expires_at = ?, "
                     "attempts = attempts + 1 "
                     "WHERE job_id = ? AND version = ? "
-                    "AND (status = ? OR (status = ? AND lease_expires_at IS NOT NULL "
+                    "AND (status IN (?, ?, ?) OR (status = ? AND lease_expires_at IS NOT NULL "
                     "AND lease_expires_at < ?))",
                     (
                         JobStatus.RUNNING.value,
+                        record.delivery_state.value if record.delivery_state else None,
                         worker_id,
                         heartbeat,
                         lease_expires,
                         record.job_id,
                         record.version,
                         JobStatus.QUEUED.value,
+                        *_LEGACY_RETRYING_STATUS_VALUES,
                         JobStatus.RUNNING.value,
                         now_str,
                     ),
@@ -330,7 +360,7 @@ class DurableJobQueue:
 
             payload_json = json.dumps(payload)
             result = self._engine.execute(
-                "UPDATE durable_jobs SET status = ?, payload_json = ?, "
+                "UPDATE durable_jobs SET status = ?, delivery_state = NULL, payload_json = ?, "
                 "version = version + 1, attempts = 0, error_message = NULL, "
                 "locked_by = NULL, heartbeat_at = NULL, lease_expires_at = NULL "
                 "WHERE job_id = ? AND version = ? AND fence_token = ?",
@@ -357,6 +387,7 @@ class DurableJobQueue:
         status: JobStatus,
         payload: dict[str, Any] | None = None,
         *,
+        delivery_state: JobDeliveryState | None = None,
         expected_version: int | None = None,
         fence_token: int | None = None,
         error_message: str | None = None,
@@ -368,6 +399,11 @@ class DurableJobQueue:
                 "error_message = ?",
             ]
             params: list[Any] = [status.value, error_message]
+            if status == JobStatus.SUCCEEDED:
+                assignments.append("delivery_state = NULL")
+            elif delivery_state is not None:
+                assignments.append("delivery_state = ?")
+                params.append(delivery_state.value)
             if payload is not None:
                 assignments.append("payload_json = ?")
                 params.append(json.dumps(payload))
@@ -470,12 +506,42 @@ class DurableJobQueue:
         if "lease_expires_at" in keys and row["lease_expires_at"] is not None:
             lease_val = datetime.fromisoformat(row["lease_expires_at"])
 
+        raw_status = row["status"]
+        status_text = raw_status.value if isinstance(raw_status, Enum) else str(raw_status)
+        status_key = status_text.strip().lower()
+        raw_delivery_state = row["delivery_state"] if "delivery_state" in keys else None
+        delivery_text = (
+            raw_delivery_state.value
+            if isinstance(raw_delivery_state, Enum)
+            else str(raw_delivery_state).strip().lower()
+            if raw_delivery_state
+            else None
+        )
+        delivery_state = JobDeliveryState(delivery_text) if delivery_text else None
+
+        # Before outcome/delivery separation, the public legacy adapter encoded
+        # these delivery mechanics directly in ``status``. Read those rows at
+        # the persistence boundary without carrying the legacy values forward.
+        if status_key == "retrying":
+            status_key = JobStatus.QUEUED.value
+            delivery_state = JobDeliveryState.RETRYING
+        elif status_key == "dead_letter":
+            status_key = JobStatus.FAILED.value
+            delivery_state = JobDeliveryState.DEAD_LETTER
+
+        status_val = JobStatus(status_key)
+        if delivery_state is None and attempts >= max_retries and status_val == JobStatus.FAILED:
+            # Rows written by the old durable queue have no delivery column;
+            # FAILED at the retry limit is the unambiguous legacy DLQ shape.
+            delivery_state = JobDeliveryState.DEAD_LETTER
+
         return JobRecord(
             job_type=row["job_type"],
             payload=json.loads(row["payload_json"]),
             correlation_id=row["correlation_id"],
             idempotency_key=row["idempotency_key"],
-            status=JobStatus(row["status"]),
+            status=status_val,
+            delivery_state=delivery_state,
             job_id=row["job_id"],
             created_at=datetime.fromisoformat(row["created_at"]),
             attempts=attempts,
