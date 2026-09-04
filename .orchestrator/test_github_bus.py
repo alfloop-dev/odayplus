@@ -3069,7 +3069,6 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             parse("gh-readonly-queue/main/pr-42-0123456789abcdef"),
             42,
         )
-        self.assertEqual(parse("pr-100-abc1234"), 100)
         self.assertIsNone(parse("gh-readonly-queue/dev/pr-invalid-abc"))
         self.assertIsNone(parse("refs/heads/feature/test-branch"))
         # A PR-shaped suffix in an arbitrary branch must never be attributed to
@@ -3078,6 +3077,12 @@ class MergeGroupReconciliationTests(unittest.TestCase):
         self.assertIsNone(parse("gh-readonly-queue/dev/pr-756-deadbeef/extra"))
         self.assertIsNone(parse(""))
         self.assertIsNone(parse(None))
+
+    def test_parse_merge_group_rejects_bare_pr_ref(self) -> None:
+        """A PR-shaped bare ref is not proof that a run came from merge queue."""
+        self.assertIsNone(
+            github_reconciliation.parse_merge_group_pr_number("pr-100-abc1234")
+        )
 
     def test_save_bus_state_retains_merge_group_failure_audit_record(self) -> None:
         with tempfile.TemporaryDirectory(prefix="pantheon-github-bus-state-") as tmp:

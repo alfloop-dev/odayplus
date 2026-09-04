@@ -58,7 +58,7 @@ SUCCESS_CONCLUSIONS = frozenset({
 })
 
 MERGE_GROUP_QUEUE_REF_PATTERN = re.compile(
-    r"^(?:(?:refs/heads/)?gh-readonly-queue/[^/]+/)?pr-(?P<pr>\d+)-[0-9a-fA-F]+$",
+    r"^(?:refs/heads/)?gh-readonly-queue/[^/]+/pr-(?P<pr>\d+)-[0-9a-fA-F]+$",
     re.IGNORECASE,
 )
 
@@ -166,7 +166,6 @@ def parse_merge_group_pr_number(queue_ref: str | None) -> int | None:
     Expected ref formats include:
       - refs/heads/gh-readonly-queue/<base>/pr-<number>-<base_sha>
       - gh-readonly-queue/<base>/pr-<number>-<base_sha>
-      - pr-<number>-<base_sha>
     """
     if not queue_ref or not isinstance(queue_ref, str):
         return None
