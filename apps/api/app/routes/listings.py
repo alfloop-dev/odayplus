@@ -716,11 +716,19 @@ else:
         correction_repository: Any = None,
     ) -> APIRouter:
         from apps.api.oday_api.security.dependencies import (
+            _raise_forbidden,
+            _record_denial,
             build_engine,
-            principal_from_headers,
             require_permission,
         )
-        from shared.auth import Action, Role, rbac_allows
+        from shared.auth import (
+            AccessRequest,
+            Action,
+            Decision,
+            Environment,
+            Principal,
+            ResourceDescriptor,
+        )
         from shared.infrastructure.persistence.repositories import (
             InMemoryAddressLocationRepository,
             InMemoryManualCorrectionRepository,
@@ -756,41 +764,97 @@ else:
                     return bundle.manual_correction_repository
             return InMemoryManualCorrectionRepository()
 
-        def _require_caller_tenant(principal: Any) -> str:
+        def _require_caller_tenant(
+            principal: Any,
+            request: Request,
+            action: Action = Action.VIEW,
+            resource_id: str | None = None,
+        ) -> str:
             """Return the caller's tenant, refusing an unscoped principal.
 
             A caller with no tenant has no scope to compare a record against.
-            Letting it through means ``"" == ""`` matches every record that
-            also predates tenant scoping, so the absence of a tenant is denied
-            here rather than normalized into one.
+            Absence of a tenant is denied and audited.
             """
             caller_tenant = str(getattr(principal, "tenant_id", "") or "").strip()
             if not caller_tenant:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Tenant scope is required",
+                decision = Decision.deny(
+                    "TENANT_SCOPE_DENIED: Tenant scope is required",
+                    policy_id="tenant.isolation",
                 )
+                access = AccessRequest(
+                    principal=principal,
+                    action=action,
+                    resource=ResourceDescriptor(
+                        type="address_location",
+                        resource_id=resource_id,
+                        tenant_id="",
+                    ),
+                    environment=Environment(
+                        source_ip=request.client.host if request.client else None,
+                        attributes={"correlation_id": request.headers.get("x-correlation-id", "unknown")},
+                    ),
+                )
+                _record_denial(authz_engine, access, decision)
+                _raise_forbidden(decision)
             return caller_tenant
 
-        def _require_address_tenant_scope(address: Any, principal: Any) -> None:
+        def _require_address_tenant_scope(
+            address: Any,
+            principal: Any,
+            request: Request,
+            action: Action = Action.VIEW,
+        ) -> None:
             """Fail closed unless the caller may act inside the record's tenant.
 
-            Platform admins cross tenants by design, but even they cannot reach
-            a record carrying no tenant at all: an unscoped legacy row stays
-            unreachable until it is migrated into a real tenant.
+            Platform admins do NOT bypass tenant scoping; unresolved cross-tenant
+            policy defaults to fail closed (ODP-OPEN-DECISIONS 5a / remediation 5a).
+            Denials write a security.authorization audit event.
             """
-            caller_tenant = _require_caller_tenant(principal)
+            caller_tenant = _require_caller_tenant(
+                principal, request, action=action, resource_id=getattr(address, "address_id", None)
+            )
             record_tenant = str(getattr(address, "tenant_id", "") or "").strip()
             if not record_tenant:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Record has no tenant scope",
+                decision = Decision.deny(
+                    "TENANT_SCOPE_DENIED: Record has no tenant scope",
+                    policy_id="tenant.isolation",
                 )
-            if record_tenant != caller_tenant and Role.PLATFORM_ADMIN not in principal.roles:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Cross-tenant access forbidden",
+                access = AccessRequest(
+                    principal=principal,
+                    action=action,
+                    resource=ResourceDescriptor(
+                        type="address_location",
+                        resource_id=getattr(address, "address_id", None),
+                        tenant_id="",
+                    ),
+                    environment=Environment(
+                        source_ip=request.client.host if request.client else None,
+                        attributes={"correlation_id": request.headers.get("x-correlation-id", "unknown")},
+                    ),
                 )
+                _record_denial(authz_engine, access, decision)
+                _raise_forbidden(decision)
+
+            if record_tenant != caller_tenant:
+                decision = Decision.deny(
+                    "TENANT_SCOPE_DENIED: Cross-tenant access forbidden",
+                    policy_id="tenant.isolation",
+                )
+                access = AccessRequest(
+                    principal=principal,
+                    action=action,
+                    resource=ResourceDescriptor(
+                        type="address_location",
+                        resource_id=getattr(address, "address_id", None),
+                        tenant_id=record_tenant,
+                    ),
+                    environment=Environment(
+                        source_ip=request.client.host if request.client else None,
+                        attributes={"correlation_id": request.headers.get("x-correlation-id", "unknown")},
+                    ),
+                )
+                _record_denial(authz_engine, access, decision)
+                _raise_forbidden(decision)
 
         router = APIRouter(prefix="/listings", tags=["listings"])
 
@@ -834,22 +898,15 @@ else:
             address_id: str,
             body: AddressCorrectionPayload,
             request: Request,
+            principal: Principal = Depends(
+                require_permission("listing", Action.UPDATE, engine=authz_engine)
+            ),
             if_match: str | None = Header(None, alias="If-Match"),
         ) -> dict[str, Any]:
-            principal = principal_from_headers(request.headers)
-            if not principal.authenticated or not principal.subject_id:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                )
             actor_id = principal.subject_id
-
-            if not rbac_allows(principal, "listing", Action.UPDATE):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="PERMISSION_DENIED: Role not authorized for manual corrections",
-                )
-            caller_tenant = _require_caller_tenant(principal)
+            caller_tenant = _require_caller_tenant(
+                principal, request, action=Action.UPDATE, resource_id=address_id
+            )
 
             reason = (body.reason or "").strip()
             if len(reason) < 5:
@@ -866,7 +923,11 @@ else:
 
             addr_repo = _address_repo(request)
             corr_repo = _correction_repo(request)
-            audit = getattr(request.app.state, "audit_log", active_audit_log) if hasattr(request, "app") and hasattr(request.app, "state") else active_audit_log
+            audit = (
+                getattr(request.app.state, "audit_log", active_audit_log)
+                if hasattr(request, "app") and hasattr(request.app, "state")
+                else active_audit_log
+            )
 
             updates: dict[str, Any] = {}
             for field_name in (
@@ -910,11 +971,26 @@ else:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Address {address_id} not found",
                 ) from e
-            except PermissionError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Cross-tenant modification forbidden",
-                ) from e
+            except PermissionError:
+                decision = Decision.deny(
+                    "TENANT_SCOPE_DENIED: Cross-tenant modification forbidden",
+                    policy_id="tenant.isolation",
+                )
+                access = AccessRequest(
+                    principal=principal,
+                    action=Action.UPDATE,
+                    resource=ResourceDescriptor(
+                        type="address_location",
+                        resource_id=address_id,
+                        tenant_id=caller_tenant,
+                    ),
+                    environment=Environment(
+                        source_ip=request.client.host if request.client else None,
+                        attributes={"correlation_id": request.headers.get("x-correlation-id", "unknown")},
+                    ),
+                )
+                _record_denial(authz_engine, access, decision)
+                _raise_forbidden(decision)
             except StaleRevisionError as e:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -973,22 +1049,15 @@ else:
             correction_id: str,
             body: AddressRollbackPayload,
             request: Request,
+            principal: Principal = Depends(
+                require_permission("listing", Action.UPDATE, engine=authz_engine)
+            ),
             if_match: str | None = Header(None, alias="If-Match"),
         ) -> dict[str, Any]:
-            principal = principal_from_headers(request.headers)
-            if not principal.authenticated or not principal.subject_id:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                )
             actor_id = principal.subject_id
-
-            if not rbac_allows(principal, "listing", Action.UPDATE):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="PERMISSION_DENIED: Role not authorized for rollback",
-                )
-            caller_tenant = _require_caller_tenant(principal)
+            caller_tenant = _require_caller_tenant(
+                principal, request, action=Action.UPDATE, resource_id=address_id
+            )
 
             reason = (body.reason or "").strip()
             if len(reason) < 5:
@@ -1005,7 +1074,11 @@ else:
 
             addr_repo = _address_repo(request)
             corr_repo = _correction_repo(request)
-            audit = getattr(request.app.state, "audit_log", active_audit_log) if hasattr(request, "app") and hasattr(request.app, "state") else active_audit_log
+            audit = (
+                getattr(request.app.state, "audit_log", active_audit_log)
+                if hasattr(request, "app") and hasattr(request.app, "state")
+                else active_audit_log
+            )
 
             try:
                 corr_id = request.headers.get("x-correlation-id") or str(uuid4())
@@ -1025,11 +1098,26 @@ else:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=str(e),
                 ) from e
-            except PermissionError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Cross-tenant modification forbidden",
-                ) from e
+            except PermissionError:
+                decision = Decision.deny(
+                    "TENANT_SCOPE_DENIED: Cross-tenant modification forbidden",
+                    policy_id="tenant.isolation",
+                )
+                access = AccessRequest(
+                    principal=principal,
+                    action=Action.UPDATE,
+                    resource=ResourceDescriptor(
+                        type="address_location",
+                        resource_id=address_id,
+                        tenant_id=caller_tenant,
+                    ),
+                    environment=Environment(
+                        source_ip=request.client.host if request.client else None,
+                        attributes={"correlation_id": request.headers.get("x-correlation-id", "unknown")},
+                    ),
+                )
+                _record_denial(authz_engine, access, decision)
+                _raise_forbidden(decision)
             except StaleRevisionError as e:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -1077,13 +1165,13 @@ else:
         @router.get(
             "/addresses/{address_id}",
         )
-        def get_address_location(address_id: str, request: Request) -> dict[str, Any]:
-            principal = principal_from_headers(request.headers)
-            if not principal.authenticated:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                )
+        def get_address_location(
+            address_id: str,
+            request: Request,
+            principal: Principal = Depends(
+                require_permission("listing", Action.VIEW, engine=authz_engine)
+            ),
+        ) -> dict[str, Any]:
             addr_repo = _address_repo(request)
             address = addr_repo.get_address(address_id)
             if not address:
@@ -1092,7 +1180,7 @@ else:
                     detail=f"Address {address_id} not found",
                 )
 
-            _require_address_tenant_scope(address, principal)
+            _require_address_tenant_scope(address, principal, request, action=Action.VIEW)
 
             return {
                 "address_id": address.address_id,
@@ -1117,13 +1205,13 @@ else:
         @router.get(
             "/addresses/{address_id}/corrections",
         )
-        def list_address_corrections(address_id: str, request: Request) -> dict[str, Any]:
-            principal = principal_from_headers(request.headers)
-            if not principal.authenticated:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                )
+        def list_address_corrections(
+            address_id: str,
+            request: Request,
+            principal: Principal = Depends(
+                require_permission("listing", Action.VIEW, engine=authz_engine)
+            ),
+        ) -> dict[str, Any]:
             addr_repo = _address_repo(request)
             corr_repo = _correction_repo(request)
             address = addr_repo.get_address(address_id)
@@ -1133,7 +1221,7 @@ else:
                     detail=f"Address {address_id} not found",
                 )
 
-            _require_address_tenant_scope(address, principal)
+            _require_address_tenant_scope(address, principal, request, action=Action.VIEW)
 
             corrections = addr_repo.get_corrections(address_id, correction_repo=corr_repo)
             return {

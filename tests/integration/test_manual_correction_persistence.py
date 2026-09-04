@@ -959,3 +959,166 @@ def test_durable_correction_compensates_when_audit_write_fails(tmp_path: Path) -
     )
     assert applied.revision == 2
     assert correction.source_revision == 1
+
+
+def test_durable_rollback_compensates_when_audit_write_fails(tmp_path: Path) -> None:
+    """Regression test: a rollback whose audit trail fails must compensate back to applied state."""
+    db_file = tmp_path / "durable_rollback_compensation.sqlite3"
+    engine = SqliteEngine(db_file)
+    corr_repo = DurableManualCorrectionRepository(engine)
+    audit_log = DurableAuditLog(engine)
+    repo = DurableAddressLocationRepository(engine, correction_repo=corr_repo, audit_log=audit_log)
+
+    addr_id = str(uuid4())
+    repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei Rollback Road 1",
+            latitude=25.0000,
+            longitude=121.0000,
+            geocode_confidence=0.5,
+            manual_override_flag=False,
+            tenant_id="tenant-rollback-comp",
+            revision=1,
+        )
+    )
+
+    # 1. Apply correction successfully
+    applied, correction, _ = repo.apply_correction(
+        addr_id,
+        updates={"latitude": 25.5555},
+        reason="Initial valid correction before rollback test",
+        actor_id="operator-1",
+        tenant_id="tenant-rollback-comp",
+        expected_revision=1,
+    )
+    assert applied.revision == 2
+    assert correction.status == "applied"
+
+    class _FailingAuditLog:
+        def record(self, _event: object) -> None:
+            raise RuntimeError("audit log unavailable during rollback")
+
+    # 2. Attempt rollback with failing audit log
+    with pytest.raises(RuntimeError, match="audit log unavailable during rollback"):
+        repo.rollback_correction(
+            addr_id,
+            correction.correction_id,
+            reason="Rollback with audit failure",
+            actor_id="operator-rollback-fail",
+            tenant_id="tenant-rollback-comp",
+            expected_revision=2,
+            audit_log=_FailingAuditLog(),
+        )
+
+    # 3. Verify on disk that address is back at revision 2 and correction is still 'applied'
+    verifier_engine = SqliteEngine(db_file)
+    verifier_corr_repo = DurableManualCorrectionRepository(verifier_engine)
+    verifier_audit = DurableAuditLog(verifier_engine)
+    verifier = DurableAddressLocationRepository(
+        verifier_engine, correction_repo=verifier_corr_repo, audit_log=verifier_audit
+    )
+
+    restored = verifier.get_address(addr_id)
+    assert restored is not None
+    assert restored.revision == 2
+    assert restored.latitude == 25.5555
+    assert restored.manual_override_flag is True
+
+    stored_corrections = verifier.get_corrections(addr_id)
+    assert len(stored_corrections) == 1
+    assert stored_corrections[0].status == "applied"
+
+    # 4. Rollback succeeds after audit recovers
+    restored_final, rolled_back, _ = verifier.rollback_correction(
+        addr_id,
+        correction.correction_id,
+        reason="Rollback retried after audit sink restored",
+        actor_id="operator-2",
+        tenant_id="tenant-rollback-comp",
+        expected_revision=2,
+    )
+    assert restored_final.revision == 3
+    assert restored_final.latitude == 25.0000
+    assert restored_final.manual_override_flag is False
+    assert rolled_back.status == "rolled_back"
+
+
+def test_in_memory_compensation_when_audit_fails() -> None:
+    """Verify that InMemoryAddressLocationRepository compensates on audit log failure."""
+    from shared.infrastructure.persistence.repositories import (
+        InMemoryAddressLocationRepository,
+        InMemoryManualCorrectionRepository,
+    )
+
+    corr_repo = InMemoryManualCorrectionRepository()
+    repo = InMemoryAddressLocationRepository(_corrections=corr_repo)
+
+    addr_id = str(uuid4())
+    repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei Memory Compensation",
+            latitude=25.0,
+            longitude=121.0,
+            manual_override_flag=False,
+            tenant_id="tenant-mem",
+            revision=1,
+        )
+    )
+
+    class _FailingAuditLog:
+        def record(self, _event: object) -> None:
+            raise RuntimeError("sink unavailable")
+
+    # 1. Failing apply_correction
+    with pytest.raises(RuntimeError, match="sink unavailable"):
+        repo.apply_correction(
+            addr_id,
+            updates={"latitude": 25.9},
+            reason="Failed apply correction",
+            actor_id="mem-op-1",
+            tenant_id="tenant-mem",
+            expected_revision=1,
+            audit_log=_FailingAuditLog(),
+        )
+
+    # Address should be restored and correction deleted
+    saved = repo.get_address(addr_id)
+    assert saved is not None
+    assert saved.revision == 1
+    assert saved.latitude == 25.0
+    assert saved.manual_override_flag is False
+    assert repo.get_corrections(addr_id) == []
+
+    # 2. Valid apply_correction
+    applied, correction, _ = repo.apply_correction(
+        addr_id,
+        updates={"latitude": 25.9},
+        reason="Valid apply correction",
+        actor_id="mem-op-1",
+        tenant_id="tenant-mem",
+        expected_revision=1,
+    )
+    assert applied.revision == 2
+    assert correction.status == "applied"
+
+    # 3. Failing rollback_correction
+    with pytest.raises(RuntimeError, match="sink unavailable"):
+        repo.rollback_correction(
+            addr_id,
+            correction.correction_id,
+            reason="Failed rollback correction",
+            actor_id="mem-op-2",
+            tenant_id="tenant-mem",
+            expected_revision=2,
+            audit_log=_FailingAuditLog(),
+        )
+
+    # Address should be at revision 2 and correction status restored to applied
+    saved_after_rb_fail = repo.get_address(addr_id)
+    assert saved_after_rb_fail is not None
+    assert saved_after_rb_fail.revision == 2
+    assert saved_after_rb_fail.latitude == 25.9
+    assert saved_after_rb_fail.manual_override_flag is True
+    assert repo.get_corrections(addr_id)[0].status == "applied"

@@ -138,6 +138,7 @@ def test_submit_correction_success_and_server_actor_provenance(
 def test_cross_tenant_modification_rejected(
     client: TestClient,
     address_repo: InMemoryAddressLocationRepository,
+    audit_log: InMemoryAuditLog,
 ) -> None:
     # Seed address for tenant-alpha
     addr_id = str(uuid4())
@@ -168,6 +169,58 @@ def test_cross_tenant_modification_rejected(
     assert response.status_code == 403
     assert "TENANT_SCOPE_DENIED" in response.text
 
+    # Security authorization denial audit event emitted
+    denial_events = [
+        e for e in audit_log.list_events()
+        if e.event_type == "security.authorization" and e.outcome == "deny" and e.actor == "user-beta"
+    ]
+    assert len(denial_events) >= 1
+    assert any("Cross-tenant" in e.metadata.get("reason", "") for e in denial_events)
+
+
+def test_cross_tenant_platform_admin_modification_and_read_rejected(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+    audit_log: InMemoryAuditLog,
+) -> None:
+    """Regression test (P1): platform_admin cannot bypass tenant isolation to read/modify cross-tenant records."""
+    addr_id = str(uuid4())
+    address = AddressLocation(
+        address_id=addr_id,
+        raw_address="Taipei",
+        latitude=25.0,
+        longitude=121.0,
+        manual_override_flag=False,
+        tenant_id="tenant-alpha",
+        revision=1,
+    )
+    address_repo.save_address(address)
+
+    # Admin from tenant-beta attempts to view & correct tenant-alpha address
+    admin_beta_headers = {
+        "x-subject-id": "admin-beta-user",
+        "x-roles": "expansion_user,platform_admin",
+        "x-tenant-id": "tenant-beta",
+    }
+
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=admin_beta_headers)
+    assert get_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in get_resp.text
+
+    post_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={"latitude": 25.1, "reason": "Cross-tenant admin modification attempt"},
+        headers=admin_beta_headers,
+    )
+    assert post_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in post_resp.text
+
+    denials = [
+        e for e in audit_log.list_events()
+        if e.event_type == "security.authorization" and e.outcome == "deny" and e.actor == "admin-beta-user"
+    ]
+    assert len(denials) >= 2
+
 
 @pytest.mark.parametrize(
     "role",
@@ -186,6 +239,7 @@ def test_cross_tenant_modification_rejected(
 def test_unauthorized_roles_rejected_for_correction_and_rollback(
     client: TestClient,
     address_repo: InMemoryAddressLocationRepository,
+    audit_log: InMemoryAuditLog,
     role: str,
 ) -> None:
     addr_id = str(uuid4())
@@ -214,7 +268,6 @@ def test_unauthorized_roles_rejected_for_correction_and_rollback(
     # Correction attempt denied
     response = client.post(f"/listings/addresses/{addr_id}/corrections", json=payload, headers=headers)
     assert response.status_code == 403
-    assert "PERMISSION_DENIED" in response.text
 
     # Rollback attempt denied
     rb_response = client.post(
@@ -223,7 +276,14 @@ def test_unauthorized_roles_rejected_for_correction_and_rollback(
         headers=headers,
     )
     assert rb_response.status_code == 403
-    assert "PERMISSION_DENIED" in rb_response.text
+
+    # Security authorization denial audit events emitted
+    denial_events = [
+        e for e in audit_log.list_events()
+        if e.event_type == "security.authorization" and e.outcome == "deny" and e.actor == f"user-{role}"
+    ]
+    assert len(denial_events) >= 2
+    assert any(e.action == "update" for e in denial_events)
 
 
 def test_missing_or_short_reason_rejected(
@@ -774,6 +834,7 @@ def test_regression_unscoped_caller_cannot_reach_unscoped_legacy_record(
 def test_regression_platform_admin_cannot_reach_unscoped_legacy_record(
     client: TestClient,
     address_repo: InMemoryAddressLocationRepository,
+    audit_log: InMemoryAuditLog,
 ) -> None:
     """Regression test (P1): cross-tenant admin is not a bypass for *no* tenant.
 
@@ -796,7 +857,7 @@ def test_regression_platform_admin_cannot_reach_unscoped_legacy_record(
 
     admin_headers = {
         "x-subject-id": "admin-1",
-        "x-roles": "platform_admin",
+        "x-roles": "expansion_user,platform_admin",
         "x-tenant-id": "tenant-alpha",
     }
 
@@ -810,16 +871,24 @@ def test_regression_platform_admin_cannot_reach_unscoped_legacy_record(
         headers=admin_headers,
     )
     assert corr_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in corr_resp.text
 
     saved = address_repo.get_address(addr_id)
     assert saved is not None
     assert saved.tenant_id == ""
     assert saved.revision == 1
 
+    denials = [
+        e for e in audit_log.list_events()
+        if e.event_type == "security.authorization" and e.outcome == "deny" and e.actor == "admin-1"
+    ]
+    assert len(denials) >= 2
+
 
 def test_regression_platform_admin_without_tenant_is_denied(
     client: TestClient,
     address_repo: InMemoryAddressLocationRepository,
+    audit_log: InMemoryAuditLog,
 ) -> None:
     """Regression test (P1): the admin role does not substitute for a tenant."""
     addr_id = str(uuid4())
@@ -835,7 +904,7 @@ def test_regression_platform_admin_without_tenant_is_denied(
         )
     )
 
-    admin_no_tenant = {"x-subject-id": "admin-1", "x-roles": "platform_admin"}
+    admin_no_tenant = {"x-subject-id": "admin-1", "x-roles": "expansion_user,platform_admin"}
 
     get_resp = client.get(f"/listings/addresses/{addr_id}", headers=admin_no_tenant)
     assert get_resp.status_code == 403
@@ -847,10 +916,17 @@ def test_regression_platform_admin_without_tenant_is_denied(
         headers=admin_no_tenant,
     )
     assert corr_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in corr_resp.text
 
     saved = address_repo.get_address(addr_id)
     assert saved is not None
     assert saved.revision == 1
+
+    denials = [
+        e for e in audit_log.list_events()
+        if e.event_type == "security.authorization" and e.outcome == "deny" and e.actor == "admin-1"
+    ]
+    assert len(denials) >= 2
 
 
 def test_apply_correction_omitted_geocode_confidence_preserves_existing_zero(

@@ -1335,6 +1335,9 @@ class InMemoryManualCorrectionRepository:
         self._corrections[correction.correction_id] = correction
         return correction
 
+    def delete_correction(self, correction_id: str) -> None:
+        self._corrections.pop(correction_id, None)
+
     def get_correction(self, correction_id: str) -> ManualCorrection | None:
         return self._corrections.get(correction_id)
 
@@ -1427,6 +1430,15 @@ class DurableManualCorrectionRepository:
             ),
         )
         return correction
+
+    def delete_correction(self, correction_id: str) -> None:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        with self._engine.lock:
+            self._engine.execute(
+                f"DELETE FROM {table} WHERE correction_id = ?",  # nosec B608
+                (correction_id,),
+            )
 
     def get_correction(self, correction_id: str) -> ManualCorrection | None:
         postgres = _requires_tenant_scope(self._engine)
@@ -1769,32 +1781,6 @@ class InMemoryAddressLocationRepository:
             },
         )
 
-        if audit_log is not None:
-            audit_event = AuditEvent(
-                event_id=audit_event_id,
-                event_type="canonical.manual_correction",
-                actor=actor_id,
-                action="manual_override",
-                resource=f"address_location:{address_id}",
-                outcome="SUCCESS",
-                correlation_id=corr_id,
-                metadata={
-                    "entity_type": "address_location",
-                    "entity_id": address_id,
-                    "tenant_id": existing.tenant_id,
-                    "correction_id": correction_id,
-                    "fields_updated": list(updates.keys()),
-                    "old_value": old_value,
-                    "new_value": new_value,
-                    "reason": reason.strip(),
-                    "source_revision": existing.revision,
-                    "applied_revision": new_revision,
-                    "decision_card": decision_card.to_dict(),
-                },
-                occurred_at=now_dt,
-            )
-            audit_log.record(audit_event)
-
         correction = ManualCorrection(
             correction_id=correction_id,
             entity_type="address_location",
@@ -1815,11 +1801,42 @@ class InMemoryAddressLocationRepository:
         )
 
         repo = correction_repo or self._corrections
-        repo.record_correction(
-            correction, decision_card_json=json.dumps(decision_card.to_dict())
-        )
+        try:
+            repo.record_correction(
+                correction, decision_card_json=json.dumps(decision_card.to_dict())
+            )
 
-        self.save_address(new_address)
+            if audit_log is not None:
+                audit_event = AuditEvent(
+                    event_id=audit_event_id,
+                    event_type="canonical.manual_correction",
+                    actor=actor_id,
+                    action="manual_override",
+                    resource=f"address_location:{address_id}",
+                    outcome="SUCCESS",
+                    correlation_id=corr_id,
+                    metadata={
+                        "entity_type": "address_location",
+                        "entity_id": address_id,
+                        "tenant_id": existing.tenant_id,
+                        "correction_id": correction_id,
+                        "fields_updated": list(updates.keys()),
+                        "old_value": old_value,
+                        "new_value": new_value,
+                        "reason": reason.strip(),
+                        "source_revision": existing.revision,
+                        "applied_revision": new_revision,
+                        "decision_card": decision_card.to_dict(),
+                    },
+                    occurred_at=now_dt,
+                )
+                audit_log.record(audit_event)
+
+            self.save_address(new_address)
+        except Exception:
+            if hasattr(repo, "delete_correction"):
+                repo.delete_correction(correction_id)
+            raise
         return new_address, correction, decision_card
 
     def rollback_correction(
@@ -1926,41 +1943,45 @@ class InMemoryAddressLocationRepository:
             },
         )
 
-        if audit_log is not None:
-            audit_event = AuditEvent(
-                event_id=audit_event_id,
-                event_type="canonical.manual_correction_rollback",
-                actor=actor_id,
-                action="rollback_manual_override",
-                resource=f"address_location:{address_id}",
-                outcome="ROLLED_BACK",
-                correlation_id=corr_id,
-                metadata={
-                    "entity_type": "address_location",
-                    "entity_id": address_id,
-                    "tenant_id": existing.tenant_id,
-                    "correction_id": correction_id,
-                    "old_value": rollback_old_value,
-                    "new_value": rollback_new_value,
-                    "restored_values": old_val,
-                    "fields_updated": list(old_val.keys()),
-                    "reason": reason.strip(),
-                    "source_revision": existing.revision,
-                    "applied_revision": new_revision,
-                    "decision_card": rollback_card.to_dict(),
-                },
-                occurred_at=now_dt,
-            )
-            audit_log.record(audit_event)
-
         from dataclasses import replace
 
         updated_correction = replace(correction, status="rolled_back")
-        repo.record_correction(
-            updated_correction, decision_card_json=json.dumps(rollback_card.to_dict())
-        )
+        try:
+            repo.record_correction(
+                updated_correction, decision_card_json=json.dumps(rollback_card.to_dict())
+            )
 
-        self.save_address(restored_address)
+            if audit_log is not None:
+                audit_event = AuditEvent(
+                    event_id=audit_event_id,
+                    event_type="canonical.manual_correction_rollback",
+                    actor=actor_id,
+                    action="rollback_manual_override",
+                    resource=f"address_location:{address_id}",
+                    outcome="ROLLED_BACK",
+                    correlation_id=corr_id,
+                    metadata={
+                        "entity_type": "address_location",
+                        "entity_id": address_id,
+                        "tenant_id": existing.tenant_id,
+                        "correction_id": correction_id,
+                        "old_value": rollback_old_value,
+                        "new_value": rollback_new_value,
+                        "restored_values": old_val,
+                        "fields_updated": list(old_val.keys()),
+                        "reason": reason.strip(),
+                        "source_revision": existing.revision,
+                        "applied_revision": new_revision,
+                        "decision_card": rollback_card.to_dict(),
+                    },
+                    occurred_at=now_dt,
+                )
+                audit_log.record(audit_event)
+
+            self.save_address(restored_address)
+        except Exception:
+            repo.record_correction(correction)
+            raise
         return restored_address, updated_correction, rollback_card
 
 
@@ -2102,16 +2123,19 @@ class DurableAddressLocationRepository:
 
     @contextmanager
     def _compensate_claim_on_failure(
-        self, previous: AddressLocation, claimed: AddressLocation
+        self,
+        previous: AddressLocation,
+        claimed: AddressLocation,
+        *,
+        repo: Any = None,
+        correction_id: str | None = None,
     ) -> Iterator[None]:
-        """Undo an already-claimed revision if its audit trail cannot be written.
+        """Undo an already-claimed revision if its correction/audit writes fail.
 
-        The revision is claimed before the audit event and correction record so
-        a writer that loses the race leaves nothing behind. That ordering opens
-        the opposite window: a row that moved while its audit write failed would
-        be an unauditable change. Compensating back to ``previous`` -- guarded on
-        the revision this call claimed, so a later writer is never clobbered --
-        keeps the pair all-or-nothing without a cross-statement transaction.
+        The revision is claimed before the correction record and audit event so
+        a writer that loses the race leaves nothing behind. If writing the correction
+        or recording the audit event fails, we compensate by restoring the address row
+        to ``previous`` and deleting the un-audited correction record.
         """
         try:
             yield
@@ -2121,6 +2145,37 @@ class DurableAddressLocationRepository:
                 from_revision=claimed.revision,
                 tenant_id=previous.tenant_id,
             )
+            if repo is not None and correction_id is not None:
+                try:
+                    if hasattr(repo, "delete_correction"):
+                        repo.delete_correction(correction_id)
+                except Exception:
+                    pass
+            raise
+
+    @contextmanager
+    def _compensate_rollback_on_failure(
+        self,
+        previous: AddressLocation,
+        claimed: AddressLocation,
+        *,
+        repo: Any = None,
+        original_correction: ManualCorrection | None = None,
+    ) -> Iterator[None]:
+        """Undo an already-claimed rollback revision if its correction/audit writes fail."""
+        try:
+            yield
+        except Exception:
+            self._claim_revision(
+                previous,
+                from_revision=claimed.revision,
+                tenant_id=previous.tenant_id,
+            )
+            if repo is not None and original_correction is not None:
+                try:
+                    repo.record_correction(original_correction)
+                except Exception:
+                    pass
             raise
 
     def get_address(self, address_id: str) -> AddressLocation | None:
@@ -2250,8 +2305,34 @@ class DurableAddressLocationRepository:
                 },
             )
 
+            correction = ManualCorrection(
+                correction_id=correction_id,
+                entity_type="address_location",
+                entity_id=address_id,
+                tenant_id=existing.tenant_id,
+                field_name=",".join(updates.keys()),
+                old_value=old_value,
+                new_value=new_value,
+                reason=reason.strip(),
+                actor_id=actor_id,
+                occurred_at=now_dt,
+                source_revision=existing.revision,
+                applied_revision=new_revision,
+                status="applied",
+                correlation_id=corr_id,
+                decision_card_hash=decision_card.content_hash(),
+                audit_event_id=audit_event_id,
+            )
+
+            repo = correction_repo or self._correction_repo
             active_audit_log = audit_log or self._audit_log
-            with self._compensate_claim_on_failure(existing, new_address):
+            with self._compensate_claim_on_failure(
+                existing, new_address, repo=repo, correction_id=correction_id
+            ):
+                repo.record_correction(
+                    correction, decision_card_json=json.dumps(decision_card.to_dict())
+                )
+
                 if active_audit_log is not None:
                     audit_event = AuditEvent(
                         event_id=audit_event_id,
@@ -2277,30 +2358,6 @@ class DurableAddressLocationRepository:
                         occurred_at=now_dt,
                     )
                     active_audit_log.record(audit_event)
-
-                correction = ManualCorrection(
-                    correction_id=correction_id,
-                    entity_type="address_location",
-                    entity_id=address_id,
-                    tenant_id=existing.tenant_id,
-                    field_name=",".join(updates.keys()),
-                    old_value=old_value,
-                    new_value=new_value,
-                    reason=reason.strip(),
-                    actor_id=actor_id,
-                    occurred_at=now_dt,
-                    source_revision=existing.revision,
-                    applied_revision=new_revision,
-                    status="applied",
-                    correlation_id=corr_id,
-                    decision_card_hash=decision_card.content_hash(),
-                    audit_event_id=audit_event_id,
-                )
-
-                repo = correction_repo or self._correction_repo
-                repo.record_correction(
-                    correction, decision_card_json=json.dumps(decision_card.to_dict())
-                )
 
             return new_address, correction, decision_card
 
@@ -2421,8 +2478,18 @@ class DurableAddressLocationRepository:
                 },
             )
 
+            from dataclasses import replace
+
+            updated_correction = replace(correction, status="rolled_back")
+            repo = correction_repo or self._correction_repo
             active_audit_log = audit_log or self._audit_log
-            with self._compensate_claim_on_failure(existing, restored_address):
+            with self._compensate_rollback_on_failure(
+                existing, restored_address, repo=repo, original_correction=correction
+            ):
+                repo.record_correction(
+                    updated_correction, decision_card_json=json.dumps(rollback_card.to_dict())
+                )
+
                 if active_audit_log is not None:
                     audit_event = AuditEvent(
                         event_id=audit_event_id,
@@ -2449,13 +2516,6 @@ class DurableAddressLocationRepository:
                         occurred_at=now_dt,
                     )
                     active_audit_log.record(audit_event)
-
-                from dataclasses import replace
-
-                updated_correction = replace(correction, status="rolled_back")
-                repo.record_correction(
-                    updated_correction, decision_card_json=json.dumps(rollback_card.to_dict())
-                )
 
             return restored_address, updated_correction, rollback_card
 
