@@ -772,16 +772,56 @@ def helper_owner_is_saturated(
     task: dict[str, Any],
     agent_loads: dict[str, list[int]],
     helper_settings: dict[str, Any],
+    *,
+    state: dict[str, Any] | None = None,
+    provider_report: dict[str, Any] | None = None,
+    active_quota_counts: dict[str, int] | None = None,
+    pending_quota_counts: dict[str, int] | None = None,
+    dispatchable_agent_ids: list[str] | set[str] | None = None,
+    now: datetime | None = None,
 ) -> bool:
     owner = str(task.get("owner") or "")
-    owner_load = len(agent_loads.get(owner, []))
-    if owner_load >= agent_dispatch_capacity(config, owner):
-        return True
+    owner_id = normalize_agent_id(owner)
+    if not owner_id or owner_id not in (config.get("agents", {}) or {}):
+        owner_undispatchable = True
+    elif not agent_can_take_task(config, owner, task):
+        owner_undispatchable = True
+    elif dispatchable_agent_ids is not None and owner_id not in [
+        normalize_agent_id(aid) for aid in dispatchable_agent_ids
+    ]:
+        owner_undispatchable = True
+    elif state is not None and (
+        agent_auto_dispatch_block_reason(config, state, owner_id, provider_report)
+        or agent_dispatch_paused(config, state, owner_id)
+        or account_pool_dispatch_block_reason(config, owner_id, runtime_state=state)
+    ):
+        owner_undispatchable = True
+    else:
+        owner_display = display_name_for(config, owner_id) or owner
+        owner_load = len(agent_loads.get(owner_display, agent_loads.get(owner, [])))
+        owner_capacity = agent_dispatch_capacity(config, owner_id)
+        quota_limit = account_pool_effective_concurrency(config, state, owner_id) if state else None
+        quota_group = agent_quota_group_id(config, owner_id)
+        quota_used = (
+            (active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0))
+            if (quota_group and active_quota_counts is not None and pending_quota_counts is not None)
+            else 0
+        )
+        owner_saturated = (owner_load >= owner_capacity) or bool(
+            quota_limit and quota_group and quota_used >= quota_limit
+        )
+        owner_undispatchable = owner_saturated
+
+    current_time = now or datetime.now(UTC)
     last_update = parse_iso_timestamp(str(task.get("last_update") or ""))
-    if last_update is None:
-        return not helper_settings.get("require_owner_saturated", True)
-    age = (datetime.now(UTC) - last_update).total_seconds()
-    return age >= float(helper_settings.get("dispatch_sla_seconds", 600))
+    sla_seconds = float(helper_settings.get("dispatch_sla_seconds", 600))
+    sla_exceeded = (
+        last_update is None
+        or (current_time - last_update).total_seconds() >= sla_seconds
+    )
+    if helper_settings.get("require_owner_saturated", True):
+        return owner_undispatchable and sla_exceeded
+    return owner_undispatchable or sla_exceeded
 
 @_entrypoint
 
@@ -1278,8 +1318,8 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
 
     if expected_key is None:
         if (
-            reason == REASON_OWNED_READY
-            and task_status == "in_progress"
+            reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}
+            and task_status in {"todo", "in_progress"}
             and owner == target
             and dependency_ready
         ):
@@ -1289,8 +1329,8 @@ def stale_dispatch_skip_message(config: dict[str, Any], event: dict[str, Any], t
     queued_key = str(event.get("event_key") or "")
     if queued_key and queued_key != expected_key:
         if (
-            reason == REASON_OWNED_READY
-            and task_status == "in_progress"
+            reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS}
+            and task_status in {"todo", "in_progress"}
             and owner == target
             and dependency_ready
         ):
@@ -1561,6 +1601,34 @@ def dispatch_ready_tasks(
 
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
+
+    import capacity_controller
+    released_claim_ids = set(
+        capacity_controller.helper_claim_task_ids_to_release(
+            config,
+            tasks,
+            state,
+            task_id_field=task_id_field,
+        )
+    )
+    if released_claim_ids:
+        for task in tasks:
+            if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
+                task.pop("helper_execution_lease", None)
+        if commit_canonical_task_transition(config, status):
+            changed = True
+            for task_id in sorted(released_claim_ids):
+                write_activity_log(
+                    config,
+                    {
+                        "type": "helper_claim_released",
+                        "task_id": task_id,
+                        "message": "Helper execution lease released because its launched run is no longer live.",
+                    },
+                )
+            status = load_status(config)
+            tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+            task_map = {task.get(task_id_field): task for task in tasks}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
@@ -1916,23 +1984,41 @@ def dispatch_ready_tasks(
             if reason is None and helper_settings.get("enabled", True):
                 claimable_statuses = {
                     str(value).lower()
-                    for value in helper_settings.get("claimable_statuses", ["todo"])
+                    for value in helper_settings.get("claimable_statuses", ["todo", "in_progress"])
                 }
                 claim = task.get("helper_execution_lease") or {}
                 claimed_by = normalize_agent_id(str(claim.get("claimed_by") or ""))
                 existing_claim_live = helper_claim_is_live(claim)
                 independent = norm_target not in {norm_task_owner, norm_task_reviewer}
                 owner_saturated = helper_owner_is_saturated(
-                    config, task, agent_loads, helper_settings
+                    config,
+                    task,
+                    agent_loads,
+                    helper_settings,
+                    state=state,
+                    provider_report=provider_report,
+                    active_quota_counts=active_quota_counts,
+                    pending_quota_counts=pending_quota_counts,
+                    dispatchable_agent_ids=agent_ids,
                 )
                 if (
                     task_status in claimable_statuses
+                    and task_status not in {"review", "review_approved", "blocked", "done"}
+                    and not task_is_human_gate(task)
+                    and not bool(task.get("non_dispatchable"))
+                    and not is_human_gate_agent(str(task.get("waiting_for") or ""))
+                    and not is_human_gate_agent(str(task_owner or ""))
                     and dependencies_satisfied(task, task_map, dependency_done_statuses)
                     and independent
-                    and (not existing_claim_live or claimed_by == norm_target)
                     and (
-                        owner_saturated
-                        or not helper_settings.get("require_owner_saturated", True)
+                        (existing_claim_live and claimed_by == norm_target)
+                        or (
+                            (not existing_claim_live)
+                            and (
+                                owner_saturated
+                                or not helper_settings.get("require_owner_saturated", True)
+                            )
+                        )
                     )
                 ):
                     reason = REASON_HELPER_CLAIM

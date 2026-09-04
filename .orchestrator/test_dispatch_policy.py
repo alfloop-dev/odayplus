@@ -88,6 +88,7 @@ def test_ready_dispatch_settings_current_defaults() -> None:
         settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
     )
     assert settings["helper_execution_lease"]["enabled"] is True
+    assert settings["helper_execution_lease"]["claimable_statuses"] == ["todo", "in_progress"]
     assert settings["helper_execution_lease"]["require_owner_saturated"] is True
 
 
@@ -614,3 +615,418 @@ def test_worktree_with_materialized_context_seed_recovers_immediately(tmp_path: 
         dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map)
         is False
     )
+
+
+def _base_test_config() -> dict:
+    return {
+        "paths": {
+            "status_file": "/tmp/status.json",
+            "activity_log": "/tmp/activity.jsonl",
+            "event_queue": "/tmp/events.jsonl",
+        },
+        "agents": {
+            "claude": {
+                "id": "claude",
+                "display_name": "Claude",
+                "provider": "claude",
+                "slot_id": "slot-claude",
+            },
+            "antigravity7": {
+                "id": "antigravity7",
+                "display_name": "Antigravity7",
+                "provider": "antigravity",
+                "slot_id": "slot-antigravity",
+            },
+            "codex": {
+                "id": "codex",
+                "display_name": "Codex",
+                "provider": "codex",
+                "slot_id": "slot-codex",
+            },
+        },
+        "ready_dispatcher": {
+            "enabled": True,
+            "helper_execution_lease": {
+                "enabled": True,
+                "claimable_statuses": ["todo", "in_progress"],
+                "require_owner_saturated": True,
+                "dispatch_sla_seconds": 600,
+                "lease_seconds": 1800,
+                "max_claims_per_tick": 4,
+                "max_claims_per_agent": 2,
+            },
+        },
+        "worker_runtime": {
+            "heartbeat_stale_seconds": 300,
+            "heartbeat_grace_seconds": 60,
+        },
+        "providers": {
+            "claude": {"delivery_mode": "claude"},
+            "antigravity": {"delivery_mode": "antigravity"},
+            "codex": {"delivery_mode": "codex"},
+        },
+    }
+
+
+def test_orphaned_in_progress_task_redispatched_to_available_owner() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-ORPHANED-001",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {
+        "workers": {},
+        "queue": {"events": {}},
+    }
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7", "claude"])
+
+    assert changed is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["task_id"] == "TASK-ORPHANED-001"
+    assert queued_events[0]["target_agent"] == "Claude"
+    assert queued_events[0]["reason"] == "owned_in_progress_dispatch"
+    assert "helper_execution_lease" not in task
+
+
+def test_orphaned_in_progress_task_claimed_by_helper_when_owner_busy_and_sla_exceeded() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-ORPHANED-002",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    busy_task = {
+        "id": "TASK-BUSY-001",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+    }
+    status = {"tasks": [task, busy_task]}
+    state = {
+        "workers": {
+            "run-claude-busy": {
+                "run_id": "run-claude-busy",
+                "task_id": "TASK-BUSY-001",
+                "logical_agent_id": "claude",
+                "agent_id": "claude",
+                "status": "running",
+                "pid": 12345,
+                "last_heartbeat_at": "2026-08-20T12:00:00Z",
+                "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+            }
+        },
+        "queue": {"events": {}},
+    }
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
+
+    assert changed is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["task_id"] == "TASK-ORPHANED-002"
+    assert queued_events[0]["target_agent"] == "Antigravity7"
+    assert queued_events[0]["reason"] == "helper_claim_dispatch"
+    assert task["helper_execution_lease"]["claimed_by"] == "Antigravity7"
+    assert task["helper_execution_lease"]["original_owner"] == "Claude"
+    assert task["owner"] == "Claude"
+
+
+def test_orphaned_in_progress_task_not_claimed_when_sla_not_exceeded() -> None:
+    cfg = _base_test_config()
+    now_iso = (datetime.now(UTC) - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    task = {
+        "id": "TASK-ORPHANED-003",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": now_iso,
+    }
+    status = {"tasks": [task]}
+    state = {
+        "workers": {
+            "run-claude-busy": {
+                "run_id": "run-claude-busy",
+                "task_id": "TASK-BUSY-001",
+                "logical_agent_id": "claude",
+                "agent_id": "claude",
+                "status": "running",
+                "pid": 12345,
+                "last_heartbeat_at": "2026-08-20T12:00:00Z",
+                "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+            }
+        },
+        "queue": {"events": {}},
+    }
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
+
+    assert len(queued_events) == 0
+    assert "helper_execution_lease" not in task
+
+
+def test_orphaned_in_progress_task_claimed_when_owner_paused_and_sla_exceeded() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-ORPHANED-004",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {
+        "workers": {},
+        "queue": {"events": {}},
+        "paused_agents": {"claude": "maintenance"},
+    }
+    queued_events: list[dict] = []
+
+    def fake_block_reason(_cfg, _state, agent_id, _report=None):
+        if agent_id == "claude":
+            return "claude is paused"
+        return None
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", side_effect=fake_block_reason),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7", "claude"])
+
+    assert changed is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["target_agent"] == "Antigravity7"
+    assert queued_events[0]["reason"] == "helper_claim_dispatch"
+
+
+def test_active_runner_prevents_duplicate_owner_dispatch_and_helper_claim() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-ACTIVE-001",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {
+        "workers": {
+            "run-claude-active": {
+                "run_id": "run-claude-active",
+                "task_id": "TASK-ACTIVE-001",
+                "logical_agent_id": "claude",
+                "agent_id": "claude",
+                "status": "running",
+                "pid": 54321,
+                "last_heartbeat_at": (datetime.now(UTC) - timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+            }
+        },
+        "queue": {"events": {}},
+    }
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7", "claude"])
+
+    assert len(queued_events) == 0
+
+
+def test_review_blocked_human_gate_and_dependency_tasks_never_claimed() -> None:
+    cfg = _base_test_config()
+    tasks = [
+        {"id": "T-REV", "priority": "P2", "status": "review", "owner": "Claude", "reviewer": "Codex", "last_update": "2026-08-20T00:00:00Z"},
+        {"id": "T-BLOCK", "priority": "P2", "status": "blocked", "owner": "Claude", "reviewer": "Codex", "last_update": "2026-08-20T00:00:00Z"},
+        {"id": "T-HG", "priority": "P2", "status": "todo", "owner": "Claude", "reviewer": "Codex", "task_class": "human_gate", "last_update": "2026-08-20T00:00:00Z"},
+        {"id": "T-NONDISP", "priority": "P2", "status": "in_progress", "owner": "Claude", "reviewer": "Codex", "non_dispatchable": True, "last_update": "2026-08-20T00:00:00Z"},
+        {"id": "T-UNSAT", "priority": "P2", "status": "in_progress", "owner": "Claude", "reviewer": "Codex", "depends_on": ["NON-EXISTENT"], "last_update": "2026-08-20T00:00:00Z"},
+    ]
+    status = {"tasks": tasks}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
+
+    assert len(queued_events) == 0
+    assert all("helper_execution_lease" not in t for t in tasks)
+
+
+def test_dead_helper_lease_released_and_recovered_for_owner_redispatch() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-DEAD-LEASE-001",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+        "helper_execution_lease": {
+            "claimed_by": "Codex",
+            "original_owner": "Claude",
+            "run_id": "run-codex-dead",
+            "generation": 1,
+            "lease_expires_at": (datetime.now(UTC) + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        },
+    }
+    status = {"tasks": [task]}
+    state = {
+        "workers": {
+            "run-codex-dead": {
+                "run_id": "run-codex-dead",
+                "task_id": "TASK-DEAD-LEASE-001",
+                "status": "failed",
+                "request_snapshot": {"reason": "helper_claim_dispatch"},
+            }
+        },
+        "queue": {"events": {}},
+    }
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7", "claude"])
+
+    assert changed is True
+    assert "helper_execution_lease" not in task
+    assert len(queued_events) == 1
+    assert queued_events[0]["target_agent"] == "Claude"
+    assert queued_events[0]["reason"] == "owned_in_progress_dispatch"
+
+
+def test_active_helper_continues_executing_valid_lease() -> None:
+    cfg = _base_test_config()
+    expires = (datetime.now(UTC) + timedelta(minutes=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    task = {
+        "id": "TASK-ACTIVE-LEASE-001",
+        "priority": "P2",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+        "helper_execution_lease": {
+            "claimed_by": "Antigravity7",
+            "original_owner": "Claude",
+            "generation": 1,
+            "lease_expires_at": expires,
+        },
+    }
+    status = {"tasks": [task]}
+    state = {
+        "workers": {},
+        "queue": {"events": {}},
+    }
+    queued_events: list[dict] = []
+
+    with (
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
+
+    assert changed is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["target_agent"] == "Antigravity7"
+    assert queued_events[0]["reason"] == "helper_claim_dispatch"
+    assert task["helper_execution_lease"]["generation"] == 1
+
+

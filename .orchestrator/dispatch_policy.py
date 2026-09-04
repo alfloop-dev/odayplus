@@ -96,7 +96,7 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
     helper = dict(settings.get("helper_execution_lease", {}) or {})
     helper.setdefault("enabled", True)
-    helper.setdefault("claimable_statuses", ["todo"])
+    helper.setdefault("claimable_statuses", ["todo", "in_progress"])
     helper.setdefault("dispatch_sla_seconds", 600)
     helper.setdefault("lease_seconds", 1800)
     helper.setdefault("max_claims_per_tick", 4)
