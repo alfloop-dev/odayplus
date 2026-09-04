@@ -5023,6 +5023,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             quiet=True,
             verbose=False,
             once=False,
+            poll_interval=None,
         )
         self.assertIn("RuntimeError: boom", console_log.call_args.args[0])
         self.assertTrue(console_log.call_args.kwargs["quiet"])
@@ -13678,6 +13679,226 @@ class ResolvePollIntervalTests(unittest.TestCase):
         )
         self.assertEqual(value, supervisor.CONFIG_DEFAULT_POLL_INTERVAL_SECONDS)
         self.assertEqual(source, "config")
+
+
+class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
+    def test_resolve_heartbeat_warn_after_seconds_default_from_poll_interval(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 180.0}}
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_explicit_valid_threshold(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 300.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 300.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_accepts_exact_floor(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 240.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_clamps_just_below_floor(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 239.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_clamps_legacy_low_value(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 10.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_empty_config(self) -> None:
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds({})
+        self.assertEqual(
+            warn_seconds,
+            supervisor.CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+            + supervisor.DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS,
+        )
+
+    def test_resolve_heartbeat_warn_after_seconds_explicit_poll_interval_arg(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 180.0}}
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(
+            config, poll_interval=60.0
+        )
+        self.assertEqual(warn_seconds, 120.0)
+
+    def test_normal_180s_poll_does_not_log_heartbeat_lag_warning(self) -> None:
+        state = {
+            "supervisor": {
+                "last_heartbeat_at": "2026-09-04T06:03:00Z",
+                "lifecycle": "running",
+                "mode_status": "active",
+            }
+        }
+        approval_state: dict[str, Any] = {}
+        with mock.patch.object(supervisor, "console_log") as mock_log:
+            supervisor.log_runtime_summary(
+                state,
+                approval_state,
+                changed=False,
+                quiet=False,
+                verbose=False,
+                previous_heartbeat="2026-09-04T06:00:00Z",
+                warn_after_seconds=240.0,
+            )
+        logged_lines = [call.args[0] for call in mock_log.call_args_list]
+        for line in logged_lines:
+            self.assertNotIn("WARNING heartbeat lag exceeded threshold", line)
+
+    def test_excessive_heartbeat_lag_logs_warning(self) -> None:
+        state = {
+            "supervisor": {
+                "last_heartbeat_at": "2026-09-04T06:06:00Z",
+                "lifecycle": "running",
+                "mode_status": "active",
+            }
+        }
+        approval_state: dict[str, Any] = {}
+        with mock.patch.object(supervisor, "console_log") as mock_log:
+            supervisor.log_runtime_summary(
+                state,
+                approval_state,
+                changed=False,
+                quiet=False,
+                verbose=False,
+                previous_heartbeat="2026-09-04T06:00:00Z",
+                warn_after_seconds=240.0,
+            )
+        logged_lines = [call.args[0] for call in mock_log.call_args_list]
+        warning_lines = [
+            line for line in logged_lines if "WARNING heartbeat lag exceeded threshold" in line
+        ]
+        self.assertEqual(len(warning_lines), 1)
+        self.assertIn("360.0s > 240.0s", warning_lines[0])
+
+    def test_run_once_passes_threshold_for_effective_poll_interval(self) -> None:
+        config = load_test_config()
+        config["supervisor"] = {
+            "poll_interval_seconds": 180.0,
+            "heartbeat_warn_after_seconds": 240.0,
+        }
+        with (
+            mock.patch.object(supervisor, "log_runtime_summary") as mock_summary,
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state",
+                return_value={"supervisor": {"last_heartbeat_at": "2026-09-04T06:00:00Z"}},
+            ),
+            mock.patch.object(supervisor, "save_runtime_state"),
+            mock.patch.object(supervisor, "stamp_supervisor_runtime_state"),
+            mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"),
+            mock.patch.object(supervisor, "safe_load_approval_state", return_value={}),
+        ):
+            supervisor.run_once(config, watch=False, once=True, poll_interval=600.0)
+        self.assertEqual(mock_summary.call_args.kwargs.get("warn_after_seconds"), 660.0)
+
+    def test_main_wires_cli_poll_interval_to_supervisor_cycle(self) -> None:
+        config = load_test_config()
+        with (
+            # main() exports the selected config for worker inheritance; do not
+            # leak that process-level override into later ai_status tests.
+            mock.patch.dict(os.environ),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "supervisor.py",
+                    "--config",
+                    "/tmp/pantheon-test-config.json",
+                    "--poll-interval",
+                    "600",
+                    "--no-watch",
+                ],
+            ),
+            mock.patch.object(supervisor, "resolve_path", return_value=Path("/tmp/pantheon-test-config.json")),
+            mock.patch.object(supervisor, "authoritative_status_root", return_value=None),
+            mock.patch.object(supervisor, "load_config", return_value=config),
+            mock.patch.object(supervisor, "acquire_singleton_lock", return_value=True),
+            mock.patch.object(supervisor, "terminate_other_supervisors"),
+            mock.patch.object(supervisor.atexit, "register"),
+            mock.patch.object(supervisor, "install_termination_logging"),
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(supervisor, "bootstrap_supervisor_runtime_state"),
+            mock.patch.object(supervisor, "console_log"),
+            mock.patch.object(
+                supervisor,
+                "run_supervisor_cycle",
+                side_effect=RuntimeError("stop after first cycle"),
+            ) as run_cycle,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stop after first cycle"):
+                supervisor.main()
+
+        run_cycle.assert_called_once_with(
+            config,
+            watch=False,
+            replay=False,
+            quiet=False,
+            verbose=False,
+            poll_interval=600.0,
+        )
+
+    def test_main_wires_cli_poll_interval_to_once_run(self) -> None:
+        config = load_test_config()
+        with (
+            mock.patch.dict(os.environ),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "supervisor.py",
+                    "--config",
+                    "/tmp/pantheon-test-config.json",
+                    "--poll-interval",
+                    "600",
+                    "--no-watch",
+                    "--once",
+                ],
+            ),
+            mock.patch.object(supervisor, "resolve_path", return_value=Path("/tmp/pantheon-test-config.json")),
+            mock.patch.object(supervisor, "authoritative_status_root", return_value=None),
+            mock.patch.object(supervisor, "load_config", return_value=config),
+            mock.patch.object(supervisor, "acquire_singleton_lock", return_value=True),
+            mock.patch.object(supervisor, "terminate_other_supervisors"),
+            mock.patch.object(supervisor.atexit, "register"),
+            mock.patch.object(supervisor, "install_termination_logging"),
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(supervisor, "bootstrap_supervisor_runtime_state"),
+            mock.patch.object(supervisor, "console_log"),
+            mock.patch.object(supervisor, "run_once", return_value=False) as run_once,
+        ):
+            self.assertEqual(supervisor.main(), 0)
+
+        run_once.assert_called_once_with(
+            config,
+            watch=False,
+            replay=False,
+            quiet=False,
+            verbose=False,
+            once=True,
+            poll_interval=600.0,
+        )
 
 
 class RunSupervisorShellGuardTests(unittest.TestCase):

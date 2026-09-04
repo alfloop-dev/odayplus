@@ -727,6 +727,7 @@ def parse_args() -> argparse.Namespace:
 
 
 CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS = 60.0
 
 
 class FastPollNotAllowedError(SystemExit):
@@ -757,6 +758,37 @@ def resolve_poll_interval(
             "if this is a steady-state change."
         )
     return cli_value, "cli"
+
+
+def resolve_heartbeat_warn_after_seconds(
+    config: dict[str, Any],
+    *,
+    poll_interval: float | None = None,
+) -> float:
+    """Resolve a heartbeat warning threshold for the effective poll cadence.
+
+    A supervisor can only observe a missed heartbeat on its next poll, so the
+    warning floor is one full effective poll interval plus a small grace period.
+    Keep explicitly configured thresholds that meet that floor, while clamping
+    legacy values below it.  The inclusive boundary is intentional: a value
+    exactly at the floor is already valid and must not jump to a different
+    rule than a value just above it.
+    """
+    base_poll = (
+        float(poll_interval)
+        if poll_interval is not None and poll_interval > 0
+        else float(
+            config.get("supervisor", {}).get(
+                "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+            )
+        )
+    )
+    minimum_warn = base_poll + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    raw_warn = config.get("supervisor", {}).get("heartbeat_warn_after_seconds")
+    if raw_warn is not None:
+        configured_warn = float(raw_warn)
+        return max(minimum_warn, configured_warn)
+    return minimum_warn
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -1239,7 +1271,9 @@ def log_runtime_summary(
     quiet: bool,
     verbose: bool,
     previous_heartbeat: str | None = None,
-    warn_after_seconds: float = 10.0,
+    warn_after_seconds: float = (
+        CONFIG_DEFAULT_POLL_INTERVAL_SECONDS + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    ),
     once: bool = False,
 ) -> None:
     summary = summarize_runtime(state, approval_state)
@@ -5001,6 +5035,7 @@ def run_once(
     quiet: bool = False,
     verbose: bool = False,
     once: bool = False,
+    poll_interval: float | None = None,
 ) -> bool:
     write_supervisor_pid(config)
     loop_started_at = utc_now()
@@ -5146,7 +5181,9 @@ def run_once(
             quiet=quiet,
             verbose=verbose,
             previous_heartbeat=previous_heartbeat,
-            warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
+            warn_after_seconds=resolve_heartbeat_warn_after_seconds(
+                config, poll_interval=poll_interval
+            ),
             once=once,
         )
         return changed
@@ -5173,9 +5210,18 @@ def run_supervisor_cycle(
     replay: bool = False,
     quiet: bool = False,
     verbose: bool = False,
+    poll_interval: float | None = None,
 ) -> bool:
     try:
-        return run_once(config, watch=watch, replay=replay, quiet=quiet, verbose=verbose, once=False)
+        return run_once(
+            config,
+            watch=watch,
+            replay=replay,
+            quiet=quiet,
+            verbose=verbose,
+            once=False,
+            poll_interval=poll_interval,
+        )
     except Exception as exc:
         console_log(
             f"supervisor cycle failed: {type(exc).__name__}: {exc}; continuing after next poll",
@@ -5293,6 +5339,7 @@ def main() -> int:
             quiet=args.quiet,
             verbose=args.verbose,
             once=True,
+            poll_interval=poll_interval,
         )
         return 0
     run_supervisor_cycle(
@@ -5301,6 +5348,7 @@ def main() -> int:
         replay=args.replay,
         quiet=args.quiet,
         verbose=args.verbose,
+        poll_interval=poll_interval,
     )
     while True:
         sleep_until_work_or_interval(config, poll_interval)
@@ -5310,6 +5358,7 @@ def main() -> int:
             replay=False,
             quiet=args.quiet,
             verbose=args.verbose,
+            poll_interval=poll_interval,
         )
 
 
