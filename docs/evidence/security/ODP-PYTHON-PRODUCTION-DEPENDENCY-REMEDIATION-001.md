@@ -3,7 +3,7 @@ doc_id: ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001-SECURITY-EVIDENCE
 title: Python Production 相依套件漏洞修復與 NLTK PYSEC-2026-3740 曝險分析佐證
 version: 1.0.0
 status: approved-evidence
-owner: Antigravity6
+owner: Codex
 task: ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001
 updated_at: 2026-09-04
 ---
@@ -27,11 +27,11 @@ updated_at: 2026-09-04
 
 | 套件名稱 | 修復前版本 | 修復後版本 | 處置方式與對應 Advisory |
 |---|---|---|---|
-| `cryptography` | `<49.0` | `>=50.0.0` (50.0.0) | `pyproject.toml` 更新限制並升級，修復 CVE-2024-12797 等已知漏洞 |
-| `mlflow` | `3.14.0` | `3.16.0` | `pyproject.toml` 升級直接依賴，修復 GHSA-7w7g-w6cr-3p42 |
-| `sqlparse` | `0.5.5` | `0.6.0` | `uv.lock` 同步升級至安全版本，修復 PYSEC-2024-199 |
-| `gitpython` | `<3.1.44` | `>=3.1.44` | 間接相依隨 mlflow 升級解析為安全版本 |
-| `nltk` | `3.10.0` | `3.10.3` | 升級至 PyPI 目前最新版 3.10.3 |
+| `cryptography` | `48.0.1` | `50.0.1` | `pyproject.toml` 約束為 `>=50.0.1,<51`；實測清除 `PYSEC-2026-3552`、`PYSEC-2026-3553`、`PYSEC-2026-3554`（分別需 `>=50.0.0`、`>=49.0.0`、`>=49.0.0`） |
+| `mlflow` | `3.14.0` | `3.16.0` | 直接依賴升級；實測清除 `PYSEC-2026-3687`、`GHSA-gqvg-gmmx-x4hm`、`CVE-2026-71211`（均需 `>=3.15.0`） |
+| `sqlparse` | `0.5.5` | `0.6.0` | `uv.lock` 同步升級；實測清除 `PYSEC-2026-3696`、`PYSEC-2026-3697`、`PYSEC-2026-3698`、`PYSEC-2026-3699`、`CVE-2026-84305`（均需 `>=0.6.0`） |
+| `gitpython` | `3.1.58` | `3.1.61` | 間接相依隨 MLflow 升級解析；實測清除 `PYSEC-2026-3785`、`PYSEC-2026-3786`、`PYSEC-2026-3787`、`PYSEC-2026-3788`（均需 `>=3.1.59`） |
+| `nltk` | `3.10.0` | `3.10.3` | 升級至 PyPI 目前最新版；實測清除 22 筆舊版 advisory，但 `PYSEC-2026-3740` 仍無修補版本，詳見第 3 節 |
 
 ---
 
@@ -61,19 +61,43 @@ updated_at: 2026-09-04
 
 ---
 
-## 5. 真實 pip-audit 掃描前後輸出記錄
+## 5. 真實 pip-audit 升級前後輸出記錄
 
-### 5.1 升級後真實掃描輸出
-執行真實 `uv run --with pip-audit pip-audit` 掃描結果如下：
+### 5.1 升級前真實掃描輸出
+
+以 lockfile 升級前的五個 production 版本 pinned 掃描（`--no-deps`，不依賴
+`--local` 是否指向正確的虛擬環境）：
+
+```text
+$ pip-audit -r <base 版本> --no-deps -f json
+Found 40 known vulnerabilities in 5 packages
+```
+
+這次掃描實際回報並由升級清除的 advisory 為：`cryptography` 的
+`PYSEC-2026-3552`、`PYSEC-2026-3553`、`PYSEC-2026-3554`；`gitpython` 的
+`PYSEC-2026-3785`、`PYSEC-2026-3786`、`PYSEC-2026-3787`、`PYSEC-2026-3788`；
+`mlflow` 的 `PYSEC-2026-3687`、`GHSA-gqvg-gmmx-x4hm`、
+`CVE-2026-71211`；以及 `sqlparse` 的 `PYSEC-2026-3696`、
+`PYSEC-2026-3697`、`PYSEC-2026-3698`、`PYSEC-2026-3699`、
+`CVE-2026-84305`。舊版 `nltk` 另有多筆 findings，升級到 3.10.3 後僅剩
+`PYSEC-2026-3740`。
+
+### 5.2 升級後真實掃描輸出
+
+以升級後的五個 pinned 版本執行真實 `pip-audit -r ... --no-deps`，結果如下：
 
 ```text
 Found 1 known vulnerability in 1 package
-Name Version ID              Fix Versions
----- ------- --------------- ------------
-nltk 3.10.3  PYSEC-2026-3740 
+Name  Version  ID                Fix Versions
+----  -------  ----------------  -----------
+nltk  3.10.3   PYSEC-2026-3740   (none)
 ```
 
-所有具有可用修補版本之 Production 相依套件（`cryptography`, `gitpython`, `mlflow`, `sqlparse` 等）已全數升級至安全版本，無任何殘留之可修補漏洞。
+所有具有可用修補版本之 production 相依套件（`cryptography`、`gitpython`、
+`mlflow`、`sqlparse`）已全數升級，唯一殘留是上游尚未提供修補版的
+`nltk 3.10.3 / PYSEC-2026-3740`。在目前 worktree 的 `pip-audit --local`
+路徑則會得到 `No known vulnerabilities found`，因該路徑稽核的是空的/未對應的
+local 環境；此輸出不能取代上述針對實際 pinned production 版本的掃描。
 
 ---
 
@@ -84,13 +108,15 @@ nltk 3.10.3  PYSEC-2026-3740
 2. `docs/evidence/completion/ODP-OSS-LICENSE-GATE-002/sbom.json`
 
 經 `delivery_toolchain/security/generate_sbom.py --check` 與 `tests/security/test_supply_chain_security_gate.py` 驗證：
-- 共計收錄 798 個相依組件（346 個 npm 組件完整保留 supplier/author 資訊）。
+- 共計收錄 798 個相依組件：554 個 npm 與 244 個 PyPI 組件；其中 346 個 npm 組件帶有 `supplier`。SBOM 沒有宣稱保留 `author` 欄位，因目前 component 的 `author` 欄位數量為 0。
 - `components`、`dependencies` 與 `properties` 完全與當前 lockfiles（`package-lock.json`, `uv.lock`）一致。
 - 通過 SBOM 一致性防退化測試（`test_sbom_and_provenance_present_and_valid`）。
 
 ---
 
-## 7. 後續追蹤與維護處置計畫
+## 7. 後續追蹤、#1188 交互作用與維護處置計畫
 
-1. **上游追蹤**：將 NLTK 與 Evidently 之版本釋出納入例行相依套件監控；一旦 NLTK 釋出修復版本或 Evidently 提供解耦更新，立即排程升級。
-2. **合規記錄**：本文件作為 PR #1194 及後續審查之正式中文安全佐證，不採取任何 suppression 設定，維持審計真實透明度。
+1. **現況與限制**：runtime `Evidently 0.7.21` 仍需要 `nltk>=3.6.7`，因此 runtime 依賴鏈仍會安裝 `nltk 3.10.3`。`PYSEC-2026-3740` 沒有任何 `fix_versions`；本 task 不能把它記成已修復，也不能為了讓 gate 變綠而 suppress、ignore、移除 Evidently/runtime 依賴或假稱 clean。
+2. **#1188 fail-closed 交互作用**：目前 `Makefile` 的 `pip-audit --local` 會因 local 環境未對應 production 安裝而回報空稽核；這不是殘留 NLTK 漏洞已消失的證據。既有 #1188（`ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001`）合併後的 `pip_audit_gate.py` 會掃描實際 `.venv` 中的套件，且任何一筆 pip-audit finding 都以 exit 1 fail-closed。因此 #1188 一旦採用該路徑，`nltk 3.10.3 / PYSEC-2026-3740` 會使 gate 失敗；本 task 不改 audit routing，並將此列為明確的 follow-up blocker。
+3. **後續追蹤與驗收**：另開 follow-up 時，必須有明確的 Evidently/NLTK 遷移設計、替代監控能力、依賴移除或上游修補的驗收條件，以及 #1188 gate 的協調方案；未完成前不可宣稱 production dependency audit clean。持續追蹤 NLTK 與 Evidently 發行；一旦 NLTK 釋出修復版本或 Evidently 提供解耦更新，立即排程升級並重跑完整 audit。
+4. **本 task 的可稽核交付邊界**：本 task 完成可修補 advisory 的 dependency/lockfile 修復、SBOM 正確性與上述 residual-risk 揭露；不以任何方式偽裝無修補漏洞已被消除。此文件作為 PR #1194 及後續審查之正式中文安全佐證。
