@@ -238,8 +238,8 @@ def _optional_datetime(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _seed_state() -> dict[str, Any]:
-    return {
+def _seed_state(*, tenant_id: str = "tenant-a") -> dict[str, Any]:
+    state = {
         "heatZones": [
             {
                 "id": "HZ-01",
@@ -298,6 +298,7 @@ def _seed_state() -> dict[str, Any]:
         "listings": [
             {
                 "id": "L-2024",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2024",
                 "heatZoneId": "HZ-01",
@@ -321,6 +322,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2025",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-BROKER",
                 "sourceListingId": "broker-2025",
                 "heatZoneId": "HZ-02",
@@ -340,6 +342,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2029",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2029",
                 "heatZoneId": "HZ-02",
@@ -364,6 +367,7 @@ def _seed_state() -> dict[str, Any]:
             },
             {
                 "id": "L-2030",
+                "tenantId": "tenant-a",
                 "sourceId": "SRC-591",
                 "sourceListingId": "s591-2030",
                 "heatZoneId": "HZ-01",
@@ -382,10 +386,14 @@ def _seed_state() -> dict[str, Any]:
                 "sourceUrl": "https://example.invalid/listings/L-2030",
             },
         ],
+
         "candidates": [],
         "siteReviews": [],
         "auditEvents": [],
     }
+    for listing in state["listings"]:
+        listing["tenantId"] = tenant_id
+    return state
 
 
 def _empty_state() -> dict[str, Any]:
@@ -410,8 +418,10 @@ class NetworkListingService:
         *,
         initial_state: dict[str, Any] | None = None,
         seed_fixtures: bool = True,
+        tenant_id: str | None = None,
     ) -> None:
         self._seed_fixtures = seed_fixtures
+        self._tenant_id = tenant_id.strip() if tenant_id and tenant_id.strip() else None
         self._listing_repository = listing_repository
         self._intakes: AssistedIntakeRepository = (
             intake_repository if intake_repository is not None else InMemoryAssistedIntakeRepository()
@@ -419,7 +429,7 @@ class NetworkListingService:
         state = _copy(
             initial_state
             if initial_state is not None
-            else _seed_state()
+            else _seed_state(tenant_id=self._tenant_id or "tenant-a")
             if seed_fixtures
             else _empty_state()
         )
@@ -501,6 +511,8 @@ class NetworkListingService:
             "geocodeConfidence": 0.0,
             "sourceUrl": lst.snapshot_id,
         }
+        if self._tenant_id is not None:
+            res["tenantId"] = self._tenant_id
         # Carry the persisted geocode through the dict layer. Without this the
         # round trip loses latitude/longitude/h3 and _dict_to_listing has to
         # invent them, which is how an ungeocoded listing used to reach the
@@ -520,7 +532,7 @@ class NetworkListingService:
         if meta:
             res.update(meta)
         elif self._seed_fixtures:
-            for item in _seed_state()["listings"]:
+            for item in _seed_state(tenant_id=self._tenant_id or "tenant-a")["listings"]:
                 if item["id"] == lst.listing_id:
                     for k, v in item.items():
                         if k not in res:
@@ -682,6 +694,7 @@ class NetworkListingService:
             self._listing_repository.save_listing(lst_obj, addr_obj, key_obj)
 
             meta = {
+                "tenantId": listing.get("tenantId"),
                 "heatZoneId": listing.get("heatZoneId"),
                 "hardRuleFailures": listing.get("hardRuleFailures"),
                 "hardRuleSummary": listing.get("hardRuleSummary"),
@@ -778,7 +791,9 @@ class NetworkListingService:
 
     def reset(self) -> dict[str, Any]:
         self._state = (
-            _seed_state() if self._seed_fixtures else _empty_state()
+            _seed_state(tenant_id=self._tenant_id or "tenant-a")
+            if self._seed_fixtures
+            else _empty_state()
         )
         self._idempotency_cache = {}
         self._intakes.clear()
@@ -798,6 +813,7 @@ class NetworkListingService:
         selected_heat_zone_id: str | None = None,
         lens: str | None = None,
         correlation_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         selected_id = selected_heat_zone_id or (
             self._state["heatZones"][0]["id"]
@@ -806,14 +822,32 @@ class NetworkListingService:
         )
         active_lens = lens or "demand"
         self._state.setdefault("assistedIntakes", [])
+        visible_tenant = tenant_id.strip() if tenant_id and tenant_id.strip() else self._tenant_id
+        listings = _copy(self._state["listings"])
+        if visible_tenant is not None:
+            listings = [item for item in listings if item.get("tenantId") == visible_tenant]
+        listing_ids = {item.get("id") for item in listings}
+        candidates = _copy(self._state["candidates"])
+        if visible_tenant is not None:
+            candidates = [
+                item
+                for item in candidates
+                if item.get("tenantId") == visible_tenant
+                or item.get("listingId") in listing_ids
+            ]
+        assisted_intakes = _copy(self._state["assistedIntakes"])
+        if visible_tenant is not None:
+            assisted_intakes = [
+                item for item in assisted_intakes if item.get("tenantId") == visible_tenant
+            ]
         return {
             "source": "api",
             "heatZones": _copy(self._state["heatZones"]),
             "listingSources": _copy(self._state["listingSources"]),
-            "listings": _copy(self._state["listings"]),
-            "candidates": _copy(self._state["candidates"]),
+            "listings": listings,
+            "candidates": candidates,
             "siteReviews": _copy(self._state["siteReviews"]),
-            "assistedIntakes": _copy(self._state["assistedIntakes"]),
+            "assistedIntakes": assisted_intakes,
             "expansionSteps": self._expansion_steps(selected_id=selected_id),
             "selectedHeatZoneId": selected_id,
             "selectedLens": active_lens,
@@ -821,10 +855,10 @@ class NetworkListingService:
             "correlationId": correlation_id,
             "counts": {
                 "heatZones": len(self._state["heatZones"]),
-                "listings": len(self._state["listings"]),
-                "candidates": len(self._state["candidates"]),
+                "listings": len(listings),
+                "candidates": len(candidates),
                 "siteReviews": len(self._state["siteReviews"]),
-                "assistedIntakes": len(self._state["assistedIntakes"]),
+                "assistedIntakes": len(assisted_intakes),
             },
         }
 
@@ -1333,10 +1367,18 @@ class NetworkListingService:
             self._save_idempotency("submit_intake", idempotency_key, intake)
         return _copy(intake)
 
-    def list_intakes(self, selected_heat_zone_id: str | None = None) -> list[dict[str, Any]]:
+    def list_intakes(
+        self,
+        selected_heat_zone_id: str | None = None,
+        *,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         self._load_intakes()
         self._state.setdefault("assistedIntakes", [])
         intakes = self._state["assistedIntakes"]
+        visible_tenant = tenant_id.strip() if tenant_id and tenant_id.strip() else self._tenant_id
+        if visible_tenant is not None:
+            intakes = [item for item in intakes if item.get("tenantId") == visible_tenant]
         if selected_heat_zone_id is not None:
             intakes = [item for item in intakes if item.get("heatZoneId") == selected_heat_zone_id]
         return _copy(intakes)
