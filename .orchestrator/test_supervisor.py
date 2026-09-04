@@ -11775,11 +11775,17 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
         terminate_worker_pid.assert_called_once_with(5555)
         sync_preempted.assert_called_once_with(config, review_worker)
 
-        # 4. In next tick, ready dispatcher dispatches P0 CI repair
+        # 4. In next tick, ready dispatcher dispatches P0 CI repair.
+        # ODP-TENANT-REV-001 is in review with no verified review submission, so the
+        # exact-head CI readiness gate suppresses its reviewer dispatch and records the
+        # reason on the task. That is a real canonical write, so it is isolated here
+        # alongside write_activity_log; without it the dispatcher writes the reason
+        # straight into the repository's tracked ai-status.json.
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             dispatch_state = {"workers": {}, "queue": {"events": {}}}
