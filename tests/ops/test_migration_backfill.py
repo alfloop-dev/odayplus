@@ -37,6 +37,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0012",
         "0013",
         "0014",
+        "0015",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -163,6 +164,19 @@ def test_learninghub_backtest_receipt_ddl_is_reachable_from_alembic_head() -> No
         for asset in backtest_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000019_learninghub_backtest_receipts.sql"}
+
+
+def test_price_exploration_gate_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-PRICE-006: Price exploration gate and decision tracking schema."""
+    plan = build_migration_plan(environment="dev")
+    gate_step = next(step for step in plan.steps if step.revision == "0015")
+
+    assert gate_step.path.endswith("0015_price_exploration_gate.py")
+    assert {
+        asset.path
+        for asset in gate_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000020_price_exploration_gate.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

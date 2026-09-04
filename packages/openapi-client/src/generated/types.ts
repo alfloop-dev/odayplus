@@ -1155,6 +1155,10 @@ export type PriceOpsActivationPayload = {
 /** PriceOpsActorPayload */
 export type PriceOpsActorPayload = {
   actor?: string;
+  exploration_algorithm?: string;
+  exploration_gate_id?: string | null;
+  exploration_history?: unknown[][] | null;
+  exploration_seed?: number | null;
   occurred_at?: string | null;
   reason?: string;
 };
@@ -1188,6 +1192,42 @@ export type PriceOpsEvaluationPayload = {
   outcome_window_start?: string | null;
 };
 
+/** PriceOpsExplorationCandidatesPayload */
+export type PriceOpsExplorationCandidatesPayload = {
+  algorithm?: string;
+  at?: string | null;
+  history?: unknown[][] | null;
+  items: PriceOpsPlanItemPayload[];
+  scope_brand_id?: string | null;
+  scope_sku_group?: string | null;
+  scope_store_group?: string | null;
+  seed?: number | null;
+  tenant_id: string;
+};
+
+/** PriceOpsExplorationGateRegisterPayload */
+export type PriceOpsExplorationGateRegisterPayload = {
+  approval_decision_id: string;
+  approval_id: string;
+  approved_by: string;
+  budget_limit: number;
+  decision_policy_version_id: string;
+  effective_from: string;
+  effective_to: string;
+  gate_id?: string | null;
+  rollback_condition: string;
+  scope_brand_id?: string | null;
+  scope_sku_group?: string | null;
+  scope_store_group?: string | null;
+  tenant_id: string;
+};
+
+/** PriceOpsExplorationGateRevokePayload */
+export type PriceOpsExplorationGateRevokePayload = {
+  reason: string;
+  revoked_at?: string | null;
+};
+
 /** PriceOpsObservationPayload */
 export type PriceOpsObservationPayload = {
   actor?: string;
@@ -1207,6 +1247,7 @@ export type PriceOpsPlanItemPayload = {
   applicable_max_price?: number | null;
   applicable_min_price?: number | null;
   baseline_demand: number;
+  brand_id?: string | null;
   confidence?: number | null;
   current_price: number;
   elasticity_value?: number | null;
@@ -1221,6 +1262,8 @@ export type PriceOpsPlanItemPayload = {
   prediction_origin_time?: string | null;
   price_demand_observations?: Record<string, number>[] | null;
   price_ladder_step?: number;
+  sku_group?: string | null;
+  store_group?: string | null;
   store_id: string;
   unit_cost: number;
 };
@@ -1228,6 +1271,10 @@ export type PriceOpsPlanItemPayload = {
 /** PriceOpsPlanPayload */
 export type PriceOpsPlanPayload = {
   created_at?: string | null;
+  exploration_algorithm?: string;
+  exploration_gate_id?: string | null;
+  exploration_history?: unknown[][] | null;
+  exploration_seed?: number | null;
   idempotency_key?: string | null;
   items: PriceOpsPlanItemPayload[];
   plan_id?: string | null;
@@ -2061,11 +2108,15 @@ export const API_PATHS = {
   "/api/v1/platform/dashboards/provisioned": ["GET"],
   "/api/v1/platform/metrics/export": ["GET"],
   "/api/v1/platform/observability": ["GET"],
+  "/api/v1/priceops/exploration-candidates": ["POST"],
+  "/api/v1/priceops/exploration-gates": ["GET", "POST"],
+  "/api/v1/priceops/exploration-gates/{gate_id}/revoke": ["POST"],
   "/api/v1/priceops/optimizer-jobs": ["POST"],
   "/api/v1/priceops/optimizer-jobs/{job_id}": ["GET"],
   "/api/v1/priceops/plans": ["GET", "POST"],
   "/api/v1/priceops/plans/{plan_id}": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/activate": ["POST"],
+  "/api/v1/priceops/plans/{plan_id}/activation-receipt": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/approve": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/comparison": ["GET"],
   "/api/v1/priceops/plans/{plan_id}/decision-writeback": ["POST"],
