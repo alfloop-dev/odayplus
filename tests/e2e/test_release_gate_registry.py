@@ -178,6 +178,57 @@ def test_fully_attested_go_registry_is_accepted() -> None:
     assert errors_for(mutated(mutate)) == []
 
 
+def test_staging_and_prod_gates_do_not_block_dev_go_decision() -> None:
+    """Staged admission: blocked staging/prod gates do not backward-block dev boundary."""
+    def mutate(registry: dict[str, Any]) -> None:
+        # Clear only dev boundary gates (e.g. gate-0, gate-1, gate-4)
+        for index in (0, 1, 4):
+            clear_gate(registry["gates"][index])
+        # Staging and production boundary gates remain blocked with valid blockers
+        registry["gates"][2].update({"stage": "dev-verified", "environment": "dev", "admission_target": "staging"})
+        for index in (3, 5, 6):
+            registry["gates"][index].update({"stage": "staging-verified", "environment": "staging", "admission_target": "production"})
+        registry["release"]["stage"] = "candidate-built"
+        registry["release"]["environment"] = "dev"
+        registry["release"]["admission_target"] = "dev"
+        registry["release"]["decision"] = "go"
+        registry["release"]["human_signoff"] = {"approver": "Human/Ops", "date": "2026-07-30"}
+
+    assert errors_for(mutated(mutate)) == []
+
+
+def test_dev_go_decision_requires_dev_boundary_gates_cleared() -> None:
+    """Dev admission fails closed if a dev boundary gate is open."""
+    def mutate(registry: dict[str, Any]) -> None:
+        for index in (0, 4):
+            clear_gate(registry["gates"][index])
+        # gate-1 is left blocked
+        registry["gates"][2].update({"stage": "dev-verified", "environment": "dev", "admission_target": "staging"})
+        for index in (3, 5, 6):
+            registry["gates"][index].update({"stage": "staging-verified", "environment": "staging", "admission_target": "production"})
+        registry["release"]["stage"] = "candidate-built"
+        registry["release"]["environment"] = "dev"
+        registry["release"]["admission_target"] = "dev"
+        registry["release"]["decision"] = "go"
+        registry["release"]["human_signoff"] = {"approver": "Human/Ops", "date": "2026-07-30"}
+
+    errors = errors_for(mutated(mutate))
+    assert any("gate-1" in error for error in errors)
+
+
+def test_blocking_gates_filters_by_target() -> None:
+    registry = load_committed_registry()
+    module = load_checker_module()
+    # All gates are blocked in committed registry
+    assert module.blocking_gates(registry, target="dev") == [f"gate-{i}" for i in range(7)]
+    assert module.blocking_gates(registry, target="staging") == []
+
+    # If gate-2 is assigned to staging, target=dev omits gate-2
+    registry["gates"][2]["admission_target"] = "staging"
+    assert "gate-2" not in module.blocking_gates(registry, target="dev")
+    assert module.blocking_gates(registry, target="staging") == ["gate-2"]
+
+
 def test_unknown_decision_value_is_rejected() -> None:
     def mutate(registry: dict[str, Any]) -> None:
         registry["release"]["decision"] = "conditional-go"

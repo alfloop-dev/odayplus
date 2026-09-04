@@ -185,16 +185,24 @@ def is_cleared(gate: Any) -> bool:
     return isinstance(gate, dict) and gate.get("status") in CLEARED_STATUSES
 
 
-def blocking_gates(registry: dict[str, Any]) -> list[str]:
-    """Gate ids that still block a GO decision, in registry order."""
+def blocking_gates(registry: dict[str, Any], target: str | None = None) -> list[str]:
+    """Gate ids that still block a GO decision, in registry order.
+
+    If target is provided, only gates bound to that admission target are evaluated.
+    """
     gates = registry.get("gates")
     if not isinstance(gates, list):
         return ["<gates missing>"]
     blocking: list[str] = []
     for index, gate in enumerate(gates):
+        if not isinstance(gate, dict):
+            blocking.append(f"<gate #{index}>")
+            continue
+        if target is not None and gate.get("admission_target") != target:
+            continue
         if is_cleared(gate):
             continue
-        gate_id = gate.get("id") if isinstance(gate, dict) else None
+        gate_id = gate.get("id")
         blocking.append(gate_id if is_nonempty_str(gate_id) else f"<gate #{index}>")
     return blocking
 
@@ -603,7 +611,8 @@ def validate_registry(registry: dict[str, Any], root: Path = ROOT) -> list[str]:
 
     release = registry.get("release")
     if isinstance(release, dict) and release.get("decision") == "go":
-        open_gates = blocking_gates(registry)
+        target = release.get("admission_target")
+        open_gates = blocking_gates(registry, target=target)
         if open_gates:
             errors.append(
                 "release.decision is 'go' but these gates are not cleared: "
@@ -616,7 +625,8 @@ def validate_registry(registry: dict[str, Any], root: Path = ROOT) -> list[str]:
 def build_report(registry: dict[str, Any], errors: list[str]) -> dict[str, Any]:
     release = registry.get("release") if isinstance(registry.get("release"), dict) else {}
     gates = registry.get("gates") if isinstance(registry.get("gates"), list) else []
-    open_gates = blocking_gates(registry)
+    target = release.get("admission_target") if isinstance(release, dict) else None
+    open_gates = blocking_gates(registry, target=target)
     return {
         "registry_id": registry.get("registry_id"),
         "candidate_sha": release.get("candidate_sha"),
