@@ -1259,6 +1259,42 @@ def test_api_adjust_production_entry_success_and_rejections() -> None:
     )
     assert unauth_adj.status_code == 403
 
+    # A regional supervisor may execute an intervention but may not create the
+    # replacement that Adjust opens. The route must reject this combination
+    # before the workflow writes lineage or lifecycle audit events.
+    regional_client = TestClient(
+        app,
+        headers=auth_headers(Role.REGIONAL_SUPERVISOR, subject="regional-only"),
+    )
+    lifecycle_events_before = [
+        event
+        for event in app.state.audit_log.list_events()
+        if event.event_type == "intervention.lifecycle.v1"
+        and event.resource == f"intervention/{iid}"
+        and event.action == "adjust"
+    ]
+    regional_adj = regional_client.post(
+        f"/interventions/{iid}/adjust",
+        json={
+            "actor": "regional-only",
+            "reason": "try adjust without create permission",
+        },
+    )
+    assert regional_adj.status_code == 403
+    unchanged = client.get(f"/interventions/{iid}")
+    assert unchanged.status_code == 200
+    assert unchanged.json()["status"] == "OBSERVING"
+    assert unchanged.json()["replacement_id"] is None
+    assert unchanged.json()["adjustment"] is None
+    lifecycle_events_after = [
+        event
+        for event in app.state.audit_log.list_events()
+        if event.event_type == "intervention.lifecycle.v1"
+        and event.resource == f"intervention/{iid}"
+        and event.action == "adjust"
+    ]
+    assert lifecycle_events_after == lifecycle_events_before
+
     # 3. Stale update rejection (HTTP 409)
     stale_adj = client.post(
         f"/interventions/{iid}/adjust",

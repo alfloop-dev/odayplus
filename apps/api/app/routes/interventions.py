@@ -618,7 +618,13 @@ else:
                 ),
             )
 
-        @router.post("/{intervention_id}/adjust", dependencies=[Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine))])
+        @router.post(
+            "/{intervention_id}/adjust",
+            dependencies=[
+                Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine)),
+                Depends(require_permission("intervention", Action.CREATE, engine=authz_engine)),
+            ],
+        )
         def adjust_case(
             intervention_id: str,
             body: AdjustPayload,
