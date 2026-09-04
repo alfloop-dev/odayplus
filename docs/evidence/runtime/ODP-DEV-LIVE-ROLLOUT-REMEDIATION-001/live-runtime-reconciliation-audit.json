@@ -133,11 +133,31 @@
     "target_absence_receipt": {
       "kind": "runtime-release-target-absence-readback",
       "candidate_sha": "1edb2f834cbf38ccd489cd999802098076e891b7",
-      "api_service": {"name": "oday-api", "exists": false, "serving_traffic": false},
-      "web_service": {"name": "oday-web", "exists": false, "serving_traffic": false},
-      "migration_job": {"name": "oday-migration-r-1edb2f834cbf", "exists": false, "serving_traffic": false},
-      "worker_job": {"name": "oday-worker-r-1edb2f834cbf", "exists": false, "serving_traffic": false},
-      "scheduler_job": {"name": "oday-scheduler-r-1edb2f834cbf", "exists": false, "serving_traffic": false}
+      "api_service": {
+        "name": "oday-api",
+        "exists": false,
+        "serving_traffic": false
+      },
+      "web_service": {
+        "name": "oday-web",
+        "exists": false,
+        "serving_traffic": false
+      },
+      "migration_job": {
+        "name": "oday-migration-r-1edb2f834cbf",
+        "exists": false,
+        "serving_traffic": false
+      },
+      "worker_job": {
+        "name": "oday-worker-r-1edb2f834cbf",
+        "exists": false,
+        "serving_traffic": false
+      },
+      "scheduler_job": {
+        "name": "oday-scheduler-r-1edb2f834cbf",
+        "exists": false,
+        "serving_traffic": false
+      }
     },
     "deployment_commands_run": false,
     "traffic_switch_run": false,
@@ -217,9 +237,34 @@
     "No deployment-success receipt was written."
   ],
   "unblock_requirements": [
-    "Reconcile the canonical release gate registry to candidate 1edb2f834cbf38ccd489cd999802098076e891b7 and manifest digest sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7.",
-    "Have the Supervisor issuer create and durably record an Ed25519-signed lease for task ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001, target dev, action deploy, and the exact manifest digest.",
-    "Dispatch the existing Runtime Release deploy phase with the four exact hosted image refs and the signed lease.",
+    "Merge PR #1183 (ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001), which releases the HARD HOLD on ODP-DEV-STAGED-GATE-RECONCILIATION-001 and fixes the candidate selection point.",
+    "Select the then-latest origin/dev head as the deploy candidate. Do NOT reconcile the registry to 1edb2f834cbf38ccd489cd999802098076e891b7: ODP-DEV-STAGED-GATE-RECONCILIATION-001 is explicitly forbidden to bind that SHA, so the build artifacts of run 33844319992 are superseded in advance and must not be reused.",
+    "Re-run the single existing Runtime Release build phase once against that new exact SHA to produce a fresh build-once manifest and four immutable image digests.",
+    "Reconcile the canonical release gate registry from candidate ebc4fca5c2dd5871275aee39a18406dd67464f04 / decision no-go to the new candidate SHA and its manifest digest, via ODP-DEV-STAGED-GATE-RECONCILIATION-001 and its staged dev-admission rules.",
+    "Have the Supervisor issuer create and durably record an Ed25519-signed lease for target dev, action deploy, and that new exact manifest digest. No worker holds the private signing key, and ODP-DEV-STAGED-GATE-RECONCILIATION-001 acceptance forbids it from signing a lease or dispatching a deploy, so this step currently has no owner on the board and is carried by this task's open blocker.",
+    "Dispatch the existing Runtime Release deploy phase with the new exact image refs and the signed lease.",
     "Capture authorized post-deploy Cloud Run URLs/revisions, migration/worker/scheduler executions, authenticated smoke, provider-off/16-source, default-deny egress, and exact manifest-binding receipts."
-  ]
+  ],
+  "candidate_finality": {
+    "assessed_at": "2026-09-04T07:20:00Z",
+    "assessed_by": "Claude",
+    "built_candidate_sha": "1edb2f834cbf38ccd489cd999802098076e891b7",
+    "built_manifest_digest": "sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7",
+    "is_final_deploy_candidate": false,
+    "reason": "The board task that owns gate-registry reconciliation, ODP-DEV-STAGED-GATE-RECONCILIATION-001, is under an explicit HARD HOLD that forbids producing or claiming a final candidate gate receipt for 1edb2f83, and requires selecting the then-latest origin/dev only after PR #1183 (task/ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001) merges. PR #1183 was still OPEN and unmerged when this assessment was made, so origin/dev will advance past 1edb2f83 before any deploy can be admitted.",
+    "blocking_pr": {
+      "number": 1183,
+      "url": "https://github.com/alfloop-dev/odayplus/pull/1183",
+      "head_ref": "task/ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001",
+      "state_observed": "OPEN",
+      "merged": false
+    },
+    "consequence": "Re-running the Runtime Release build phase against 1edb2f83 a third time would consume hosted build capacity for artifacts that cannot become the admitted release. The existing run 33844319992 evidence is retained as-is and no further build was dispatched.",
+    "evidence_retained_unchanged": true
+  },
+  "superseded_unblock_requirements": {
+    "superseded_at": "2026-09-04T07:20:00Z",
+    "reason": "The earlier plan named 1edb2f83 as the registry reconciliation target before the HARD HOLD on ODP-DEV-STAGED-GATE-RECONCILIATION-001 was known. Recorded here so the correction is auditable rather than silent.",
+    "previous_first_requirement": "Reconcile the canonical release gate registry to candidate 1edb2f834cbf38ccd489cd999802098076e891b7 and manifest digest sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7."
+  }
 }
