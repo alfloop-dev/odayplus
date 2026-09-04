@@ -16,11 +16,12 @@ PIP_AUDIT_PROCESS_TIMEOUT_SECONDS ?= 300
 PIP_AUDIT_ATTEMPTS ?= 3
 PIP_AUDIT_BACKOFF_SECONDS ?= 5
 
-.PHONY: help bootstrap boundary-check lint test smoke dependency-audit security node-check api-contract api-contract-refresh release-gate-registry task-dependency-check product-e2e-gate product-release-gate ci clean
+.PHONY: help bootstrap product-e2e-bootstrap boundary-check lint test smoke dependency-audit security node-check api-contract api-contract-refresh release-gate-registry task-dependency-check product-e2e-gate product-release-gate ci clean
 
 help:
 	@printf "ODay Plus developer commands\n\n"
 	@printf "  make bootstrap   Prepare ignored local config needed by tests\n"
+	@printf "  make product-e2e-bootstrap Install Node/Python/Chromium dependencies for E2E\n"
 	@printf "  make boundary-check  Enforce product/development/removal boundaries\n"
 	@printf "  make lint        Run Python lint checks\n"
 	@printf "  make test        Run CI-safe Python tests\n"
@@ -41,6 +42,9 @@ bootstrap:
 	else \
 		printf "Using existing %s\n" "$(LOCAL_CONFIG)"; \
 	fi
+
+product-e2e-bootstrap: bootstrap
+	delivery_toolchain/e2e/bootstrap_product_e2e.sh
 
 boundary-check:
 	$(UV) run python delivery_toolchain/governance/check_code_boundaries.py
