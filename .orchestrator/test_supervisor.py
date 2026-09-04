@@ -6688,6 +6688,530 @@ class PollWorkersRecoveryTests(unittest.TestCase):
                 self.assertEqual(state["queue"]["events"]["evt-helper-1"]["status"], "completed")
                 terminate_worker_pid.assert_called_once_with(4321)
 
+    def test_helper_claim_persisted_before_wake_queued(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "TASK-ATOMIC-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+        }
+        status = {"tasks": [task]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "max_dispatches_per_tick": 4,
+                "helper_execution_lease": {
+                    "enabled": True,
+                    "lease_seconds": 1800,
+                    "max_claims_per_agent": 2,
+                    "max_claims_per_tick": 2,
+                    "require_owner_saturated": False,
+                },
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "providers": {},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "dispatch_state": {},
+        }
+
+        call_order = []
+
+        def mock_commit(_config, _status):
+            self.assertIn("helper_execution_lease", task)
+            self.assertEqual(task["helper_execution_lease"]["generation"], 1)
+            self.assertEqual(task["helper_execution_lease"]["claimed_by"], "Codex")
+            call_order.append("commit")
+            return True
+
+        def mock_queue(_config, event):
+            self.assertEqual(event["reason"], supervisor.REASON_HELPER_CLAIM)
+            self.assertEqual(event["task"]["helper_execution_lease"]["generation"], 1)
+            call_order.append("queue")
+            return True
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", side_effect=mock_commit),
+            mock.patch.object(supervisor, "queue_dispatch_event_safely", side_effect=mock_queue),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+        self.assertEqual(call_order, ["commit", "queue"])
+
+    def test_helper_wake_validates_generation_and_validity_period(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        valid_claim = {
+            "claimed_by": "Codex",
+            "generation": 3,
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        task = {
+            "id": "TASK-VAL-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "helper_execution_lease": deepcopy(valid_claim),
+        }
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "dependency_done_statuses": ["done"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+        }
+        task_map = {task["id"]: task}
+
+        # Case 1: Valid event matching live board
+        event = {
+            "event_key": supervisor.dispatch_engine.build_dispatch_event(
+                task, "Codex", supervisor.REASON_HELPER_CLAIM, task_map
+            )["key"],
+            "task_id": "TASK-VAL-001",
+            "target_agent": "codex",
+            "reason": supervisor.REASON_HELPER_CLAIM,
+            "task": deepcopy(task),
+        }
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, event, task_map)
+        self.assertIsNone(skip_msg)
+
+        # Case 2: Event generation mismatch (event has gen 2, board has gen 3)
+        stale_gen_event = deepcopy(event)
+        stale_gen_event["task"]["helper_execution_lease"]["generation"] = 2
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, stale_gen_event, task_map)
+        self.assertIn("generation mismatch", skip_msg)
+
+        # Case 3: Board claim expired (board lease expired)
+        expired_task = deepcopy(task)
+        expired_task["helper_execution_lease"]["lease_expires_at"] = (
+            now - timedelta(seconds=1)
+        ).isoformat().replace("+00:00", "Z")
+        expired_task_map = {expired_task["id"]: expired_task}
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, event, expired_task_map)
+        self.assertIn("expired", skip_msg)
+
+        # Case 4: Event claimant mismatch
+        mismatched_claimant_event = deepcopy(event)
+        mismatched_claimant_event["task"]["helper_execution_lease"]["claimed_by"] = "Gemini"
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, mismatched_claimant_event, task_map)
+        self.assertIn("claimant mismatch", skip_msg)
+
+        # Case 5: Board lease was renewed (snapshot has old/expired expiry, but board has renewed live expiry)
+        renewed_board_task = deepcopy(task)
+        renewed_board_task["helper_execution_lease"]["lease_expires_at"] = (
+            now + timedelta(minutes=60)
+        ).isoformat().replace("+00:00", "Z")
+        renewed_task_map = {renewed_board_task["id"]: renewed_board_task}
+        snapshot_old_expiry_event = deepcopy(event)
+        snapshot_old_expiry_event["task"]["helper_execution_lease"]["lease_expires_at"] = (
+            now - timedelta(seconds=10)
+        ).isoformat().replace("+00:00", "Z")
+        # Validity is judged solely by board's current_claim; wake remains consumable!
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, snapshot_old_expiry_event, renewed_task_map)
+        self.assertIsNone(skip_msg)
+
+    def test_unrelated_board_revision_preserves_live_helper_claim_and_wake(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        claim = {
+            "claimed_by": "Codex",
+            "generation": 5,
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        task = {
+            "id": "TASK-REVISION-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "helper_execution_lease": deepcopy(claim),
+        }
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "dependency_done_statuses": ["done"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+        }
+        task_map = {task["id"]: task}
+        event = {
+            "event_key": supervisor.dispatch_engine.build_dispatch_event(
+                task, "Codex", supervisor.REASON_HELPER_CLAIM, task_map
+            )["key"],
+            "task_id": "TASK-REVISION-001",
+            "target_agent": "codex",
+            "reason": supervisor.REASON_HELPER_CLAIM,
+            "task": deepcopy(task),
+        }
+
+        # Board is updated concurrently: task status moved to in_progress, last_update changed, another task added
+        updated_task = deepcopy(task)
+        updated_task["status"] = "in_progress"
+        updated_task["last_update"] = now.isoformat().replace("+00:00", "Z")
+        updated_task_map = {
+            "TASK-REVISION-001": updated_task,
+            "UNRELATED-001": {"id": "UNRELATED-001", "status": "done"},
+        }
+
+        # Wake remains consumable despite the board revision
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, event, updated_task_map)
+        self.assertIsNone(skip_msg)
+
+    def test_stale_or_expired_lease_cannot_start_worker(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "TASK-NO-START-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 3,
+                "lease_expires_at": (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+            },
+        }
+        status = {"tasks": [task]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "providers": {"codex": {}},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        event = {
+            "event_id": "evt-expired-1",
+            "task_id": "TASK-NO-START-001",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "reason": supervisor.REASON_HELPER_CLAIM,
+            "provider": "codex",
+            "task": deepcopy(task),
+        }
+        state = {
+            "queue": {"events": {"evt-expired-1": {"status": "pending"}}},
+            "workers": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(supervisor, "start_worker_for_request") as mock_start,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
+
+        # Worker MUST NOT start on an expired lease
+        mock_start.assert_not_called()
+        self.assertEqual(state["queue"]["events"]["evt-expired-1"]["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-expired-1"]["skip_reason"], "stale_dispatch_event")
+
+    def test_helper_claim_exactly_once_worker_start(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "TASK-EXACTLY-ONCE-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 1,
+                "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            },
+        }
+        status = {"tasks": [task]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "worker_runtime": {
+                "heartbeat_stale_seconds": 300,
+                "heartbeat_grace_seconds": 60,
+            },
+            "providers": {"codex": {}},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        task_map = {task["id"]: task}
+        event = supervisor.dispatch_engine.build_dispatch_event(
+            task, "Codex", supervisor.REASON_HELPER_CLAIM, task_map
+        )
+        event["event_id"] = "evt-exact-1"
+        event["provider"] = "codex"
+        event["message"] = "Execute helper claim work"
+        state = {
+            "queue": {"events": {"evt-exact-1": {"status": "pending"}}},
+            "workers": {},
+        }
+
+        start_calls = []
+
+        def fake_start(_config, state_arg, _report, _req, queue_event_id=None, **_kwargs):
+            start_calls.append(queue_event_id)
+            run_id = f"run-{queue_event_id}"
+            state_arg["workers"][run_id] = {
+                "run_id": run_id,
+                "task_id": "TASK-EXACTLY-ONCE-001",
+                "queue_event_id": queue_event_id,
+                "status": "running",
+                "logical_agent_id": "codex",
+                "request_snapshot": {"reason": supervisor.REASON_HELPER_CLAIM, "metadata": {"task": task}},
+            }
+            return True, run_id, {"auto_delivered": True}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "ok")),
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=fake_start),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            # First tick processes the queue: starts worker
+            supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
+            self.assertEqual(len(start_calls), 1)
+
+            # Second tick with the same event in queue: MUST NOT start a second worker
+            supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
+            self.assertEqual(len(start_calls), 1)
+
+            # Duplicate event for the same task in queue: MUST NOT start a second worker
+            dup_event = deepcopy(event)
+            dup_event["event_id"] = "evt-exact-2"
+            with mock.patch.object(supervisor, "load_event_queue", return_value=[dup_event]):
+                supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
+                self.assertEqual(len(start_calls), 1)
+
+    def test_dispatch_rollback_on_commit_failure(self) -> None:
+        task1 = {
+            "id": "TASK-FAIL-COMMIT-1",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+        }
+        task2 = {
+            "id": "TASK-SUCCEED-COMMIT-2",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+        }
+        status = {"tasks": [task1, task2]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "account_pools": {"codex_pool": {"max_concurrent": 2, "state": "healthy"}},
+            "ready_dispatcher": {
+                "max_dispatches_per_tick": 4,
+                "helper_execution_lease": {
+                    "enabled": True,
+                    "lease_seconds": 1800,
+                    "max_claims_per_agent": 1,
+                    "max_claims_per_tick": 2,
+                    "require_owner_saturated": False,
+                },
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "providers": {},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "account_pool": "codex_pool"},
+                "codex_slot_1": {"id": "codex_slot_1", "display_name": "Codex", "slot_id": "codex_slot_1", "account_pool": "codex_pool", "dispatch_slot_for_pool": "codex_pool"},
+                "codex_slot_2": {"id": "codex_slot_2", "display_name": "Codex", "slot_id": "codex_slot_2", "account_pool": "codex_pool", "dispatch_slot_for_pool": "codex_pool"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "dispatch_state": {},
+        }
+
+        # First task commit fails; second task commit succeeds
+        commit_attempts = []
+
+        def mock_commit(_config, _status):
+            if len(commit_attempts) == 0:
+                commit_attempts.append("fail")
+                return False
+            commit_attempts.append("success")
+            return True
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", side_effect=mock_commit),
+            mock.patch.object(supervisor, "queue_dispatch_event_safely", return_value=True) as mock_queue,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+        # task1 rolled back its uncommitted lease
+        self.assertNotIn("helper_execution_lease", task1)
+        # task2 was successfully claimed and committed because task1's rollback unblocked Codex's max_claims_per_agent=1 cap
+        self.assertIn("helper_execution_lease", task2)
+        self.assertEqual(task2["helper_execution_lease"]["claimed_by"], "Codex")
+        self.assertEqual(mock_queue.call_count, 1)
+
+    def test_stale_or_expired_lease_cannot_clear_newer_generation(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        # Task has a newer generation (generation 2)
+        gen2_claim = {
+            "claimed_by": "Codex",
+            "generation": 2,
+            "run_id": "helper-run-2",
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        config, state, status = self._helper_lease_fixture(current_claim=gen2_claim)
+        # Old worker is from generation 1
+        state["workers"]["helper-run-1"]["status"] = "completed"
+        old_dispatched = state["workers"]["helper-run-1"]["request_snapshot"]["metadata"]["task"]
+        old_dispatched["helper_execution_lease"]["generation"] = 1
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        # Generation 2 claim on the task MUST NOT be cleared by older generation 1 worker termination
+        self.assertIn("helper_execution_lease", status["tasks"][0])
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["generation"], 2)
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["run_id"], "helper-run-2")
+        terminate_worker_pid.assert_not_called()
+
+    def test_redispatch_preserves_same_generation_live_lease(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "TASK-REDISPATCH-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "original_owner": "Claude",
+                "generation": 4,
+                "claimed_at": now.isoformat().replace("+00:00", "Z"),
+                "lease_expires_at": (now + timedelta(minutes=25)).isoformat().replace("+00:00", "Z"),
+                "reason": "owner_capacity_saturated_or_dispatch_sla_exceeded",
+            },
+        }
+        status = {"tasks": [task]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "max_dispatches_per_tick": 4,
+                "helper_execution_lease": {
+                    "enabled": True,
+                    "lease_seconds": 1800,
+                    "max_claims_per_agent": 2,
+                    "max_claims_per_tick": 2,
+                    "require_owner_saturated": False,
+                },
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "providers": {},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "dispatch_state": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition") as mock_commit,
+            mock.patch.object(supervisor, "queue_dispatch_event_safely", return_value=True) as mock_queue,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+        # Retains same generation 4 without re-committing or bumping generation
+        self.assertEqual(task["helper_execution_lease"]["generation"], 4)
+        mock_commit.assert_not_called()
+        mock_queue.assert_called_once()
+        queued_event = mock_queue.call_args[0][1]
+        self.assertEqual(queued_event["task"]["helper_execution_lease"]["generation"], 4)
+
     def test_lower_priority_worker_is_superseded_when_finalize_backlog_exists(self) -> None:
         config = {
             "schema": {
