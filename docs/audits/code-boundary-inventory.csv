@@ -375,6 +375,7 @@ modules/avm/domain/valuation.py,product_system,product_required,true,,engineerin
 modules/avm/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/infrastructure/lifelines_survival.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/avm/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/avm/tests/test_avm_depreciation_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/avm/tests/test_avm_production_execution.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/avm/tests/test_deal_outcome_and_calibration.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/avm/tests/test_lifelines_liquidity_survival.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -898,6 +899,7 @@ tests/e2e/test_release_gate_registry.py,verification,verification_only,false,dev
 tests/e2e/test_release_target.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_remote_staging_proof_checker.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_seed_product_e2e_data.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/governance/test_avm001_disposition.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/governance/test_decision_policy.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/governance/test_evidence_ladder_boundary.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/governance/test_netplan_disclosure_policy.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
