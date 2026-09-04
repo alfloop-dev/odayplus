@@ -113,7 +113,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.SITE_REVIEWER: frozenset(
         _grant("operator_console", Action.VIEW)
-        | _grant("heatzone", Action.VIEW)
+        | _grant("heatzone", Action.VIEW, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("listing", Action.VIEW, Action.CREATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE, Action.APPROVE, Action.OVERRIDE)
     ),

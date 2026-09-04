@@ -1019,7 +1019,7 @@ def test_an_outcome_for_an_unpublished_cell_is_refused() -> None:
 def test_the_roles_that_decide_a_merge_cannot_write_its_evidence() -> None:
     """Structural separation: whoever approves a composition cannot record for it.
 
-    The two roles checked here are exactly the ones granted heatzone approval
+    The three roles checked here are exactly the ones granted heatzone approval
     and override, so this is the separation itself rather than a sample of it.
     """
     bundle = _bundle_with_registered_cell()
@@ -1028,7 +1028,7 @@ def test_the_roles_that_decide_a_merge_cannot_write_its_evidence() -> None:
         cell_id="cell-hz004-00", window_start=WINDOW_START, window_end=WINDOW_END
     )
 
-    for role in (Role.EXPANSION_USER, Role.EXECUTIVE):
+    for role in (Role.EXPANSION_USER, Role.SITE_REVIEWER, Role.EXECUTIVE):
         response = _record_outcome(
             client,
             body,
@@ -1038,6 +1038,53 @@ def test_the_roles_that_decide_a_merge_cannot_write_its_evidence() -> None:
             },
         )
         assert response.status_code == 403, role
+
+
+def test_heatzone_composition_approver_set_is_pinned(monkeypatch, tmp_path) -> None:
+    """Pin the authorized approver set for composition decisions.
+
+    Role.SITE_REVIEWER (expansion-manager), Role.EXPANSION_USER (expansion-staff),
+    and Role.EXECUTIVE are granted OVERRIDE/ROLLBACK authority on heatzone.
+    Unprivileged roles (AUDITOR, MARKETING_MANAGER, REGIONAL_SUPERVISOR) are denied HTTP 403.
+    """
+    bundle = _bundle_with_evidence()
+    use_matured_receipt(monkeypatch, tmp_path)
+    client = TestClient(create_app(persistence=bundle))
+
+    proposal_resp = _evaluate(client)
+    assert proposal_resp.status_code == 200
+    proposal_id = proposal_resp.json()["proposals"][0]["proposal_id"]
+
+    # 1. Privileged approvers can reach approve
+    for role in (Role.SITE_REVIEWER, Role.EXPANSION_USER, Role.EXECUTIVE):
+        resp = client.post(
+            f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/preview",
+            headers={**auth_headers(role, subject="approver"), "x-tenant-id": TENANT_ID},
+        )
+        assert resp.status_code == 200, f"Role {role} must be permitted to preview"
+
+    # 2. Unprivileged roles are denied on approve/override/rollback
+    for unprivileged in (Role.AUDITOR, Role.MARKETING_MANAGER, Role.REGIONAL_SUPERVISOR):
+        app_resp = client.post(
+            f"/api/v1/heatzones/merge-split/proposals/{proposal_id}/approve",
+            json={"notes": "unauthorized attempt"},
+            headers={**auth_headers(unprivileged, subject="attacker"), "x-tenant-id": TENANT_ID},
+        )
+        assert app_resp.status_code == 403, f"Role {unprivileged} must be denied approve"
+
+        ovr_resp = client.post(
+            "/api/v1/heatzones/zones/MZ-00112233/override",
+            json={"override_reason": "unauthorized attempt"},
+            headers={**auth_headers(unprivileged, subject="attacker"), "x-tenant-id": TENANT_ID},
+        )
+        assert ovr_resp.status_code == 403, f"Role {unprivileged} must be denied override"
+
+        rb_resp = client.post(
+            "/api/v1/heatzones/zones/MZ-00112233/rollback",
+            json={"revert_reason": "unauthorized attempt"},
+            headers={**auth_headers(unprivileged, subject="attacker"), "x-tenant-id": TENANT_ID},
+        )
+        assert rb_resp.status_code == 403, f"Role {unprivileged} must be denied rollback"
 
 
 def test_recorded_outcomes_reach_the_merge_split_engine(monkeypatch, tmp_path) -> None:

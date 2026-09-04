@@ -32,10 +32,10 @@ export const MERGE_DENIED_NOTE =
 // Role gating for HeatZone composition decisions (ODP-FR-HZ-006).
 //
 // Mirrors the server's `require_permission("heatzone", OVERRIDE)`. Of the
-// console's roles, operatorSecurityHeaders() maps only `expansion-manager` onto
-// `expansion_user`, which is the role ROLE_PERMISSIONS grants heatzone
-// OVERRIDE and ROLLBACK. Presentation only: the API re-derives the operator
-// from the authenticated principal and re-checks the permission on every write.
+// console's roles, `expansion-manager` (backed by platform role site_reviewer / executive)
+// holds heatzone OVERRIDE and ROLLBACK in shared/auth/rbac.py ROLE_PERMISSIONS.
+// Presentation only: the API re-derives the operator from the authenticated
+// principal and re-checks the permission on every write.
 
 const COMPOSITION_DECISION_ROLES: readonly OperatorRoleId[] = ["expansion-manager"];
 

@@ -156,3 +156,19 @@ Stamped baseline fixture（`tests/integration/test_official_real_estate_postgres
 2. **Durable 拆分顯式 Fail-Closed**：目前持久層尚未實作受信任的 geo barrier 寫入 pipeline（`geo.h3_cells` 無 barrier 欄位）。當呼叫端嘗試對持久層未註冊 barrier 的空間單元紀錄帶有 `barrier_side` 的實績時，路由明確回傳 `422 HZ004_BARRIER_UNBACKED`；合併／拆分評估引擎對持久層候選拆分熱區，亦依據已宣告的命名規則 `no_side_labelled_hz004_outcomes_for_every_member_cell` 顯式拒絕與棄權，杜絕無地理障礙證據的猜測性拆分。
 3. **測試保證**：於 `tests/integration/test_heatzone_composition_api.py`（`test_durable_path_side_based_split_refused_and_barrier_unbacked`）與 `tests/models/test_heatzone_merge_split.py`（`test_durable_evidence_repository_refuses_split_when_cells_lack_barrier_sides`）新增持久層真實路徑之斷言測試。
 
+---
+
+## 8. 審查回應與契約／RBAC 對齊（Round 8）
+
+針對第八輪審查退回之項目處置如下：
+
+### 8.1 OpenAPI 契約與 TypeScript Client 型別重新產製
+- 透過 `delivery_toolchain/openapi/export_openapi.py` 重新匯出 FastAPI live app schema 至 `packages/openapi-client/openapi.json`（含本分支新增之熱區合併／拆分提案與 HZ-004 實績寫入等路由 schema）。
+- 透過 `delivery_toolchain/openapi/generate_client.py` 重新生成 `packages/openapi-client/src/generated/types.ts`。
+- 契約一致性驗證：`tests/contract/test_openapi_artifact_and_client.py` 全數通過。
+
+### 8.2 RBAC 核准者集合與 Operator Console 角色對齊
+- **RBAC 授權修正**：於 `shared/auth/rbac.py` 中，將 `Role.SITE_REVIEWER`（對應 Operator Console 之 `expansion-manager` persona）補上 `heatzone` 之 `Action.OVERRIDE` 與 `Action.ROLLBACK` 權限，消除前端 `canDecideHeatZoneComposition` 允許 `expansion-manager` 但後端在生產模式下因缺少權限而 403 的語意矛盾。
+- **職責分離與核准者集合測試**：於 `tests/integration/test_heatzone_composition_api.py` 新增 `test_heatzone_composition_approver_set_is_pinned()`，嚴格鎖定具決策權限之角色集合（`Role.SITE_REVIEWER`、`Role.EXPANSION_USER`、`Role.EXECUTIVE` 可進行 preview/approve/override/rollback；`Role.AUDITOR`、`Role.MARKETING_MANAGER`、`Role.REGIONAL_SUPERVISOR` 確實驗證為 403 拒絕），並於 `test_the_roles_that_decide_a_merge_cannot_write_its_evidence` 斷言決策者皆不可寫入 HZ-004 實績證據。
+
+
