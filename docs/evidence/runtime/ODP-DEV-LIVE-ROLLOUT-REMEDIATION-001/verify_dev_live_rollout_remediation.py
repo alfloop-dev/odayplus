@@ -4,7 +4,7 @@
 Validates the fail-closed evidence produced by the latest owner run:
 1. Evidence files existence and schema structure.
 2. Candidate drift detection integrity between the repository manifest and origin/dev.
-3. Hosted build phase run 33627271466 and exact artifact digest syntax.
+3. Hosted build phase run 33844319992 and exact artifact digest syntax.
 4. Rollback, lease-authority, and GCP-readback blockers are recorded without success claims.
 5. Historical receipt immutability is represented by seven hashes.
 """
@@ -25,8 +25,10 @@ TRANSCRIPT_TXT = EVIDENCE_DIR / "live-readback-transcript.txt"
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-EXPECTED_CURRENT_CANDIDATE = "d858e1c3a75489b5ecae5f67920fb314289a93d9"
-EXPECTED_BUILD_RUN_ID = 33642907363
+EXPECTED_CURRENT_CANDIDATE = "1edb2f834cbf38ccd489cd999802098076e891b7"
+EXPECTED_BUILD_RUN_ID = 33844319992
+EXPECTED_RELEASE_ID = "odp-1edb2f834cbf"
+EXPECTED_MANIFEST_DIGEST = "sha256:c9ff71c7557c4009487cf6e093280f47369db2fdd49a17ac8b9e1aa472e8c2c7"
 
 
 def verify_evidence_bundle() -> list[str]:
@@ -93,6 +95,12 @@ def verify_evidence_bundle() -> list[str]:
         errors.append("hosted build release_sha does not match current candidate")
     if build_exec.get("result") != "success":
         errors.append("hosted build result must be success")
+    if build_exec.get("release_id") != EXPECTED_RELEASE_ID:
+        errors.append("hosted build release_id does not match current candidate")
+    if build_exec.get("manifest_digest") != EXPECTED_MANIFEST_DIGEST:
+        errors.append("hosted build manifest_digest does not match the current manifest")
+    if build_exec.get("run_url") != f"https://github.com/alfloop-dev/odayplus/actions/runs/{EXPECTED_BUILD_RUN_ID}":
+        errors.append("hosted build run_url does not match the expected run")
     if build_exec.get("handoff_manifest_published") is not True:
         errors.append("handoff_manifest_published must be true")
     if build_exec.get("image_handoff_published") is not True:
@@ -111,6 +119,13 @@ def verify_evidence_bundle() -> list[str]:
         ref = published_images.get(comp, "")
         if not IMAGE_DIGEST_PATTERN.fullmatch(ref):
             errors.append(f"published_images[{comp}] '{ref}' does not match immutable digest pattern")
+
+    if len(published_images) != 4:
+        errors.append("published_images must contain exactly api, web, worker, and scheduler")
+    if len(build_exec.get("signature_refs", [])) != 4:
+        errors.append("hosted build must record four Cosign signature refs")
+    if len(build_exec.get("sbom_refs", [])) != 4:
+        errors.append("hosted build must record four SBOM refs")
 
     for sig in build_exec.get("signature_refs", []):
         if not IMAGE_DIGEST_PATTERN.fullmatch(sig):
@@ -143,6 +158,23 @@ def verify_evidence_bundle() -> list[str]:
         errors.append("current GCP readback must record hosted pre-deploy target absence")
     if live_state.get("deployment_commands_run") is not False:
         errors.append("deployment_commands_run must be false")
+
+    absence = live_state.get("target_absence_receipt", {})
+    if absence.get("candidate_sha") != EXPECTED_CURRENT_CANDIDATE:
+        errors.append("target absence readback must bind to the current candidate")
+    targets = absence.get("api_service"), absence.get("web_service"), absence.get("migration_job"), absence.get("worker_job"), absence.get("scheduler_job")
+    if len(targets) != 5 or any(not isinstance(target, dict) or target.get("exists") is not False for target in targets):
+        errors.append("all five release targets must be explicitly absent in pre-deploy readback")
+
+    source_posture = audit.get("source_posture", {})
+    if source_posture.get("all_sources_disabled") is not True:
+        errors.append("source posture must record all sources disabled")
+    if source_posture.get("zero_credentials_present") is not True:
+        errors.append("source posture must record zero provider credentials")
+    if source_posture.get("total_sources_audited") != 16:
+        errors.append("source posture must audit all 16 sources")
+    if source_posture.get("egress_posture") != "default-deny":
+        errors.append("source posture must record default-deny egress")
 
     return errors
 
