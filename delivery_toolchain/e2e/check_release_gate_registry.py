@@ -612,6 +612,16 @@ def validate_registry(registry: dict[str, Any], root: Path = ROOT) -> list[str]:
     release = registry.get("release")
     if isinstance(release, dict) and release.get("decision") == "go":
         target = release.get("admission_target")
+        target_gates = [
+            gate
+            for gate in gates
+            if isinstance(gate, dict) and (target is None or gate.get("admission_target") == target)
+        ] if isinstance(gates, list) else []
+        if not target_gates:
+            errors.append(
+                f"no gate is bound to admission_target {target!r}; the registry admits "
+                "nothing for this environment"
+            )
         open_gates = blocking_gates(registry, target=target)
         if open_gates:
             errors.append(
@@ -626,7 +636,18 @@ def build_report(registry: dict[str, Any], errors: list[str]) -> dict[str, Any]:
     release = registry.get("release") if isinstance(registry.get("release"), dict) else {}
     gates = registry.get("gates") if isinstance(registry.get("gates"), list) else []
     target = release.get("admission_target") if isinstance(release, dict) else None
+    target_gates = [
+        gate
+        for gate in gates
+        if isinstance(gate, dict) and (target is None or gate.get("admission_target") == target)
+    ]
     open_gates = blocking_gates(registry, target=target)
+    is_go = (
+        release.get("decision") == "go"
+        and len(target_gates) > 0
+        and not open_gates
+        and not errors
+    )
     return {
         "registry_id": registry.get("registry_id"),
         "candidate_sha": release.get("candidate_sha"),
@@ -641,7 +662,7 @@ def build_report(registry: dict[str, Any], errors: list[str]) -> dict[str, Any]:
         ],
         "blocking_gates": open_gates,
         "integrity_errors": errors,
-        "release_state": "GO" if release.get("decision") == "go" and not open_gates else "NO-GO",
+        "release_state": "GO" if is_go else "NO-GO",
     }
 
 

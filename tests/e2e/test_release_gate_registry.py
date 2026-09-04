@@ -229,6 +229,47 @@ def test_blocking_gates_filters_by_target() -> None:
     assert module.blocking_gates(registry, target="staging") == ["gate-2"]
 
 
+def test_go_decision_with_no_gates_bound_to_admission_target_is_rejected() -> None:
+    """Fail-closed guard: GO decision is rejected if no gate is bound to release.admission_target."""
+    def mutate(registry: dict[str, Any]) -> None:
+        # All 7 gates are cleared but bound to dev
+        clear_all_gates(registry)
+        # Release targets staging, but 0 gates are bound to staging
+        registry["release"]["stage"] = "dev-verified"
+        registry["release"]["environment"] = "dev"
+        registry["release"]["admission_target"] = "staging"
+        registry["release"]["decision"] = "go"
+        registry["release"]["human_signoff"] = {"approver": "Human/Ops", "date": "2026-07-30"}
+
+    module = load_checker_module()
+    target_registry = mutated(mutate)
+    errors = module.validate_registry(target_registry)
+    assert any("no gate is bound to admission_target 'staging'" in error for error in errors)
+    report = module.build_report(target_registry, errors)
+    assert report["release_state"] == "NO-GO"
+
+
+def test_blocked_gates_with_unmatched_target_fails_closed_under_require_go(tmp_path: Path) -> None:
+    """When all gates are blocked and bound to dev, staging GO target fails closed and does not exit 0."""
+    registry = load_committed_registry()
+    registry["release"]["stage"] = "dev-verified"
+    registry["release"]["environment"] = "dev"
+    registry["release"]["admission_target"] = "staging"
+    registry["release"]["decision"] = "go"
+    registry["release"]["human_signoff"] = {"approver": "Human/Ops", "date": "2026-07-30"}
+
+    module = load_checker_module()
+    errors = module.validate_registry(registry)
+    assert any("no gate is bound to admission_target 'staging'" in error for error in errors)
+    report = module.build_report(registry, errors)
+    assert report["release_state"] == "NO-GO"
+
+    reg_path = tmp_path / "reg.json"
+    reg_path.write_text(json.dumps(registry), encoding="utf-8")
+    rc = module.main(["--registry", str(reg_path), "--require-go"])
+    assert rc == 1
+
+
 def test_unknown_decision_value_is_rejected() -> None:
     def mutate(registry: dict[str, Any]) -> None:
         registry["release"]["decision"] = "conditional-go"
