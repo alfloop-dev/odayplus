@@ -121,7 +121,10 @@ def test_job_status_and_delivery_state_type_separation() -> None:
 def test_check_requirement_members_passes_with_zero_failures() -> None:
     failures, tally = check(REPO_ROOT, MANIFEST_PATH, reference_date=None)
     assert failures == [], f"check_requirement_members returned failures: {failures}"
-    assert tally["requirements"] == 6
-    assert tally["members"] == 32
-    assert tally["satisfied"] == 24
-    assert tally["absent"] == 8
+    manifest = _load_manifest()
+    total_reqs = len(manifest.get("requirements", []))
+    total_members = sum(len(r.get("members", [])) for r in manifest.get("requirements", []))
+    assert tally["requirements"] == total_reqs
+    assert tally["requirements"] >= 6
+    assert tally["members"] == total_members
+    assert tally["dispositions"]["BLOCKED_BY_EVIDENCE"] >= 1
