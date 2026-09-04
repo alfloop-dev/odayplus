@@ -24,6 +24,8 @@ def _rows() -> list[dict[str, object]]:
             "entity_id": "store-001",
             "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
             "prediction_origin_time": PREDICTION_TIME.isoformat(),
+            "data_quality_score": 0.98,
+            "confidence": 0.95,
             "features": {
                 "event_time": SNAPSHOT_TIME.isoformat(),
                 "governed_feature": 1,

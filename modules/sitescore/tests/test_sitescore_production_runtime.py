@@ -345,3 +345,37 @@ def test_production_scoring_accepts_declared_output_transform(tmp_path: Path) ->
         assert reports[0].m12.p50 == 106_531.25
     finally:
         engine.close()
+
+
+def test_production_model_scoring_fails_closed_on_missing_quality(tmp_path: Path) -> None:
+    engine, repository = _repository(tmp_path / "sitescore-quality.sqlite3")
+    runtime = RecordingRuntime()
+    try:
+        feature_missing = _feature()  # _feature() has no average_confidence or data_quality_score
+        reports = SiteScoreReportService(
+            repository=repository,
+            model_runtime=runtime,
+            runtime_mode="production",
+        ).score_candidates([feature_missing], prediction_origin_time=NOW)
+        assert reports[0].confidence == 0.0
+        assert reports[0].recommendation.value == "INVESTIGATE"
+        assert "missing_source_confidence" in reports[0].warnings
+        assert "missing_data_quality_score" in reports[0].warnings
+        assert "missing_source_confidence" in reports[0].key_negative_factors
+        assert "missing_data_quality_score" in reports[0].key_negative_factors
+
+        # Measured feature produces complete confidence
+        feature_measured = _feature() | {
+            "average_confidence": 0.95,
+            "data_quality_score": 0.90,
+        }
+        measured_reports = SiteScoreReportService(
+            repository=repository,
+            model_runtime=runtime,
+            runtime_mode="production",
+        ).score_candidates([feature_measured], prediction_origin_time=NOW)
+        assert measured_reports[0].confidence == pytest.approx(0.855, abs=0.001)
+        assert "missing_source_confidence" not in measured_reports[0].warnings
+        assert "missing_data_quality_score" not in measured_reports[0].warnings
+    finally:
+        engine.close()

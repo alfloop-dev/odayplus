@@ -663,6 +663,40 @@ class BoundedModelTrainingRelease:
             metadata={"validation_run_id": validation.validation_run_id},
         )
         run_id = f"training-{spec.model_name}-{version}-{snapshot_id}"
+        backtest_receipt = self.service.evaluate_backtest(
+            model_name=spec.model_name,
+            model_version=version,
+            dataset_snapshot_id=snapshot_id,
+            code_version=self.git_sha or "unversioned-dev",
+            metrics=metrics,
+            baseline_metrics=temporal.baseline_metrics,
+            thresholds=(
+                MetricThreshold(
+                    "normalized_mae",
+                    max_value=spec.max_normalized_mae,
+                ),
+                MetricThreshold("observed_event_rate", min_value=0.02),
+            ),
+            decision_policy=decision_policy,
+            calibration_summary={"temporal_validation": True},
+            requested_by=self.actor,
+        )
+        backtest_payload = {
+            "artifact_type": "backtest_report",
+            "backtest_receipt": backtest_receipt.to_dict(),
+        }
+        self.artifact_store.put_artifact(
+            model_name=spec.model_name,
+            version=version,
+            kind=ArtifactKind.BACKTEST_REPORT,
+            data=_canonical_json(backtest_payload),
+            content_type="application/json",
+            metadata={
+                "backtest_receipt_id": backtest_receipt.receipt_id,
+                "dataset_snapshot_id": snapshot_id,
+                "run_id": run_id,
+            },
+        )
         model_version = ModelVersion(
             model_name=spec.model_name,
             version=version,
