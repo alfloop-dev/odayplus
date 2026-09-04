@@ -28,6 +28,7 @@ def _sync_supervisor_scope() -> None:
         'task_index_from_status', 
         'current_dispatch_event_key', 
         'dispatch_priority_for_task', 
+        'is_task_review_dispatch_eligible',
         'agent_dispatch_loads', 
         'configured_worker_slot_total', 
         'default_max_dispatches_per_tick', 
@@ -640,7 +641,6 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
-    reviewer_field = schema.get("reviewer_field", "reviewer")
     target_agent = str(event.get("target_display_name") or display_name_for(config, str(event.get("target_agent") or "")))
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
@@ -650,7 +650,13 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
     eligible = False
     if reason == REASON_REVIEW_READY:
-        eligible = task_status in review_statuses and task.get(reviewer_field) == target_agent
+        eligible = is_task_review_dispatch_eligible(
+            config,
+            task,
+            target_agent,
+            review_statuses=review_statuses,
+            finalize_statuses=finalize_statuses,
+        )
     elif reason == REASON_OWNED_FINALIZE:
         eligible = task_status in finalize_statuses and task.get(owner_field) == target_agent
     elif reason == REASON_OWNED_IN_PROGRESS:
@@ -684,8 +690,60 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
 
     return str(build_dispatch_event(task, target_agent, reason, task_map).get("key") or "")
 
-@_entrypoint
 
+@_entrypoint
+def is_task_review_dispatch_eligible(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+    *,
+    review_statuses: set[str] | None = None,
+    finalize_statuses: set[str] | None = None,
+) -> bool:
+    """Return whether a task is eligible for reviewer dispatch (review_ready_dispatch).
+
+    A task is review-ready only when in genuine review status, has not been approved
+    (no approved_head, not in finalize statuses), has not been queued/routed to merge
+    (no merge_route), has independent owner/reviewer, and the target agent matches the reviewer.
+    """
+    if not isinstance(task, dict) or not task:
+        return False
+    settings = ready_dispatch_settings(config)
+    rev_statuses = (
+        review_statuses
+        if review_statuses is not None
+        else normalized_status_set(settings.get("review_statuses"), ["review"])
+    )
+    fin_statuses = (
+        finalize_statuses
+        if finalize_statuses is not None
+        else normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
+    )
+    task_status = str(task.get("status") or "").lower()
+    if task_status not in rev_statuses or task_status in fin_statuses:
+        return False
+    if task.get("approved_head"):
+        return False
+    if task.get("merge_route"):
+        return False
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+    task_owner = str(task.get(owner_field) or "")
+    task_reviewer = str(task.get(reviewer_field) or "")
+    norm_target = normalize_agent_id(target_agent or "")
+    norm_owner = normalize_agent_id(task_owner)
+    norm_reviewer = normalize_agent_id(task_reviewer)
+    if not norm_target or norm_reviewer != norm_target:
+        return False
+    if norm_owner == norm_reviewer:
+        return False
+    if not review_is_independent(config, task_owner, target_agent):
+        return False
+    return True
+
+
+@_entrypoint
 def dispatch_priority_for_task(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -703,15 +761,19 @@ def dispatch_priority_for_task(
     )
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
-    reviewer_field = schema.get("reviewer_field", "reviewer")
     task_status = str(task.get("status") or "").lower()
     tmap = task_map if task_map is not None else {str(task.get("id") or ""): task}
 
     norm_target = normalize_agent_id(agent_name or "")
     task_owner = normalize_agent_id(str(task.get(owner_field) or ""))
-    task_reviewer = normalize_agent_id(str(task.get(reviewer_field) or ""))
 
-    if task_status in review_statuses and task_reviewer == norm_target:
+    if is_task_review_dispatch_eligible(
+        config,
+        task,
+        agent_name,
+        review_statuses=review_statuses,
+        finalize_statuses=finalize_statuses,
+    ):
         return 0
     if task_status in finalize_statuses and task_owner == norm_target:
         approved_head = task.get("approved_head")
@@ -1887,18 +1949,13 @@ def dispatch_ready_tasks(
 
             reason = None
             priority = None
-            if task_status in review_statuses and norm_task_reviewer == norm_target:
-                # The status CLI rejects identical owner/reviewer assignments,
-                # but dispatch must still fail closed if a stale or externally
-                # edited snapshot reaches the Supervisor. Never spend a worker
-                # slot on an approval that would be an owner self-review.
-                if norm_task_owner == norm_task_reviewer:
-                    continue
-                if not review_is_independent(config, str(task_owner or ""), target_agent):
-                    # The reassignment helper above repairs this when another
-                    # healthy pool is available.  Do not write an event on
-                    # every dispatch tick if all alternate pools are busy.
-                    continue
+            if is_task_review_dispatch_eligible(
+                config,
+                task,
+                target_agent,
+                review_statuses=review_statuses,
+                finalize_statuses=finalize_statuses,
+            ):
                 reason = "review_ready_dispatch"
                 priority = 0
             elif task_status in finalize_statuses and norm_task_owner == norm_target:
