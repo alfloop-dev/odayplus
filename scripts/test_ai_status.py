@@ -6487,6 +6487,116 @@ class TaskPrLookupScopeTests(unittest.TestCase):
 
         self.assertEqual([call[2] for call in calls], ["task/T-2", "task-T-2"])
 
+    def test_ci_status_excludes_pending_task_review_gate(self) -> None:
+        def fake_run(args, *, cwd=None):
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {
+                        "__typename": "CheckRun",
+                        "name": "orchestrator",
+                        "workflowName": "orchestrator",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                    },
+                    {
+                        "__typename": "CheckRun",
+                        "name": "product",
+                        "workflowName": "product",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                    },
+                    {
+                        "__typename": "StatusContext",
+                        "context": "task-review-gate",
+                        "state": "PENDING",
+                    },
+                ],
+            }
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], 100)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TASK-REV-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("OPEN", "success"))
+
+    def test_ci_status_fails_closed_when_only_task_review_gate_present(self) -> None:
+        def fake_run(args, *, cwd=None):
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {
+                        "__typename": "StatusContext",
+                        "context": "task-review-gate",
+                        "state": "PENDING",
+                    },
+                ],
+            }
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], 101)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TASK-ONLY-GATE-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("OPEN", "none"))
+
+    def test_ci_status_handles_superseded_runs(self) -> None:
+        def fake_run(args, *, cwd=None):
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {
+                        "__typename": "CheckRun",
+                        "name": "product",
+                        "workflowName": "product",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE",
+                        "completedAt": "2026-09-04T10:00:00Z",
+                    },
+                    {
+                        "__typename": "CheckRun",
+                        "name": "product",
+                        "workflowName": "product",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS",
+                        "completedAt": "2026-09-04T10:15:00Z",
+                    },
+                    {
+                        "__typename": "StatusContext",
+                        "context": "task-review-gate",
+                        "state": "PENDING",
+                    },
+                ],
+            }
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], 102)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TASK-SUPERSEDED-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("OPEN", "success"))
+
+    def test_ci_status_fails_closed_on_unrecognized_or_malformed_checks(self) -> None:
+        def fake_run(args, *, cwd=None):
+            return {
+                "state": "OPEN",
+                "statusCheckRollup": [
+                    {"__typename": "UnknownType", "name": "weird-check"},
+                ],
+            }
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], 103)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TASK-MALFORMED-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("OPEN", "failure"))
+
 
 class TaskBranchNameTests(unittest.TestCase):
     """Look a task up by the branch it records, not by an invented one.

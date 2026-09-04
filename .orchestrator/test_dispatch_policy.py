@@ -1946,3 +1946,81 @@ def test_stale_wake_for_review_ready_skipped_when_ci_is_pending_or_failed() -> N
         assert skip_msg is not None
         assert "no longer eligible" in skip_msg
 
+
+def test_review_dispatch_eligible_when_task_review_gate_pending_but_other_ci_green() -> None:
+    cfg = _base_test_config()
+    task = {
+        "id": "TASK-REV-GATE-PENDING-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 108,
+            "branch": "task/TASK-REV-GATE-PENDING-001",
+            "base_branch": "dev",
+            "remote_sha": "7" * 40,
+        },
+        "depends_on": [],
+        "last_update": "2026-08-20T10:00:00Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    def fake_gh_json(args, *, cwd=None):
+        return {
+            "state": "OPEN",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "orchestrator",
+                    "workflowName": "orchestrator",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                },
+                {
+                    "__typename": "CheckRun",
+                    "name": "product",
+                    "workflowName": "product",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                },
+                {
+                    "__typename": "StatusContext",
+                    "context": "task-review-gate",
+                    "state": "PENDING",
+                },
+            ],
+        }
+
+    supervisor.runtime_ai_status._CI_STATUS_CACHE.clear()
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="7" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "run_gh_json_command", side_effect=fake_gh_json),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_lookup_scope", return_value=(Path("/"), [], 108)),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"TASK-REV-GATE-PENDING-001": task}) == 0
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(
+                supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+            ),
+        ):
+            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert changed is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["task_id"] == "TASK-REV-GATE-PENDING-001"
+    assert queued_events[0]["target_agent"] == "Codex"
+    assert queued_events[0]["reason"] == "review_ready_dispatch"
+
+
