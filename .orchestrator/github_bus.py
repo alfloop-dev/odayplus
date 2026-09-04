@@ -38,6 +38,7 @@ from cross_repo_issue_mapper import (
 )
 from github_cloud_relay import pull_commands, push_status_digest
 from github_command_parser import GitHubCommand, parse_command
+from github_reconciliation import poll_merge_group_runs
 from multi_repo_registry import (
     coordination_enabled,
     repository_slug,
@@ -2503,6 +2504,8 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
         changed = sync_coordination_outbound(config, bus_state, runtime_state) or changed
         status = load_status(config)
         changed = poll_pr_reviews(config, bus_state, status, repo) or changed
+        status = load_status(config)
+        changed = poll_merge_group_runs(config, bus_state, status, repo) or changed
         status = load_status(config)
         changed = poll_issue_comments(config, bus_state, status, repo) or changed
         status = load_status(config)

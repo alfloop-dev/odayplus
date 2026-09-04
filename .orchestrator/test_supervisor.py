@@ -14337,6 +14337,55 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             res = supervisor.evaluate_finalize_gate(task)
             self.assertEqual(res.status, supervisor.READY)
 
+    def test_supervisor_merge_group_reconciliation_exports_and_behavior(self) -> None:
+        """Verify supervisor exports and delegates merge group reconciliation correctly."""
+        self.assertTrue(callable(supervisor.parse_merge_group_pr_number))
+        self.assertTrue(callable(supervisor.correlate_merge_group_task))
+        self.assertTrue(callable(supervisor.reconcile_merge_group_runs))
+        self.assertTrue(callable(supervisor.poll_merge_group_runs))
+
+        self.assertEqual(
+            supervisor.parse_merge_group_pr_number("refs/heads/gh-readonly-queue/dev/pr-555-abc"),
+            555,
+        )
+
+        task = {
+            "id": "ODP-SUP-MG-001",
+            "status": "review_approved",
+            "owner": "Antigravity5",
+            "reviewer": "Claude2",
+            "pr_number": 555,
+        }
+        status = {"tasks": [task], "handoffs": []}
+        bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
+        run = {
+            "id": 999111,
+            "head_branch": "gh-readonly-queue/dev/pr-555-abc",
+            "head_sha": "abc12345",
+            "conclusion": "failure",
+            "status": "completed",
+        }
+
+        with (
+            unittest.mock.patch("github_reconciliation.write_activity_log") as log,
+            unittest.mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+        ):
+            changed = supervisor.reconcile_merge_group_runs(
+                {"github_bus": {"enabled": True}},
+                bus_state,
+                status,
+                "o/r",
+                [run],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(len(status["handoffs"]), 1)
+        self.assertEqual(status["handoffs"][0]["to"], "Claude2")
+        self.assertEqual(status["handoffs"][0]["from"], "Antigravity5")
+        self.assertEqual(status["handoffs"][0]["reason"], "merge_group_failure")
+        log.assert_called_once()
+        self.assertEqual(log.call_args.args[1]["type"], "merge_group_failure_reconciled")
+
     def test_approve_fails_closed_when_approved_head_cannot_be_resolved(self) -> None:
         """B20: approving without freezing a head silently disables the freeze.
 
