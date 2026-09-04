@@ -30,14 +30,18 @@ def test_postcss_advisory_resolved() -> None:
     ), f"PostCSS version {version} is vulnerable"
 
 
-def test_npm_audit_passes() -> None:
-    res = subprocess.run(
-        [sys.executable, str(ROOT / "delivery_toolchain/security/npm_audit_gate.py")],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
+def test_npm_audit_passes(monkeypatch) -> None:
+    gate = _audit_gate()
+    monkeypatch.setattr(
+        gate,
+        "run_npm_audit",
+        lambda cwd=gate.ROOT, timeout=1.0: gate.classify_audit_output(_report_json(), ""),
     )
-    assert res.returncode == 0, f"npm audit gate failed with output:\n{res.stdout}\n{res.stderr}"
+    outcome = gate.audit_with_retry(attempts=1, backoff=0, sleep=lambda _s: None)
+    assert outcome.has_report
+    code, verdict = gate.evaluate(outcome, "high")
+    assert code == gate.EXIT_OK, f"clean audit report must pass the gate: {verdict}"
+    assert "PASS" in verdict
 
 
 def test_pip_audit_passes() -> None:
