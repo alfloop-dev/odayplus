@@ -6995,6 +6995,13 @@
       "RebalanceScenario": {
         "additionalProperties": true,
         "properties": {
+          "acknowledgeableConstraintClasses": {
+            "items": {
+              "$ref": "#/components/schemas/ConstraintClass"
+            },
+            "title": "Acknowledgeableconstraintclasses",
+            "type": "array"
+          },
           "actions": {
             "anyOf": [
               {
@@ -7012,6 +7019,13 @@
               "type": "string"
             },
             "title": "Bindingconstraints",
+            "type": "array"
+          },
+          "blockedConstraintClasses": {
+            "items": {
+              "$ref": "#/components/schemas/ConstraintClass"
+            },
+            "title": "Blockedconstraintclasses",
             "type": "array"
           },
           "capacityDelta": {
@@ -7032,6 +7046,22 @@
             "items": {},
             "title": "Diagnostics",
             "type": "array"
+          },
+          "disclosurePolicyVersionId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disclosurepolicyversionid"
+          },
+          "disclosureUndeclared": {
+            "default": false,
+            "title": "Disclosureundeclared",
+            "type": "boolean"
           },
           "evidenceIds": {
             "items": {
@@ -7247,7 +7277,9 @@
           "modelledConstraintClasses",
           "unmodelledConstraintClasses",
           "modelled_constraint_classes",
-          "unmodelled_constraint_classes"
+          "unmodelled_constraint_classes",
+          "blockedConstraintClasses",
+          "acknowledgeableConstraintClasses"
         ],
         "title": "RebalanceScenario",
         "type": "object"
@@ -7749,6 +7781,49 @@
       "RebalanceSubmitPayload": {
         "additionalProperties": true,
         "properties": {
+          "acknowledgedClasses": {
+            "anyOf": [
+              {
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ConstraintClass"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledgedclasses"
+          },
+          "acknowledgementActorId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledgementactorid"
+          },
+          "acknowledgementReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledgementreason"
+          },
           "actorName": {
             "anyOf": [
               {
@@ -7764,6 +7839,17 @@
             "default": "expansionManager",
             "title": "Actorroleid",
             "type": "string"
+          },
+          "approvalReceiptId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approvalreceiptid"
           },
           "reason": {
             "title": "Reason",
