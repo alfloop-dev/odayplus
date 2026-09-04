@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from models.shared_ml import (
     ProductionExecutionConfigurationError,
@@ -33,13 +34,24 @@ else:
     from models.priceops.binding import ElasticityInputError, resolve_elasticity
     from modules.priceops.application import (
         ApprovalBlockedError,
+        ExplorationService,
         MissingRollbackPlanError,
         PlanNotFoundError,
         PriceOpsService,
+        authorize_exploration,
     )
     from modules.priceops.domain import (
+        ActivationReceipt,
+        ExplorationBudgetExceededError,
+        ExplorationDecision,
+        ExplorationGate,
+        ExplorationGateExpiredError,
+        ExplorationGateRevokedError,
+        ExplorationGrant,
+        ExplorationNotAuthorizedError,
         InvalidScenarioError,
         PriceConstraints,
+        PriceScope,
         PricingPlanItem,
         UnavailableSimulationResultError,
     )
@@ -141,6 +153,39 @@ else:
         outcome_window_start: str | None = None
         outcome_window_end: str | None = None
         generated_at: str | None = None
+
+
+    class PriceOpsExplorationGateRegisterPayload(BaseModel):
+        tenant_id: str = Field(min_length=1)
+        budget_limit: float = Field(gt=0)
+        effective_from: str = Field(min_length=1)
+        effective_to: str = Field(min_length=1)
+        approved_by: str = Field(min_length=1)
+        approval_decision_id: str = Field(min_length=1)
+        approval_id: str = Field(min_length=1)
+        rollback_condition: str = Field(min_length=1)
+        decision_policy_version_id: str = Field(min_length=1)
+        scope_brand_id: str | None = None
+        scope_store_group: str | None = None
+        scope_sku_group: str | None = None
+        gate_id: str | None = None
+
+
+    class PriceOpsExplorationGateRevokePayload(BaseModel):
+        reason: str = Field(min_length=1)
+        revoked_at: str | None = None
+
+
+    class PriceOpsExplorationCandidatesPayload(BaseModel):
+        tenant_id: str = Field(min_length=1)
+        items: list[PriceOpsPlanItemPayload] = Field(min_length=1)
+        scope_brand_id: str | None = None
+        scope_store_group: str | None = None
+        scope_sku_group: str | None = None
+        algorithm: str = "THOMPSON_SAMPLING"
+        seed: int | None = None
+        history: list[tuple[float, float]] | None = None
+        at: str | None = None
 
 
     def create_priceops_router(
@@ -679,6 +724,161 @@ else:
                 body=body,
             )
 
+        # -- Exploration Gates & Bandit (ODP-FR-PRICE-006) -------------------
+        @router.get("/exploration-gates", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        def get_exploration_gates(
+            request: Request,
+            tenant_id_param: str | None = Query(default=None, alias="tenant_id"),
+            brand_id: str | None = Query(default=None),
+            store_group: str | None = Query(default=None),
+            sku_group: str | None = Query(default=None),
+            at: str | None = Query(default=None),
+        ) -> dict[str, Any]:
+            tid = tenant_id(request, tenant_id_param)
+            now = _parse_time(at) or datetime.now(UTC)
+            scope = PriceScope(
+                tenant_id=tid,
+                brand_id=brand_id,
+                store_group=store_group,
+                sku_group=sku_group,
+            )
+            active_gate = service.repository.find_active_gate(scope, at=now)
+            all_gates = service.repository.list_gates(tenant_id=tid)
+            return {
+                "tenant_id": tid,
+                "scope": scope.to_dict(),
+                "active_gate": active_gate.to_dict() if active_gate is not None else None,
+                "authorized": active_gate is not None,
+                "gates": [g.to_dict() for g in all_gates],
+            }
+
+        @router.post("/exploration-gates", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        def register_exploration_gate(
+            body: PriceOpsExplorationGateRegisterPayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            active_tid = tenant_id(request, body.tenant_id)
+            gate = service.repository.save_gate(
+                ExplorationGate(
+                    gate_id=body.gate_id or f"gate-{uuid4()}",
+                    tenant_id=active_tid,
+                    budget_limit=body.budget_limit,
+                    effective_from=_parse_required_time(body.effective_from),
+                    effective_to=_parse_required_time(body.effective_to),
+                    approved_by=body.approved_by,
+                    approval_decision_id=body.approval_decision_id,
+                    approval_id=body.approval_id,
+                    rollback_condition=body.rollback_condition,
+                    decision_policy_version_id=body.decision_policy_version_id,
+                    scope_brand_id=body.scope_brand_id,
+                    scope_store_group=body.scope_store_group,
+                    scope_sku_group=body.scope_sku_group,
+                    budget_consumed=0.0,
+                    revoked_at=None,
+                )
+            )
+            audit_event = _record_audit(
+                active_audit_log,
+                request,
+                "priceops.gate_registered.v1",
+                "create",
+                f"priceops/gates/{gate.gate_id}",
+                {"gate_id": gate.gate_id, "tenant_id": gate.tenant_id},
+            )
+            payload = gate.to_dict()
+            payload["audit_event_id"] = audit_event.event_id
+            payload["correlation_id"] = request.state.correlation_id
+            return payload
+
+        @router.post("/exploration-gates/{gate_id}/revoke", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        def revoke_exploration_gate(
+            gate_id: str,
+            body: PriceOpsExplorationGateRevokePayload,
+            request: Request,
+            tenant_id_param: str | None = Query(default=None, alias="tenant_id"),
+        ) -> dict[str, Any]:
+            tid = tenant_id(request, tenant_id_param)
+            revoked_at = _parse_time(body.revoked_at) or datetime.now(UTC)
+            try:
+                gate = service.repository.revoke_gate(gate_id, tenant_id=tid, revoked_at=revoked_at)
+            except LookupError as exc:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except ExplorationGateRevokedError as exc:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+            audit_event = _record_audit(
+                active_audit_log,
+                request,
+                "priceops.gate_revoked.v1",
+                "revoke",
+                f"priceops/gates/{gate.gate_id}",
+                {"gate_id": gate.gate_id, "reason": body.reason},
+            )
+            payload = gate.to_dict()
+            payload["audit_event_id"] = audit_event.event_id
+            payload["correlation_id"] = request.state.correlation_id
+            return payload
+
+        @router.post("/exploration-candidates", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        def generate_exploration_candidates(
+            body: PriceOpsExplorationCandidatesPayload,
+            request: Request,
+        ) -> dict[str, Any]:
+            active_tid = tenant_id(request, body.tenant_id)
+            now = _parse_time(body.at) or datetime.now(UTC)
+            scope = PriceScope(
+                tenant_id=active_tid,
+                brand_id=body.scope_brand_id,
+                store_group=body.scope_store_group,
+                sku_group=body.scope_sku_group,
+            )
+            try:
+                grant = authorize_exploration(scope, at=now, repository=service.repository)
+            except ExplorationNotAuthorizedError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "EXPLORATION_NOT_AUTHORIZED",
+                        "message": str(exc),
+                        "exploration_enabled": False,
+                    },
+                ) from exc
+
+            explore_service = ExplorationService(repository=service.repository)
+            try:
+                domain_items = [_item_from_payload(item) for item in body.items]
+            except ElasticityInputError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            candidates = explore_service.explorer.generate_candidates(
+                scope=scope,
+                grant=grant,
+                items=domain_items,
+                algorithm=body.algorithm,
+                history=body.history,
+                seed=body.seed,
+            )
+            return {
+                "exploration_enabled": True,
+                "grant": grant.to_dict(),
+                "algorithm": body.algorithm,
+                "candidates": [c.to_dict() for c in candidates],
+            }
+
+        @router.get("/plans/{plan_id}/activation-receipt", dependencies=[Depends(require_permission("priceops", Action.VIEW, engine=authz_engine))])
+        def get_activation_receipt(
+            plan_id: str,
+            request: Request,
+        ) -> dict[str, Any]:
+            receipt = service.repository.get_activation_receipt(plan_id)
+            if receipt is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"No activation receipt found for plan {plan_id}",
+                )
+            return receipt.to_dict()
+
         return router
 
     def _resolve_item(
@@ -852,7 +1052,15 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
-            except (ApprovalBlockedError, MissingRollbackPlanError, ValueError) as exc:
+            except (
+                ApprovalBlockedError,
+                MissingRollbackPlanError,
+                ExplorationNotAuthorizedError,
+                ExplorationBudgetExceededError,
+                ExplorationGateExpiredError,
+                ExplorationGateRevokedError,
+                ValueError,
+            ) as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
