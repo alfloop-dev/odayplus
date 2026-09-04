@@ -184,7 +184,7 @@ def test_production_app_entry_manual_correction_wiring(tmp_path: Path) -> None:
 
     headers = {
         "x-subject-id": "site-reviewer-prod",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-prod-entry",
     }
     payload = {
@@ -234,7 +234,7 @@ def test_durable_sqlite_app_entry_and_multi_rollback_lifecycle(tmp_path: Path) -
 
     headers = {
         "x-subject-id": "reviewer-e2e",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-durable-e2e",
     }
 
@@ -459,19 +459,19 @@ def _address_repositories(tmp_path: Path) -> list[object]:
     ]
 
 
-def test_rollback_restores_geocode_fields_the_correction_changed_implicitly(
+def test_apply_preserves_omitted_geocode_precision_and_rollback_restores_explicit_precision(
     tmp_path: Path,
 ) -> None:
-    """A correction that names only ``latitude`` still rewrites geocode_precision
-    to ``manual``. That implicit write has to reach ``old_value`` or rollback
-    cannot put the original precision back."""
+    """When geocode_precision is omitted from updates, existing precision is preserved.
+    When geocode_precision is explicitly changed, rollback restores the original precision."""
     for repo in _address_repositories(tmp_path):
         address_id = str(uuid4())
         repo.save_address(  # type: ignore[attr-defined]
             _correction_regression_address(address_id, geocode_precision="rooftop")
         )
 
-        _, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+        # 1. Omitted geocode_precision must be preserved on apply and readback
+        applied, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
             address_id,
             updates={"latitude": 25.0500},
             reason="shift the pin to the building entrance",
@@ -480,20 +480,35 @@ def test_rollback_restores_geocode_fields_the_correction_changed_implicitly(
             expected_revision=1,
         )
 
+        assert applied.geocode_precision == "rooftop"
+        assert repo.get_address(address_id).geocode_precision == "rooftop"  # type: ignore[attr-defined]
+        assert "geocode_precision" not in correction.old_value
+
+        # 2. Explicit geocode_precision update changes precision and rollback restores it
+        applied2, correction2, _ = repo.apply_correction(  # type: ignore[attr-defined]
+            address_id,
+            updates={"geocode_precision": "manual"},
+            reason="explicitly setting manual geocode precision",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=2,
+        )
+        assert applied2.geocode_precision == "manual"
         assert repo.get_address(address_id).geocode_precision == "manual"  # type: ignore[attr-defined]
-        assert correction.old_value["geocode_precision"] == "rooftop"
+        assert correction2.old_value["geocode_precision"] == "rooftop"
+        assert correction2.new_value["geocode_precision"] == "manual"
 
         repo.rollback_correction(  # type: ignore[attr-defined]
             address_id,
-            correction_id=correction.correction_id,
-            reason="pin was correct before the edit",
+            correction_id=correction2.correction_id,
+            reason="reverting explicit manual precision override",
             actor_id="operator-1",
             tenant_id="tenant-regress",
         )
 
         restored = repo.get_address(address_id)  # type: ignore[attr-defined]
         assert restored.geocode_precision == "rooftop"
-        assert restored.latitude == 25.0330
+        assert restored.latitude == 25.0500
 
 
 def test_rollback_restores_zero_geocode_confidence(tmp_path: Path) -> None:

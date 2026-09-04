@@ -720,7 +720,7 @@ else:
             principal_from_headers,
             require_permission,
         )
-        from shared.auth import Action, Role
+        from shared.auth import Action, Role, rbac_allows
         from shared.infrastructure.persistence.repositories import (
             InMemoryAddressLocationRepository,
             InMemoryManualCorrectionRepository,
@@ -844,14 +844,7 @@ else:
                 )
             actor_id = principal.subject_id
 
-            authorized_roles = {
-                Role.SITE_REVIEWER,
-                Role.DATA_OWNER,
-                Role.EXPANSION_USER,
-                Role.OPERATIONS_MANAGER,
-                Role.PLATFORM_ADMIN,
-            }
-            if not any(r in authorized_roles for r in principal.roles):
+            if not rbac_allows(principal, "listing", Action.UPDATE):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="PERMISSION_DENIED: Role not authorized for manual corrections",
@@ -990,14 +983,7 @@ else:
                 )
             actor_id = principal.subject_id
 
-            authorized_roles = {
-                Role.SITE_REVIEWER,
-                Role.DATA_OWNER,
-                Role.EXPANSION_USER,
-                Role.OPERATIONS_MANAGER,
-                Role.PLATFORM_ADMIN,
-            }
-            if not any(r in authorized_roles for r in principal.roles):
+            if not rbac_allows(principal, "listing", Action.UPDATE):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="PERMISSION_DENIED: Role not authorized for rollback",

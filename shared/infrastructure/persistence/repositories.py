@@ -1509,9 +1509,9 @@ class DurableManualCorrectionRepository:
 
 # Canonical AddressLocation fields a manual correction can move. The
 # before/after snapshot has to cover all of them rather than only the fields the
-# caller named: applying a correction also derives geocode_precision,
-# geocode_confidence and the h3 cells, so a snapshot limited to the requested
-# fields cannot restore the record on rollback.
+# caller named: applying a correction preserves omitted fields (including
+# geocode_precision and geocode_confidence) and derives h3 cells when coordinates
+# move, so snapshots must capture the full moved state for rollback fidelity.
 _CORRECTABLE_ADDRESS_FIELDS: tuple[str, ...] = (
     "raw_address",
     "normalized_address",
@@ -1563,13 +1563,18 @@ def _build_corrected_address(
         road=updates.get("road", existing.road),
         latitude=new_lat,
         longitude=new_lng,
-        geocode_precision=updates.get("geocode_precision", "manual"),
+        geocode_precision=(
+            updates["geocode_precision"]
+            if "geocode_precision" in updates and updates["geocode_precision"] is not None
+            else existing.geocode_precision
+        ),
         geocode_confidence=float(
-            updates.get(
-                "geocode_confidence",
+            updates["geocode_confidence"]
+            if "geocode_confidence" in updates and updates["geocode_confidence"] is not None
+            else (
                 existing.geocode_confidence
                 if existing.geocode_confidence is not None
-                else 0.0,
+                else 0.0
             )
         ),
         h3_res_8=h3_res_8,

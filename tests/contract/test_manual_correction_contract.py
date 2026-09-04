@@ -82,7 +82,7 @@ def test_submit_correction_success_and_server_actor_provenance(
     # 2. Submit correction with authentic principal headers, but body attempts to SPOOF actor
     headers = {
         "x-subject-id": "real-reviewer-42",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
         "x-correlation-id": "corr-test-001",
     }
@@ -155,7 +155,7 @@ def test_cross_tenant_modification_rejected(
     # Actor belongs to tenant-beta
     headers = {
         "x-subject-id": "user-beta",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-beta",
     }
     payload = {
@@ -169,9 +169,24 @@ def test_cross_tenant_modification_rejected(
     assert "TENANT_SCOPE_DENIED" in response.text
 
 
-def test_unauthorized_role_rejected(
+@pytest.mark.parametrize(
+    "role",
+    [
+        "platform_admin",
+        "data_owner",
+        "operations_manager",
+        "site_reviewer",
+        "auditor",
+        "franchisee",
+        "marketing_manager",
+        "finance_legal",
+        "model_owner",
+    ],
+)
+def test_unauthorized_roles_rejected_for_correction_and_rollback(
     client: TestClient,
     address_repo: InMemoryAddressLocationRepository,
+    role: str,
 ) -> None:
     addr_id = str(uuid4())
     address = AddressLocation(
@@ -185,20 +200,30 @@ def test_unauthorized_role_rejected(
     )
     address_repo.save_address(address)
 
-    # Role auditor is read-only for listing
     headers = {
-        "x-subject-id": "user-auditor",
-        "x-roles": "auditor",
+        "x-subject-id": f"user-{role}",
+        "x-roles": role,
         "x-tenant-id": "tenant-alpha",
     }
     payload = {
         "latitude": 25.1,
         "longitude": 121.1,
-        "reason": "Auditor trying to edit coordinates",
+        "reason": f"Role {role} attempting correction",
     }
 
+    # Correction attempt denied
     response = client.post(f"/listings/addresses/{addr_id}/corrections", json=payload, headers=headers)
     assert response.status_code == 403
+    assert "PERMISSION_DENIED" in response.text
+
+    # Rollback attempt denied
+    rb_response = client.post(
+        f"/listings/addresses/{addr_id}/corrections/{uuid4()}/rollback",
+        json={"reason": f"Role {role} attempting rollback"},
+        headers=headers,
+    )
+    assert rb_response.status_code == 403
+    assert "PERMISSION_DENIED" in rb_response.text
 
 
 def test_missing_or_short_reason_rejected(
@@ -219,7 +244,7 @@ def test_missing_or_short_reason_rejected(
 
     headers = {
         "x-subject-id": "reviewer-1",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
     }
 
@@ -251,7 +276,7 @@ def test_stale_revision_optimistic_concurrency_rejected(
 
     headers = {
         "x-subject-id": "reviewer-1",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
         "If-Match": '"3"',
     }
@@ -287,7 +312,7 @@ def test_rollback_compensation_and_audit(
 
     headers = {
         "x-subject-id": "reviewer-1",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
     }
 
@@ -311,8 +336,8 @@ def test_rollback_compensation_and_audit(
 
     # 4. Rollback correction
     rollback_headers = {
-        "x-subject-id": "admin-1",
-        "x-roles": "platform_admin",
+        "x-subject-id": "reviewer-2",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
     }
     rollback_payload = {
@@ -338,7 +363,7 @@ def test_rollback_compensation_and_audit(
     # Verify rollback audit event
     events = audit_log.list_events()
     rb_event = [e for e in events if e.action == "rollback_manual_override"][-1]
-    assert rb_event.actor == "admin-1"
+    assert rb_event.actor == "reviewer-2"
     assert rb_event.metadata["reason"] == "Reverting incorrect GPS override back to original"
     assert rb_event.metadata["decision_card"]["outcome"] == "ROLLED_BACK"
     assert audit_log.verify_chain().ok is True
@@ -361,10 +386,10 @@ def test_tenant_fail_closed_without_tenant_header(
     )
     address_repo.save_address(address)
 
-    # Authenticated site_reviewer with NO tenant header
+    # Authenticated expansion_user with NO tenant header
     headers_no_tenant = {
-        "x-subject-id": "site-reviewer-no-tenant",
-        "x-roles": "site_reviewer",
+        "x-subject-id": "user-no-tenant",
+        "x-roles": "expansion_user",
     }
 
     # 1. Attempting correction without tenant header MUST fail closed (403 TENANT_SCOPE_DENIED)
@@ -407,7 +432,7 @@ def test_top_of_stack_rollback_ordering(
 
     headers = {
         "x-subject-id": "reviewer-1",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
     }
 
@@ -498,7 +523,7 @@ def test_regression_h3_cell_restoration_on_coordinate_rollback(
 
     headers = {
         "x-subject-id": "reviewer-1",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
     }
 
@@ -561,7 +586,7 @@ def test_regression_legacy_empty_tenant_records_cannot_be_claimed_or_bypassed(
 
     tenant_headers = {
         "x-subject-id": "reviewer-tenant-beta",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-beta",
     }
 
@@ -618,7 +643,7 @@ def test_regression_rollback_audit_self_contained_snapshots(
 
     headers = {
         "x-subject-id": "reviewer-1",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
     }
 
@@ -676,8 +701,6 @@ def test_regression_rollback_audit_self_contained_snapshots(
     assert decision_card["metrics"]["new_value"]["road"] == "Road 1"
 
 
-
-
 def test_regression_unscoped_caller_cannot_reach_unscoped_legacy_record(
     client: TestClient,
     address_repo: InMemoryAddressLocationRepository,
@@ -704,8 +727,8 @@ def test_regression_unscoped_caller_cannot_reach_unscoped_legacy_record(
 
     # Authenticated, role-authorized, but carrying no tenant scope at all.
     headers_no_tenant = {
-        "x-subject-id": "site-reviewer-no-tenant",
-        "x-roles": "site_reviewer",
+        "x-subject-id": "user-no-tenant",
+        "x-roles": "expansion_user",
     }
 
     get_resp = client.get(f"/listings/addresses/{addr_id}", headers=headers_no_tenant)
@@ -787,7 +810,6 @@ def test_regression_platform_admin_cannot_reach_unscoped_legacy_record(
         headers=admin_headers,
     )
     assert corr_resp.status_code == 403
-    assert "TENANT_SCOPE_DENIED" in corr_resp.text
 
     saved = address_repo.get_address(addr_id)
     assert saved is not None
@@ -825,7 +847,6 @@ def test_regression_platform_admin_without_tenant_is_denied(
         headers=admin_no_tenant,
     )
     assert corr_resp.status_code == 403
-    assert "TENANT_SCOPE_DENIED" in corr_resp.text
 
     saved = address_repo.get_address(addr_id)
     assert saved is not None
@@ -856,7 +877,7 @@ def test_apply_correction_omitted_geocode_confidence_preserves_existing_zero(
 
     headers = {
         "x-subject-id": "reviewer-1",
-        "x-roles": "site_reviewer",
+        "x-roles": "expansion_user",
         "x-tenant-id": "tenant-alpha",
     }
     payload = {
@@ -873,6 +894,7 @@ def test_apply_correction_omitted_geocode_confidence_preserves_existing_zero(
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["address"]["geocode_confidence"] == 0.0
+    assert data["address"]["geocode_precision"] == "rooftop"
     assert data["address"]["city"] == "New Taipei City"
 
     # Verify readback via GET /addresses/{addr_id}
@@ -880,5 +902,57 @@ def test_apply_correction_omitted_geocode_confidence_preserves_existing_zero(
     assert get_resp.status_code == 200
     readback = get_resp.json()
     assert readback["geocode_confidence"] == 0.0
+    assert readback["geocode_precision"] == "rooftop"
     assert readback["city"] == "New Taipei City"
+
+
+def test_apply_correction_omitted_geocode_precision_preserves_existing_precision(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    """Regression test (P1): omitted geocode_precision preserves existing provenance precision."""
+    addr_id = str(uuid4())
+    address_repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei City Xinyi Dist Songgao Rd 1",
+            city="Taipei City",
+            latitude=25.0380,
+            longitude=121.5670,
+            geocode_precision="rooftop",
+            geocode_confidence=0.92,
+            manual_override_flag=False,
+            tenant_id="tenant-alpha",
+            revision=1,
+        )
+    )
+
+    headers = {
+        "x-subject-id": "operator-1",
+        "x-roles": "expansion_user",
+        "x-tenant-id": "tenant-alpha",
+    }
+    payload = {
+        "latitude": 25.0395,
+        "longitude": 121.5685,
+        "reason": "Updating coordinates only",
+        "expected_revision": 1,
+    }
+
+    response = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["address"]["geocode_precision"] == "rooftop"
+    assert data["address"]["latitude"] == 25.0395
+
+    # Verify readback via GET /addresses/{addr_id}
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=headers)
+    assert get_resp.status_code == 200
+    readback = get_resp.json()
+    assert readback["geocode_precision"] == "rooftop"
+    assert readback["latitude"] == 25.0395
 
