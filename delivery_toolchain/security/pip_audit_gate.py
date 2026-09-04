@@ -14,7 +14,9 @@ This gate wraps `pip-audit` to ensure:
   from network/service outages and timeouts);
 * Bounded retries on transient transport failures, exiting 2 (AUDIT UNAVAILABLE)
   if the service remains unreachable;
-* Vulnerabilities at or above threshold cause gate failure with exit 1 (VULNERABLE);
+* Every reported vulnerability causes gate failure with exit 1 (VULNERABLE);
+  pip-audit's JSON format has no normalized severity, so there is no safe
+  high-only equivalent for this gate;
 * Clean audit reports pass with exit 0 (OK);
 * Transport/database failures never pass: without advisory data the gate stays closed.
 """
@@ -235,11 +237,15 @@ def evaluate(outcome: AuditOutcome) -> tuple[int, str]:
             f"advisory data, so this run proves nothing about Python dependencies. Last error: {outcome.detail}",
         )
 
+    # pip-audit does not provide a normalized severity in its JSON schema.
+    # Every advisory is therefore intentionally blocking; treating an unknown
+    # severity as below threshold would turn a real finding into a pass.
     if outcome.findings:
         summary = ", ".join(outcome.findings)
         return (
             EXIT_VULNERABLE,
-            f"VULNERABILITIES FOUND in Python dependencies: {summary}. "
+            "VULNERABILITIES FOUND in Python dependencies (all reported findings are blocking; "
+            f"pip-audit has no normalized severity): {summary}. "
             "Run 'uv run --with pip-audit pip-audit --path "
             f"{DEFAULT_INSTALLATION_PATH}' for details.",
         )

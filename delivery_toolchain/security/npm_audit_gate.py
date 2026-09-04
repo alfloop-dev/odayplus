@@ -53,7 +53,10 @@ EXIT_AUDIT_UNAVAILABLE = 2
 # 400/503 responses.
 DEFAULT_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 5.0
-DEFAULT_TIMEOUT_SECONDS = 300.0
+# The dev baseline observed a single registry audit taking 13m42s. Keep a
+# finite 15-minute ceiling so a slow but healthy registry is not misclassified
+# as unavailable; three attempts still fit the product job's 60-minute cap.
+DEFAULT_TIMEOUT_SECONDS = 900.0
 
 REPORT = "report"
 UNAVAILABLE = "unavailable"

@@ -8,7 +8,9 @@ LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 # Keep the registry calls bounded at the shared security entry point. The
 # wrappers still validate these values and fail closed if an override is
 # invalid; exposing them here makes the CI/Make invocation auditable.
-NPM_AUDIT_TIMEOUT_SECONDS ?= 300
+# The registry audit has taken 13m42s on dev; leave bounded headroom while
+# keeping the three-attempt budget within the product job's 60-minute ceiling.
+NPM_AUDIT_TIMEOUT_SECONDS ?= 900
 NPM_AUDIT_ATTEMPTS ?= 3
 NPM_AUDIT_BACKOFF_SECONDS ?= 5
 PIP_AUDIT_SOCKET_TIMEOUT_SECONDS ?= 15

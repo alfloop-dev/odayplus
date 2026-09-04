@@ -62,7 +62,7 @@ def test_makefile_wires_both_audit_gates_without_bypass() -> None:
 
 
 def test_audit_gates_have_finite_defaults() -> None:
-    assert 0 < npm_audit_gate.DEFAULT_TIMEOUT_SECONDS <= 300
+    assert 0 < npm_audit_gate.DEFAULT_TIMEOUT_SECONDS <= 900
     assert 0 < pip_audit_gate.DEFAULT_SOCKET_TIMEOUT <= 60
     assert 0 < pip_audit_gate.DEFAULT_PROCESS_TIMEOUT <= 300
     assert npm_audit_gate.DEFAULT_ATTEMPTS > 0
@@ -219,6 +219,7 @@ def test_pip_audit_fails_closed_on_vulnerabilities() -> None:
     assert code == pip_audit_gate.EXIT_VULNERABLE
     assert "VULNERABILITIES FOUND" in verdict
     assert "requests 2.20.0 (PYSEC-2023-001)" in verdict
+    assert "all reported findings are blocking" in verdict
 
 
 def test_pip_audit_passes_on_clean_report() -> None:
