@@ -1703,7 +1703,7 @@ def test_review_dispatch_suppressed_when_ci_is_pending() -> None:
                 supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
             ),
         ):
-            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+            supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
 
     assert len(queued_events) == 0
     assert task["status"] == "review"
@@ -1750,7 +1750,7 @@ def test_review_dispatch_suppressed_when_ci_is_failure() -> None:
                 supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
             ),
         ):
-            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+            supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
 
     assert len(queued_events) == 0
     assert task["status"] == "review"
@@ -1797,7 +1797,7 @@ def test_review_dispatch_suppressed_when_head_has_drifted() -> None:
                 supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
             ),
         ):
-            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+            supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
 
     assert len(queued_events) == 0
     assert task["status"] == "review"
@@ -1844,7 +1844,7 @@ def test_review_dispatch_suppressed_when_remote_head_is_missing() -> None:
                 supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
             ),
         ):
-            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+            supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
 
     assert len(queued_events) == 0
     assert task["status"] == "review"
@@ -1892,7 +1892,7 @@ def test_review_dispatch_suppressed_when_merge_group_failed_retains_reason() -> 
                 supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
             ),
         ):
-            changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+            supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
 
     assert len(queued_events) == 0
     assert task["status"] == "review"
