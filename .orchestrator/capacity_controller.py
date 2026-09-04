@@ -346,14 +346,33 @@ def helper_claim_task_ids_to_release(
         # expiry. There is no runtime run to prove that the claim is stale yet.
         if not claim_run_id:
             # A worker record without a binding is a failed launch handshake,
-            # not a live pre-launch claim. Release it so the normal dispatcher
-            # can retry without allowing two helpers to coexist.
-            if any(
-                _worker_task_id(worker, task_id_field) == task_id
-                and str(worker.get("request_snapshot", {}).get("reason") or "")
-                == "helper_claim_dispatch"
-                for worker in workers
-            ):
+            # not a live pre-launch claim. Release it only if it matches the current
+            # generation and claimant (stale older-generation runs must not clear a new lease).
+            current_gen = None
+            try:
+                current_gen = int(claim.get("generation"))
+            except (TypeError, ValueError):
+                pass
+            failed_unbound = False
+            for worker in workers:
+                if _worker_task_id(worker, task_id_field) != task_id:
+                    continue
+                req = worker.get("request_snapshot") or {}
+                if str(req.get("reason") or "") != "helper_claim_dispatch":
+                    continue
+                d_claim = (req.get("metadata", {}) or {}).get("task", {}).get("helper_execution_lease") or {}
+                try:
+                    d_gen = int(d_claim.get("generation"))
+                except (TypeError, ValueError):
+                    d_gen = None
+                if d_gen is not None and current_gen is not None:
+                    if d_gen == current_gen:
+                        failed_unbound = True
+                        break
+                elif d_gen is None:
+                    failed_unbound = True
+                    break
+            if failed_unbound:
                 release.append(task_id)
                 continue
             expires_at = _parse_iso(claim.get("lease_expires_at"))
@@ -384,6 +403,9 @@ def helper_claim_task_ids_to_release(
             current_generation = int(claim.get("generation"))
         except (TypeError, ValueError):
             release.append(task_id)
+            continue
+        if dispatched_generation < current_generation:
+            # Stale/older generation worker must NOT clear a newer generation lease
             continue
         if (
             str(dispatched_task.get(task_id_field) or dispatched_task.get("id") or "").strip()

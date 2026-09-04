@@ -55,12 +55,14 @@ from branch_drift_alarms import check_branch_drift
 from common import (
     agent_config_for,
     authoritative_status_root,
+    classify_reopen_reason,
     cmdline_is_supervisor_process,
     config_path,
     CONFIG_PATH_ENV_VAR,
     display_name_for,
     execution_context_files,
     generate_task_brief_content,
+    is_control_plane_recovery_reason,
     is_github_cli_auth_failure,
     is_task_brief_stale,
     isoformat_utc,
@@ -80,6 +82,7 @@ from common import (
     selected_shared_files,
     shell_quote,
     spawn_background_process,
+    substantive_review_reopen_count,
     summarize_failure_reason,
     supervisor_lock_path,
     supervisor_pid_path,
@@ -91,6 +94,14 @@ from common import (
     write_activity_log,
     write_failure_evidence,
     write_json,
+    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+    REOPEN_CATEGORY_OWNER_RESUME,
+    REOPEN_CATEGORY_SUBSTANTIVE_REVIEW,
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_OWNER_RESUME,
+    REOPEN_REASON_REVIEW_FINDING,
+    REOPEN_REASON_STALE_REVIEW_SHA,
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
 )
 from coordination_file_watcher import sync_coordination_files
 from dispatch_policy import (
@@ -250,6 +261,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "mark_provider_dispatch_paused",
 "maybe_reassign_task_after_worker_failure",
 "reassign_tasks_after_review_churn",
+"substantive_review_reopen_count",
+"is_control_plane_recovery_reason",
+"classify_reopen_reason",
 "maybe_trigger_retry_or_fallback",
 "normalized_mapping_values",
 "parse_quota_retry_hint",
@@ -713,6 +727,7 @@ def parse_args() -> argparse.Namespace:
 
 
 CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS = 60.0
 
 
 class FastPollNotAllowedError(SystemExit):
@@ -743,6 +758,37 @@ def resolve_poll_interval(
             "if this is a steady-state change."
         )
     return cli_value, "cli"
+
+
+def resolve_heartbeat_warn_after_seconds(
+    config: dict[str, Any],
+    *,
+    poll_interval: float | None = None,
+) -> float:
+    """Resolve a heartbeat warning threshold for the effective poll cadence.
+
+    A supervisor can only observe a missed heartbeat on its next poll, so the
+    warning floor is one full effective poll interval plus a small grace period.
+    Keep explicitly configured thresholds that meet that floor, while clamping
+    legacy values below it.  The inclusive boundary is intentional: a value
+    exactly at the floor is already valid and must not jump to a different
+    rule than a value just above it.
+    """
+    base_poll = (
+        float(poll_interval)
+        if poll_interval is not None and poll_interval > 0
+        else float(
+            config.get("supervisor", {}).get(
+                "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+            )
+        )
+    )
+    minimum_warn = base_poll + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    raw_warn = config.get("supervisor", {}).get("heartbeat_warn_after_seconds")
+    if raw_warn is not None:
+        configured_warn = float(raw_warn)
+        return max(minimum_warn, configured_warn)
+    return minimum_warn
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -1225,7 +1271,9 @@ def log_runtime_summary(
     quiet: bool,
     verbose: bool,
     previous_heartbeat: str | None = None,
-    warn_after_seconds: float = 10.0,
+    warn_after_seconds: float = (
+        CONFIG_DEFAULT_POLL_INTERVAL_SECONDS + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    ),
     once: bool = False,
 ) -> None:
     summary = summarize_runtime(state, approval_state)
@@ -4114,7 +4162,7 @@ def consume_human_continuation_approvals(
         task.pop("human_continuation_approval", None)
 
         try:
-            reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0))
+            reopen_count = substantive_review_reopen_count(task)
             reassigned_count = max(
                 0,
                 int(task.get("review_churn_reassigned_at_count", 0) or 0),
@@ -4855,8 +4903,12 @@ def worker_can_be_preempted(
     task = task_map.get(task_id) or {}
     task_status = str(task.get("status") or "").lower()
 
-    # Finalize workers are read-only on repo (immutable approved head)
-    if dispatch_reason == REASON_OWNED_FINALIZE or task_status == "review_approved":
+    # Finalize workers are read-only on repo (immutable approved head),
+    # and review workers are read-only reviewers. Both are safe to preempt when clean.
+    if (
+        dispatch_reason in {REASON_REVIEW_READY, REASON_OWNED_FINALIZE}
+        or task_status in {"review", "review_approved"}
+    ):
         return worker_worktree_is_clean(config, worker)
 
     # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
@@ -4983,6 +5035,7 @@ def run_once(
     quiet: bool = False,
     verbose: bool = False,
     once: bool = False,
+    poll_interval: float | None = None,
 ) -> bool:
     write_supervisor_pid(config)
     loop_started_at = utc_now()
@@ -5128,7 +5181,9 @@ def run_once(
             quiet=quiet,
             verbose=verbose,
             previous_heartbeat=previous_heartbeat,
-            warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
+            warn_after_seconds=resolve_heartbeat_warn_after_seconds(
+                config, poll_interval=poll_interval
+            ),
             once=once,
         )
         return changed
@@ -5155,9 +5210,18 @@ def run_supervisor_cycle(
     replay: bool = False,
     quiet: bool = False,
     verbose: bool = False,
+    poll_interval: float | None = None,
 ) -> bool:
     try:
-        return run_once(config, watch=watch, replay=replay, quiet=quiet, verbose=verbose, once=False)
+        return run_once(
+            config,
+            watch=watch,
+            replay=replay,
+            quiet=quiet,
+            verbose=verbose,
+            once=False,
+            poll_interval=poll_interval,
+        )
     except Exception as exc:
         console_log(
             f"supervisor cycle failed: {type(exc).__name__}: {exc}; continuing after next poll",
@@ -5275,6 +5339,7 @@ def main() -> int:
             quiet=args.quiet,
             verbose=args.verbose,
             once=True,
+            poll_interval=poll_interval,
         )
         return 0
     run_supervisor_cycle(
@@ -5283,6 +5348,7 @@ def main() -> int:
         replay=args.replay,
         quiet=args.quiet,
         verbose=args.verbose,
+        poll_interval=poll_interval,
     )
     while True:
         sleep_until_work_or_interval(config, poll_interval)
@@ -5292,6 +5358,7 @@ def main() -> int:
             replay=False,
             quiet=args.quiet,
             verbose=args.verbose,
+            poll_interval=poll_interval,
         )
 
 

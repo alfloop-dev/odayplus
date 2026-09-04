@@ -189,13 +189,11 @@
         },
         {
           "name": "BACKTEST",
-          "status": "absent",
-          "note": "run_rolling_backtest exists in models/shared_ml/backtest.py and is used by the training pipeline, but modules/learninghub references it nowhere. It is not a release mode, so a release cannot be gated on a backtest result.",
+          "status": "satisfied",
+          "evidence": "models/shared_ml/backtest.py::BacktestReceipt",
+          "note": "Backtest is connected as a versioned release admission gate for FULL and CANARY releases, binding model version, dataset snapshot, code version (git SHA), and DecisionPolicy thresholds.",
           "disposition": {
-            "state": "OPEN",
-            "assigned_to": "ML Platform Lead",
-            "next_review_date": "2026-10-01",
-            "rationale": "Rolling backtest exists in training pipeline but is not connected as a LearningHub release gate (Batch 6)."
+            "state": "VERIFIED"
           }
         }
       ]
@@ -418,6 +416,105 @@
           "note": "Performance drift compares observed metrics against baseline_metrics using absolute/relative degradation thresholds and governed decision policies.",
           "disposition": {
             "state": "VERIFIED"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-INT-001",
+      "statement": "整合層必須支援 Batch、CDC、API、File 與 Event 來源攝取模式。",
+      "member_count": 5,
+      "members": [
+        {
+          "name": "BATCH",
+          "status": "satisfied",
+          "evidence": "apps/data_platform/source.py::MongoSource",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "API",
+          "status": "satisfied",
+          "evidence": "modules/external_data/connectors/provider_registry.py::PROVIDER_REGISTRY",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "FILE",
+          "status": "satisfied",
+          "evidence": "modules/external_data/application/xlsx_import.py::XlsxCommitReceipt",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "EVENT",
+          "status": "absent",
+          "note": "The machine_status_event schema contract declares integration_mode=event_stream and envelope=event, but in production core.machine_status_events is populated via batch watermark reads of device_log (store.py:394-401). No event broker/stream consumer currently exists in production.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Platform Infrastructure Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "Schema contract declares event_stream mode but production ingestion path executes via device_log batch ingestion; reconcile contract or implement event consumer."
+          }
+        },
+        {
+          "name": "CDC",
+          "status": "absent",
+          "note": "Audited in ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md and ODP_INT001_CDC_DISPOSITION_2026-09-03.md. No production upstream requires CDC for change log, ordering, latency, or delete semantics; downstream data plane has no delete propagation path; change stream credentials require expanded cluster-level privileges. Maintained as absent; handback submitted for formal human requirement amendment / waiver governance.",
+          "disposition": {
+            "state": "OPEN",
+            "assigned_to": "Data Platform Lead",
+            "next_review_date": "2026-10-01",
+            "rationale": "No production upstream requires CDC; downstream sink has no delete path; credential boundary expansion unapproved. AI cannot self-sign waivers; pending human governance amendment/waiver authorization.",
+            "formal_handback_ref": "docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-FCT-004",
+      "statement": "系統必須提供成長階段、轉折機率、異常證據與根因候選。",
+      "member_count": 4,
+      "members": [
+        {
+          "name": "TRAJECTORY_CLASS",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.trajectory_class",
+          "note": "ForecastOutput carries trajectory_class ('growing', 'mature', 'declining', 'plateau') per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "TURNING_POINT_PROBABILITY",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::ForecastOutput.turning_point_probability",
+          "note": "ForecastOutput carries turning_point_probability per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ANOMALY_EVIDENCE",
+          "status": "satisfied",
+          "evidence": "modules/forecastops/domain/forecasting.py::Alert.evidence_json",
+          "note": "Alert carries structured anomaly evidence in evidence_json per ODP-FR-FCT-004.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "ROOT_CAUSE_CANDIDATE",
+          "status": "absent",
+          "note": "No automated root-cause deduction producer exists in the current production tree. Keep the schema field explicitly marked RESERVED (unproduced), with designated Owner (ForecastOps / Platform Ops) and Target Milestone (Wave 5+). Do not synthesize a fake producer.",
+          "disposition": {
+            "state": "IMPLEMENTATION_READY",
+            "assigned_to": "ForecastOps / Platform Ops",
+            "target_phase": "Wave 5+",
+            "rationale": "Full-tree lineage trace confirms no automated root-cause producer exists. The compatible WorkOrder, presentation, and database contracts are explicitly marked RESERVED (unproduced), and the real producer work is assigned to ForecastOps / Platform Ops for Wave 5+; do not manufacture a fake heuristic producer."
           }
         }
       ]

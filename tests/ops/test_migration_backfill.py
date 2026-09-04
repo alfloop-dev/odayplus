@@ -35,6 +35,9 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0010",
         "0011",
         "0012",
+        "0013",
+        "0014",
+        "0015",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -135,6 +138,45 @@ def test_netplan_disclosure_migration_is_reachable_from_alembic_head() -> None:
         for asset in disclosure_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000017_netplan_constraint_disclosure.sql"}
+
+
+def test_work_orders_root_cause_disposition_ddl_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-FCT-004: WorkOrder root_cause column reserved disposition schema."""
+    plan = build_migration_plan(environment="dev")
+    disposition_step = next(step for step in plan.steps if step.revision == "0013")
+
+    assert disposition_step.path.endswith("0013_work_orders_root_cause_disposition.py")
+    assert {
+        asset.path
+        for asset in disposition_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000018_work_orders_root_cause_disposition.sql"}
+
+
+def test_learninghub_backtest_receipt_ddl_is_reachable_from_alembic_head() -> None:
+    """Backtest receipts must be applied by the release-gate revision."""
+    plan = build_migration_plan(environment="dev")
+    backtest_step = next(step for step in plan.steps if step.revision == "0014")
+
+    assert backtest_step.path.endswith("0014_learninghub_backtest_receipts.py")
+    assert {
+        asset.path
+        for asset in backtest_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000019_learninghub_backtest_receipts.sql"}
+
+
+def test_price_exploration_gate_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-PRICE-006: Price exploration gate and decision tracking schema."""
+    plan = build_migration_plan(environment="dev")
+    gate_step = next(step for step in plan.steps if step.revision == "0015")
+
+    assert gate_step.path.endswith("0015_price_exploration_gate.py")
+    assert {
+        asset.path
+        for asset in gate_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000020_price_exploration_gate.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

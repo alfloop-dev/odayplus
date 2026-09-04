@@ -356,9 +356,7 @@ def test_raw_pytest_rejects_resealed_requested_and_collected_id_drift() -> None:
         if nodeid in PYTEST_NODE_IDS
     )
     artifact["payload"]["requested_node_ids"].remove(removed)
-    phases = artifact["payload"]["phase_reports"].pop(removed)
     artifact["payload"]["requested_node_ids"].append("tests/security/forged.py::test_forged")
-    artifact["payload"]["phase_reports"]["tests/security/forged.py::test_forged"] = phases
     artifact["payload_sha256"] = sha256_bytes(
         canonical_json_bytes(artifact["payload"])
     )
@@ -369,16 +367,44 @@ def test_raw_pytest_rejects_resealed_requested_and_collected_id_drift() -> None:
         expected_source=artifact["source"],
     )
     errors = validate_raw_artifact(artifact, "pytest")
-    assert any(
-        "requested_node_ids do not exactly match" in error
-        for error in payload_errors
-    )
-    assert any("missing exact test ids" in error for error in payload_errors)
-    assert any("unexpected collected test ids" in error for error in payload_errors)
+    assert any("missing exact test ids: tests/security/forged.py::test_forged" in error for error in payload_errors)
+    assert any(f"unexpected collected test ids: {removed}" in error for error in payload_errors)
     assert any(
         "integrity_errors do not exactly match parsed payload" in error
         for error in errors
     )
+
+
+def test_raw_pytest_reproduces_and_rejects_three_inconsistencies_fixture() -> None:
+    """Reproduce the three inconsistencies when stored summary contradicts raw payload."""
+    artifact = json.loads((ROOT / RAW_PYTEST_PATH).read_text(encoding="utf-8"))
+    # Tamper the stored results, counts, and integrity_errors relative to payload
+    forged_results = [r for r in artifact["results"] if r["test_id"] != PYTEST_NODE_IDS[0]]
+    artifact["results"] = forged_results
+    artifact["counts"] = _counts(forged_results, "pytest")
+    artifact["integrity_errors"] = ["forged discrepancy"]
+    seal_normalized(artifact, "normalized_artifact_sha256")
+
+    errors = validate_raw_artifact(artifact, "pytest", require_success=False)
+    assert "raw pytest results do not exactly match parsed payload" in errors
+    assert "raw pytest counts do not exactly match parsed payload" in errors
+    assert "raw pytest integrity_errors do not exactly match parsed payload" in errors
+
+
+def test_raw_pytest_positive_projection_and_validation() -> None:
+    """Positive test: authentic pytest payload parses cleanly without errors."""
+    artifact = json.loads((ROOT / RAW_PYTEST_PATH).read_text(encoding="utf-8"))
+    results, counts, integrity_errors = parse_pytest_payload(
+        artifact["payload"],
+        expected_source=artifact["source"],
+    )
+    assert integrity_errors == []
+    assert counts["total_tests"] == len(artifact["payload"]["requested_node_ids"])
+    assert counts["passed"] == len(artifact["payload"]["requested_node_ids"])
+    assert len(results) == len(artifact["payload"]["requested_node_ids"])
+    assert all(r["status"] == "passed" for r in results)
+    errors = validate_raw_artifact(artifact, "pytest", require_success=True)
+    assert errors == []
 
 
 @pytest.mark.parametrize(
@@ -587,6 +613,28 @@ def test_python_runner_propagates_pytest_failure(
     assert status != 0
     artifact = json.loads((tmp_path / "raw_pytest_results.json").read_text(encoding="utf-8"))
     assert artifact["run"]["exit_code"] == 1
+
+
+def test_receipt_rejects_insufficient_or_mismatched_pytest_counts(
+    tmp_path: Path,
+) -> None:
+    _clone_packet_repo(tmp_path)
+    py_path = tmp_path / RAW_PYTEST_PATH
+    py_artifact = json.loads(py_path.read_text(encoding="utf-8"))
+    # Forge pytest counts to not prove exact passes
+    py_artifact["counts"]["total_tests"] = len(PYTEST_NODE_IDS) - 1
+    py_artifact["counts"]["passed"] = len(PYTEST_NODE_IDS) - 1
+    # Adjust results to match counts so validate_raw_artifact passes
+    py_artifact["results"] = py_artifact["results"][:-1]
+    py_artifact["payload"]["requested_node_ids"] = py_artifact["payload"]["requested_node_ids"][:-1]
+    dropped_id = list(py_artifact["payload"]["phase_reports"].keys())[-1]
+    del py_artifact["payload"]["phase_reports"][dropped_id]
+    py_artifact["payload_sha256"] = sha256_bytes(canonical_json_bytes(py_artifact["payload"]))
+    seal_normalized(py_artifact, "normalized_artifact_sha256")
+    py_path.write_text(json.dumps(py_artifact, indent=2), encoding="utf-8")
+
+    errors = validate_receipt_packet(tmp_path, allow_worktree_evidence=True)
+    assert any("Pytest receipt counts do not prove" in error for error in errors)
 
 
 def test_evidence_allowlist_is_explicit_and_narrow() -> None:

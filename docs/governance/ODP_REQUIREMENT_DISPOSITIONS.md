@@ -170,10 +170,11 @@ stateDiagram-v2
 ### 4.3 `ODP-FR-LH-003`：LearningHub 發布模式
 
 #### 成員：`BACKTEST`（回測發布閘）
-- **處置狀態**：`OPEN`
+- **處置狀態**：`VERIFIED`
+- **Formal Decision Ref**: `docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md#odp-fr-lh-003-backtest`
 - **負責人 (Assigned To)**: `ML Platform Lead`
-- **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: `models/shared_ml/backtest.py` 具備滾動回測功能，但未與 LearningHub 發布閘流程對接；列為 Batch 6 評估項目。
+- **理由 (Rationale)**: `BacktestReceipt` 已作為版本化 release admission gate 接入 LearningHub 發布流程（FULL 與 CANARY），綁定 model version、dataset snapshot、code version (git SHA) 與 DecisionPolicy 閾值。
+
 
 ---
 
@@ -210,6 +211,57 @@ stateDiagram-v2
 - **負責人 (Assigned To)**: `ML Monitoring Lead`
 - **目標交付批次 (Target Phase)**: `Batch 4a (ODP Remediation Plan)`
 - **理由 (Rationale)**: Evidently 預測分布漂移監控已完成技術規格設計，排入 Batch 4a 實作。
+
+---
+
+### 4.7 `ODP-FR-INT-001`：整合層攝取模式
+
+#### 成員：`BATCH`（批次快照與增量）
+- **處置狀態**：`VERIFIED`
+- **實作證據 (Evidence)**: `apps/data_platform/source.py::MongoSource`
+- **理由 (Rationale)**: 支援 `SNAPSHOT_SOURCE_KINDS` 全量快照分頁讀取及 `_window_query` 水位線時間窗增量讀取，生產路徑已驗證。
+
+#### 成員：`API`（外部 API 介接）
+- **處置狀態**：`VERIFIED`
+- **實作證據 (Evidence)**: `modules/external_data/connectors/provider_registry.py::PROVIDER_REGISTRY`
+- **理由 (Rationale)**: 外部資料提供者註冊表支援商用 POI、地理編碼等多來源 API 介接。
+
+#### 成員：`FILE`（檔案與 Feed 匯入）
+- **處置狀態**：`VERIFIED`
+- **實作證據 (Evidence)**: `modules/external_data/application/xlsx_import.py::XlsxCommitReceipt`
+- **理由 (Rationale)**: 具備治理化 XLSX 試算表解析、預覽驗證與冪等提交，另支援 feed 與 public_dataset。
+
+#### 成員：`EVENT`（事件串流）
+- **處置狀態**：`OPEN`
+- **負責人 (Assigned To)**: `Platform Infrastructure Lead`
+- **下次檢視日期 (Next Review Date)**: `2026-10-01`
+- **理由 (Rationale)**:
+  `machine_status_event` 契約宣告了 `integration_mode: event_stream` 與 `envelope: event`，但在生產環境中 `core.machine_status_events` 係透過 `SourceKind.DEVICE_LOG` 走批次水位線落地。目前全樹無事件 Broker / Stream Consumer 生產者。待架構與平台團隊評估補建生產者或修訂契約 taxonomy。
+
+#### 成員：`CDC`（異動資料擷取）
+- **處置狀態**：`OPEN`（不適用；維持 absent 並提交人類治理修訂/豁免 Handback）
+- **負責人 (Assigned To)**: `Data Platform Lead`
+- **下次檢視日期 (Next Review Date)**: `2026-10-01`
+- **正式移交文件 (Formal Handback Ref)**: `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md`
+- **處置依據與查證結論**:
+  依 `docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md` 與 `docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md` 之查證：
+  1. **無真實上游需求**：唯一內部來源為 MongoDB `fongniao_prod`，外部來源均為快照。無任何生產上游需要 Change Stream / oplog 讀取。
+  2. **延遲與排程已匹配**：下游資產為日粒度（DailyPartitions），上游已有 15 分鐘 Sensor 輪詢，無 sub-15m 延遲需求。
+  3. **順序性與冪等保證**：透過 deterministic `_id` cursor 與基於 content hash 之冪等鍵達成，不依賴 CDC 全域變更順序。
+  4. **下游無刪除傳播路徑**：上游實體刪除無法由 CDC 解決（因 PostgreSQL 落地層皆為 upsert，無 delete / tombstone 路徑）。
+  5. **憑證邊界收斂**：Change Stream 需擴大資料庫權限至 cluster 級別，未經安全核准前嚴格 fail-closed。
+  6. **AI 禁止自簽 Waiver**：依本政策 §3.2，AI 代理人嚴禁自簽豁免。本項目維持 `absent` 索引並將處置 Handback 提交人類治理負責人（`Data Platform Lead` / `Human/Ops`），待正式 Amendment / Waiver 裁決後再行更新。
+### 4.8 `ODP-FR-FCT-004`：ForecastOps 預測特徵與根因契約
+
+#### 成員：`ROOT_CAUSE_CANDIDATE`（根因候選）
+- **處置狀態**：`IMPLEMENTATION_READY`
+- **負責人 (Assigned To)**: `ForecastOps / Platform Ops`
+- **目標交付批次 (Target Phase)**: `Wave 5+`
+- **工程處置 (Engineering Disposition)**:
+  全樹追溯證實目前代碼庫中沒有自動化根因推導生產者。保留相容的
+  `WorkOrder.root_cause`、`RootCauseEvidenceCardContract.causeCandidate` 與資料庫欄位，並在各契約明確標示為 `RESERVED (unproduced)`；不得製造裝飾性 Heuristic 假生產者。
+- **裁決狀態 (Decision Status)**:
+  `ODP_OPEN_DECISIONS_2026-09-03.md` § 8 仍為 `OPEN`。本項是已具備 owner／target phase 的工程實作準備，不是本任務代替人類治理角色建立 Waiver 或 Requirement Amendment。
 
 ---
 

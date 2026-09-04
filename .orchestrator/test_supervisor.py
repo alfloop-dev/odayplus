@@ -34,10 +34,13 @@ os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
+import common
+import github_bus
 import runtime_state
 import supervisor
 import watch_events
 import worker_failure_policy
+import worker_workspace
 
 
 def tearDownModule() -> None:
@@ -5020,6 +5023,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             quiet=True,
             verbose=False,
             once=False,
+            poll_interval=None,
         )
         self.assertIn("RuntimeError: boom", console_log.call_args.args[0])
         self.assertTrue(console_log.call_args.kwargs["quiet"])
@@ -6684,6 +6688,530 @@ class PollWorkersRecoveryTests(unittest.TestCase):
                 self.assertEqual(worker["status"], "superseded")
                 self.assertEqual(state["queue"]["events"]["evt-helper-1"]["status"], "completed")
                 terminate_worker_pid.assert_called_once_with(4321)
+
+    def test_helper_claim_persisted_before_wake_queued(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "TASK-ATOMIC-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+        }
+        status = {"tasks": [task]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "max_dispatches_per_tick": 4,
+                "helper_execution_lease": {
+                    "enabled": True,
+                    "lease_seconds": 1800,
+                    "max_claims_per_agent": 2,
+                    "max_claims_per_tick": 2,
+                    "require_owner_saturated": False,
+                },
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "providers": {},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "dispatch_state": {},
+        }
+
+        call_order = []
+
+        def mock_commit(_config, _status):
+            self.assertIn("helper_execution_lease", task)
+            self.assertEqual(task["helper_execution_lease"]["generation"], 1)
+            self.assertEqual(task["helper_execution_lease"]["claimed_by"], "Codex")
+            call_order.append("commit")
+            return True
+
+        def mock_queue(_config, event):
+            self.assertEqual(event["reason"], supervisor.REASON_HELPER_CLAIM)
+            self.assertEqual(event["task"]["helper_execution_lease"]["generation"], 1)
+            call_order.append("queue")
+            return True
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", side_effect=mock_commit),
+            mock.patch.object(supervisor, "queue_dispatch_event_safely", side_effect=mock_queue),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+        self.assertEqual(call_order, ["commit", "queue"])
+
+    def test_helper_wake_validates_generation_and_validity_period(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        valid_claim = {
+            "claimed_by": "Codex",
+            "generation": 3,
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        task = {
+            "id": "TASK-VAL-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "helper_execution_lease": deepcopy(valid_claim),
+        }
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "dependency_done_statuses": ["done"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+        }
+        task_map = {task["id"]: task}
+
+        # Case 1: Valid event matching live board
+        event = {
+            "event_key": supervisor.dispatch_engine.build_dispatch_event(
+                task, "Codex", supervisor.REASON_HELPER_CLAIM, task_map
+            )["key"],
+            "task_id": "TASK-VAL-001",
+            "target_agent": "codex",
+            "reason": supervisor.REASON_HELPER_CLAIM,
+            "task": deepcopy(task),
+        }
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, event, task_map)
+        self.assertIsNone(skip_msg)
+
+        # Case 2: Event generation mismatch (event has gen 2, board has gen 3)
+        stale_gen_event = deepcopy(event)
+        stale_gen_event["task"]["helper_execution_lease"]["generation"] = 2
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, stale_gen_event, task_map)
+        self.assertIn("generation mismatch", skip_msg)
+
+        # Case 3: Board claim expired (board lease expired)
+        expired_task = deepcopy(task)
+        expired_task["helper_execution_lease"]["lease_expires_at"] = (
+            now - timedelta(seconds=1)
+        ).isoformat().replace("+00:00", "Z")
+        expired_task_map = {expired_task["id"]: expired_task}
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, event, expired_task_map)
+        self.assertIn("expired", skip_msg)
+
+        # Case 4: Event claimant mismatch
+        mismatched_claimant_event = deepcopy(event)
+        mismatched_claimant_event["task"]["helper_execution_lease"]["claimed_by"] = "Gemini"
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, mismatched_claimant_event, task_map)
+        self.assertIn("claimant mismatch", skip_msg)
+
+        # Case 5: Board lease was renewed (snapshot has old/expired expiry, but board has renewed live expiry)
+        renewed_board_task = deepcopy(task)
+        renewed_board_task["helper_execution_lease"]["lease_expires_at"] = (
+            now + timedelta(minutes=60)
+        ).isoformat().replace("+00:00", "Z")
+        renewed_task_map = {renewed_board_task["id"]: renewed_board_task}
+        snapshot_old_expiry_event = deepcopy(event)
+        snapshot_old_expiry_event["task"]["helper_execution_lease"]["lease_expires_at"] = (
+            now - timedelta(seconds=10)
+        ).isoformat().replace("+00:00", "Z")
+        # Validity is judged solely by board's current_claim; wake remains consumable!
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, snapshot_old_expiry_event, renewed_task_map)
+        self.assertIsNone(skip_msg)
+
+    def test_unrelated_board_revision_preserves_live_helper_claim_and_wake(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        claim = {
+            "claimed_by": "Codex",
+            "generation": 5,
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        task = {
+            "id": "TASK-REVISION-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "helper_execution_lease": deepcopy(claim),
+        }
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "dependency_done_statuses": ["done"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+        }
+        task_map = {task["id"]: task}
+        event = {
+            "event_key": supervisor.dispatch_engine.build_dispatch_event(
+                task, "Codex", supervisor.REASON_HELPER_CLAIM, task_map
+            )["key"],
+            "task_id": "TASK-REVISION-001",
+            "target_agent": "codex",
+            "reason": supervisor.REASON_HELPER_CLAIM,
+            "task": deepcopy(task),
+        }
+
+        # Board is updated concurrently: task status moved to in_progress, last_update changed, another task added
+        updated_task = deepcopy(task)
+        updated_task["status"] = "in_progress"
+        updated_task["last_update"] = now.isoformat().replace("+00:00", "Z")
+        updated_task_map = {
+            "TASK-REVISION-001": updated_task,
+            "UNRELATED-001": {"id": "UNRELATED-001", "status": "done"},
+        }
+
+        # Wake remains consumable despite the board revision
+        skip_msg = supervisor.dispatch_engine.stale_dispatch_skip_message(config, event, updated_task_map)
+        self.assertIsNone(skip_msg)
+
+    def test_stale_or_expired_lease_cannot_start_worker(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "TASK-NO-START-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 3,
+                "lease_expires_at": (now - timedelta(seconds=1)).isoformat().replace("+00:00", "Z"),
+            },
+        }
+        status = {"tasks": [task]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "providers": {"codex": {}},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        event = {
+            "event_id": "evt-expired-1",
+            "task_id": "TASK-NO-START-001",
+            "target_agent": "codex",
+            "target_display_name": "Codex",
+            "reason": supervisor.REASON_HELPER_CLAIM,
+            "provider": "codex",
+            "task": deepcopy(task),
+        }
+        state = {
+            "queue": {"events": {"evt-expired-1": {"status": "pending"}}},
+            "workers": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(supervisor, "start_worker_for_request") as mock_start,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
+
+        # Worker MUST NOT start on an expired lease
+        mock_start.assert_not_called()
+        self.assertEqual(state["queue"]["events"]["evt-expired-1"]["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-expired-1"]["skip_reason"], "stale_dispatch_event")
+
+    def test_helper_claim_exactly_once_worker_start(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "TASK-EXACTLY-ONCE-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 1,
+                "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+            },
+        }
+        status = {"tasks": [task]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "worker_runtime": {
+                "heartbeat_stale_seconds": 300,
+                "heartbeat_grace_seconds": 60,
+            },
+            "providers": {"codex": {}},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        task_map = {task["id"]: task}
+        event = supervisor.dispatch_engine.build_dispatch_event(
+            task, "Codex", supervisor.REASON_HELPER_CLAIM, task_map
+        )
+        event["event_id"] = "evt-exact-1"
+        event["provider"] = "codex"
+        event["message"] = "Execute helper claim work"
+        state = {
+            "queue": {"events": {"evt-exact-1": {"status": "pending"}}},
+            "workers": {},
+        }
+
+        start_calls = []
+
+        def fake_start(_config, state_arg, _report, _req, queue_event_id=None, **_kwargs):
+            start_calls.append(queue_event_id)
+            run_id = f"run-{queue_event_id}"
+            state_arg["workers"][run_id] = {
+                "run_id": run_id,
+                "task_id": "TASK-EXACTLY-ONCE-001",
+                "queue_event_id": queue_event_id,
+                "status": "running",
+                "logical_agent_id": "codex",
+                "request_snapshot": {"reason": supervisor.REASON_HELPER_CLAIM, "metadata": {"task": task}},
+            }
+            return True, run_id, {"auto_delivered": True}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[event]),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "ok")),
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+            mock.patch.object(supervisor, "start_worker_for_request", side_effect=fake_start),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            # First tick processes the queue: starts worker
+            supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
+            self.assertEqual(len(start_calls), 1)
+
+            # Second tick with the same event in queue: MUST NOT start a second worker
+            supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
+            self.assertEqual(len(start_calls), 1)
+
+            # Duplicate event for the same task in queue: MUST NOT start a second worker
+            dup_event = deepcopy(event)
+            dup_event["event_id"] = "evt-exact-2"
+            with mock.patch.object(supervisor, "load_event_queue", return_value=[dup_event]):
+                supervisor.worker_lifecycle.process_queue(config, state, provider_report={})
+                self.assertEqual(len(start_calls), 1)
+
+    def test_dispatch_rollback_on_commit_failure(self) -> None:
+        task1 = {
+            "id": "TASK-FAIL-COMMIT-1",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+        }
+        task2 = {
+            "id": "TASK-SUCCEED-COMMIT-2",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+        }
+        status = {"tasks": [task1, task2]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "account_pools": {"codex_pool": {"max_concurrent": 2, "state": "healthy"}},
+            "ready_dispatcher": {
+                "max_dispatches_per_tick": 4,
+                "helper_execution_lease": {
+                    "enabled": True,
+                    "lease_seconds": 1800,
+                    "max_claims_per_agent": 1,
+                    "max_claims_per_tick": 2,
+                    "require_owner_saturated": False,
+                },
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "providers": {},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "account_pool": "codex_pool"},
+                "codex_slot_1": {"id": "codex_slot_1", "display_name": "Codex", "slot_id": "codex_slot_1", "account_pool": "codex_pool", "dispatch_slot_for_pool": "codex_pool"},
+                "codex_slot_2": {"id": "codex_slot_2", "display_name": "Codex", "slot_id": "codex_slot_2", "account_pool": "codex_pool", "dispatch_slot_for_pool": "codex_pool"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "dispatch_state": {},
+        }
+
+        # First task commit fails; second task commit succeeds
+        commit_attempts = []
+
+        def mock_commit(_config, _status):
+            if len(commit_attempts) == 0:
+                commit_attempts.append("fail")
+                return False
+            commit_attempts.append("success")
+            return True
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", side_effect=mock_commit),
+            mock.patch.object(supervisor, "queue_dispatch_event_safely", return_value=True) as mock_queue,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+        # task1 rolled back its uncommitted lease
+        self.assertNotIn("helper_execution_lease", task1)
+        # task2 was successfully claimed and committed because task1's rollback unblocked Codex's max_claims_per_agent=1 cap
+        self.assertIn("helper_execution_lease", task2)
+        self.assertEqual(task2["helper_execution_lease"]["claimed_by"], "Codex")
+        self.assertEqual(mock_queue.call_count, 1)
+
+    def test_stale_or_expired_lease_cannot_clear_newer_generation(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        # Task has a newer generation (generation 2)
+        gen2_claim = {
+            "claimed_by": "Codex",
+            "generation": 2,
+            "run_id": "helper-run-2",
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        config, state, status = self._helper_lease_fixture(current_claim=gen2_claim)
+        # Old worker is from generation 1
+        state["workers"]["helper-run-1"]["status"] = "completed"
+        old_dispatched = state["workers"]["helper-run-1"]["request_snapshot"]["metadata"]["task"]
+        old_dispatched["helper_execution_lease"]["generation"] = 1
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        # Generation 2 claim on the task MUST NOT be cleared by older generation 1 worker termination
+        self.assertIn("helper_execution_lease", status["tasks"][0])
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["generation"], 2)
+        self.assertEqual(status["tasks"][0]["helper_execution_lease"]["run_id"], "helper-run-2")
+        terminate_worker_pid.assert_not_called()
+
+    def test_redispatch_preserves_same_generation_live_lease(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        task = {
+            "id": "TASK-REDISPATCH-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": (now - timedelta(hours=2)).isoformat().replace("+00:00", "Z"),
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "original_owner": "Claude",
+                "generation": 4,
+                "claimed_at": now.isoformat().replace("+00:00", "Z"),
+                "lease_expires_at": (now + timedelta(minutes=25)).isoformat().replace("+00:00", "Z"),
+                "reason": "owner_capacity_saturated_or_dispatch_sla_exceeded",
+            },
+        }
+        status = {"tasks": [task]}
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "max_dispatches_per_tick": 4,
+                "helper_execution_lease": {
+                    "enabled": True,
+                    "lease_seconds": 1800,
+                    "max_claims_per_agent": 2,
+                    "max_claims_per_tick": 2,
+                    "require_owner_saturated": False,
+                },
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running"],
+                "dependency_done_statuses": ["done"],
+            },
+            "providers": {},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+            },
+            "paths": {"event_queue": "events.jsonl", "activity_log": "activity.jsonl"},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "dispatch_state": {},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "commit_canonical_task_transition") as mock_commit,
+            mock.patch.object(supervisor, "queue_dispatch_event_safely", return_value=True) as mock_queue,
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_can_take_task", return_value=True),
+        ):
+            supervisor.dispatch_ready_tasks(config, state, agent_ids_override=["codex"])
+
+        # Retains same generation 4 without re-committing or bumping generation
+        self.assertEqual(task["helper_execution_lease"]["generation"], 4)
+        mock_commit.assert_not_called()
+        mock_queue.assert_called_once()
+        queued_event = mock_queue.call_args[0][1]
+        self.assertEqual(queued_event["task"]["helper_execution_lease"]["generation"], 4)
 
     def test_lower_priority_worker_is_superseded_when_finalize_backlog_exists(self) -> None:
         config = {
@@ -8484,6 +9012,261 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(event["type"], "review_churn_reassigned")
         self.assertNotEqual(event["from_owner_pool"], event["to_owner_pool"])
 
+    def test_review_churn_ignores_control_plane_recovery_reopens(self) -> None:
+        """Control-plane recovery reopens (stale SHA, lease mismatch) do not trigger owner reassignment."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        # Task has 1 substantive review finding and 3 control-plane recovery reopens
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-CONTROL-PLANE-RECOVERY",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 1,
+                    "review_reopen_history": [
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "stale_review_sha",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T02:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "worktree_lease_mismatch",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T02:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "control_plane_recovery",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                    ],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+    def test_review_churn_reassigns_when_substantive_findings_reach_threshold_despite_recovery_reopens(self) -> None:
+        """Owner reassignment triggers when substantive review findings reach threshold, even with recovery reopens interleaved."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+        # Task has 2 substantive findings interleaved with control plane recoveries
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-MIXED-CHURN",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 2,
+                    "review_reopen_history": [
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                        {
+                            "count": 1,
+                            "at": "2026-08-27T01:30:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "stale_review_sha",
+                            "category": "control_plane_recovery",
+                            "is_churn": False,
+                        },
+                        {
+                            "count": 2,
+                            "at": "2026-08-27T02:00:00Z",
+                            "by": "Claude",
+                            "owner": "Antigravity",
+                            "reason": "review_finding",
+                            "category": "substantive_review",
+                            "is_churn": True,
+                        },
+                    ],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 2)
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+
+    def test_substantive_review_reopen_count_reads_durable_counter_and_handles_truncated_history(self) -> None:
+        """substantive_review_reopen_count reads durable review_reopen_count, never dropping to 0 from recoveries."""
+        # 1. review_reopen_count is 4, but history only contains 20 recovery entries (no churn)
+        task_with_recoveries = {
+            "id": "T-001",
+            "review_reopen_count": 4,
+            "review_reopen_history": [
+                {"count": 4, "is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"}
+                for _ in range(20)
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_with_recoveries), 4)
+
+        # 2. review_reopen_count is 0 with recovery history
+        task_zero = {
+            "id": "T-002",
+            "review_reopen_count": 0,
+            "review_reopen_history": [
+                {"count": 0, "is_churn": False, "category": "control_plane_recovery", "reason": "worktree_lease_mismatch"}
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_zero), 0)
+
+        # 3. Fallback when review_reopen_count key is missing
+        task_legacy = {
+            "id": "T-003",
+            "review_reopen_history": [
+                {"is_churn": True, "category": "substantive_review", "reason": "review_finding"},
+                {"is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"},
+                {"is_churn": True, "category": "substantive_review", "reason": "please_fix_scoring"},
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_legacy), 2)
+
+    def test_review_churn_multi_epoch_rotation_with_recoveries_does_not_wipe_epoch_failed_owners(self) -> None:
+        """Multi-epoch failover (e.g. 4 substantive findings) succeeds and does not reset failed owners on recoveries."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex", "Claude2"],
+                    "Codex": ["Claude2", "Antigravity"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+
+        # Task already reassigned at 2 reopens (Antigravity -> Codex), now at review_reopen_count=2 with 10 recovery reopens
+        task = {
+            "id": "P3-MULTI-EPOCH",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "review_reopen_count": 2,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+            "review_reopen_history": [
+                {"count": 2, "is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"}
+                for _ in range(10)
+            ],
+        }
+        status = {"tasks": [task]}
+
+        # While reopen_count is 2 and raw_last_reassigned is 2, no reassignment happens and epoch_failed_owners is NOT wiped
+        with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual(task["review_churn_epoch_failed_owners"], ["Antigravity"])
+
+        # Now 2 more substantive findings occur -> review_reopen_count becomes 4
+        task["review_reopen_count"] = 4
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        # Must rotate to Claude2 (not bouncing back to Antigravity)
+        self.assertEqual(kwargs["new_owner"], "Claude2")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 4)
+        self.assertIn("Antigravity", kwargs["task_updates"]["review_churn_epoch_failed_owners"])
+        self.assertIn("Codex", kwargs["task_updates"]["review_churn_epoch_failed_owners"])
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+
     def _escalation_config(self, **churn_overrides) -> dict:
         churn = {
             "enabled": True,
@@ -10013,6 +10796,47 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         write_json.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_preempted_synced")
 
+    def test_sync_preempted_review_task_keeps_review(self) -> None:
+        config = {
+            "paths": {"status_file": "ai-status.json"},
+            "agents": {
+                "antigravity": {"id": "antigravity", "display_name": "Antigravity"},
+            },
+        }
+        worker = {
+            "task_id": "BP5-REV-001",
+            "agent_id": "antigravity",
+            "provider": "antigravity",
+            "request_snapshot": {"reason": "review_ready_dispatch"},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "BP5-REV-001",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Antigravity",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_json") as write_json,
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "utc_now", return_value="2026-04-15T16:09:52Z"),
+        ):
+            synced = supervisor.sync_preempted_task_status(config, worker)
+
+        self.assertTrue(synced)
+        task = status["tasks"][0]
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["last_update"], "2026-04-15T16:09:52Z")
+        self.assertIn("task remains review", task["next"])
+        write_json.assert_called_once()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_preempted_synced")
+
     def test_reassigns_finalize_task_to_new_owner_after_repeated_failure(self) -> None:
         config = {
             **self.config,
@@ -10774,6 +11598,258 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
         self.assertEqual(worker["status"], "superseded")
         terminate_worker_pid.assert_called_once_with(5555)
         sync_preempted.assert_called_once_with(config, worker)
+
+    def test_clean_review_worker_can_be_preempted_and_preserves_review(self) -> None:
+        """Review workers on clean worktrees are safe to preempt and remain review."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+        worker = {
+            "run_id": "run-review-1",
+            "task_id": "REV-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-review-1",
+            "pid": 5555,
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        state = {
+            "queue": {"events": {"evt-review-1": {"status": "started", "run_id": "run-review-1"}}},
+            "workers": {"run-review-1": worker},
+        }
+        task_map = {
+            "REV-001": {
+                "id": "REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "priority": "P2",
+                "depends_on": [],
+            },
+            "P0-TASK-001": {
+                "id": "P0-TASK-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+        ):
+            self.assertTrue(
+                supervisor.worker_can_be_preempted(config, worker, task_map, state)
+            )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
+            mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True) as sync_preempted,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(5555)
+        sync_preempted.assert_called_once_with(config, worker)
+
+    def test_odp_tenant_p0_ci_repair_preempts_lower_priority_review_worker(self) -> None:
+        """ODP-TENANT regression: P0 CI repair preempts lower priority (P2/P3) review worker occupying single quota slot."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        now_iso = supervisor.utc_now()
+        review_worker = {
+            "run_id": "run-p2-review-1",
+            "task_id": "ODP-TENANT-REV-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p2-rev-1",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        state = {
+            "queue": {"events": {"evt-p2-rev-1": {"status": "started", "run_id": "run-p2-review-1"}}},
+            "workers": {"run-p2-review-1": review_worker},
+        }
+        task_map = {
+            "ODP-TENANT-REV-001": {
+                "id": "ODP-TENANT-REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "priority": "P2",
+                "depends_on": [],
+            },
+            "ODP-TENANT-P0-REPAIR": {
+                "id": "ODP-TENANT-P0-REPAIR",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        # 1. higher_priority_ready_task_exists returns True because P0 repair outranks P2 review
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertTrue(
+                supervisor.higher_priority_ready_task_exists(config, review_worker, task_map, state)
+            )
+
+        # 2. worker_can_be_preempted returns True for clean review worker
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+        ):
+            self.assertTrue(
+                supervisor.worker_can_be_preempted(config, review_worker, task_map, state)
+            )
+
+        # 3. poll_workers supersedes the review worker and syncs preempted status
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "worker_worktree_is_clean", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
+            mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True) as sync_preempted,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(review_worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(5555)
+        sync_preempted.assert_called_once_with(config, review_worker)
+
+        # 4. In next tick, ready dispatcher dispatches P0 CI repair
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            dispatch_state = {"workers": {}, "queue": {"events": {}}}
+            dispatched = supervisor.dispatch_ready_tasks(config, dispatch_state)
+
+        self.assertTrue(dispatched)
+        queue_delivery_event.assert_called_once()
+        dispatched_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(dispatched_event["task_id"], "ODP-TENANT-P0-REPAIR")
+        self.assertEqual(dispatched_event["reason"], supervisor.REASON_OWNED_IN_PROGRESS)
+
+    def test_p0_in_progress_worker_does_not_preempt_same_priority_p0_review_or_finalize(self) -> None:
+        """P0 in-progress worker does NOT preempt same priority P0 review or P0 finalize tasks."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        now_iso = supervisor.utc_now()
+        # Case A: P0 review worker vs P0 in_progress candidate
+        review_worker = {
+            "run_id": "run-p0-review",
+            "task_id": "P0-REV-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p0-rev",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_REVIEW_READY},
+        }
+        state_rev = {
+            "queue": {"events": {"evt-p0-rev": {"status": "started", "run_id": "run-p0-review"}}},
+            "workers": {"run-p0-review": review_worker},
+        }
+        task_map_rev = {
+            "P0-REV-001": {
+                "id": "P0-REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "priority": "P0",
+                "depends_on": [],
+            },
+            "P0-REPAIR-001": {
+                "id": "P0-REPAIR-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "depends_on": [],
+            },
+        }
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(config, review_worker, task_map_rev, state_rev)
+            )
+
+        # Case B: P0 finalize worker vs P0 in_progress candidate
+        finalize_worker = {
+            "run_id": "run-p0-finalize",
+            "task_id": "P0-FINAL-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-p0-fin",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        state_fin = {
+            "queue": {"events": {"evt-p0-fin": {"status": "started", "run_id": "run-p0-finalize"}}},
+            "workers": {"run-p0-finalize": finalize_worker},
+        }
+        task_map_fin = {
+            "P0-FINAL-001": {
+                "id": "P0-FINAL-001",
+                "status": "review_approved",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "approved_head": "1111111122222222333333334444444455555555",
+                "depends_on": [],
+            },
+            "P0-REPAIR-001": {
+                "id": "P0-REPAIR-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "priority": "P0",
+                "depends_on": [],
+            },
+        }
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(config, finalize_worker, task_map_fin, state_fin)
+            )
 
     def test_lawfully_preempted_task_redispatched_by_ready_dispatcher(self) -> None:
         """Lawfully preempted task is returned to todo and redispatched by the existing ready dispatcher."""
@@ -12603,6 +13679,226 @@ class ResolvePollIntervalTests(unittest.TestCase):
         )
         self.assertEqual(value, supervisor.CONFIG_DEFAULT_POLL_INTERVAL_SECONDS)
         self.assertEqual(source, "config")
+
+
+class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
+    def test_resolve_heartbeat_warn_after_seconds_default_from_poll_interval(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 180.0}}
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_explicit_valid_threshold(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 300.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 300.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_accepts_exact_floor(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 240.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_clamps_just_below_floor(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 239.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_clamps_legacy_low_value(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 10.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_empty_config(self) -> None:
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds({})
+        self.assertEqual(
+            warn_seconds,
+            supervisor.CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+            + supervisor.DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS,
+        )
+
+    def test_resolve_heartbeat_warn_after_seconds_explicit_poll_interval_arg(self) -> None:
+        config = {"supervisor": {"poll_interval_seconds": 180.0}}
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(
+            config, poll_interval=60.0
+        )
+        self.assertEqual(warn_seconds, 120.0)
+
+    def test_normal_180s_poll_does_not_log_heartbeat_lag_warning(self) -> None:
+        state = {
+            "supervisor": {
+                "last_heartbeat_at": "2026-09-04T06:03:00Z",
+                "lifecycle": "running",
+                "mode_status": "active",
+            }
+        }
+        approval_state: dict[str, Any] = {}
+        with mock.patch.object(supervisor, "console_log") as mock_log:
+            supervisor.log_runtime_summary(
+                state,
+                approval_state,
+                changed=False,
+                quiet=False,
+                verbose=False,
+                previous_heartbeat="2026-09-04T06:00:00Z",
+                warn_after_seconds=240.0,
+            )
+        logged_lines = [call.args[0] for call in mock_log.call_args_list]
+        for line in logged_lines:
+            self.assertNotIn("WARNING heartbeat lag exceeded threshold", line)
+
+    def test_excessive_heartbeat_lag_logs_warning(self) -> None:
+        state = {
+            "supervisor": {
+                "last_heartbeat_at": "2026-09-04T06:06:00Z",
+                "lifecycle": "running",
+                "mode_status": "active",
+            }
+        }
+        approval_state: dict[str, Any] = {}
+        with mock.patch.object(supervisor, "console_log") as mock_log:
+            supervisor.log_runtime_summary(
+                state,
+                approval_state,
+                changed=False,
+                quiet=False,
+                verbose=False,
+                previous_heartbeat="2026-09-04T06:00:00Z",
+                warn_after_seconds=240.0,
+            )
+        logged_lines = [call.args[0] for call in mock_log.call_args_list]
+        warning_lines = [
+            line for line in logged_lines if "WARNING heartbeat lag exceeded threshold" in line
+        ]
+        self.assertEqual(len(warning_lines), 1)
+        self.assertIn("360.0s > 240.0s", warning_lines[0])
+
+    def test_run_once_passes_threshold_for_effective_poll_interval(self) -> None:
+        config = load_test_config()
+        config["supervisor"] = {
+            "poll_interval_seconds": 180.0,
+            "heartbeat_warn_after_seconds": 240.0,
+        }
+        with (
+            mock.patch.object(supervisor, "log_runtime_summary") as mock_summary,
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(
+                supervisor,
+                "load_runtime_state",
+                return_value={"supervisor": {"last_heartbeat_at": "2026-09-04T06:00:00Z"}},
+            ),
+            mock.patch.object(supervisor, "save_runtime_state"),
+            mock.patch.object(supervisor, "stamp_supervisor_runtime_state"),
+            mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"),
+            mock.patch.object(supervisor, "safe_load_approval_state", return_value={}),
+        ):
+            supervisor.run_once(config, watch=False, once=True, poll_interval=600.0)
+        self.assertEqual(mock_summary.call_args.kwargs.get("warn_after_seconds"), 660.0)
+
+    def test_main_wires_cli_poll_interval_to_supervisor_cycle(self) -> None:
+        config = load_test_config()
+        with (
+            # main() exports the selected config for worker inheritance; do not
+            # leak that process-level override into later ai_status tests.
+            mock.patch.dict(os.environ),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "supervisor.py",
+                    "--config",
+                    "/tmp/pantheon-test-config.json",
+                    "--poll-interval",
+                    "600",
+                    "--no-watch",
+                ],
+            ),
+            mock.patch.object(supervisor, "resolve_path", return_value=Path("/tmp/pantheon-test-config.json")),
+            mock.patch.object(supervisor, "authoritative_status_root", return_value=None),
+            mock.patch.object(supervisor, "load_config", return_value=config),
+            mock.patch.object(supervisor, "acquire_singleton_lock", return_value=True),
+            mock.patch.object(supervisor, "terminate_other_supervisors"),
+            mock.patch.object(supervisor.atexit, "register"),
+            mock.patch.object(supervisor, "install_termination_logging"),
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(supervisor, "bootstrap_supervisor_runtime_state"),
+            mock.patch.object(supervisor, "console_log"),
+            mock.patch.object(
+                supervisor,
+                "run_supervisor_cycle",
+                side_effect=RuntimeError("stop after first cycle"),
+            ) as run_cycle,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stop after first cycle"):
+                supervisor.main()
+
+        run_cycle.assert_called_once_with(
+            config,
+            watch=False,
+            replay=False,
+            quiet=False,
+            verbose=False,
+            poll_interval=600.0,
+        )
+
+    def test_main_wires_cli_poll_interval_to_once_run(self) -> None:
+        config = load_test_config()
+        with (
+            mock.patch.dict(os.environ),
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "supervisor.py",
+                    "--config",
+                    "/tmp/pantheon-test-config.json",
+                    "--poll-interval",
+                    "600",
+                    "--no-watch",
+                    "--once",
+                ],
+            ),
+            mock.patch.object(supervisor, "resolve_path", return_value=Path("/tmp/pantheon-test-config.json")),
+            mock.patch.object(supervisor, "authoritative_status_root", return_value=None),
+            mock.patch.object(supervisor, "load_config", return_value=config),
+            mock.patch.object(supervisor, "acquire_singleton_lock", return_value=True),
+            mock.patch.object(supervisor, "terminate_other_supervisors"),
+            mock.patch.object(supervisor.atexit, "register"),
+            mock.patch.object(supervisor, "install_termination_logging"),
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(supervisor, "bootstrap_supervisor_runtime_state"),
+            mock.patch.object(supervisor, "console_log"),
+            mock.patch.object(supervisor, "run_once", return_value=False) as run_once,
+        ):
+            self.assertEqual(supervisor.main(), 0)
+
+        run_once.assert_called_once_with(
+            config,
+            watch=False,
+            replay=False,
+            quiet=False,
+            verbose=False,
+            once=True,
+            poll_interval=600.0,
+        )
 
 
 class RunSupervisorShellGuardTests(unittest.TestCase):
@@ -18694,6 +19990,197 @@ class WorkerPromptContractTests(unittest.TestCase):
                 self.assertIn("uv run", rendered)
                 self.assertIn("不自行掃描主機", rendered)
 
+
+class ReopenReasonClassificationTests(unittest.TestCase):
+    """Reopen classification must come from --reason, never from the message prose.
+
+    Guards ODP-ORCH-REVIEW-CHURN-CAUSE-001: keyword sniffing the free-form message
+    misclassified reopens in both directions -- it downgraded real review findings to
+    control-plane recovery (switching the churn failover safety net off) and it failed
+    to recognise real recovery notes that used different wording.
+    """
+
+    # Verbatim prose from the only production control-plane recovery reopen on record
+    # (ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001 review_reopen_history[1]).
+    REAL_RECOVERY_MESSAGE = (
+        "Reviewer recovery: PR #1164 now points to 890afc62 after an owner timeout anchor, "
+        "while prior review submission remains pinned to 31fdfa89 and blocks reviewer worktree "
+        "lease. Return to owner via canonical reopen; preserve existing PR, collect current CI, "
+        "update remote review submission for the exact new head, then return for independent "
+        "review. No duplicate broad tests."
+    )
+
+    def _classify(self, message: str, raw_reason: str | None = None):
+        return common.classify_reopen_reason(
+            raw_reason=raw_reason,
+            actor="Claude",
+            owner="Antigravity",
+            reviewer="Claude",
+            message=message,
+        )
+
+    def test_substantive_finding_quoting_control_plane_terms_still_counts_as_churn(self) -> None:
+        """A review body that merely mentions recovery vocabulary is still a real finding."""
+        for message in (
+            "Review rejected: the lease mismatch branch never fires",
+            "GitHub PR requested changes via PR #1178 by @rev. B1 stale review sha handling is wrong",
+            "Reopen: the control plane recovery path is untested, please fix",
+            "head mismatch is handled but the worktree lease conflict path is not",
+            "CI repair helper swallows errors; unsealed handoff is never detected",
+        ):
+            with self.subTest(message=message):
+                reason, category, is_churn = self._classify(message)
+                self.assertEqual(reason, "review_finding")
+                self.assertEqual(category, "substantive_review")
+                self.assertTrue(is_churn, "substantive finding must keep counting towards churn failover")
+
+    def test_recovery_prose_without_reason_fails_safe_to_review_finding(self) -> None:
+        """Real recovery wording alone is not enough -- absent --reason we fail safe to churn."""
+        reason, category, is_churn = self._classify(self.REAL_RECOVERY_MESSAGE)
+        self.assertEqual(reason, "review_finding")
+        self.assertEqual(category, "substantive_review")
+        self.assertTrue(is_churn)
+
+    def test_recovery_prose_with_explicit_reason_is_not_churn(self) -> None:
+        """The structured --reason path is what exempts a recovery from churn."""
+        for raw_reason, expected in (
+            ("stale_review_sha", "stale_review_sha"),
+            ("worktree_lease_mismatch", "worktree_lease_mismatch"),
+            ("control_plane_recovery", "control_plane_recovery"),
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                reason, category, is_churn = self._classify(self.REAL_RECOVERY_MESSAGE, raw_reason)
+                self.assertEqual(reason, expected)
+                self.assertEqual(category, "control_plane_recovery")
+                self.assertFalse(is_churn)
+
+    def test_free_form_reason_text_is_not_a_recovery_declaration(self) -> None:
+        """--reason must carry a documented identifier, not prose that merely mentions one.
+
+        Otherwise the message-prose hole simply reappears in the --reason field.
+        """
+        for raw_reason in (
+            "the lease mismatch branch never fires",
+            "defect in head mismatch handling",
+            "fix the stale review sha bug",
+            "please_fix_scoring",
+            "release_gate_failure",
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                _reason, category, is_churn = self._classify("m", raw_reason)
+                self.assertEqual(category, "substantive_review")
+                self.assertTrue(is_churn)
+
+    def test_documented_recovery_identifiers_and_aliases_are_honoured(self) -> None:
+        """Every documented identifier (and its alias spellings) still exempts churn."""
+        for raw_reason, expected in (
+            ("stale_review_sha", "stale_review_sha"),
+            ("stale-review-sha", "stale_review_sha"),
+            ("head_mismatch", "stale_review_sha"),
+            ("worktree_lease_mismatch", "worktree_lease_mismatch"),
+            ("lease_expired", "worktree_lease_mismatch"),
+            ("control_plane_recovery", "control_plane_recovery"),
+            ("ci_repair", "control_plane_recovery"),
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                reason, category, is_churn = self._classify("m", raw_reason)
+                self.assertEqual(reason, expected)
+                self.assertEqual(category, "control_plane_recovery")
+                self.assertFalse(is_churn)
+
+    def test_explicit_review_finding_reason_counts_as_churn(self) -> None:
+        reason, category, is_churn = self._classify("anything at all", "review_finding")
+        self.assertEqual(reason, "review_finding")
+        self.assertEqual(category, "substantive_review")
+        self.assertTrue(is_churn)
+
+    def test_owner_resume_is_never_churn(self) -> None:
+        reason, category, is_churn = common.classify_reopen_reason(
+            raw_reason=None,
+            actor="Antigravity",
+            owner="Antigravity",
+            reviewer="Claude",
+            message="stale review sha, resuming my own work",
+        )
+        self.assertEqual(reason, "owner_resume")
+        self.assertEqual(category, "owner_resume")
+        self.assertFalse(is_churn)
+
+
+class GitHubBusReopenReasonTests(unittest.TestCase):
+    """The CHANGES_REQUESTED relay must tag its reopen explicitly.
+
+    The relayed detail embeds the reviewer's PR body verbatim, so it must never be
+    the thing that decides how the reopen is classified.
+    """
+
+    def test_changes_requested_relay_passes_review_finding_reason(self) -> None:
+        self.assertEqual(github_bus.REOPEN_REASON_REVIEW_FINDING, "review_finding")
+        source = Path(github_bus.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "run_ai_status"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "reopen"
+        ]
+        self.assertTrue(calls, "expected at least one run_ai_status('reopen', ...) call")
+
+        tagged = [
+            call
+            for call in calls
+            if any(
+                kw.arg == "extra_args"
+                and "--reason=" in ast.unparse(kw.value)
+                # the reason may be spelled as the literal or via the shared constant
+                and (
+                    "review_finding" in ast.unparse(kw.value)
+                    or "REOPEN_REASON_REVIEW_FINDING" in ast.unparse(kw.value)
+                )
+                for kw in call.keywords
+            )
+        ]
+        self.assertEqual(
+            len(tagged), 1, "CHANGES_REQUESTED relay must pass --reason=review_finding exactly once"
+        )
+
+    def test_seeded_collaboration_guide_documents_reopen_reasons(self) -> None:
+        """Workers must be told the --reason enum, or the structured path goes unused."""
+        guide = worker_workspace._generated_collaboration_guide({})
+        self.assertIn("--reason=<reason>", guide)
+        for reason in (
+            "review_finding",
+            "stale_review_sha",
+            "worktree_lease_mismatch",
+            "control_plane_recovery",
+        ):
+            self.assertIn(reason, guide)
+        self.assertIn("never parsed", guide)
+
+    def test_run_ai_status_forwards_extra_args(self) -> None:
+        recorded: dict[str, Any] = {}
+
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            recorded["cmd"] = cmd
+            return _Proc()
+
+        with mock.patch.object(github_bus.subprocess, "run", side_effect=fake_run):
+            github_bus.run_ai_status(
+                "reopen", "TASK-1", "detail", actor="Claude", extra_args=["--reason=review_finding"]
+            )
+
+        self.assertEqual(recorded["cmd"][-1], "--reason=review_finding")
+        self.assertEqual(recorded["cmd"][-2], "detail")
 
 if __name__ == "__main__":
     unittest.main()

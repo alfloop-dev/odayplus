@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib.metadata import version
 from typing import Any
 
@@ -14,10 +14,13 @@ from solver.netplan import (
     STATUS_FEASIBLE,
     STATUS_INFEASIBLE,
     STATUS_OPTIMAL,
+    ActionOption,
     NetworkAction,
+    NetworkPlanCandidate,
     NetworkPlanSolveResult,
 )
 from solver.netplan.optimizer import (
+    _candidate_from_selected,
     _require_declared_resource,
     _require_open_options_declare_zone,
     diagnose_infeasible,
@@ -40,6 +43,9 @@ class NetPlanProductionExecutionError(RuntimeError):
     """Raised when the production OSS solver contract cannot complete."""
 
 
+NETPLAN_PRODUCTION_SOLVER_VERSION = "netplan-ortools-cp-sat-v2"
+
+
 @dataclass(frozen=True)
 class NetPlanProductionExecution:
     result: NetworkPlanSolveResult
@@ -55,6 +61,8 @@ class NetPlanProductionExecutor:
         *,
         alternative_limit: int,
     ) -> NetPlanProductionExecution:
+        if alternative_limit < 0:
+            raise ValueError("alternative_limit must be non-negative")
         source_snapshot_ids = sorted(
             {
                 snapshot_id
@@ -101,6 +109,14 @@ class NetPlanProductionExecutor:
             raise NetPlanProductionExecutionError(
                 f"OR-Tools returned unsupported status {primary.solver_status!r}"
             )
+
+        if primary.solver_status in {STATUS_OPTIMAL, STATUS_FEASIBLE} and alternative_limit:
+            alternatives = _solve_cp_sat_alternatives(
+                scenario,
+                primary=primary,
+                alternative_limit=alternative_limit,
+            )
+            primary = replace(primary, alternatives=alternatives)
 
         robust = _run_robust_contract(scenario)
         if robust.solver_status in {
@@ -189,7 +205,54 @@ class NetPlanProductionExecutor:
         return NetPlanProductionExecution(result=primary, metadata=metadata)
 
 
-def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
+def _solve_cp_sat_alternatives(
+    scenario: NetPlanScenario,
+    *,
+    primary: NetworkPlanSolveResult,
+    alternative_limit: int,
+) -> tuple[NetworkPlanCandidate, ...]:
+    """Enumerate distinct feasible CP-SAT plans without exhaustive search.
+
+    The library solver has an exhaustive candidate ranking contract, but the
+    production path must keep its alternatives in the CP-SAT execution path.
+    Re-solving with a no-good constraint for each selected action signature
+    keeps the alternatives feasible and avoids calling the library solver to
+    manufacture production evidence.
+    """
+    excluded = {_selected_action_signature(primary.selected_actions)}
+    alternatives: list[NetworkPlanCandidate] = []
+    for _ in range(alternative_limit):
+        candidate_result = _solve_ortools_cp_sat(
+            scenario,
+            excluded_signatures=excluded,
+        )
+        if candidate_result.solver_status not in {STATUS_OPTIMAL, STATUS_FEASIBLE}:
+            break
+        candidate = _candidate_from_selected(
+            sorted(candidate_result.selected_actions, key=lambda action: action.entity_id),
+            scenario.constraints,
+            100_000.0,
+        )
+        if candidate.action_signature in excluded:
+            break
+        alternatives.append(candidate)
+        excluded.add(candidate.action_signature)
+    return tuple(alternatives)
+
+
+def _selected_action_signature(
+    selected_actions: tuple[ActionOption, ...],
+) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        sorted((action.entity_id, action.action.value) for action in selected_actions)
+    )
+
+
+def _solve_ortools_cp_sat(
+    scenario: NetPlanScenario,
+    *,
+    excluded_signatures: set[tuple[tuple[str, str], ...]] | None = None,
+) -> NetworkPlanSolveResult:
     try:
         from ortools.sat.python import cp_model
     except Exception as exc:
@@ -209,6 +272,15 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
     }
     for entity_id, options in scenario.options_by_entity.items():
         model.add(sum(variables[(entity_id, index)] for index in range(len(options))) == 1)
+    for signature in excluded_signatures or set():
+        selected_variables = [
+            variables[(entity_id, index)]
+            for entity_id, action in signature
+            for index, option in enumerate(scenario.options_by_entity[entity_id])
+            if option.action.value == action
+        ]
+        if len(selected_variables) == len(scenario.options_by_entity):
+            model.add(sum(selected_variables) <= len(scenario.options_by_entity) - 1)
     model.add(
         sum(
             variables[(entity_id, index)] * round(option.budget_cost * money_scale)
@@ -374,7 +446,7 @@ def _solve_ortools_cp_sat(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
         capacity_delta=capacity,
         action_counts=counts,
         binding_constraints=tuple(bindings),
-        solver_version="netplan-ortools-cp-sat-v2",
+        solver_version=NETPLAN_PRODUCTION_SOLVER_VERSION,
     )
 
 
@@ -398,7 +470,7 @@ def _infeasible_primary(scenario: NetPlanScenario) -> NetworkPlanSolveResult:
                 scenario.constraints,
             )
         ),
-        solver_version="netplan-ortools-cp-sat-v2",
+        solver_version=NETPLAN_PRODUCTION_SOLVER_VERSION,
     )
 
 

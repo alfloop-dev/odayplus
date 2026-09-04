@@ -70,6 +70,8 @@ def _row(
         "feature_snapshot_time": SNAPSHOT_TIME.isoformat(),
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
         "source_snapshot_ids": [snapshot_id],
+        "data_quality_score": 0.98,
+        "confidence": 0.95,
         "labels": {"w4_revenue": label},
         "label_maturity_time": SNAPSHOT_TIME.isoformat(),
         "features": {
@@ -102,6 +104,7 @@ def _feature_and_train(
     thresholds: tuple[MetricThreshold, ...] | None = None,
     decision_policy=None,
 ) -> TrainingPipelineResult:
+    policy = decision_policy or default_model_performance_drift_policy("tenant-modeling")
     feature = FeaturePipelineRunner(
         repository=service.repository,
         artifact_store=artifacts,
@@ -130,7 +133,7 @@ def _feature_and_train(
         actor="Codex2",
         run_id=f"training-{version}",
         git_sha="abc1234",
-        decision_policy=decision_policy,
+        decision_policy=policy,
     )
 
 

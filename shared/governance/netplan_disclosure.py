@@ -130,11 +130,36 @@ def _string_tuple(value: Any, *, field_name: str, policy: DecisionPolicy) -> tup
 
 def required_classes(policy: DecisionPolicy) -> tuple[str, ...]:
     """The classes this policy version insists a solve must have bound."""
-    return _string_tuple(
+    declared = _string_tuple(
         policy.parameters.get("required_classes"),
         field_name="required_classes",
         policy=policy,
     )
+    declared_set = set(declared)
+    missing = tuple(
+        name for name in NETPLAN_REQUIRED_CONSTRAINT_CLASSES if name not in declared_set
+    )
+    unknown = tuple(
+        name
+        for name in declared
+        if name not in NETPLAN_REQUIRED_CONSTRAINT_CLASSES
+    )
+    duplicates = tuple(
+        name for index, name in enumerate(declared) if name in declared[:index]
+    )
+    if missing or unknown or duplicates:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing required classes {','.join(missing)}")
+        if unknown:
+            details.append(f"unknown classes {','.join(dict.fromkeys(unknown))}")
+        if duplicates:
+            details.append(f"duplicate classes {','.join(dict.fromkeys(duplicates))}")
+        raise NetPlanDisclosurePolicyError(
+            f"netplan disclosure policy {policy.policy_version_id} has an invalid "
+            f"required_classes set: {'; '.join(details)}"
+        )
+    return declared
 
 
 def acknowledgeable_classes(policy: DecisionPolicy) -> tuple[str, ...]:
@@ -212,6 +237,14 @@ def evaluate_disclosure(
     observed = tuple(
         dict.fromkeys(str(name).strip().upper() for name in unmodelled_classes if str(name).strip())
     )
+    unknown = tuple(
+        name for name in observed if name not in NETPLAN_REQUIRED_CONSTRAINT_CLASSES
+    )
+    if unknown:
+        raise NetPlanDisclosurePolicyError(
+            f"netplan disclosure policy {policy.policy_version_id} received unknown "
+            f"unmodelled constraint classes: {','.join(unknown)}"
+        )
     blocking = tuple(name for name in observed if name in required and name not in waivable)
     acknowledgeable = tuple(name for name in observed if name in required and name in waivable)
     not_required = tuple(name for name in observed if name not in required)
