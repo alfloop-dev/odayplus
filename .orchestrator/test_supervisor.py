@@ -3446,23 +3446,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "reviewer": "Claude2",
             "depends_on": [],
             "last_update": "2026-04-13T14:20:00Z",
-        }
-        current_event = supervisor.build_dispatch_event(
-            current_task,
-            "Claude2",
-            "review_ready_dispatch",
-            {"BUS-VAL-005B": current_task},
-        )
-        queue_payload = {
-            "event_id": "evt-not-ready",
-            "event_key": current_event["key"],
-            "task_id": "BUS-VAL-005B",
-            "target_agent": "claude2",
-            "target_display_name": "Claude2",
-            "provider": "claude2",
-            "reason": "review_ready_dispatch",
-            "message": "wake",
-            "context_files": [],
+            "review_submission": {"remote_sha": "a" * 40},
         }
         provider_report = {
             "agent_adapters": {
@@ -3476,13 +3460,48 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         }
         state = {"queue": {"events": {}}, "workers": {}}
 
+        config = {
+            **self.config,
+            "agents": {
+                **self.config.get("agents", {}),
+                "claude2": {
+                    "id": "claude2",
+                    "name": "Claude2",
+                    "display_name": "Claude2",
+                    "provider": "claude2",
+                    "adapter": "claude",
+                },
+            },
+        }
+
         with (
-            mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
-            mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
-            mock.patch.object(supervisor, "start_worker_for_request", side_effect=AssertionError("not-ready provider should not start")),
-            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
-            changed = supervisor.process_queue(self.config, state, provider_report)
+            current_event = supervisor.build_dispatch_event(
+                current_task,
+                "Claude2",
+                "review_ready_dispatch",
+                {"BUS-VAL-005B": current_task},
+            )
+            queue_payload = {
+                "event_id": "evt-not-ready",
+                "event_key": current_event["key"],
+                "task_id": "BUS-VAL-005B",
+                "target_agent": "claude2",
+                "target_display_name": "Claude2",
+                "provider": "claude2",
+                "reason": "review_ready_dispatch",
+                "message": "wake",
+                "context_files": [],
+            }
+            with (
+                mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
+                mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
+                mock.patch.object(supervisor, "start_worker_for_request", side_effect=AssertionError("not-ready provider should not start")),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                changed = supervisor.process_queue(config, state, provider_report)
 
         self.assertTrue(changed)
         record = state["queue"]["events"]["evt-not-ready"]
@@ -3878,6 +3897,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "owner": "Antigravity",
                     "reviewer": "Codex",
                     "depends_on": [],
+                    "review_submission": {"remote_sha": "a" * 40},
                 },
             ]
         }
@@ -3901,6 +3921,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 "utc_now",
                 return_value="2026-07-31T12:00:00Z",
             ),
+            mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         )
         with contextlib.ExitStack() as stack:
             for patcher in common_patches:
@@ -3938,6 +3960,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "utc_now",
                     return_value="2026-07-31T12:00:00Z",
                 ),
+                mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
+                mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
                 mock.patch.object(
                     supervisor,
                     "queue_delivery_event",
@@ -4320,6 +4344,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "owner": "Antigravity",
                     "reviewer": "Codex",
                     "depends_on": [],
+                    "review_submission": {"remote_sha": "a" * 40},
                 }
             ]
         }
@@ -4332,6 +4357,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "reviewer": "Antigravity2",
                     "depends_on": [],
                     "last_update": "2026-08-02T14:05:00Z",
+                    "review_submission": {"remote_sha": "a" * 40},
                 }
             ]
         }
@@ -4341,6 +4367,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             changed = supervisor.dispatch_ready_tasks(config, state)
@@ -4447,12 +4475,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         }
         initial_status = {
             "tasks": [
-                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Helper", "depends_on": []},
+                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Helper", "depends_on": [], "review_submission": {"remote_sha": "a" * 40}},
             ]
         }
         normalized_status = {
             "tasks": [
-                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Codex", "depends_on": []},
+                {"id": "WB-012", "status": "review", "owner": "Claude", "reviewer": "Codex", "depends_on": [], "review_submission": {"remote_sha": "a" * 40}},
             ]
         }
 
@@ -4461,6 +4489,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch("ai_status.resolve_task_sha", return_value="a" * 40),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             changed = supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}})
@@ -11745,11 +11775,17 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
         terminate_worker_pid.assert_called_once_with(5555)
         sync_preempted.assert_called_once_with(config, review_worker)
 
-        # 4. In next tick, ready dispatcher dispatches P0 CI repair
+        # 4. In next tick, ready dispatcher dispatches P0 CI repair.
+        # ODP-TENANT-REV-001 is in review with no verified review submission, so the
+        # exact-head CI readiness gate suppresses its reviewer dispatch and records the
+        # reason on the task. That is a real canonical write, so it is isolated here
+        # alongside write_activity_log; without it the dispatcher writes the reason
+        # straight into the repository's tracked ai-status.json.
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
             mock.patch.object(supervisor, "write_activity_log"),
         ):
             dispatch_state = {"workers": {}, "queue": {"events": {}}}
@@ -14020,7 +14056,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             ]
         }
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"):
-            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+                 unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
                 with unittest.mock.patch("ai_status.sync_all"):
                     with self.assertRaises(SystemExit) as cm:
                         ai_status.command_approve(state, ["FREEZE-TEST-002", "Approve self"])
@@ -14413,6 +14450,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         state = _fresh_state()
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("ai_status.append_log"), \
              unittest.mock.patch("ai_status.sync_all"):
             ai_status.command_approve(state, ["FREEZE-TEST-020A", "Approve valid"])
@@ -14480,6 +14518,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         state["tasks"][0]["review_submission"]["remote_sha"] = old_head
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
              unittest.mock.patch("ai_status.append_log"), \
              unittest.mock.patch("ai_status.sync_all"):
             ai_status.command_approve(state, ["FREEZE-TEST-020B", "Approve same head"])
@@ -15354,7 +15393,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         ai_status.clear_ai_status_caches()
         with unittest.mock.patch("ai_status.append_log"), unittest.mock.patch("ai_status.sync_all"):
             with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
-                 unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved):
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved), \
+                 unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
                 ai_status.command_approve(state, ["FREEZE-TEST-021A", "Approved"])
             self.assertEqual(task["last_approved_head"], approved)
 

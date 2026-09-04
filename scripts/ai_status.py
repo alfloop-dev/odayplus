@@ -2403,21 +2403,59 @@ def task_pr_ci_status(
         )
         if res and isinstance(res, dict):
             pr_state = res.get("state")
-            rollup = res.get("statusCheckRollup") or []
-            if not rollup:
+            raw_rollup = res.get("statusCheckRollup")
+            if not isinstance(raw_rollup, list) or not raw_rollup:
                 val = (pr_state, "none")
                 _CI_STATUS_CACHE[cache_key] = (now, val)
                 return val
 
+            raw_checks, _superseded_checks = latest_status_check_runs(raw_rollup)
+
             has_pending = False
             has_failure = False
             has_success = False
-            for check in rollup:
-                if isinstance(check, dict):
-                    conclusion = str(check.get("conclusion") or "").upper()
-                    state_val = str(check.get("state") or "").upper()
-                    status_val = str(check.get("status") or "").upper()
+            valid_checks_count = 0
 
+            for check in raw_checks:
+                if not isinstance(check, dict):
+                    has_failure = True
+                    valid_checks_count += 1
+                    continue
+
+                check_name = str(check.get("name") or "").strip()
+                check_context = str(check.get("context") or "").strip()
+
+                # Exclude the pre-approval reviewer gate: task-review-gate is a commit status
+                # emitted upon review approval and is always pending prior to approval.
+                if check_context == "task-review-gate" or check_name == "task-review-gate":
+                    continue
+
+                valid_checks_count += 1
+
+                check_type = str(check.get("__typename") or "").strip()
+                conclusion = str(check.get("conclusion") or "").upper()
+                state_val = str(check.get("state") or "").upper()
+                status_val = str(check.get("status") or "").upper()
+
+                if check_type == "CheckRun":
+                    if status_val != "COMPLETED" or not conclusion:
+                        has_pending = True
+                    elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                        has_success = True
+                    elif conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
+                        has_failure = True
+                    else:
+                        has_failure = True
+                elif check_type == "StatusContext":
+                    if state_val in {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING"} or not state_val:
+                        has_pending = True
+                    elif state_val == "SUCCESS":
+                        has_success = True
+                    elif state_val in {"FAILURE", "ERROR"}:
+                        has_failure = True
+                    else:
+                        has_failure = True
+                else:
                     if conclusion:
                         if conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
                             has_failure = True
@@ -2425,13 +2463,17 @@ def task_pr_ci_status(
                             has_pending = True
                         elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
                             has_success = True
+                        else:
+                            has_failure = True
                     elif state_val:
                         if state_val in {"FAILURE", "ERROR"}:
                             has_failure = True
                         elif state_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"}:
                             has_pending = True
-                        elif state_val in {"SUCCESS"}:
+                        elif state_val == "SUCCESS":
                             has_success = True
+                        else:
+                            has_failure = True
                     elif status_val:
                         if status_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED", "REQUESTED"}:
                             has_pending = True
@@ -2439,8 +2481,14 @@ def task_pr_ci_status(
                             has_failure = True
                         elif status_val in {"COMPLETED", "SUCCESS"}:
                             has_success = True
+                        else:
+                            has_failure = True
+                    else:
+                        has_failure = True
 
-            if has_failure:
+            if valid_checks_count == 0:
+                ci_status = "none"
+            elif has_failure:
                 ci_status = "failure"
             elif has_pending:
                 ci_status = "pending"
@@ -7283,6 +7331,21 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             f"Cannot approve task {task_id}: it still carries an uncleared approved head "
             f"({existing_head[:8]}) while the branch is now at {approved_sha[:8]}. "
             f"Run `re_review {task_id} <reason>` to clear the stale freeze first. "
+            "No approval was recorded."
+        )
+
+    # Required CI terminal success check on exact head
+    try:
+        pr_status, ci_status = task_pr_ci_status(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: unable to check PR CI status ({exc}). "
+            "Integrity gate failed closed; no approval was recorded."
+        ) from exc
+    if ci_status != "success":
+        raise SystemExit(
+            f"Cannot approve task {task_id}: required CI status is '{ci_status}' "
+            f"(exact head {approved_sha[:8]} must have all required CI terminal success before approval). "
             "No approval was recorded."
         )
 
