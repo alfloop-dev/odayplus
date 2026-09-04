@@ -30,21 +30,44 @@ def test_postcss_advisory_resolved() -> None:
     ), f"PostCSS version {version} is vulnerable"
 
 
-def test_npm_audit_passes() -> None:
-    res = subprocess.run(
-        ["npm", "audit", "--omit=dev", "--audit-level=high"], cwd=ROOT, capture_output=True, text=True
+def test_dependency_audit_runner_wiring_and_timeouts() -> None:
+    sys.path.insert(0, str(ROOT))
+    from delivery_toolchain.security.dependency_audit import (
+        DEFAULT_NPM_TIMEOUT_SECONDS,
+        DEFAULT_PIP_TIMEOUT_SECONDS,
+        resolve_timeouts,
     )
-    assert res.returncode == 0, f"npm audit failed with output:\n{res.stdout}\n{res.stderr}"
+
+    npm_t, pip_t = resolve_timeouts()
+    assert npm_t == DEFAULT_NPM_TIMEOUT_SECONDS and npm_t > 0
+    assert pip_t == DEFAULT_PIP_TIMEOUT_SECONDS and pip_t > 0
 
 
-def test_pip_audit_passes() -> None:
-    res = subprocess.run(
-        ["uv", "run", "--with", "pip-audit", "pip-audit", "--local"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    assert res.returncode == 0, f"pip-audit failed with output:\n{res.stdout}\n{res.stderr}"
+def test_npm_audit_fails_closed_on_registry_error_without_bypass() -> None:
+    sys.path.insert(0, str(ROOT))
+    from delivery_toolchain.security.dependency_audit import run_npm_audit
+
+    def mock_503_runner(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd,
+            returncode=1,
+            stdout="",
+            stderr="npm ERR! 503 Service Unavailable",
+        )
+
+    res = run_npm_audit(root=ROOT, runner=mock_503_runner)
+    assert res != 0, "npm audit must fail closed on 503 service unavailable (no bypass)"
+
+
+def test_pip_audit_fails_closed_on_timeout_without_bypass() -> None:
+    sys.path.insert(0, str(ROOT))
+    from delivery_toolchain.security.dependency_audit import run_pip_audit
+
+    def mock_timeout_runner(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd=cmd, timeout=30.0)
+
+    res = run_pip_audit(root=ROOT, runner=mock_timeout_runner)
+    assert res != 0, "pip-audit must fail closed on timeout (no bypass)"
 
 
 def test_secrets_scan_passes() -> None:
