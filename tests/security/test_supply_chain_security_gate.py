@@ -30,6 +30,20 @@ def test_postcss_advisory_resolved() -> None:
     ), f"PostCSS version {version} is vulnerable"
 
 
+def test_npm_audit_passes(monkeypatch) -> None:
+    gate = _audit_gate()
+    monkeypatch.setattr(
+        gate,
+        "run_npm_audit",
+        lambda cwd=gate.ROOT, timeout=1.0: gate.classify_audit_output(_report_json(), ""),
+    )
+    outcome = gate.audit_with_retry(attempts=1, backoff=0, sleep=lambda _s: None)
+    assert outcome.has_report
+    code, verdict = gate.evaluate(outcome, "high")
+    assert code == gate.EXIT_OK, f"clean audit report must pass the gate: {verdict}"
+    assert "PASS" in verdict
+
+
 def test_npm_audit_gate_is_wired() -> None:
     package_json = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     assert "npm_audit_gate.py" in package_json["scripts"]["audit:security"]
@@ -396,9 +410,11 @@ def test_npm_audit_gate_exhausted_retries_stay_closed(monkeypatch) -> None:
 
 def test_npm_audit_gate_is_wired_into_the_release_gate() -> None:
     package_json = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
-    assert "npm_audit_gate.py" in package_json["scripts"]["audit:security"], (
-        "make dependency-audit runs 'npm run audit:security'; it must reach the hardened gate"
-    )
+    assert "npm_audit_gate.py" in package_json["scripts"]["audit:security"]
+    deploy_workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert "npm_audit_gate.py" in deploy_workflow
+    assert "--receipt" in deploy_workflow
+    assert "npm-audit-receipt.json" in deploy_workflow
 
 
 def test_npm_audit_gate_omits_dev_dependencies() -> None:
@@ -465,3 +481,126 @@ def test_pip_audit_gate_does_not_pass_on_transport_failure() -> None:
 def test_pip_audit_gate_is_wired_into_makefile() -> None:
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     assert "delivery_toolchain/security/pip_audit_gate.py" in makefile
+
+
+def test_npm_audit_gate_rejects_lowering_threshold_to_critical() -> None:
+    """ODP_NPM_AUDIT_LEVEL must not lower the production threshold from high to critical."""
+    gate = _audit_gate()
+    import pytest
+
+    with pytest.raises(ValueError, match="cannot be lowered"):
+        gate.validate_threshold("critical")
+
+    outcome = gate.classify_audit_output(_report_json(high=1), "")
+    code, verdict = gate.evaluate(outcome, "critical")
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+    assert "invalid severity threshold" in verdict
+
+
+def test_npm_audit_gate_rejects_critical_env_var(monkeypatch) -> None:
+    gate = _audit_gate()
+    monkeypatch.setenv("ODP_NPM_AUDIT_LEVEL", "critical")
+    code = gate.main([])
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+
+
+def test_npm_audit_gate_writes_redacted_receipt(tmp_path: Path) -> None:
+    gate = _audit_gate()
+    receipt_file = tmp_path / "npm-audit-receipt.json"
+    outcome = gate.classify_audit_output(_report_json(moderate=1), "")
+    code, verdict = gate.evaluate(outcome, "high")
+    gate.write_audit_receipt(receipt_file, outcome, code, verdict, "high")
+
+    assert receipt_file.exists()
+    data = json.loads(receipt_file.read_text(encoding="utf-8"))
+    assert data["secret_values_redacted"] is True
+    assert data["status"] == "passed"
+    assert data["result"] == "pass"
+    assert data["exit_code"] == gate.EXIT_OK
+    assert data["threshold"] == "high"
+    assert data["omit_dev"] is True
+    assert data["outcome_kind"] == "report"
+    assert data["counts"]["moderate"] == 1
+
+
+def test_npm_audit_gate_redacts_sensitive_registry_details(tmp_path: Path) -> None:
+    """Registry errors containing credentials or tokens must be redacted from receipts and verdicts."""
+    gate = _audit_gate()
+    sensitive_error = json.dumps(
+        {
+            "message": (
+                "503 Service Unavailable from "
+                "https://deploy-agent:super_secret_password_123@registry.internal.corp/npm/?token=secret_query_token_999 "
+                "with auth header Bearer secret_bearer_token_888"
+            ),
+            "method": "POST",
+            "uri": "https://deploy-agent:super_secret_password_123@registry.internal.corp/npm/?token=secret_query_token_999",
+            "statusCode": 503,
+            "body": (
+                "Gateway Error: failed to connect with certificate:\n"
+                "-----BEGIN RSA PRIVATE KEY-----\n"  # pragma: allowlist-secret
+                "MIIEowIBAAKCAQEA0secretkeybody\n"
+                "-----END RSA PRIVATE KEY-----"  # pragma: allowlist-secret
+            ),
+        }
+    )
+    outcome = gate.classify_audit_output(sensitive_error, "")
+    assert not outcome.has_report
+
+    code, verdict = gate.evaluate(outcome, "high")
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+    assert "super_secret_password_123" not in verdict
+    assert "secret_query_token_999" not in verdict
+    assert "secret_bearer_token_888" not in verdict
+    assert "MIIEowIBAAKCAQEA0" not in verdict
+    assert "[REDACTED]" in verdict
+
+    receipt_file = tmp_path / "sensitive-npm-audit-receipt.json"
+    gate.write_audit_receipt(receipt_file, outcome, code, verdict, "high")
+
+    assert receipt_file.exists()
+    receipt_text = receipt_file.read_text(encoding="utf-8")
+
+    # Absolute negative assertions: no raw secret string anywhere in the receipt artifact
+    assert "super_secret_password_123" not in receipt_text
+    assert "secret_query_token_999" not in receipt_text
+    assert "secret_bearer_token_888" not in receipt_text
+    assert "MIIEowIBAAKCAQEA0" not in receipt_text
+
+    # Positive assertions: redacted placeholders present
+    assert "https://deploy-agent:[REDACTED]@registry.internal.corp" in receipt_text
+    assert "?token=[REDACTED]" in receipt_text
+    assert "Bearer [REDACTED]" in receipt_text
+    assert "[REDACTED]" in receipt_text
+
+    data = json.loads(receipt_text)
+    assert data["secret_values_redacted"] is True
+    assert data["status"] == "failed"
+    assert data["result"] == "fail"
+    assert "super_secret_password_123" not in data["detail"]
+    assert "super_secret_password_123" not in data["verdict"]
+
+
+def test_npm_audit_gate_receipt_distinguishes_unavailable_from_vulnerabilities(
+    tmp_path: Path,
+) -> None:
+    gate = _audit_gate()
+    unavail_receipt = tmp_path / "unavail.json"
+    unavail_outcome = gate.classify_audit_output(QUICK_ENDPOINT_400, "")
+    code_u, verdict_u = gate.evaluate(unavail_outcome, "high")
+    gate.write_audit_receipt(unavail_receipt, unavail_outcome, code_u, verdict_u, "high")
+    data_u = json.loads(unavail_receipt.read_text(encoding="utf-8"))
+    assert data_u["status"] == "failed"
+    assert data_u["result"] == "fail"
+    assert data_u["exit_code"] == gate.EXIT_AUDIT_UNAVAILABLE
+    assert data_u["outcome_kind"] == "unavailable"
+
+    vuln_receipt = tmp_path / "vuln.json"
+    vuln_outcome = gate.classify_audit_output(_report_json(high=1), "")
+    code_v, verdict_v = gate.evaluate(vuln_outcome, "high")
+    gate.write_audit_receipt(vuln_receipt, vuln_outcome, code_v, verdict_v, "high")
+    data_v = json.loads(vuln_receipt.read_text(encoding="utf-8"))
+    assert data_v["status"] == "failed"
+    assert data_v["result"] == "fail"
+    assert data_v["exit_code"] == gate.EXIT_VULNERABLE
+    assert data_v["outcome_kind"] == "report"

@@ -348,6 +348,8 @@ class DataPlatformMarketIntelligenceRepository:
             )
             return context
         except MarketDataAuthorizationError as err:
+            if err.code == "missing_tenant":
+                raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
             ) from err
@@ -394,6 +396,8 @@ class DataPlatformMarketIntelligenceRepository:
             )
             return document
         except MarketDataAuthorizationError as err:
+            if err.code == "missing_tenant":
+                raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
             ) from err
@@ -437,6 +441,8 @@ class DataPlatformMarketIntelligenceRepository:
             )
             return profile
         except MarketDataAuthorizationError as err:
+            if err.code == "missing_tenant":
+                raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
             ) from err
@@ -483,6 +489,8 @@ class DataPlatformMarketIntelligenceRepository:
             )
             return document
         except MarketDataAuthorizationError as err:
+            if err.code == "missing_tenant":
+                raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
             ) from err

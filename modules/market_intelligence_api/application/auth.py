@@ -12,7 +12,7 @@ from typing import Any
 from modules.market_intelligence_api.domain.contracts import (
     ALLOWED_MARKET_INTELLIGENCE_ROLES,
 )
-from shared.audit.policy import build_security_event, requires_audit
+from shared.audit.policy import build_security_event
 from shared.auth import (
     AccessRequest,
     Action,
@@ -20,7 +20,9 @@ from shared.auth import (
     Decision,
     Principal,
     ResourceDescriptor,
-    Role,
+    TenantAccessWaiver,
+    TenantAccessWaiverRegistry,
+    check_tenant_isolation,
 )
 from shared.auth.engine import AuthorizationEngine
 
@@ -77,26 +79,59 @@ class MarketIntelligenceValidationError(MarketIntelligenceError, ValueError):
         super().__init__(message, code="market_intelligence_validation_error", details=details)
 
 
+def _extract_envelope_tenant(envelope: Any) -> str | None:
+    if envelope is None:
+        return None
+    if isinstance(envelope, Mapping):
+        return (
+            envelope.get("tenant_id")
+            or envelope.get("tenantId")
+            or (
+                envelope.get("metadata", {}).get("tenant_id")
+                if isinstance(envelope.get("metadata"), Mapping)
+                else None
+            )
+        )
+    return getattr(envelope, "tenant_id", None) or (
+        getattr(envelope, "metadata", {}).get("tenant_id")
+        if isinstance(getattr(envelope, "metadata", None), Mapping)
+        else None
+    )
+
+
 def authorize_market_intelligence(
     resource_type: str,
     resource_id: str | None = None,
     *,
     action: Action = Action.VIEW,
     tenant_id: str | None = None,
+    resource_tenant_id: str | None = None,
+    resource_envelope: Any | None = None,
     principal: Principal | None = None,
     auth_engine: AuthorizationEngine | None = None,
     classification: DataClassification = DataClassification.CONFIDENTIAL,
     enforce_auth: bool = True,
+    waiver: TenantAccessWaiver | str | None = None,
+    waiver_registry: TenantAccessWaiverRegistry | None = None,
 ) -> str | None:
     """Enforce ODayPlus product authorization, tenant isolation, and RBAC rules.
+
+    Derives resource tenant from the target resource envelope when provided.
+    Fails closed on missing or unauthorized tenant access.
+    Records canonical security audit events for all decisions (both allows and denials).
 
     Returns:
         The verified effective tenant_id for downstream data access.
     """
-    effective_tenant_id = tenant_id or (principal.tenant_id if principal is not None else None)
+    derived_tenant = (
+        _extract_envelope_tenant(resource_envelope)
+        if resource_envelope is not None
+        else (resource_tenant_id if resource_tenant_id is not None else tenant_id)
+    )
+    clean_target_tenant = str(derived_tenant).strip() if derived_tenant else ""
 
     if not enforce_auth and principal is None:
-        return effective_tenant_id
+        return clean_target_tenant or None
 
     if principal is None:
         raise MarketIntelligenceAuthorizationError(
@@ -111,7 +146,7 @@ def authorize_market_intelligence(
         resource=ResourceDescriptor(
             type=resource_type,
             resource_id=resource_id,
-            tenant_id=effective_tenant_id,
+            tenant_id=clean_target_tenant or None,
             data_classification=classification,
         ),
     )
@@ -128,24 +163,33 @@ def authorize_market_intelligence(
             details={"subject_id": principal.subject_id, "resource_type": resource_type},
         )
 
-    # 1. Tenant Isolation
-    if effective_tenant_id and principal.tenant_id and principal.tenant_id != effective_tenant_id:
-        if not principal.has_role(Role.PLATFORM_ADMIN):
-            decision = Decision.deny(
-                f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
-                policy_id="tenant_isolation",
-            )
-            if hasattr(engine, "audit_log") and engine.audit_log:
-                engine.audit_log.record(build_security_event(access, decision))
-            raise MarketIntelligenceAuthorizationError(
-                f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
-                code="cross_tenant_access_denied",
-                details={
-                    "principal_tenant_id": principal.tenant_id,
-                    "resource_tenant_id": effective_tenant_id,
-                    "resource_id": resource_id,
-                },
-            )
+    # 1. Tenant Isolation using the shared fail-closed guard
+    tenant_decision = check_tenant_isolation(
+        principal=principal,
+        resource_tenant_id=clean_target_tenant or None,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        waiver=waiver,
+        waiver_registry=waiver_registry,
+    )
+    if not tenant_decision.allowed:
+        if hasattr(engine, "audit_log") and engine.audit_log:
+            engine.audit_log.record(build_security_event(access, tenant_decision))
+        code = (
+            "missing_tenant"
+            if "missing" in tenant_decision.reason.lower()
+            else "cross_tenant_access_denied"
+        )
+        raise MarketIntelligenceAuthorizationError(
+            tenant_decision.reason,
+            code=code,
+            details={
+                "principal_tenant_id": principal.tenant_id,
+                "resource_tenant_id": clean_target_tenant or None,
+                "resource_id": resource_id,
+                "policy_id": tenant_decision.policy_id,
+            },
+        )
 
     # 2. RBAC: Caller must hold at least one role permitted for Market Intelligence
     has_allowed_role = any(role in ALLOWED_MARKET_INTELLIGENCE_ROLES for role in principal.roles)
@@ -180,12 +224,16 @@ def authorize_market_intelligence(
             },
         )
 
-    # 4. Audit recording for authorized access
-    decision = Decision.allow("authorized")
-    if requires_audit(action, classification) and hasattr(engine, "audit_log") and engine.audit_log:
+    # 4. Mandatory immutable audit recording for all authorized access paths
+    decision = (
+        tenant_decision
+        if "cross_tenant_waiver" in tenant_decision.obligations
+        else Decision.allow("authorized")
+    )
+    if hasattr(engine, "audit_log") and engine.audit_log:
         engine.audit_log.record(build_security_event(access, decision))
 
-    return effective_tenant_id
+    return clean_target_tenant or None
 
 
 __all__ = [

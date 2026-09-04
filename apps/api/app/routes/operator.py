@@ -649,6 +649,7 @@ def create_operator_router(
                 # test-reset gate (ODP_E2E_MODE): production keeps the durable
                 # listing aggregate fail-closed empty until real intake writes.
                 seed_fixtures=allow_test_reset,
+                tenant_id=tenant_id,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={

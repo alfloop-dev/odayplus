@@ -33,6 +33,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.release_receipts import redact
 
 EXIT_OK = 0
 EXIT_VULNERABLE = 1
@@ -234,7 +238,7 @@ def evaluate(outcome: AuditOutcome) -> tuple[int, str]:
         return (
             EXIT_AUDIT_UNAVAILABLE,
             "AUDIT UNAVAILABLE: the Python vulnerability database (PyPI/OSV) never returned "
-            f"advisory data, so this run proves nothing about Python dependencies. Last error: {outcome.detail}",
+            f"advisory data, so this run proves nothing about Python dependencies. Last error: {redact(outcome.detail)}",
         )
 
     # pip-audit does not provide a normalized severity in its JSON schema.
