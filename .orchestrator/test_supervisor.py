@@ -5023,6 +5023,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             quiet=True,
             verbose=False,
             once=False,
+            poll_interval=None,
         )
         self.assertIn("RuntimeError: boom", console_log.call_args.args[0])
         self.assertTrue(console_log.call_args.kwargs["quiet"])
@@ -13696,6 +13697,26 @@ class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
         warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
         self.assertEqual(warn_seconds, 300.0)
 
+    def test_resolve_heartbeat_warn_after_seconds_accepts_exact_floor(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 240.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
+    def test_resolve_heartbeat_warn_after_seconds_clamps_just_below_floor(self) -> None:
+        config = {
+            "supervisor": {
+                "poll_interval_seconds": 180.0,
+                "heartbeat_warn_after_seconds": 239.0,
+            }
+        }
+        warn_seconds = supervisor.resolve_heartbeat_warn_after_seconds(config)
+        self.assertEqual(warn_seconds, 240.0)
+
     def test_resolve_heartbeat_warn_after_seconds_clamps_legacy_low_value(self) -> None:
         config = {
             "supervisor": {
@@ -13770,7 +13791,7 @@ class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
         self.assertEqual(len(warning_lines), 1)
         self.assertIn("360.0s > 240.0s", warning_lines[0])
 
-    def test_run_once_passes_resolved_warning_threshold(self) -> None:
+    def test_run_once_passes_threshold_for_effective_poll_interval(self) -> None:
         config = load_test_config()
         config["supervisor"] = {
             "poll_interval_seconds": 180.0,
@@ -13789,8 +13810,51 @@ class SupervisorHeartbeatWarningSemanticsTests(unittest.TestCase):
             mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"),
             mock.patch.object(supervisor, "safe_load_approval_state", return_value={}),
         ):
-            supervisor.run_once(config, watch=False, once=True)
-        self.assertEqual(mock_summary.call_args.kwargs.get("warn_after_seconds"), 240.0)
+            supervisor.run_once(config, watch=False, once=True, poll_interval=600.0)
+        self.assertEqual(mock_summary.call_args.kwargs.get("warn_after_seconds"), 660.0)
+
+    def test_main_wires_cli_poll_interval_to_supervisor_cycle(self) -> None:
+        config = load_test_config()
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                [
+                    "supervisor.py",
+                    "--config",
+                    "/tmp/pantheon-test-config.json",
+                    "--poll-interval",
+                    "600",
+                    "--no-watch",
+                ],
+            ),
+            mock.patch.object(supervisor, "resolve_path", return_value=Path("/tmp/pantheon-test-config.json")),
+            mock.patch.object(supervisor, "authoritative_status_root", return_value=None),
+            mock.patch.object(supervisor, "load_config", return_value=config),
+            mock.patch.object(supervisor, "acquire_singleton_lock", return_value=True),
+            mock.patch.object(supervisor, "terminate_other_supervisors"),
+            mock.patch.object(supervisor.atexit, "register"),
+            mock.patch.object(supervisor, "install_termination_logging"),
+            mock.patch.object(supervisor, "write_supervisor_pid"),
+            mock.patch.object(supervisor, "bootstrap_supervisor_runtime_state"),
+            mock.patch.object(supervisor, "console_log"),
+            mock.patch.object(
+                supervisor,
+                "run_supervisor_cycle",
+                side_effect=RuntimeError("stop after first cycle"),
+            ) as run_cycle,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "stop after first cycle"):
+                supervisor.main()
+
+        run_cycle.assert_called_once_with(
+            config,
+            watch=False,
+            replay=False,
+            quiet=False,
+            verbose=False,
+            poll_interval=600.0,
+        )
 
 
 class RunSupervisorShellGuardTests(unittest.TestCase):

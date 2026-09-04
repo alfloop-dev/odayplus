@@ -887,7 +887,7 @@
           "type": "integer"
         },
         "heartbeat_warn_after_seconds": {
-          "description": "Heartbeat lag threshold in seconds before logging a warning. Evaluated relative to poll cadence to prevent false warnings during normal polling.",
+          "description": "Heartbeat lag threshold in seconds before logging a warning. The effective value is at least the effective supervisor poll interval plus the heartbeat grace period, preventing false warnings during normal polling.",
           "type": "number"
         },
         "max_worker_history": {
