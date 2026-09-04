@@ -248,12 +248,17 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
 def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     sv = _supervisor_module()
     from dispatch import worker_logical_dispatch_agent_id
-    from dispatch_policy import REASON_OWNED_FINALIZE, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY
+    from dispatch_policy import (
+        REASON_OWNED_FINALIZE,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_READY,
+        REASON_REVIEW_READY,
+    )
 
     if not config.get("paths", {}).get("status_file"):
         return False
 
-    dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or "").strip()
+    dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or worker.get("reason") or "").strip()
     task_id = str(worker.get("task_id") or "").strip()
     target_agent = sv.display_name_for(
         config,
@@ -266,8 +271,17 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
     task = _task_index_from_status(config, status).get(task_id)
     if not task:
         return False
-    if str(task.get("owner") or "").strip() != target_agent:
-        return False
+
+    schema = config.get("schema", {})
+    owner_field = schema.get("assignee_field", "owner")
+    reviewer_field = schema.get("reviewer_field", "reviewer")
+
+    if dispatch_reason == REASON_REVIEW_READY:
+        if str(task.get(reviewer_field) or "").strip() != target_agent:
+            return False
+    else:
+        if str(task.get(owner_field) or "").strip() != target_agent:
+            return False
 
     task_status = str(task.get("status") or "").lower()
     timestamp = sv.utc_now()
@@ -278,15 +292,22 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
             return False
         task["status"] = "todo"
         message = (
-            f"Supervisor preempted {task_id} to free {target_agent} for higher-priority review/finalize work; "
+            f"Supervisor preempted {task_id} to free {target_agent} for higher-priority work; "
             "task returned to todo until a fresh run restarts it."
         )
     elif dispatch_reason == REASON_OWNED_FINALIZE:
         if task_status != "review_approved":
             return False
         message = (
-            f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority review work; "
+            f"Supervisor paused finalize on {task_id} to free {target_agent} for higher-priority work; "
             "task remains review_approved."
+        )
+    elif dispatch_reason == REASON_REVIEW_READY:
+        if task_status != "review":
+            return False
+        message = (
+            f"Supervisor paused review on {task_id} to free {target_agent} for higher-priority work; "
+            "task remains review."
         )
     else:
         return False

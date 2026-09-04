@@ -1011,7 +1011,9 @@ def higher_priority_ready_task_exists(
 ) -> bool:
     if worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker):
         return False
-    current_priority = dispatch_reason_priority(worker.get("request_snapshot", {}).get("reason"))
+    current_priority = dispatch_reason_priority(
+        worker.get("request_snapshot", {}).get("reason") or worker.get("reason")
+    )
     if current_priority is None:
         return False
 
@@ -1039,7 +1041,7 @@ def higher_priority_ready_task_exists(
             continue
         task_status = str(task.get("status") or "").lower()
         candidate_priority = None
-        if task_status in review_statuses and task.get(reviewer_field) == agent_name:
+        if task_status in review_statuses and normalize_agent_id(str(task.get(reviewer_field) or "")) == normalize_agent_id(agent_name):
             if is_sidecar_review_of_current_parent(
                 task,
                 current_task,
@@ -1093,7 +1095,9 @@ def higher_priority_ready_task_exists(
         event_id = str(other.get("queue_event_id") or "")
         if event_id:
             active_event_ids.add(event_id)
-        other_priority = dispatch_reason_priority(other.get("request_snapshot", {}).get("reason"))
+        other_priority = dispatch_reason_priority(
+            other.get("request_snapshot", {}).get("reason") or other.get("reason")
+        )
         other_task_id = str(other.get("task_id") or "")
         other_task = task_map.get(other_task_id)
         other_task_rank = task_priority_rank(other_task)
