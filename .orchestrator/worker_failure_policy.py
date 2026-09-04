@@ -11,6 +11,7 @@ from common import (
     claude_model_selection_args,
     parse_iso_timestamp,
     spawn_background_process,
+    substantive_review_reopen_count,
 )
 from provider_runtime import configured_provider_binary
 import status_transition
@@ -2026,7 +2027,7 @@ def reassign_tasks_after_review_churn(
         if task_is_human_gate(snapshot) or bool(snapshot.get("non_dispatchable")):
             continue
         try:
-            reopen_count = max(0, int(snapshot.get("review_reopen_count", 0) or 0))
+            reopen_count = substantive_review_reopen_count(snapshot)
             raw_last_reassigned = max(0, int(snapshot.get("review_churn_reassigned_at_count", 0) or 0))
             # If reopen_count was reset below the previous reassignment count, start a new epoch with last_reassigned_count=0
             last_reassigned_count = raw_last_reassigned if raw_last_reassigned <= reopen_count else 0
