@@ -11,6 +11,7 @@ Verifies that:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -271,6 +272,129 @@ def test_activation_receipt_binds_audit_metadata() -> None:
     # Verify receipt persisted
     persisted = repo.get_activation_receipt(plan.plan_id)
     assert persisted == receipt
+
+
+def test_activate_fails_if_gate_revoked_before_activation() -> None:
+    repo = InMemoryPriceOpsRepository()
+    service = PriceOpsService(repository=repo)
+    explore_service = ExplorationService(repository=repo)
+
+    now = datetime.now(UTC)
+    gate = explore_service.register_gate(
+        tenant_id=TENANT_ID,
+        budget_limit=500.0,
+        effective_from=now - timedelta(days=1),
+        effective_to=now + timedelta(days=7),
+        approved_by="pricing_director",
+        approval_decision_id="dec-1",
+        approval_id="appr-1",
+        rollback_condition="margin_loss > 0.05",
+        decision_policy_version_id="policy-v1",
+    )
+
+    item = _make_item()
+    plan = service.create_plan(tenant_id=TENANT_ID, items=[item], correlation_id="corr-rev-1")
+    service.simulate(plan.plan_id)
+    service.optimize(plan.plan_id, exploration_gate_id=gate.gate_id, exploration_seed=123)
+    service.submit_for_approval(plan.plan_id, actor="analyst", reason="ready")
+    service.approve(plan.plan_id, actor_id="manager", reason="approved")
+
+    # Gate is revoked before activation
+    explore_service.revoke_gate(gate.gate_id, tenant_id=TENANT_ID)
+
+    with pytest.raises(ExplorationNotAuthorizedError, match="revoked"):
+        service.activate(plan.plan_id, executor="pricing_operator_01")
+
+    # Ensure plan was not activated
+    stored_plan = repo.get_plan(plan.plan_id)
+    assert stored_plan is not None
+    assert stored_plan.status.value != "ACTIVE"
+
+
+def test_production_required_with_exploration() -> None:
+    from modules.priceops.infrastructure.oss_optimizer import (
+        PRICEOPS_OSS_SOLVER_VERSION,
+        PriceOpsProductionExecutionError,
+        PriceOpsProductionOptimizer,
+    )
+
+    class StubDurablePriceOpsRepo:
+        def __init__(self) -> None:
+            self._mem = InMemoryPriceOpsRepository()
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._mem, name)
+
+    repo = StubDurablePriceOpsRepo()
+    explore_service = ExplorationService(repository=repo)
+
+    now = datetime.now(UTC)
+    gate = explore_service.register_gate(
+        tenant_id=TENANT_ID,
+        budget_limit=500.0,
+        effective_from=now - timedelta(days=1),
+        effective_to=now + timedelta(days=7),
+        approved_by="pricing_director",
+        approval_decision_id="dec-prod-1",
+        approval_id="appr-prod-1",
+        rollback_condition="margin_loss > 0.05",
+        decision_policy_version_id="policy-v1",
+    )
+
+    prod_service = PriceOpsService(
+        repository=repo,
+        production_optimizer=PriceOpsProductionOptimizer(),
+        runtime_mode="production",
+    )
+
+    # 1. Without source snapshot lineage, production optimization must fail closed
+    item_no_lineage = _make_item()
+    plan_no_lineage = prod_service.create_plan(
+        tenant_id=TENANT_ID, items=[item_no_lineage], correlation_id="corr-p1"
+    )
+    prod_service.simulate(plan_no_lineage.plan_id)
+    with pytest.raises(PriceOpsProductionExecutionError, match="lineage"):
+        prod_service.optimize(
+            plan_no_lineage.plan_id, exploration_gate_id=gate.gate_id, exploration_seed=42
+        )
+
+    # 2. With lineage, production optimization succeeds and outputs PRICEOPS_OSS_SOLVER_VERSION
+    item_with_lineage = PricingPlanItem(
+        item_id="item-lineage-1",
+        store_id="store-001",
+        machine_type="espresso-master",
+        constraints=PriceConstraints(
+            unit_cost=10.0,
+            current_price=20.0,
+            margin_floor_ratio=0.30,
+            max_increase_pct=0.20,
+            max_decrease_pct=0.20,
+            price_ladder_step=0.5,
+        ),
+        baseline_demand=100.0,
+        elasticity=PriceElasticityEstimate(
+            elasticity_value=-1.5,
+            confidence=0.9,
+            model_version="pricing-demand-v1",
+            feature_version="feat-v1",
+        ),
+        source_snapshot_ids=("snap-lineage-001",),
+    )
+    plan_with_lineage = prod_service.create_plan(
+        tenant_id=TENANT_ID, items=[item_with_lineage], correlation_id="corr-p2"
+    )
+    prod_service.simulate(plan_with_lineage.plan_id)
+    opt = prod_service.optimize(
+        plan_with_lineage.plan_id,
+        exploration_gate_id=gate.gate_id,
+        exploration_seed=42,
+    )
+
+    assert opt.solver_version == PRICEOPS_OSS_SOLVER_VERSION
+    assert opt.solver_metadata["exploration_enabled"] is True
+    assert opt.solver_metadata["gate_id"] == gate.gate_id
+    assert "engines" in opt.solver_metadata
+
 
 
 def test_priceops_exploration_api_endpoints() -> None:

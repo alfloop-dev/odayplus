@@ -209,6 +209,16 @@ class PriceOpsService:
         }
         solver_version = PRICEOPS_SOLVER_VERSION
 
+        if self.production_required:
+            executor = self.production_optimizer or PriceOpsProductionOptimizer()
+            execution = executor.optimize(plan)
+            pairs = execution.results
+            solver_metadata.update(execution.metadata)
+            solver_version = PRICEOPS_OSS_SOLVER_VERSION
+        else:
+            pairs = tuple((item, optimize_item(item)) for item in plan.items)
+            solver_version = PRICEOPS_SOLVER_VERSION
+
         if exploration_gate_id is not None:
             # Authorize exploration gate fail-closed
             gate = self.repository.get_gate(exploration_gate_id, tenant_id=plan.tenant_id)
@@ -266,14 +276,11 @@ class PriceOpsService:
             solver_metadata["gate_id"] = gate.gate_id
             solver_metadata["bandit_candidates"] = [c.to_dict() for c in bandit_candidates]
 
-            # Build item optimizations with explored prices
-            item_optimizations_list: list[ItemOptimization] = []
-            pairs_list: list[tuple[PricingPlanItem, OptimizationResult]] = []
-            for item, candidate in zip(plan.items, bandit_candidates, strict=False):
-                opt_res = optimize_item(item)
-                # If explored price differs, wrap into optimization result
+            # Update pairs with explored prices
+            updated_pairs: list[tuple[PricingPlanItem, OptimizationResult]] = []
+            for (item, opt_res), candidate in zip(pairs, bandit_candidates, strict=False):
                 if abs(candidate.explored_price - item.constraints.current_price) > 1e-9:
-                    sim_explored = simulate_item(item) if abs(candidate.explored_price - item.constraints.current_price) < 1e-9 else simulate_price(
+                    sim_explored = simulate_price(
                         price=candidate.explored_price,
                         baseline_demand=item.baseline_demand,
                         baseline_price=item.constraints.current_price,
@@ -293,28 +300,13 @@ class PriceOpsService:
                         recommended_simulation=sim_explored,
                         requires_approval=True,
                     )
-                pairs_list.append((item, opt_res))
-                item_optimizations_list.append(
-                    ItemOptimization(item_id=item.item_id, store_id=item.store_id, result=opt_res)
-                )
-            pairs = tuple(pairs_list)
-            item_optimizations = tuple(item_optimizations_list)
-        elif self.production_required:
-            executor = self.production_optimizer or PriceOpsProductionOptimizer()
-            execution = executor.optimize(plan)
-            pairs = execution.results
-            solver_metadata.update(execution.metadata)
-            solver_version = PRICEOPS_OSS_SOLVER_VERSION
-            item_optimizations = tuple(
-                ItemOptimization(item_id=item.item_id, store_id=item.store_id, result=result)
-                for item, result in pairs
-            )
-        else:
-            pairs = tuple((item, optimize_item(item)) for item in plan.items)
-            item_optimizations = tuple(
-                ItemOptimization(item_id=item.item_id, store_id=item.store_id, result=result)
-                for item, result in pairs
-            )
+                updated_pairs.append((item, opt_res))
+            pairs = tuple(updated_pairs)
+
+        item_optimizations = tuple(
+            ItemOptimization(item_id=item.item_id, store_id=item.store_id, result=result)
+            for item, result in pairs
+        )
 
         total_incremental = round(sum(result.incremental_gross_margin for _, result in pairs), 4)
         violation_count = count_hard_violations(pairs)
@@ -609,6 +601,29 @@ class PriceOpsService:
                 f"plan {plan_id} cannot be executed without a rollback plan"
             )
         now = executed_at or datetime.now(UTC)
+
+        # Re-validate exploration gate fail-closed at activation time
+        exploration_enabled = bool(optimization.solver_metadata.get("exploration_enabled", False))
+        gate_id = optimization.solver_metadata.get("gate_id")
+        if exploration_enabled or gate_id is not None:
+            if not gate_id:
+                raise ExplorationNotAuthorizedError(
+                    f"plan {plan_id} has exploration enabled but no gate_id in optimization metadata"
+                )
+            gate = self.repository.get_gate(gate_id, tenant_id=plan.tenant_id)
+            if gate is None:
+                raise ExplorationNotAuthorizedError(
+                    f"Exploration gate {gate_id} not found for tenant {plan.tenant_id} at activation"
+                )
+            if gate.revoked_at is not None:
+                raise ExplorationNotAuthorizedError(
+                    f"Exploration gate {gate.gate_id} is revoked at {gate.revoked_at.isoformat()} at activation time"
+                )
+            if not (gate.effective_from <= now < gate.effective_to):
+                raise ExplorationNotAuthorizedError(
+                    f"Exploration gate {gate.gate_id} is outside validity window [{gate.effective_from.isoformat()}, {gate.effective_to.isoformat()}) at activation time {now.isoformat()}"
+                )
+
         corr = correlation_id or plan.correlation_id
         item_by_id = {item.item_id: item for item in plan.items}
 
