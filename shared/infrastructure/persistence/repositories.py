@@ -2239,14 +2239,12 @@ class DurableHeatZoneCompositionRepository:
                     f"cell '{record.member_cell_id}' is already an active member of zone '{existing_active.zone_id}'"
                 )
         self._engine.execute(
-            f"""
-            INSERT INTO {self.table_composition} (
-                composition_id, zone_id, tenant_id, member_cell_id,
-                composition_kind, parent_zone_id, decided_by, decided_at,
-                decision_policy_version_id, model_version, override_reason,
-                reverted_at, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            f"INSERT INTO {self.table_composition} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "composition_id, zone_id, tenant_id, member_cell_id, "
+            "composition_kind, parent_zone_id, decided_by, decided_at, "
+            "decision_policy_version_id, model_version, override_reason, "
+            "reverted_at, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.composition_id,
                 record.zone_id,
@@ -2276,7 +2274,7 @@ class DurableHeatZoneCompositionRepository:
 
     def get_composition(self, zone_id: str, tenant_id: str) -> list[HeatZoneCompositionRecord]:
         rows = self._engine.query(
-            f"SELECT * FROM {self.table_composition} WHERE zone_id = ? AND tenant_id = ? ORDER BY decided_at DESC",
+            f"SELECT * FROM {self.table_composition} WHERE zone_id = ? AND tenant_id = ? ORDER BY decided_at DESC",  # nosec B608
             (zone_id, tenant_id),
         )
         return [self._row_to_record(row) for row in rows]
@@ -2285,7 +2283,7 @@ class DurableHeatZoneCompositionRepository:
         self, cell_id: str, tenant_id: str
     ) -> HeatZoneCompositionRecord | None:
         row = self._engine.query_one(
-            f"SELECT * FROM {self.table_composition} WHERE member_cell_id = ? AND tenant_id = ? AND reverted_at IS NULL LIMIT 1",
+            f"SELECT * FROM {self.table_composition} WHERE member_cell_id = ? AND tenant_id = ? AND reverted_at IS NULL LIMIT 1",  # nosec B608
             (cell_id, tenant_id),
         )
         if not row:
@@ -2297,7 +2295,7 @@ class DurableHeatZoneCompositionRepository:
     ) -> list[HeatZoneCompositionRecord]:
         clause = " AND reverted_at IS NULL" if active_only else ""
         rows = self._engine.query(
-            f"SELECT * FROM {self.table_composition} WHERE tenant_id = ?{clause} ORDER BY decided_at DESC",
+            f"SELECT * FROM {self.table_composition} WHERE tenant_id = ?{clause} ORDER BY decided_at DESC",  # nosec B608
             (tenant_id,),
         )
         return [self._row_to_record(row) for row in rows]
@@ -2313,7 +2311,7 @@ class DurableHeatZoneCompositionRepository:
                 raise CompositionValidationError(f"no active composition found for zone '{zone_id}'")
 
             self._engine.execute(
-                f"UPDATE {self.table_composition} SET reverted_at = ? WHERE zone_id = ? AND tenant_id = ? AND reverted_at IS NULL",
+                f"UPDATE {self.table_composition} SET reverted_at = ? WHERE zone_id = ? AND tenant_id = ? AND reverted_at IS NULL",  # nosec B608
                 (now.isoformat(), zone_id, tenant_id),
             )
             return self.get_composition(zone_id, tenant_id)
@@ -2393,21 +2391,19 @@ class DurableHeatZoneCompositionRepository:
         warnings_json = json.dumps(list(proposal.warnings))
         child_partitions_json = json.dumps([list(part) for part in proposal.child_partitions])
         self._engine.execute(
-            f"""
-            INSERT INTO {self.table_proposals} (
-                proposal_id, zone_id, tenant_id, composition_kind,
-                member_cell_ids, parent_zone_id, ndcg_gain,
-                cannibalization_variance_reduction, correlation_rho,
-                disconnect_index, split_density_ratio, child_partitions, confidence,
-                model_version, policy_version_id, status, reasons,
-                warnings, created_at, approved_by, approved_at, rejection_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(proposal_id) DO UPDATE SET
-                status = excluded.status,
-                approved_by = excluded.approved_by,
-                approved_at = excluded.approved_at,
-                rejection_reason = excluded.rejection_reason
-            """,
+            f"INSERT INTO {self.table_proposals} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "proposal_id, zone_id, tenant_id, composition_kind, "
+            "member_cell_ids, parent_zone_id, ndcg_gain, "
+            "cannibalization_variance_reduction, correlation_rho, "
+            "disconnect_index, split_density_ratio, child_partitions, confidence, "
+            "model_version, policy_version_id, status, reasons, "
+            "warnings, created_at, approved_by, approved_at, rejection_reason"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(proposal_id) DO UPDATE SET "
+            "status = excluded.status, "
+            "approved_by = excluded.approved_by, "
+            "approved_at = excluded.approved_at, "
+            "rejection_reason = excluded.rejection_reason",
             (
                 proposal.proposal_id,
                 proposal.zone_id,
@@ -2437,7 +2433,7 @@ class DurableHeatZoneCompositionRepository:
 
     def get_proposal(self, proposal_id: str, tenant_id: str) -> MergeSplitProposalRecord | None:
         row = self._engine.query_one(
-            f"SELECT * FROM {self.table_proposals} WHERE proposal_id = ? AND tenant_id = ?",
+            f"SELECT * FROM {self.table_proposals} WHERE proposal_id = ? AND tenant_id = ?",  # nosec B608
             (proposal_id, tenant_id),
         )
         if not row:
@@ -2450,12 +2446,12 @@ class DurableHeatZoneCompositionRepository:
         status_val = status.value if isinstance(status, ProposalStatus) else str(status) if status else None
         if status_val:
             rows = self._engine.query(
-                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC",
+                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC",  # nosec B608
                 (tenant_id, status_val),
             )
         else:
             rows = self._engine.query(
-                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? ORDER BY created_at DESC",
+                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? ORDER BY created_at DESC",  # nosec B608
                 (tenant_id,),
             )
         return [self._row_to_proposal(row) for row in rows]
@@ -2697,7 +2693,7 @@ class DurableMergeSplitEvidenceRepository:
 
     def list_absorption_outcomes(self, tenant_id: str) -> list[AbsorptionOutcomeRecord]:
         rows = self._engine.query(
-            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? "
+            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? "  # nosec B608 -- fixed dialect-selected relation; values are bound
             "ORDER BY geo_cell_id, period_start",
             (tenant_id,),
         )
@@ -2711,7 +2707,7 @@ class DurableMergeSplitEvidenceRepository:
 
         placeholders = ", ".join("?" for _ in cell_ids)
         rows = self._engine.query(
-            f"SELECT geo_cell_id, h3_index, admin_city, admin_district "
+            f"SELECT geo_cell_id, h3_index, admin_city, admin_district "  # nosec B608 -- fixed dialect-selected relation; values are bound
             f"FROM {self.table_cells} WHERE geo_cell_id IN ({placeholders})",
             tuple(cell_ids),
         )
@@ -2766,7 +2762,7 @@ class DurableMergeSplitEvidenceRepository:
         if not observed:
             return []
         rows = self._engine.query(
-            f"SELECT cell_id, neighbor_cell_id FROM {self.table_adjacency}", ()
+            f"SELECT cell_id, neighbor_cell_id FROM {self.table_adjacency}", ()  # nosec B608
         )
         edges: set[tuple[str, str]] = set()
         for row in rows:
@@ -2821,7 +2817,7 @@ class DurableAbsorptionOutcomeWriter:
         if outcome.barrier_side is not None:
             params = (*params, outcome.barrier_side)
         row = self._engine.query_one(
-            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? AND geo_cell_id = ? "
+            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? AND geo_cell_id = ? "  # nosec B608
             f"AND period_start = ? AND period_end = ? AND {side_clause}",
             params,
         )
@@ -2832,7 +2828,7 @@ class DurableAbsorptionOutcomeWriter:
     def _cell_is_registered(self, cell_id: str) -> bool:
         return (
             self._engine.query_one(
-                f"SELECT 1 FROM {self._reader.table_cells} WHERE geo_cell_id = ?",
+                f"SELECT 1 FROM {self._reader.table_cells} WHERE geo_cell_id = ?",  # nosec B608
                 (cell_id,),
             )
             is not None
@@ -2872,14 +2868,12 @@ class DurableAbsorptionOutcomeWriter:
             return existing
 
         self._engine.execute(
-            f"""
-            INSERT INTO {self.table_outcomes} (
-                outcome_id, tenant_id, geo_cell_id, period_start, period_end,
-                original_demand, absorbed_demand, remaining_demand, absorption_ratio,
-                absorbing_store_count, under_realized, barrier_side, barrier_description,
-                basis_source_ids, basis_at, absorption_policy_version_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            f"INSERT INTO {self.table_outcomes} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "outcome_id, tenant_id, geo_cell_id, period_start, period_end, "
+            "original_demand, absorbed_demand, remaining_demand, absorption_ratio, "
+            "absorbing_store_count, under_realized, barrier_side, barrier_description, "
+            "basis_source_ids, basis_at, absorption_policy_version_id, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 str(uuid4()),
                 tenant_id,

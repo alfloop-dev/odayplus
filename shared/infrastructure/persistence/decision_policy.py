@@ -37,8 +37,11 @@ class SqlDecisionPolicyRepository:
         if not normalized_tenant_id:
             raise ValueError("tenant_id is required for decision-policy resolution")
         row = self._engine.query_one(
-            f"""
-            SELECT {_POLICY_COLUMNS}
+            """
+            SELECT policy_version_id, policy_label, policy_id, policy_version,
+                   policy_kind, tenant_id, effective_from, effective_to,
+                   change_reason, rollback_policy_version, parameters,
+                   declared_inputs, approved_by, owner_role
             FROM workflow.decision_policies
             WHERE policy_kind = ?
               AND tenant_id = ?
@@ -58,8 +61,11 @@ class SqlDecisionPolicyRepository:
         if not normalized:
             return None
         row = self._engine.query_one(
-            f"""
-            SELECT {_POLICY_COLUMNS}
+            """
+            SELECT policy_version_id, policy_label, policy_id, policy_version,
+                   policy_kind, tenant_id, effective_from, effective_to,
+                   change_reason, rollback_policy_version, parameters,
+                   declared_inputs, approved_by, owner_role
             FROM workflow.decision_policies
             WHERE policy_version_id = ?
             LIMIT 1
