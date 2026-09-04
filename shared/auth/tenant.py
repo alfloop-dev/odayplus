@@ -158,12 +158,18 @@ class TenantAccessWaiver:
         registry: TenantAccessWaiverRegistry | None = None,
     ) -> bool:
         """Validate whether this waiver covers the access request at the given point in time."""
-        if not self.waiver_id or not str(self.waiver_id).strip():
+        if not isinstance(self.waiver_id, str) or not self.waiver_id.strip():
             return False
         if not self.approved_by or not str(self.approved_by).strip():
             return False
 
         active_registry = registry or _default_waiver_registry
+        # A waiver object supplied by a caller is only a reference to a
+        # registry record, never an authority by itself.  Requiring object
+        # identity here also protects callers that invoke this method directly
+        # instead of going through check_tenant_isolation.
+        if active_registry.get(self.waiver_id) is not self:
+            return False
         if not active_registry.is_authorized_signer(self.approved_by):
             return False
 
@@ -246,10 +252,11 @@ def check_tenant_isolation(
     reg = waiver_registry or _default_waiver_registry
     resolved_waiver: TenantAccessWaiver | None = None
     if isinstance(waiver, str):
-        resolved_waiver = reg.get(waiver)
+        waiver_id = waiver.strip()
+        resolved_waiver = reg.get(waiver_id)
         if resolved_waiver is None:
             return Decision.deny(
-                f"Cross-tenant access denied: formal waiver ID {waiver!r} is not registered in active registry",
+                f"Cross-tenant access denied: formal waiver ID {waiver_id!r} is not registered in active registry",
                 policy_id=POLICY_ID_TENANT_ISOLATION,
             )
     elif waiver is not None:
@@ -258,7 +265,13 @@ def check_tenant_isolation(
                 "Cross-tenant access denied: waiver is not a valid tenant access waiver",
                 policy_id=POLICY_ID_TENANT_ISOLATION,
             )
-        resolved_waiver = waiver
+        waiver_id = waiver.waiver_id if isinstance(waiver.waiver_id, str) else ""
+        resolved_waiver = reg.get(waiver_id.strip()) if waiver_id.strip() else None
+        if resolved_waiver is None:
+            return Decision.deny(
+                f"Cross-tenant access denied: formal waiver ID {waiver_id!r} is not registered in active registry",
+                policy_id=POLICY_ID_TENANT_ISOLATION,
+            )
 
     if resolved_waiver is not None:
         if resolved_waiver.is_valid_for(
