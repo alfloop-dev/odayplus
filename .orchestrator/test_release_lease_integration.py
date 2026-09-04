@@ -8,16 +8,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-
 import release_lease_integration as bridge
 from common import validate_config
+
 from delivery_toolchain.release.release_lease import (
     LeaseStateStore,
     generate_keypair,
     load_private_key,
 )
 from delivery_toolchain.release.release_manifest import compute_manifest_digest
-
 
 NOW = datetime(2026, 9, 4, 12, 0, 0, tzinfo=UTC)
 CANDIDATE_SHA = "e" * 40

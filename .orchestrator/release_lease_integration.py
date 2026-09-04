@@ -24,24 +24,24 @@ import hashlib
 import json
 import re
 import subprocess
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from common import config_path, load_status, parse_iso_timestamp, write_activity_log
-from release_lease import ISSUER_NAME, issue_release_lease, issuance_errors
+from release_lease import ISSUER_NAME, issuance_errors, issue_release_lease
 
 from delivery_toolchain.release.release_lease import (
     DEFAULT_ACTION,
-    LeaseError,
-    LeaseStateStore,
     SHA256_DIGEST_PATTERN,
     SHA_PATTERN,
+    LeaseError,
+    LeaseStateStore,
     build_receipt,
     load_private_key_material,
 )
 from delivery_toolchain.release.release_manifest import load_manifest
-
 
 REQUEST_FIELD = "release_lease_request"
 ISSUANCE_FIELD = "release_lease_issuance"
