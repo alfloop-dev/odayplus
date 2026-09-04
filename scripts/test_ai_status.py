@@ -493,6 +493,29 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual([h["count"] for h in task["review_reopen_history"]], [1, 1, 1, 2])
         self.assertEqual([h["is_churn"] for h in task["review_reopen_history"]], [True, False, False, True])
 
+    def test_substantive_reasons_containing_lease_substring_are_not_misclassified(self) -> None:
+        """Reasons containing 'lease' as a substring (e.g. please_fix_scoring, release_gate_failure) must be substantive."""
+        task = self.state["tasks"][0]
+        # 1. please_fix_scoring
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Please fix the scoring logic", "please_fix_scoring"])
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["review_reopen_count"], 1)
+        self.assertEqual(task["last_reopened_reason"], "please_fix_scoring")
+        self.assertEqual(task["last_reopen_category"], "substantive_review")
+        self.assertTrue(task["review_reopen_history"][0]["is_churn"])
+        self.assertEqual(task["review_reopen_history"][0]["reason"], "please_fix_scoring")
+
+        # 2. release_gate_failure
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Release gate check failed on branch", "release_gate_failure"])
+        self.assertEqual(task["review_reopen_count"], 2)
+        self.assertEqual(task["last_reopened_reason"], "release_gate_failure")
+        self.assertEqual(task["last_reopen_category"], "substantive_review")
+        self.assertTrue(task["review_reopen_history"][1]["is_churn"])
+        self.assertEqual(task["review_reopen_history"][1]["reason"], "release_gate_failure")
+
     def test_restore_approved_refuses_when_reviewer_reopened(self) -> None:
         """B23: restore_approved must refuse when the downgrade was a reviewer rejection."""
         self.state["tasks"][0]["status"] = "review"

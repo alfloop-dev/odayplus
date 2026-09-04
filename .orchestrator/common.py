@@ -1047,10 +1047,34 @@ SUBSTANTIVE_REVIEW_REASONS = frozenset({
 def is_control_plane_recovery_reason(reason: str | None) -> bool:
     if not reason:
         return False
-    normalized = str(reason).lower().strip().replace("-", "_")
+    normalized = str(reason).lower().strip().replace("-", "_").replace(" ", "_")
     if normalized in CONTROL_PLANE_RECOVERY_REASONS:
         return True
-    return any(k in normalized for k in ("stale", "lease", "recovery", "control_plane", "unsealed"))
+    tokens = set(normalized.split("_"))
+    if tokens & {
+        "stale_review_sha",
+        "worktree_lease_mismatch",
+        "control_plane_recovery",
+        "ci_repair",
+        "unsealed_handoff",
+        "infra_recovery",
+        "infrastructure_recovery",
+    }:
+        return True
+    if {"stale", "sha"} <= tokens or {"stale", "review"} <= tokens or {"head", "mismatch"} <= tokens:
+        return True
+    if (
+        {"lease", "mismatch"} <= tokens
+        or {"lease", "conflict"} <= tokens
+        or {"lease", "expired"} <= tokens
+        or {"worktree", "lease"} <= tokens
+    ):
+        return True
+    if {"control", "plane"} <= tokens or {"infra", "recovery"} <= tokens:
+        return True
+    if normalized in {"lease", "stale", "recovery", "unsealed"}:
+        return True
+    return False
 
 
 def classify_reopen_reason(
@@ -1072,11 +1096,12 @@ def classify_reopen_reason(
     norm_reviewer = normalize_agent_id(reviewer) if reviewer else ""
 
     if raw_reason:
-        normalized = str(raw_reason).lower().strip().replace("-", "_")
+        normalized = str(raw_reason).lower().strip().replace("-", "_").replace(" ", "_")
         if is_control_plane_recovery_reason(normalized):
-            if "stale" in normalized or "head" in normalized:
+            tokens = set(normalized.split("_"))
+            if "stale" in tokens or "head" in tokens or "sha" in tokens:
                 reason = REOPEN_REASON_STALE_REVIEW_SHA
-            elif "lease" in normalized or "worktree" in normalized:
+            elif "lease" in tokens or "worktree" in tokens:
                 reason = REOPEN_REASON_WORKTREE_LEASE_MISMATCH
             else:
                 reason = REOPEN_REASON_CONTROL_PLANE_RECOVERY
@@ -1091,9 +1116,9 @@ def classify_reopen_reason(
     msg_lower = (message or "").lower()
     if any(k in msg_lower for k in ("stale review sha", "stale review reference", "stale sha", "head mismatch", "stale branch")):
         return REOPEN_REASON_STALE_REVIEW_SHA, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
-    elif any(k in msg_lower for k in ("worktree lease mismatch", "lease mismatch", "worktree lease conflict", "lease conflict", "lease expired")):
+    elif any(k in msg_lower for k in ("worktree lease mismatch", "lease mismatch", "worktree lease conflict", "lease conflict", "lease expired", "worktree lease expired")):
         return REOPEN_REASON_WORKTREE_LEASE_MISMATCH, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
-    elif any(k in msg_lower for k in ("control-plane recovery", "control plane recovery", "ci repair", "unsubmitted review")):
+    elif any(k in msg_lower for k in ("control-plane recovery", "control plane recovery", "ci repair", "unsubmitted review", "unsealed handoff", "infra recovery")):
         return REOPEN_REASON_CONTROL_PLANE_RECOVERY, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
 
     if norm_actor and norm_owner and norm_actor == norm_owner and norm_owner != norm_reviewer:
@@ -1108,28 +1133,23 @@ def classify_reopen_reason(
 
 def substantive_review_reopen_count(snapshot: dict[str, Any]) -> int:
     """Return the count of substantive reviewer findings (excluding control-plane recovery)."""
-    raw_count = 0
-    try:
-        raw_count = max(0, int(snapshot.get("review_reopen_count", 0) or 0))
-    except (TypeError, ValueError):
-        raw_count = 0
+    if "review_reopen_count" in snapshot and snapshot.get("review_reopen_count") is not None:
+        try:
+            return max(0, int(snapshot.get("review_reopen_count", 0) or 0))
+        except (TypeError, ValueError):
+            return 0
 
     history = snapshot.get("review_reopen_history")
     if isinstance(history, list) and history:
-        has_structured = any(
-            isinstance(item, dict) and ("is_churn" in item or "reason" in item or "category" in item)
-            for item in history
-        )
-        if has_structured:
-            churn_entries = [
-                item for item in history
-                if isinstance(item, dict)
-                and item.get("is_churn", True)
-                and str(item.get("category", "")).lower() != "control_plane_recovery"
-                and not is_control_plane_recovery_reason(item.get("reason"))
-            ]
-            return len(churn_entries)
-    return raw_count
+        churn_entries = [
+            item for item in history
+            if isinstance(item, dict)
+            and item.get("is_churn", True)
+            and str(item.get("category", "")).lower() != "control_plane_recovery"
+            and not is_control_plane_recovery_reason(item.get("reason"))
+        ]
+        return len(churn_entries)
+    return 0
 
 
 def render_template(path: Path, variables: dict[str, Any]) -> str:

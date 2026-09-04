@@ -8640,6 +8640,105 @@ class WorkerReassignmentTests(unittest.TestCase):
         event = write_activity_log.call_args.args[1]
         self.assertEqual(event["type"], "review_churn_reassigned")
 
+    def test_substantive_review_reopen_count_reads_durable_counter_and_handles_truncated_history(self) -> None:
+        """substantive_review_reopen_count reads durable review_reopen_count, never dropping to 0 from recoveries."""
+        # 1. review_reopen_count is 4, but history only contains 20 recovery entries (no churn)
+        task_with_recoveries = {
+            "id": "T-001",
+            "review_reopen_count": 4,
+            "review_reopen_history": [
+                {"count": 4, "is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"}
+                for _ in range(20)
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_with_recoveries), 4)
+
+        # 2. review_reopen_count is 0 with recovery history
+        task_zero = {
+            "id": "T-002",
+            "review_reopen_count": 0,
+            "review_reopen_history": [
+                {"count": 0, "is_churn": False, "category": "control_plane_recovery", "reason": "worktree_lease_mismatch"}
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_zero), 0)
+
+        # 3. Fallback when review_reopen_count key is missing
+        task_legacy = {
+            "id": "T-003",
+            "review_reopen_history": [
+                {"is_churn": True, "category": "substantive_review", "reason": "review_finding"},
+                {"is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"},
+                {"is_churn": True, "category": "substantive_review", "reason": "please_fix_scoring"},
+            ],
+        }
+        self.assertEqual(supervisor.substantive_review_reopen_count(task_legacy), 2)
+
+    def test_review_churn_multi_epoch_rotation_with_recoveries_does_not_wipe_epoch_failed_owners(self) -> None:
+        """Multi-epoch failover (e.g. 4 substantive findings) succeeds and does not reset failed owners on recoveries."""
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": False,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex", "Claude2"],
+                    "Codex": ["Claude2", "Antigravity"],
+                },
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude2": {"display_name": "Claude2", "provider": "claude2"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+
+        # Task already reassigned at 2 reopens (Antigravity -> Codex), now at review_reopen_count=2 with 10 recovery reopens
+        task = {
+            "id": "P3-MULTI-EPOCH",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "review_reopen_count": 2,
+            "review_churn_reassigned_at_count": 2,
+            "review_churn_previous_owner": "Antigravity",
+            "review_churn_epoch_failed_owners": ["Antigravity"],
+            "review_reopen_history": [
+                {"count": 2, "is_churn": False, "category": "control_plane_recovery", "reason": "stale_review_sha"}
+                for _ in range(10)
+            ],
+        }
+        status = {"tasks": [task]}
+
+        # While reopen_count is 2 and raw_last_reassigned is 2, no reassignment happens and epoch_failed_owners is NOT wiped
+        with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        self.assertEqual(task["review_churn_epoch_failed_owners"], ["Antigravity"])
+
+        # Now 2 more substantive findings occur -> review_reopen_count becomes 4
+        task["review_reopen_count"] = 4
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        # Must rotate to Claude2 (not bouncing back to Antigravity)
+        self.assertEqual(kwargs["new_owner"], "Claude2")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 4)
+        self.assertIn("Antigravity", kwargs["task_updates"]["review_churn_epoch_failed_owners"])
+        self.assertIn("Codex", kwargs["task_updates"]["review_churn_epoch_failed_owners"])
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+
     def _escalation_config(self, **churn_overrides) -> dict:
         churn = {
             "enabled": True,
