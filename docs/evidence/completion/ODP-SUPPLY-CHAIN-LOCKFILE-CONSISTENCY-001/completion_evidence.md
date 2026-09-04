@@ -4,7 +4,7 @@
 - **Task ID**: `ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001`
 - **Title**: 修正 production npm audit 的無效 package tree
 - **Owner**: Antigravity3
-- **Reviewer**: Codex
+- **Reviewer**: Claude
 - **Base Commit**: `3fbc85bab88a` (`origin/dev`, composed via base-advance merge)
 - **Environment for every command below**: this repository checkout, npm `10.9.8`,
   node available on `PATH`, Python via `uv run --frozen` unless a command is
@@ -115,8 +115,9 @@ distinction the old gate lacked:
   `2` with `AUDIT UNAVAILABLE`. A registry outage means there is no
   vulnerability data, so the gate stays closed rather than reporting a pass.
 - **Redacted receipt emission.** When `--receipt <path>` is supplied, the gate
-  atomically writes a redacted JSON receipt recording execution status, exit code,
-  severity counts, threshold, and outcome kind.
+  atomically writes a redacted JSON receipt (recursively filtered with
+  `release_receipts.redact`) recording execution status, exit code, severity
+  counts, threshold, redacted detail/verdict and outcome kind.
 - **Architectural separation between CI and Runtime Release.** PR and merge CI
   do not execute live `npm audit` calls over the network; CI validates deterministic
   classifiers and workflow wiring. Live production audit is isolated exclusively to
@@ -139,7 +140,7 @@ environment; it is orthogonal to the npm audit gate and does not affect it.
 | 2 | `python3 delivery_toolchain/security/npm_audit_gate.py` | exit `0`, `PASS: no production vulnerabilities at or above 'high'` |
 | 3 | `python3 delivery_toolchain/security/generate_sbom.py --check` | exit `0`, `SBOM at docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json is valid and up to date.` |
 | 4 | `uv run python delivery_toolchain/security/generate_sbom.py --check` | exit `0`, `SBOM at docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json is valid and up to date.` |
-| 5 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py tests/security/test_release_security_gate.py -q` | exit `0`; 33 collected, 33 passed |
+| 5 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py tests/security/test_release_security_gate.py -q` | exit `0`; 34 collected, 34 passed |
 | 6 | `uv run --frozen pytest tests/ops/test_deploy_workflow_contract.py -q` | exit `0`; 77 collected, 77 passed |
 | 7 | `uv run --frozen ruff check delivery_toolchain/security/npm_audit_gate.py tests/security/test_supply_chain_security_gate.py` | `All checks passed!` |
 | 8 | `uv run python delivery_toolchain/governance/check_code_boundaries.py` | exit `0`, `Code boundary checks passed for 1098 files.` |
@@ -164,6 +165,7 @@ as fixtures:
 - `test_npm_audit_gate_rejects_lowering_threshold_to_critical`
 - `test_npm_audit_gate_rejects_critical_env_var`
 - `test_npm_audit_gate_writes_redacted_receipt`
+- `test_npm_audit_gate_redacts_sensitive_registry_details`
 - `test_npm_audit_gate_receipt_distinguishes_unavailable_from_vulnerabilities`
 - `test_ci_does_not_execute_live_npm_audit_in_makefile`
 

@@ -463,6 +463,64 @@ def test_npm_audit_gate_writes_redacted_receipt(tmp_path: Path) -> None:
     assert data["counts"]["moderate"] == 1
 
 
+def test_npm_audit_gate_redacts_sensitive_registry_details(tmp_path: Path) -> None:
+    """Registry errors containing credentials or tokens must be redacted from receipts and verdicts."""
+    gate = _audit_gate()
+    sensitive_error = json.dumps(
+        {
+            "message": (
+                "503 Service Unavailable from "
+                "https://deploy-agent:super_secret_password_123@registry.internal.corp/npm/?token=secret_query_token_999 "
+                "with auth header Bearer secret_bearer_token_888"
+            ),
+            "method": "POST",
+            "uri": "https://deploy-agent:super_secret_password_123@registry.internal.corp/npm/?token=secret_query_token_999",
+            "statusCode": 503,
+            "body": (
+                "Gateway Error: failed to connect with certificate:\n"
+                "-----BEGIN RSA PRIVATE KEY-----\n"  # pragma: allowlist-secret
+                "MIIEowIBAAKCAQEA0secretkeybody\n"
+                "-----END RSA PRIVATE KEY-----"  # pragma: allowlist-secret
+            ),
+        }
+    )
+    outcome = gate.classify_audit_output(sensitive_error, "")
+    assert not outcome.has_report
+
+    code, verdict = gate.evaluate(outcome, "high")
+    assert code == gate.EXIT_AUDIT_UNAVAILABLE
+    assert "super_secret_password_123" not in verdict
+    assert "secret_query_token_999" not in verdict
+    assert "secret_bearer_token_888" not in verdict
+    assert "MIIEowIBAAKCAQEA0" not in verdict
+    assert "[REDACTED]" in verdict
+
+    receipt_file = tmp_path / "sensitive-npm-audit-receipt.json"
+    gate.write_audit_receipt(receipt_file, outcome, code, verdict, "high")
+
+    assert receipt_file.exists()
+    receipt_text = receipt_file.read_text(encoding="utf-8")
+
+    # Absolute negative assertions: no raw secret string anywhere in the receipt artifact
+    assert "super_secret_password_123" not in receipt_text
+    assert "secret_query_token_999" not in receipt_text
+    assert "secret_bearer_token_888" not in receipt_text
+    assert "MIIEowIBAAKCAQEA0" not in receipt_text
+
+    # Positive assertions: redacted placeholders present
+    assert "https://deploy-agent:[REDACTED]@registry.internal.corp" in receipt_text
+    assert "?token=[REDACTED]" in receipt_text
+    assert "Bearer [REDACTED]" in receipt_text
+    assert "[REDACTED]" in receipt_text
+
+    data = json.loads(receipt_text)
+    assert data["secret_values_redacted"] is True
+    assert data["status"] == "failed"
+    assert data["result"] == "fail"
+    assert "super_secret_password_123" not in data["detail"]
+    assert "super_secret_password_123" not in data["verdict"]
+
+
 def test_npm_audit_gate_receipt_distinguishes_unavailable_from_vulnerabilities(
     tmp_path: Path,
 ) -> None:

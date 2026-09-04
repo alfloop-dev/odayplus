@@ -35,6 +35,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -42,6 +43,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.release_receipts import redact
 
 # Ordered least to most severe; the threshold selects this level and above.
 SEVERITY_ORDER = ("info", "low", "moderate", "high", "critical")
@@ -196,7 +201,7 @@ def evaluate(outcome: AuditOutcome, threshold: str = DEFAULT_THRESHOLD) -> tuple
         return (
             EXIT_AUDIT_UNAVAILABLE,
             "AUDIT UNAVAILABLE: the npm registry never returned advisory data, so this run "
-            f"proves nothing about production dependencies. Last error: {outcome.detail}",
+            f"proves nothing about production dependencies. Last error: {redact(outcome.detail)}",
         )
 
     counts = outcome.counts or {}
@@ -225,7 +230,7 @@ def build_audit_receipt(
     threshold: str = DEFAULT_THRESHOLD,
 ) -> dict[str, Any]:
     """Construct a redacted, schema-compliant audit receipt dictionary."""
-    return {
+    receipt: dict[str, Any] = {
         "schema_version": 1,
         "receipt_kind": "npm_audit",
         "gate": "npm_audit_gate",
@@ -237,11 +242,12 @@ def build_audit_receipt(
         "omit_dev": True,
         "outcome_kind": outcome.kind,
         "counts": outcome.counts,
-        "detail": outcome.detail,
-        "verdict": verdict,
+        "detail": redact(outcome.detail),
+        "verdict": redact(verdict),
         "candidate_sha": os.environ.get("ODAY_RELEASE_SHA", ""),
         "recorded_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
+    return redact(receipt)
 
 
 def write_audit_receipt(
@@ -255,10 +261,17 @@ def write_audit_receipt(
     receipt = build_audit_receipt(outcome, code, verdict, threshold)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    with tempfile.NamedTemporaryFile(
+        mode="w",
         encoding="utf-8",
-    )
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        delete=False,
+    ) as handle:
+        temporary = Path(handle.name)
+        json.dump(receipt, handle, ensure_ascii=False, indent=2, sort_keys=True)
+        handle.write("\n")
+    temporary.replace(target)
 
 
 def _env_float(name: str, default: float) -> float:
