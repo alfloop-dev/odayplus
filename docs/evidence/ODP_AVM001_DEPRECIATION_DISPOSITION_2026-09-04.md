@@ -7,6 +7,7 @@ owner: Claude2
 reviewer: Antigravity6
 repository: alfloop-dev/odayplus
 observed_ref: a62298f3f586d1e531dfcb0af7ba0bb14356b8ca
+revalidated_ref: 6dae67d570784db6bc3b337f40d21dd5e1107b43
 ---
 
 # `ODP-FR-AVM-001` / `DEPRECIATION`：處置證據
@@ -114,3 +115,50 @@ $ uv run --frozen pytest modules/avm/tests/test_avm_depreciation_contract.py -q
 其中三條是負向測試：把 `DEPRECIATION` 改成 `VERIFIED`、改成由 AI 簽署的 `DECIDED`、
 或拿掉整個 `disposition` 區塊，checker 都必須拒絕。它們證明這道閘對本成員**真的會紅**，
 而不是恰好沒被檢查到。
+
+## 7. Base advance 之後的複查（`6dae67d5`）
+
+送審前 task branch 再做一次 base advance，把 `origin/dev` 的
+`6dae67d570784db6bc3b337f40d21dd5e1107b43` 併入。§2 的行號是在
+`a62298f3` 上量的，所以要回答一個問題：**那些行還在原位嗎。**
+
+兩個基準之間的整棵樹差異是四個檔案，全部落在 `.orchestrator/`：
+
+```
+$ git diff --name-only a62298f3 6dae67d5
+.orchestrator/config.example.json
+.orchestrator/config.schema.json
+.orchestrator/supervisor.py
+.orchestrator/test_supervisor.py
+```
+
+（內容為 `ODP-ORCH-HEARTBEAT-WARNING-SEMANTICS-001` 的 supervisor 心跳告警語意，
+與 AVM 估值、site_economics 模擬器、本處置的任何一條引用都不相交。）
+
+§2 引用的四個來源檔在兩個基準上 blob hash 逐一相同，因此行號與結論都不需要修訂：
+
+| 檔案 | `a62298f3` 與 `6dae67d5` |
+|---|---|
+| `modules/site_economics/domain/simulator.py` | 相同 |
+| `modules/avm/domain/valuation.py` | 相同 |
+| `modules/site_economics/domain/models.py` | 相同 |
+| `modules/site_economics/domain/formats.py` | 相同 |
+
+這是逐檔比對 blob hash 的結果，不是「差異看起來不相關」的推論——
+複查的對象是被引用的那些 bytes 本身。
+
+本基準上的重跑：
+
+```
+$ uv run --frozen python delivery_toolchain/governance/check_requirement_members.py
+Requirement member checks passed: 9 set-valued requirements, 47 members
+(36 satisfied, 11 absent and noted; dispositions: BLOCKED_BY_EVIDENCE=4,
+ DECIDED=1, IMPLEMENTATION_READY=3, OPEN=3, VERIFIED=36).
+
+$ uv run --frozen pytest tests/governance/ delivery_toolchain/governance/ \
+    modules/avm/tests/ tests/contract/test_root_cause_contract_disposition.py \
+    tests/integration/test_int001_cdc_disposition.py
+297 passed, 8 xfailed
+```
+
+八條 xfail 仍是 xfail：處置所宣稱的狀態，在新基準上依然是可觀測的同一個狀態。
