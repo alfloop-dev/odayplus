@@ -173,4 +173,3 @@ def test_sqlite_engine_enforces_foreign_keys_and_rejects_orphan_child_inserts_on
             )
     finally:
         restarted.close()
-
