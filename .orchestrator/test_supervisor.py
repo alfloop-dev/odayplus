@@ -34,10 +34,13 @@ os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
+import common
+import github_bus
 import runtime_state
 import supervisor
 import watch_events
 import worker_failure_policy
+import worker_workspace
 
 
 def tearDownModule() -> None:
@@ -18949,6 +18952,197 @@ class WorkerPromptContractTests(unittest.TestCase):
                 self.assertIn("uv run", rendered)
                 self.assertIn("不自行掃描主機", rendered)
 
+
+class ReopenReasonClassificationTests(unittest.TestCase):
+    """Reopen classification must come from --reason, never from the message prose.
+
+    Guards ODP-ORCH-REVIEW-CHURN-CAUSE-001: keyword sniffing the free-form message
+    misclassified reopens in both directions -- it downgraded real review findings to
+    control-plane recovery (switching the churn failover safety net off) and it failed
+    to recognise real recovery notes that used different wording.
+    """
+
+    # Verbatim prose from the only production control-plane recovery reopen on record
+    # (ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001 review_reopen_history[1]).
+    REAL_RECOVERY_MESSAGE = (
+        "Reviewer recovery: PR #1164 now points to 890afc62 after an owner timeout anchor, "
+        "while prior review submission remains pinned to 31fdfa89 and blocks reviewer worktree "
+        "lease. Return to owner via canonical reopen; preserve existing PR, collect current CI, "
+        "update remote review submission for the exact new head, then return for independent "
+        "review. No duplicate broad tests."
+    )
+
+    def _classify(self, message: str, raw_reason: str | None = None):
+        return common.classify_reopen_reason(
+            raw_reason=raw_reason,
+            actor="Claude",
+            owner="Antigravity",
+            reviewer="Claude",
+            message=message,
+        )
+
+    def test_substantive_finding_quoting_control_plane_terms_still_counts_as_churn(self) -> None:
+        """A review body that merely mentions recovery vocabulary is still a real finding."""
+        for message in (
+            "Review rejected: the lease mismatch branch never fires",
+            "GitHub PR requested changes via PR #1178 by @rev. B1 stale review sha handling is wrong",
+            "Reopen: the control plane recovery path is untested, please fix",
+            "head mismatch is handled but the worktree lease conflict path is not",
+            "CI repair helper swallows errors; unsealed handoff is never detected",
+        ):
+            with self.subTest(message=message):
+                reason, category, is_churn = self._classify(message)
+                self.assertEqual(reason, "review_finding")
+                self.assertEqual(category, "substantive_review")
+                self.assertTrue(is_churn, "substantive finding must keep counting towards churn failover")
+
+    def test_recovery_prose_without_reason_fails_safe_to_review_finding(self) -> None:
+        """Real recovery wording alone is not enough -- absent --reason we fail safe to churn."""
+        reason, category, is_churn = self._classify(self.REAL_RECOVERY_MESSAGE)
+        self.assertEqual(reason, "review_finding")
+        self.assertEqual(category, "substantive_review")
+        self.assertTrue(is_churn)
+
+    def test_recovery_prose_with_explicit_reason_is_not_churn(self) -> None:
+        """The structured --reason path is what exempts a recovery from churn."""
+        for raw_reason, expected in (
+            ("stale_review_sha", "stale_review_sha"),
+            ("worktree_lease_mismatch", "worktree_lease_mismatch"),
+            ("control_plane_recovery", "control_plane_recovery"),
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                reason, category, is_churn = self._classify(self.REAL_RECOVERY_MESSAGE, raw_reason)
+                self.assertEqual(reason, expected)
+                self.assertEqual(category, "control_plane_recovery")
+                self.assertFalse(is_churn)
+
+    def test_free_form_reason_text_is_not_a_recovery_declaration(self) -> None:
+        """--reason must carry a documented identifier, not prose that merely mentions one.
+
+        Otherwise the message-prose hole simply reappears in the --reason field.
+        """
+        for raw_reason in (
+            "the lease mismatch branch never fires",
+            "defect in head mismatch handling",
+            "fix the stale review sha bug",
+            "please_fix_scoring",
+            "release_gate_failure",
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                _reason, category, is_churn = self._classify("m", raw_reason)
+                self.assertEqual(category, "substantive_review")
+                self.assertTrue(is_churn)
+
+    def test_documented_recovery_identifiers_and_aliases_are_honoured(self) -> None:
+        """Every documented identifier (and its alias spellings) still exempts churn."""
+        for raw_reason, expected in (
+            ("stale_review_sha", "stale_review_sha"),
+            ("stale-review-sha", "stale_review_sha"),
+            ("head_mismatch", "stale_review_sha"),
+            ("worktree_lease_mismatch", "worktree_lease_mismatch"),
+            ("lease_expired", "worktree_lease_mismatch"),
+            ("control_plane_recovery", "control_plane_recovery"),
+            ("ci_repair", "control_plane_recovery"),
+        ):
+            with self.subTest(raw_reason=raw_reason):
+                reason, category, is_churn = self._classify("m", raw_reason)
+                self.assertEqual(reason, expected)
+                self.assertEqual(category, "control_plane_recovery")
+                self.assertFalse(is_churn)
+
+    def test_explicit_review_finding_reason_counts_as_churn(self) -> None:
+        reason, category, is_churn = self._classify("anything at all", "review_finding")
+        self.assertEqual(reason, "review_finding")
+        self.assertEqual(category, "substantive_review")
+        self.assertTrue(is_churn)
+
+    def test_owner_resume_is_never_churn(self) -> None:
+        reason, category, is_churn = common.classify_reopen_reason(
+            raw_reason=None,
+            actor="Antigravity",
+            owner="Antigravity",
+            reviewer="Claude",
+            message="stale review sha, resuming my own work",
+        )
+        self.assertEqual(reason, "owner_resume")
+        self.assertEqual(category, "owner_resume")
+        self.assertFalse(is_churn)
+
+
+class GitHubBusReopenReasonTests(unittest.TestCase):
+    """The CHANGES_REQUESTED relay must tag its reopen explicitly.
+
+    The relayed detail embeds the reviewer's PR body verbatim, so it must never be
+    the thing that decides how the reopen is classified.
+    """
+
+    def test_changes_requested_relay_passes_review_finding_reason(self) -> None:
+        self.assertEqual(github_bus.REOPEN_REASON_REVIEW_FINDING, "review_finding")
+        source = Path(github_bus.__file__).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+
+        calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "run_ai_status"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "reopen"
+        ]
+        self.assertTrue(calls, "expected at least one run_ai_status('reopen', ...) call")
+
+        tagged = [
+            call
+            for call in calls
+            if any(
+                kw.arg == "extra_args"
+                and "--reason=" in ast.unparse(kw.value)
+                # the reason may be spelled as the literal or via the shared constant
+                and (
+                    "review_finding" in ast.unparse(kw.value)
+                    or "REOPEN_REASON_REVIEW_FINDING" in ast.unparse(kw.value)
+                )
+                for kw in call.keywords
+            )
+        ]
+        self.assertEqual(
+            len(tagged), 1, "CHANGES_REQUESTED relay must pass --reason=review_finding exactly once"
+        )
+
+    def test_seeded_collaboration_guide_documents_reopen_reasons(self) -> None:
+        """Workers must be told the --reason enum, or the structured path goes unused."""
+        guide = worker_workspace._generated_collaboration_guide({})
+        self.assertIn("--reason=<reason>", guide)
+        for reason in (
+            "review_finding",
+            "stale_review_sha",
+            "worktree_lease_mismatch",
+            "control_plane_recovery",
+        ):
+            self.assertIn(reason, guide)
+        self.assertIn("never parsed", guide)
+
+    def test_run_ai_status_forwards_extra_args(self) -> None:
+        recorded: dict[str, Any] = {}
+
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(cmd, **kwargs):
+            recorded["cmd"] = cmd
+            return _Proc()
+
+        with mock.patch.object(github_bus.subprocess, "run", side_effect=fake_run):
+            github_bus.run_ai_status(
+                "reopen", "TASK-1", "detail", actor="Claude", extra_args=["--reason=review_finding"]
+            )
+
+        self.assertEqual(recorded["cmd"][-1], "--reason=review_finding")
+        self.assertEqual(recorded["cmd"][-2], "detail")
 
 if __name__ == "__main__":
     unittest.main()

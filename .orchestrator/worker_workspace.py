@@ -1438,6 +1438,21 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "- For `owned_finalize_dispatch` / `review_approved`, follow",
             "  .orchestrator/skills/task-closeout-finalization.md before `... done`.",
             "",
+            "## Reopening a task (`reopen`)",
+            "- `scripts/ai-status.sh reopen <task-id> \"<message>\" [--reason=<reason>]`",
+            "- `--reason` decides whether the reopen counts as **review churn**, which past",
+            "  the threshold rotates ownership away from the current owner. The message text",
+            "  is never parsed to infer this — only `--reason` is trusted.",
+            "- Counts as churn (a real defect the owner must fix):",
+            "  - `review_finding` — reviewer found a genuine implementation defect.",
+            "- Does NOT count as churn (control-plane recovery, nobody's fault):",
+            "  - `stale_review_sha` — review pinned to a head that has been superseded.",
+            "  - `worktree_lease_mismatch` — worktree/lease conflict blocked the reviewer.",
+            "  - `control_plane_recovery` — any other orchestrator-side repair or requeue.",
+            "- Omitting `--reason` falls back to the actor's role and fails safe: a reviewer",
+            "  reopen counts as churn. Always pass `--reason` when reopening for recovery,",
+            "  or the recovery is charged to the owner as if it were a review rejection.",
+            "",
         ]
     )
 

@@ -6290,7 +6290,15 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
 
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
-        raise SystemExit("Usage: reopen <task-id> <message> [reason]")
+        raise SystemExit(
+            "Usage: reopen <task-id> <message> [--reason=<reason>]\n"
+            "  --reason=review_finding          reviewer found a real defect (counts towards review churn)\n"
+            "  --reason=stale_review_sha        review pinned to a superseded head (control-plane recovery)\n"
+            "  --reason=worktree_lease_mismatch worktree/lease conflict (control-plane recovery)\n"
+            "  --reason=control_plane_recovery  other orchestrator-side repair (control-plane recovery)\n"
+            "Without --reason the reopen is classified from the actor's role and a reviewer\n"
+            "reopen counts as churn; the message text is never used to infer the reason."
+        )
     task_id, message = args[0], args[1]
     raw_reason: str | None = None
     i = 2

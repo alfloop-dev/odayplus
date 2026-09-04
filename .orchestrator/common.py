@@ -1086,6 +1086,15 @@ def classify_reopen_reason(
 ) -> tuple[str, str, bool]:
     """Classify a reopen action into (normalized_reason, category, is_churn).
 
+    A control-plane recovery can only be declared through an explicit ``raw_reason``
+    (``ai-status.sh reopen <task> <message> --reason=<reason>``).  ``message`` is kept
+    for the audit record but is never parsed for classification -- inferring intent from
+    prose misclassified reopens in both directions, so the reason enum is the only
+    trusted signal.  ``raw_reason`` must match one of CONTROL_PLANE_RECOVERY_REASONS
+    verbatim (modulo case/dash/space normalization) to declare a recovery; free-form text
+    that merely mentions one of those identifiers, and anything unrecognized, is treated
+    as a substantive review finding so the churn failover stays armed.
+
     Returns:
         normalized_reason: Canonical reason identifier.
         category: High-level category (substantive_review, control_plane_recovery, owner_resume).
@@ -1097,7 +1106,11 @@ def classify_reopen_reason(
 
     if raw_reason:
         normalized = str(raw_reason).lower().strip().replace("-", "_").replace(" ", "_")
-        if is_control_plane_recovery_reason(normalized):
+        # Declaring a recovery requires one of the documented identifiers verbatim.
+        # Fuzzy-matching tokens here would re-open the same hole the message-prose
+        # inference had: a free-form reason such as "defect in head mismatch handling"
+        # would be read as a recovery and disarm the churn failover.
+        if normalized in CONTROL_PLANE_RECOVERY_REASONS:
             tokens = set(normalized.split("_"))
             if "stale" in tokens or "head" in tokens or "sha" in tokens:
                 reason = REOPEN_REASON_STALE_REVIEW_SHA
@@ -1113,14 +1126,15 @@ def classify_reopen_reason(
             is_churn = bool(norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer)
             return normalized, REOPEN_CATEGORY_SUBSTANTIVE_REVIEW, is_churn
 
-    msg_lower = (message or "").lower()
-    if any(k in msg_lower for k in ("stale review sha", "stale review reference", "stale sha", "head mismatch", "stale branch")):
-        return REOPEN_REASON_STALE_REVIEW_SHA, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
-    elif any(k in msg_lower for k in ("worktree lease mismatch", "lease mismatch", "worktree lease conflict", "lease conflict", "lease expired", "worktree lease expired")):
-        return REOPEN_REASON_WORKTREE_LEASE_MISMATCH, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
-    elif any(k in msg_lower for k in ("control-plane recovery", "control plane recovery", "ci repair", "unsubmitted review", "unsealed handoff", "infra recovery")):
-        return REOPEN_REASON_CONTROL_PLANE_RECOVERY, REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY, False
-
+    # No structured reason was supplied.  The free-form message is deliberately NOT
+    # inspected here: reviewer prose routinely quotes control-plane vocabulary (e.g.
+    # "the lease mismatch branch never fires", or a review body relayed verbatim by
+    # github_bus), so keyword matching silently downgraded real findings to recovery
+    # and switched the churn failover safety net off.  It was equally unreliable in
+    # the other direction -- genuine recovery notes that did not happen to use the
+    # exact phrasing were still counted as churn.  Declaring a control-plane recovery
+    # therefore requires an explicit --reason; without one we fall back to the actor's
+    # role and fail safe by counting a reviewer reopen as churn.
     if norm_actor and norm_owner and norm_actor == norm_owner and norm_owner != norm_reviewer:
         return REOPEN_REASON_OWNER_RESUME, REOPEN_CATEGORY_OWNER_RESUME, False
     elif norm_actor and norm_reviewer and norm_actor == norm_reviewer and norm_owner and norm_owner != norm_reviewer:
