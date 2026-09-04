@@ -120,3 +120,12 @@ local 環境；此輸出不能取代上述針對實際 pinned production 版本�
 2. **#1188 fail-closed 交互作用**：目前 `Makefile` 的 `pip-audit --local` 會因 local 環境未對應 production 安裝而回報空稽核；這不是殘留 NLTK 漏洞已消失的證據。既有 #1188（`ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001`）合併後的 `pip_audit_gate.py` 會掃描實際 `.venv` 中的套件，且任何一筆 pip-audit finding 都以 exit 1 fail-closed。因此 #1188 一旦採用該路徑，`nltk 3.10.3 / PYSEC-2026-3740` 會使 gate 失敗；本 task 不改 audit routing，並將此列為明確的 follow-up blocker。
 3. **後續追蹤與驗收**：另開 follow-up 時，必須有明確的 Evidently/NLTK 遷移設計、替代監控能力、依賴移除或上游修補的驗收條件，以及 #1188 gate 的協調方案；未完成前不可宣稱 production dependency audit clean。持續追蹤 NLTK 與 Evidently 發行；一旦 NLTK 釋出修復版本或 Evidently 提供解耦更新，立即排程升級並重跑完整 audit。
 4. **本 task 的可稽核交付邊界**：本 task 完成可修補 advisory 的 dependency/lockfile 修復、SBOM 正確性與上述 residual-risk 揭露；不以任何方式偽裝無修補漏洞已被消除。此文件作為 PR #1194 及後續審查之正式中文安全佐證。
+
+---
+
+## 8. 本次 owner dispatch 驗證紀錄
+
+- `uv lock --check`：通過。
+- `uv run --frozen python delivery_toolchain/security/generate_sbom.py --check`：通過；兩份 SBOM 的 components/dependencies/properties 與 lockfiles 一致。
+- focused security、OSS license/notice、Evidently/OSS flow 與 smoke regression：全部通過；smoke 為 `3 passed`。
+- `make ci`：本次只執行一次。ruff、npm audit（`found 0 vulnerabilities`）與 Python `pip-audit --local`（`No known vulnerabilities found`）通過；完整 `tests/security` 已實際跑到 `260 passed`，其後在測試內再次呼叫 npm audit 時因 registry endpoint 長時間無回應而中止。這不是 Python dependency assertion 失敗，也不代表已完成全綠 full CI；PR 需由遠端 CI 在 npm endpoint 可用時提供最終結果。
