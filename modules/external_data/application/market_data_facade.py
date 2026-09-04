@@ -51,8 +51,23 @@ from packages.oday_data_product_contracts_client.models.property_observation imp
     PropertyListingObservation,
 )
 from packages.oday_data_product_contracts_client.models.site_market_context import (
+    DomainStatus,
     PeriodGrain,
+    ReadinessLevel,
+    SiteCatchment,
+    SiteCompetitor,
+    SiteCoverage,
+    SiteDemand,
+    SiteEvent,
+    SiteIdentity,
+    SiteListing,
     SiteMarketContext,
+    SiteMobility,
+    SitePOI,
+    SiteRent,
+    SiteTraffic,
+    SourceSupportSummary,
+    TravelMode,
 )
 from shared.audit.policy import build_security_event
 from shared.auth import (
@@ -120,6 +135,7 @@ _LEGACY_FETCH_MODES = frozenset({CUTOVER_MODE_LEGACY_ONLY, CUTOVER_MODE_DUAL_RUN
 _PLATFORM_READ_MODES = frozenset({CUTOVER_MODE_DUAL_RUN, CUTOVER_MODE_PLATFORM_PRIMARY})
 
 ROLLBACK_PROBE_SITE_ID = "cutover-probe-site"
+ROLLBACK_PROBE_TENANT_ID = "rollback-probe-tenant"
 
 #: Freshness SLA reported for a platform-sourced snapshot row. The published
 #: release carries no per-source SLA of its own, so the consumer states the one
@@ -1355,15 +1371,83 @@ class _RollbackProbeClient:
     The production facade receives a generated ``DataPlatformClient``. The probe
     intentionally supplies a tiny client double so it can run without
     credentials or network access while still exercising the same
-    ``MarketDataFacade`` authorization and read dispatch path.
+    ``MarketDataFacade`` authorization and document read dispatch path.
+
+    The document envelope carries its own tenant instead of echoing a query
+    tenant. This keeps the probe-shaped input aligned with the production
+    resource-derived tenant boundary, even though the probe deliberately runs
+    with authorization disabled.
     """
 
-    def get_site_market_context(self, site_id: str, **_: Any) -> dict[str, Any]:
-        return {
-            "contract": "emgi.site-market-context.v1",
-            "site_id": site_id,
-            "value": 42,
-        }
+    def get_site_market_context_document(
+        self,
+        document_id: str | None = None,
+        *,
+        site_id: str | None = None,
+        period_grain: PeriodGrain | str | None = None,
+        period_key: str | None = None,
+        tenant_id: str | None = None,
+    ) -> SiteMarketContextDocument:
+        """Return a deterministic document-shaped read without network access.
+
+        ``MarketDataFacade.get_site_market_context`` now consumes the generated
+        client's document API before selecting a context. These tiny objects
+        provide only the attributes that route needs, including a
+        resource-owned tenant envelope; ``tenant_id`` is intentionally ignored
+        so a caller cannot make the probe resource belong to its own tenant.
+        """
+        del tenant_id
+        resolved_site_id = site_id or ROLLBACK_PROBE_SITE_ID
+        resolved_grain = (
+            PeriodGrain(period_grain) if isinstance(period_grain, str) else period_grain
+        ) or PeriodGrain.MONTHLY
+        resolved_period_key = period_key or "2026-08"
+        support = SourceSupportSummary(observation_count=0, sample_count=0)
+        context = SiteMarketContext(
+            catchment=SiteCatchment(
+                catchment_id="rollback-probe-catchment",
+                cutoff_seconds=0,
+                geom={},
+                graph_version="rollback-probe",
+                routing_engine="rollback-probe",
+                status=DomainStatus.unavailable,
+                travel_mode=TravelMode.pedestrian,
+            ),
+            competitor=SiteCompetitor(status=DomainStatus.unavailable),
+            context_id="rollback-probe-context",
+            coverage=SiteCoverage(
+                domain_coverage={},
+                overall_readiness=ReadinessLevel.unknown,
+            ),
+            demand=SiteDemand(status=DomainStatus.unavailable),
+            event=SiteEvent(status=DomainStatus.unavailable),
+            identity=SiteIdentity(
+                h3_resolution=0,
+                latitude=0.0,
+                longitude=0.0,
+                primary_h3_index="rollback-probe",
+                site_id=resolved_site_id,
+            ),
+            listing=SiteListing(status=DomainStatus.unavailable),
+            mobility=SiteMobility(status=DomainStatus.unavailable),
+            period_grain=resolved_grain,
+            period_key=resolved_period_key,
+            poi=SitePOI(status=DomainStatus.unavailable),
+            rent=SiteRent(status=DomainStatus.unavailable),
+            source_support=support,
+            traffic=SiteTraffic(status=DomainStatus.unavailable),
+            metadata={"probe_value": 42},
+        )
+        return SiteMarketContextDocument(
+            contexts=[context],
+            document_id=document_id or "rollback-probe-document",
+            generated_at="2026-08-01T00:00:00Z",
+            period_grain=resolved_grain,
+            period_key=resolved_period_key,
+            source_support=support,
+            metadata={"probe": True},
+            tenant_id=ROLLBACK_PROBE_TENANT_ID,
+        )
 
     def verify_integrity(self) -> dict[str, Any]:
         return {
@@ -1411,8 +1495,11 @@ def rollback_probe(env: Mapping[str, str] | None = None) -> dict[str, Any]:
         }
 
     facade = MarketDataFacade(client=_RollbackProbeClient(), enforce_auth=False)
+    platform_context = facade.get_site_market_context(ROLLBACK_PROBE_SITE_ID)
     platform_payload = {
-        **facade.get_site_market_context(ROLLBACK_PROBE_SITE_ID),
+        "contract": "emgi.site-market-context.v1",
+        "site_id": platform_context.identity.site_id,
+        "value": platform_context.metadata["probe_value"],
         "source": "platform",
     }
     if mode == CUTOVER_MODE_PLATFORM_PRIMARY:
