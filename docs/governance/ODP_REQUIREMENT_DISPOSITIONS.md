@@ -131,11 +131,20 @@ stateDiagram-v2
   現行採用商圈內開店數上限（`max_open_per_dilution_zone`）作為稀釋約束。完整的門市配對稀釋形式需引入 $O(n^2)$ 輔助變數，且配對稀釋係數本身帶有實質不確定性，對其過度優化屬於製造假精度。投資於 `ODP-FR-HZ-004` 熱區吸收率的真實量測是更優路徑。
 
 #### 成員：`LEASE`（租約條件限制）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（待 Batch 0 確認資料源）
-- **待確認證據 (Evidence Needed)**: 租約檔期與解約金懲罰條件之資料源是否存在於上游系統。
-- **證據負責人 (Evidence Owner)**: `Data Operations Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已移交人類治理授權）
+- **Formal Handback Ref**: `docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md#2-人類授權移交單human-authority-handback-package`
+- **Evidence Request Ref**: `docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md#六決策記錄與重啟觸發條件-disposition--reopen-triggers`
+- **Handback Package ID**: `HB-NET002-LEASE-001`
+- **待確認證據 (Evidence Needed)**: 門市租約合約主檔（`core.store_leases` 或 CLM 系統，含 `lease_expiry_date`、解約金公式與續約權）及具備生產新鮮度保證與簽約截止日之候選新址 Feed 生產者。
+- **證據／風險負責人 (Evidence & Risk Owner)**: `Store Operations Lead / Real Estate Finance Lead / Data Platform Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: 待 Batch 0 確認資料源後，決定轉為實作或正式申請 Waiver。
+- **重啟條件 (Reopen Trigger)**:
+  1. 企業建立或導入門市租約合約主檔 (`core.store_leases`)，提供每家門市之 `lease_expiry_date`、解約違約金公式與續約狀態。
+  2. 建立具備生產新鮮度保證之候選新址 Feed 生產者（如完成 `listing.partner_feed` 簽約配置），並擴展資料模型納入簽約截止日 (`signing_deadline`) 與免租裝潢期。
+  3. 財務與法務部門建立門市提前解約違約金與 MOVE 雙側檔期重疊試算服務 (`LeaseAdmissibilityChecker`) 並通過生產驗證。
+- **裁決理由 (Rationale)**:
+  Batch 0 查證確認生產系統無門市合約檔（`core.stores` 無 lease 到期日、解約金、續約權），候選新址雖有 `expansion.listings` Schema 定義，但外部來源受策略與安全閘門限制僅能人工單筆進件，`partner_feed` 未簽約配置，無任何自動化生產管線與新鮮度保證，且簽約截止日與租期條件完全缺失。
+  若在無資料情況下強行實作限制，只能依賴常數或將 `None` 當作 `0.0`，將製造裝飾性限制並導致誤將關店視為零成本之重大決策風險。因此維持 `ConstraintClass.LEASE` 於 `unmodelled_constraint_classes`，以誠實宣告替代虛構限制，並向 `Human/Ops` 與 `Architecture Board` 提交正式移交單 `HB-NET002-LEASE-001`。
 
 ---
 
