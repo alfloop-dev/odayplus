@@ -11,11 +11,14 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from delivery_toolchain.release.release_receipts import redact, redact_secrets
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_FILE = "infra/docker/docker-compose.e2e.yml"
@@ -23,8 +26,37 @@ DB_PATH = "/data/product-e2e.sqlite3"
 BACKUP_PATH = "/storage/backups/product-e2e.sqlite3.backup"
 REPORT_NAME = "deployment-health-backup-rollback-report.json"
 
+DEFAULT_SUBPROCESS_TIMEOUT: float = float(os.environ.get("ODP_E2E_SUBPROCESS_TIMEOUT", "120.0"))
+DEFAULT_COMPOSE_UP_TIMEOUT: float = float(os.environ.get("ODP_E2E_COMPOSE_UP_TIMEOUT", "300.0"))
+DEFAULT_CLEANUP_TIMEOUT: float = float(os.environ.get("ODP_E2E_CLEANUP_TIMEOUT", "60.0"))
+DEFAULT_SEED_TIMEOUT: float = float(os.environ.get("ODP_E2E_SEED_TIMEOUT", "180.0"))
+DEFAULT_DIAGNOSTICS_TIMEOUT: float = float(os.environ.get("ODP_E2E_DIAGNOSTICS_TIMEOUT", "30.0"))
+DEFAULT_BACKUP_TIMEOUT: float = float(os.environ.get("ODP_E2E_BACKUP_TIMEOUT", "60.0"))
+DEFAULT_RESTORE_TIMEOUT: float = float(os.environ.get("ODP_E2E_RESTORE_TIMEOUT", "60.0"))
+DEFAULT_HEARTBEAT_EXEC_TIMEOUT: float = float(os.environ.get("ODP_E2E_HEARTBEAT_EXEC_TIMEOUT", "15.0"))
 
-def main() -> int:
+
+def sanitize_text(text: str, *, secret_values: Sequence[str] = ()) -> str:
+    if not text:
+        return ""
+    return str(redact(text, secret_values=secret_values))
+
+
+def sanitize_command(command: Sequence[str], *, secret_values: Sequence[str] = ()) -> list[str]:
+    return [str(redact(arg, secret_values=secret_values)) for arg in command]
+
+
+def collect_env_secrets(env: Mapping[str, str]) -> list[str]:
+    secrets: list[str] = []
+    for k, v in env.items():
+        if v and len(v) >= 4:
+            k_upper = k.upper()
+            if any(s in k_upper for s in ("SECRET", "TOKEN", "PASSWORD", "KEY", "AUTH", "DSN", "CREDENTIAL")):
+                secrets.append(v)
+    return secrets
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Run E2E deployment health, backup/restore, and rollback proof."
     )
@@ -43,7 +75,30 @@ def main() -> int:
         ),
     )
     parser.add_argument("--keep-stack", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--subprocess-timeout",
+        type=float,
+        default=DEFAULT_SUBPROCESS_TIMEOUT,
+        help="Default timeout for subprocess commands in seconds.",
+    )
+    parser.add_argument(
+        "--compose-up-timeout",
+        type=float,
+        default=DEFAULT_COMPOSE_UP_TIMEOUT,
+        help="Timeout for docker compose up --build in seconds.",
+    )
+    parser.add_argument(
+        "--cleanup-timeout",
+        type=float,
+        default=DEFAULT_CLEANUP_TIMEOUT,
+        help="Timeout for cleanup docker compose operations in seconds.",
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     diagnostics_dir = ROOT / args.diagnostics_dir
     diagnostics_dir.mkdir(parents=True, exist_ok=True)
@@ -61,6 +116,7 @@ def main() -> int:
         "ODP_E2E_WEB_PORT": str(args.web_port),
         "ODP_E2E_SOURCE_STUB_PORT": str(args.source_stub_port),
     }
+    env_secrets = collect_env_secrets(env)
     api_url = f"http://127.0.0.1:{args.api_port}"
     web_url = f"http://127.0.0.1:{args.web_port}"
     source_url = f"http://127.0.0.1:{args.source_stub_port}"
@@ -72,8 +128,19 @@ def main() -> int:
     }
 
     try:
-        run(compose + ["down", "--remove-orphans", "--volumes"], env=env, check=False)
-        run(compose + ["up", "-d", "--build"], env=env)
+        run(
+            compose + ["down", "--remove-orphans", "--volumes"],
+            env=env,
+            check=False,
+            timeout=args.cleanup_timeout,
+            secret_values=env_secrets,
+        )
+        run(
+            compose + ["up", "-d", "--build"],
+            env=env,
+            timeout=args.compose_up_timeout,
+            secret_values=env_secrets,
+        )
         wait_for_json(f"{api_url}/platform/health")
         wait_for_url(f"{web_url}/")
         wait_for_json(f"{source_url}/external/listing_raw_snapshot.valid.json")
@@ -92,18 +159,20 @@ def main() -> int:
             ],
             env=env,
             capture=True,
+            timeout=DEFAULT_SEED_TIMEOUT,
+            secret_values=env_secrets,
         )
         report["seed_stdout"] = seed.stdout.strip()
         health = {
             "api": wait_for_json(f"{api_url}/platform/health"),
             "web_status": wait_for_url(f"{web_url}/"),
             "source_fixture": wait_for_json(f"{source_url}/external/listing_raw_snapshot.valid.json"),
-            "worker": wait_for_worker_heartbeat(compose, env),
+            "worker": wait_for_worker_heartbeat(compose, env, secret_values=env_secrets),
         }
         report["health"] = health
 
         before_cases = list_cases(api_url)
-        backup = create_backup(compose, env)
+        backup = create_backup(compose, env, timeout=DEFAULT_BACKUP_TIMEOUT, secret_values=env_secrets)
         report["backup"] = backup
 
         probe_store_id = f"pv014-rollback-probe-{int(time.time())}"
@@ -111,9 +180,19 @@ def main() -> int:
         after_probe_cases = list_cases(api_url)
         assert_case_present(after_probe_cases, probe_store_id)
 
-        run(compose + ["stop", "web", "worker", "api"], env=env)
-        restore = restore_backup(compose, env)
-        run(compose + ["up", "-d", "api", "web", "worker"], env=env)
+        run(
+            compose + ["stop", "web", "worker", "api"],
+            env=env,
+            timeout=args.subprocess_timeout,
+            secret_values=env_secrets,
+        )
+        restore = restore_backup(compose, env, timeout=DEFAULT_RESTORE_TIMEOUT, secret_values=env_secrets)
+        run(
+            compose + ["up", "-d", "api", "web", "worker"],
+            env=env,
+            timeout=args.subprocess_timeout,
+            secret_values=env_secrets,
+        )
         wait_for_json(f"{api_url}/platform/health")
         wait_for_url(f"{web_url}/")
         restored_cases = list_cases(api_url)
@@ -139,33 +218,55 @@ def main() -> int:
             "remote_staging_rollout": "not configured because ODP_STAGING_DEPLOY_URL/host variables are placeholders",
         }
         report["result"] = "passed"
-        write_report(diagnostics_dir, report)
+        write_report(diagnostics_dir, report, secret_values=env_secrets)
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
         report["result"] = "failed"
-        report["error"] = str(exc)
-        write_report(diagnostics_dir, report)
+        report["error"] = sanitize_text(str(exc), secret_values=env_secrets)
+        write_report(diagnostics_dir, report, secret_values=env_secrets)
         raise
     finally:
-        run(compose + ["ps"], env=env, capture=True, check=False).write_to(
-            diagnostics_dir / "compose-ps.txt"
-        )
+        run(
+            compose + ["ps"],
+            env=env,
+            capture=True,
+            check=False,
+            timeout=DEFAULT_DIAGNOSTICS_TIMEOUT,
+            secret_values=env_secrets,
+        ).write_to(diagnostics_dir / "compose-ps.txt")
         run(
             compose + ["logs", "--no-color", "--tail=200"],
             env=env,
             capture=True,
             check=False,
+            timeout=DEFAULT_DIAGNOSTICS_TIMEOUT,
+            secret_values=env_secrets,
         ).write_to(diagnostics_dir / "compose-tail.log")
         if not args.keep_stack and os.environ.get("ODP_E2E_KEEP_STACK") != "1":
-            run(compose + ["down", "--remove-orphans", "--volumes"], env=env, check=False)
+            run(
+                compose + ["down", "--remove-orphans", "--volumes"],
+                env=env,
+                check=False,
+                timeout=args.cleanup_timeout,
+                secret_values=env_secrets,
+            )
 
 
 class CommandResult:
-    def __init__(self, completed: subprocess.CompletedProcess[str]) -> None:
+    def __init__(
+        self,
+        completed: subprocess.CompletedProcess[str],
+        *,
+        timed_out: bool = False,
+        timeout_seconds: float | None = None,
+        secret_values: Sequence[str] = (),
+    ) -> None:
         self.returncode = completed.returncode
-        self.stdout = completed.stdout or ""
-        self.stderr = completed.stderr or ""
+        self.stdout = sanitize_text(completed.stdout or "", secret_values=secret_values)
+        self.stderr = sanitize_text(completed.stderr or "", secret_values=secret_values)
+        self.timed_out = timed_out
+        self.timeout_seconds = timeout_seconds
 
     def write_to(self, path: Path) -> None:
         path.write_text(self.stdout + self.stderr, encoding="utf-8")
@@ -177,20 +278,76 @@ def run(
     env: dict[str, str],
     capture: bool = False,
     check: bool = True,
+    timeout: float = DEFAULT_SUBPROCESS_TIMEOUT,
+    secret_values: Sequence[str] = (),
 ) -> CommandResult:
-    completed = subprocess.run(
-        command,
-        cwd=ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.STDOUT if capture else None,
-        check=False,
-    )
+    if timeout <= 0:
+        raise ValueError(f"subprocess timeout must be positive, got {timeout}")
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.STDOUT if capture else None,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raw_stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.output if isinstance(exc.output, str) else "")
+        raw_stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        output = sanitize_text(f"{raw_stdout}\n{raw_stderr}".strip(), secret_values=secret_values)
+        cmd_str = " ".join(sanitize_command(command, secret_values=secret_values))
+        diag = f"command timed out after {timeout}s: {cmd_str}"
+        if output:
+            diag = f"{diag}\n{output}"
+
+        if check:
+            raise RuntimeError(diag)
+
+        completed = subprocess.CompletedProcess(
+            args=command,
+            returncode=124,
+            stdout="",
+            stderr=diag + "\n",
+        )
+        return CommandResult(
+            completed,
+            timed_out=True,
+            timeout_seconds=timeout,
+            secret_values=secret_values,
+        )
+    except Exception as exc:
+        cmd_str = " ".join(sanitize_command(command, secret_values=secret_values))
+        diag = sanitize_text(f"{type(exc).__name__}: {exc}", secret_values=secret_values)
+        if check:
+            raise RuntimeError(f"command failed to start: {cmd_str}\n{diag}")
+        completed = subprocess.CompletedProcess(
+            args=command,
+            returncode=1,
+            stdout="",
+            stderr=f"{cmd_str}\n{diag}\n",
+        )
+        return CommandResult(
+            completed,
+            timed_out=False,
+            timeout_seconds=timeout,
+            secret_values=secret_values,
+        )
+
     if check and completed.returncode != 0:
-        output = completed.stdout or ""
-        raise RuntimeError(f"command failed ({completed.returncode}): {' '.join(command)}\n{output}")
-    return CommandResult(completed)
+        output = sanitize_text(f"{completed.stdout or ''}\n{completed.stderr or ''}".strip(), secret_values=secret_values)
+        cmd_str = " ".join(sanitize_command(command, secret_values=secret_values))
+        raise RuntimeError(f"command failed ({completed.returncode}): {cmd_str}\n{output}".strip())
+
+    return CommandResult(
+        completed,
+        timed_out=False,
+        timeout_seconds=timeout,
+        secret_values=secret_values,
+    )
 
 
 def wait_for_json(url: str, *, timeout_seconds: int = 120) -> dict[str, Any]:
@@ -224,19 +381,19 @@ def wait_for_url(url: str, *, timeout_seconds: int = 120) -> int:
     raise RuntimeError(f"timed out waiting for {url}: {last_error}")
 
 
-def get_json(url: str) -> dict[str, Any]:
+def get_json(url: str, *, timeout: int = 10) -> dict[str, Any]:
     request = Request(
         url,
         headers={
             "x-subject-id": "verify-backup-rollback",
             "x-roles": "finance_legal,expansion_user,operations_manager,auditor,data_owner,platform_admin",
-        }
+        },
     )
-    with urlopen(request, timeout=10) as response:
+    with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
-def post_json(url: str, payload: dict[str, Any], *, correlation_id: str) -> dict[str, Any]:
+def post_json(url: str, payload: dict[str, Any], *, correlation_id: str, timeout: int = 20) -> dict[str, Any]:
     request = Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
@@ -248,7 +405,7 @@ def post_json(url: str, payload: dict[str, Any], *, correlation_id: str) -> dict
         },
         method="POST",
     )
-    with urlopen(request, timeout=20) as response:
+    with urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -289,8 +446,15 @@ def create_probe_case(api_url: str, store_id: str) -> dict[str, Any]:
     )
 
 
-def wait_for_worker_heartbeat(compose: list[str], env: dict[str, str]) -> dict[str, Any]:
-    deadline = time.time() + 60
+def wait_for_worker_heartbeat(
+    compose: list[str],
+    env: dict[str, str],
+    *,
+    timeout_seconds: int = 60,
+    exec_timeout: float = DEFAULT_HEARTBEAT_EXEC_TIMEOUT,
+    secret_values: Sequence[str] = (),
+) -> dict[str, Any]:
+    deadline = time.time() + timeout_seconds
     last_output = ""
     while time.time() < deadline:
         result = run(
@@ -310,15 +474,26 @@ def wait_for_worker_heartbeat(compose: list[str], env: dict[str, str]) -> dict[s
             env=env,
             capture=True,
             check=False,
+            timeout=exec_timeout,
+            secret_values=secret_values,
         )
         last_output = result.stdout.strip()
         if last_output:
-            return json.loads(last_output)
+            try:
+                return json.loads(last_output)
+            except json.JSONDecodeError:
+                pass
         time.sleep(2)
     raise RuntimeError(f"worker heartbeat not observed: {last_output}")
 
 
-def create_backup(compose: list[str], env: dict[str, str]) -> dict[str, Any]:
+def create_backup(
+    compose: list[str],
+    env: dict[str, str],
+    *,
+    timeout: float = DEFAULT_BACKUP_TIMEOUT,
+    secret_values: Sequence[str] = (),
+) -> dict[str, Any]:
     code = (
         "from pathlib import Path; import hashlib, json, sqlite3; "
         f"src=Path('{DB_PATH}'); dst=Path('{BACKUP_PATH}'); dst.parent.mkdir(parents=True, exist_ok=True); "
@@ -328,11 +503,23 @@ def create_backup(compose: list[str], env: dict[str, str]) -> dict[str, Any]:
         "digest=hashlib.sha256(dst.read_bytes()).hexdigest(); "
         "print(json.dumps({'path': str(dst), 'sha256': digest, 'size_bytes': dst.stat().st_size}))"
     )
-    result = run(compose + ["exec", "-T", "api", "python", "-c", code], env=env, capture=True)
+    result = run(
+        compose + ["exec", "-T", "api", "python", "-c", code],
+        env=env,
+        capture=True,
+        timeout=timeout,
+        secret_values=secret_values,
+    )
     return parse_last_json_line(result.stdout)
 
 
-def restore_backup(compose: list[str], env: dict[str, str]) -> dict[str, Any]:
+def restore_backup(
+    compose: list[str],
+    env: dict[str, str],
+    *,
+    timeout: float = DEFAULT_RESTORE_TIMEOUT,
+    secret_values: Sequence[str] = (),
+) -> dict[str, Any]:
     code = (
         "from pathlib import Path; import hashlib, json, shutil; "
         f"src=Path('{BACKUP_PATH}'); dst=Path('{DB_PATH}'); "
@@ -345,14 +532,23 @@ def restore_backup(compose: list[str], env: dict[str, str]) -> dict[str, Any]:
         compose + ["run", "--rm", "--no-deps", "api", "python", "-c", code],
         env=env,
         capture=True,
+        timeout=timeout,
+        secret_values=secret_values,
     )
     return parse_last_json_line(result.stdout)
 
 
-def write_report(diagnostics_dir: Path, report: dict[str, Any]) -> None:
-    report["report_sha256"] = sha256_json(report)
+def write_report(
+    diagnostics_dir: Path,
+    report: dict[str, Any],
+    *,
+    secret_values: Sequence[str] = (),
+) -> None:
+    redacted_report, _ = redact_secrets(report, secret_values=secret_values)
+    redacted_report["secret_values_redacted"] = True
+    redacted_report["report_sha256"] = sha256_json(redacted_report)
     (diagnostics_dir / REPORT_NAME).write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n",
+        json.dumps(redacted_report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
