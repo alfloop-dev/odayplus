@@ -70,6 +70,12 @@ def test_run_rejects_non_positive_timeout() -> None:
         vdr.run(["docker", "compose", "ps"], env={}, timeout=-5)
 
 
+@pytest.mark.parametrize("timeout", [float("nan"), float("inf"), float("-inf")])
+def test_run_rejects_non_finite_timeout(timeout: float) -> None:
+    with pytest.raises(ValueError, match="timeout must be positive and finite"):
+        vdr.run(["docker", "compose", "ps"], env={}, timeout=timeout)
+
+
 def test_run_success(monkeypatch) -> None:
     def fake_subprocess_run(command, **kwargs):
         assert kwargs.get("timeout") == 45.0
@@ -129,6 +135,7 @@ def test_run_timeout_bounded_when_check_false(monkeypatch) -> None:
     assert result.timed_out is True
     assert result.timeout_seconds == 15.0
     assert "command timed out after 15.0s" in result.stderr
+    assert "docker compose logs" in result.diagnostic_text()
 
 
 def test_run_command_failure_fails_closed_when_check_true(monkeypatch) -> None:
@@ -213,6 +220,36 @@ def test_wait_for_worker_heartbeat_timeout(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="worker heartbeat not observed"):
         vdr.wait_for_worker_heartbeat(["docker", "compose"], env={}, timeout_seconds=0)
+
+
+def test_wait_for_worker_heartbeat_reports_sanitized_timeout_diagnostics(monkeypatch) -> None:
+    secret = "heartbeat-secret-123456"
+
+    def fake_subprocess_run(command, **kwargs):
+        raise subprocess.TimeoutExpired(
+            cmd=command,
+            timeout=kwargs["timeout"],
+            output=f"Bearer {secret}",
+            stderr="worker exec timed out",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_subprocess_run)
+    clock = iter([0.0, 0.0, 61.0])
+    monkeypatch.setattr(vdr.time, "time", lambda: next(clock))
+    monkeypatch.setattr(vdr.time, "sleep", lambda _seconds: None)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        vdr.wait_for_worker_heartbeat(
+            ["docker", "compose"],
+            env={},
+            exec_timeout=15.0,
+            secret_values=[secret],
+        )
+
+    message = str(excinfo.value)
+    assert "command timed out after 15.0s" in message
+    assert "docker compose exec -T worker" in message
+    assert secret not in message
 
 
 def test_create_and_restore_backup(monkeypatch) -> None:
@@ -402,6 +439,9 @@ def test_main_cleanup_timeout_does_not_mask_original_failure(tmp_path: Path, mon
     report_data = json.loads(report_file.read_text(encoding="utf-8"))
     assert report_data["result"] == "failed"
     assert "up failed with internal error" in report_data["error"]
+    assert (diagnostics_dir / "compose-initial-cleanup.txt").exists()
+    assert (diagnostics_dir / "compose-cleanup.txt").exists()
+    assert "command timed out after" in (diagnostics_dir / "compose-cleanup.txt").read_text(encoding="utf-8")
 
 
 def test_main_redacts_secrets_in_error_report(tmp_path: Path, monkeypatch) -> None:

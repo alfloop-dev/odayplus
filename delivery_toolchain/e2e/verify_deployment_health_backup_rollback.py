@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import http.client
 import json
+import math
 import os
 import subprocess
 import sys
@@ -161,13 +162,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
 
     try:
-        run(
+        initial_cleanup = run(
             compose + ["down", "--remove-orphans", "--volumes"],
             env=env,
             check=False,
             timeout=args.cleanup_timeout,
             secret_values=env_secrets,
         )
+        initial_cleanup.write_to(diagnostics_dir / "compose-initial-cleanup.txt")
         run(
             compose + ["up", "-d", "--build"],
             env=env,
@@ -277,13 +279,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             secret_values=env_secrets,
         ).write_to(diagnostics_dir / "compose-tail.log")
         if not args.keep_stack and os.environ.get("ODP_E2E_KEEP_STACK") != "1":
-            run(
+            final_cleanup = run(
                 compose + ["down", "--remove-orphans", "--volumes"],
                 env=env,
                 check=False,
                 timeout=args.cleanup_timeout,
                 secret_values=env_secrets,
             )
+            final_cleanup.write_to(diagnostics_dir / "compose-cleanup.txt")
 
 
 class CommandResult:
@@ -294,15 +297,55 @@ class CommandResult:
         timed_out: bool = False,
         timeout_seconds: float | None = None,
         secret_values: Sequence[str] = (),
+        command: Sequence[str] | None = None,
     ) -> None:
         self.returncode = completed.returncode
         self.stdout = sanitize_text(completed.stdout or "", secret_values=secret_values)
         self.stderr = sanitize_text(completed.stderr or "", secret_values=secret_values)
         self.timed_out = timed_out
         self.timeout_seconds = timeout_seconds
+        raw_command = command
+        if raw_command is None and isinstance(completed.args, (list, tuple)):
+            raw_command = [str(arg) for arg in completed.args]
+        self.command = sanitize_command(raw_command or (), secret_values=secret_values)
+
+    def timeout_diagnostic(self) -> str:
+        command = " ".join(self.command)
+        command_suffix = f": {command}" if command else ""
+        if self.timeout_seconds is None:
+            return f"command timed out{command_suffix}"
+        return f"command timed out after {self.timeout_seconds}s{command_suffix}"
+
+    def diagnostic_text(self) -> str:
+        """Return sanitized command diagnostics, including bounded failures."""
+        output = self.stderr.strip()
+        if self.timed_out:
+            prefix = self.timeout_diagnostic()
+            if output.startswith(prefix):
+                return output
+            return f"{prefix}\n{output}".strip()
+        if self.returncode != 0:
+            command = " ".join(self.command)
+            prefix = f"command failed ({self.returncode})"
+            if command:
+                prefix += f": {command}"
+            if output.startswith(prefix):
+                return output
+            return f"{prefix}\n{output}".strip()
+        return output
 
     def write_to(self, path: Path) -> None:
-        path.write_text(self.stdout + self.stderr, encoding="utf-8")
+        if self.timed_out or self.returncode != 0:
+            output = self.stdout
+            diagnostic = self.diagnostic_text()
+            if output and diagnostic and not output.endswith("\n"):
+                output += "\n"
+            output += diagnostic
+            if output and not output.endswith("\n"):
+                output += "\n"
+        else:
+            output = self.stdout + self.stderr
+        path.write_text(output, encoding="utf-8")
 
 
 def run(
@@ -314,8 +357,8 @@ def run(
     timeout: float = DEFAULT_SUBPROCESS_TIMEOUT,
     secret_values: Sequence[str] = (),
 ) -> CommandResult:
-    if timeout <= 0:
-        raise ValueError(f"subprocess timeout must be positive, got {timeout}")
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"subprocess timeout must be positive and finite, got {timeout}")
 
     try:
         completed = subprocess.run(
@@ -351,6 +394,7 @@ def run(
             timed_out=True,
             timeout_seconds=timeout,
             secret_values=secret_values,
+            command=command,
         )
     except Exception as exc:
         cmd_str = " ".join(sanitize_command(command, secret_values=secret_values))
@@ -368,6 +412,7 @@ def run(
             timed_out=False,
             timeout_seconds=timeout,
             secret_values=secret_values,
+            command=command,
         )
 
     if check and completed.returncode != 0:
@@ -380,6 +425,7 @@ def run(
         timed_out=False,
         timeout_seconds=timeout,
         secret_values=secret_values,
+        command=command,
     )
 
 
@@ -489,6 +535,7 @@ def wait_for_worker_heartbeat(
 ) -> dict[str, Any]:
     deadline = time.time() + timeout_seconds
     last_output = ""
+    last_diagnostic = ""
     while time.time() < deadline:
         result = run(
             compose
@@ -511,13 +558,18 @@ def wait_for_worker_heartbeat(
             secret_values=secret_values,
         )
         last_output = result.stdout.strip()
+        if result.timed_out or result.returncode != 0:
+            last_diagnostic = result.diagnostic_text()
         if last_output:
             try:
                 return json.loads(last_output)
             except json.JSONDecodeError:
                 pass
         time.sleep(2)
-    raise RuntimeError(f"worker heartbeat not observed: {last_output}")
+    message = f"worker heartbeat not observed: {last_output}"
+    if last_diagnostic:
+        message += f"\nlast subprocess diagnostic: {last_diagnostic}"
+    raise RuntimeError(message)
 
 
 def create_backup(
