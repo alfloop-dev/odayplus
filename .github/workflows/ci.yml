@@ -144,7 +144,9 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Recent product runs reached 35 minutes. Keep a finite ceiling with
+    # enough headroom for the Postgres and dependency-audit setup.
+    timeout-minutes: 60
     services:
       postgres:
         image: postgis/postgis:16-3.5

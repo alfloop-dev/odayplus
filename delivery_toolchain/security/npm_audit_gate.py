@@ -53,7 +53,7 @@ EXIT_AUDIT_UNAVAILABLE = 2
 # 400/503 responses.
 DEFAULT_ATTEMPTS = 3
 DEFAULT_BACKOFF_SECONDS = 5.0
-DEFAULT_TIMEOUT_SECONDS = 60.0
+DEFAULT_TIMEOUT_SECONDS = 300.0
 
 REPORT = "report"
 UNAVAILABLE = "unavailable"
@@ -197,14 +197,11 @@ def evaluate(outcome: AuditOutcome, threshold: str = DEFAULT_THRESHOLD) -> tuple
     )
 
 
-def _env_float(name: str, default: float, fallback_name: str | None = None) -> float:
-    for var in (name, fallback_name) if fallback_name else (name,):
-        if var and var in os.environ:
-            try:
-                return float(os.environ[var])
-            except ValueError:
-                pass
-    return default
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
 
 
 def _env_int(name: str, default: int) -> int:
@@ -223,11 +220,7 @@ def main() -> int:
     outcome = audit_with_retry(
         attempts=_env_int("ODP_NPM_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS),
         backoff=_env_float("ODP_NPM_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS),
-        timeout=_env_float(
-            "ODP_NPM_AUDIT_TIMEOUT_SECONDS",
-            DEFAULT_TIMEOUT_SECONDS,
-            "ODP_AUDIT_TIMEOUT",
-        ),
+        timeout=_env_float("ODP_NPM_AUDIT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
     )
     code, verdict = evaluate(outcome, threshold)
     print(verdict, file=sys.stderr if code else sys.stdout)

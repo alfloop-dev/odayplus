@@ -31,7 +31,7 @@ def test_ci_workflow_enforces_job_timeouts() -> None:
 
     # Verify all execution jobs have bounded timeout-minutes
     assert jobs["product"].get("timeout-minutes") is not None
-    assert 0 < jobs["product"]["timeout-minutes"] <= 30
+    assert 45 <= jobs["product"]["timeout-minutes"] <= 60
 
     assert jobs["orchestrator"].get("timeout-minutes") is not None
     assert 0 < jobs["orchestrator"]["timeout-minutes"] <= 20
@@ -50,6 +50,15 @@ def test_makefile_wires_both_audit_gates_without_bypass() -> None:
     assert "npm run audit:security" in makefile
     assert "delivery_toolchain/security/pip_audit_gate.py" in makefile
     assert "security: bootstrap dependency-audit" in makefile
+    assert "delivery_toolchain/security/dependency_audit.py" not in makefile
+
+
+def test_audit_gates_have_finite_defaults() -> None:
+    assert 0 < npm_audit_gate.DEFAULT_TIMEOUT_SECONDS <= 300
+    assert 0 < pip_audit_gate.DEFAULT_SOCKET_TIMEOUT <= 60
+    assert 0 < pip_audit_gate.DEFAULT_PROCESS_TIMEOUT <= 300
+    assert npm_audit_gate.DEFAULT_ATTEMPTS > 0
+    assert pip_audit_gate.DEFAULT_ATTEMPTS > 0
 
 
 def test_code_boundary_inventory_tracks_audit_gates() -> None:
@@ -196,11 +205,68 @@ def test_pip_audit_passes_on_clean_report() -> None:
 
 
 def test_pip_audit_handles_prefixed_stdout() -> None:
-    stdout = "No known vulnerabilities found\n" + json.dumps({"dependencies": [], "fixes": []})
+    stdout = "No known vulnerabilities found\n" + json.dumps(
+        {"dependencies": [{"name": "safe-pkg", "version": "1.0.0", "vulns": []}], "fixes": []}
+    )
     outcome = pip_audit_gate.classify_pip_audit_output(stdout, "")
     assert outcome.has_report
     code, verdict = pip_audit_gate.evaluate(outcome)
     assert code == pip_audit_gate.EXIT_OK
+
+
+def test_pip_audit_fails_closed_on_empty_dependency_report() -> None:
+    outcome = pip_audit_gate.classify_pip_audit_output(
+        json.dumps({"dependencies": [], "fixes": []}), ""
+    )
+    assert not outcome.has_report
+    code, verdict = pip_audit_gate.evaluate(outcome)
+    assert code == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+    assert "no packages were audited" in verdict
+
+
+def test_pip_audit_invocation_uses_socket_and_process_timeouts() -> None:
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def fake_runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {"dependencies": [{"name": "safe-pkg", "version": "1.0.0", "vulns": []}]}
+            ),
+            stderr="",
+        )
+
+    outcome = pip_audit_gate.run_pip_audit(
+        cwd=ROOT, socket_timeout=19, process_timeout=47, runner=fake_runner
+    )
+
+    assert outcome.has_report
+    assert len(calls) == 1
+    cmd, kwargs = calls[0]
+    assert "--path" in cmd
+    assert ".venv/lib/python3.12/site-packages" in cmd
+    assert "--timeout" in cmd
+    assert "19" in cmd
+    assert kwargs["timeout"] == 47
+
+
+def test_pip_audit_rejects_unexpected_nonzero_execution_status() -> None:
+    def fake_runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            cmd,
+            3,
+            stdout=json.dumps(
+                {"dependencies": [{"name": "safe-pkg", "version": "1.0.0", "vulns": []}]}
+            ),
+            stderr="pip-audit internal error",
+        )
+
+    outcome = pip_audit_gate.run_pip_audit(cwd=ROOT, runner=fake_runner)
+    code, verdict = pip_audit_gate.evaluate(outcome)
+    assert code == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+    assert "status 3" in verdict
 
 
 def test_pip_audit_fails_closed_on_missing_executable() -> None:

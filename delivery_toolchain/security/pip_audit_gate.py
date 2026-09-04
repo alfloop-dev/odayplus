@@ -92,6 +92,12 @@ def classify_pip_audit_output(stdout: str, stderr: str) -> AuditOutcome:
     if isinstance(payload, dict) and "dependencies" in payload:
         raw_deps = payload.get("dependencies")
         if isinstance(raw_deps, list):
+            if not raw_deps:
+                return AuditOutcome(
+                    UNAVAILABLE,
+                    None,
+                    "pip-audit returned an empty dependency report; no packages were audited",
+                )
             findings: list[str] = []
             for dep in raw_deps:
                 if not isinstance(dep, dict):
@@ -133,14 +139,22 @@ def run_pip_audit(
     service: str = DEFAULT_SERVICE,
     runner=subprocess.run,
 ) -> AuditOutcome:
-    """Run pip-audit once with bounded socket and process timeouts."""
+    """Run pip-audit once with bounded socket and process timeouts.
+
+    ``uv run --with`` executes the tool in an ephemeral overlay. ``--local``
+    would inspect that overlay rather than the project environment and can
+    report zero dependencies even after ``uv sync`` installed the project.
+    Pointing pip-audit at the synced site-packages directory makes the audit
+    scope explicit and keeps the dependency count meaningful.
+    """
     cmd = [
         "uv",
         "run",
         "--with",
         "pip-audit",
         "pip-audit",
-        "--local",
+        "--path",
+        ".venv/lib/python3.12/site-packages",
         "--format",
         "json",
         "--timeout",
@@ -166,7 +180,17 @@ def run_pip_audit(
     except FileNotFoundError:
         return AuditOutcome(UNAVAILABLE, None, "uv executable not found")
 
-    return classify_pip_audit_output(res.stdout, res.stderr)
+    outcome = classify_pip_audit_output(res.stdout, res.stderr)
+    # pip-audit uses exit 1 for a report containing vulnerabilities. Any other
+    # non-zero result is an execution or service failure, even if a partial
+    # JSON payload happened to be written before it exited.
+    if res.returncode not in (EXIT_OK, EXIT_VULNERABLE):
+        return AuditOutcome(
+            UNAVAILABLE,
+            None,
+            f"pip-audit exited with status {res.returncode}: {outcome.detail}",
+        )
+    return outcome
 
 
 def audit_with_retry(
@@ -215,7 +239,7 @@ def evaluate(outcome: AuditOutcome) -> tuple[int, str]:
         return (
             EXIT_VULNERABLE,
             f"VULNERABILITIES FOUND in Python dependencies: {summary}. "
-            "Run 'uv run --with pip-audit pip-audit --local' for details.",
+            "Run 'uv run --with pip-audit pip-audit --path .venv/lib/python3.12/site-packages' for details.",
         )
 
     return (
