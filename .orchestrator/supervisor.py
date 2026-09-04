@@ -727,6 +727,7 @@ def parse_args() -> argparse.Namespace:
 
 
 CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS = 60.0
 
 
 class FastPollNotAllowedError(SystemExit):
@@ -757,6 +758,29 @@ def resolve_poll_interval(
             "if this is a steady-state change."
         )
     return cli_value, "cli"
+
+
+def resolve_heartbeat_warn_after_seconds(
+    config: dict[str, Any],
+    *,
+    poll_interval: float | None = None,
+) -> float:
+    base_poll = (
+        float(poll_interval)
+        if poll_interval is not None and poll_interval > 0
+        else float(
+            config.get("supervisor", {}).get(
+                "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+            )
+        )
+    )
+    raw_warn = config.get("supervisor", {}).get("heartbeat_warn_after_seconds")
+    if raw_warn is not None:
+        configured_warn = float(raw_warn)
+        if configured_warn > base_poll:
+            return configured_warn
+        return base_poll + max(DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS, configured_warn)
+    return base_poll + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -1239,7 +1263,9 @@ def log_runtime_summary(
     quiet: bool,
     verbose: bool,
     previous_heartbeat: str | None = None,
-    warn_after_seconds: float = 10.0,
+    warn_after_seconds: float = (
+        CONFIG_DEFAULT_POLL_INTERVAL_SECONDS + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    ),
     once: bool = False,
 ) -> None:
     summary = summarize_runtime(state, approval_state)
@@ -5146,7 +5172,7 @@ def run_once(
             quiet=quiet,
             verbose=verbose,
             previous_heartbeat=previous_heartbeat,
-            warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
+            warn_after_seconds=resolve_heartbeat_warn_after_seconds(config),
             once=once,
         )
         return changed
