@@ -676,3 +676,157 @@ def test_regression_rollback_audit_self_contained_snapshots(
     assert decision_card["metrics"]["new_value"]["road"] == "Road 1"
 
 
+
+
+def test_regression_unscoped_caller_cannot_reach_unscoped_legacy_record(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    """Regression test (P1): a blank tenant is not a wildcard on either side.
+
+    A legacy record stores no tenant and an authenticated caller may present no
+    tenant. Comparing the two normalized values for equality alone made
+    ``"" == ""`` a match, so any authorized caller without a tenant could read
+    and modify every un-tenanted record. Both sides must now be non-empty.
+    """
+    addr_id = str(uuid4())
+    address_repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Legacy Unscoped Address",
+            latitude=25.0,
+            longitude=121.0,
+            manual_override_flag=False,
+            tenant_id="",  # Un-tenanted legacy record
+            revision=1,
+        )
+    )
+
+    # Authenticated, role-authorized, but carrying no tenant scope at all.
+    headers_no_tenant = {
+        "x-subject-id": "site-reviewer-no-tenant",
+        "x-roles": "site_reviewer",
+    }
+
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=headers_no_tenant)
+    assert get_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in get_resp.text
+
+    list_resp = client.get(
+        f"/listings/addresses/{addr_id}/corrections", headers=headers_no_tenant
+    )
+    assert list_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in list_resp.text
+
+    corr_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={
+            "latitude": 25.9,
+            "longitude": 121.9,
+            "reason": "Unscoped caller modifying un-tenanted record",
+        },
+        headers=headers_no_tenant,
+    )
+    assert corr_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in corr_resp.text
+
+    rollback_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections/{uuid4()}/rollback",
+        json={"reason": "Unscoped caller rolling back un-tenanted record"},
+        headers=headers_no_tenant,
+    )
+    assert rollback_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in rollback_resp.text
+
+    # The record must be untouched: not read, not claimed, not revised.
+    saved = address_repo.get_address(addr_id)
+    assert saved is not None
+    assert saved.tenant_id == ""
+    assert saved.revision == 1
+    assert saved.latitude == 25.0
+    assert saved.manual_override_flag is False
+    assert address_repo.get_corrections(addr_id) == []
+
+
+def test_regression_platform_admin_cannot_reach_unscoped_legacy_record(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    """Regression test (P1): cross-tenant admin is not a bypass for *no* tenant.
+
+    ``platform_admin`` crosses tenants by design, but a record with no tenant
+    has no scope to cross into. It stays unreachable until it is migrated into
+    a real tenant.
+    """
+    addr_id = str(uuid4())
+    address_repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Legacy Unscoped Address",
+            latitude=25.0,
+            longitude=121.0,
+            manual_override_flag=False,
+            tenant_id="",
+            revision=1,
+        )
+    )
+
+    admin_headers = {
+        "x-subject-id": "admin-1",
+        "x-roles": "platform_admin",
+        "x-tenant-id": "tenant-alpha",
+    }
+
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=admin_headers)
+    assert get_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in get_resp.text
+
+    corr_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={"latitude": 25.9, "reason": "Admin claiming un-tenanted record"},
+        headers=admin_headers,
+    )
+    assert corr_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in corr_resp.text
+
+    saved = address_repo.get_address(addr_id)
+    assert saved is not None
+    assert saved.tenant_id == ""
+    assert saved.revision == 1
+
+
+def test_regression_platform_admin_without_tenant_is_denied(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    """Regression test (P1): the admin role does not substitute for a tenant."""
+    addr_id = str(uuid4())
+    address_repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Scoped Address",
+            latitude=25.0,
+            longitude=121.0,
+            manual_override_flag=False,
+            tenant_id="tenant-alpha",
+            revision=1,
+        )
+    )
+
+    admin_no_tenant = {"x-subject-id": "admin-1", "x-roles": "platform_admin"}
+
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=admin_no_tenant)
+    assert get_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in get_resp.text
+
+    corr_resp = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json={"latitude": 25.9, "reason": "Admin without tenant scope modifying"},
+        headers=admin_no_tenant,
+    )
+    assert corr_resp.status_code == 403
+    assert "TENANT_SCOPE_DENIED" in corr_resp.text
+
+    saved = address_repo.get_address(addr_id)
+    assert saved is not None
+    assert saved.revision == 1

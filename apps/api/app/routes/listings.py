@@ -756,6 +756,42 @@ else:
                     return bundle.manual_correction_repository
             return InMemoryManualCorrectionRepository()
 
+        def _require_caller_tenant(principal: Any) -> str:
+            """Return the caller's tenant, refusing an unscoped principal.
+
+            A caller with no tenant has no scope to compare a record against.
+            Letting it through means ``"" == ""`` matches every record that
+            also predates tenant scoping, so the absence of a tenant is denied
+            here rather than normalized into one.
+            """
+            caller_tenant = str(getattr(principal, "tenant_id", "") or "").strip()
+            if not caller_tenant:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Tenant scope is required",
+                )
+            return caller_tenant
+
+        def _require_address_tenant_scope(address: Any, principal: Any) -> None:
+            """Fail closed unless the caller may act inside the record's tenant.
+
+            Platform admins cross tenants by design, but even they cannot reach
+            a record carrying no tenant at all: an unscoped legacy row stays
+            unreachable until it is migrated into a real tenant.
+            """
+            caller_tenant = _require_caller_tenant(principal)
+            record_tenant = str(getattr(address, "tenant_id", "") or "").strip()
+            if not record_tenant:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Record has no tenant scope",
+                )
+            if record_tenant != caller_tenant and Role.PLATFORM_ADMIN not in principal.roles:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Cross-tenant access forbidden",
+                )
+
         router = APIRouter(prefix="/listings", tags=["listings"])
 
         @router.post(
@@ -820,6 +856,7 @@ else:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="PERMISSION_DENIED: Role not authorized for manual corrections",
                 )
+            caller_tenant = _require_caller_tenant(principal)
 
             reason = (body.reason or "").strip()
             if len(reason) < 5:
@@ -868,7 +905,7 @@ else:
                     updates=updates,
                     reason=reason,
                     actor_id=actor_id,
-                    tenant_id=principal.tenant_id,
+                    tenant_id=caller_tenant,
                     expected_revision=expected_revision,
                     correlation_id=corr_id,
                     risk_acknowledged=body.risk_acknowledged,
@@ -965,6 +1002,7 @@ else:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="PERMISSION_DENIED: Role not authorized for rollback",
                 )
+            caller_tenant = _require_caller_tenant(principal)
 
             reason = (body.reason or "").strip()
             if len(reason) < 5:
@@ -990,7 +1028,7 @@ else:
                     correction_id,
                     reason=reason,
                     actor_id=actor_id,
-                    tenant_id=principal.tenant_id,
+                    tenant_id=caller_tenant,
                     expected_revision=expected_revision,
                     correlation_id=corr_id,
                     audit_log=audit,
@@ -1068,16 +1106,7 @@ else:
                     detail=f"Address {address_id} not found",
                 )
 
-            address_tenant = address.tenant_id or ""
-            user_tenant = principal.tenant_id or ""
-            if (
-                address_tenant != user_tenant
-                and Role.PLATFORM_ADMIN not in principal.roles
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Cross-tenant access forbidden",
-                )
+            _require_address_tenant_scope(address, principal)
 
             return {
                 "address_id": address.address_id,
@@ -1118,16 +1147,7 @@ else:
                     detail=f"Address {address_id} not found",
                 )
 
-            address_tenant = address.tenant_id or ""
-            user_tenant = principal.tenant_id or ""
-            if (
-                address_tenant != user_tenant
-                and Role.PLATFORM_ADMIN not in principal.roles
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Cross-tenant access forbidden",
-                )
+            _require_address_tenant_scope(address, principal)
 
             corrections = addr_repo.get_corrections(address_id, correction_repo=corr_repo)
             return {

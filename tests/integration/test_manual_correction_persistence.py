@@ -8,9 +8,11 @@ Tests:
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
 from starlette.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
@@ -22,6 +24,7 @@ from shared.infrastructure.persistence.repositories import (
     DurableAddressLocationRepository,
     DurableManualCorrectionRepository,
     InMemoryAddressLocationRepository,
+    StaleRevisionError,
 )
 
 
@@ -589,3 +592,321 @@ def test_rollback_clears_override_flag_the_correction_introduced(tmp_path: Path)
         )
 
         assert repo.get_address(address_id).manual_override_flag is False  # type: ignore[attr-defined]
+
+
+def test_durable_correction_rejects_stale_write_from_concurrent_engine(
+    tmp_path: Path,
+) -> None:
+    """Regression test (P1): optimistic concurrency is enforced by the database.
+
+    ``engine.lock`` is a handle-local lock, so two engines over the same file
+    (two API processes in production) both passed the in-memory
+    ``expected_revision`` check and both wrote revision 2 -- one correction
+    silently overwriting the other. The revision bump is now a conditional
+    UPDATE, so the writer holding a stale snapshot matches zero rows.
+
+    The stale snapshot is injected rather than raced: the read that loses is
+    exactly the failure a passing concurrent test can never guarantee it hit.
+    """
+    db_file = tmp_path / "durable_correction_race.sqlite3"
+
+    def build_repo() -> DurableAddressLocationRepository:
+        engine = SqliteEngine(db_file)
+        return DurableAddressLocationRepository(
+            engine, correction_repo=DurableManualCorrectionRepository(engine)
+        )
+
+    writer_a = build_repo()
+    writer_b = build_repo()
+
+    addr_id = str(uuid4())
+    writer_a.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei Concurrency Road 1",
+            latitude=25.0000,
+            longitude=121.0000,
+            manual_override_flag=False,
+            tenant_id="tenant-race",
+            revision=1,
+        )
+    )
+
+    # Both writers observe revision 1 before either has written.
+    snapshot_a = writer_a.get_address(addr_id)
+    snapshot_b = writer_b.get_address(addr_id)
+    assert snapshot_a is not None and snapshot_b is not None
+    assert snapshot_a.revision == snapshot_b.revision == 1
+
+    common = {
+        "reason": "Concurrent correction from an independent engine",
+        "actor_id": "operator-race-1",
+        "tenant_id": "tenant-race",
+        "expected_revision": 1,
+    }
+
+    winner_address, winner_correction, _ = writer_a.apply_correction(
+        addr_id, updates={"latitude": 25.1111}, **common
+    )
+    assert winner_address.revision == 2
+    assert winner_correction.applied_revision == 2
+
+    # Writer B still holds its revision-1 snapshot: pin the read to it so the
+    # in-process pre-check passes and only the database can reject the write.
+    writer_b.get_address = lambda _address_id, _snapshot=snapshot_b: _snapshot  # type: ignore[method-assign]
+
+    with pytest.raises(StaleRevisionError):
+        writer_b.apply_correction(addr_id, updates={"latitude": 25.2222}, **common)
+
+    # The winner's write survives intact, and the loser left no partial trail.
+    verifier = build_repo()
+    final = verifier.get_address(addr_id)
+    assert final is not None
+    assert final.revision == 2
+    assert final.latitude == 25.1111
+    assert final.manual_override_flag is True
+
+    corrections = verifier.get_corrections(addr_id)
+    assert len(corrections) == 1
+    assert corrections[0].correction_id == winner_correction.correction_id
+    assert corrections[0].applied_revision == 2
+
+
+def test_durable_rollback_rejects_stale_write_from_concurrent_engine(
+    tmp_path: Path,
+) -> None:
+    """Regression test (P1): a raced rollback must not rewind the winner.
+
+    Rollback shares the read-then-write shape of ``apply_correction``. The
+    top-of-stack rule rejects most stale rollbacks, but it is evaluated against
+    a correction list read before the write; a rollback that read the whole
+    world at revision 2 and only then lost the race would still restore its
+    snapshot over the revision-3 winner. The conditional UPDATE is what makes
+    that impossible, so both stale reads are pinned here to isolate it.
+    """
+    db_file = tmp_path / "durable_rollback_race.sqlite3"
+
+    def build_repo() -> DurableAddressLocationRepository:
+        engine = SqliteEngine(db_file)
+        return DurableAddressLocationRepository(
+            engine, correction_repo=DurableManualCorrectionRepository(engine)
+        )
+
+    writer_a = build_repo()
+    writer_b = build_repo()
+    engine_b = SqliteEngine(db_file)
+    corr_repo_b = DurableManualCorrectionRepository(engine_b)
+
+    addr_id = str(uuid4())
+    writer_a.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei Rollback Race Road 1",
+            latitude=25.0000,
+            longitude=121.0000,
+            manual_override_flag=False,
+            tenant_id="tenant-race",
+            revision=1,
+        )
+    )
+
+    _, first_correction, _ = writer_a.apply_correction(
+        addr_id,
+        updates={"latitude": 25.1111},
+        reason="First correction before the rollback race",
+        actor_id="operator-race-1",
+        tenant_id="tenant-race",
+        expected_revision=1,
+    )
+    assert first_correction.applied_revision == 2
+
+    # Writer B reads the address and the correction stack at revision 2 and
+    # decides to roll the (then top-of-stack) first correction back.
+    stale_address = writer_b.get_address(addr_id)
+    assert stale_address is not None
+    assert stale_address.revision == 2
+    stale_corrections = corr_repo_b.list_corrections(
+        entity_type="address_location", entity_id=addr_id
+    )
+    assert [c.correction_id for c in stale_corrections] == [first_correction.correction_id]
+
+    # Writer A lands another correction first, moving the row to revision 3.
+    second_address, _, _ = writer_a.apply_correction(
+        addr_id,
+        updates={"latitude": 25.3333},
+        reason="Second correction that wins the rollback race",
+        actor_id="operator-race-2",
+        tenant_id="tenant-race",
+        expected_revision=2,
+    )
+    assert second_address.revision == 3
+
+    class _FrozenCorrectionView:
+        """Writer B's pre-race view: writes stay live, reads stay stale."""
+
+        def get_correction(self, correction_id: str):
+            return corr_repo_b.get_correction(correction_id)
+
+        def list_corrections(self, **_kwargs):
+            return list(stale_corrections)
+
+        def record_correction(self, *args, **kwargs):
+            return corr_repo_b.record_correction(*args, **kwargs)
+
+    writer_b.get_address = lambda _address_id, _snapshot=stale_address: _snapshot  # type: ignore[method-assign]
+
+    with pytest.raises(StaleRevisionError):
+        writer_b.rollback_correction(
+            addr_id,
+            first_correction.correction_id,
+            reason="Rollback racing a correction that already landed",
+            actor_id="operator-race-3",
+            tenant_id="tenant-race",
+            expected_revision=2,
+            correction_repo=_FrozenCorrectionView(),
+        )
+
+    verifier = build_repo()
+    final = verifier.get_address(addr_id)
+    assert final is not None
+    assert final.revision == 3
+    assert final.latitude == 25.3333
+    assert final.manual_override_flag is True
+
+    # The raced rollback must not have flipped the correction's status either.
+    corrections = {c.correction_id: c for c in verifier.get_corrections(addr_id)}
+    assert corrections[first_correction.correction_id].status == "applied"
+
+
+def test_durable_correction_concurrent_writers_produce_one_winner(
+    tmp_path: Path,
+) -> None:
+    """Two threads on independent engines: exactly one may take revision 2."""
+    db_file = tmp_path / "durable_correction_threads.sqlite3"
+
+    def build_repo() -> DurableAddressLocationRepository:
+        engine = SqliteEngine(db_file)
+        return DurableAddressLocationRepository(
+            engine, correction_repo=DurableManualCorrectionRepository(engine)
+        )
+
+    seeder = build_repo()
+    addr_id = str(uuid4())
+    seeder.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei Thread Race Road 1",
+            latitude=25.0000,
+            longitude=121.0000,
+            manual_override_flag=False,
+            tenant_id="tenant-race",
+            revision=1,
+        )
+    )
+
+    repos = [build_repo(), build_repo()]
+    barrier = threading.Barrier(len(repos))
+    outcomes: list[object] = [None] * len(repos)
+
+    def attempt(index: int) -> None:
+        repo = repos[index]
+        barrier.wait(timeout=10)
+        try:
+            address, _, _ = repo.apply_correction(
+                addr_id,
+                updates={"latitude": 25.0 + index + 1},
+                reason=f"Concurrent thread {index} correction attempt",
+                actor_id=f"operator-thread-{index}",
+                tenant_id="tenant-race",
+                expected_revision=1,
+            )
+            outcomes[index] = address.revision
+        except StaleRevisionError as exc:
+            outcomes[index] = exc
+
+    threads = [threading.Thread(target=attempt, args=(i,)) for i in range(len(repos))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+        assert not thread.is_alive()
+
+    winners = [o for o in outcomes if o == 2]
+    losers = [o for o in outcomes if isinstance(o, StaleRevisionError)]
+    assert len(winners) == 1, outcomes
+    assert len(losers) == 1, outcomes
+
+    verifier = build_repo()
+    final = verifier.get_address(addr_id)
+    assert final is not None
+    assert final.revision == 2
+    assert len(verifier.get_corrections(addr_id)) == 1
+
+
+def test_durable_correction_compensates_when_audit_write_fails(tmp_path: Path) -> None:
+    """Regression test: a correction whose audit trail fails must not stay applied.
+
+    The revision is claimed before the audit and correction records are written,
+    so the losing writer of a race leaves no trail. The same ordering means a
+    failing audit write would otherwise leave the row moved and unauditable.
+    The failure is injected, because a write path that never fails is a write
+    path whose compensation is never exercised.
+    """
+    db_file = tmp_path / "durable_correction_compensation.sqlite3"
+    engine = SqliteEngine(db_file)
+    corr_repo = DurableManualCorrectionRepository(engine)
+    repo = DurableAddressLocationRepository(engine, correction_repo=corr_repo)
+
+    addr_id = str(uuid4())
+    repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei Compensation Road 1",
+            latitude=25.0000,
+            longitude=121.0000,
+            geocode_confidence=0.5,
+            manual_override_flag=False,
+            tenant_id="tenant-compensate",
+            revision=1,
+        )
+    )
+
+    class _FailingAuditLog:
+        def record(self, _event: object) -> None:
+            raise RuntimeError("audit sink unavailable")
+
+    with pytest.raises(RuntimeError, match="audit sink unavailable"):
+        repo.apply_correction(
+            addr_id,
+            updates={"latitude": 25.9999, "longitude": 121.9999},
+            reason="Correction whose audit write is going to fail",
+            actor_id="operator-compensate-1",
+            tenant_id="tenant-compensate",
+            expected_revision=1,
+            audit_log=_FailingAuditLog(),
+        )
+
+    # The row must be back at its pre-correction state, on disk.
+    verifier_engine = SqliteEngine(db_file)
+    verifier = DurableAddressLocationRepository(
+        verifier_engine, correction_repo=DurableManualCorrectionRepository(verifier_engine)
+    )
+    restored = verifier.get_address(addr_id)
+    assert restored is not None
+    assert restored.revision == 1
+    assert restored.latitude == 25.0000
+    assert restored.longitude == 121.0000
+    assert restored.manual_override_flag is False
+    assert verifier.get_corrections(addr_id) == []
+
+    # And the address is still correctable afterwards at the original revision.
+    applied, correction, _ = verifier.apply_correction(
+        addr_id,
+        updates={"latitude": 25.5555},
+        reason="Correction retried after the audit sink recovered",
+        actor_id="operator-compensate-2",
+        tenant_id="tenant-compensate",
+        expected_revision=1,
+    )
+    assert applied.revision == 2
+    assert correction.source_revision == 1
