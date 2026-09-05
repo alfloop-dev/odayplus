@@ -1032,3 +1032,87 @@ def test_apply_correction_omitted_geocode_precision_preserves_existing_precision
     assert readback["geocode_precision"] == "rooftop"
     assert readback["latitude"] == 25.0395
 
+
+def test_apply_and_rollback_preserves_null_coordinates_and_confidence_api_contract(
+    client: TestClient,
+    address_repo: InMemoryAddressLocationRepository,
+) -> None:
+    """When an address has NULL coordinates and confidence:
+    1. POST correction (city-only) preserves null coordinates and confidence in API response and GET readback.
+    2. POST rollback restores previous state with null coordinates and confidence in API response and GET readback.
+    """
+    addr_id = str(uuid4())
+    address_repo.save_address(
+        AddressLocation(
+            address_id=addr_id,
+            raw_address="Taipei City Unknown Location",
+            city="Old City",
+            latitude=None,
+            longitude=None,
+            geocode_precision="manual",
+            geocode_confidence=None,
+            manual_override_flag=False,
+            tenant_id="tenant-alpha",
+            revision=1,
+        )
+    )
+
+    headers = {
+        "x-subject-id": "operator-1",
+        "x-roles": "expansion_user",
+        "x-tenant-id": "tenant-alpha",
+    }
+    payload = {
+        "city": "Corrected City",
+        "reason": "Updating city boundary only",
+        "expected_revision": 1,
+    }
+
+    # 1. Apply city-only correction
+    response = client.post(
+        f"/listings/addresses/{addr_id}/corrections",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["address"]["latitude"] is None
+    assert data["address"]["longitude"] is None
+    assert data["address"]["geocode_confidence"] is None
+    assert data["address"]["city"] == "Corrected City"
+    assert data["address"]["revision"] == 2
+
+    correction_id = data["correction_id"]
+
+    # Verify readback via GET
+    get_resp = client.get(f"/listings/addresses/{addr_id}", headers=headers)
+    assert get_resp.status_code == 200
+    readback = get_resp.json()
+    assert readback["latitude"] is None
+    assert readback["longitude"] is None
+    assert readback["geocode_confidence"] is None
+    assert readback["city"] == "Corrected City"
+
+    # 2. Rollback correction
+    rb_response = client.post(
+        f"/listings/addresses/{addr_id}/corrections/{correction_id}/rollback",
+        json={"reason": "Reverting city change", "expected_revision": 2},
+        headers=headers,
+    )
+    assert rb_response.status_code == 200, rb_response.text
+    rb_data = rb_response.json()
+    assert rb_data["address"]["latitude"] is None
+    assert rb_data["address"]["longitude"] is None
+    assert rb_data["address"]["geocode_confidence"] is None
+    assert rb_data["address"]["city"] == "Old City"
+    assert rb_data["address"]["revision"] == 3
+
+    # Verify readback after rollback via GET
+    get_resp2 = client.get(f"/listings/addresses/{addr_id}", headers=headers)
+    assert get_resp2.status_code == 200
+    readback2 = get_resp2.json()
+    assert readback2["latitude"] is None
+    assert readback2["longitude"] is None
+    assert readback2["geocode_confidence"] is None
+    assert readback2["city"] == "Old City"
+

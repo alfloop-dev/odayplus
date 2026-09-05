@@ -1122,3 +1122,180 @@ def test_in_memory_compensation_when_audit_fails() -> None:
     assert saved_after_rb_fail.latitude == 25.9
     assert saved_after_rb_fail.manual_override_flag is True
     assert repo.get_corrections(addr_id)[0].status == "applied"
+
+
+def test_apply_and_rollback_preserves_nullable_coordinates_and_confidence_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """When an address has NULL / missing latitude, longitude, and geocode_confidence:
+    1. A city-only correction preserves NULL coordinates and confidence across both memory and durable SQLite.
+    2. Durable SQLite readback returns None (not 0.0 or 1.0) and raw DB columns remain NULL.
+    3. Rollback restores the previous state without converting NULL coordinates or confidence to 0.0 or 1.0.
+    4. Durable SQLite readback after rollback returns None and raw DB columns remain NULL.
+    """
+    for repo in _address_repositories(tmp_path):
+        address_id = str(uuid4())
+        initial = _correction_regression_address(
+            address_id,
+            latitude=None,
+            longitude=None,
+            geocode_confidence=None,
+            city="Old City",
+        )
+        repo.save_address(initial)  # type: ignore[attr-defined]
+
+        # Check raw DB if durable
+        if hasattr(repo, "_engine"):
+            raw_row = repo._engine.query_one(  # type: ignore[attr-defined]
+                "SELECT latitude, longitude, geocode_confidence FROM address_locations WHERE address_id = ?",
+                (address_id,),
+            )
+            assert raw_row is not None
+            assert raw_row["latitude"] is None
+            assert raw_row["longitude"] is None
+            assert raw_row["geocode_confidence"] is None
+
+        # 1. Apply city-only correction
+        applied, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+            address_id,
+            updates={"city": "New City"},
+            reason="Correcting city boundary",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=1,
+        )
+        assert applied.latitude is None
+        assert applied.longitude is None
+        assert applied.geocode_confidence is None
+        assert applied.city == "New City"
+        assert applied.revision == 2
+        assert applied.manual_override_flag is True
+
+        assert "latitude" not in correction.old_value
+        assert "longitude" not in correction.old_value
+        assert "geocode_confidence" not in correction.old_value
+
+        # 2. Verify readback
+        readback = repo.get_address(address_id)  # type: ignore[attr-defined]
+        assert readback is not None
+        assert readback.latitude is None
+        assert readback.longitude is None
+        assert readback.geocode_confidence is None
+        assert readback.city == "New City"
+
+        # Check raw DB after apply
+        if hasattr(repo, "_engine"):
+            raw_row = repo._engine.query_one(  # type: ignore[attr-defined]
+                "SELECT latitude, longitude, geocode_confidence FROM address_locations WHERE address_id = ?",
+                (address_id,),
+            )
+            assert raw_row is not None
+            assert raw_row["latitude"] is None
+            assert raw_row["longitude"] is None
+            assert raw_row["geocode_confidence"] is None
+
+        # 3. Rollback correction
+        restored, rolled_corr, _ = repo.rollback_correction(  # type: ignore[attr-defined]
+            address_id,
+            correction_id=correction.correction_id,
+            reason="Reverting city change",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=2,
+        )
+        assert restored.latitude is None
+        assert restored.longitude is None
+        assert restored.geocode_confidence is None
+        assert restored.city == "Old City"
+        assert restored.revision == 3
+        assert restored.manual_override_flag is False
+
+        # 4. Verify readback after rollback
+        restored_readback = repo.get_address(address_id)  # type: ignore[attr-defined]
+        assert restored_readback is not None
+        assert restored_readback.latitude is None
+        assert restored_readback.longitude is None
+        assert restored_readback.geocode_confidence is None
+        assert restored_readback.city == "Old City"
+
+        # Check raw DB after rollback
+        if hasattr(repo, "_engine"):
+            raw_row = repo._engine.query_one(  # type: ignore[attr-defined]
+                "SELECT latitude, longitude, geocode_confidence FROM address_locations WHERE address_id = ?",
+                (address_id,),
+            )
+            assert raw_row is not None
+            assert raw_row["latitude"] is None
+            assert raw_row["longitude"] is None
+            assert raw_row["geocode_confidence"] is None
+
+
+def test_apply_and_rollback_with_explicit_coordinates_from_nullable_state(
+    tmp_path: Path,
+) -> None:
+    """When an address initially has NULL coordinates and confidence:
+    1. Applying explicit coordinates and confidence derives valid H3 cells and sets values.
+    2. Rolling back restores coordinates and confidence to None and clears derived H3 cells.
+    """
+    for repo in _address_repositories(tmp_path):
+        address_id = str(uuid4())
+        initial = _correction_regression_address(
+            address_id,
+            latitude=None,
+            longitude=None,
+            geocode_confidence=None,
+            h3_res_8="",
+            h3_res_9="",
+            h3_res_10="",
+        )
+        repo.save_address(initial)  # type: ignore[attr-defined]
+
+        # 1. Apply correction with explicit coords
+        applied, correction, _ = repo.apply_correction(  # type: ignore[attr-defined]
+            address_id,
+            updates={
+                "latitude": 25.0330,
+                "longitude": 121.5650,
+                "geocode_confidence": 0.88,
+            },
+            reason="GPS survey added coordinates",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=1,
+        )
+        assert applied.latitude == 25.0330
+        assert applied.longitude == 121.5650
+        assert applied.geocode_confidence == 0.88
+        assert applied.h3_res_8 != ""
+        assert applied.h3_res_9 != ""
+        assert applied.h3_res_10 != ""
+
+        assert correction.old_value["latitude"] is None
+        assert correction.old_value["longitude"] is None
+        assert correction.old_value["geocode_confidence"] is None
+
+        # 2. Rollback correction
+        restored, _, _ = repo.rollback_correction(  # type: ignore[attr-defined]
+            address_id,
+            correction_id=correction.correction_id,
+            reason="Survey rejected",
+            actor_id="operator-1",
+            tenant_id="tenant-regress",
+            expected_revision=2,
+        )
+        assert restored.latitude is None
+        assert restored.longitude is None
+        assert restored.geocode_confidence is None
+        assert restored.h3_res_8 == ""
+        assert restored.h3_res_9 == ""
+        assert restored.h3_res_10 == ""
+
+        # Verify readback
+        restored_readback = repo.get_address(address_id)  # type: ignore[attr-defined]
+        assert restored_readback is not None
+        assert restored_readback.latitude is None
+        assert restored_readback.longitude is None
+        assert restored_readback.geocode_confidence is None
+        assert restored_readback.h3_res_8 == ""
+        assert restored_readback.h3_res_9 == ""
+        assert restored_readback.h3_res_10 == ""

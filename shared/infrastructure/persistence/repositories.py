@@ -1549,21 +1549,55 @@ def _build_corrected_address(
     Shared by the in-memory and durable repositories so the two write paths
     cannot drift apart on which fields a correction touches.
     """
-    new_lat = float(updates.get("latitude", existing.latitude))
-    new_lng = float(updates.get("longitude", existing.longitude))
+    if "latitude" in updates:
+        new_lat = float(updates["latitude"]) if updates["latitude"] is not None else None
+    else:
+        new_lat = float(existing.latitude) if existing.latitude is not None else None
+
+    if "longitude" in updates:
+        new_lng = float(updates["longitude"]) if updates["longitude"] is not None else None
+    else:
+        new_lng = float(existing.longitude) if existing.longitude is not None else None
 
     h3_res_8 = existing.h3_res_8
     h3_res_9 = existing.h3_res_9
     h3_res_10 = existing.h3_res_10
     if "latitude" in updates or "longitude" in updates:
-        try:
-            import h3
+        if new_lat is not None and new_lng is not None:
+            try:
+                import h3
 
-            h3_res_8 = h3.latlng_to_cell(new_lat, new_lng, 8)
-            h3_res_9 = h3.latlng_to_cell(new_lat, new_lng, 9)
-            h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
-        except Exception:
-            pass
+                h3_res_8 = h3.latlng_to_cell(new_lat, new_lng, 8)
+                h3_res_9 = h3.latlng_to_cell(new_lat, new_lng, 9)
+                h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
+            except Exception:
+                pass
+        else:
+            h3_res_8 = ""
+            h3_res_9 = ""
+            h3_res_10 = ""
+
+    if "geocode_precision" in updates:
+        new_precision = (
+            str(updates["geocode_precision"])
+            if updates["geocode_precision"] is not None
+            else None
+        )
+    else:
+        new_precision = existing.geocode_precision
+
+    if "geocode_confidence" in updates:
+        new_confidence = (
+            float(updates["geocode_confidence"])
+            if updates["geocode_confidence"] is not None
+            else None
+        )
+    else:
+        new_confidence = (
+            float(existing.geocode_confidence)
+            if existing.geocode_confidence is not None
+            else None
+        )
 
     return AddressLocation(
         address_id=existing.address_id,
@@ -1575,20 +1609,8 @@ def _build_corrected_address(
         road=updates.get("road", existing.road),
         latitude=new_lat,
         longitude=new_lng,
-        geocode_precision=(
-            updates["geocode_precision"]
-            if "geocode_precision" in updates and updates["geocode_precision"] is not None
-            else existing.geocode_precision
-        ),
-        geocode_confidence=float(
-            updates["geocode_confidence"]
-            if "geocode_confidence" in updates and updates["geocode_confidence"] is not None
-            else (
-                existing.geocode_confidence
-                if existing.geocode_confidence is not None
-                else 0.0
-            )
-        ),
+        geocode_precision=new_precision,
+        geocode_confidence=new_confidence,
         h3_res_8=h3_res_8,
         h3_res_9=h3_res_9,
         h3_res_10=h3_res_10,
@@ -1640,9 +1662,19 @@ def _restore_from_snapshot(
     restored: dict[str, Any] = {}
     for name in _CORRECTABLE_ADDRESS_FIELDS:
         restored[name] = old_value.get(name, getattr(existing, name))
-    restored["latitude"] = float(restored["latitude"])
-    restored["longitude"] = float(restored["longitude"])
-    restored["geocode_confidence"] = float(restored["geocode_confidence"])
+    restored["latitude"] = (
+        float(restored["latitude"]) if restored["latitude"] is not None else None
+    )
+    restored["longitude"] = (
+        float(restored["longitude"]) if restored["longitude"] is not None else None
+    )
+    restored["geocode_confidence"] = (
+        float(restored["geocode_confidence"])
+        if restored["geocode_confidence"] is not None
+        else None
+    )
+    if restored.get("geocode_precision") is not None:
+        restored["geocode_precision"] = str(restored["geocode_precision"])
 
     coords_moved = (restored["latitude"], restored["longitude"]) != (
         existing.latitude,
@@ -1654,16 +1686,20 @@ def _restore_from_snapshot(
         if name not in old_value
     ]
     if missing_cells and coords_moved:
-        try:
-            import h3
+        if restored["latitude"] is not None and restored["longitude"] is not None:
+            try:
+                import h3
 
+                for name in missing_cells:
+                    resolution = int(name.rsplit("_", 1)[1])
+                    restored[name] = h3.latlng_to_cell(
+                        restored["latitude"], restored["longitude"], resolution
+                    )
+            except Exception:
+                pass
+        else:
             for name in missing_cells:
-                resolution = int(name.rsplit("_", 1)[1])
-                restored[name] = h3.latlng_to_cell(
-                    restored["latitude"], restored["longitude"], resolution
-                )
-        except Exception:
-            pass
+                restored[name] = ""
 
     return AddressLocation(
         address_id=existing.address_id,
@@ -2015,10 +2051,16 @@ class DurableAddressLocationRepository:
 
     def save_address(self, address: AddressLocation) -> AddressLocation:
         postgres = _requires_tenant_scope(self._engine)
-        geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)" if postgres else "?"
-        geom_params: tuple[Any, ...] = (
-            (address.longitude, address.latitude) if postgres else (address.raw_address,)
-        )
+        if postgres:
+            if address.longitude is not None and address.latitude is not None:
+                geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)"
+                geom_params: tuple[Any, ...] = (address.longitude, address.latitude)
+            else:
+                geom_expression = "CAST(NULL AS geometry)"
+                geom_params = ()
+        else:
+            geom_expression = "?"
+            geom_params = (address.raw_address,)
         self._engine.execute(
             "INSERT INTO address_locations ("
             "  address_id, raw_address, normalized_address, city, district, village, road, "
@@ -2084,10 +2126,16 @@ class DurableAddressLocationRepository:
         record's contents, never its tenant.
         """
         postgres = _requires_tenant_scope(self._engine)
-        geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)" if postgres else "?"
-        geom_params: tuple[Any, ...] = (
-            (address.longitude, address.latitude) if postgres else (address.raw_address,)
-        )
+        if postgres:
+            if address.longitude is not None and address.latitude is not None:
+                geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)"
+                geom_params: tuple[Any, ...] = (address.longitude, address.latitude)
+            else:
+                geom_expression = "CAST(NULL AS geometry)"
+                geom_params = ()
+        else:
+            geom_expression = "?"
+            geom_params = (address.raw_address,)
         result = self._engine.execute(
             "UPDATE address_locations SET "
             "  raw_address = ?, normalized_address = ?, city = ?, district = ?, "
@@ -2207,12 +2255,12 @@ class DurableAddressLocationRepository:
             district=row["district"] or "",
             village=row["village"] or "",
             road=row["road"] or "",
-            latitude=row["latitude"] or 0.0,
-            longitude=row["longitude"] or 0.0,
-            geocode_precision=row["geocode_precision"],
+            latitude=float(row["latitude"]) if row["latitude"] is not None else None,
+            longitude=float(row["longitude"]) if row["longitude"] is not None else None,
+            geocode_precision=row["geocode_precision"] if row["geocode_precision"] is not None else "manual",
             geocode_confidence=float(row["geocode_confidence"])
             if row["geocode_confidence"] is not None
-            else 0.0,
+            else None,
             h3_res_8=row["h3_res_8"] or "",
             h3_res_9=row["h3_res_9"] or "",
             h3_res_10=row["h3_res_10"] or "",

@@ -39,10 +39,10 @@ class AddressLocation:
     district: str = ""
     village: str = ""
     road: str = ""
-    latitude: float = 0.0
-    longitude: float = 0.0
+    latitude: float | None = None
+    longitude: float | None = None
     geocode_precision: str = "manual"  # rooftop/street/district/manual
-    geocode_confidence: float = 0.0  # 0 to 1
+    geocode_confidence: float | None = None  # 0 to 1
     h3_res_8: str = ""
     h3_res_9: str = ""
     h3_res_10: str = ""
