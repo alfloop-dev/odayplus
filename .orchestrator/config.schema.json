@@ -906,6 +906,31 @@
       },
       "additionalProperties": false
     },
+    "release_lease_issuer": {
+      "type": "object",
+      "description": "Disabled-by-default Supervisor lease issuer. The secret reference is public configuration only; key material is never stored here.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "secret_reference": {
+          "type": "string"
+        },
+        "state_uri": {
+          "type": "string"
+        },
+        "github_repository": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "ttl_seconds": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
     "watchdog": {
       "type": "object",
       "properties": {

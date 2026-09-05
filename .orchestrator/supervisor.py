@@ -138,6 +138,7 @@ from github_reconciliation import (
 import status_transition
 import dispatch as dispatch_ops
 import worker_lifecycle
+import release_lease_integration
 
 import dispatch_engine
 import worker_workspace
@@ -5188,6 +5189,14 @@ def run_once(
                 # dispatcher. The dispatcher then re-reads canonical status and
                 # remains the only path that decides whether execution starts.
                 changed = consume_human_continuation_approvals(config, state) or changed
+                # This is intentionally the only release-lease scheduler: the
+                # bridge remains disabled until its public configuration is
+                # explicitly enabled, and it can dispatch only the existing
+                # Runtime Release after signed GCS-CAS issuance and a
+                # secret-free canonical receipt have both committed.
+                changed = release_lease_integration.process_release_lease_issuance(
+                    config, commit_status=commit_canonical_task_transition
+                ) or changed
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             # An in-memory cycle cache fixes every repository base to exactly
