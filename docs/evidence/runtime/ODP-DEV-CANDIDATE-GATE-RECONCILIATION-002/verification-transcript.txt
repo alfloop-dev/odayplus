@@ -106,3 +106,23 @@ Code boundary checks passed for 1110 files.
 - product_operations_tooling: 42
 - product_system: 514
 - verification: 376
+
+================================================================================
+5. Focused remediation verification (2026-09-05, after base advance)
+The task branch first merged current origin/dev at 6c4a8be856a5 without rewriting
+task history. The evidence-only fixes then corrected the three GitHub artifact
+API archive digests from the API metadata and replaced the removed Python
+validator reference with verify_live_artifact_binding.sh.
+
+./docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live_artifact_binding.sh
+Exit code: 0
+Result: all raw SHA-256 checks, downloaded-artifact cmp checks, candidate and
+manifest bindings, staged gate mapping, and fail-closed NO-GO checks passed.
+
+python3 delivery_toolchain/e2e/check_release_gate_registry.py --expected-sha 04e1572f802a54c2646ba678fe2975226dfbd7c4
+Exit code: 0
+Result: registry integrity passed; 0/7 gates cleared and decision remains NO-GO.
+
+python3 delivery_toolchain/e2e/check_release_gate_registry.py --require-go
+Exit code: 1 (expected fail-closed behavior)
+Result: release remains NO-GO because no cleared GO state is recorded.

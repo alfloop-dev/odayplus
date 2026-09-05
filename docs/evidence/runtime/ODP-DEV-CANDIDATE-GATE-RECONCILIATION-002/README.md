@@ -1,7 +1,7 @@
 # ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 — 真實 build artifact 與 dev gate registry 的 exact candidate reconciliation
 
-- Owner: Antigravity4
-- Reviewer: Codex (Claude)
+- Owner: Codex2
+- Reviewer: Codex (Claude independent review)
 - 記錄日期: 2026-09-05
 - Candidate SHA: `04e1572f802a54c2646ba678fe2975226dfbd7c4`
 - Build run: [Runtime Release 33942097235](https://github.com/alfloop-dev/odayplus/actions/runs/33942097235)
@@ -11,8 +11,9 @@
 
 使用 Runtime Release run 33942097235 產出的真實 release manifest 與 build artifact 原封不動放進 repo，將
 `RELEASE_GATE_REGISTRY.json` 綁定的 candidate、`RELEASE_MANIFEST.json` 描述的
-artifact，以及 build 實際推上 Artifact Registry 的四個 image digest，指向最新的
-exact dev candidate SHA `04e1572f802a54c2646ba678fe2975226dfbd7c4`。
+artifact，以及 build 實際推上 Artifact Registry 的四個 image digest，指向本次稽核的
+exact build candidate SHA `04e1572f802a54c2646ba678fe2975226dfbd7c4`；該 SHA 不宣稱為
+目前 `origin/dev` tip。
 
 依據部署規劃《EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md》§6.1，修正 gate 階段與 admission target，解除首次部署循環依賴：
 - Gate 0 (Code Gate), Gate 1 (Contract Gate), Gate 4 (Security Gate) 屬於 `candidate-built` / `dev` -> 阻擋 `dev` 初始部署；
@@ -26,9 +27,9 @@ GitHub Artifact API 回傳下列三個 artifact（均來自 run 33942097235，he
 
 | Artifact 名稱 | Artifact ID | API Archive Digest | 解壓檔 Raw SHA-256 |
 |---|---|---|---|
-| `runtime-release-manifest-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288831 | `sha256:40f743e32ac9c44faa0fec03d0c73c6ebd9103e3a479ff7fa2143d2aa66b5791` | `efe7bed05df8f176b053f448acc0c303d8b81786212a98fc5e56f27031e1f124` |
-| `runtime-release-images-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288660 | `sha256:192d7c227764201461af005c08fb261502dc8a264a7cce69b2d352b2cf607548` | `e177983c92b64b8bd1e9da524010d47712192237adf58c19fa56cbf5550ad23e` |
-| `initial-release-absence-readback-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288978 | `sha256:e732be9f4fecffe179729f885c75514d6786c12d46e3d2aa2dbfc0ceb7eec9ee` | `5e6aba3b690ecbbac394ea2706036bc3319a650a0dfdbad25a61785dca01897f` |
+| `runtime-release-manifest-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288831 | `sha256:40f743e32ac9c44faa0fec03d0c73c6ebd33e18479c8986348ef040c1201f672` | `efe7bed05df8f176b053f448acc0c303d8b81786212a98fc5e56f27031e1f124` |
+| `runtime-release-images-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288660 | `sha256:192d7c227764201461af005c08fb26150247e6c54e5e40e6920596837f31a956` | `e177983c92b64b8bd1e9da524010d47712192237adf58c19fa56cbf5550ad23e` |
+| `initial-release-absence-readback-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288978 | `sha256:e732be9f4fecffe179729f885c75514d67703122c0087852730e21768277388d` | `5e6aba3b690ecbbac394ea2706036bc3319a650a0dfdbad25a61785dca01897f` |
 
 使用 `gh run download 33942097235 --repo alfloop-dev/odayplus` 下載至 `/tmp/odp-release-binding-check.YKEX6i` 後進行比對：
 - `cmp docs/evidence/gates/RELEASE_MANIFEST.json /tmp/odp-release-binding-check.YKEX6i/.../RELEASE_MANIFEST.json` -> EXIT=0
@@ -66,9 +67,9 @@ Registry host 一律為
 ## 驗證了什麼
 
 完整逐字紀錄見 `verification-transcript.txt`，可重跑的檢查見
-`verify_live_artifact_binding.py`（結果 EXIT=0）。
+`verify_live_artifact_binding.sh`；缺少必要下載來源時會明確失敗，不會誤報通過。
 
-1. **repo 內的 manifest 就是 run 的 artifact**：`cmp` 與 `sha256sum` 顯示
+1. **repo 內的 manifest 就是 run 的 artifact**：下載來源存在時，`cmp` 與 `sha256sum` 顯示
    `docs/evidence/gates/RELEASE_MANIFEST.json` 與 run 下載的
    `runtime-release-manifest-04e1572f802a54c2646ba678fe2975226dfbd7c4` artifact 位元組完全相同（Raw SHA-256 `efe7bed05df8f176b053f448acc0c303d8b81786212a98fc5e56f27031e1f124`）。無人工編輯。
 2. **manifest digest 可自我驗證**：`manifest_digest` 等於移除該欄位後的
@@ -120,11 +121,9 @@ Registry host 一律為
 |---|---|
 | `README.md` | 本說明文件 |
 | `verification-transcript.txt` | 所有指令與真實 exit code 的逐字紀錄 |
-| `verify_live_artifact_binding.py` | 可重跑的綁定驗證（EXIT=0 代表綁定成立） |
+| `verify_live_artifact_binding.sh` | 可重跑的綁定驗證；僅所有必要來源存在且檢查通過時回傳 EXIT=0 |
 | `runtime-release-images.json` | run 33942097235 的 build-once image handoff（原始 artifact） |
 | `release-phase-receipt.json` | build 階段前置檢查 receipt（原始 artifact） |
 | `release-environment-receipt.json` | build 階段 environment 綁定 receipt（原始 artifact） |
 | `initial-release-absence-readback.json` | dev 初始部署目標不存在證明（原始 artifact） |
 | `npm-audit-receipt.json` | build 階段 npm audit receipt（原始 artifact） |
-
-

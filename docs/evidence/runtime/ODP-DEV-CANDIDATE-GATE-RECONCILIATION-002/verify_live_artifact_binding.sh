@@ -142,22 +142,27 @@ def main() -> int:
         raw_sha256(ABSENCE_PATH),
     )
 
-    if DOWNLOAD_DIR.exists():
-        manifest_cmp = subprocess.run(
-            ["cmp", str(MANIFEST_PATH), str(DOWNLOAD_DIR / f"runtime-release-manifest-{CANDIDATE_SHA}/RELEASE_MANIFEST.json")],
-            capture_output=True,
-        ).returncode == 0
-        images_cmp = subprocess.run(
-            ["cmp", str(IMAGES_PATH), str(DOWNLOAD_DIR / f"runtime-release-images-{CANDIDATE_SHA}/runtime-release-images.json")],
-            capture_output=True,
-        ).returncode == 0
-        absence_cmp = subprocess.run(
-            ["cmp", str(ABSENCE_PATH), str(DOWNLOAD_DIR / f"initial-release-absence-readback-{CANDIDATE_SHA}/initial-release-absence-readback.json")],
-            capture_output=True,
-        ).returncode == 0
-        check("cmp byte-exact: RELEASE_MANIFEST.json against downloaded artifact", manifest_cmp)
-        check("cmp byte-exact: runtime-release-images.json against downloaded artifact", images_cmp)
-        check("cmp byte-exact: initial-release-absence-readback.json against downloaded artifact", absence_cmp)
+    downloaded_paths = {
+        "RELEASE_MANIFEST.json": DOWNLOAD_DIR / f"runtime-release-manifest-{CANDIDATE_SHA}/RELEASE_MANIFEST.json",
+        "runtime-release-images.json": DOWNLOAD_DIR / f"runtime-release-images-{CANDIDATE_SHA}/runtime-release-images.json",
+        "initial-release-absence-readback.json": DOWNLOAD_DIR / f"initial-release-absence-readback-{CANDIDATE_SHA}/initial-release-absence-readback.json",
+    }
+    if not DOWNLOAD_DIR.is_dir():
+        check("downloaded artifact directory is present for raw-byte comparison", False, str(DOWNLOAD_DIR))
+    else:
+        for name, downloaded_path in downloaded_paths.items():
+            check(f"downloaded artifact file is present: {name}", downloaded_path.is_file(), str(downloaded_path))
+        if all(path.is_file() for path in downloaded_paths.values()):
+            local_paths = {
+                "RELEASE_MANIFEST.json": MANIFEST_PATH,
+                "runtime-release-images.json": IMAGES_PATH,
+                "initial-release-absence-readback.json": ABSENCE_PATH,
+            }
+            for name, downloaded_path in downloaded_paths.items():
+                check(
+                    f"cmp byte-exact: {name} against downloaded artifact",
+                    subprocess.run(["cmp", str(local_paths[name]), str(downloaded_path)], capture_output=True).returncode == 0,
+                )
 
     check("manifest schema is valid", not validate_manifest(manifest), str(validate_manifest(manifest)))
     check(
@@ -166,7 +171,7 @@ def main() -> int:
         manifest["manifest_digest"],
     )
     check(
-        "manifest.candidate_sha is the live candidate",
+        "manifest.candidate_sha is the exact build candidate",
         manifest["candidate_sha"] == CANDIDATE_SHA,
         manifest["candidate_sha"],
     )
