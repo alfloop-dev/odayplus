@@ -38,6 +38,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0013",
         "0014",
         "0015",
+        "0016",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -177,6 +178,19 @@ def test_price_exploration_gate_migration_is_reachable_from_alembic_head() -> No
         for asset in gate_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000020_price_exploration_gate.sql"}
+
+
+def test_intervention_adjust_lineage_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-FR-INTV-006: Replacement lineage must be applied in production."""
+    plan = build_migration_plan(environment="dev")
+    lineage_step = next(step for step in plan.steps if step.revision == "0016")
+
+    assert lineage_step.path.endswith("0016_intervention_adjust_lineage.py")
+    assert {
+        asset.path
+        for asset in lineage_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000017_intervention_adjust_lineage.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:
