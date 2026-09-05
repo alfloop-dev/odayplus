@@ -38,6 +38,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0013",
         "0014",
         "0015",
+        "0016",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -177,6 +178,19 @@ def test_price_exploration_gate_migration_is_reachable_from_alembic_head() -> No
         for asset in gate_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000020_price_exploration_gate.sql"}
+
+
+def test_manual_corrections_audit_schema_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-INT-006: Manual corrections, audit trail and rollback schema."""
+    plan = build_migration_plan(environment="dev")
+    correction_step = next(step for step in plan.steps if step.revision == "0016")
+
+    assert correction_step.path.endswith("0016_manual_corrections_audit_schema.py")
+    assert {
+        asset.path
+        for asset in correction_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000021_manual_corrections_audit_schema.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

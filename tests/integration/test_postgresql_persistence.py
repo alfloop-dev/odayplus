@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import UTC, datetime
 from multiprocessing import get_context
 from typing import Any
@@ -467,3 +468,99 @@ def test_postgresql_address_store_and_transaction_contracts_are_tenant_scoped(
         # deleting the tenant is refused -- correctly, since a decision cites
         # the policy version that produced it.
         bundle.engine.close()
+
+
+def test_postgresql_manual_correction_readback_and_rollback(
+    intake_blank_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _provision_canonical_schema(intake_blank_db)
+    database_url = intake_blank_db.url()
+    apply_upgrade_to_database(database_url)
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODAY_DATABASE_URL", database_url)
+    bundle = build_persistence(mode="postgresql")
+
+    tenant = Tenant(tenant_name=f"Tenant PG Corr {uuid4()}")
+    addr_id = str(uuid4())
+    address = AddressLocation(
+        address_id=addr_id,
+        raw_address="台北市信義區松仁路 100 號",
+        normalized_address="台北市信義區松仁路 100 號",
+        city="台北市",
+        district="信義區",
+        road="松仁路",
+        latitude=25.0350,
+        longitude=121.5670,
+        geocode_precision="rooftop",
+        geocode_confidence=0.92,
+        manual_override_flag=False,
+        tenant_id=tenant.tenant_id,
+        revision=1,
+    )
+
+    try:
+        bundle.tenant_repository.save_tenant(tenant)
+        bundle.address_location_repository.save_address(address)
+
+        # 1. Verify initial save in PostgreSQL
+        initial_addr = bundle.address_location_repository.get_address(addr_id)
+        assert initial_addr is not None
+        assert initial_addr.manual_override_flag is False
+        assert initial_addr.revision == 1
+
+        # 2. Apply correction
+        updated_addr, corr, dec_card = bundle.address_location_repository.apply_correction(
+            addr_id,
+            updates={
+                "latitude": 25.0365,
+                "longitude": 121.5685,
+                "road": "松仁路二段",
+            },
+            reason="現場勘查修正經緯度與路段資訊",
+            actor_id="pg-site-reviewer-01",
+            tenant_id=tenant.tenant_id,
+            expected_revision=1,
+            correlation_id="corr-pg-001",
+        )
+        assert updated_addr.manual_override_flag is True
+        assert updated_addr.revision == 2
+        assert updated_addr.latitude == 25.0365
+
+        # 3. Verify durable PostgreSQL row and hash contract
+        row = bundle.engine.query_one(
+            "SELECT * FROM odp_runtime.durable_manual_corrections WHERE correction_id = ?",
+            (corr.correction_id,),
+        )
+        assert row is not None
+        assert row["entity_id"] == addr_id
+        assert row["status"] == "applied"
+        assert row["applied_revision"] == 2
+
+        # 4. Verify readback via manual correction repo returns 64-char sha256 hex hash
+        readback_corr = bundle.manual_correction_repository.get_correction(corr.correction_id)
+        assert readback_corr is not None
+        assert readback_corr.status == "applied"
+        assert re.match(r"^[a-f0-9]{64}$", readback_corr.decision_card_hash)
+
+        # 5. Rollback correction
+        restored_addr, rolled_corr, rb_card = bundle.address_location_repository.rollback_correction(
+            addr_id,
+            corr.correction_id,
+            reason="復原人工修正：路段回退至初始定義",
+            actor_id="pg-admin-01",
+            tenant_id=tenant.tenant_id,
+            expected_revision=2,
+            correlation_id="corr-pg-rollback",
+        )
+        assert restored_addr.manual_override_flag is False
+        assert restored_addr.revision == 3
+        assert restored_addr.latitude == 25.0350
+        assert restored_addr.road == "松仁路"
+        assert rolled_corr.status == "rolled_back"
+
+        # 6. Verify audit log integrity
+        assert bundle.audit_log.verify_chain().ok is True
+    finally:
+        bundle.engine.close()
+
