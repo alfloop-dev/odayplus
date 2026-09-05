@@ -1,7 +1,7 @@
 """Persist governed HeatZone merge/split compositions and policy.
 
-Revision ID: 0015
-Revises: 0014
+Revision ID: 0016
+Revises: 0015
 Create Date: 2026-09-03 16:00:00.000000
 
 Task: ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001
@@ -15,8 +15,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0015"
-down_revision: str = "0014"
+revision: str = "0016"
+down_revision: str = "0015"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -24,7 +24,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     sql_file_path = os.path.join(
         os.path.dirname(os.path.realpath(__file__)),
-        "../000020_heatzone_composition.sql",
+        "../000021_heatzone_composition.sql",
     )
     with open(sql_file_path, encoding="utf-8") as migration_file:
         sql_content = migration_file.read()

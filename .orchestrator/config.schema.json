@@ -887,6 +887,7 @@
           "type": "integer"
         },
         "heartbeat_warn_after_seconds": {
+          "description": "Heartbeat lag threshold in seconds before logging a warning. The effective value is at least the effective supervisor poll interval plus the heartbeat grace period, preventing false warnings during normal polling.",
           "type": "number"
         },
         "max_worker_history": {
@@ -901,6 +902,31 @@
         "hard_inactivity_seconds": {
           "description": "Terminate a worker that keeps heartbeating but has produced no storage I/O for this long. Counter-based stall detection cannot see a CLI blocked forever on a shell command, because such a process still burns CPU and keeps its sockets warm. Set to 0 to disable.",
           "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "release_lease_issuer": {
+      "type": "object",
+      "description": "Disabled-by-default Supervisor lease issuer. The secret reference is public configuration only; key material is never stored here.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "secret_reference": {
+          "type": "string"
+        },
+        "state_uri": {
+          "type": "string"
+        },
+        "github_repository": {
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "ttl_seconds": {
+          "type": "integer"
         }
       },
       "additionalProperties": false

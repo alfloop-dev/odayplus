@@ -131,11 +131,20 @@ stateDiagram-v2
   現行採用商圈內開店數上限（`max_open_per_dilution_zone`）作為稀釋約束。完整的門市配對稀釋形式需引入 $O(n^2)$ 輔助變數，且配對稀釋係數本身帶有實質不確定性，對其過度優化屬於製造假精度。投資於 `ODP-FR-HZ-004` 熱區吸收率的真實量測是更優路徑。
 
 #### 成員：`LEASE`（租約條件限制）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（待 Batch 0 確認資料源）
-- **待確認證據 (Evidence Needed)**: 租約檔期與解約金懲罰條件之資料源是否存在於上游系統。
-- **證據負責人 (Evidence Owner)**: `Data Operations Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已移交人類治理授權）
+- **Formal Handback Ref**: `docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md#2-人類授權移交單human-authority-handback-package`
+- **Evidence Request Ref**: `docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md#六決策記錄與重啟觸發條件-disposition--reopen-triggers`
+- **Handback Package ID**: `HB-NET002-LEASE-001`
+- **待確認證據 (Evidence Needed)**: 門市租約合約主檔（`core.store_leases` 或 CLM 系統，含 `lease_expiry_date`、解約金公式與續約權）及具備生產新鮮度保證與簽約截止日之候選新址 Feed 生產者。
+- **證據／風險負責人 (Evidence & Risk Owner)**: `Store Operations Lead / Real Estate Finance Lead / Data Platform Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **理由 (Rationale)**: 待 Batch 0 確認資料源後，決定轉為實作或正式申請 Waiver。
+- **重啟條件 (Reopen Trigger)**:
+  1. 企業建立或導入門市租約合約主檔 (`core.store_leases`)，提供每家門市之 `lease_expiry_date`、解約違約金公式與續約狀態。
+  2. 建立具備生產新鮮度保證之候選新址 Feed 生產者（如完成 `listing.partner_feed` 簽約配置），並擴展資料模型納入簽約截止日 (`signing_deadline`) 與免租裝潢期。
+  3. 財務與法務部門建立門市提前解約違約金與 MOVE 雙側檔期重疊試算服務 (`LeaseAdmissibilityChecker`) 並通過生產驗證。
+- **裁決理由 (Rationale)**:
+  Batch 0 查證確認生產系統無門市合約檔（`core.stores` 無 lease 到期日、解約金、續約權），候選新址雖有 `expansion.listings` Schema 定義，但外部來源受策略與安全閘門限制僅能人工單筆進件，`partner_feed` 未簽約配置，無任何自動化生產管線與新鮮度保證，且簽約截止日與租期條件完全缺失。
+  若在無資料情況下強行實作限制，只能依賴常數或將 `None` 當作 `0.0`，將製造裝飾性限制並導致誤將關店視為零成本之重大決策風險。因此維持 `ConstraintClass.LEASE` 於 `unmodelled_constraint_classes`，以誠實宣告替代虛構限制，並向 `Human/Ops` 與 `Architecture Board` 提交正式移交單 `HB-NET002-LEASE-001`。
 
 ---
 
@@ -191,13 +200,16 @@ stateDiagram-v2
 ### 4.5 `ODP-FR-SHARED-001`：工作狀態回報
 
 #### 成員：`PARTIAL`（部分成功狀態）
-- **處置狀態**：`BLOCKED_BY_EVIDENCE`（自 `OPEN` 轉入；靜態 producer 查證已完成）
-- **前一狀態 (Previous State)**: `OPEN`
-- **待確認證據 (Evidence Needed)**: 兩項，都不是讀 code 能回答的。(1) live production queue／scheduler／worker receipt inventory，用來判定已部署的 job 是否曾回報過 `JobStatus.PARTIAL`；repo trace 只能證明「沒有任何程式路徑會寫入」。(2) 產品裁決：現存的 partial-shaped command outcome（批次 intake 的 207 逐列 receipt、XLSX 部分 commit、external ingestion 的 accepted／quarantined counts）是否應升格為帶 member receipt 與 member retry contract 的 durable job。
-- **證據負責人 (Evidence Owner)**: `Platform Infrastructure Lead`
+- **處置狀態**：`BLOCKED_BY_EVIDENCE`（已移交人類治理授權）
+- **Formal Handback Ref**: `docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md#3-人類授權移交單human-authority-handback-package`
+- **Evidence Request Ref**: `docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`
+- **Handback Package ID**: `HB-SHARED001-PARTIAL-001`
+- **待確認證據 (Evidence Needed)**: 兩項非代碼庫可獨立判定之證據。(1) live production queue／scheduler／worker receipt inventory，用以判定已部署 job 是否曾回報過 `JobStatus.PARTIAL`；(2) 產品裁決：現存 partial-shaped command outcomes（批次房源寫入之 207 逐列收據、XLSX 局部提交、外部資料攝取之 accepted/quarantined counts）是否應昇格為具備 itemized receipt 與 member retry contract 之 durable queue jobs。
+- **證據／風險負責人 (Evidence & Risk Owner)**: `Platform Infrastructure Lead`
 - **下次檢視日期 (Next Review Date)**: `2026-10-01`
-- **證據文件 (Evidence Ref)**: [`docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`](../evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md)
-- **理由 (Rationale)**: `JobStatus` 詞彙已納入 `PARTIAL`，但系統中尚未有會產出部分成功狀態的長任務；不強行假實作。`ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001` 走完 default registry（`forecast`、`external-fetch`、`assisted-listing-intake`）與所有 module worker entry point，皆無 `JobStatus.PARTIAL` write，因此「缺口是否存在」這一題已經關閉；為了把六個成員湊滿而硬接任一 command receipt，正是本閘要防的假實作。
+- **重啟條件 (Reopen Trigger)**: (1) Production worker registry 新增具備可達 `JobStatus.PARTIAL` 狀態轉移之多工作項目批次任務 handler；或 (2) 同步指令操作（批次房源寫入/外部資料攝取）正式排程昇格為具備成員明細收據與成員級重試契約之 durable jobs；或 (3) 線上執行期隊列/worker 審計日誌出現回報 `PARTIAL` 之部署任務。
+- **裁決理由 (Rationale)**:
+  `JobStatus` 詞彙與 `JobDeliveryState` 交付狀態已完成型別分離，但代碼庫中現行 default worker registry 與所有模組 worker entry points 皆無任何寫入 `JobStatus.PARTIAL` 的生產者。批次房源 207 收據、XLSX commit 與外部資料攝取隔離計數皆屬同步指令或資料層品質標記，而非隊列任務成果；隊列的 `RETRYING` 與 `DEAD_LETTER` 亦屬傳遞狀態而非業務成果。嚴禁為湊齊成員而進行偽實作。已建立結構化人類授權移交單提報至 `Human/Ops`、`Architecture Board` 與 `Platform Infrastructure Lead`，待批次長任務規格確立後轉為 `IMPLEMENTATION_READY` 或由人類授權人簽署正式修訂／豁免。
 
 ---
 
@@ -259,6 +271,29 @@ stateDiagram-v2
   `WorkOrder.root_cause`、`RootCauseEvidenceCardContract.causeCandidate` 與資料庫欄位，並在各契約明確標示為 `RESERVED (unproduced)`；不得製造裝飾性 Heuristic 假生產者。
 - **裁決狀態 (Decision Status)**:
   `ODP_OPEN_DECISIONS_2026-09-03.md` § 8 仍為 `OPEN`。本項是已具備 owner／target phase 的工程實作準備，不是本任務代替人類治理角色建立 Waiver 或 Requirement Amendment。
+
+---
+
+### 4.9 `ODP-FR-AVM-001`：AVM 估值組成
+
+#### 成員：`DEPRECIATION`（資產折舊）
+- **處置狀態**：`IMPLEMENTATION_READY`
+- **負責人 (Assigned To)**: `AVM Domain Lead / Finance Analytics Lead`
+- **目標交付批次 (Target Phase)**: `Batch 1 (ODP Remediation Plan) — AVM 估值`
+- **契約文件 (Contract Ref)**: [`docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md`](../design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md)
+- **處置證據 (Evidence Ref)**: [`docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md`](../evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md)
+- **驗收標準 (Acceptance Criteria)**: `modules/avm/tests/test_avm_depreciation_contract.py` 的八條 `xfail(strict=True)` 契約規格（C-1 基數判別、C-2 輸入欄位、C-3 直線折舊計算、C-4 evidence 與版本欄位、C-5 缺席 fail-closed、L-1／L-2 舊估值卡、L-4 校準分版本、R-1 逐位元回滾）。`strict=True` 使實作落地後這些規格會以 XPASS 判紅，強迫實作者回來移除標記——本狀態因此帶有機械式到期機制。
+- **工程處置 (Engineering Disposition)**:
+  修復計畫第 1 批要求先回答「AVM 資產折舊與 `site_economics` 門市現金流折舊是否同一概念」。判定為**不是**，四項證據：被量測的對象不同（format catalog 的全新機型組合 vs. 已使用 N 個月的特定門市設備）、輸出去向不同（稅盾，從未調低任何資產帳面價值 vs. 直接進 asset lens）、時鐘原點相反（開店月往後 vs. 投入使用日往回）、殘值語意不同（期末退場現金流入 vs. 折舊下限）。因此採 **AVM-specific model**，且**連直線折舊純函式都不抽出共用**——為三行算式建立 `modules/avm` → `modules/site_economics` 依賴，換到的是「兩邊折舊政策一致」的假象。要對齊的是參數（`useful_life_months` 與 `residual_value_ratio` 的 catalog 假設），不是程式碼。
+- **為何不是其他狀態**:
+  - 不是 `VERIFIED`：`modules/avm` 內沒有任何折舊計算，且依 §3.1 `absent` 不得冒充 `VERIFIED`。
+  - 不是 `DECIDED`：沒有任何人類裁決「不納入折舊」。要通過 `DECIDED` 閘就必須編造 `decider`，正是 §3.2 禁止的 AI 自簽豁免。本處置不攜帶任何法定裁決欄位。
+  - 不是 `BLOCKED_BY_EVIDENCE`：判定已做出、驗收標準已可執行，實作現在就能開始。欠的是工，不是證據——把它記成阻塞會讓一份寫完的契約看起來像在等別人。
+- **仍屬人類治理、本次不代簽**:
+  1. 契約 R-4 的三個回滾門檻（數值／結構／校準）由財務 owner 填入，**門檻未填不得 cutover**；
+  2. `ODP-FR-AVM-001` 的 canonical 需求 bytes 依 [`ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md`](../evidence/ODP_SPEC_SOURCE_PROVENANCE_2026-09-03.md) 仍為 `BLOCKED_BY_EVIDENCE`，manifest `_source_provenance` 已記錄。本處置只宣稱「依目前轉錄內容」成立。
+- **轉為 `VERIFIED` 的條件**: 八條 xfail 標記被實作而非改寫地移除且全數通過、`status` 轉為 `satisfied` 且 `evidence` 指向可解析符號、R-4 門檻已填。
+- **回歸測試**: `tests/governance/test_avm001_disposition.py`（含三條負向測試：冒充 `VERIFIED`、AI 簽署的 `DECIDED`、移除 `disposition` 區塊，checker 均須拒絕）。
 
 ---
 

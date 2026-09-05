@@ -359,6 +359,20 @@ jobs:
       - name: Run Python SAST Scan
         run: python3 delivery_toolchain/security/sast_scan.py
 
+      - name: Run production npm audit gate
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/security/npm_audit_gate.py \
+            --receipt "${RELEASE_RECEIPT_DIR}/npm-audit-receipt.json"
+
+      - name: Publish production npm audit receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-npm-audit-receipt-${{ inputs.environment }}
+          path: .odp_data/release/npm-audit-receipt.json
+          if-no-files-found: warn
+
       - name: Generate SBOM
         run: python3 delivery_toolchain/security/generate_sbom.py
 

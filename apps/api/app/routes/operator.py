@@ -127,6 +127,8 @@ def create_operator_router(
     model_runtime: Any | None = None,
     avm_production_executor: Any | None = None,
     netplan_production_executor: Any | None = None,
+    netplan_policy_repository: Any | None = None,
+    netplan_approval_verifier: Any | None = None,
     evidence_store: Any | None = None,
     intake_repository: Any | None = None,
     live_repository: OperatorLiveRepositoryProtocol | None = None,
@@ -647,6 +649,7 @@ def create_operator_router(
                 # test-reset gate (ODP_E2E_MODE): production keeps the durable
                 # listing aggregate fail-closed empty until real intake writes.
                 seed_fixtures=allow_test_reset,
+                tenant_id=tenant_id,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -757,6 +760,8 @@ def create_operator_router(
                     "netplan_repository",
                     tenant_id,
                 ),
+                netplan_policy_repository=netplan_policy_repository,
+                netplan_approval_verifier=netplan_approval_verifier,
                 avm_production_executor=avm_production_executor,
                 netplan_production_executor=netplan_production_executor,
                 runtime_mode="production",

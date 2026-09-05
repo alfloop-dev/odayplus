@@ -1,5 +1,5 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HeatZoneMergeSplitPanel, type HeatZoneProposal } from "../network/HeatZoneMergeSplitPanel";
 
@@ -73,7 +73,7 @@ describe("HeatZoneMergeSplitPanel", () => {
       />
     );
 
-    expect(screen.getByText("MZ-0123456789abcdef")).toBeInTheDocument();
+    expect(within(screen.getByTestId("proposal-detail")).getByText("MZ-0123456789abcdef")).toBeInTheDocument();
     expect(screen.getByText("+5.80%")).toBeInTheDocument();
     expect(screen.getByText("-24.0%")).toBeInTheDocument();
 

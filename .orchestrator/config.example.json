@@ -26,12 +26,20 @@
   },
   "supervisor": {
     "poll_interval_seconds": 180.0,
-    "heartbeat_warn_after_seconds": 10.0,
+    "heartbeat_warn_after_seconds": 240.0,
     "stall_after_seconds": 300,
     "hard_inactivity_seconds": 3600,
     "max_worker_history": 200,
     "external_command_timeout_seconds": 30,
     "auto_refresh_provider_capabilities": true
+  },
+  "release_lease_issuer": {
+    "enabled": false,
+    "secret_reference": "projects/767864276141/secrets/odp-release-lease-private-key",
+    "state_uri": "",
+    "github_repository": "",
+    "workflow": ".github/workflows/deploy-dev.yml",
+    "ttl_seconds": 300
   },
   "worker_runtime": {
     "worker_lease_seconds": 1800,
@@ -575,7 +583,7 @@
     "max_active_workers_per_task": 1,
     "helper_execution_lease": {
       "enabled": true,
-      "claimable_statuses": ["todo"],
+      "claimable_statuses": ["todo", "in_progress"],
       "dispatch_sla_seconds": 600,
       "lease_seconds": 1800,
       "max_claims_per_tick": 4,

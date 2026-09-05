@@ -1539,6 +1539,8 @@ else:
                 model_runtime=model_runtime,
                 avm_production_executor=avm_production_executor,
                 netplan_production_executor=netplan_production_executor,
+                netplan_policy_repository=netplan_policy_repo,
+                netplan_approval_verifier=netplan_approval_verifier,
                 evidence_store=evidence_store,
                 intake_repository=operator_intake_repository,
                 live_repository=operator_live_repository,

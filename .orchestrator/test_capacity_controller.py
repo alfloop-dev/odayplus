@@ -243,6 +243,46 @@ def test_helper_claim_release_clears_terminal_and_unbound_failed_launches() -> N
     ) == ["TERMINAL-HELPER-001", "FAILED-LAUNCH-001"]
 
 
+def test_older_generation_worker_does_not_release_newer_helper_claim() -> None:
+    tasks = [
+        {
+            "id": "NEW-GEN-001",
+            "status": "todo",
+            "helper_execution_lease": {
+                "claimed_by": "Codex",
+                "generation": 2,
+                "lease_expires_at": "2026-09-30T12:00:00Z",
+            },
+        },
+    ]
+    # An older generation 1 worker is in workers
+    runtime_state = {
+        "workers": {
+            "old-gen1-run": {
+                "run_id": "old-gen1-run",
+                "task_id": "NEW-GEN-001",
+                "status": "completed",
+                "request_snapshot": {
+                    "reason": "helper_claim_dispatch",
+                    "metadata": {
+                        "task": {
+                            "id": "NEW-GEN-001",
+                            "helper_execution_lease": {
+                                "claimed_by": "Codex",
+                                "generation": 1,
+                            },
+                        }
+                    },
+                },
+            }
+        }
+    }
+
+    assert capacity_controller.helper_claim_task_ids_to_release(
+        config(), tasks, runtime_state, now=NOW
+    ) == []
+
+
 def test_capacity_snapshot_excludes_human_gate_non_dispatchable_review_and_blocked() -> None:
     tasks = [
         {"id": "HG-001", "status": "todo", "owner": "Human/Ops", "task_class": "human_gate"},
