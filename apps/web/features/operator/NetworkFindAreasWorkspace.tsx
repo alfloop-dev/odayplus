@@ -40,12 +40,11 @@ import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
 import { RebalancePanel } from "./network/RebalancePanel";
-import {
-  HeatZoneMergeSplitPanel,
-  type HeatZoneProposal,
-  type ProposalPreviewData,
+import type {
+  HeatZoneMergeSplitPanelProps,
+  HeatZoneProposal,
+  ProposalPreviewData,
 } from "./network/HeatZoneMergeSplitPanel";
-import { buildHeatZoneCompositionClient } from "./network/heatZoneCompositionClient";
 import {
   buildNetworkTabHref,
   parseNetworkTabIndex,
@@ -103,6 +102,28 @@ const HeatZoneMap = dynamic<HeatZoneMapProps>(
           role="status"
         >
           HeatZone 地圖載入中…
+        </div>
+      );
+    },
+  },
+);
+
+const HeatZoneMergeSplitPanel = dynamic<HeatZoneMergeSplitPanelProps>(
+  () =>
+    import("./network/HeatZoneMergeSplitPanel").then(
+      (mod) => mod.HeatZoneMergeSplitPanel,
+    ),
+  {
+    ssr: false,
+    loading: function HeatZoneMergeSplitPanelLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="heat-zone-merge-split-loading"
+          role="status"
+        >
+          熱區重組提案載入中…
         </div>
       );
     },
@@ -622,14 +643,17 @@ export function NetworkFindAreasWorkspace({
   );
   const [proposalsApiError, setProposalsApiError] = useState<string | null>(null);
 
-  const compositionClient = useMemo(
-    () => buildHeatZoneCompositionClient(activeRoleId),
-    [activeRoleId],
-  );
+  const getCompositionClient = useCallback(async () => {
+    const { buildHeatZoneCompositionClient } = await import(
+      "./network/heatZoneCompositionClient"
+    );
+    return buildHeatZoneCompositionClient(activeRoleId);
+  }, [activeRoleId]);
 
   const reloadProposals = useCallback(async () => {
     try {
-      const items = await compositionClient.fetchProposals();
+      const client = await getCompositionClient();
+      const items = await client.fetchProposals();
       if (items.length > 0 || !fixturesAllowed) {
         setProposals(items);
         setProposalsLoadState("ready");
@@ -642,13 +666,17 @@ export function NetworkFindAreasWorkspace({
       setProposalsLoadState(fixturesAllowed ? "fixture" : "error");
       setProposalsApiError("Failed to load merge/split proposals");
     }
-  }, [compositionClient, fixturesAllowed]);
+  }, [fixturesAllowed, getCompositionClient]);
 
   useEffect(() => {
+    if (activeTab !== 7) {
+      return;
+    }
     let cancelled = false;
     async function load() {
       try {
-        const items = await compositionClient.fetchProposals();
+        const client = await getCompositionClient();
+        const items = await client.fetchProposals();
         if (!cancelled) {
           if (items.length > 0 || !fixturesAllowed) {
             setProposals(items);
@@ -670,35 +698,38 @@ export function NetworkFindAreasWorkspace({
     return () => {
       cancelled = true;
     };
-  }, [compositionClient, fixturesAllowed]);
+  }, [activeTab, fixturesAllowed, getCompositionClient]);
 
   const handleApproveProposal = useCallback(
     async (proposalId: string, notes?: string) => {
-      const ok = await compositionClient.approveProposal(proposalId, notes);
+      const client = await getCompositionClient();
+      const ok = await client.approveProposal(proposalId, notes);
       if (!ok) {
         throw new Error("Failed to approve proposal");
       }
       await reloadProposals();
     },
-    [compositionClient, reloadProposals],
+    [getCompositionClient, reloadProposals],
   );
 
   const handleRejectProposal = useCallback(
     async (proposalId: string, reason: string) => {
-      const ok = await compositionClient.rejectProposal(proposalId, reason);
+      const client = await getCompositionClient();
+      const ok = await client.rejectProposal(proposalId, reason);
       if (!ok) {
         throw new Error("Failed to reject proposal");
       }
       await reloadProposals();
     },
-    [compositionClient, reloadProposals],
+    [getCompositionClient, reloadProposals],
   );
 
   const handlePreviewProposal = useCallback(
     async (proposalId: string): Promise<ProposalPreviewData | null> => {
-      return await compositionClient.previewProposal(proposalId);
+      const client = await getCompositionClient();
+      return await client.previewProposal(proposalId);
     },
-    [compositionClient],
+    [getCompositionClient],
   );
 
   const changeActiveTab = useCallback((tabIndex: number) => {
