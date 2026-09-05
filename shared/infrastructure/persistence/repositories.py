@@ -9,6 +9,7 @@ application tests stay compatible. State lives in ``durable_documents`` via
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -93,6 +94,7 @@ from modules.netplan.domain import (
     ScenarioSolveRecord as NetPlanScenarioSolveRecord,
 )
 from modules.netplan.infrastructure.repositories import ImmutableRecordError
+from modules.opsboard.audit.domain.evidence import DecisionCard
 from modules.priceops.domain.exploration import (
     ActivationReceipt,
     ExplorationBudgetExceededError,
@@ -115,6 +117,7 @@ from modules.priceops.domain.pricing import (
     RollbackPlan,
 )
 from modules.sitescore.domain.scoring import SiteScoreReport
+from shared.audit.events import AuditEvent
 from shared.domain import ForecastOutput as CanonicalForecastOutput
 from shared.domain import Prediction, PredictionRun, SiteScoreRun
 from shared.domain.models import (
@@ -123,6 +126,7 @@ from shared.domain.models import (
     Listing,
     Machine,
     MachineCycle,
+    ManualCorrection,
     Store,
     Tenant,
     Transaction,
@@ -136,6 +140,14 @@ class TenantScopeRequiredError(ValueError):
     """Raised when a production repository read omits its tenant boundary."""
 
 
+class StaleRevisionError(ValueError):
+    """Raised when a manual correction optimistic concurrency check fails."""
+
+
+class InvalidCorrectionError(ValueError):
+    """Raised when manual correction input validation fails."""
+
+
 def _requires_tenant_scope(engine: Any) -> bool:
     return str(getattr(engine, "dialect", "")).lower() == "postgresql"
 
@@ -144,6 +156,35 @@ def _require_tenant_scope(engine: Any, tenant_id: str | None) -> str | None:
     normalized = str(tenant_id or "").strip()
     if _requires_tenant_scope(engine) and not normalized:
         raise TenantScopeRequiredError("tenant_id is required for PostgreSQL business-data reads")
+    return normalized or None
+
+
+def _assert_tenant_scope(record_tenant: str | None, request_tenant: str | None) -> None:
+    """Fail closed unless record and caller carry the same *non-empty* tenant.
+
+    A blank tenant is not a wildcard on either side. Rows that predate tenant
+    scoping store NULL and read back as ``""``, and a caller that presents no
+    tenant also normalizes to ``""``; deciding scope on equality alone lets an
+    unscoped caller read and modify every unscoped legacy row. Requiring both
+    sides to be non-empty keeps those rows unreachable until they are migrated
+    into a real tenant.
+    """
+    record = str(record_tenant or "").strip()
+    request = str(request_tenant or "").strip()
+    if not record or not request or record != request:
+        raise PermissionError("TENANT_SCOPE_DENIED")
+
+
+def _nullable_tenant_id(tenant_id: str | None) -> str | None:
+    """Bind a blank tenant id as SQL NULL rather than the empty string.
+
+    ``AddressLocation.tenant_id`` defaults to ``""`` for records that predate
+    tenant scoping. SQLite stores that happily, but PostgreSQL's
+    ``tenant_id UUID`` column rejects ``''`` with InvalidTextRepresentation.
+    NULL is the accurate representation of "no tenant" on both backends, and
+    ``_row_to_address`` already reads NULL back as ``""``.
+    """
+    normalized = str(tenant_id or "").strip()
     return normalized or None
 
 
@@ -1490,8 +1531,413 @@ class DurableBrandRepository:
 
 
 @dataclass
+class InMemoryManualCorrectionRepository:
+    _corrections: dict[str, ManualCorrection] = field(default_factory=dict)
+
+    def record_correction(
+        self, correction: ManualCorrection, *, decision_card_json: str | None = None
+    ) -> ManualCorrection:
+        self._corrections[correction.correction_id] = correction
+        return correction
+
+    def delete_correction(self, correction_id: str) -> None:
+        self._corrections.pop(correction_id, None)
+
+    def get_correction(self, correction_id: str) -> ManualCorrection | None:
+        return self._corrections.get(correction_id)
+
+    def list_corrections(
+        self,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[ManualCorrection]:
+        results = list(self._corrections.values())
+        if entity_type:
+            results = [c for c in results if c.entity_type == entity_type]
+        if entity_id:
+            results = [c for c in results if c.entity_id == entity_id]
+        if tenant_id:
+            results = [c for c in results if c.tenant_id == tenant_id]
+        return sorted(results, key=lambda c: c.occurred_at, reverse=True)
+
+
+class DurableManualCorrectionRepository:
+    def __init__(self, engine: SqliteEngine) -> None:
+        self._engine = engine
+        self._ensure_table()
+
+    def _ensure_table(self) -> None:
+        if _requires_tenant_scope(self._engine):
+            return
+        with self._engine.lock:
+            self._engine.execute(
+                "CREATE TABLE IF NOT EXISTS durable_manual_corrections ("
+                "  correction_id TEXT PRIMARY KEY,"
+                "  entity_type TEXT NOT NULL,"
+                "  entity_id TEXT NOT NULL,"
+                "  tenant_id TEXT NOT NULL,"
+                "  field_name TEXT NOT NULL,"
+                "  old_value_json TEXT NOT NULL,"
+                "  new_value_json TEXT NOT NULL,"
+                "  reason TEXT NOT NULL,"
+                "  actor_id TEXT NOT NULL,"
+                "  occurred_at TEXT NOT NULL,"
+                "  source_revision INTEGER NOT NULL DEFAULT 1,"
+                "  applied_revision INTEGER NOT NULL DEFAULT 2,"
+                "  status TEXT NOT NULL DEFAULT 'applied',"
+                "  correlation_id TEXT,"
+                "  decision_card_json TEXT,"
+                "  audit_event_id TEXT,"
+                "  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
+                "  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                ")"
+            )
+
+    def record_correction(
+        self, correction: ManualCorrection, *, decision_card_json: str | None = None
+    ) -> ManualCorrection:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        occurred_at_val = (
+            correction.occurred_at.isoformat()
+            if isinstance(correction.occurred_at, datetime)
+            else str(correction.occurred_at)
+        )
+        self._engine.execute(
+            f"INSERT INTO {table} ("
+            "  correction_id, entity_type, entity_id, tenant_id, field_name, "
+            "  old_value_json, new_value_json, reason, actor_id, occurred_at, "
+            "  source_revision, applied_revision, status, correlation_id, "
+            "  decision_card_json, audit_event_id, created_at, updated_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "ON CONFLICT (correction_id) DO UPDATE SET "
+            "  status = excluded.status, "
+            "  updated_at = CURRENT_TIMESTAMP",  # nosec B608
+            (
+                correction.correction_id,
+                correction.entity_type,
+                correction.entity_id,
+                correction.tenant_id,
+                correction.field_name,
+                json.dumps(correction.old_value, default=str),
+                json.dumps(correction.new_value, default=str),
+                correction.reason,
+                correction.actor_id,
+                occurred_at_val,
+                correction.source_revision,
+                correction.applied_revision,
+                correction.status,
+                correction.correlation_id,
+                decision_card_json or "",
+                correction.audit_event_id,
+            ),
+        )
+        return correction
+
+    def delete_correction(self, correction_id: str) -> None:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        with self._engine.lock:
+            self._engine.execute(
+                f"DELETE FROM {table} WHERE correction_id = ?",  # nosec B608
+                (correction_id,),
+            )
+
+    def get_correction(self, correction_id: str) -> ManualCorrection | None:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        row = self._engine.query_one(
+            f"SELECT * FROM {table} WHERE correction_id = ?",  # nosec B608
+            (correction_id,),
+        )
+        if not row:
+            return None
+        return self._row_to_correction(row)
+
+    def list_corrections(
+        self,
+        *,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[ManualCorrection]:
+        postgres = _requires_tenant_scope(self._engine)
+        table = "odp_runtime.durable_manual_corrections" if postgres else "durable_manual_corrections"
+        query = f"SELECT * FROM {table} WHERE 1=1"  # nosec B608
+        params: list[Any] = []
+        if entity_type:
+            query += " AND entity_type = ?"
+            params.append(entity_type)
+        if entity_id:
+            query += " AND entity_id = ?"
+            params.append(entity_id)
+        if tenant_id:
+            query += " AND tenant_id = ?"
+            params.append(tenant_id)
+        query += " ORDER BY occurred_at DESC, applied_revision DESC"
+        rows = self._engine.query(query, tuple(params))
+        return [self._row_to_correction(row) for row in rows]
+
+    def _row_to_correction(self, row: Any) -> ManualCorrection:
+        occurred_at = row["occurred_at"]
+        if isinstance(occurred_at, str):
+            occurred_at = datetime.fromisoformat(occurred_at.replace("Z", "+00:00"))
+        old_val = json.loads(row["old_value_json"]) if row["old_value_json"] else None
+        new_val = json.loads(row["new_value_json"]) if row["new_value_json"] else None
+        decision_card_json = row["decision_card_json"] or ""
+        card_hash = ""
+        if decision_card_json:
+            try:
+                card_data = json.loads(decision_card_json)
+                if isinstance(card_data, dict) and "card_hash" in card_data:
+                    card_hash = str(card_data["card_hash"])
+                elif isinstance(card_data, dict):
+                    card_data_clean = dict(card_data)
+                    card_data_clean.pop("card_hash", None)
+                    encoded = json.dumps(
+                        card_data_clean, sort_keys=True, separators=(",", ":"), default=str
+                    )
+                    card_hash = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+                else:
+                    card_hash = hashlib.sha256(decision_card_json.encode("utf-8")).hexdigest()
+            except Exception:
+                card_hash = hashlib.sha256(decision_card_json.encode("utf-8")).hexdigest()
+        return ManualCorrection(
+            correction_id=row["correction_id"],
+            entity_type=row["entity_type"],
+            entity_id=row["entity_id"],
+            tenant_id=row["tenant_id"],
+            field_name=row["field_name"],
+            old_value=old_val,
+            new_value=new_val,
+            reason=row["reason"],
+            actor_id=row["actor_id"],
+            occurred_at=occurred_at,
+            source_revision=int(row["source_revision"]),
+            applied_revision=int(row["applied_revision"]),
+            status=row["status"],
+            correlation_id=row["correlation_id"] or "",
+            decision_card_hash=card_hash,
+            audit_event_id=row["audit_event_id"] or "",
+        )
+
+
+# Canonical AddressLocation fields a manual correction can move. The
+# before/after snapshot has to cover all of them rather than only the fields the
+# caller named: applying a correction preserves omitted fields (including
+# geocode_precision and geocode_confidence) and derives h3 cells when coordinates
+# move, so snapshots must capture the full moved state for rollback fidelity.
+_CORRECTABLE_ADDRESS_FIELDS: tuple[str, ...] = (
+    "raw_address",
+    "normalized_address",
+    "city",
+    "district",
+    "village",
+    "road",
+    "latitude",
+    "longitude",
+    "geocode_precision",
+    "geocode_confidence",
+    "h3_res_8",
+    "h3_res_9",
+    "h3_res_10",
+)
+
+
+def _build_corrected_address(
+    existing: AddressLocation, updates: dict[str, Any]
+) -> AddressLocation:
+    """Return ``existing`` with ``updates`` applied and derived fields refreshed.
+
+    Shared by the in-memory and durable repositories so the two write paths
+    cannot drift apart on which fields a correction touches.
+    """
+    if "latitude" in updates:
+        new_lat = float(updates["latitude"]) if updates["latitude"] is not None else None
+    else:
+        new_lat = float(existing.latitude) if existing.latitude is not None else None
+
+    if "longitude" in updates:
+        new_lng = float(updates["longitude"]) if updates["longitude"] is not None else None
+    else:
+        new_lng = float(existing.longitude) if existing.longitude is not None else None
+
+    h3_res_8 = existing.h3_res_8
+    h3_res_9 = existing.h3_res_9
+    h3_res_10 = existing.h3_res_10
+    if "latitude" in updates or "longitude" in updates:
+        if new_lat is not None and new_lng is not None:
+            try:
+                import h3
+
+                h3_res_8 = h3.latlng_to_cell(new_lat, new_lng, 8)
+                h3_res_9 = h3.latlng_to_cell(new_lat, new_lng, 9)
+                h3_res_10 = h3.latlng_to_cell(new_lat, new_lng, 10)
+            except Exception:
+                pass
+        else:
+            h3_res_8 = ""
+            h3_res_9 = ""
+            h3_res_10 = ""
+
+    if "geocode_precision" in updates:
+        new_precision = (
+            str(updates["geocode_precision"])
+            if updates["geocode_precision"] is not None
+            else None
+        )
+    else:
+        new_precision = existing.geocode_precision
+
+    if "geocode_confidence" in updates:
+        new_confidence = (
+            float(updates["geocode_confidence"])
+            if updates["geocode_confidence"] is not None
+            else None
+        )
+    else:
+        new_confidence = (
+            float(existing.geocode_confidence)
+            if existing.geocode_confidence is not None
+            else None
+        )
+
+    return AddressLocation(
+        address_id=existing.address_id,
+        raw_address=updates.get("raw_address", existing.raw_address),
+        normalized_address=updates.get("normalized_address", existing.normalized_address),
+        city=updates.get("city", existing.city),
+        district=updates.get("district", existing.district),
+        village=updates.get("village", existing.village),
+        road=updates.get("road", existing.road),
+        latitude=new_lat,
+        longitude=new_lng,
+        geocode_precision=new_precision,
+        geocode_confidence=new_confidence,
+        h3_res_8=h3_res_8,
+        h3_res_9=h3_res_9,
+        h3_res_10=h3_res_10,
+        manual_override_flag=True,
+        tenant_id=existing.tenant_id,
+        revision=existing.revision + 1,
+    )
+
+
+def _correction_snapshots(
+    before: AddressLocation, after: AddressLocation, updates: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build the self-contained ``old_value`` / ``new_value`` pair for a write.
+
+    Covers the requested fields plus every other canonical field the write
+    actually moved, so ``old_value`` alone is enough to reconstruct the
+    pre-correction record.
+    """
+    old_value: dict[str, Any] = {
+        "manual_override_flag": before.manual_override_flag,
+        "revision": before.revision,
+    }
+    new_value: dict[str, Any] = {
+        "manual_override_flag": after.manual_override_flag,
+        "revision": after.revision,
+    }
+    for name in _CORRECTABLE_ADDRESS_FIELDS:
+        old = getattr(before, name)
+        new = getattr(after, name)
+        if name in updates or old != new:
+            old_value[name] = old
+            new_value[name] = new
+    return old_value, new_value
+
+
+def _restore_from_snapshot(
+    existing: AddressLocation,
+    old_value: dict[str, Any],
+    *,
+    new_revision: int,
+    manual_override_flag: bool,
+) -> AddressLocation:
+    """Rebuild the pre-correction record from a correction's ``old_value``.
+
+    Snapshots written before ``_correction_snapshots`` may omit fields; those
+    fall back to the current record, and missing h3 cells are recomputed from
+    the restored coordinates so a cell can never disagree with its lat/lng.
+    """
+    restored: dict[str, Any] = {}
+    for name in _CORRECTABLE_ADDRESS_FIELDS:
+        restored[name] = old_value.get(name, getattr(existing, name))
+    restored["latitude"] = (
+        float(restored["latitude"]) if restored["latitude"] is not None else None
+    )
+    restored["longitude"] = (
+        float(restored["longitude"]) if restored["longitude"] is not None else None
+    )
+    restored["geocode_confidence"] = (
+        float(restored["geocode_confidence"])
+        if restored["geocode_confidence"] is not None
+        else None
+    )
+    if restored.get("geocode_precision") is not None:
+        restored["geocode_precision"] = str(restored["geocode_precision"])
+
+    coords_moved = (restored["latitude"], restored["longitude"]) != (
+        existing.latitude,
+        existing.longitude,
+    )
+    missing_cells = [
+        name
+        for name in ("h3_res_8", "h3_res_9", "h3_res_10")
+        if name not in old_value
+    ]
+    if missing_cells and coords_moved:
+        if restored["latitude"] is not None and restored["longitude"] is not None:
+            try:
+                import h3
+
+                for name in missing_cells:
+                    resolution = int(name.rsplit("_", 1)[1])
+                    restored[name] = h3.latlng_to_cell(
+                        restored["latitude"], restored["longitude"], resolution
+                    )
+            except Exception:
+                pass
+        else:
+            for name in missing_cells:
+                restored[name] = ""
+
+    return AddressLocation(
+        address_id=existing.address_id,
+        manual_override_flag=manual_override_flag,
+        tenant_id=existing.tenant_id,
+        revision=new_revision,
+        **restored,
+    )
+
+
+def _rollback_override_flag(
+    old_value: dict[str, Any], other_applied: list[ManualCorrection]
+) -> bool:
+    """Decide the override flag a rollback restores.
+
+    Rollback is top-of-stack only, so ``old_value`` is by construction the state
+    immediately before this correction and is authoritative -- including for a
+    record that was already flagged before any tracked correction existed.
+    Corrections written before snapshots carried the flag fall back to whether
+    any other correction is still applied.
+    """
+    flag = old_value.get("manual_override_flag")
+    if flag is not None:
+        return bool(flag)
+    return len(other_applied) > 0
+
+
+@dataclass
 class InMemoryAddressLocationRepository:
     _addresses: dict[str, AddressLocation] = field(default_factory=dict)
+    _corrections: InMemoryManualCorrectionRepository = field(
+        default_factory=InMemoryManualCorrectionRepository
+    )
 
     def save_address(self, address: AddressLocation) -> AddressLocation:
         self._addresses[address.address_id] = address
@@ -1500,27 +1946,332 @@ class InMemoryAddressLocationRepository:
     def get_address(self, address_id: str) -> AddressLocation | None:
         return self._addresses.get(address_id)
 
-    def list_addresses(self) -> list[AddressLocation]:
-        return list(self._addresses.values())
+    def list_addresses(self, tenant_id: str | None = None) -> list[AddressLocation]:
+        results = list(self._addresses.values())
+        if tenant_id:
+            results = [a for a in results if (a.tenant_id or "") == tenant_id]
+        return results
+
+    def get_corrections(
+        self, address_id: str, *, correction_repo: Any = None
+    ) -> list[ManualCorrection]:
+        repo = correction_repo or self._corrections
+        return repo.list_corrections(entity_type="address_location", entity_id=address_id)
+
+    def apply_correction(
+        self,
+        address_id: str,
+        *,
+        updates: dict[str, Any],
+        reason: str,
+        actor_id: str,
+        tenant_id: str = "",
+        expected_revision: int | None = None,
+        correlation_id: str | None = None,
+        risk_acknowledged: bool = False,
+        audit_log: Any = None,
+        correction_repo: Any = None,
+    ) -> tuple[AddressLocation, ManualCorrection, DecisionCard]:
+        if not actor_id or not actor_id.strip():
+            raise InvalidCorrectionError("Authenticated actor_id is required")
+        if not reason or len(reason.strip()) < 5:
+            raise InvalidCorrectionError(
+                "Correction reason is required and must be at least 5 characters"
+            )
+
+        existing = self.get_address(address_id)
+        if existing is None:
+            raise KeyError(f"AddressLocation {address_id} not found")
+
+        req_tenant = tenant_id or ""
+        _assert_tenant_scope(existing.tenant_id, req_tenant)
+
+        if expected_revision is not None and existing.revision != expected_revision:
+            raise StaleRevisionError(
+                f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
+            )
+
+        new_address = _build_corrected_address(existing, updates)
+        new_revision = new_address.revision
+        old_value, new_value = _correction_snapshots(existing, new_address, updates)
+
+        correction_id = str(uuid4())
+        audit_event_id = str(uuid4())
+        corr_id = correlation_id or str(uuid4())
+        now_dt = datetime.now(UTC)
+
+        decision_card = DecisionCard(
+            decision_id=f"dec-corr-{correction_id}",
+            decision_type="MANUAL_CORRECTION",
+            module="listing",
+            title=f"Manual correction for address_location {address_id}",
+            subject_ref=f"address_location:{address_id}",
+            outcome="APPLIED",
+            owner=actor_id,
+            decided_at=now_dt,
+            rationale=reason.strip(),
+            input_snapshot_id=f"rev:{existing.revision}",
+            audit_event_ids=(audit_event_id,),
+            policy_refs=("ODP-INT-006:manual_correction",),
+            evidence_refs=(f"correction:{correction_id}",),
+            risk_flags=() if risk_acknowledged else ("MANUAL_OVERRIDE",),
+            metrics={
+                "old_value": old_value,
+                "new_value": new_value,
+                "fields": list(updates.keys()),
+            },
+        )
+
+        correction = ManualCorrection(
+            correction_id=correction_id,
+            entity_type="address_location",
+            entity_id=address_id,
+            tenant_id=existing.tenant_id,
+            field_name=",".join(updates.keys()),
+            old_value=old_value,
+            new_value=new_value,
+            reason=reason.strip(),
+            actor_id=actor_id,
+            occurred_at=now_dt,
+            source_revision=existing.revision,
+            applied_revision=new_revision,
+            status="applied",
+            correlation_id=corr_id,
+            decision_card_hash=decision_card.content_hash(),
+            audit_event_id=audit_event_id,
+        )
+
+        repo = correction_repo or self._corrections
+        try:
+            repo.record_correction(
+                correction, decision_card_json=json.dumps(decision_card.to_dict())
+            )
+
+            if audit_log is not None:
+                audit_event = AuditEvent(
+                    event_id=audit_event_id,
+                    event_type="canonical.manual_correction",
+                    actor=actor_id,
+                    action="manual_override",
+                    resource=f"address_location:{address_id}",
+                    outcome="SUCCESS",
+                    correlation_id=corr_id,
+                    metadata={
+                        "entity_type": "address_location",
+                        "entity_id": address_id,
+                        "tenant_id": existing.tenant_id,
+                        "correction_id": correction_id,
+                        "fields_updated": list(updates.keys()),
+                        "old_value": old_value,
+                        "new_value": new_value,
+                        "reason": reason.strip(),
+                        "source_revision": existing.revision,
+                        "applied_revision": new_revision,
+                        "decision_card": decision_card.to_dict(),
+                    },
+                    occurred_at=now_dt,
+                )
+                audit_log.record(audit_event)
+
+            self.save_address(new_address)
+        except Exception:
+            if hasattr(repo, "delete_correction"):
+                repo.delete_correction(correction_id)
+            raise
+        return new_address, correction, decision_card
+
+    def rollback_correction(
+        self,
+        address_id: str,
+        correction_id: str,
+        *,
+        reason: str,
+        actor_id: str,
+        tenant_id: str = "",
+        expected_revision: int | None = None,
+        correlation_id: str | None = None,
+        audit_log: Any = None,
+        correction_repo: Any = None,
+    ) -> tuple[AddressLocation, ManualCorrection, DecisionCard]:
+        if not actor_id or not actor_id.strip():
+            raise InvalidCorrectionError("Authenticated actor_id is required")
+        if not reason or len(reason.strip()) < 5:
+            raise InvalidCorrectionError(
+                "Rollback reason is required and must be at least 5 characters"
+            )
+
+        existing = self.get_address(address_id)
+        if existing is None:
+            raise KeyError(f"AddressLocation {address_id} not found")
+
+        req_tenant = tenant_id or ""
+        _assert_tenant_scope(existing.tenant_id, req_tenant)
+
+        if expected_revision is not None and existing.revision != expected_revision:
+            raise StaleRevisionError(
+                f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
+            )
+
+        repo = correction_repo or self._corrections
+        correction = repo.get_correction(correction_id)
+        if correction is None or correction.entity_id != address_id:
+            raise KeyError(f"Correction {correction_id} not found for address {address_id}")
+
+        _assert_tenant_scope(correction.tenant_id, req_tenant)
+
+        if correction.status != "applied":
+            raise ValueError(
+                f"Correction {correction_id} is already in status {correction.status}"
+            )
+
+        all_corrections = repo.list_corrections(
+            entity_type="address_location", entity_id=address_id
+        )
+        applied_corrections = [c for c in all_corrections if c.status == "applied"]
+        if not applied_corrections:
+            raise ValueError(f"No applied corrections found for address {address_id}")
+
+        latest_applied = max(applied_corrections, key=lambda c: c.applied_revision)
+        if correction.correction_id != latest_applied.correction_id:
+            raise ValueError(
+                f"ROLLBACK_ORDER_VIOLATION: Only latest applied correction '{latest_applied.correction_id}' (revision {latest_applied.applied_revision}) can be rolled back; '{correction_id}' is not top-of-stack."
+            )
+
+        old_val = correction.old_value or {}
+        new_revision = existing.revision + 1
+
+        other_applied = [
+            c
+            for c in repo.list_corrections(entity_type="address_location", entity_id=address_id)
+            if c.correction_id != correction_id and c.status == "applied"
+        ]
+        manual_override_flag = _rollback_override_flag(old_val, other_applied)
+
+        restored_address = _restore_from_snapshot(
+            existing,
+            old_val,
+            new_revision=new_revision,
+            manual_override_flag=manual_override_flag,
+        )
+
+        rollback_old_value, rollback_new_value = _correction_snapshots(
+            existing, restored_address, old_val
+        )
+
+        audit_event_id = str(uuid4())
+        corr_id = correlation_id or str(uuid4())
+        now_dt = datetime.now(UTC)
+
+        rollback_card = DecisionCard(
+            decision_id=f"dec-rollback-{correction_id}",
+            decision_type="MANUAL_CORRECTION_ROLLBACK",
+            module="listing",
+            title=f"Rollback manual correction {correction_id} for address_location {address_id}",
+            subject_ref=f"address_location:{address_id}",
+            outcome="ROLLED_BACK",
+            owner=actor_id,
+            decided_at=now_dt,
+            rationale=reason.strip(),
+            input_snapshot_id=f"rev:{existing.revision}",
+            audit_event_ids=(audit_event_id,),
+            policy_refs=("ODP-INT-006:manual_correction_rollback",),
+            evidence_refs=(f"correction:{correction_id}",),
+            metrics={
+                "old_value": rollback_old_value,
+                "new_value": rollback_new_value,
+                "restored_fields": list(old_val.keys()),
+                "manual_override_flag": manual_override_flag,
+            },
+        )
+
+        from dataclasses import replace
+
+        updated_correction = replace(correction, status="rolled_back")
+        try:
+            repo.record_correction(
+                updated_correction, decision_card_json=json.dumps(rollback_card.to_dict())
+            )
+
+            if audit_log is not None:
+                audit_event = AuditEvent(
+                    event_id=audit_event_id,
+                    event_type="canonical.manual_correction_rollback",
+                    actor=actor_id,
+                    action="rollback_manual_override",
+                    resource=f"address_location:{address_id}",
+                    outcome="ROLLED_BACK",
+                    correlation_id=corr_id,
+                    metadata={
+                        "entity_type": "address_location",
+                        "entity_id": address_id,
+                        "tenant_id": existing.tenant_id,
+                        "correction_id": correction_id,
+                        "old_value": rollback_old_value,
+                        "new_value": rollback_new_value,
+                        "restored_values": old_val,
+                        "fields_updated": list(old_val.keys()),
+                        "reason": reason.strip(),
+                        "source_revision": existing.revision,
+                        "applied_revision": new_revision,
+                        "decision_card": rollback_card.to_dict(),
+                    },
+                    occurred_at=now_dt,
+                )
+                audit_log.record(audit_event)
+
+            self.save_address(restored_address)
+        except Exception:
+            repo.record_correction(correction)
+            raise
+        return restored_address, updated_correction, rollback_card
 
 
 class DurableAddressLocationRepository:
-    def __init__(self, engine: SqliteEngine) -> None:
+    def __init__(
+        self,
+        engine: SqliteEngine,
+        *,
+        correction_repo: DurableManualCorrectionRepository | None = None,
+        audit_log: Any = None,
+    ) -> None:
         self._engine = engine
+        self._correction_repo = correction_repo or DurableManualCorrectionRepository(engine)
+        self._audit_log = audit_log
+        self._ensure_columns()
+
+    def _ensure_columns(self) -> None:
+        if _requires_tenant_scope(self._engine):
+            return
+        with self._engine.lock:
+            existing = {
+                row["name"]
+                for row in self._engine.query("PRAGMA table_info(address_locations)")
+            }
+            if "tenant_id" not in existing:
+                self._engine.execute("ALTER TABLE address_locations ADD COLUMN tenant_id TEXT")
+            if "revision" not in existing:
+                self._engine.execute(
+                    "ALTER TABLE address_locations ADD COLUMN revision INTEGER NOT NULL DEFAULT 1"
+                )
 
     def save_address(self, address: AddressLocation) -> AddressLocation:
         postgres = _requires_tenant_scope(self._engine)
-        geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)" if postgres else "?"
-        geom_params: tuple[Any, ...] = (
-            (address.longitude, address.latitude) if postgres else (address.raw_address,)
-        )
-        # geom_expression is selected from two fixed dialect-specific fragments.
+        if postgres:
+            if address.longitude is not None and address.latitude is not None:
+                geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)"
+                geom_params: tuple[Any, ...] = (address.longitude, address.latitude)
+            else:
+                geom_expression = "CAST(NULL AS geometry)"
+                geom_params = ()
+        else:
+            geom_expression = "?"
+            geom_params = (address.raw_address,)
         self._engine.execute(
             "INSERT INTO address_locations ("
             "  address_id, raw_address, normalized_address, city, district, village, road, "
             "  latitude, longitude, geom, geocode_precision, geocode_confidence, "
-            "  h3_res_8, h3_res_9, h3_res_10, manual_override_flag, created_at, updated_at"
-            f") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {geom_expression}, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+            "  h3_res_8, h3_res_9, h3_res_10, manual_override_flag, tenant_id, revision, created_at, updated_at"
+            f") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {geom_expression}, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
             "ON CONFLICT(address_id) DO UPDATE SET "
             "  raw_address = excluded.raw_address, "
             "  normalized_address = excluded.normalized_address, "
@@ -1537,6 +2288,8 @@ class DurableAddressLocationRepository:
             "  h3_res_9 = excluded.h3_res_9, "
             "  h3_res_10 = excluded.h3_res_10, "
             "  manual_override_flag = excluded.manual_override_flag, "
+            "  tenant_id = excluded.tenant_id, "
+            "  revision = excluded.revision, "
             "  updated_at = CURRENT_TIMESTAMP",  # nosec B608
             (
                 address.address_id,
@@ -1555,9 +2308,128 @@ class DurableAddressLocationRepository:
                 address.h3_res_9,
                 address.h3_res_10,
                 bool(address.manual_override_flag),
+                _nullable_tenant_id(address.tenant_id),
+                address.revision,
             ),
         )
         return address
+
+    def _claim_revision(
+        self, address: AddressLocation, *, from_revision: int, tenant_id: str
+    ) -> bool:
+        """Move the row to ``address`` only while it still sits at ``from_revision``.
+
+        ``engine.lock`` is a handle-local lock: two API processes, or two engines
+        over the same database, each hold their own, so read-check-write is not
+        atomic across writers and both would accept the same
+        ``expected_revision``. Folding the revision bump into one conditional
+        UPDATE pushes the compare-and-set down into the database, where the
+        losing writer matches zero rows instead of silently overwriting the
+        winner. Returns ``True`` only when this writer owns the new revision.
+
+        ``tenant_id`` is matched but never assigned: a correction may move a
+        record's contents, never its tenant.
+        """
+        postgres = _requires_tenant_scope(self._engine)
+        if postgres:
+            if address.longitude is not None and address.latitude is not None:
+                geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)"
+                geom_params: tuple[Any, ...] = (address.longitude, address.latitude)
+            else:
+                geom_expression = "CAST(NULL AS geometry)"
+                geom_params = ()
+        else:
+            geom_expression = "?"
+            geom_params = (address.raw_address,)
+        result = self._engine.execute(
+            "UPDATE address_locations SET "
+            "  raw_address = ?, normalized_address = ?, city = ?, district = ?, "
+            "  village = ?, road = ?, latitude = ?, longitude = ?, "
+            f"  geom = {geom_expression}, "
+            "  geocode_precision = ?, geocode_confidence = ?, "
+            "  h3_res_8 = ?, h3_res_9 = ?, h3_res_10 = ?, "
+            "  manual_override_flag = ?, revision = ?, updated_at = CURRENT_TIMESTAMP "
+            "WHERE address_id = ? AND revision = ? AND tenant_id = ?",  # nosec B608
+            (
+                address.raw_address,
+                address.normalized_address,
+                address.city,
+                address.district,
+                address.village,
+                address.road,
+                address.latitude,
+                address.longitude,
+                *geom_params,
+                address.geocode_precision,
+                address.geocode_confidence,
+                address.h3_res_8,
+                address.h3_res_9,
+                address.h3_res_10,
+                bool(address.manual_override_flag),
+                address.revision,
+                address.address_id,
+                from_revision,
+                tenant_id,
+            ),
+        )
+        return int(getattr(result, "rowcount", 0)) == 1
+
+    @contextmanager
+    def _compensate_claim_on_failure(
+        self,
+        previous: AddressLocation,
+        claimed: AddressLocation,
+        *,
+        repo: Any = None,
+        correction_id: str | None = None,
+    ) -> Iterator[None]:
+        """Undo an already-claimed revision if its correction/audit writes fail.
+
+        The revision is claimed before the correction record and audit event so
+        a writer that loses the race leaves nothing behind. If writing the correction
+        or recording the audit event fails, we compensate by restoring the address row
+        to ``previous`` and deleting the un-audited correction record.
+        """
+        try:
+            yield
+        except Exception:
+            self._claim_revision(
+                previous,
+                from_revision=claimed.revision,
+                tenant_id=previous.tenant_id,
+            )
+            if repo is not None and correction_id is not None:
+                try:
+                    if hasattr(repo, "delete_correction"):
+                        repo.delete_correction(correction_id)
+                except Exception:
+                    pass
+            raise
+
+    @contextmanager
+    def _compensate_rollback_on_failure(
+        self,
+        previous: AddressLocation,
+        claimed: AddressLocation,
+        *,
+        repo: Any = None,
+        original_correction: ManualCorrection | None = None,
+    ) -> Iterator[None]:
+        """Undo an already-claimed rollback revision if its correction/audit writes fail."""
+        try:
+            yield
+        except Exception:
+            self._claim_revision(
+                previous,
+                from_revision=claimed.revision,
+                tenant_id=previous.tenant_id,
+            )
+            if repo is not None and original_correction is not None:
+                try:
+                    repo.record_correction(original_correction)
+                except Exception:
+                    pass
+            raise
 
     def get_address(self, address_id: str) -> AddressLocation | None:
         row = self._engine.query_one(
@@ -1565,6 +2437,21 @@ class DurableAddressLocationRepository:
         )
         if not row:
             return None
+        return self._row_to_address(row)
+
+    def list_addresses(self, tenant_id: str | None = None) -> list[AddressLocation]:
+        if tenant_id:
+            rows = self._engine.query(
+                "SELECT * FROM address_locations WHERE tenant_id = ?",
+                (tenant_id,),
+            )
+        else:
+            rows = self._engine.query("SELECT * FROM address_locations")
+        return [self._row_to_address(row) for row in rows]
+
+    def _row_to_address(self, row: Any) -> AddressLocation:
+        tenant_id = str(row["tenant_id"] or "") if "tenant_id" in row.keys() else ""
+        revision = int(row["revision"] or 1) if "revision" in row.keys() else 1
         return AddressLocation(
             address_id=row["address_id"],
             raw_address=row["raw_address"],
@@ -1573,38 +2460,317 @@ class DurableAddressLocationRepository:
             district=row["district"] or "",
             village=row["village"] or "",
             road=row["road"] or "",
-            latitude=row["latitude"] or 0.0,
-            longitude=row["longitude"] or 0.0,
-            geocode_precision=row["geocode_precision"],
-            geocode_confidence=row["geocode_confidence"] or 0.0,
+            latitude=float(row["latitude"]) if row["latitude"] is not None else None,
+            longitude=float(row["longitude"]) if row["longitude"] is not None else None,
+            geocode_precision=row["geocode_precision"] if row["geocode_precision"] is not None else "manual",
+            geocode_confidence=float(row["geocode_confidence"])
+            if row["geocode_confidence"] is not None
+            else None,
             h3_res_8=row["h3_res_8"] or "",
             h3_res_9=row["h3_res_9"] or "",
             h3_res_10=row["h3_res_10"] or "",
             manual_override_flag=bool(row["manual_override_flag"]),
+            tenant_id=tenant_id,
+            revision=revision,
         )
 
-    def list_addresses(self) -> list[AddressLocation]:
-        rows = self._engine.query("SELECT * FROM address_locations")
-        return [
-            AddressLocation(
-                address_id=row["address_id"],
-                raw_address=row["raw_address"],
-                normalized_address=row["normalized_address"] or "",
-                city=row["city"] or "",
-                district=row["district"] or "",
-                village=row["village"] or "",
-                road=row["road"] or "",
-                latitude=row["latitude"] or 0.0,
-                longitude=row["longitude"] or 0.0,
-                geocode_precision=row["geocode_precision"],
-                geocode_confidence=row["geocode_confidence"] or 0.0,
-                h3_res_8=row["h3_res_8"] or "",
-                h3_res_9=row["h3_res_9"] or "",
-                h3_res_10=row["h3_res_10"] or "",
-                manual_override_flag=bool(row["manual_override_flag"]),
+    def get_corrections(
+        self, address_id: str, *, correction_repo: Any = None
+    ) -> list[ManualCorrection]:
+        repo = correction_repo or self._correction_repo
+        return repo.list_corrections(entity_type="address_location", entity_id=address_id)
+
+    def apply_correction(
+        self,
+        address_id: str,
+        *,
+        updates: dict[str, Any],
+        reason: str,
+        actor_id: str,
+        tenant_id: str = "",
+        expected_revision: int | None = None,
+        correlation_id: str | None = None,
+        risk_acknowledged: bool = False,
+        audit_log: Any = None,
+        correction_repo: Any = None,
+    ) -> tuple[AddressLocation, ManualCorrection, DecisionCard]:
+        if not actor_id or not actor_id.strip():
+            raise InvalidCorrectionError("Authenticated actor_id is required")
+        if not reason or len(reason.strip()) < 5:
+            raise InvalidCorrectionError(
+                "Correction reason is required and must be at least 5 characters"
             )
-            for row in rows
-        ]
+
+        with self._engine.lock:
+            existing = self.get_address(address_id)
+            if existing is None:
+                raise KeyError(f"AddressLocation {address_id} not found")
+
+            req_tenant = tenant_id or ""
+            _assert_tenant_scope(existing.tenant_id, req_tenant)
+
+            if expected_revision is not None and existing.revision != expected_revision:
+                raise StaleRevisionError(
+                    f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
+                )
+
+            new_address = _build_corrected_address(existing, updates)
+            new_revision = new_address.revision
+            old_value, new_value = _correction_snapshots(existing, new_address, updates)
+
+            # Claim the revision in the database before writing any audit or
+            # correction record, so a writer that lost the race leaves no trail
+            # of a correction it never actually applied.
+            if not self._claim_revision(
+                new_address,
+                from_revision=existing.revision,
+                tenant_id=existing.tenant_id,
+            ):
+                raise StaleRevisionError(
+                    f"STALE_REVISION: address_location {address_id} moved past revision "
+                    f"{existing.revision} before this correction could be applied"
+                )
+
+            correction_id = str(uuid4())
+            audit_event_id = str(uuid4())
+            corr_id = correlation_id or str(uuid4())
+            now_dt = datetime.now(UTC)
+
+            decision_card = DecisionCard(
+                decision_id=f"dec-corr-{correction_id}",
+                decision_type="MANUAL_CORRECTION",
+                module="listing",
+                title=f"Manual correction for address_location {address_id}",
+                subject_ref=f"address_location:{address_id}",
+                outcome="APPLIED",
+                owner=actor_id,
+                decided_at=now_dt,
+                rationale=reason.strip(),
+                input_snapshot_id=f"rev:{existing.revision}",
+                audit_event_ids=(audit_event_id,),
+                policy_refs=("ODP-INT-006:manual_correction",),
+                evidence_refs=(f"correction:{correction_id}",),
+                risk_flags=() if risk_acknowledged else ("MANUAL_OVERRIDE",),
+                metrics={
+                    "old_value": old_value,
+                    "new_value": new_value,
+                    "fields": list(updates.keys()),
+                },
+            )
+
+            correction = ManualCorrection(
+                correction_id=correction_id,
+                entity_type="address_location",
+                entity_id=address_id,
+                tenant_id=existing.tenant_id,
+                field_name=",".join(updates.keys()),
+                old_value=old_value,
+                new_value=new_value,
+                reason=reason.strip(),
+                actor_id=actor_id,
+                occurred_at=now_dt,
+                source_revision=existing.revision,
+                applied_revision=new_revision,
+                status="applied",
+                correlation_id=corr_id,
+                decision_card_hash=decision_card.content_hash(),
+                audit_event_id=audit_event_id,
+            )
+
+            repo = correction_repo or self._correction_repo
+            active_audit_log = audit_log or self._audit_log
+            with self._compensate_claim_on_failure(
+                existing, new_address, repo=repo, correction_id=correction_id
+            ):
+                repo.record_correction(
+                    correction, decision_card_json=json.dumps(decision_card.to_dict())
+                )
+
+                if active_audit_log is not None:
+                    audit_event = AuditEvent(
+                        event_id=audit_event_id,
+                        event_type="canonical.manual_correction",
+                        actor=actor_id,
+                        action="manual_override",
+                        resource=f"address_location:{address_id}",
+                        outcome="SUCCESS",
+                        correlation_id=corr_id,
+                        metadata={
+                            "entity_type": "address_location",
+                            "entity_id": address_id,
+                            "tenant_id": existing.tenant_id,
+                            "correction_id": correction_id,
+                            "fields_updated": list(updates.keys()),
+                            "old_value": old_value,
+                            "new_value": new_value,
+                            "reason": reason.strip(),
+                            "source_revision": existing.revision,
+                            "applied_revision": new_revision,
+                            "decision_card": decision_card.to_dict(),
+                        },
+                        occurred_at=now_dt,
+                    )
+                    active_audit_log.record(audit_event)
+
+            return new_address, correction, decision_card
+
+    def rollback_correction(
+        self,
+        address_id: str,
+        correction_id: str,
+        *,
+        reason: str,
+        actor_id: str,
+        tenant_id: str = "",
+        expected_revision: int | None = None,
+        correlation_id: str | None = None,
+        audit_log: Any = None,
+        correction_repo: Any = None,
+    ) -> tuple[AddressLocation, ManualCorrection, DecisionCard]:
+        if not actor_id or not actor_id.strip():
+            raise InvalidCorrectionError("Authenticated actor_id is required")
+        if not reason or len(reason.strip()) < 5:
+            raise InvalidCorrectionError(
+                "Rollback reason is required and must be at least 5 characters"
+            )
+
+        with self._engine.lock:
+            existing = self.get_address(address_id)
+            if existing is None:
+                raise KeyError(f"AddressLocation {address_id} not found")
+
+            req_tenant = tenant_id or ""
+            _assert_tenant_scope(existing.tenant_id, req_tenant)
+
+            if expected_revision is not None and existing.revision != expected_revision:
+                raise StaleRevisionError(
+                    f"STALE_REVISION: expected revision {expected_revision} but current is {existing.revision}"
+                )
+
+            repo = correction_repo or self._correction_repo
+            correction = repo.get_correction(correction_id)
+            if correction is None or correction.entity_id != address_id:
+                raise KeyError(f"Correction {correction_id} not found for address {address_id}")
+
+            _assert_tenant_scope(correction.tenant_id, req_tenant)
+
+            if correction.status != "applied":
+                raise ValueError(
+                    f"Correction {correction_id} is already in status {correction.status}"
+                )
+
+            all_corrections = repo.list_corrections(
+                entity_type="address_location", entity_id=address_id
+            )
+            applied_corrections = [c for c in all_corrections if c.status == "applied"]
+            if not applied_corrections:
+                raise ValueError(f"No applied corrections found for address {address_id}")
+
+            latest_applied = max(applied_corrections, key=lambda c: c.applied_revision)
+            if correction.correction_id != latest_applied.correction_id:
+                raise ValueError(
+                    f"ROLLBACK_ORDER_VIOLATION: Only latest applied correction '{latest_applied.correction_id}' (revision {latest_applied.applied_revision}) can be rolled back; '{correction_id}' is not top-of-stack."
+                )
+
+            old_val = correction.old_value or {}
+            new_revision = existing.revision + 1
+
+            other_applied = [
+                c
+                for c in repo.list_corrections(entity_type="address_location", entity_id=address_id)
+                if c.correction_id != correction_id and c.status == "applied"
+            ]
+            manual_override_flag = _rollback_override_flag(old_val, other_applied)
+
+            restored_address = _restore_from_snapshot(
+                existing,
+                old_val,
+                new_revision=new_revision,
+                manual_override_flag=manual_override_flag,
+            )
+
+            rollback_old_value, rollback_new_value = _correction_snapshots(
+                existing, restored_address, old_val
+            )
+
+            # Same compare-and-set as apply_correction: a rollback that raced a
+            # concurrent write must not rewind the winner's revision.
+            if not self._claim_revision(
+                restored_address,
+                from_revision=existing.revision,
+                tenant_id=existing.tenant_id,
+            ):
+                raise StaleRevisionError(
+                    f"STALE_REVISION: address_location {address_id} moved past revision "
+                    f"{existing.revision} before this rollback could be applied"
+                )
+
+            audit_event_id = str(uuid4())
+            corr_id = correlation_id or str(uuid4())
+            now_dt = datetime.now(UTC)
+
+            rollback_card = DecisionCard(
+                decision_id=f"dec-rollback-{correction_id}",
+                decision_type="MANUAL_CORRECTION_ROLLBACK",
+                module="listing",
+                title=f"Rollback manual correction {correction_id} for address_location {address_id}",
+                subject_ref=f"address_location:{address_id}",
+                outcome="ROLLED_BACK",
+                owner=actor_id,
+                decided_at=now_dt,
+                rationale=reason.strip(),
+                input_snapshot_id=f"rev:{existing.revision}",
+                audit_event_ids=(audit_event_id,),
+                policy_refs=("ODP-INT-006:manual_correction_rollback",),
+                evidence_refs=(f"correction:{correction_id}",),
+                metrics={
+                    "old_value": rollback_old_value,
+                    "new_value": rollback_new_value,
+                    "restored_fields": list(old_val.keys()),
+                    "manual_override_flag": manual_override_flag,
+                },
+            )
+
+            from dataclasses import replace
+
+            updated_correction = replace(correction, status="rolled_back")
+            repo = correction_repo or self._correction_repo
+            active_audit_log = audit_log or self._audit_log
+            with self._compensate_rollback_on_failure(
+                existing, restored_address, repo=repo, original_correction=correction
+            ):
+                repo.record_correction(
+                    updated_correction, decision_card_json=json.dumps(rollback_card.to_dict())
+                )
+
+                if active_audit_log is not None:
+                    audit_event = AuditEvent(
+                        event_id=audit_event_id,
+                        event_type="canonical.manual_correction_rollback",
+                        actor=actor_id,
+                        action="rollback_manual_override",
+                        resource=f"address_location:{address_id}",
+                        outcome="ROLLED_BACK",
+                        correlation_id=corr_id,
+                        metadata={
+                            "entity_type": "address_location",
+                            "entity_id": address_id,
+                            "tenant_id": existing.tenant_id,
+                            "correction_id": correction_id,
+                            "old_value": rollback_old_value,
+                            "new_value": rollback_new_value,
+                            "restored_values": old_val,
+                            "fields_updated": list(old_val.keys()),
+                            "reason": reason.strip(),
+                            "source_revision": existing.revision,
+                            "applied_revision": new_revision,
+                            "decision_card": rollback_card.to_dict(),
+                        },
+                        occurred_at=now_dt,
+                    )
+                    active_audit_log.record(audit_event)
+
+            return restored_address, updated_correction, rollback_card
 
 
 @dataclass

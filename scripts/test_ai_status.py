@@ -397,6 +397,70 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         self.assertEqual(pending[0]["to"], "Claude")
 
+    def test_submit_review_clears_stale_merge_route_and_approved_head(self) -> None:
+        evidence = {
+            "pr_number": 123,
+            "pr_url": "https://github.com/example/repo/pull/123",
+            "branch": "task/REG-002",
+            "remote_sha": "2222222222222222222222222222222222222222",
+            "base_branch": "dev",
+            "verified_at": "2026-08-11T00:00:00Z",
+        }
+        task = self.state["tasks"][0]
+        task["status"] = "in_progress"
+        task["approved_head"] = "1111111111111111111111111111111111111111"
+        task["merge_route"] = {
+            "head": "1111111111111111111111111111111111111111",
+            "route": "queued",
+            "pr_number": 123,
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "review_submission_for_task", return_value=evidence),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "123", "Resubmitted for review"])
+
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["review_submission"], evidence)
+        self.assertNotIn("approved_head", task)
+        self.assertNotIn("merge_route", task)
+
+    def test_reopen_and_re_review_clear_stale_merge_route_and_approved_head(self) -> None:
+        task = self.state["tasks"][0]
+        task["status"] = "review_approved"
+        task["approved_head"] = "1111111111111111111111111111111111111111"
+        task["merge_route"] = {
+            "head": "1111111111111111111111111111111111111111",
+            "route": "queued",
+        }
+
+        # 1. Reopen
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Need changes", "--reason=control_plane_recovery"])
+        self.assertEqual(task["status"], "in_progress")
+        self.assertNotIn("approved_head", task)
+        self.assertNotIn("merge_route", task)
+
+        # 2. Re-review
+        task["status"] = "review_approved"
+        task["approved_head"] = "1111111111111111111111111111111111111111"
+        task["merge_route"] = {"head": "1111111111111111111111111111111111111111", "route": "queued"}
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_re_review(self.state, ["REG-002", "Requesting re-review"])
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("approved_head", task)
+        self.assertNotIn("merge_route", task)
+
+        # 3. Progress from review_approved
+        task["status"] = "review_approved"
+        task["approved_head"] = "1111111111111111111111111111111111111111"
+        task["merge_route"] = {"head": "1111111111111111111111111111111111111111", "route": "queued"}
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_progress(self.state, ["REG-002", "Resuming work"])
+        self.assertEqual(task["status"], "in_progress")
+        self.assertNotIn("approved_head", task)
+        self.assertNotIn("merge_route", task)
+
     def test_review_submission_rejects_delivery_identity_mismatch(self) -> None:
         task = self.state["tasks"][0]
         remote_sha = "1111111122222222333333334444444455555555"

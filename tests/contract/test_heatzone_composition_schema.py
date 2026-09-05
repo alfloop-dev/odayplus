@@ -15,7 +15,7 @@ DECISION_POLICY_MIGRATION = (
     REPO_ROOT / "infra/db/migrations/000014_decision_policy_registry.sql"
 )
 COMPOSITION_MIGRATION = (
-    REPO_ROOT / "infra/db/migrations/000021_heatzone_composition.sql"
+    REPO_ROOT / "infra/db/migrations/000023_heatzone_composition.sql"
 )
 
 live = pytest.mark.requires_live_env

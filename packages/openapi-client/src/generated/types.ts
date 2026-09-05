@@ -74,6 +74,35 @@ export type AdLiftIncrementalityJobPayload = {
   idempotency_key?: string | null;
 };
 
+/** AddressCorrectionPayload */
+export type AddressCorrectionPayload = {
+  actor?: string | null;
+  actorName?: string | null;
+  actorRoleId?: string | null;
+  actor_id?: string | null;
+  city?: string | null;
+  district?: string | null;
+  expected_revision?: number | null;
+  geocode_confidence?: number | null;
+  geocode_precision?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  normalized_address?: string | null;
+  raw_address?: string | null;
+  reason: string;
+  risk_acknowledged?: boolean;
+  road?: string | null;
+  village?: string | null;
+};
+
+/** AddressRollbackPayload */
+export type AddressRollbackPayload = {
+  actor?: string | null;
+  actor_id?: string | null;
+  expected_revision?: number | null;
+  reason: string;
+};
+
 /** ApiError */
 export type ApiError = {
   code: "AUTHENTICATION_REQUIRED" | "ROLE_DENIED" | "TENANT_SCOPE_DENIED" | "SCOPE_DENIED" | "OWNERSHIP_REQUIRED" | "ASSIGNMENT_SCOPE_DENIED" | "SOURCE_SCOPE_DENIED" | "FIELD_MASKED" | "DATA_CLASSIFICATION_DENIED" | "PURPOSE_REQUIRED" | "PRECONDITION_REQUIRED" | "VERSION_CONFLICT" | "WORKFLOW_STATE_DENIED" | "OWNER_CONFLICT" | "SECOND_ACTOR_REQUIRED" | "SELF_REVIEW_DENIED" | "RISK_ACKNOWLEDGEMENT_REQUIRED" | "SOURCE_POLICY_DENIED" | "SOURCE_POLICY_UNKNOWN" | "SOURCE_AUTH_REQUIRED" | "LEGAL_HOLD_CONFLICT" | "RETENTION_NOT_REACHED" | "RESIDENCY_DENIED" | "EXPORT_APPROVAL_REQUIRED" | "PURGE_APPROVAL_REQUIRED" | "QUARANTINE_RELEASE_DENIED" | "PROMOTION_APPROVAL_REQUIRED" | "RESTRICTED_EXPORT_DENIED" | "BREAK_GLASS_DENIED" | "DEPENDENCY_CONFLICT" | "DUPLICATE_CANDIDATE" | "IDEMPOTENCY_KEY_REUSED" | "RETRY_BUDGET_EXHAUSTED" | "CHECKPOINT_UNAVAILABLE" | "JOB_FENCE_REJECTED" | "SLA_PAUSE_DENIED" | "DECISION_INCOMPLETE" | "BACKPRESSURE_ACTIVE" | "RATE_LIMITED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "FIELD_REQUIRED" | "CURSOR_INVALID" | "CURSOR_EXPIRED" | "INTERNAL_ERROR";
@@ -2069,6 +2098,9 @@ export const API_PATHS = {
   "/api/v1/learninghub/oss-capabilities": ["GET"],
   "/api/v1/learninghub/releases": ["GET", "POST"],
   "/api/v1/learninghub/releases/{release_id}/monitor": ["POST"],
+  "/api/v1/listings/addresses/{address_id}": ["GET"],
+  "/api/v1/listings/addresses/{address_id}/corrections": ["GET", "POST"],
+  "/api/v1/listings/addresses/{address_id}/corrections/{correction_id}/rollback": ["POST"],
   "/api/v1/listings/candidates": ["GET"],
   "/api/v1/listings/import": ["POST"],
   "/api/v1/listings/import-jobs": ["POST"],
