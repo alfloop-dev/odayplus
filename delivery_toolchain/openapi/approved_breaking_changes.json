@@ -42,6 +42,12 @@
       "task_id": "ODP-EVIDENCE-LEVEL-API-DEFAULT-002",
       "reason": "Same defect on the PriceOps evaluation write path: a free string defaulting to \"medium\" recorded an unassessed pilot evaluation as medium evidence.",
       "migration": "Send a canonical rung (L0..L5), or omit the field / send null for an unrated evaluation. An unrecognised value is now rejected at the boundary instead of stored verbatim."
+    },
+    {
+      "signature": "request.type:POST /api/v1/avm/cases:quality_score",
+      "task_id": "ODP-AVM-QUALITY-NULLABLE-001",
+      "reason": "AVM ValuationInput.quality_score was changed from float = 1.0 (defaulting to perfect score on absent) to nullable float | None = None fail-closed across API, domain, DB, client, and valuation card.",
+      "migration": "Callers can explicitly supply a measured quality_score or omit / send null to represent unmeasured quality, which will not fabricate a perfect quality valuation card."
     }
   ]
 }
