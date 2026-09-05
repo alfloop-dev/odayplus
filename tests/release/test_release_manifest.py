@@ -102,10 +102,24 @@ def blocked_manifest() -> dict:
     """
 
     manifest = load_manifest()
+    manifest["schema_version"] = 2
+    # ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001: borrow the identity, not
+    # the posture. `sources_off_attestation` and `initial_release_recovery`
+    # describe one specific release; carried into a fixture that then binds a
+    # rollback release they make the manifest fail for the collision rather than
+    # for the blocked state under test. Downgrading to `schema_version: 1` would
+    # silence the same collision by moving it to a version the v2 posture rules
+    # do not police, which hides it rather than removing it.
+    manifest.pop("sources_off_attestation", None)
+    manifest.pop("initial_release_recovery", None)
     manifest["release_status"] = "blocked"
     manifest["components"] = {}
     manifest["sbom_refs"] = []
     manifest["signature_refs"] = []
+    # A blocked release still records what it would have rolled back to; that is
+    # what keeps it reviewable rather than merely refused.
+    manifest["data_snapshot"] = valid_data_snapshot(manifest["data_contract_digest"])
+    manifest["rollback_release"] = valid_rollback_release(manifest["candidate_sha"])
     manifest["blockers"] = [
         {
             "id": "TEST-BLOCKER-001",
@@ -143,8 +157,16 @@ def test_committed_manifest_is_honest_about_whether_it_has_an_artifact() -> None
     """Whichever state the candidate of the day is in, it must be consistent.
 
     ``ready`` means the build really published immutable images plus SBOM and
-    signature references. Legacy v1 remains readable for historical audit, but
-    admission fails closed without snapshot and rollback bindings.
+    signature references.
+
+    ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001: whether a ready manifest is
+    *admissible* is read off the manifest's own shape, not off its schema
+    version. A release is admissible when it says what it falls back to -- a
+    predecessor release (``rollback_release``) or a read-back empty target
+    (``initial_release_recovery``). Legacy manifests that bind neither fail
+    closed. Asserting one verdict or the other outright would make this test
+    flip with the release of the day rather than with a regression, which is the
+    same coupling the fixtures above were rewritten to remove.
     """
 
     manifest = load_manifest()
@@ -154,8 +176,19 @@ def test_committed_manifest_is_honest_about_whether_it_has_an_artifact() -> None
         assert manifest["sbom_refs"]
         assert manifest["signature_refs"]
         assert validate_manifest(manifest) == []
-        # Committed v1 manifest lacks snapshot and rollback bindings, so admission fails closed
-        assert validate_release_admission(manifest)
+
+        binds_a_fallback = bool(
+            manifest.get("rollback_release") or manifest.get("initial_release_recovery")
+        )
+        admission_errors = validate_release_admission(manifest)
+        if binds_a_fallback:
+            assert admission_errors == [], (
+                "a ready manifest that binds a fallback must be admissible"
+            )
+        else:
+            assert admission_errors, (
+                "a manifest with no rollback or initial-release binding must fail closed"
+            )
     else:
         assert manifest["blockers"], "a blocked manifest must record why it is blocked"
         assert validate_release_admission(manifest)
