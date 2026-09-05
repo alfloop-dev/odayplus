@@ -47,10 +47,122 @@ DEFAULT_BACKOFF_SECONDS = 5.0
 DEFAULT_SOCKET_TIMEOUT = 15.0
 DEFAULT_PROCESS_TIMEOUT = 300.0
 DEFAULT_SERVICE = "pypi"
-DEFAULT_INSTALLATION_PATH = ".venv/lib/python3.12/site-packages"
+DEFAULT_WAIVERS_PATH = ROOT / "delivery_toolchain/security/pip_audit_waivers.json"
+
+
+def get_default_installation_path() -> str:
+    """Resolve the active virtual environment site-packages directory dynamically."""
+    venv = os.environ.get("VIRTUAL_ENV")
+    venv_path = Path(venv) if venv else ROOT / ".venv"
+    py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    candidates = [
+        venv_path / "lib" / py_ver / "site-packages",
+        venv_path / "Lib" / "site-packages",
+    ]
+    for c in candidates:
+        if c.exists():
+            try:
+                return str(c.relative_to(ROOT))
+            except ValueError:
+                return str(c)
+    lib_dir = venv_path / "lib"
+    if lib_dir.exists():
+        py_dirs = sorted(lib_dir.glob("python3.*/site-packages"))
+        if py_dirs and py_dirs[0].exists():
+            c = py_dirs[0]
+            try:
+                return str(c.relative_to(ROOT))
+            except ValueError:
+                return str(c)
+    return f".venv/lib/{py_ver}/site-packages"
+
+
+DEFAULT_INSTALLATION_PATH = get_default_installation_path()
 
 REPORT = "report"
 UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class VulnerabilityWaiver:
+    """A recorded, time-bounded waiver for an unpatched or unreachable vulnerability."""
+
+    id: str
+    package: str
+    aliases: tuple[str, ...]
+    decider: str
+    owner: str
+    reason: str
+    expires: str
+
+    def is_expired(self, as_of: str | None = None) -> bool:
+        today = as_of or time.strftime("%Y-%m-%d", time.gmtime())
+        return self.expires < today
+
+
+def load_recorded_waivers(
+    waivers_file: Path = DEFAULT_WAIVERS_PATH,
+    as_of: str | None = None,
+) -> tuple[list[VulnerabilityWaiver], list[str]]:
+    """Load and validate recorded waivers from a JSON registry.
+
+    Returns (active_waivers, error_messages).
+    Any expired waiver or invalid schema entry generates a validation error.
+    """
+    if not waivers_file.is_file():
+        return ([], [])
+    try:
+        data = json.loads(waivers_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return ([], [f"Failed to parse waivers file {waivers_file}: {exc}"])
+
+    if not isinstance(data, dict) or "waivers" not in data:
+        return ([], [f"Malformed waivers file {waivers_file}: missing 'waivers' list"])
+
+    waivers_list = data.get("waivers")
+    if not isinstance(waivers_list, list):
+        return ([], [f"Malformed waivers file {waivers_file}: 'waivers' is not a list"])
+
+    active_waivers: list[VulnerabilityWaiver] = []
+    errors: list[str] = []
+    today = as_of or time.strftime("%Y-%m-%d", time.gmtime())
+
+    for idx, item in enumerate(waivers_list):
+        if not isinstance(item, dict):
+            errors.append(f"Waiver #{idx} is not an object")
+            continue
+        vid = item.get("id")
+        pkg = item.get("package", "")
+        raw_aliases = item.get("aliases", [])
+        aliases = tuple(raw_aliases) if isinstance(raw_aliases, list) else ()
+        decider = item.get("decider", "")
+        owner = item.get("owner", "")
+        reason = item.get("reason", "")
+        expires = item.get("expires", "")
+
+        if not vid or not expires or not decider or not reason:
+            errors.append(
+                f"Waiver {vid or f'#{idx}'} missing required fields (id, expires, decider, reason)"
+            )
+            continue
+
+        waiver = VulnerabilityWaiver(
+            id=str(vid),
+            package=str(pkg),
+            aliases=aliases,
+            decider=str(decider),
+            owner=str(owner),
+            reason=str(reason),
+            expires=str(expires),
+        )
+        if waiver.is_expired(today):
+            errors.append(
+                f"Waiver for {waiver.id} ({waiver.package}) expired on {waiver.expires} (as of {today})"
+            )
+        else:
+            active_waivers.append(waiver)
+
+    return (active_waivers, errors)
 
 
 @dataclass(frozen=True)
@@ -106,21 +218,27 @@ def classify_pip_audit_output(stdout: str, stderr: str) -> AuditOutcome:
                     "pip-audit returned an empty dependency report; no packages were audited",
                 )
             findings: list[str] = []
+            seen_findings: set[str] = set()
+            unique_deps: set[str] = set()
             for dep in raw_deps:
                 if not isinstance(dep, dict):
                     continue
                 dep_name = dep.get("name", "unknown")
                 dep_ver = dep.get("version", "")
+                unique_deps.add(f"{dep_name}=={dep_ver}")
                 vulns = dep.get("vulns")
                 if isinstance(vulns, list) and vulns:
                     for v in vulns:
                         vid = v.get("id", "VULN") if isinstance(v, dict) else "VULN"
-                        findings.append(f"{dep_name} {dep_ver} ({vid})".strip())
+                        finding_str = f"{dep_name} {dep_ver} ({vid})".strip()
+                        if finding_str not in seen_findings:
+                            seen_findings.add(finding_str)
+                            findings.append(finding_str)
             return AuditOutcome(
                 REPORT,
                 findings,
-                f"pip-audit returned advisory data for {len(raw_deps)} dependencies",
-                total_dependencies=len(raw_deps),
+                f"pip-audit returned advisory data for {len(unique_deps)} dependencies",
+                total_dependencies=len(unique_deps),
             )
         return AuditOutcome(UNAVAILABLE, None, "audit report 'dependencies' is not a list")
 
@@ -144,6 +262,8 @@ def run_pip_audit(
     socket_timeout: float = DEFAULT_SOCKET_TIMEOUT,
     process_timeout: float = DEFAULT_PROCESS_TIMEOUT,
     service: str = DEFAULT_SERVICE,
+    installation_path: str = DEFAULT_INSTALLATION_PATH,
+    ignore_vulns: list[str] | None = None,
     runner=subprocess.run,
 ) -> AuditOutcome:
     """Run pip-audit once with bounded socket and process timeouts.
@@ -161,7 +281,7 @@ def run_pip_audit(
         "pip-audit",
         "pip-audit",
         "--path",
-        DEFAULT_INSTALLATION_PATH,
+        installation_path,
         "--format",
         "json",
         "--timeout",
@@ -169,6 +289,10 @@ def run_pip_audit(
     ]
     if service and service != "pypi":
         cmd.extend(["--vulnerability-service", service])
+    if ignore_vulns:
+        for vuln_id in ignore_vulns:
+            if vuln_id:
+                cmd.extend(["--ignore-vuln", vuln_id])
 
     try:
         res = runner(
@@ -207,6 +331,8 @@ def audit_with_retry(
     socket_timeout: float = DEFAULT_SOCKET_TIMEOUT,
     process_timeout: float = DEFAULT_PROCESS_TIMEOUT,
     service: str = DEFAULT_SERVICE,
+    installation_path: str = DEFAULT_INSTALLATION_PATH,
+    ignore_vulns: list[str] | None = None,
     sleep=time.sleep,
     runner=subprocess.run,
 ) -> AuditOutcome:
@@ -218,6 +344,8 @@ def audit_with_retry(
             socket_timeout=socket_timeout,
             process_timeout=process_timeout,
             service=service,
+            installation_path=installation_path,
+            ignore_vulns=ignore_vulns,
             runner=runner,
         )
         if outcome.has_report:
@@ -232,7 +360,10 @@ def audit_with_retry(
     return outcome
 
 
-def evaluate(outcome: AuditOutcome) -> tuple[int, str]:
+def evaluate(
+    outcome: AuditOutcome,
+    installation_path: str = DEFAULT_INSTALLATION_PATH,
+) -> tuple[int, str]:
     """Map an audit outcome onto an exit code and a human-readable verdict."""
     if not outcome.has_report:
         return (
@@ -251,7 +382,7 @@ def evaluate(outcome: AuditOutcome) -> tuple[int, str]:
             "VULNERABILITIES FOUND in Python dependencies (all reported findings are blocking; "
             f"pip-audit has no normalized severity): {summary}. "
             "Run 'uv run --with pip-audit pip-audit --path "
-            f"{DEFAULT_INSTALLATION_PATH}' for details.",
+            f"{installation_path}' for details.",
         )
 
     return (
@@ -260,21 +391,25 @@ def evaluate(outcome: AuditOutcome) -> tuple[int, str]:
     )
 
 
-def _env_float(name: str, default: float, fallback_name: str | None = None) -> float:
+def _parse_env_float(name: str, default: float, fallback_name: str | None = None) -> float:
     for var in (name, fallback_name) if fallback_name else (name,):
         if var and var in os.environ:
+            val = os.environ[var]
             try:
-                return float(os.environ[var])
-            except ValueError:
-                pass
+                return float(val)
+            except ValueError as exc:
+                raise ValueError(f"Invalid float for {var}: {val!r}") from exc
     return default
 
 
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ[name])
-    except (KeyError, ValueError):
-        return default
+def _parse_env_int(name: str, default: int) -> int:
+    if name in os.environ:
+        val = os.environ[name]
+        try:
+            return int(val)
+        except ValueError as exc:
+            raise ValueError(f"Invalid integer for {name}: {val!r}") from exc
+    return default
 
 
 def main() -> int:
@@ -303,49 +438,96 @@ def main() -> int:
         default=None,
         help="Vulnerability service (pypi, osv)",
     )
+    parser.add_argument(
+        "--path",
+        type=str,
+        default=None,
+        help="Path to the site-packages directory to audit",
+    )
+    parser.add_argument(
+        "--ignore-vuln",
+        action="append",
+        default=[],
+        help="Vulnerability ID to ignore (can be specified multiple times)",
+    )
     args = parser.parse_args()
 
-    socket_timeout = (
-        args.socket_timeout
-        if args.socket_timeout is not None
-        else _env_float(
-            "ODP_PIP_AUDIT_SOCKET_TIMEOUT_SECONDS",
-            DEFAULT_SOCKET_TIMEOUT,
-            "ODP_AUDIT_TIMEOUT",
+    try:
+        socket_timeout = (
+            args.socket_timeout
+            if args.socket_timeout is not None
+            else _parse_env_float(
+                "ODP_PIP_AUDIT_SOCKET_TIMEOUT_SECONDS",
+                DEFAULT_SOCKET_TIMEOUT,
+                "ODP_AUDIT_TIMEOUT",
+            )
         )
-    )
-    process_timeout = (
-        args.process_timeout
-        if args.process_timeout is not None
-        else _env_float(
-            "ODP_PIP_AUDIT_PROCESS_TIMEOUT_SECONDS",
-            DEFAULT_PROCESS_TIMEOUT,
-            "ODP_PIP_AUDIT_TIMEOUT_SECONDS",
+        process_timeout = (
+            args.process_timeout
+            if args.process_timeout is not None
+            else _parse_env_float(
+                "ODP_PIP_AUDIT_PROCESS_TIMEOUT_SECONDS",
+                DEFAULT_PROCESS_TIMEOUT,
+                "ODP_PIP_AUDIT_TIMEOUT_SECONDS",
+            )
         )
-    )
-    attempts = (
-        args.attempts
-        if args.attempts is not None
-        else _env_int("ODP_PIP_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS)
-    )
+        attempts = (
+            args.attempts
+            if args.attempts is not None
+            else _parse_env_int("ODP_PIP_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS)
+        )
+        backoff = _parse_env_float("ODP_PIP_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS)
+    except ValueError as exc:
+        print(f"[FAIL CLOSED] Invalid timeout or attempt configuration: {exc}", file=sys.stderr)
+        return EXIT_AUDIT_UNAVAILABLE
+
     service = (
         args.service
         if args.service is not None
         else os.environ.get("ODP_PIP_AUDIT_SERVICE", DEFAULT_SERVICE)
     )
+    installation_path = (
+        args.path
+        if args.path is not None
+        else os.environ.get("ODP_PIP_AUDIT_PATH", DEFAULT_INSTALLATION_PATH)
+    )
 
-    if socket_timeout <= 0 or process_timeout <= 0 or attempts <= 0:
+    if socket_timeout <= 0 or process_timeout <= 0 or attempts <= 0 or backoff < 0:
         print("[FAIL CLOSED] Invalid timeout or attempt configuration", file=sys.stderr)
         return EXIT_AUDIT_UNAVAILABLE
 
+    # Load recorded waivers and fail closed on any expired waiver or parse error
+    waivers, waiver_errors = load_recorded_waivers()
+    if waiver_errors:
+        for err in waiver_errors:
+            print(f"[FAIL CLOSED] Waiver validation error: {err}", file=sys.stderr)
+        return EXIT_AUDIT_UNAVAILABLE
+
+    ignore_vulns: list[str] = []
+    for w in waivers:
+        ignore_vulns.append(w.id)
+        ignore_vulns.extend(w.aliases)
+
+    if args.ignore_vuln:
+        ignore_vulns.extend(args.ignore_vuln)
+    if "ODP_PIP_AUDIT_IGNORE_VULNS" in os.environ:
+        env_ignores = [
+            x.strip()
+            for x in os.environ["ODP_PIP_AUDIT_IGNORE_VULNS"].split(",")
+            if x.strip()
+        ]
+        ignore_vulns.extend(env_ignores)
+
     outcome = audit_with_retry(
         attempts=attempts,
-        backoff=_env_float("ODP_PIP_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS),
+        backoff=backoff,
         socket_timeout=socket_timeout,
         process_timeout=process_timeout,
         service=service,
+        installation_path=installation_path,
+        ignore_vulns=ignore_vulns if ignore_vulns else None,
     )
-    code, verdict = evaluate(outcome)
+    code, verdict = evaluate(outcome, installation_path=installation_path)
     print(verdict, file=sys.stderr if code else sys.stdout)
     return code
 

@@ -102,7 +102,6 @@ def validate_threshold(threshold: str) -> str:
 def severities_at_or_above(threshold: str) -> tuple[str, ...]:
     threshold = validate_threshold(threshold)
     return SEVERITY_ORDER[SEVERITY_ORDER.index(threshold) :]
-    return SEVERITY_ORDER[SEVERITY_ORDER.index(threshold) :]
 
 
 def _loads(text: str) -> object | None:
@@ -278,18 +277,24 @@ def write_audit_receipt(
     temporary.replace(target)
 
 
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ[name])
-    except (KeyError, ValueError):
-        return default
+def _parse_env_float(name: str, default: float) -> float:
+    if name in os.environ:
+        val = os.environ[name]
+        try:
+            return float(val)
+        except ValueError as exc:
+            raise ValueError(f"Invalid float for {name}: {val!r}") from exc
+    return default
 
 
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.environ[name])
-    except (KeyError, ValueError):
-        return default
+def _parse_env_int(name: str, default: int) -> int:
+    if name in os.environ:
+        val = os.environ[name]
+        try:
+            return int(val)
+        except ValueError as exc:
+            raise ValueError(f"Invalid integer for {name}: {val!r}") from exc
+    return default
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -308,38 +313,63 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--attempts",
         type=int,
-        default=_env_int("ODP_NPM_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS),
+        default=None,
         help=f"Retry attempts (default: {DEFAULT_ATTEMPTS}).",
     )
     parser.add_argument(
         "--backoff",
         type=float,
-        default=_env_float("ODP_NPM_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS),
+        default=None,
         help=f"Backoff seconds between retries (default: {DEFAULT_BACKOFF_SECONDS}).",
     )
     parser.add_argument(
         "--timeout",
         type=float,
-        default=_env_float("ODP_NPM_AUDIT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS),
+        default=None,
         help=f"Timeout seconds per attempt (default: {DEFAULT_TIMEOUT_SECONDS}).",
     )
     args = parser.parse_args(argv)
 
     try:
         threshold = validate_threshold(args.threshold)
+        attempts = (
+            args.attempts
+            if args.attempts is not None
+            else _parse_env_int("ODP_NPM_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS)
+        )
+        backoff = (
+            args.backoff
+            if args.backoff is not None
+            else _parse_env_float("ODP_NPM_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS)
+        )
+        timeout = (
+            args.timeout
+            if args.timeout is not None
+            else _parse_env_float("ODP_NPM_AUDIT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
+        )
     except ValueError as exc:
-        print(f"Invalid threshold configuration: {exc}", file=sys.stderr)
+        print(f"[FAIL CLOSED] Invalid configuration: {exc}", file=sys.stderr)
         if args.receipt:
-            outcome = AuditOutcome(UNAVAILABLE, None, f"invalid threshold configuration: {exc}")
+            outcome = AuditOutcome(UNAVAILABLE, None, f"invalid configuration: {exc}")
             write_audit_receipt(
                 args.receipt, outcome, EXIT_AUDIT_UNAVAILABLE, str(exc), args.threshold
             )
         return EXIT_AUDIT_UNAVAILABLE
 
+    if attempts <= 0 or backoff < 0 or timeout <= 0:
+        msg = "attempts and timeout must be positive, backoff must be non-negative"
+        print(f"[FAIL CLOSED] Invalid configuration: {msg}", file=sys.stderr)
+        if args.receipt:
+            outcome = AuditOutcome(UNAVAILABLE, None, f"invalid configuration: {msg}")
+            write_audit_receipt(
+                args.receipt, outcome, EXIT_AUDIT_UNAVAILABLE, msg, threshold
+            )
+        return EXIT_AUDIT_UNAVAILABLE
+
     outcome = audit_with_retry(
-        attempts=args.attempts,
-        backoff=args.backoff,
-        timeout=args.timeout,
+        attempts=attempts,
+        backoff=backoff,
+        timeout=timeout,
     )
     code, verdict = evaluate(outcome, threshold)
     print(verdict, file=sys.stderr if code else sys.stdout)

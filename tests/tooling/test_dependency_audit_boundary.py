@@ -324,3 +324,107 @@ def test_pip_audit_fails_closed_on_invalid_timeout_args() -> None:
     )
     assert res.returncode == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
     assert "[FAIL CLOSED]" in res.stderr
+
+
+def test_dynamic_installation_path_resolution() -> None:
+    path_str = pip_audit_gate.get_default_installation_path()
+    assert "site-packages" in path_str
+    py_ver = f"python{sys.version_info.major}.{sys.version_info.minor}"
+    assert py_ver in path_str or "site-packages" in path_str
+
+
+def test_pip_audit_deduplicates_dependencies_and_findings() -> None:
+    payload = json.dumps(
+        {
+            "dependencies": [
+                {
+                    "name": "cryptography",
+                    "version": "48.0.1",
+                    "vulns": [{"id": "PYSEC-2026-3554", "description": "Duplicate finding"}],
+                },
+                {
+                    "name": "cryptography",
+                    "version": "48.0.1",
+                    "vulns": [{"id": "PYSEC-2026-3554", "description": "Duplicate finding"}],
+                },
+                {"name": "safe-pkg", "version": "1.0.0", "vulns": []},
+            ],
+            "fixes": [],
+        }
+    )
+    outcome = pip_audit_gate.classify_pip_audit_output(payload, "")
+    assert outcome.has_report
+    assert outcome.total_dependencies == 2  # cryptography + safe-pkg (unique)
+    assert outcome.findings == ["cryptography 48.0.1 (PYSEC-2026-3554)"]
+
+
+def test_npm_audit_fails_closed_on_invalid_env_or_args(monkeypatch) -> None:
+    monkeypatch.setenv("ODP_NPM_AUDIT_TIMEOUT_SECONDS", "not-a-number")
+    code = npm_audit_gate.main([])
+    assert code == npm_audit_gate.EXIT_AUDIT_UNAVAILABLE
+
+    monkeypatch.setenv("ODP_NPM_AUDIT_TIMEOUT_SECONDS", "-10")
+    code = npm_audit_gate.main([])
+    assert code == npm_audit_gate.EXIT_AUDIT_UNAVAILABLE
+
+
+def test_pip_audit_waiver_loading_active_passes() -> None:
+    waivers, errors = pip_audit_gate.load_recorded_waivers(as_of="2026-09-05")
+    assert not errors
+    waiver_ids = [w.id for w in waivers]
+    assert "PYSEC-2026-3740" in waiver_ids
+
+
+def test_pip_audit_waiver_loading_expired_fails_closed(tmp_path: Path) -> None:
+    expired_waivers_file = tmp_path / "pip_audit_waivers.json"
+    expired_waivers_file.write_text(
+        json.dumps(
+            {
+                "waivers": [
+                    {
+                        "id": "PYSEC-2026-9999",
+                        "package": "old-pkg",
+                        "aliases": [],
+                        "decider": "Human/Ops",
+                        "owner": "Tester",
+                        "reason": "Old waiver",
+                        "expires": "2026-01-01",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    waivers, errors = pip_audit_gate.load_recorded_waivers(
+        waivers_file=expired_waivers_file, as_of="2026-09-05"
+    )
+    assert len(errors) == 1
+    assert "expired on 2026-01-01" in errors[0]
+
+
+def test_pip_audit_applies_waivers_to_command_args() -> None:
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def fake_runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(
+            cmd,
+            0,
+            stdout=json.dumps(
+                {"dependencies": [{"name": "safe-pkg", "version": "1.0.0", "vulns": []}]}
+            ),
+            stderr="",
+        )
+
+    outcome = pip_audit_gate.run_pip_audit(
+        cwd=ROOT,
+        ignore_vulns=["PYSEC-2026-3740", "GHSA-8mgp-746c-j5xp"],
+        runner=fake_runner,
+    )
+    assert outcome.has_report
+    assert len(calls) == 1
+    cmd, _ = calls[0]
+    assert "--ignore-vuln" in cmd
+    assert "PYSEC-2026-3740" in cmd
+    assert "GHSA-8mgp-746c-j5xp" in cmd
+
