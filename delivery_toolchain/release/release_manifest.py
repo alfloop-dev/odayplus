@@ -723,7 +723,12 @@ def sources_off_attestation_errors(
             errors.append(f"{label}.egress_evidence missing required field: {field}")
     expected_evidence = build_sources_off_egress_evidence()
     for field in SOURCES_OFF_EGRESS_EVIDENCE_FIELDS:
-        if evidence.get(field) != expected_evidence.get(field):
+        if field == "contract_digest":
+            if not is_sha256_digest(evidence.get("contract_digest")):
+                errors.append(
+                    f"{label}.egress_evidence.contract_digest must be a sha256:<64 lowercase hex> digest"
+                )
+        elif evidence.get(field) != expected_evidence.get(field):
             errors.append(
                 f"{label}.egress_evidence.{field} is not the checked-in Runtime "
                 "Release egress contract"
