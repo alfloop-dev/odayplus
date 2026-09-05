@@ -5,14 +5,16 @@ PYTEST_MARK_EXPR ?= not requires_live_env
 LOCAL_CONFIG := .orchestrator/config.json
 LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 
-# Keep the registry calls bounded at the shared security entry point. The
-# wrappers still validate these values and fail closed if an override is
-# invalid; exposing them here makes the CI/Make invocation auditable.
-# The registry audit has taken 13m42s on dev; leave bounded headroom while
-# keeping the three-attempt budget within the product job's 60-minute ceiling.
-NPM_AUDIT_TIMEOUT_SECONDS ?= 900
-NPM_AUDIT_ATTEMPTS ?= 3
-NPM_AUDIT_BACKOFF_SECONDS ?= 5
+# Keep the Python audit's registry calls bounded at the shared security entry
+# point. pip_audit_gate.py still validates these values and fails closed if an
+# override is invalid; exposing them here makes the CI/Make invocation
+# auditable.
+#
+# There is deliberately no npm counterpart here. The live npm audit belongs to
+# Runtime Release only (ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001, dev
+# 5442117e): deploy-dev.yml runs npm_audit_gate.py directly and archives its
+# receipt. Re-adding a `make security` npm entry point would give the repo two
+# npm audit paths and put a registry round trip back on every product PR.
 PIP_AUDIT_SOCKET_TIMEOUT_SECONDS ?= 15
 PIP_AUDIT_PROCESS_TIMEOUT_SECONDS ?= 300
 PIP_AUDIT_ATTEMPTS ?= 3
@@ -60,15 +62,9 @@ test: bootstrap
 smoke: bootstrap
 	$(UV) run pytest tests/smoke
 
+# Python-only by design; see the audit variables above for why the live npm
+# audit is not invoked here.
 dependency-audit: bootstrap
-	@if [[ -f package-lock.json ]]; then \
-		ODP_NPM_AUDIT_TIMEOUT_SECONDS="$(NPM_AUDIT_TIMEOUT_SECONDS)" \
-		ODP_NPM_AUDIT_ATTEMPTS="$(NPM_AUDIT_ATTEMPTS)" \
-		ODP_NPM_AUDIT_BACKOFF_SECONDS="$(NPM_AUDIT_BACKOFF_SECONDS)" \
-		npm run audit:security; \
-	else \
-		printf "Skipping dependency audit: package-lock.json is not present yet.\n"; \
-	fi
 	ODP_PIP_AUDIT_BACKOFF_SECONDS="$(PIP_AUDIT_BACKOFF_SECONDS)" \
 	$(UV) run python delivery_toolchain/security/pip_audit_gate.py \
 		--socket-timeout "$(PIP_AUDIT_SOCKET_TIMEOUT_SECONDS)" \

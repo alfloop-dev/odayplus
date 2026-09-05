@@ -78,11 +78,18 @@ class AuditOutcome:
     ``kind`` is ``REPORT`` when the registry returned advisory data (and
     ``counts`` holds the per-severity totals), or ``UNAVAILABLE`` when the
     request never produced a report.
+
+    ``retryable`` is True only for a failure a later attempt could plausibly
+    resolve: a request timeout, a connection error or a transient upstream
+    status. A missing ``npm``, unparsable output or a report without severity
+    counts is deterministic, so retrying it only burns the release budget
+    before failing closed anyway.
     """
 
     kind: str
     counts: dict[str, int] | None
     detail: str
+    retryable: bool = False
 
     @property
     def has_report(self) -> bool:
@@ -112,6 +119,43 @@ def _loads(text: str) -> object | None:
         return None
 
 
+# Statuses the registry returns while it is unhealthy rather than while it is
+# rejecting us. A 401/403/404 against the bulk endpoint is a standing condition
+# a retry cannot clear.
+TRANSIENT_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+# Node/npm surface transport failures as these codes in the error message.
+TRANSIENT_ERROR_TOKENS = (
+    "econnreset",
+    "econnrefused",
+    "etimedout",
+    "enotfound",
+    "eai_again",
+    "socket hang up",
+    "network timeout",
+)
+
+# ``@npmcli/arborist`` only calls the deprecated ``audits/quick`` endpoint after
+# the bulk advisory request has already thrown, so any error naming it is a
+# symptom of that first failure -- which is exactly the transient 400/503 class
+# this gate was built to absorb -- rather than a verdict on the lockfile.
+QUICK_FALLBACK_ENDPOINT = "/-/npm/v1/security/audits/quick"
+
+
+def _is_transient_registry_error(status: object, message: str) -> bool:
+    """Decide whether a registry error is worth another bounded attempt."""
+    if isinstance(status, bool):
+        return False
+    if isinstance(status, int) and status in TRANSIENT_STATUS_CODES:
+        return True
+    if isinstance(status, str) and status.isdigit() and int(status) in TRANSIENT_STATUS_CODES:
+        return True
+    lowered = message.lower()
+    if QUICK_FALLBACK_ENDPOINT in lowered:
+        return True
+    return any(token in lowered for token in TRANSIENT_ERROR_TOKENS)
+
+
 def classify_audit_output(stdout: str, stderr: str) -> AuditOutcome:
     """Decide whether ``npm audit --json`` produced advisory data.
 
@@ -138,8 +182,11 @@ def classify_audit_output(stdout: str, stderr: str) -> AuditOutcome:
     if isinstance(payload, dict):
         status = payload.get("statusCode")
         message = payload.get("message") or payload.get("body") or ""
-        detail = f"registry error (statusCode={status}): {str(message).strip()[:400]}"
-        return AuditOutcome(UNAVAILABLE, None, detail)
+        text = str(message).strip()
+        detail = f"registry error (statusCode={status}): {text[:400]}"
+        return AuditOutcome(
+            UNAVAILABLE, None, detail, retryable=_is_transient_registry_error(status, text)
+        )
 
     combined = f"{stdout}\n{stderr}".strip()
     return AuditOutcome(
@@ -158,8 +205,13 @@ def run_npm_audit(cwd: Path = ROOT, timeout: float = DEFAULT_TIMEOUT_SECONDS) ->
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return AuditOutcome(UNAVAILABLE, None, f"npm audit timed out after {timeout:.0f}s")
+        # A hung registry request is the canonical transient failure.
+        return AuditOutcome(
+            UNAVAILABLE, None, f"npm audit timed out after {timeout:.0f}s", retryable=True
+        )
     except FileNotFoundError:
+        # A missing npm is an environment defect, not an outage: every further
+        # attempt fails identically.
         return AuditOutcome(UNAVAILABLE, None, "npm executable not found")
 
     # The return code is deliberately ignored when a report is present: with
@@ -175,18 +227,32 @@ def audit_with_retry(
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
     sleep=time.sleep,
 ) -> AuditOutcome:
-    """Run the audit until it yields a report or the attempts are exhausted."""
+    """Run the audit until it yields a report or the retry budget is spent.
+
+    Only a failure classified as transient earns another attempt. A missing
+    ``npm``, unparsable output or a report without severity counts is
+    deterministic: retrying it cannot change the verdict, and spending the
+    backoff budget on it only delays a failure that is already certain.
+    """
+    total = max(1, attempts)
     outcome = AuditOutcome(UNAVAILABLE, None, "no audit attempt was made")
-    for attempt in range(1, max(1, attempts) + 1):
+    for attempt in range(1, total + 1):
         outcome = run_npm_audit(cwd=cwd, timeout=timeout)
         if outcome.has_report:
             return outcome
         print(
-            f"npm audit attempt {attempt}/{attempts} did not return advisory data: "
+            f"npm audit attempt {attempt}/{total} did not return advisory data: "
             f"{outcome.detail}",
             file=sys.stderr,
         )
-        if attempt < attempts:
+        if not outcome.retryable:
+            print(
+                "Failure is not a transient transport/service error; failing closed "
+                "without further attempts.",
+                file=sys.stderr,
+            )
+            return outcome
+        if attempt < total:
             sleep(backoff * attempt)
     return outcome
 

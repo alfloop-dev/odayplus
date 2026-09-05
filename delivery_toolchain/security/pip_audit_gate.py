@@ -90,12 +90,19 @@ class AuditOutcome:
     `kind` is `REPORT` when the vulnerability database returned advisory data
     (with `findings` holding any vulnerability descriptions), or `UNAVAILABLE`
     when the audit never yielded a valid report.
+
+    `retryable` is True only for a failure a later attempt could plausibly
+    resolve: a transport timeout, a connection error or an upstream 5xx. A
+    missing executable, unparsable output or an incomplete report is
+    deterministic, so retrying it only burns the CI budget before failing
+    closed anyway.
     """
 
     kind: str
     findings: list[str] | None
     detail: str
     total_dependencies: int = 0
+    retryable: bool = False
 
     @property
     def has_report(self) -> bool:
@@ -122,6 +129,106 @@ def _extract_json(text: str) -> object | None:
     return None
 
 
+def _summarize(items: list[str], limit: int = 10) -> str:
+    """Join a bounded sample of `items` so one bad report cannot flood the log."""
+    shown = ", ".join(items[:limit])
+    if len(items) > limit:
+        shown += f", ... (+{len(items) - limit} more)"
+    return shown
+
+
+def classify_dependency_entries(raw_deps: list[object]) -> AuditOutcome:
+    """Turn pip-audit's `dependencies` array into a report, or refuse it.
+
+    pip-audit's JSON formatter represents a package it could *not* audit as
+    ``{"name": ..., "skip_reason": ...}`` with no ``vulns`` key -- an editable
+    install, a package missing from the index, a resolution failure. Such an
+    entry proves the package was seen, not that it was scanned. Treating it as
+    audited-and-clean (as counting names and defaulting a missing ``vulns`` to
+    "none" does) reports "no vulnerabilities" for a tree that was never fully
+    checked, which is the fail-open this gate exists to prevent.
+
+    So any skipped or malformed entry makes the whole report incomplete and the
+    gate stays closed. Anything already visible in the partial data is carried
+    into the detail so the failure is still diagnosable.
+    """
+    if not raw_deps:
+        return AuditOutcome(
+            UNAVAILABLE,
+            None,
+            "pip-audit returned an empty dependency report; no packages were audited",
+        )
+
+    findings: list[str] = []
+    seen_findings: set[str] = set()
+    unique_deps: set[str] = set()
+    skipped: list[str] = []
+    malformed: list[str] = []
+
+    for index, dep in enumerate(raw_deps):
+        if not isinstance(dep, dict):
+            malformed.append(f"entry {index} is {type(dep).__name__}, not an object")
+            continue
+
+        raw_name = dep.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            malformed.append(f"entry {index} has no usable 'name'")
+            continue
+        dep_name = raw_name.strip()
+
+        skip_reason = dep.get("skip_reason")
+        if skip_reason:
+            skipped.append(f"{dep_name} ({str(skip_reason).strip()[:120]})")
+            continue
+
+        vulns = dep.get("vulns")
+        if not isinstance(vulns, list):
+            malformed.append(f"{dep_name} carries no 'vulns' list, so it was never scanned")
+            continue
+
+        raw_ver = dep.get("version")
+        dep_ver = raw_ver.strip() if isinstance(raw_ver, str) else ""
+        unique_deps.add(f"{dep_name}=={dep_ver}")
+        for v in vulns:
+            vid = v.get("id", "VULN") if isinstance(v, dict) else "VULN"
+            finding_str = f"{dep_name} {dep_ver} ({vid})".strip()
+            if finding_str not in seen_findings:
+                seen_findings.add(finding_str)
+                findings.append(finding_str)
+
+    if skipped or malformed:
+        parts = [
+            f"{len(unique_deps)} of {len(raw_deps)} entries carried advisory data",
+        ]
+        if skipped:
+            parts.append(f"{len(skipped)} not audited: {_summarize(skipped)}")
+        if malformed:
+            parts.append(f"{len(malformed)} malformed: {_summarize(malformed)}")
+        if findings:
+            parts.append(
+                f"vulnerabilities already visible in the partial data: {_summarize(findings)}"
+            )
+        return AuditOutcome(
+            UNAVAILABLE,
+            None,
+            "pip-audit returned an incomplete report (" + "; ".join(parts) + ")",
+        )
+
+    if not unique_deps:
+        return AuditOutcome(
+            UNAVAILABLE,
+            None,
+            "pip-audit returned no audited packages; no dependency carried advisory data",
+        )
+
+    return AuditOutcome(
+        REPORT,
+        findings,
+        f"pip-audit returned advisory data for {len(unique_deps)} dependencies",
+        total_dependencies=len(unique_deps),
+    )
+
+
 def classify_pip_audit_output(stdout: str, stderr: str) -> AuditOutcome:
     """Classify `pip-audit --format json` output structurally into report vs unavailable."""
     payload = _extract_json(stdout)
@@ -129,50 +236,40 @@ def classify_pip_audit_output(stdout: str, stderr: str) -> AuditOutcome:
     if isinstance(payload, dict) and "dependencies" in payload:
         raw_deps = payload.get("dependencies")
         if isinstance(raw_deps, list):
-            if not raw_deps:
-                return AuditOutcome(
-                    UNAVAILABLE,
-                    None,
-                    "pip-audit returned an empty dependency report; no packages were audited",
-                )
-            findings: list[str] = []
-            seen_findings: set[str] = set()
-            unique_deps: set[str] = set()
-            for dep in raw_deps:
-                if not isinstance(dep, dict):
-                    continue
-                dep_name = dep.get("name", "unknown")
-                dep_ver = dep.get("version", "")
-                unique_deps.add(f"{dep_name}=={dep_ver}")
-                vulns = dep.get("vulns")
-                if isinstance(vulns, list) and vulns:
-                    for v in vulns:
-                        vid = v.get("id", "VULN") if isinstance(v, dict) else "VULN"
-                        finding_str = f"{dep_name} {dep_ver} ({vid})".strip()
-                        if finding_str not in seen_findings:
-                            seen_findings.add(finding_str)
-                            findings.append(finding_str)
-            return AuditOutcome(
-                REPORT,
-                findings,
-                f"pip-audit returned advisory data for {len(unique_deps)} dependencies",
-                total_dependencies=len(unique_deps),
-            )
+            return classify_dependency_entries(raw_deps)
         return AuditOutcome(UNAVAILABLE, None, "audit report 'dependencies' is not a list")
 
     combined = f"{stdout}\n{stderr}".strip()
     lowered = combined.lower()
 
+    # Only these three shapes are transport symptoms that a retry can clear.
+    # Anything else here is pip-audit failing deterministically, so it must not
+    # buy extra attempts.
     if "503" in combined or "service unavailable" in lowered or "502" in combined or "504" in combined:
-        detail = f"registry error (503/502/504 Service Unavailable): {combined[:400]}"
-    elif "timed out" in lowered or "timeout" in lowered:
-        detail = f"PyPI/OSV vulnerability database timeout: {combined[:400]}"
-    elif "connection" in lowered or "econnrefused" in lowered or "resolution failed" in lowered:
-        detail = f"connection error contacting PyPI/OSV: {combined[:400]}"
-    else:
-        detail = f"pip-audit produced no parsable report: {combined[:400]}"
+        return AuditOutcome(
+            UNAVAILABLE,
+            None,
+            f"registry error (503/502/504 Service Unavailable): {combined[:400]}",
+            retryable=True,
+        )
+    if "timed out" in lowered or "timeout" in lowered:
+        return AuditOutcome(
+            UNAVAILABLE,
+            None,
+            f"PyPI/OSV vulnerability database timeout: {combined[:400]}",
+            retryable=True,
+        )
+    if "connection" in lowered or "econnrefused" in lowered or "resolution failed" in lowered:
+        return AuditOutcome(
+            UNAVAILABLE,
+            None,
+            f"connection error contacting PyPI/OSV: {combined[:400]}",
+            retryable=True,
+        )
 
-    return AuditOutcome(UNAVAILABLE, None, detail)
+    return AuditOutcome(
+        UNAVAILABLE, None, f"pip-audit produced no parsable report: {combined[:400]}"
+    )
 
 
 def run_pip_audit(
@@ -216,12 +313,17 @@ def run_pip_audit(
             timeout=process_timeout,
         )
     except subprocess.TimeoutExpired:
+        # A hung request is the canonical transient failure, so this one is
+        # worth another attempt within the bounded budget.
         return AuditOutcome(
             UNAVAILABLE,
             None,
             f"pip-audit process timed out after {process_timeout:.0f}s contacting vulnerability database",
+            retryable=True,
         )
     except FileNotFoundError:
+        # A missing interpreter is an environment defect, not an outage: every
+        # further attempt fails identically.
         return AuditOutcome(UNAVAILABLE, None, "uv executable not found")
 
     outcome = classify_pip_audit_output(res.stdout, res.stderr)
@@ -233,6 +335,7 @@ def run_pip_audit(
             UNAVAILABLE,
             None,
             f"pip-audit exited with status {res.returncode}: {outcome.detail}",
+            retryable=outcome.retryable,
         )
     return outcome
 
@@ -248,9 +351,16 @@ def audit_with_retry(
     sleep=time.sleep,
     runner=subprocess.run,
 ) -> AuditOutcome:
-    """Run pip-audit until it yields a report or attempts are exhausted."""
+    """Run pip-audit until it yields a report or the retry budget is spent.
+
+    Only a failure classified as transient earns another attempt. A missing
+    executable, unparsable output or an incomplete report is deterministic:
+    retrying it cannot change the verdict, and spending the backoff budget on
+    it only delays a failure that is already certain.
+    """
+    total = max(1, attempts)
     outcome = AuditOutcome(UNAVAILABLE, None, "no audit attempt was made")
-    for attempt in range(1, max(1, attempts) + 1):
+    for attempt in range(1, total + 1):
         outcome = run_pip_audit(
             cwd=cwd,
             socket_timeout=socket_timeout,
@@ -262,11 +372,18 @@ def audit_with_retry(
         if outcome.has_report:
             return outcome
         print(
-            f"pip-audit attempt {attempt}/{attempts} did not return advisory data: "
+            f"pip-audit attempt {attempt}/{total} did not return advisory data: "
             f"{outcome.detail}",
             file=sys.stderr,
         )
-        if attempt < attempts:
+        if not outcome.retryable:
+            print(
+                "Failure is not a transient transport/service error; failing closed "
+                "without further attempts.",
+                file=sys.stderr,
+            )
+            return outcome
+        if attempt < total:
             sleep(backoff * attempt)
     return outcome
 

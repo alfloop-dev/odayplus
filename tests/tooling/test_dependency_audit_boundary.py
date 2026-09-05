@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -45,22 +46,55 @@ def test_ci_workflow_enforces_job_timeouts() -> None:
     assert 0 < jobs["product-e2e-gate"]["timeout-minutes"] <= 45
 
 
-def test_makefile_wires_both_audit_gates_without_bypass() -> None:
+def test_makefile_wires_the_python_audit_gate_without_bypass() -> None:
+    """`make security` runs the bounded pip gate and nothing else audit-shaped."""
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "dependency-audit: bootstrap" in makefile or "dependency-audit:" in makefile
-    assert "npm run audit:security" in makefile
     assert "delivery_toolchain/security/pip_audit_gate.py" in makefile
     assert "security: bootstrap dependency-audit" in makefile
     assert "delivery_toolchain/security/dependency_audit.py" not in makefile
     for variable in (
-        "NPM_AUDIT_TIMEOUT_SECONDS",
         "PIP_AUDIT_SOCKET_TIMEOUT_SECONDS",
         "PIP_AUDIT_PROCESS_TIMEOUT_SECONDS",
     ):
         assert variable in makefile
     assert "--socket-timeout" in makefile
     assert "--process-timeout" in makefile
+
+    # The bare `pip-audit --local` this replaced audited the ephemeral `uv run`
+    # overlay rather than the project environment, so it could report zero
+    # packages and still exit 0.
+    assert "pip-audit --local" not in makefile
+
+
+def test_makefile_does_not_reintroduce_a_second_npm_audit_entry_point() -> None:
+    """The live npm audit stays in Runtime Release; `make security` must not add a second.
+
+    dev 5442117e (ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001) converged the live
+    npm audit onto deploy-dev.yml. Re-adding it here would run a registry round
+    trip on every product PR and leave two npm audit paths to keep in agreement.
+    """
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    # Comments are allowed to explain the absence; only executable lines matter.
+    executable = "\n".join(
+        line for line in makefile.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "npm run audit:security" not in executable
+    assert "npm audit" not in executable
+
+    deploy = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert "delivery_toolchain/security/npm_audit_gate.py" in deploy
+
+
+def test_npm_audit_timeout_bound_lives_in_the_gate() -> None:
+    """With no Makefile variables to carry it, the npm bound is the gate's own default."""
+    assert math.isfinite(npm_audit_gate.DEFAULT_TIMEOUT_SECONDS)
+    assert 0 < npm_audit_gate.DEFAULT_TIMEOUT_SECONDS <= 900
+
+    source = (ROOT / "delivery_toolchain/security/npm_audit_gate.py").read_text(encoding="utf-8")
+    assert "ODP_NPM_AUDIT_TIMEOUT_SECONDS" in source
+    assert "timeout=timeout" in source
 
 
 def test_audit_gates_have_finite_defaults() -> None:
@@ -499,3 +533,296 @@ def test_pip_audit_rejects_non_finite_configuration(
 )
 def test_npm_audit_rejects_non_finite_configuration(argv: list[str]) -> None:
     assert npm_audit_gate.main(argv) == npm_audit_gate.EXIT_AUDIT_UNAVAILABLE
+
+
+# --- Incomplete pip-audit reports must not read as clean (review round 8, item 1) ---
+
+
+def _pip_payload(deps: list[Any]) -> str:
+    return json.dumps({"dependencies": deps, "fixes": []})
+
+
+def test_pip_audit_rejects_report_whose_only_entry_was_skipped() -> None:
+    """`{"name": ..., "skip_reason": ...}` means "not audited", not "no vulnerabilities".
+
+    pip-audit's JSON formatter uses this shape for a package it could not
+    resolve. Counting the name as an audited dependency turned a tree that was
+    never scanned into a PASS.
+    """
+    outcome = pip_audit_gate.classify_pip_audit_output(
+        _pip_payload([{"name": "unknown", "skip_reason": "Dependency not found on PyPI"}]), ""
+    )
+    assert not outcome.has_report
+    code, verdict = pip_audit_gate.evaluate(outcome)
+    assert code == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+    assert "incomplete report" in verdict
+    assert "unknown" in verdict
+    assert "Dependency not found on PyPI" in verdict
+
+
+def test_pip_audit_rejects_mixed_valid_and_skipped_report() -> None:
+    """A partially audited tree is still an unaudited tree."""
+    outcome = pip_audit_gate.classify_pip_audit_output(
+        _pip_payload(
+            [
+                {"name": "fastapi", "version": "0.110.0", "vulns": []},
+                {"name": "local-pkg", "version": "0.1.0", "skip_reason": "editable install"},
+            ]
+        ),
+        "",
+    )
+    assert not outcome.has_report
+    code, verdict = pip_audit_gate.evaluate(outcome)
+    assert code == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+    assert "1 of 2 entries carried advisory data" in verdict
+    assert "local-pkg" in verdict
+
+
+def test_pip_audit_incomplete_report_still_surfaces_visible_vulnerabilities() -> None:
+    """Failing closed must not throw away advisory data already in the payload."""
+    outcome = pip_audit_gate.classify_pip_audit_output(
+        _pip_payload(
+            [
+                {
+                    "name": "nltk",
+                    "version": "3.10.3",
+                    "vulns": [{"id": "PYSEC-2026-3740", "description": "unpatched"}],
+                },
+                {"name": "ghost-pkg", "skip_reason": "not found"},
+            ]
+        ),
+        "",
+    )
+    assert not outcome.has_report
+    code, verdict = pip_audit_gate.evaluate(outcome)
+    assert code == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+    assert "nltk 3.10.3 (PYSEC-2026-3740)" in verdict
+
+
+@pytest.mark.parametrize(
+    ("deps", "expected_fragment"),
+    [
+        ([{"name": "no-vulns-key", "version": "1.0.0"}], "never scanned"),
+        ([{"name": "wrong-type", "version": "1.0.0", "vulns": "none"}], "never scanned"),
+        (["just-a-string"], "not an object"),
+        ([{"version": "1.0.0", "vulns": []}], "no usable 'name'"),
+        ([{"name": "   ", "version": "1.0.0", "vulns": []}], "no usable 'name'"),
+    ],
+)
+def test_pip_audit_rejects_malformed_dependency_entries(
+    deps: list[Any], expected_fragment: str
+) -> None:
+    """A dependency entry the parser cannot read is not evidence of a clean scan."""
+    outcome = pip_audit_gate.classify_pip_audit_output(_pip_payload(deps), "")
+    assert not outcome.has_report
+    code, verdict = pip_audit_gate.evaluate(outcome)
+    assert code == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+    assert expected_fragment in verdict
+
+
+def test_pip_audit_rejects_report_with_zero_valid_entries() -> None:
+    """Every entry skipped is the same as no report at all."""
+    outcome = pip_audit_gate.classify_pip_audit_output(
+        _pip_payload(
+            [
+                {"name": "a", "skip_reason": "not found"},
+                {"name": "b", "skip_reason": "not found"},
+            ]
+        ),
+        "",
+    )
+    assert not outcome.has_report
+    assert outcome.total_dependencies == 0
+    code, verdict = pip_audit_gate.evaluate(outcome)
+    assert code == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+    assert "0 of 2 entries carried advisory data" in verdict
+
+
+def test_pip_audit_still_accepts_a_fully_scanned_report() -> None:
+    """The stricter parser must not reject well-formed reports."""
+    outcome = pip_audit_gate.classify_pip_audit_output(
+        _pip_payload(
+            [
+                {"name": "fastapi", "version": "0.110.0", "vulns": []},
+                {"name": "pydantic", "version": "2.6.0", "vulns": []},
+            ]
+        ),
+        "",
+    )
+    assert outcome.has_report
+    assert outcome.total_dependencies == 2
+    assert pip_audit_gate.evaluate(outcome)[0] == pip_audit_gate.EXIT_OK
+
+
+# --- Retry is limited to classified transient failures (review round 8, item 3) ---
+
+
+def _pip_retry_runner(outcomes: list[subprocess.CompletedProcess[str]]):
+    calls: list[list[str]] = []
+    queue = list(outcomes)
+
+    def runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return queue.pop(0) if len(queue) > 1 else queue[0]
+
+    return runner, calls
+
+
+def _completed(returncode: int, stdout: str = "", stderr: str = ""):
+    return subprocess.CompletedProcess(["pip-audit"], returncode, stdout=stdout, stderr=stderr)
+
+
+def test_pip_audit_retries_transient_service_errors() -> None:
+    runner, calls = _pip_retry_runner(
+        [_completed(2, stderr="503 Service Unavailable from pypi.org")]
+    )
+    outcome = pip_audit_gate.audit_with_retry(
+        attempts=3, backoff=0, sleep=lambda _s: None, runner=runner
+    )
+    assert not outcome.has_report
+    assert outcome.retryable
+    assert len(calls) == 3
+
+
+def test_pip_audit_recovers_when_a_transient_error_clears() -> None:
+    runner, calls = _pip_retry_runner(
+        [
+            _completed(2, stderr="HTTPSConnectionPool(host='pypi.org'): Read timed out."),
+            _completed(0, stdout=_pip_payload([{"name": "safe", "version": "1.0.0", "vulns": []}])),
+        ]
+    )
+    outcome = pip_audit_gate.audit_with_retry(
+        attempts=3, backoff=0, sleep=lambda _s: None, runner=runner
+    )
+    assert outcome.has_report
+    assert len(calls) == 2
+
+
+@pytest.mark.parametrize(
+    "process",
+    [
+        _completed(0, stdout="not json at all"),
+        _completed(0, stdout=_pip_payload([{"name": "ghost", "skip_reason": "not found"}])),
+        _completed(0, stdout=_pip_payload([])),
+        _completed(0, stdout=json.dumps({"dependencies": {"not": "a list"}})),
+    ],
+    ids=["unparsable", "incomplete-report", "empty-report", "dependencies-not-a-list"],
+)
+def test_pip_audit_does_not_retry_deterministic_failures(
+    process: subprocess.CompletedProcess[str],
+) -> None:
+    """Retrying a deterministic failure only delays a verdict that cannot change."""
+    runner, calls = _pip_retry_runner([process])
+    outcome = pip_audit_gate.audit_with_retry(
+        attempts=3, backoff=0, sleep=lambda _s: None, runner=runner
+    )
+    assert not outcome.has_report
+    assert not outcome.retryable
+    assert len(calls) == 1
+
+
+def test_pip_audit_does_not_retry_a_missing_executable() -> None:
+    calls: list[list[str]] = []
+
+    def runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        raise FileNotFoundError("No such file or directory: 'uv'")
+
+    outcome = pip_audit_gate.audit_with_retry(
+        attempts=3, backoff=0, sleep=lambda _s: None, runner=runner
+    )
+    assert not outcome.retryable
+    assert len(calls) == 1
+    assert pip_audit_gate.evaluate(outcome)[0] == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+
+
+def test_pip_audit_does_not_retry_a_vulnerability_report() -> None:
+    """A real finding is a verdict, not an outage; it must not be retried to green."""
+    runner, calls = _pip_retry_runner(
+        [
+            _completed(
+                1,
+                stdout=_pip_payload(
+                    [{"name": "nltk", "version": "3.10.3", "vulns": [{"id": "PYSEC-2026-3740"}]}]
+                ),
+            )
+        ]
+    )
+    outcome = pip_audit_gate.audit_with_retry(
+        attempts=3, backoff=0, sleep=lambda _s: None, runner=runner
+    )
+    assert len(calls) == 1
+    assert pip_audit_gate.evaluate(outcome)[0] == pip_audit_gate.EXIT_VULNERABLE
+
+
+@pytest.mark.parametrize(
+    ("payload", "retryable"),
+    [
+        ({"statusCode": 503, "message": "Service Unavailable"}, True),
+        ({"statusCode": 429, "message": "Too Many Requests"}, True),
+        (
+            {
+                "statusCode": 404,
+                "message": "404 Not Found - POST "
+                "https://registry.npmjs.org/-/npm/v1/security/audits/quick",
+            },
+            True,
+        ),
+        ({"message": "request to https://registry.npmjs.org failed, reason: ETIMEDOUT"}, True),
+        ({"statusCode": 401, "message": "Unauthorized"}, False),
+        ({"statusCode": 403, "message": "Forbidden"}, False),
+    ],
+)
+def test_npm_audit_classifies_registry_error_retryability(
+    payload: dict[str, Any], retryable: bool
+) -> None:
+    outcome = npm_audit_gate.classify_audit_output(json.dumps(payload), "")
+    assert not outcome.has_report
+    assert outcome.retryable is retryable
+    assert npm_audit_gate.evaluate(outcome, "high")[0] == npm_audit_gate.EXIT_AUDIT_UNAVAILABLE
+
+
+def test_npm_audit_does_not_retry_a_malformed_report(monkeypatch) -> None:
+    """A report without severity counts is deterministic, so one attempt is enough."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps({"auditReportVersion": 2, "metadata": {}}), stderr=""
+        )
+
+    monkeypatch.setattr(npm_audit_gate.subprocess, "run", fake_run)
+    outcome = npm_audit_gate.audit_with_retry(attempts=3, backoff=0, sleep=lambda _s: None)
+    assert not outcome.has_report
+    assert not outcome.retryable
+    assert len(calls) == 1
+
+
+def test_npm_audit_does_not_retry_a_missing_executable(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        raise FileNotFoundError("No such file or directory: 'npm'")
+
+    monkeypatch.setattr(npm_audit_gate.subprocess, "run", fake_run)
+    outcome = npm_audit_gate.audit_with_retry(attempts=3, backoff=0, sleep=lambda _s: None)
+    assert not outcome.retryable
+    assert len(calls) == 1
+    assert "npm executable not found" in outcome.detail
+
+
+def test_npm_audit_retries_a_transient_registry_error(monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout=json.dumps({"statusCode": 503, "message": "Service Unavailable"}), stderr=""
+        )
+
+    monkeypatch.setattr(npm_audit_gate.subprocess, "run", fake_run)
+    outcome = npm_audit_gate.audit_with_retry(attempts=3, backoff=0, sleep=lambda _s: None)
+    assert not outcome.has_report
+    assert len(calls) == 3
