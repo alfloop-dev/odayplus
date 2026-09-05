@@ -1475,6 +1475,7 @@ def test_durable_intervention_repository_persists_adjust_lineage(tmp_path: pytes
     """ODP-FR-INTV-006: DurableInterventionRepository preserves predecessor_id, replacement_id, and adjustment records."""
     db_file = tmp_path / "durable_interventions.db"
     engine = SqliteEngine(db_file)
+    _seed_store(engine, store_id="store-durable-1")
     store = SqliteDocumentStore(engine)
     repo = DurableInterventionRepository(store)
 
@@ -1921,7 +1922,7 @@ def test_api_production_entry_relational_write_failure_does_not_leave_document(
     original_execute = engine.execute
 
     def fail_intervention_write(sql: str, params: tuple = ()):
-        if sql.lstrip().upper().startswith("INSERT INTO interventions"):
+        if sql.lstrip().upper().startswith("INSERT INTO INTERVENTIONS"):
             raise RuntimeError("relational intervention write failed")
         return original_execute(sql, params)
 
