@@ -213,7 +213,8 @@ def _run(harness: dict, dispatch, *, loader=None, ref_resolver=None) -> bool:
         commit_status=harness["commit"],
         private_key_loader=loader or (lambda _: harness["private_key"]),
         dispatch=dispatch,
-        ref_resolver=ref_resolver or (lambda root, ref: harness["request"]["candidate_sha"]),
+        ref_resolver=ref_resolver
+        or (lambda root, ref, *, repository=None: harness["request"]["candidate_sha"]),
         now=NOW,
     )
 
@@ -545,7 +546,7 @@ def test_dispatch_ref_ancestry_real_git_evidence_only_passes(tmp_path: Path, mon
         commit_status=lambda _, cand: status_path.write_text(json.dumps(cand), encoding="utf-8") or True,
         private_key_loader=lambda _: private_key,
         dispatch=lambda **kwargs: dispatched.append(kwargs),
-        ref_resolver=lambda root, ref: dev_sha,
+        ref_resolver=lambda root, ref, *, repository=None: dev_sha,
         now=NOW,
     )
     assert len(dispatched) == 1
@@ -559,26 +560,200 @@ def test_dispatch_ref_ancestry_real_git_evidence_only_passes(tmp_path: Path, mon
     assert record["receipt"]["dispatch_ref_sha"] == dev_sha
 
 
-def test_resolve_ref_sha_remote_and_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+# ---------------------------------------------------------------------------
+# ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001: `resolve_ref_sha` reads one
+# remote and nothing else.
+#
+# These exercise real `git ls-remote` against a real repository. The configured
+# repository's HTTPS URL is redirected with git's own `url.<base>.insteadOf`, so
+# production code builds and runs exactly the command it runs in the Supervisor
+# -- no network, no patched `subprocess`, and no test-only branch inside
+# `resolve_ref_sha` for the tests to accidentally certify.
+
+CONFIGURED_REPOSITORY = "example/odayplus"
+CONFIGURED_REMOTE_URL = f"https://github.com/{CONFIGURED_REPOSITORY}.git"
+
+
+def make_repo_with_remote(tmp_path: Path, *, remote_path: Path | None = None):
+    """A work repo whose configured-repository URL points at a local bare repo."""
+
     repo, run_git = make_repo(tmp_path)
+    remote = remote_path if remote_path is not None else tmp_path / "configured-remote.git"
+    if remote_path is None:
+        subprocess.run(
+            ["git", "init", "--bare", str(remote)], capture_output=True, text=True, check=True
+        )
+    run_git("config", f"url.{remote}.insteadOf", CONFIGURED_REMOTE_URL)
+    run_git("remote", "add", "configured", str(remote))
+    return repo, run_git, remote
+
+
+def test_resolve_ref_sha_reads_the_configured_remote_not_the_local_tip(tmp_path: Path) -> None:
+    """A local branch that has drifted from the remote is not the answer."""
+
+    repo, run_git, _remote = make_repo_with_remote(tmp_path)
+    (repo / "file.txt").write_text("remote tip\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "remote tip")
+    run_git("branch", "-M", "dev")
+    run_git("push", "configured", "dev")
+    remote_sha = run_git("rev-parse", "HEAD")
+
+    # Local `dev` and the local `origin/dev` mirror both move ahead of the
+    # remote. Before this fix either one would have been signed for.
+    (repo / "file.txt").write_text("local only\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "local drift the remote never saw")
+    local_sha = run_git("rev-parse", "HEAD")
+    run_git("update-ref", "refs/remotes/origin/dev", local_sha)
+    assert local_sha != remote_sha
+
+    assert (
+        bridge.resolve_ref_sha(repo, "dev", repository=CONFIGURED_REPOSITORY) == remote_sha
+    )
+
+
+def test_resolve_ref_sha_refuses_when_the_configured_remote_cannot_be_read(tmp_path: Path) -> None:
+    """An unreadable remote is unknown, and unknown is not "use whatever is local"."""
+
+    repo, run_git, _remote = make_repo_with_remote(
+        tmp_path, remote_path=tmp_path / "this-remote-does-not-exist.git"
+    )
+    (repo / "file.txt").write_text("hello\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "init")
+    run_git("branch", "-M", "dev")
+    local_sha = run_git("rev-parse", "HEAD")
+    run_git("update-ref", "refs/remotes/origin/dev", local_sha)
+
+    assert bridge.resolve_ref_sha(repo, "dev", repository=CONFIGURED_REPOSITORY) is None
+
+
+def test_resolve_ref_sha_refuses_an_unknown_ref_on_a_readable_remote(tmp_path: Path) -> None:
+    repo, run_git, _remote = make_repo_with_remote(tmp_path)
+    (repo / "file.txt").write_text("hello\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "init")
+    run_git("branch", "-M", "dev")
+    run_git("push", "configured", "dev")
+
+    assert bridge.resolve_ref_sha(repo, "no-such-branch", repository=CONFIGURED_REPOSITORY) is None
+
+
+def test_resolve_ref_sha_refuses_without_a_configured_repository(tmp_path: Path) -> None:
+    """No repository means no remote to be definitive about; local is not a substitute."""
+
+    repo, run_git, _remote = make_repo_with_remote(tmp_path)
+    (repo / "file.txt").write_text("hello\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "init")
+    run_git("branch", "-M", "dev")
+    run_git("push", "configured", "dev")
+
+    assert bridge.resolve_ref_sha(repo, "dev") is None
+    assert bridge.resolve_ref_sha(repo, "dev", repository="") is None
+    assert bridge.resolve_ref_sha(repo, "dev", repository="not-an-owner-slash-repo") is None
+
+
+def test_resolve_ref_sha_peels_an_annotated_tag_to_its_commit(tmp_path: Path) -> None:
+    """GitHub runs the commit a tag points at, never the tag object."""
+
+    repo, run_git, _remote = make_repo_with_remote(tmp_path)
+    (repo / "file.txt").write_text("hello\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "init")
+    commit_sha = run_git("rev-parse", "HEAD")
+    run_git("tag", "-a", "release-1", "-m", "annotated release tag")
+    run_git("push", "configured", "release-1")
+    tag_object_sha = run_git("rev-parse", "release-1")
+    assert tag_object_sha != commit_sha
+
+    resolved = bridge.resolve_ref_sha(repo, "release-1", repository=CONFIGURED_REPOSITORY)
+    assert resolved == commit_sha
+
+
+def test_resolve_ref_sha_resolves_a_lightweight_tag(tmp_path: Path) -> None:
+    repo, run_git, _remote = make_repo_with_remote(tmp_path)
+    (repo / "file.txt").write_text("hello\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "init")
+    commit_sha = run_git("rev-parse", "HEAD")
+    run_git("tag", "release-2")
+    run_git("push", "configured", "release-2")
+
+    assert bridge.resolve_ref_sha(repo, "release-2", repository=CONFIGURED_REPOSITORY) == commit_sha
+
+
+def test_resolve_ref_sha_refuses_a_branch_and_tag_of_the_same_name(tmp_path: Path) -> None:
+    """`workflow_dispatch` takes a bare name; a collision has no single answer."""
+
+    repo, run_git, _remote = make_repo_with_remote(tmp_path)
+    (repo / "file.txt").write_text("one\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "one")
+    run_git("branch", "-M", "dev")
+    run_git("tag", "shared-name")
+    run_git("push", "configured", "shared-name")
+
+    (repo / "file.txt").write_text("two\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "two")
+    run_git("branch", "shared-name")
+    run_git("push", "configured", "refs/heads/shared-name:refs/heads/shared-name")
+
+    assert bridge.resolve_ref_sha(repo, "shared-name", repository=CONFIGURED_REPOSITORY) is None
+
+
+def test_resolve_ref_sha_accepts_a_branch_and_tag_that_agree(tmp_path: Path) -> None:
+    repo, run_git, _remote = make_repo_with_remote(tmp_path)
+    (repo / "file.txt").write_text("one\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "one")
+    run_git("branch", "-M", "agreeing-name")
+    run_git("tag", "agreeing-name")
+    commit_sha = run_git("rev-parse", "HEAD")
+    run_git("push", "configured", "refs/heads/agreeing-name:refs/heads/agreeing-name")
+    run_git("push", "configured", "refs/tags/agreeing-name:refs/tags/agreeing-name")
+
+    assert (
+        bridge.resolve_ref_sha(repo, "agreeing-name", repository=CONFIGURED_REPOSITORY)
+        == commit_sha
+    )
+
+
+def test_resolve_ref_sha_refuses_a_raw_sha_as_a_ref(tmp_path: Path) -> None:
+    repo, run_git, _remote = make_repo_with_remote(tmp_path)
     (repo / "file.txt").write_text("hello\n")
     run_git("add", ".")
     run_git("commit", "-m", "init")
     head_sha = run_git("rev-parse", "HEAD")
 
-    # 1. Local resolution when git ls-remote fails/times out
-    resolved = bridge.resolve_ref_sha(repo, "HEAD")
-    assert resolved == head_sha
+    assert bridge.resolve_ref_sha(repo, head_sha, repository=CONFIGURED_REPOSITORY) is None
 
-    # 2. Remote resolution when git ls-remote returns heads
-    class FakeProc:
-        returncode = 0
-        stdout = f"{head_sha}\trefs/heads/dev\n"
 
-    monkeypatch.setattr(bridge.subprocess, "run", lambda *args, **kwargs: FakeProc())
-    resolved_remote = bridge.resolve_ref_sha(repo, "dev", repository="example/odayplus")
-    assert resolved_remote == head_sha
+def test_unreadable_remote_blocks_issuance_even_with_a_matching_local_ref(
+    tmp_path: Path,
+) -> None:
+    """The end of the chain: an unknown remote blocks, it does not sign locally."""
 
+    repo, run_git, _remote = make_repo_with_remote(
+        tmp_path, remote_path=tmp_path / "unreachable.git"
+    )
+    (repo / "file.txt").write_text("hello\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "init")
+    run_git("branch", "-M", "dev")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    settings = {
+        "dispatch_ref": "dev",
+        "github_repository": CONFIGURED_REPOSITORY,
+    }
+    ref_sha, errors = bridge.check_dispatch_ref_errors(settings, candidate_sha, repo)
+    assert ref_sha is None
+    assert errors
+    assert any("does not resolve to exactly one commit" in error for error in errors)
+    assert any(CONFIGURED_REPOSITORY in error for error in errors)
 
 
 def test_dispatch_ref_ancestry_real_git_non_evidence_drift_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -640,7 +815,7 @@ def test_dispatch_ref_ancestry_real_git_non_evidence_drift_blocks(tmp_path: Path
         commit_status=lambda _, cand: status_path.write_text(json.dumps(cand), encoding="utf-8") or True,
         private_key_loader=lambda _: pytest.fail("non-evidence drift must not load signing key"),
         dispatch=lambda **kwargs: dispatched.append(kwargs),
-        ref_resolver=lambda root, ref: dev_sha,
+        ref_resolver=lambda root, ref, *, repository=None: dev_sha,
         now=NOW,
     )
     assert dispatched == []
@@ -655,7 +830,7 @@ def test_dispatch_ref_non_ancestor_blocks(harness: dict) -> None:
     assert _run(
         harness,
         lambda **kwargs: dispatched.append(kwargs),
-        ref_resolver=lambda root, ref: "f" * 40,
+        ref_resolver=lambda root, ref, *, repository=None: "f" * 40,
         loader=lambda _: pytest.fail("non-ancestor ref must stop before Secret Manager"),
     )
     assert dispatched == []
@@ -669,13 +844,16 @@ def test_dispatch_ref_unresolvable_blocks(harness: dict) -> None:
     assert _run(
         harness,
         lambda **kwargs: dispatched.append(kwargs),
-        ref_resolver=lambda root, ref: None,
+        ref_resolver=lambda root, ref, *, repository=None: None,
         loader=lambda _: pytest.fail("unresolvable ref must stop before Secret Manager"),
     )
     assert dispatched == []
     record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
     assert record["state"] == "blocked"
-    assert any("cannot be resolved" in error for error in record["receipt"]["errors"])
+    assert any(
+        "does not resolve to exactly one commit" in error
+        for error in record["receipt"]["errors"]
+    )
 
 
 def test_runtime_release_inputs_missing_components_raises_dispatch_error() -> None:

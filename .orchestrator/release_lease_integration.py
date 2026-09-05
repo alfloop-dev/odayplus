@@ -51,6 +51,10 @@ REQUEST_KIND = "runtime_release_deploy"
 RUNTIME_RELEASE_WORKFLOW_PATH = ".github/workflows/deploy-dev.yml"
 RUNTIME_RELEASE_WORKFLOW_ID = "deploy-dev.yml"
 DEFAULT_DISPATCH_REF = "dev"
+# A read-only `git ls-remote` against one repository; long enough to survive a
+# slow round trip, short enough that a hung remote blocks the lease instead of
+# the whole Supervisor cycle.
+REMOTE_QUERY_TIMEOUT_SECONDS = 15
 DEFAULT_SECRET_REFERENCE = (
     "projects/767864276141/secrets/odp-release-lease-private-key"
 )
@@ -525,56 +529,78 @@ def _runtime_release_inputs(lease: dict[str, Any], request: dict[str, Any], mani
     }
 
 
-def resolve_ref_sha(root: Path, ref: str, *, repository: str | None = None) -> str | None:
-    """Resolve a git branch or tag reference to its exact commit SHA.
+def _remote_ref_lines(root: Path, remote: str, patterns: list[str]) -> list[str] | None:
+    """Return ``git ls-remote`` output lines, or ``None`` if the remote cannot be read.
 
-    First queries read-only remote references (e.g. git ls-remote) to verify
-    the remote tip matches the repository, falling back to local refs in isolated
-    or offline test environments.
+    ``None`` means "unknown", never "no such ref": a network failure, an
+    authentication failure, and a timeout are all indistinguishable from the
+    outside, so none of them may be reported as a definitive answer.
     """
-    targets: list[str] = []
-    if repository:
-        targets.append(f"https://github.com/{repository}.git")
-    targets.append("origin")
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", remote, *patterns],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=REMOTE_QUERY_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.splitlines()
 
-    for target in targets:
-        try:
-            proc = subprocess.run(
-                ["git", "ls-remote", target, f"refs/heads/{ref}", f"refs/tags/{ref}", ref],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=8,
-            )
-            if proc.returncode == 0 and proc.stdout:
-                for line in proc.stdout.splitlines():
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        sha, ref_name = parts[0].strip(), parts[1].strip()
-                        if (
-                            ref_name in (f"refs/heads/{ref}", f"refs/tags/{ref}", f"refs/tags/{ref}^{{}}", ref)
-                            and SHA_PATTERN.fullmatch(sha)
-                        ):
-                            return sha
-        except (OSError, subprocess.TimeoutExpired):
-            pass
 
-    for spec in [f"refs/remotes/origin/{ref}", f"refs/heads/{ref}", ref]:
-        try:
-            proc = subprocess.run(
-                ["git", "rev-parse", "--verify", f"{spec}^{{commit}}"],
-                cwd=root,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=5,
-            )
-            if proc.returncode == 0 and SHA_PATTERN.fullmatch(proc.stdout.strip()):
-                return proc.stdout.strip()
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-    return None
+def resolve_ref_sha(root: Path, ref: str, *, repository: str | None = None) -> str | None:
+    """Resolve *ref* to the exact commit the configured GitHub repository holds.
+
+    Only the configured repository's remote is read. There is deliberately no
+    fallback to ``origin``, to `refs/remotes/*`, or to local branches: the lease
+    binds the deploy to the commit GitHub will actually check out, and a local
+    clone is evidence of what some worktree fetched at some point, not of what
+    the remote holds now. A ref that cannot be read as an exact commit -- unknown,
+    ambiguous, unreachable, or unpeelable -- returns ``None`` so the caller blocks
+    rather than signing a lease against a guess.
+
+    Annotated tags are peeled: GitHub runs the commit a tag points at, so the tag
+    object's own SHA is never the answer.
+    """
+    if repository is None or not _REPOSITORY.fullmatch(str(repository).strip()):
+        return None
+    if not ref or SHA_PATTERN.fullmatch(ref) or not _REF_PATTERN.fullmatch(ref):
+        return None
+
+    remote = f"https://github.com/{str(repository).strip()}.git"
+    branch_ref = f"refs/heads/{ref}"
+    tag_ref = f"refs/tags/{ref}"
+    peeled_tag_ref = f"{tag_ref}^{{}}"
+
+    lines = _remote_ref_lines(root, remote, [branch_ref, tag_ref, peeled_tag_ref])
+    if lines is None:
+        return None
+
+    found: dict[str, str] = {}
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        sha, ref_name = parts[0].strip(), parts[1].strip()
+        if ref_name in (branch_ref, tag_ref, peeled_tag_ref) and SHA_PATTERN.fullmatch(sha):
+            found[ref_name] = sha
+
+    # An annotated tag reports the tag object under `refs/tags/<ref>` and the
+    # commit it points at under `refs/tags/<ref>^{}`. A lightweight tag reports
+    # only the former, which is already a commit.
+    tag_sha = found.get(peeled_tag_ref) or found.get(tag_ref)
+    branch_sha = found.get(branch_ref)
+
+    if branch_sha and tag_sha and branch_sha != tag_sha:
+        # `workflow_dispatch` takes a bare ref name and resolves the collision
+        # server-side. Which commit runs is then not something the Supervisor can
+        # state, so it does not sign a lease claiming to know.
+        return None
+    return branch_sha or tag_sha
 
 
 def check_dispatch_ref_errors(
@@ -595,13 +621,14 @@ def check_dispatch_ref_errors(
         return None, ["dispatch_ref must be a git branch or tag reference, not a commit SHA"]
     if not _REF_PATTERN.fullmatch(dispatch_ref):
         return None, [f"dispatch_ref {dispatch_ref!r} is not a valid git branch or tag reference"]
-    repo = settings.get("github_repository")
-    try:
-        ref_sha = ref_resolver(root, dispatch_ref, repository=repo)
-    except TypeError:
-        ref_sha = ref_resolver(root, dispatch_ref)
+    repository = str(settings.get("github_repository") or "").strip()
+    ref_sha = ref_resolver(root, dispatch_ref, repository=repository)
     if ref_sha is None:
-        return None, [f"dispatch_ref {dispatch_ref!r} cannot be resolved to a commit in git"]
+        return None, [
+            f"dispatch_ref {dispatch_ref!r} does not resolve to exactly one commit in "
+            f"{repository or 'the configured repository'}; a lease is never signed against "
+            "a local ref or an unreadable remote"
+        ]
     ancestry_errors = check_candidate_ancestry(candidate_sha, ref_sha, root)
     return ref_sha, ancestry_errors
 
@@ -713,7 +740,7 @@ def process_release_lease_issuance(
     commit_status: Callable[[dict[str, Any], dict[str, Any]], bool],
     private_key_loader: Callable[[str], Any] = load_private_key_from_secret_reference,
     dispatch: Callable[..., None] = dispatch_runtime_release,
-    ref_resolver: Callable[[Path, str], str | None] = resolve_ref_sha,
+    ref_resolver: Callable[..., str | None] = resolve_ref_sha,
     now: datetime | None = None,
 ) -> bool:
     """Run release issuance within the existing Supervisor cycle.
@@ -1003,6 +1030,7 @@ __all__ = [
     "DEFAULT_DISPATCH_REF",
     "DEFAULT_SECRET_REFERENCE",
     "ISSUANCE_FIELD",
+    "REMOTE_QUERY_TIMEOUT_SECONDS",
     "REQUEST_FIELD",
     "REQUEST_KIND",
     "RUNTIME_RELEASE_WORKFLOW_ID",

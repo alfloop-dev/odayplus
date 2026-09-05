@@ -674,38 +674,70 @@ jobs:
     # The admission job is itself protected by the selected GitHub environment.
     # Its variable-binding gate runs before any lease-state access, so hosted
     # admission cannot accidentally use ambient/local credentials.
+    #
+    # ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001: admission is the one job
+    # that checks out the dispatch event SHA (E), not the candidate SHA (C).
+    #
+    # The registry that records the release decision is written as evidence
+    # *after* C is built, on an evidence-only descendant E. Checking out C
+    # therefore hands admission the registry as it stood before the decision
+    # existed -- a stale no-go -- and no amount of extra ancestry checking can
+    # conjure the approval into a tree that predates it. Reading the registry at
+    # E is what makes the decision visible; `check_candidate_ancestry(C, E)`
+    # below is what keeps E honest, by refusing any E whose commits since C
+    # touch anything but evidence paths. Every other identity in this job --
+    # the lease, the images, the transported manifest, its expected SHA, and the
+    # deploy itself -- stays bound to C.
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.release_sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
-      - name: Assert exact release SHA is checked out
+      - name: Assert the dispatch event SHA is checked out
         env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
+          EVENT_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          if [[ ! "${EVENT_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Error: dispatch event SHA (${EVENT_SHA}) is not an exact 40-character commit SHA." >&2
+            exit 1
+          fi
           head_sha="$(git rev-parse HEAD)"
-          if [ "${head_sha}" != "${RELEASE_SHA}" ]; then
-            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
+          if [ "${head_sha}" != "${EVENT_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match the dispatch event SHA (${EVENT_SHA})." >&2
             exit 1
           fi
 
-      - name: Validate candidate ancestry against dispatch GITHUB_SHA
+      # The Supervisor already refused to sign a lease whose dispatch_ref tip
+      # was not an evidence-only descendant of C. This re-derives that verdict
+      # from the SHA GitHub actually resolved the ref to, on the runner, so a
+      # ref that moved between dispatch and admission -- or a run started by
+      # any other route -- cannot smuggle new code in behind an old approval.
+      - name: Validate candidate ancestry against the dispatch event SHA
         env:
+          EVENT_SHA: ${{ github.sha }}
           RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
-          if [ -n "${GITHUB_SHA:-}" ] && [ "${GITHUB_SHA}" != "${RELEASE_SHA}" ]; then
-            python3 -c "
+          python3 -c '
           import sys
+          from pathlib import Path
+
           from delivery_toolchain.e2e.check_release_gate_registry import check_candidate_ancestry
-          errors = check_candidate_ancestry('${RELEASE_SHA}', '${GITHUB_SHA}')
+
+          candidate_sha, event_sha = sys.argv[1], sys.argv[2]
+          errors = check_candidate_ancestry(candidate_sha, event_sha, Path.cwd())
           if errors:
-              print('Error: candidate release_sha is not an evidence-only ancestor of event GITHUB_SHA:', errors, file=sys.stderr)
+              print(
+                  "Error: inputs.release_sha is not an evidence-only ancestor of the "
+                  "dispatch event SHA; the checked out tree carries more than evidence.",
+                  file=sys.stderr,
+              )
+              for error in errors:
+                  print(f"- {error}", file=sys.stderr)
               sys.exit(1)
-          "
-          fi
+          ' "${RELEASE_SHA}" "${EVENT_SHA}"
 
       - name: Validate immutable image handoff
         env:
@@ -888,9 +920,18 @@ jobs:
       # it authorises deploying *these* artifacts, and the images handed back
       # from the build phase must be the ones `manifest.components` records.
       # Without that binding a valid lease would admit any digest at all.
+      #
+      # `--sha` is the event SHA (E), because that is the tree this registry was
+      # read from and `registry_admission_errors` re-runs
+      # `check_candidate_ancestry(registry.candidate_sha, --sha)` against it.
+      # Passing C here would compare the registry's candidate against itself and
+      # admit a registry that never named this run's tree. The lease stays bound
+      # to C through `expected_candidate_sha`, which the verifier reads from the
+      # registry rather than from `--sha`, so widening `--sha` to E does not
+      # widen what the lease authorises.
       - name: Validate supervisor release admission
         env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
+          EVENT_SHA: ${{ github.sha }}
           RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_TASK_ID: ${{ inputs.task_id }}
           RELEASE_LEASE: ${{ inputs.release_lease }}
@@ -906,7 +947,7 @@ jobs:
           umask 077
           printf '%s' "${RELEASE_LEASE}" | base64 -d > "${RUNNER_TEMP}/release-lease.json"
           python3 delivery_toolchain/release/check_runtime_admission.py \
-            --sha "${RELEASE_SHA}" \
+            --sha "${EVENT_SHA}" \
             --environment "${RELEASE_ENVIRONMENT}" \
             --task-id "${RELEASE_TASK_ID}" \
             --action deploy \
