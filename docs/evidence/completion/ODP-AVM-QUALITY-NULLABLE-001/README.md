@@ -21,8 +21,8 @@ No valuation report or valuation card is persisted on that path.
 | Durable case | `shared/infrastructure/persistence/repositories.py::DurableAVMRepository` | Pickle persistence preserves `None` without coercion; only cases whose payload predates the status field are persisted as `legacy_unknown` |
 | Historical reports | `ValuationReport.with_legacy_quality_disposition`, `latest_report`, `report_history` | Legacy reports are persisted as `legacy_unknown_downgraded`, expose only `low` confidence, and cannot carry an actionable old approval |
 | Historical data rooms | `DataRoom.with_legacy_quality_disposition`, `get_dataroom` | Legacy rooms retain historical prices for audit but expose a named low-confidence downgrade; rebuild and export are rejected |
-| PostgreSQL | `infra/db/migrations/000021_avm_quality_score_nullable.sql` and Alembic `0016` | Drops `NOT NULL` and `DEFAULT`; old rows retain values and receive `legacy_unknown` status |
-| SQLite | `infra/db/migrations/000021_avm_quality_score_nullable_sqlite.sql` | Rebuilds table with nullable score; commits before/after PRAGMAs to retain `foreign_keys=1` and reject orphan child inserts on fresh and restarted engines |
+| PostgreSQL | `infra/db/migrations/000023_avm_quality_score_nullable.sql` and Alembic `0017` | Drops `NOT NULL` and `DEFAULT`; old rows retain values and receive `legacy_unknown` status |
+| SQLite | `infra/db/migrations/000023_avm_quality_score_nullable_sqlite.sql` | Rebuilds table with nullable score; commits before/after PRAGMAs to retain `foreign_keys=1` and reject orphan child inserts on fresh and restarted engines |
 | API contract | `packages/openapi-client/openapi.json` | `quality_score` is `number | null` with no default and is not required |
 | TypeScript | `packages/openapi-client/src/generated/types.ts`, `src/index.ts` | `quality_score?: number | null` |
 | Governance | `delivery_toolchain/governance/measurement_default_exemptions.json` | AVM exemption removed in the same change |

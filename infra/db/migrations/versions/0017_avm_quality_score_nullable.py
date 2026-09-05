@@ -1,7 +1,7 @@
 """Make snapshot quality nullable and preserve legacy quality semantics.
 
-Revision ID: 0016
-Revises: 0015
+Revision ID: 0017
+Revises: 0016
 Task: ODP-AVM-QUALITY-NULLABLE-001
 
 Existing rows are not rewritten. Their old ``1.00`` values remain available, but
@@ -17,14 +17,14 @@ from pathlib import Path
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0016"
-down_revision: str = "0015"
+revision: str = "0017"
+down_revision: str = "0016"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    sql_file_path = Path(__file__).resolve().parents[1] / "000021_avm_quality_score_nullable.sql"
+    sql_file_path = Path(__file__).resolve().parents[1] / "000023_avm_quality_score_nullable.sql"
     op.execute(sa.text(sql_file_path.read_text(encoding="utf-8")))
 
 

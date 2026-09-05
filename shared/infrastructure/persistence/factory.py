@@ -71,6 +71,7 @@ class PersistenceBundle:
     machine_repository: Any
     transaction_repository: Any
     machine_cycle_repository: Any
+    manual_correction_repository: Any = None
     external_fetch_state_store: Any = None
     notification_repository: Any = None
     outbox_repository: Any = None
@@ -200,6 +201,7 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         InMemoryBrandRepository,
         InMemoryMachineCycleRepository,
         InMemoryMachineRepository,
+        InMemoryManualCorrectionRepository,
         InMemoryStoreRepository,
         InMemoryTenantRepository,
         InMemoryTransactionRepository,
@@ -212,10 +214,12 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         repository=InMemorySessionRepository(),
         config=SessionConfig(),
     )
+    mem_corr_repo = InMemoryManualCorrectionRepository()
+    mem_audit_log = InMemoryAuditLog(worm_sink=worm_sink)
 
     return PersistenceBundle(
         mode="memory",
-        audit_log=InMemoryAuditLog(worm_sink=worm_sink),
+        audit_log=mem_audit_log,
         evidence_store=InMemoryEvidenceBundleStore(worm_sink=worm_sink),
         job_queue=InMemoryJobQueue(),
         avm_repository=InMemoryAVMRepository(),
@@ -238,7 +242,10 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
 
         tenant_repository=InMemoryTenantRepository(),
         brand_repository=InMemoryBrandRepository(),
-        address_location_repository=InMemoryAddressLocationRepository(),
+        address_location_repository=InMemoryAddressLocationRepository(
+            _corrections=mem_corr_repo
+        ),
+        manual_correction_repository=mem_corr_repo,
         store_repository=InMemoryStoreRepository(),
         machine_repository=InMemoryMachineRepository(),
         transaction_repository=InMemoryTransactionRepository(),
@@ -282,6 +289,7 @@ def _durable_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
+        DurableManualCorrectionRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableRealizedSiteStore,
@@ -313,9 +321,12 @@ def _durable_bundle(
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env(
         default_root=worm_root
     )
+    durable_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
+    durable_manual_corr_repo = DurableManualCorrectionRepository(engine)
+
     return PersistenceBundle(
         mode="durable",
-        audit_log=DurableAuditLog(engine, worm_sink=resolved_worm_sink),
+        audit_log=durable_audit_log,
         evidence_store=DurableEvidenceBundleStore(engine, worm_sink=resolved_worm_sink),
         job_queue=DurableJobQueue(engine),
         avm_repository=DurableAVMRepository(store),
@@ -337,7 +348,12 @@ def _durable_bundle(
         sitescore_realized_store=DurableRealizedSiteStore(store),
         tenant_repository=DurableTenantRepository(engine),
         brand_repository=DurableBrandRepository(engine),
-        address_location_repository=DurableAddressLocationRepository(engine),
+        address_location_repository=DurableAddressLocationRepository(
+            engine,
+            correction_repo=durable_manual_corr_repo,
+            audit_log=durable_audit_log,
+        ),
+        manual_correction_repository=durable_manual_corr_repo,
         store_repository=DurableStoreRepository(engine),
         machine_repository=DurableMachineRepository(engine),
         transaction_repository=DurableTransactionRepository(engine),
@@ -392,6 +408,7 @@ def _postgres_bundle(
         DurableListingRepository,
         DurableMachineCycleRepository,
         DurableMachineRepository,
+        DurableManualCorrectionRepository,
         DurableNetPlanRepository,
         DurablePriceOpsRepository,
         DurableRealizedSiteStore,
@@ -430,9 +447,12 @@ def _postgres_bundle(
     )
 
     resolved_worm_sink = worm_sink or build_audit_worm_sink_from_env()
+    pg_audit_log = DurableAuditLog(engine, worm_sink=resolved_worm_sink)
+    pg_manual_corr_repo = DurableManualCorrectionRepository(engine)
+
     return PersistenceBundle(
         mode="postgresql",
-        audit_log=DurableAuditLog(engine, worm_sink=resolved_worm_sink),
+        audit_log=pg_audit_log,
         evidence_store=DurableEvidenceBundleStore(
             engine,
             worm_sink=resolved_worm_sink,
@@ -457,7 +477,12 @@ def _postgres_bundle(
         sitescore_realized_store=DurableRealizedSiteStore(store),
         tenant_repository=DurableTenantRepository(engine),
         brand_repository=DurableBrandRepository(engine),
-        address_location_repository=DurableAddressLocationRepository(engine),
+        address_location_repository=DurableAddressLocationRepository(
+            engine,
+            correction_repo=pg_manual_corr_repo,
+            audit_log=pg_audit_log,
+        ),
+        manual_correction_repository=pg_manual_corr_repo,
         store_repository=DurableStoreRepository(engine),
         machine_repository=DurableMachineRepository(engine),
         transaction_repository=DurableTransactionRepository(engine),

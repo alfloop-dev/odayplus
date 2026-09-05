@@ -180,16 +180,29 @@ def test_price_exploration_gate_migration_is_reachable_from_alembic_head() -> No
     } == {"infra/db/migrations/000020_price_exploration_gate.sql"}
 
 
+def test_manual_corrections_audit_schema_migration_is_reachable_from_alembic_head() -> None:
+    """ODP-INT-006: Manual corrections, audit trail and rollback schema."""
+    plan = build_migration_plan(environment="dev")
+    correction_step = next(step for step in plan.steps if step.revision == "0016")
+
+    assert correction_step.path.endswith("0016_manual_corrections_audit_schema.py")
+    assert {
+        asset.path
+        for asset in correction_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000021_manual_corrections_audit_schema.sql"}
+
+
 def test_avm_quality_nullable_migration_is_reachable_from_alembic_head() -> None:
     plan = build_migration_plan(environment="dev")
-    quality_step = next(step for step in plan.steps if step.revision == "0016")
+    quality_step = next(step for step in plan.steps if step.revision == "0017")
 
-    assert quality_step.path.endswith("0016_avm_quality_score_nullable.py")
+    assert quality_step.path.endswith("0017_avm_quality_score_nullable.py")
     assert {
         asset.path
         for asset in quality_step.assets
         if asset.role == "sql"
-    } == {"infra/db/migrations/000021_avm_quality_score_nullable.sql"}
+    } == {"infra/db/migrations/000023_avm_quality_score_nullable.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

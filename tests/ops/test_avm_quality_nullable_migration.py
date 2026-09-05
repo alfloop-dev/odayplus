@@ -7,8 +7,8 @@ from pathlib import Path
 
 from shared.infrastructure.persistence.engine import SqliteEngine
 
-POSTGRES_MIGRATION = Path("infra/db/migrations/000021_avm_quality_score_nullable.sql")
-SQLITE_MIGRATION = Path("infra/db/migrations/000021_avm_quality_score_nullable_sqlite.sql")
+POSTGRES_MIGRATION = Path("infra/db/migrations/000023_avm_quality_score_nullable.sql")
+SQLITE_MIGRATION = Path("infra/db/migrations/000023_avm_quality_score_nullable_sqlite.sql")
 
 
 def test_postgres_and_sqlite_migrations_share_nullable_legacy_contract() -> None:
