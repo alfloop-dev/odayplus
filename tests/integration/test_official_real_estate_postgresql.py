@@ -127,6 +127,16 @@ CREATE TABLE IF NOT EXISTS workflow.approvals (
     created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Only the shape the heat-zone composition and absorption-outcome foreign keys
+-- resolve against; the canonical column set needs postgis for `geom`, which is
+-- the extension this stamped path exists to avoid.
+CREATE SCHEMA IF NOT EXISTS geo;
+
+CREATE TABLE IF NOT EXISTS geo.h3_cells (
+    geo_cell_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    h3_index    VARCHAR(15) NOT NULL UNIQUE
+);
+
 CREATE TABLE IF NOT EXISTS core.work_orders (
     work_order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     root_cause TEXT

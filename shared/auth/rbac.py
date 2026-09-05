@@ -84,6 +84,11 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         _grant("integration", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("data_quality", Action.VIEW, Action.UPDATE, Action.OVERRIDE)
         | _grant("data", Action.APPROVE)
+        # Recording HZ-004 absorption outcomes is a pipeline write, and it is
+        # deliberately not granted to the roles that decide merges and splits:
+        # merge/split is judged against this history, so whoever can approve a
+        # composition must not be able to write the evidence for it.
+        | _grant("heatzone_absorption", Action.VIEW, Action.CREATE)
         | _grant("audit", Action.VIEW)
     ),
     Role.MODEL_OWNER: frozenset(
@@ -102,13 +107,13 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     ),
     Role.EXPANSION_USER: frozenset(
         _grant("operator_console", Action.VIEW)
-        | _grant("heatzone", Action.VIEW, Action.CREATE)
+        | _grant("heatzone", Action.VIEW, Action.CREATE, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("listing", Action.VIEW, Action.CREATE, Action.UPDATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE)
     ),
     Role.SITE_REVIEWER: frozenset(
         _grant("operator_console", Action.VIEW)
-        | _grant("heatzone", Action.VIEW)
+        | _grant("heatzone", Action.VIEW, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("listing", Action.VIEW, Action.CREATE)
         | _grant("sitescore", Action.VIEW, Action.EXECUTE, Action.APPROVE, Action.OVERRIDE)
     ),
@@ -153,7 +158,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.EXECUTIVE: frozenset(
         _grant("operator_console", Action.VIEW)
         | _grant("netplan", Action.VIEW, Action.APPROVE, Action.CREATE, Action.EXECUTE)
-        | _grant("heatzone", Action.VIEW, Action.APPROVE)
+        | _grant("heatzone", Action.VIEW, Action.APPROVE, Action.OVERRIDE, Action.ROLLBACK)
         | _grant("sitescore", Action.VIEW, Action.APPROVE)
         | _grant("audit", Action.VIEW)
     ),

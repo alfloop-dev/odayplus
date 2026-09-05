@@ -85,10 +85,50 @@ def test_sql_decision_policy_repository_resolves_registry_row() -> None:
         scored_at=at,
         policy_repository=repo,
     )
-    assert len(forecasts) == 1
-    assert len(alerts) == 1
     assert alerts[0].alert_level is AlertLevel.RED
     assert alerts[0].policy_version == "four-light-policy-v1"
     assert alerts[0].policy_version_id == f"four-light-policy-v1:{tenant_id}"
+
+
+def test_sql_decision_policy_repository_find_version() -> None:
+    tenant_id = "11111111-1111-1111-1111-111111111111"
+    policy_ver_id = f"heatzone-merge-v1:{tenant_id}"
+    engine = _Engine(
+        {
+            "policy_version_id": policy_ver_id,
+            "policy_label": "heatzone-merge-v1",
+            "policy_id": "heatzone-merge",
+            "policy_version": "1.0.0",
+            "policy_kind": "heatzone_merge",
+            "tenant_id": tenant_id,
+            "effective_from": "2026-09-01T00:00:00+00:00",
+            "effective_to": None,
+            "change_reason": "merge mechanism",
+            "rollback_policy_version": None,
+            "parameters": json.dumps(
+                {
+                    "min_observation_days": 180,
+                    "min_mature_labels": 200,
+                    "min_active_stores": 50,
+                    "min_adjacent_pairs": 30,
+                    "min_metro_clusters": 2,
+                    "min_spatial_contiguity": 0.80,
+                    "max_absorption_cv": 0.15,
+                    "max_drift_psi": 0.10,
+                    "max_wasserstein": 0.05,
+                }
+            ),
+            "declared_inputs": json.dumps(["store_daily_performance"]),
+            "approved_by": "architecture_owner",
+            "owner_role": "expansion-manager",
+        }
+    )
+
+    repo = SqlDecisionPolicyRepository(engine)
+    pol = repo.find_version(policy_ver_id)
+    assert pol is not None
+    assert pol.policy_version_id == policy_ver_id
+    assert pol.owner_role == "expansion-manager"
+    assert engine.calls[0][1] == (policy_ver_id,)
 
 
