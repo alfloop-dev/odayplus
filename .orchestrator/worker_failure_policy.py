@@ -13,7 +13,7 @@ from common import (
     spawn_background_process,
     substantive_review_reopen_count,
 )
-from provider_runtime import configured_provider_binary
+from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
 
 
@@ -28,7 +28,7 @@ def _sync_supervisor_scope() -> None:
     excluded = {
         "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__",
         "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard", "status_transition",
-        "claude_model_selection_args", "configured_provider_binary", "spawn_background_process",
+        "claude_model_selection_args", "configured_provider_binary", "provider_config_entry", "spawn_background_process",
     }
     module_exports = {
         "__all__",
@@ -1678,6 +1678,192 @@ def agent_open_task_counts(
             counts[agent] = counts.get(agent, 0) + 1
     return counts
 
+#: Where the single owner-provider preference group is configured. It lives
+#: under `ready_dispatcher` because it answers the same question that block
+#: already answers -- which lane should take this work next -- rather than
+#: introducing a second scheduler with its own settings.
+OWNER_PROVIDER_PREFERENCE_KEY = "owner_provider_preference"
+#: The preference is an implementation-lane policy. Deployment/integration
+#: classes such as `runtime_release`, review work, `human_gate` approvals and
+#: `sidecar` helpers keep whatever owner the existing rules choose.
+DEFAULT_OWNER_PREFERENCE_TASK_CLASSES = ["implementation", "remediation", "documentation"]
+
+
+@_entrypoint
+def owner_provider_preference_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the owner-provider preference block with its defaults applied.
+
+    `preferred_providers` deliberately defaults to empty: an operator who has
+    not configured a group gets exactly the previous selector behaviour, and
+    the whole preference path -- including its capacity probe -- stays off.
+    """
+    raw = (config.get("ready_dispatcher", {}) or {}).get(OWNER_PROVIDER_PREFERENCE_KEY, {}) or {}
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    settings.setdefault("enabled", True)
+    settings.setdefault("preferred_providers", [])
+    settings.setdefault("task_classes", list(DEFAULT_OWNER_PREFERENCE_TASK_CLASSES))
+    return settings
+
+
+@_entrypoint
+def preferred_owner_provider_ids(config: dict[str, Any]) -> set[str]:
+    settings = owner_provider_preference_settings(config)
+    if settings.get("enabled") is False:
+        return set()
+    values = settings.get("preferred_providers")
+    if isinstance(values, str):
+        values = [values]
+    return {
+        normalize_agent_id(str(value))
+        for value in list(values or [])
+        if normalize_agent_id(str(value))
+    }
+
+
+@_entrypoint
+def agent_provider_identity_ids(config: dict[str, Any], agent_name: str | None) -> set[str]:
+    """Every configured provider/adapter id that names the model behind an agent.
+
+    A display name is not model identity. `Antigravity2` runs on the
+    `antigravity2` provider alias, whose `delivery_mode` and whose agent
+    `adapter` are both `antigravity`; guessing from the name would either miss
+    that alias or start matching on spelling. Resolving through the configured
+    provider entry keeps the preference group a statement about providers.
+    """
+    agent_id = normalize_agent_id(agent_name or "")
+    if not agent_id:
+        return set()
+    agent = (config.get("agents", {}) or {}).get(agent_id, {}) or {}
+    provider_id = str(agent.get("provider") or agent_id)
+    canonical_key, provider_cfg = provider_config_entry(config, provider_id)
+    identities = {
+        normalize_agent_id(provider_id),
+        normalize_agent_id(str(canonical_key or "")),
+        normalize_agent_id(str(agent.get("adapter") or "")),
+        normalize_agent_id(str(provider_cfg.get("delivery_mode") or "")),
+        normalize_agent_id(str(provider_cfg.get("adapter") or provider_cfg.get("type") or "")),
+    }
+    identities.discard("")
+    return identities
+
+
+@_entrypoint
+def agent_is_preferred_owner_provider(config: dict[str, Any], agent_name: str | None) -> bool:
+    preferred = preferred_owner_provider_ids(config)
+    if not preferred:
+        return False
+    return bool(agent_provider_identity_ids(config, agent_name) & preferred)
+
+
+@_entrypoint
+def owner_preference_applies_to_task(
+    config: dict[str, Any],
+    task: dict[str, Any] | None,
+    role: str = "owner",
+) -> bool:
+    """Whether the owner preference may influence this selection at all.
+
+    Reviewer selection, human gates and non-dispatchable records are outside
+    the policy by construction, and a caller that cannot show the task cannot
+    show its `task_class` either -- so the preference stays off rather than
+    guessing that an unknown task is implementation work.
+    """
+    if str(role or "").lower() != "owner":
+        return False
+    if not preferred_owner_provider_ids(config):
+        return False
+    if not isinstance(task, dict):
+        return False
+    if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    task_class = str(task.get("task_class") or "").strip().lower()
+    if not task_class:
+        return False
+    values = owner_provider_preference_settings(config).get("task_classes")
+    if isinstance(values, str):
+        values = [values]
+    eligible = {str(value).strip().lower() for value in list(values or []) if str(value).strip()}
+    return task_class in eligible
+
+
+@_entrypoint
+def dispatch_slot_loads(config: dict[str, Any], state: dict[str, Any] | None) -> dict[str, list[int]] | None:
+    """Active-plus-undelivered dispatch load per logical agent, or None.
+
+    This is the ready dispatcher's own accounting (`agent_dispatch_loads`), not
+    a second one: it counts running workers and queue events that have not been
+    delivered yet. None means "not measurable from here" -- no runtime state,
+    or no readable event queue -- which callers must treat as "no known
+    capacity" rather than as an empty lane.
+    """
+    if not isinstance(state, dict):
+        return None
+    try:
+        return agent_dispatch_loads(config, state, active_worker_statuses(config))
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+
+
+@_entrypoint
+def agent_has_free_dispatch_slot(
+    config: dict[str, Any],
+    agent_name: str | None,
+    loads: dict[str, list[int]] | None,
+) -> bool:
+    """Whether a worker for this agent could actually start right now.
+
+    Open task count is board bookkeeping, not capacity. An agent holding nine
+    open tasks with two idle slots can start immediately; an agent holding one
+    open task with its only slot busy cannot. Quota groups, dispatch pauses and
+    account-pool blocks are not re-derived here -- every candidate reaching this
+    point has already passed `agent_auto_dispatch_block_reason`.
+    """
+    if loads is None:
+        return False
+    agent_id = normalize_agent_id(agent_name or "")
+    if not agent_id:
+        return False
+    used = len(loads.get(display_name_for(config, agent_id), []) or [])
+    return used < agent_dispatch_capacity(config, agent_id)
+
+
+@_entrypoint
+def owner_preference_ranks(
+    config: dict[str, Any],
+    agent_names: list[str],
+    *,
+    state: dict[str, Any] | None,
+    task: dict[str, Any] | None,
+    role: str = "owner",
+) -> dict[str, int]:
+    """Rank 0 for a preferred-provider owner with a free slot, 1 for everyone else.
+
+    Both owner selection paths -- `first_viable_agent` and the paused-owner
+    failover in `dispatch_engine.reassign_unavailable_reviewers` -- rank through
+    this one function, so they cannot drift into two different preferences. The
+    rank is only ever a leading sort key: everything after it stays whatever the
+    caller already did, and a rank of 1 for every candidate reproduces the
+    previous ordering exactly.
+    """
+    names = [str(name) for name in agent_names]
+    if not owner_preference_applies_to_task(config, task, role):
+        return dict.fromkeys(names, 1)
+    loads = dispatch_slot_loads(config, state)
+    if loads is None:
+        # Preferring a lane whose capacity cannot be measured would move work
+        # onto an agent that may have nothing free to run it.
+        return dict.fromkeys(names, 1)
+    return {
+        name: (
+            0
+            if agent_is_preferred_owner_provider(config, name)
+            and agent_has_free_dispatch_slot(config, name, loads)
+            else 1
+        )
+        for name in names
+    }
+
+
 @_entrypoint
 def first_viable_agent(
     config: dict[str, Any],
@@ -1724,8 +1910,22 @@ def first_viable_agent(
     # among them is free. Take the least loaded and keep the caller's ordering
     # as the tie-break, which preserves the configured preference whenever the
     # load is equal.
+    #
+    # The owner preference group leads that ordering, and only for owners with a
+    # genuinely free slot. Load balancing alone cannot express "this provider
+    # should implement" -- a busy-but-idle-slotted Antigravity lane always sorts
+    # behind a Codex lane holding one fewer open task -- while a bare reordering
+    # of the fallback list cannot either, because load is compared before order.
     counts = agent_open_task_counts(config, status, role=role)
-    return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
+    ranks = owner_preference_ranks(config, viable, state=state, task=task, role=role)
+    return min(
+        viable,
+        key=lambda name: (
+            ranks.get(name, 1),
+            counts.get(normalize_agent_id(name), 0),
+            viable.index(name),
+        ),
+    )
 
 @_entrypoint
 def has_configured_reassignment_candidates(

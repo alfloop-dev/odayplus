@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 THIS_DIR = Path(__file__).resolve().parent
 ROOT_DIR = THIS_DIR.parent
@@ -494,6 +495,292 @@ class WorkerFailurePolicyAuthorityTests(unittest.TestCase):
         res = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
         self.assertEqual(res.get("kind"), "capacity_retryable")
         self.assertTrue(worker_failure_policy.should_pause_dispatch_for_failure_kind(res.get("kind")))
+
+
+class OwnerProviderPreferenceTests(unittest.TestCase):
+    """The owner lane has to be able to prefer a provider, not just the idlest one.
+
+    Load balancing answers "who is least busy"; it cannot answer "who should
+    implement". On the live board the two disagree constantly: an Antigravity
+    lane holding nine open tasks with an idle worker slot always sorted behind a
+    Codex lane holding one, so implementation work kept landing on the lane that
+    is meant to integrate and deploy it. Reordering `owner_fallbacks` cannot fix
+    that either -- order is only consulted after load, so it decides ties and
+    nothing else.
+    """
+
+    PREFERENCE = {
+        "enabled": True,
+        "preferred_providers": ["antigravity", "claude"],
+        "task_classes": ["implementation", "remediation", "documentation"],
+    }
+    POOL = ["Codex", "Antigravity", "Claude"]
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmpdir.name)
+        # `agent_dispatch_loads` reads the real event queue; an empty one keeps
+        # "pending delivery" a measured zero rather than an unreadable path.
+        (self.root / "event_queue.jsonl").write_text("", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def _config(self, preference: dict[str, Any] | None = "default") -> dict[str, Any]:
+        config: dict[str, Any] = {
+            "paths": {
+                "event_queue": str(self.root / "event_queue.jsonl"),
+                "status_file": str(self.root / "ai-status.json"),
+                "activity_log": str(self.root / "activity.jsonl"),
+            },
+            "providers": {
+                "antigravity": {"delivery_mode": "antigravity"},
+                # The alias the live fleet actually runs: a distinct provider key
+                # whose delivery mode is still the agy adapter.
+                "antigravity2": {"delivery_mode": "antigravity"},
+                "claude": {"delivery_mode": "claude_cli"},
+                "codex": {
+                    "delivery_mode": "codex",
+                    "codex": {"codex_home": str(self.root / "codex-home")},
+                },
+            },
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "adapter": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "antigravity2": {
+                    "display_name": "Antigravity2",
+                    "provider": "antigravity2",
+                    "adapter": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "adapter": "claude_cli",
+                    "account_pool": "claude_main",
+                },
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "adapter": "codex",
+                    "account_pool": "codex_bjoe",
+                },
+                "antigravity_slot_1": {
+                    "display_name": "antigravity_slot_1",
+                    "provider": "antigravity",
+                    "adapter": "antigravity",
+                    "account_pool": "antigravity_main",
+                    "dispatch_slot_for_pool": "antigravity_main",
+                },
+                "antigravity_slot_2": {
+                    "display_name": "antigravity_slot_2",
+                    "provider": "antigravity",
+                    "adapter": "antigravity",
+                    "account_pool": "antigravity_main",
+                    "dispatch_slot_for_pool": "antigravity_main",
+                },
+                "claude_slot_1": {
+                    "display_name": "claude_slot_1",
+                    "provider": "claude",
+                    "adapter": "claude_cli",
+                    "account_pool": "claude_main",
+                    "dispatch_slot_for_pool": "claude_main",
+                },
+                "codex_slot_1": {
+                    "display_name": "codex_slot_1",
+                    "provider": "codex",
+                    "adapter": "codex",
+                    "account_pool": "codex_bjoe",
+                    "dispatch_slot_for_pool": "codex_bjoe",
+                },
+            },
+            "account_pools": {
+                "antigravity_main": {"enabled": True, "max_concurrent": 2},
+                "claude_main": {"enabled": True, "max_concurrent": 1},
+                "codex_bjoe": {"enabled": True, "max_concurrent": 1},
+            },
+            "ready_dispatcher": {},
+        }
+        if preference == "default":
+            preference = dict(self.PREFERENCE)
+        if preference is not None:
+            config["ready_dispatcher"]["owner_provider_preference"] = preference
+        return config
+
+    @staticmethod
+    def _status(counts: dict[str, int]) -> dict[str, Any]:
+        tasks: list[dict[str, Any]] = []
+        for owner, count in counts.items():
+            tasks.extend(
+                {"id": f"T-{owner}-{index}", "status": "in_progress", "owner": owner}
+                for index in range(count)
+            )
+        return {"tasks": tasks}
+
+    @staticmethod
+    def _state(busy_slots: dict[str, str] | None = None) -> dict[str, Any]:
+        workers = {
+            f"run-{index}": {
+                "status": "running",
+                "agent_id": slot_id,
+                "logical_agent_id": logical_id,
+                "task_id": f"T-BUSY-{index}",
+                "request_snapshot": {"reason": "owned_ready_dispatch"},
+            }
+            for index, (slot_id, logical_id) in enumerate(sorted((busy_slots or {}).items()))
+        }
+        return {"workers": workers, "queue": {"events": {}}, "provider_guardrails": {"dispatch_pauses": {}}}
+
+    # A task the preference is allowed to act on, and a load picture where load
+    # balancing on its own would pick Codex.
+    TASK = {"id": "T-1", "status": "todo", "task_class": "implementation"}
+    LOAD = {"Antigravity": 9, "Claude": 7, "Codex": 1}
+
+    def _select(self, config: dict[str, Any], **kwargs: Any) -> str | None:
+        params: dict[str, Any] = {
+            "exclude": set(),
+            "state": self._state(),
+            "task": dict(self.TASK),
+            "status": self._status(self.LOAD),
+            "role": "owner",
+        }
+        params.update(kwargs)
+        pool = params.pop("pool", self.POOL)
+        return worker_failure_policy.first_viable_agent(config, pool, **params)
+
+    def test_busier_preferred_owner_with_a_free_slot_beats_idle_codex(self) -> None:
+        """The whole point: open task count is not capacity."""
+        self.assertEqual(self._select(self._config()), "Claude")
+
+    def test_preferred_group_keeps_its_own_load_balancing(self) -> None:
+        chosen = self._select(
+            self._config(),
+            pool=["Antigravity", "Claude"],
+            status=self._status({"Antigravity": 9, "Claude": 2}),
+        )
+        self.assertEqual(chosen, "Claude")
+
+    def test_saturated_preferred_group_falls_back_to_codex(self) -> None:
+        """Every preferred slot is running, so the preference has nothing to offer."""
+        state = self._state(
+            {
+                "antigravity_slot_1": "antigravity",
+                "antigravity_slot_2": "antigravity",
+                "claude_slot_1": "claude",
+            }
+        )
+        self.assertEqual(self._select(self._config(), state=state), "Codex")
+
+    def test_partially_loaded_preferred_lane_is_still_preferred(self) -> None:
+        """One of two Antigravity slots is busy; the other can start work now."""
+        state = self._state({"antigravity_slot_1": "antigravity", "claude_slot_1": "claude"})
+        self.assertEqual(self._select(self._config(), state=state), "Antigravity")
+
+    def test_provider_alias_is_resolved_through_config_not_agent_names(self) -> None:
+        """Antigravity2 runs on the `antigravity2` provider key, not `antigravity`."""
+        chosen = self._select(
+            self._config(),
+            pool=["Codex", "Antigravity2"],
+            status=self._status({"Antigravity2": 9, "Codex": 1}),
+        )
+        self.assertEqual(chosen, "Antigravity2")
+
+    def test_reviewer_selection_is_untouched(self) -> None:
+        self.assertEqual(self._select(self._config(), role="reviewer"), "Codex")
+
+    def test_deployment_task_classes_keep_their_owner_rules(self) -> None:
+        for task_class in ("runtime_release", "rollout", "sidecar"):
+            with self.subTest(task_class=task_class):
+                task = {"id": "T-2", "status": "todo", "task_class": task_class}
+                self.assertEqual(self._select(self._config(), task=task), "Codex")
+
+    def test_task_without_a_class_is_not_assumed_to_be_implementation(self) -> None:
+        self.assertEqual(self._select(self._config(), task={"id": "T-3", "status": "todo"}), "Codex")
+
+    def test_human_gate_and_non_dispatchable_tasks_are_out_of_scope(self) -> None:
+        for task in (
+            {"id": "T-4", "status": "blocked", "task_class": "human_gate"},
+            {"id": "T-5", "status": "todo", "task_class": "implementation", "non_dispatchable": True},
+        ):
+            with self.subTest(task=task["id"]):
+                # A human gate is never dispatchable at all, so no owner is viable.
+                self.assertIn(self._select(self._config(), task=task), {None, "Codex"})
+
+    def test_unconfigured_preference_reproduces_load_balancing(self) -> None:
+        self.assertEqual(self._select(self._config(preference=None)), "Codex")
+
+    def test_disabled_preference_reproduces_load_balancing(self) -> None:
+        preference = dict(self.PREFERENCE, enabled=False)
+        self.assertEqual(self._select(self._config(preference=preference)), "Codex")
+
+    def test_missing_runtime_state_never_claims_capacity(self) -> None:
+        """No state means no capacity evidence, so the preference stays out of it."""
+        self.assertEqual(self._select(self._config(), state=None), "Codex")
+
+    def test_unreadable_event_queue_never_claims_capacity(self) -> None:
+        config = self._config()
+        config["paths"].pop("event_queue")
+        self.assertEqual(self._select(config), "Codex")
+
+    def test_paused_preferred_agents_are_excluded_before_the_preference(self) -> None:
+        state = self._state()
+        state["provider_guardrails"]["dispatch_pauses"] = {
+            provider: {
+                "provider": provider,
+                "blocked_until": "2099-01-01T00:00:00Z",
+                "reason": f"{provider} usage limit reached",
+            }
+            for provider in ("antigravity", "claude")
+        }
+        self.assertEqual(self._select(self._config(), state=state), "Codex")
+
+    def test_excluded_owners_stay_excluded_however_preferred(self) -> None:
+        chosen = self._select(self._config(), exclude={"Antigravity", "Claude"})
+        self.assertEqual(chosen, "Codex")
+
+    def test_account_pool_exclusion_still_wins_over_the_preference(self) -> None:
+        chosen = self._select(self._config(), exclude_pools={"antigravity_main", "claude_main"})
+        self.assertEqual(chosen, "Codex")
+
+    def test_single_candidate_checks_still_skip_load_and_preference(self) -> None:
+        """A one-name list asks "can this agent take it?" and must stay that cheap."""
+        config = self._config()
+        with mock.patch.object(
+            worker_failure_policy,
+            "dispatch_slot_loads",
+            side_effect=AssertionError("must not probe capacity"),
+        ):
+            self.assertEqual(self._select(config, pool=["Codex"]), "Codex")
+            self.assertEqual(self._select(config, pool=self.POOL, balance_load=False), "Codex")
+
+    def test_settings_defaults_leave_the_preference_inert(self) -> None:
+        settings = worker_failure_policy.owner_provider_preference_settings({})
+        self.assertEqual(settings["preferred_providers"], [])
+        self.assertEqual(
+            settings["task_classes"],
+            ["implementation", "remediation", "documentation"],
+        )
+        self.assertIs(settings["enabled"], True)
+        self.assertEqual(worker_failure_policy.preferred_owner_provider_ids({}), set())
+
+    def test_provider_identity_covers_provider_key_and_adapter(self) -> None:
+        config = self._config()
+        self.assertEqual(
+            worker_failure_policy.agent_provider_identity_ids(config, "Antigravity2"),
+            {"antigravity", "antigravity2"},
+        )
+        self.assertEqual(
+            worker_failure_policy.agent_provider_identity_ids(config, "Claude"),
+            {"claude", "claude_cli"},
+        )
+        self.assertEqual(
+            worker_failure_policy.agent_provider_identity_ids(config, "Codex"),
+            {"codex"},
+        )
 
 
 if __name__ == "__main__":
