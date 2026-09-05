@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -549,24 +551,44 @@ def test_the_excluded_dumps_are_the_files_the_deploy_script_actually_writes(
     )
 
 
-def test_all_checkout_steps_bind_to_release_sha_input() -> None:
-    """Every checkout step in Runtime Release must explicitly specify ref: inputs.release_sha."""
+# ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001: admission is the documented
+# exception to "everything checks out inputs.release_sha".
+#
+# The registry that records the release decision is written as evidence after the
+# candidate (C) is built, on an evidence-only descendant (E). A job that checks
+# out C therefore cannot see the decision at all -- it reads the registry as it
+# stood before the decision existed. Admission alone checks out the dispatch
+# event SHA and re-derives `check_candidate_ancestry(C, E)` on the runner, which
+# is what stops E from carrying anything but evidence.
+ADMISSION_EVENT_SHA_EXPRESSION = "${{ github.sha }}"
+CANDIDATE_SHA_EXPRESSION = "${{ inputs.release_sha }}"
+
+
+def test_all_checkout_steps_bind_to_an_exact_commit_expression() -> None:
+    """No checkout may float: each binds to the candidate SHA, or admission's event SHA."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     checkout_count = 0
     for job_id, job in parsed.get("jobs", {}).items():
         for step in job.get("steps", []):
             if not isinstance(step, dict):
                 continue
-            if str(step.get("uses", "")).startswith("actions/checkout@"):
-                checkout_count += 1
-                assert step.get("with", {}).get("ref") == "${{ inputs.release_sha }}", (
-                    f"Job {job_id} checkout step does not bind ref to inputs.release_sha"
-                )
+            if not str(step.get("uses", "")).startswith("actions/checkout@"):
+                continue
+            checkout_count += 1
+            ref = step.get("with", {}).get("ref")
+            expected = (
+                ADMISSION_EVENT_SHA_EXPRESSION
+                if job_id == "admission"
+                else CANDIDATE_SHA_EXPRESSION
+            )
+            assert ref == expected, (
+                f"Job {job_id} checkout binds ref to {ref!r}, expected {expected!r}"
+            )
     assert checkout_count >= 3, f"Expected at least 3 checkout steps, found {checkout_count}"
 
 
-def test_jobs_assert_checked_out_head_matches_release_sha() -> None:
-    """Every job must assert git rev-parse HEAD equals inputs.release_sha."""
+def test_jobs_assert_checked_out_head_matches_the_sha_they_bound() -> None:
+    """Every job must assert git rev-parse HEAD equals the SHA its checkout named."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     for job_id, job in parsed.get("jobs", {}).items():
         steps = job.get("steps", [])
@@ -578,6 +600,221 @@ def test_jobs_assert_checked_out_head_matches_release_sha() -> None:
         assert any("git rev-parse HEAD" in run for run in runs), (
             f"Job {job_id} does not assert that git rev-parse HEAD equals the expected release SHA"
         )
+
+
+def test_admission_checks_out_the_dispatch_event_sha_and_proves_it() -> None:
+    """Admission reads the registry at E, and says so out loud before trusting it."""
+    jobs = _release_jobs()
+    steps = _job_steps(jobs["admission"])
+
+    checkout = steps[0]
+    assert str(checkout.get("uses", "")).startswith("actions/checkout@")
+    assert checkout["with"]["ref"] == ADMISSION_EVENT_SHA_EXPRESSION
+    assert checkout["with"]["fetch-depth"] == 0, (
+        "the ancestry check needs history reaching back to the candidate SHA"
+    )
+
+    assert_step = _named_step(jobs["admission"], "Assert the dispatch event SHA is checked out")
+    assert assert_step["env"]["EVENT_SHA"] == ADMISSION_EVENT_SHA_EXPRESSION
+    run = assert_step["run"]
+    assert "git rev-parse HEAD" in run
+    assert "${EVENT_SHA}" in run
+    assert "^[0-9a-f]{40}$" in run, (
+        "an event SHA that is not an exact commit must be refused, not interpolated"
+    )
+
+
+def test_admission_re_derives_candidate_ancestry_on_the_runner() -> None:
+    """`check_candidate_ancestry(C, E)` runs here, with the arguments it actually takes."""
+    jobs = _release_jobs()
+    names = [step.get("name") for step in _job_steps(jobs["admission"])]
+    ancestry_name = "Validate candidate ancestry against the dispatch event SHA"
+    step = _named_step(jobs["admission"], ancestry_name)
+
+    assert step["env"]["EVENT_SHA"] == ADMISSION_EVENT_SHA_EXPRESSION
+    assert step["env"]["RELEASE_SHA"] == CANDIDATE_SHA_EXPRESSION
+
+    run = step["run"]
+    assert "check_candidate_ancestry" in run
+    # The SHAs arrive as argv, not spliced into the Python source, and `root` is
+    # supplied: calling it with two arguments raises TypeError and would have
+    # failed the step on every run rather than checking anything.
+    assert 'check_candidate_ancestry(candidate_sha, event_sha, Path.cwd())' in run
+    assert '"${RELEASE_SHA}" "${EVENT_SHA}"' in run
+    assert "sys.exit(1)" in run
+
+    # It must gate the lease, not trail it.
+    assert names.index(ancestry_name) < names.index("Validate supervisor release admission")
+
+
+# The string assertions above say the step is wired up. These run it.
+#
+# The previous form of this step called `check_candidate_ancestry(C, E)` with two
+# arguments against a three-argument function, so it raised TypeError under
+# `set -euo pipefail` and failed admission on every dispatch -- while every
+# structural assertion about it still passed. Executing the step is the only
+# thing that would have caught that.
+
+
+def _admission_ancestry_script() -> str:
+    return _named_step(
+        _release_jobs()["admission"],
+        "Validate candidate ancestry against the dispatch event SHA",
+    )["run"]
+
+
+def _run_admission_ancestry(
+    repo: Path, candidate_sha: str, event_sha: str
+) -> subprocess.CompletedProcess[str]:
+    """Run the workflow's own shell, with the env GitHub Actions would give it."""
+
+    env = dict(os.environ)
+    env["RELEASE_SHA"] = candidate_sha
+    env["EVENT_SHA"] = event_sha
+    # In the hosted run the checkout root *is* the working directory, so the
+    # first-party import resolves from it. Here the working directory is the
+    # repository whose ancestry is under test, so the import needs saying.
+    env["PYTHONPATH"] = str(ROOT)
+    return subprocess.run(
+        ["bash", "-c", _admission_ancestry_script()],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
+@pytest.fixture
+def ancestry_repo(tmp_path: Path) -> dict[str, object]:
+    repo = tmp_path / "candidate-repo"
+    repo.mkdir()
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+
+    (repo / "src").mkdir()
+    (repo / "src/app.py").write_text("print('candidate')\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "candidate code")
+    candidate = git("rev-parse", "HEAD")
+
+    (repo / "docs/evidence/gates").mkdir(parents=True)
+    (repo / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json").write_text("{}\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "record the release decision as evidence")
+    evidence_descendant = git("rev-parse", "HEAD")
+
+    (repo / "src/app.py").write_text("print('smuggled')\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "code that no approval covers")
+    code_descendant = git("rev-parse", "HEAD")
+
+    return {
+        "repo": repo,
+        "candidate": candidate,
+        "evidence_descendant": evidence_descendant,
+        "code_descendant": code_descendant,
+    }
+
+
+def test_admission_ancestry_step_admits_an_evidence_only_descendant(
+    ancestry_repo: dict[str, object],
+) -> None:
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"],
+        ancestry_repo["candidate"],
+        ancestry_repo["evidence_descendant"],
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_admission_ancestry_step_refuses_code_smuggled_in_behind_the_approval(
+    ancestry_repo: dict[str, object],
+) -> None:
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"],
+        ancestry_repo["candidate"],
+        ancestry_repo["code_descendant"],
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "non-evidence paths" in result.stderr
+    assert "src/app.py" in result.stderr
+
+
+def test_admission_ancestry_step_accepts_an_event_sha_equal_to_the_candidate(
+    ancestry_repo: dict[str, object],
+) -> None:
+    """A dispatch ref already sitting on the candidate is the ordinary case."""
+
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"], ancestry_repo["candidate"], ancestry_repo["candidate"]
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_admission_ancestry_step_refuses_an_event_sha_behind_the_candidate(
+    ancestry_repo: dict[str, object],
+) -> None:
+    """The registry cannot live on a commit the candidate is not built from."""
+
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"],
+        ancestry_repo["evidence_descendant"],
+        ancestry_repo["candidate"],
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "is not an ancestor of" in result.stderr
+
+
+def test_admission_ancestry_step_refuses_a_malformed_event_sha(
+    ancestry_repo: dict[str, object],
+) -> None:
+    result = _run_admission_ancestry(
+        ancestry_repo["repo"], ancestry_repo["candidate"], "not-a-sha"
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_admission_reads_the_registry_at_e_but_binds_everything_else_to_c() -> None:
+    """Widening the checkout to E must not widen what the deploy is bound to."""
+    jobs = _release_jobs()
+
+    admit = _named_step(jobs["admission"], "Validate supervisor release admission")
+    assert admit["env"]["EVENT_SHA"] == ADMISSION_EVENT_SHA_EXPRESSION
+    assert '--sha "${EVENT_SHA}"' in admit["run"]
+    assert "RELEASE_SHA" not in admit.get("env", {}), (
+        "the candidate SHA is not admission's registry lookup key; the registry names it"
+    )
+
+    # Identity that must stay on the candidate.
+    manifest_download = _named_step(
+        jobs["admission"], "Download the candidate release manifest from its build run"
+    )
+    assert CANDIDATE_SHA_EXPRESSION in str(manifest_download["with"]["name"])
+
+    bind = _named_step(jobs["admission"], "Bind the transported manifest to the digest the lease names")
+    assert bind["env"]["RELEASE_SHA"] == CANDIDATE_SHA_EXPRESSION
+    assert '--expected-sha "${RELEASE_SHA}"' in bind["run"]
+
+    probe = _named_step(jobs["admission"], "重讀部署 target 以重驗 initial-release recovery")
+    assert f'--candidate-sha "{CANDIDATE_SHA_EXPRESSION}"' in probe["run"]
+
+    for job_id in ("release_phase", "build", "deploy"):
+        job = jobs.get(job_id)
+        if not job:
+            continue
+        for step in _job_steps(job):
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                assert step["with"]["ref"] == CANDIDATE_SHA_EXPRESSION, (
+                    f"{job_id} must deploy the candidate, not whatever the ref points at"
+                )
 
 
 def test_runtime_release_is_single_entrypoint() -> None:
@@ -747,6 +984,7 @@ def test_staging_skips_static_preflight_and_uses_foundation_binding_scope() -> N
     assert "ODP_STAGING_KMS_KEY_ID" in staging_gate["env"]
     assert "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT" in staging_gate["env"]
     assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in staging_gate["env"]
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET" in staging_gate["env"]
 
 
 def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sidecars() -> None:
@@ -758,7 +996,7 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "--terraform-backend-prefix" in create_run
     assert "${STAGING_BACKEND_PREFIX}" in create_run
     assert "${RUNNER_TEMP}" not in create_run
-    persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected state storage")
+    persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage")
     assert "gcloud storage cp" in str(persist["run"])
     assert "STAGING_BUNDLE_URI" in str(persist["run"])
 
@@ -769,6 +1007,60 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "verify_watch_window_receipt" in closeout_run
     assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout_run
     assert "MANIFEST_DIGEST" in closeout_run
+
+
+def test_staging_recovery_bundle_storage_boundary_contract() -> None:
+    """Staging recovery bundle storage must be strictly separated from Terraform state bucket across deploy and closeout."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+
+    # 1. deploy job environment exports and path preparation checks
+    deploy_job = parsed["jobs"]["deploy"]
+    assert deploy_job["env"]["ODP_STAGING_TERRAFORM_STATE_BUCKET"] == "${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}"
+    assert deploy_job["env"]["ODP_STAGING_RECOVERY_BUNDLE_BUCKET"] == "${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}"
+
+    deploy_steps = deploy_job["steps"]
+    prep_handoff = next(
+        step for step in deploy_steps if step.get("name") == "Prepare release-scoped staging handoff paths"
+    )
+    prep_handoff_run = str(prep_handoff["run"])
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET is required" in prep_handoff_run
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required" in prep_handoff_run
+    assert '"${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}"' in prep_handoff_run
+    assert 'staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"' in prep_handoff_run
+
+    # 2. Producer persistence steps use protected recovery storage
+    persist_create = next(
+        step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage"
+    )
+    assert persist_create.get("if") == "${{ success() && inputs.environment == 'staging' }}"
+    assert 'gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"' in str(persist_create["run"])
+
+    persist_hold = next(
+        step for step in deploy_steps if step.get("name") == "Persist staging hold state to protected recovery storage"
+    )
+    assert persist_hold.get("if") == "${{ always() && inputs.environment == 'staging' }}"
+    assert 'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' in str(persist_hold["run"])
+
+    # 3. closeout job environment exports and path preparation checks
+    closeout_job = parsed["jobs"]["staging_closeout"]
+    assert closeout_job["env"]["ODP_STAGING_TERRAFORM_STATE_BUCKET"] == "${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}"
+    assert closeout_job["env"]["ODP_STAGING_RECOVERY_BUNDLE_BUCKET"] == "${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}"
+
+    closeout_steps = closeout_job["steps"]
+    prep_closeout = next(
+        step for step in closeout_steps if step.get("name") == "Prepare release-scoped staging closeout paths"
+    )
+    prep_closeout_run = str(prep_closeout["run"])
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout" in prep_closeout_run
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required for staging closeout" in prep_closeout_run
+    assert '"${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}"' in prep_closeout_run
+    assert 'staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"' in prep_closeout_run
+
+    # 4. Consumer reads recovery bundle from STAGING_BUNDLE_URI
+    read_bundle = next(
+        step for step in closeout_steps if step.get("name") == "Read staging recovery bundle with staging identity"
+    )
+    assert 'gcloud storage cp "${STAGING_BUNDLE_URI}/*" "${STAGING_STATE_DIR}/"' in str(read_bundle["run"])
 
 
 def test_staging_identity_rejects_dev_operator_impersonation() -> None:

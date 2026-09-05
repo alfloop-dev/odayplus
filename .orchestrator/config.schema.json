@@ -796,6 +796,30 @@
             "type": "string"
           }
         },
+        "owner_provider_preference": {
+          "description": "Owner-lane provider preference used when a task owner is chosen or re-chosen. Viable agents whose provider/adapter resolves into preferred_providers and that have a free dispatch slot right now sort ahead of other viable agents; inside each group the existing load balancing and fallback ordering are unchanged. An empty preferred_providers keeps the previous selector behaviour.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "preferred_providers": {
+              "description": "Provider or adapter ids, not agent display names. Provider aliases such as antigravity2 resolve through their delivery_mode/adapter, so listing antigravity covers them.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "task_classes": {
+              "description": "task_class values the preference applies to. Deployment/integration classes such as runtime_release, plus review, human_gate and sidecar work, are deliberately absent.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "review_statuses": {
           "type": "array",
           "items": {
@@ -923,6 +947,9 @@
           "type": "string"
         },
         "workflow": {
+          "type": "string"
+        },
+        "dispatch_ref": {
           "type": "string"
         },
         "ttl_seconds": {
