@@ -1,7 +1,7 @@
 # ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 — 真實 build artifact 與 dev gate registry 的 exact candidate reconciliation
 
-- Owner: Codex2
-- Reviewer: Codex (Claude independent review)
+- Owner: Codex（整合；前段實作由 Antigravity4／Codex2 完成）
+- Reviewer: Claude（待獨立審查，不代表已核准）
 - 記錄日期: 2026-09-05
 - Candidate SHA: `04e1572f802a54c2646ba678fe2975226dfbd7c4`
 - Build run: [Runtime Release 33942097235](https://github.com/alfloop-dev/odayplus/actions/runs/33942097235)
@@ -16,6 +16,7 @@ exact build candidate SHA `04e1572f802a54c2646ba678fe2975226dfbd7c4`；該 SHA �
 目前 `origin/dev` tip。
 
 依據部署規劃《EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md》§6.1，修正 gate 階段與 admission target，解除首次部署循環依賴：
+
 - Gate 0 (Code Gate), Gate 1 (Contract Gate), Gate 4 (Security Gate) 屬於 `candidate-built` / `dev` -> 阻擋 `dev` 初始部署；
 - Gate 2 (Data Gate) 屬於 `dev-verified` / `dev` -> 需 dev live deployment 證據，用於阻擋後續 `staging`；
 - Gate 3 (Model & Solver Gate), Gate 5 (E2E/UAT Gate), Gate 6 (Ops & Audit Gate) 屬於 `staging-verified` / `staging` -> 需 staging 演練與 UAT 證據，用於阻擋 `production`。
@@ -32,11 +33,12 @@ GitHub Artifact API 回傳下列三個 artifact（均來自 run 33942097235，he
 | `initial-release-absence-readback-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288978 | `sha256:e732be9f4fecffe179729f885c75514d67703122c0087852730e21768277388d` | `5e6aba3b690ecbbac394ea2706036bc3319a650a0dfdbad25a61785dca01897f` |
 
 使用 `gh run download 33942097235 --repo alfloop-dev/odayplus` 下載至 `/tmp/odp-release-binding-check.YKEX6i` 後進行比對：
+
 - `cmp docs/evidence/gates/RELEASE_MANIFEST.json /tmp/odp-release-binding-check.YKEX6i/.../RELEASE_MANIFEST.json` -> EXIT=0
 - `cmp docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/runtime-release-images.json /tmp/odp-release-binding-check.YKEX6i/.../runtime-release-images.json` -> EXIT=0
 - `cmp docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/initial-release-absence-readback.json /tmp/odp-release-binding-check.YKEX6i/.../initial-release-absence-readback.json` -> EXIT=0
 
-另以 `gcloud artifacts docker images describe` 確認 manifest 內 API、Web、worker、scheduler 四個完整 image digest 均存在於 GCP Artifact Registry（各 command exit 0，此為 registry 存在性證明，非已部署或 live network 證明）。
+整合者另以 `gcloud artifacts docker images describe` 確認 manifest 內 API、Web、worker、scheduler 四個完整 image digest 均存在於 GCP Artifact Registry（各 command exit 0）。命令及讀回來源見 [PR #1205 整合查核紀錄](https://github.com/alfloop-dev/odayplus/pull/1205#issuecomment-5549270578)。這只證明 image digest 存在，不代表已部署、live network 通過，或已獨立重驗 SBOM／Cosign；回傳的 SLSA level 為 unknown。
 
 ## 綁定內容
 
@@ -66,14 +68,22 @@ Registry host 一律為
 
 ## 驗證了什麼
 
-完整逐字紀錄見 `verification-transcript.txt`，可重跑的檢查見
-`verify_live_artifact_binding.sh`；缺少必要下載來源時會明確失敗，不會誤報通過。
+歷史執行的輸出節錄及後續摘要見 `verification-transcript.txt`，並非所有命令的完整 stdout；例如 `--require-go` 節錄保留拒絕原因與 exit code。原始 build artifact 不因這次文件修正而重寫。
+
+目前的 `verify_live_artifact_binding.sh` 只組合既有 manifest／registry validator 與共用 `compute_*_digest(root=...)`，不再重寫 file-set digest 算法。必須明確提供 artifact 解壓目錄及 HEAD 為本次 C 的 worktree：
+
+```bash
+bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live_artifact_binding.sh \
+  /path/to/downloaded-artifacts /path/to/candidate-worktree
+```
+
+第二個參數須為 git worktree 根目錄；HEAD 不符或 digest 輸入未提交會拒絕驗證。缺少原始下載目錄／檔案也會失敗，不預設任何特定主機的暫存目錄。這個封裝只比對既有下載，不會自行取得 GitHub API provenance，也不執行網路驗章或部署。新封裝的執行結果以 PR 上綁定新 head 的整合紀錄為準，不能把下列歷史結果當成新程式的執行證據。
 
 1. **repo 內的 manifest 就是 run 的 artifact**：下載來源存在時，`cmp` 與 `sha256sum` 顯示
    `docs/evidence/gates/RELEASE_MANIFEST.json` 與 run 下載的
    `runtime-release-manifest-04e1572f802a54c2646ba678fe2975226dfbd7c4` artifact 位元組完全相同（Raw SHA-256 `efe7bed05df8f176b053f448acc0c303d8b81786212a98fc5e56f27031e1f124`）。無人工編輯。
 2. **manifest digest 可自我驗證**：`manifest_digest` 等於移除該欄位後的
-   canonical JSON 的 SHA-256（`sha256:1aeadb35512f819ba3aca92dc72fe2834226eb8b83e4d4b286408fa67a870908`），任何一個字元被改動都會失效。
+   canonical JSON 的 SHA-256（`sha256:1aeadb35512f819ba3aca92dc72fe2834226eb8b83e4d4b286408fa67a870908`），核對結構化內容；排版或空白改變不一定影響它。原始檔案的逐位元組一致性另以 raw SHA-256 與 `cmp` 核對。
 3. **三個內容 digest 可從 candidate tree 重算**：`migration_digest`（`sha256:b3bb608d7895f127766536e92d1f35d04c2b37c10db16d501f54923e87abb316`）、
    `data_contract_digest`（`sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73`）、`source_policy_digest`（`sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824`）重算結果與 manifest 記錄一致。
    這是把 manifest 綁到 candidate **原始碼樹**（`04e1572f802a54c2646ba678fe2975226dfbd7c4`）、而不只是綁到 commit 標籤。
@@ -104,9 +114,7 @@ Registry host 一律為
 
 ## 沒有驗證到、也沒有做的事
 
-- **無法從本機重新解析 Artifact Registry**：本環境沒有可用的 registry 憑證，
-  `docker buildx imagetools inspect` EXIT=1。這一筆記成失敗，不記成通過。
-  digest 的可信度目前來自 build job 本身。獨立重新解析留給 Gate 4 的簽核者。
+- **不同查核不能互相替代**：worker 的 `docker buildx imagetools inspect` 曾因 registry 憑證不足而 EXIT=1，這筆失敗保留。整合者後來的 GCP API 查核證明四個 image digest 存在；獨立 SBOM／Cosign 驗章仍未完成，build job 的簽章成功也不能冒充這項獨立查核。
 - **沒有部署**：run 33942097235 只跑 build phase，lease 驗證與 deploy 兩個 job 都是
   `skipped`。沒有申請 lease、沒有 admission、沒有任何環境被改動。
 - **沒有新增任何 gate receipt**：七道 gate 全部維持 `blocked`，`receipts` 全部為
@@ -120,8 +128,8 @@ Registry host 一律為
 | 檔案 | 內容 |
 |---|---|
 | `README.md` | 本說明文件 |
-| `verification-transcript.txt` | 所有指令與真實 exit code 的逐字紀錄 |
-| `verify_live_artifact_binding.sh` | 可重跑的綁定驗證；僅所有必要來源存在且檢查通過時回傳 EXIT=0 |
+| `verification-transcript.txt` | 歷史命令輸出節錄、exit code 與後續摘要；不是完整 stdout |
+| `verify_live_artifact_binding.sh` | 既有檢查 API 的組合封裝；需明確下載目錄與固定 C worktree，必要來源缺漏時失敗 |
 | `runtime-release-images.json` | run 33942097235 的 build-once image handoff（原始 artifact） |
 | `release-phase-receipt.json` | build 階段前置檢查 receipt（原始 artifact） |
 | `release-environment-receipt.json` | build 階段 environment 綁定 receipt（原始 artifact） |

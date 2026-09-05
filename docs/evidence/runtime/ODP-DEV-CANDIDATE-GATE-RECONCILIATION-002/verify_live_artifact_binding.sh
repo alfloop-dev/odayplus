@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "$#" -ne 2 ]]; then
+  echo "用法：$0 <GitHub artifact 解壓目錄> <固定 candidate 的乾淨 worktree>" >&2
+  exit 2
+fi
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 export PYTHONPATH="${ROOT}:${PYTHONPATH:-}"
 
-python3 - <<'PYEOF'
+python3 - "$ROOT" "$1" "$2" <<'PYEOF'
 import hashlib
 import json
 import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(".").resolve()
+ROOT = Path(sys.argv[1]).resolve()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -19,6 +24,9 @@ from delivery_toolchain.e2e.check_release_gate_registry import validate_registry
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
     component_binding_errors,
     compute_manifest_digest,
+    compute_migration_digest,
+    compute_data_contract_digest,
+    compute_source_policy_digest,
     initial_release_recovery_errors,
     sources_off_attestation_errors,
     validate_manifest,
@@ -41,7 +49,27 @@ EXPECTED_RAW_SHA256 = {
     "initial-release-absence-readback.json": "5e6aba3b690ecbbac394ea2706036bc3319a650a0dfdbad25a61785dca01897f",
 }
 
-DOWNLOAD_DIR = Path("/tmp/odp-release-binding-check.YKEX6i")
+DOWNLOAD_DIR = Path(sys.argv[2]).resolve()
+CANDIDATE_ROOT = Path(sys.argv[3]).resolve()
+
+# 既有共用算法讀取真正的 C 原始碼，不以目前工作樹或漂移後的 dev 代替。
+def candidate_git(*args: str) -> str:
+    return subprocess.check_output(
+        ["git", "-C", str(CANDIDATE_ROOT), *args], text=True
+    ).strip()
+
+if not CANDIDATE_ROOT.is_dir():
+    raise SystemExit("FAIL: candidate worktree 不存在")
+if Path(candidate_git("rev-parse", "--show-toplevel")).resolve() != CANDIDATE_ROOT:
+    raise SystemExit("FAIL: candidate 參數不是 git worktree 根目錄")
+if candidate_git("rev-parse", "HEAD") != CANDIDATE_SHA:
+    raise SystemExit("FAIL: candidate worktree HEAD 不符")
+if candidate_git(
+    "status", "--porcelain", "--untracked-files=all", "--",
+    "infra/db/migrations", "docs/data", "docs/security/license_policy.json",
+    "docs/security/license_exemptions.json", "docs/security/release_bindings.json",
+):
+    raise SystemExit("FAIL: candidate digest 輸入有未提交變更")
 
 failures = []
 
@@ -58,63 +86,6 @@ def repo_of(ref: str) -> str:
 
 def raw_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def compute_git_file_set_digest(commit: str, file_paths: list[str]) -> str:
-    h = hashlib.sha256()
-    for rel_path in sorted(file_paths):
-        content = subprocess.run(
-            ["git", "show", f"{commit}:{rel_path}"],
-            cwd=str(ROOT),
-            capture_output=True,
-            check=True,
-        ).stdout
-        h.update(rel_path.encode("utf-8"))
-        h.update(b"\x00")
-        h.update(content)
-        h.update(b"\x00")
-    return "sha256:" + h.hexdigest()
-
-
-def compute_git_migration_digest(commit: str = CANDIDATE_SHA) -> str:
-    proc = subprocess.run(
-        ["git", "ls-tree", f"{commit}:infra/db/migrations"],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    sql_files = []
-    for line in proc.stdout.splitlines():
-        parts = line.split(None, 3)
-        if len(parts) == 4 and parts[3].endswith(".sql"):
-            sql_files.append(f"infra/db/migrations/{parts[3]}")
-    return compute_git_file_set_digest(commit, sql_files)
-
-
-def compute_git_data_contract_digest(commit: str = CANDIDATE_SHA) -> str:
-    proc = subprocess.run(
-        ["git", "ls-tree", f"{commit}:docs/data"],
-        cwd=str(ROOT),
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    data_files = []
-    for line in proc.stdout.splitlines():
-        parts = line.split(None, 3)
-        if len(parts) == 4 and parts[1] == "blob":
-            data_files.append(f"docs/data/{parts[3]}")
-    return compute_git_file_set_digest(commit, data_files)
-
-
-def compute_git_source_policy_digest(commit: str = CANDIDATE_SHA) -> str:
-    policies = [
-        "docs/security/license_policy.json",
-        "docs/security/license_exemptions.json",
-        "docs/security/release_bindings.json",
-    ]
-    return compute_git_file_set_digest(commit, policies)
 
 
 def main() -> int:
@@ -183,11 +154,11 @@ def main() -> int:
 
     # 2. Candidate tree digests
     for label, recompute in (
-        ("migration_digest", compute_git_migration_digest),
-        ("data_contract_digest", compute_git_data_contract_digest),
-        ("source_policy_digest", compute_git_source_policy_digest),
+        ("migration_digest", compute_migration_digest),
+        ("data_contract_digest", compute_data_contract_digest),
+        ("source_policy_digest", compute_source_policy_digest),
     ):
-        actual = recompute(CANDIDATE_SHA)
+        actual = recompute(root=CANDIDATE_ROOT)
         check(f"{label} recomputes from candidate tree {CANDIDATE_SHA[:12]}", manifest[label] == actual, actual)
 
     binding = component_binding_errors(manifest, images)
@@ -284,7 +255,7 @@ def main() -> int:
     if failures:
         print(f"FAILED: {len(failures)} binding check(s) did not hold")
         return 1
-    print("Live-artifact binding verified; the release remains NO-GO.")
+    print("既有下載 artifact 與 C 的內容綁定通過；未證明獨立驗章或 runtime，release 仍為 NO-GO。")
     return 0
 
 
