@@ -33,7 +33,7 @@ _SCHEMA_FILES = (
     "000006_durable_outbox.sql",
     "000007_job_lease_columns.sql",
     "000017_durable_operator_comments.sql",
-    "000021_durable_manual_corrections.sql",
+    "000022_durable_manual_corrections.sql",
 )
 
 

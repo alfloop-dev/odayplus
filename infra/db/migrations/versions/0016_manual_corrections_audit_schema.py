@@ -1,7 +1,7 @@
 """Manual corrections, audit trail and rollback schema.
 
-Revision ID: 0015
-Revises: 0014
+Revision ID: 0016
+Revises: 0015
 Create Date: 2026-09-03 16:00:00.000000
 
 Phase: ODP Remediation · W4 Blind Spots
@@ -20,15 +20,15 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "0015"
-down_revision: str | None = "0014"
+revision: str = "0016"
+down_revision: str | None = "0015"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     dir_path = os.path.dirname(os.path.realpath(__file__))
-    sql_file_path = os.path.join(dir_path, "../000020_manual_corrections_audit_schema.sql")
+    sql_file_path = os.path.join(dir_path, "../000021_manual_corrections_audit_schema.sql")
 
     with open(sql_file_path, encoding="utf-8") as f:
         sql_content = f.read()

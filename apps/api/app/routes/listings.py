@@ -1997,6 +1997,12 @@ else:
                 operator_role_id=operator_role_id,
                 audit_log=active_audit_log,
                 correlation_id=correlation_id,
+                # A collection has no individual resource envelope.  Its
+                # verified query scope is the authenticated tenant returned by
+                # require_actor; pass it explicitly so the shared guard can
+                # authorize the collection without treating it as an
+                # unscoped resource.
+                tenant_id=tenant_id,
             )
 
             tenant_items = [

@@ -64,6 +64,9 @@ if str(DELIVERY_GIT_DIR) not in sys.path:
 
 import common as orchestrator_common
 from check_task_delivery_identity import validate_delivery_identity
+from common import (
+    classify_reopen_reason,
+)
 from multi_repo_registry import (
     cross_repo_delivery_requirements,
     repository_local_path,
@@ -2400,21 +2403,59 @@ def task_pr_ci_status(
         )
         if res and isinstance(res, dict):
             pr_state = res.get("state")
-            rollup = res.get("statusCheckRollup") or []
-            if not rollup:
+            raw_rollup = res.get("statusCheckRollup")
+            if not isinstance(raw_rollup, list) or not raw_rollup:
                 val = (pr_state, "none")
                 _CI_STATUS_CACHE[cache_key] = (now, val)
                 return val
 
+            raw_checks, _superseded_checks = latest_status_check_runs(raw_rollup)
+
             has_pending = False
             has_failure = False
             has_success = False
-            for check in rollup:
-                if isinstance(check, dict):
-                    conclusion = str(check.get("conclusion") or "").upper()
-                    state_val = str(check.get("state") or "").upper()
-                    status_val = str(check.get("status") or "").upper()
+            valid_checks_count = 0
 
+            for check in raw_checks:
+                if not isinstance(check, dict):
+                    has_failure = True
+                    valid_checks_count += 1
+                    continue
+
+                check_name = str(check.get("name") or "").strip()
+                check_context = str(check.get("context") or "").strip()
+
+                # Exclude the pre-approval reviewer gate: task-review-gate is a commit status
+                # emitted upon review approval and is always pending prior to approval.
+                if check_context == "task-review-gate" or check_name == "task-review-gate":
+                    continue
+
+                valid_checks_count += 1
+
+                check_type = str(check.get("__typename") or "").strip()
+                conclusion = str(check.get("conclusion") or "").upper()
+                state_val = str(check.get("state") or "").upper()
+                status_val = str(check.get("status") or "").upper()
+
+                if check_type == "CheckRun":
+                    if status_val != "COMPLETED" or not conclusion:
+                        has_pending = True
+                    elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                        has_success = True
+                    elif conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
+                        has_failure = True
+                    else:
+                        has_failure = True
+                elif check_type == "StatusContext":
+                    if state_val in {"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING"} or not state_val:
+                        has_pending = True
+                    elif state_val == "SUCCESS":
+                        has_success = True
+                    elif state_val in {"FAILURE", "ERROR"}:
+                        has_failure = True
+                    else:
+                        has_failure = True
+                else:
                     if conclusion:
                         if conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
                             has_failure = True
@@ -2422,13 +2463,17 @@ def task_pr_ci_status(
                             has_pending = True
                         elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
                             has_success = True
+                        else:
+                            has_failure = True
                     elif state_val:
                         if state_val in {"FAILURE", "ERROR"}:
                             has_failure = True
                         elif state_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"}:
                             has_pending = True
-                        elif state_val in {"SUCCESS"}:
+                        elif state_val == "SUCCESS":
                             has_success = True
+                        else:
+                            has_failure = True
                     elif status_val:
                         if status_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED", "REQUESTED"}:
                             has_pending = True
@@ -2436,8 +2481,14 @@ def task_pr_ci_status(
                             has_failure = True
                         elif status_val in {"COMPLETED", "SUCCESS"}:
                             has_success = True
+                        else:
+                            has_failure = True
+                    else:
+                        has_failure = True
 
-            if has_failure:
+            if valid_checks_count == 0:
+                ci_status = "none"
+            elif has_failure:
                 ci_status = "failure"
             elif has_pending:
                 ci_status = "pending"
@@ -6287,8 +6338,29 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
 
 def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
-        raise SystemExit("Usage: reopen <task-id> <message>")
+        raise SystemExit(
+            "Usage: reopen <task-id> <message> [--reason=<reason>]\n"
+            "  --reason=review_finding          reviewer found a real defect (counts towards review churn)\n"
+            "  --reason=stale_review_sha        review pinned to a superseded head (control-plane recovery)\n"
+            "  --reason=worktree_lease_mismatch worktree/lease conflict (control-plane recovery)\n"
+            "  --reason=control_plane_recovery  other orchestrator-side repair (control-plane recovery)\n"
+            "Without --reason the reopen is classified from the actor's role and a reviewer\n"
+            "reopen counts as churn; the message text is never used to infer the reason."
+        )
     task_id, message = args[0], args[1]
+    raw_reason: str | None = None
+    i = 2
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("--reason="):
+            raw_reason = arg.split("=", 1)[1].strip()
+        elif arg == "--reason" and i + 1 < len(args):
+            raw_reason = args[i + 1].strip()
+            i += 1
+        elif not arg.startswith("--") and raw_reason is None:
+            raw_reason = arg.strip()
+        i += 1
+
     actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
@@ -6301,6 +6373,15 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     reviewer = canonical_agent_name(task.get("reviewer"))
     if actor not in {owner, reviewer}:
         raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can reopen {task_id}")
+
+    reason, category, is_churn = classify_reopen_reason(
+        raw_reason=raw_reason,
+        actor=actor,
+        owner=owner,
+        reviewer=reviewer,
+        message=message,
+    )
+
     timestamp = iso_now()
     task["status"] = "in_progress"
     task["last_update"] = timestamp
@@ -6308,15 +6389,26 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
     task["last_reopened_by"] = actor
+    task["last_reopened_reason"] = reason
+    task["last_reopen_category"] = category
+    task["last_reopened_at"] = timestamp
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
+
     if actor == reviewer and owner and owner != reviewer:
         try:
-            review_reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0)) + 1
+            current_reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0))
         except (TypeError, ValueError):
-            review_reopen_count = 1
-        task["review_reopen_count"] = review_reopen_count
-        task["last_review_reopen_at"] = timestamp
+            current_reopen_count = 0
+
+        if is_churn:
+            review_reopen_count = current_reopen_count + 1
+            task["review_reopen_count"] = review_reopen_count
+            task["last_review_reopen_at"] = timestamp
+        else:
+            review_reopen_count = current_reopen_count
+            task["review_reopen_count"] = current_reopen_count
+
         raw_history = task.get("review_reopen_history")
         review_reopen_history = list(raw_history) if isinstance(raw_history, list) else []
         review_reopen_history.append(
@@ -6326,6 +6418,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 "by": reviewer,
                 "owner": owner,
                 "message": message,
+                "reason": reason,
+                "category": category,
+                "is_churn": is_churn,
             }
         )
         task["review_reopen_history"] = review_reopen_history[-20:]
@@ -6346,8 +6441,10 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
             "type": "reopen",
             "task_id": task_id,
             "message": message,
+            "reason": reason,
+            "category": category,
             "review_reopen_count": task.get("review_reopen_count", 0),
-            "review_churn": actor == reviewer and owner != reviewer,
+            "review_churn": is_churn,
         }
     )
 
@@ -7234,6 +7331,21 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             f"Cannot approve task {task_id}: it still carries an uncleared approved head "
             f"({existing_head[:8]}) while the branch is now at {approved_sha[:8]}. "
             f"Run `re_review {task_id} <reason>` to clear the stale freeze first. "
+            "No approval was recorded."
+        )
+
+    # Required CI terminal success check on exact head
+    try:
+        pr_status, ci_status = task_pr_ci_status(task_id)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: unable to check PR CI status ({exc}). "
+            "Integrity gate failed closed; no approval was recorded."
+        ) from exc
+    if ci_status != "success":
+        raise SystemExit(
+            f"Cannot approve task {task_id}: required CI status is '{ci_status}' "
+            f"(exact head {approved_sha[:8]} must have all required CI terminal success before approval). "
             "No approval was recorded."
         )
 

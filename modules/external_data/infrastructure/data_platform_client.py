@@ -432,6 +432,20 @@ class DataPlatformClient:
             )
         self._transport = transport
 
+    @staticmethod
+    def _preserve_missing_product_tenant(raw: Mapping[str, Any]) -> dict[str, Any]:
+        """Keep an omitted tenant envelope omitted through generated parsing.
+
+        Some released product models use ``"default"`` as the generated
+        dataclass default for their optional ``tenant_id`` field. Treating
+        that code-generation fallback as a real owner would turn an
+        unscoped payload into a cross-tenant decision instead of the required
+        fail-closed missing-tenant decision.
+        """
+        payload = dict(raw)
+        payload.setdefault("tenant_id", None)
+        return payload
+
     @property
     def transport(self) -> DataPlatformTransport:
         return self._transport
@@ -531,7 +545,9 @@ class DataPlatformClient:
                 },
             )
         try:
-            return SiteMarketContextDocument.from_dict(raw)
+            return SiteMarketContextDocument.from_dict(
+                self._preserve_missing_product_tenant(raw)
+            )
         except Exception as err:
             raise DataPlatformValidationError(
                 f"Failed to parse SiteMarketContextDocument: {err}",
@@ -617,7 +633,9 @@ class DataPlatformClient:
                 },
             )
         try:
-            return MarketCellProfileDocument.from_dict(raw)
+            return MarketCellProfileDocument.from_dict(
+                self._preserve_missing_product_tenant(raw)
+            )
         except Exception as err:
             raise DataPlatformValidationError(
                 f"Failed to parse MarketCellProfileDocument: {err}",

@@ -57,6 +57,9 @@ from modules.netplan.domain import (
     ApprovalRecord as NetPlanApprovalRecord,
 )
 from modules.netplan.domain import (
+    ConstraintDisclosureAcknowledgement as NetPlanConstraintDisclosureAcknowledgement,
+)
+from modules.netplan.domain import (
     ExecutionRecord as NetPlanExecutionRecord,
 )
 from modules.netplan.domain import (
@@ -68,7 +71,17 @@ from modules.netplan.domain import (
 from modules.netplan.domain import (
     ScenarioSolveRecord as NetPlanScenarioSolveRecord,
 )
+from modules.netplan.infrastructure.repositories import ImmutableRecordError
 from modules.opsboard.audit.domain.evidence import DecisionCard
+from modules.priceops.domain.exploration import (
+    ActivationReceipt,
+    ExplorationBudgetExceededError,
+    ExplorationDecision,
+    ExplorationGate,
+    ExplorationGateExpiredError,
+    ExplorationGateRevokedError,
+    PriceScope,
+)
 from modules.priceops.domain.pricing import (
     ApprovalRecord,
     InterventionTreatmentHandoff,
@@ -559,6 +572,9 @@ class DurablePriceOpsRepository:
     _HANDOFFS = "priceops.handoffs"
     _LABELS = "priceops.label_entries"
     _EVALUATIONS = "priceops.evaluations"
+    _GATES = "priceops.exploration_gates"
+    _EXPLORATION_DECISIONS = "priceops.exploration_decisions"
+    _ACTIVATION_RECEIPTS = "priceops.activation_receipts"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
@@ -639,6 +655,132 @@ class DurablePriceOpsRepository:
 
     def get_evaluation(self, plan_id: str) -> PricingEffectEvaluation | None:
         return self._store.get(self._EVALUATIONS, plan_id)
+
+    # -- exploration gates and receipts ----------------------------------
+    # These records use the same durable document store as the rest of the
+    # PriceOps aggregate.  The Postgres deployment store implements the same
+    # interface, so production API composition cannot silently fall back to
+    # the process-local gate repository.
+    def save_gate(self, gate: ExplorationGate) -> ExplorationGate:
+        self._store.put(self._GATES, gate.gate_id, gate, group_key=gate.tenant_id)
+        return gate
+
+    def get_gate(self, gate_id: str, tenant_id: str | None = None) -> ExplorationGate | None:
+        gate = self._store.get(self._GATES, gate_id)
+        if gate is not None and tenant_id is not None and gate.tenant_id != tenant_id:
+            return None
+        return gate
+
+    def find_active_gate(
+        self, scope: PriceScope, at: datetime | None = None
+    ) -> ExplorationGate | None:
+        now = at or datetime.now(UTC)
+        for gate in self.list_gates(tenant_id=scope.tenant_id):
+            if scope.matches(gate) and gate.is_valid_at(now) and gate.remaining_budget > 0:
+                return gate
+        return None
+
+    def list_gates(self, tenant_id: str | None = None) -> list[ExplorationGate]:
+        if tenant_id is not None:
+            return self._store.list_by_group(self._GATES, tenant_id)
+        return self._store.list_all(self._GATES)
+
+    def revoke_gate(
+        self, gate_id: str, tenant_id: str, revoked_at: datetime | None = None
+    ) -> ExplorationGate:
+        gate = self.get_gate(gate_id, tenant_id=tenant_id)
+        if gate is None:
+            raise LookupError(f"Gate {gate_id} not found for tenant {tenant_id}")
+        if gate.revoked_at is not None:
+            raise ExplorationGateRevokedError(
+                f"Gate {gate_id} is already revoked at {gate.revoked_at}"
+            )
+        revoked = ExplorationGate(
+            gate_id=gate.gate_id,
+            tenant_id=gate.tenant_id,
+            budget_limit=gate.budget_limit,
+            budget_consumed=gate.budget_consumed,
+            effective_from=gate.effective_from,
+            effective_to=gate.effective_to,
+            approved_by=gate.approved_by,
+            approval_decision_id=gate.approval_decision_id,
+            approval_id=gate.approval_id,
+            rollback_condition=gate.rollback_condition,
+            decision_policy_version_id=gate.decision_policy_version_id,
+            scope_brand_id=gate.scope_brand_id,
+            scope_store_group=gate.scope_store_group,
+            scope_sku_group=gate.scope_sku_group,
+            revoked_at=revoked_at or datetime.now(UTC),
+            created_at=gate.created_at,
+        )
+        return self.save_gate(revoked)
+
+    def record_exploration_decision(
+        self, decision: ExplorationDecision
+    ) -> ExplorationDecision:
+        gate = self.get_gate(decision.gate_id, tenant_id=decision.tenant_id)
+        if gate is None:
+            raise LookupError(
+                f"Gate {decision.gate_id} not found for tenant {decision.tenant_id}"
+            )
+        if gate.revoked_at is not None:
+            raise ExplorationGateRevokedError(f"Gate {gate.gate_id} is revoked")
+        if not gate.is_valid_at(decision.created_at):
+            raise ExplorationGateExpiredError(
+                f"Gate {gate.gate_id} is outside active window at {decision.created_at}"
+            )
+        if decision.budget_consumed < 0:
+            raise ExplorationBudgetExceededError(
+                f"Gate {gate.gate_id} cannot consume a negative budget"
+            )
+        new_consumed = round(gate.budget_consumed + decision.budget_consumed, 4)
+        if new_consumed > gate.budget_limit + 1e-6:
+            raise ExplorationBudgetExceededError(
+                f"Gate {gate.gate_id} budget exceeded: consumed {new_consumed} > limit {gate.budget_limit}"
+            )
+        self.save_gate(
+            ExplorationGate(
+                gate_id=gate.gate_id,
+                tenant_id=gate.tenant_id,
+                budget_limit=gate.budget_limit,
+                budget_consumed=new_consumed,
+                effective_from=gate.effective_from,
+                effective_to=gate.effective_to,
+                approved_by=gate.approved_by,
+                approval_decision_id=gate.approval_decision_id,
+                approval_id=gate.approval_id,
+                rollback_condition=gate.rollback_condition,
+                decision_policy_version_id=gate.decision_policy_version_id,
+                scope_brand_id=gate.scope_brand_id,
+                scope_store_group=gate.scope_store_group,
+                scope_sku_group=gate.scope_sku_group,
+                revoked_at=gate.revoked_at,
+                created_at=gate.created_at,
+            )
+        )
+        self._store.put(
+            self._EXPLORATION_DECISIONS,
+            decision.decision_id,
+            decision,
+            group_key=decision.gate_id,
+        )
+        return decision
+
+    def list_exploration_decisions(
+        self, gate_id: str | None = None
+    ) -> list[ExplorationDecision]:
+        if gate_id is not None:
+            return self._store.list_by_group(self._EXPLORATION_DECISIONS, gate_id)
+        return self._store.list_all(self._EXPLORATION_DECISIONS)
+
+    def save_activation_receipt(
+        self, receipt: ActivationReceipt
+    ) -> ActivationReceipt:
+        self._store.put(self._ACTIVATION_RECEIPTS, receipt.plan_id, receipt)
+        return receipt
+
+    def get_activation_receipt(self, plan_id: str) -> ActivationReceipt | None:
+        return self._store.get(self._ACTIVATION_RECEIPTS, plan_id)
 
 
 class DurableLabelRegistry:
@@ -1066,6 +1208,7 @@ class DurableNetPlanRepository:
 
     _SCENARIOS = "netplan.scenarios"
     _SOLVES = "netplan.solves"
+    _DISCLOSURE_ACKNOWLEDGEMENTS = "netplan.disclosure_acknowledgements"
     _APPROVALS = "netplan.approvals"
     _EXECUTIONS = "netplan.executions"
     _OUTCOMES = "netplan.outcomes"
@@ -1089,6 +1232,46 @@ class DurableNetPlanRepository:
 
     def get_solve(self, scenario_id: str) -> NetPlanScenarioSolveRecord | None:
         return self._store.get(self._SOLVES, scenario_id)
+
+    def save_disclosure_acknowledgement(
+        self,
+        acknowledgement: NetPlanConstraintDisclosureAcknowledgement,
+    ) -> NetPlanConstraintDisclosureAcknowledgement:
+        """Persist one sealed disclosure receipt without permitting rewrites."""
+        if not acknowledgement.integrity_verified:
+            raise ImmutableRecordError(
+                f"acknowledgement {acknowledgement.acknowledgement_id} does not match "
+                "its own content hash; refusing to store an unverifiable receipt"
+            )
+        with self._store.engine.lock:
+            existing = self._store.get(
+                self._DISCLOSURE_ACKNOWLEDGEMENTS,
+                acknowledgement.acknowledgement_id,
+            )
+            if existing is not None:
+                raise ImmutableRecordError(
+                    f"acknowledgement {acknowledgement.acknowledgement_id} already exists "
+                    "and is immutable; issue a new acknowledgement instead of rewriting it"
+                )
+            self._store.put(
+                self._DISCLOSURE_ACKNOWLEDGEMENTS,
+                acknowledgement.acknowledgement_id,
+                acknowledgement,
+                group_key=acknowledgement.scenario_id,
+            )
+        return acknowledgement
+
+    def get_disclosure_acknowledgement(
+        self,
+        acknowledgement_id: str,
+    ) -> NetPlanConstraintDisclosureAcknowledgement | None:
+        return self._store.get(self._DISCLOSURE_ACKNOWLEDGEMENTS, acknowledgement_id)
+
+    def list_disclosure_acknowledgements(
+        self,
+        scenario_id: str,
+    ) -> list[NetPlanConstraintDisclosureAcknowledgement]:
+        return self._store.list_by_group(self._DISCLOSURE_ACKNOWLEDGEMENTS, scenario_id)
 
     def save_approval(self, approval: NetPlanApprovalRecord) -> NetPlanApprovalRecord:
         self._store.put(

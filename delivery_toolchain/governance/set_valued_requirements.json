@@ -122,13 +122,15 @@
         {
           "name": "LEASE",
           "status": "absent",
-          "note": "Needs a per-option admissibility check (can this lease be signed or broken in the plan window, and at what penalty). No such data source is wired to the solver. Reported through ConstraintClass.LEASE in unmodelled_constraint_classes on every solve.",
+          "note": "Per-option lease availability windows and early termination cost schedules are absent across candidate site feeds and core.stores schemas per ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md. No decorative constraint is wired. ConstraintClass.LEASE is reported in unmodelled_constraint_classes on every solve, displayed in Operator UI, and requires explicit acknowledgement/policy governance. Formal handback HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
-            "evidence_needed": "Per-option lease admissibility and penalty schedule data source verification (Batch 0)",
-            "evidence_owner": "Data Operations Lead",
+            "evidence_needed": "Store lease contract master data (lease_expiry_date, break clauses, termination penalties in core.store_leases/CLM) and automated candidate site lease feed with freshness SLA and signing deadlines",
+            "evidence_owner": "Store Operations Lead / Real Estate Finance Lead / Data Platform Lead",
             "next_review_date": "2026-10-01",
-            "rationale": "Awaiting Batch 0 data source audit before scheduling solver integration or formal waiver."
+            "rationale": "Batch 0 audit confirmed production system lacks per-store lease expiry/penalties and automated candidate listing feed. Wiring fake constraints or treating None as 0.0 violates fail-closed principles. Maintained in unmodelled_constraint_classes; handback package HB-NET002-LEASE-001 submitted to Human/Ops and Architecture Board per ODP_NET002_LEASE_DISPOSITION_2026-09-03.md.",
+            "formal_handback_ref": "docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md#2-人類授權移交單human-authority-handback-package",
+            "reopen_trigger": "Store lease contract master table (core.store_leases or CLM) is deployed with per-store lease_expiry_date and early termination penalty formula, and candidate site partner feed is contracted with signing deadline and fitout grace days."
           }
         },
         {
@@ -288,7 +290,7 @@
         {
           "name": "PARTIAL",
           "status": "absent",
-          "note": "JobStatus in shared/governance/vocabularies.py now carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics. The Batch 5b producer trace under ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 closed the tree-level question against every registered job type and named the partial-shaped outcomes that are deliberately not mapped onto JobStatus.",
+          "note": "JobStatus in shared/governance/vocabularies.py carries PARTIAL per ODP-FR-SHARED-001, but no job in the tree currently reports it. The vocabulary fork between queue.py and listings.py was resolved under ODP-JOBSTATUS-OUTCOME-VS-DELIVERY-001 by separating outcome from delivery mechanics. Producer trace under ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 closed the tree-level question against all registered job types. Formal disposition and handback package HB-SHARED001-PARTIAL-001 submitted to Human/Ops, Architecture Board, and Platform Infrastructure Lead per docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md.",
           "disposition": {
             "state": "BLOCKED_BY_EVIDENCE",
             "previous_state": "OPEN",
@@ -301,7 +303,7 @@
               {
                 "state": "BLOCKED_BY_EVIDENCE",
                 "date": "2026-09-03",
-                "note": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 finished the static producer trace. What is left is not more code reading."
+                "note": "ODP-JOB-PARTIAL-PRODUCER-EVIDENCE-001 completed producer trace and ODP-JOB-PARTIAL-DISPOSITION-001 established formal disposition and Human-Authority Handback Package (HB-SHARED001-PARTIAL-001)."
               }
             ],
             "evidence_needed": "Two things, neither of which the tree can answer. (1) A live production queue/scheduler/worker receipt inventory, to say whether any deployed job has ever reported JobStatus.PARTIAL; the repo trace only establishes that no code path writes it. (2) A product decision on whether the partial-shaped command outcomes that do exist -- batch intake 207 per-row receipts, XLSX partial commit, external ingestion accepted/quarantined counts -- should become durable jobs carrying member-level receipts and a member retry contract.",
@@ -309,7 +311,10 @@
             "next_review_date": "2026-10-01",
             "assigned_to": "Platform Infrastructure Lead",
             "evidence_ref": "docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md",
-            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b). The producer trace walked the default registry (forecast, external-fetch, assisted-listing-intake) and every module worker entry point and found no PARTIAL write. The partial-shaped outcomes that do exist are synchronous command receipts, not queue jobs; wiring them onto JobStatus to complete the member count would be the fake implementation this gate exists to prevent."
+            "formal_handback_ref": "docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md#3-人類授權移交單human-authority-handback-package",
+            "handback_id": "HB-SHARED001-PARTIAL-001",
+            "reopen_trigger": "(1) Production worker registry adds a multi-item batch job handler with reachable JobStatus.PARTIAL transition, OR (2) synchronous command operations (batch intake / external ingestion) are formally scheduled to become durable jobs with itemized receipts and member-level retry contracts, OR (3) live production queue/worker audit receipts demonstrate deployed jobs reporting PARTIAL.",
+            "rationale": "JobStatus vocabulary declares PARTIAL but no long-running batch job currently produces partial status (Batch 5b). The producer trace walked the default registry (forecast, external-fetch, assisted-listing-intake) and every module worker entry point and found no PARTIAL write. The partial-shaped outcomes that do exist are synchronous command receipts, not queue jobs; wiring them onto JobStatus to complete the member count would be the fake implementation this gate exists to prevent. Handback package HB-SHARED001-PARTIAL-001 submitted per ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md."
           }
         }
       ]
@@ -512,6 +517,71 @@
             "assigned_to": "ForecastOps / Platform Ops",
             "target_phase": "Wave 5+",
             "rationale": "Full-tree lineage trace confirms no automated root-cause producer exists. The compatible WorkOrder, presentation, and database contracts are explicitly marked RESERVED (unproduced), and the real producer work is assigned to ForecastOps / Platform Ops for Wave 5+; do not manufacture a fake heuristic producer."
+          }
+        }
+      ]
+    },
+    {
+      "id": "ODP-FR-AVM-001",
+      "statement": "估值必須組合 GM_TTM、GM_FWD、折舊、資產、租約與正常化。",
+      "statement_provenance": "_source_provenance.records['ODP-FR-AVM-001'] -- BLOCKED_BY_EVIDENCE. This statement is a repo transcription of the AVM-001 row in docs/evidence/ODP_FR_VERIFICATION_112_AND_ROOT_CAUSES_2026-09-01.md, not canonical bytes. The member list below is therefore asserted 'as transcribed', and no disposition here claims canonical traceability.",
+      "member_count": 6,
+      "members": [
+        {
+          "name": "GM_TTM",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.gm_ttm",
+          "note": "Trailing-twelve-month gross margin enters normalize_margin at a 0.45 weight.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "GM_FWD",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.forecast_gm_next_12m",
+          "note": "Forward twelve-month gross margin enters normalize_margin at a 0.55 weight.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "DEPRECIATION",
+          "status": "absent",
+          "note": "No depreciation reaches the valuation path. The only depreciation in the tree is modules/site_economics/domain/simulator.py:325-357, where it is a tax shield on a greenfield store's projected cash flow -- a different quantity, on a different clock, for a different consumer -- and modules/avm does not import it. The verdict is AVM-specific and its four pieces of evidence, the input fields, the version fields, the legacy-card rules and the rollback guarantee are in docs/design/ODP_AVM_DEPRECIATION_CONTRACT_2026-09-03.md; the disposition is registered at docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md section 4.9 and evidenced at docs/evidence/ODP_AVM001_DEPRECIATION_DISPOSITION_2026-09-04.md. This member stays absent until an implementation lands: the contract is written, the gap is not closed.",
+          "disposition": {
+            "state": "IMPLEMENTATION_READY",
+            "assigned_to": "AVM Domain Lead / Finance Analytics Lead",
+            "target_phase": "Batch 1 (ODP Remediation Plan) -- AVM valuation",
+            "acceptance_criteria": "modules/avm/tests/test_avm_depreciation_contract.py -- eight xfail(strict=True) specs covering C-1 basis discrimination, C-2 input fields, C-3 straight-line calculation, C-4 evidence and version fields, C-5 fail-closed on missing inputs, L-1/L-2 legacy card handling, L-4 calibration version split, and R-1 bit-exact v0 rollback. strict=True means the specs turn red by XPASS the moment an implementation satisfies them, so the contract cannot be met without removing the markers deliberately.",
+            "rationale": "The remediation plan asked first whether AVM asset depreciation and the site_economics store cash-flow depreciation are the same concept. They are not: different measured object (a greenfield format's brand-new machine mix versus a specific store's N-month-old equipment), different destination (a tax shield that never lowers a carrying value versus a direct reduction of the asset lens), opposite clock origins, and a residual that is an exit cash inflow on one side and a carrying-value floor on the other. So the model is AVM-specific, and even the three-line straight-line formula is not extracted into a shared function, because the shared dependency would advertise a policy alignment that does not exist. What is missing is the implementation, not the specification: C-1..C-5, L-1..L-4 and R-1..R-4 are written and executable, an owner and a delivery batch are named. Two preconditions are recorded in the contract and belong to humans, not to this registration: the finance owner must fill in the three R-4 rollback thresholds before cutover, and the canonical requirement bytes remain BLOCKED_BY_EVIDENCE under _source_provenance."
+          }
+        },
+        {
+          "name": "ASSET",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.asset_book_value",
+          "note": "Asset book value and equipment_fair_value form the asset lens in value_store. Which of the two carries equipment, and whether it is already net of age, is the ambiguity section C-1 of the depreciation contract resolves.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "LEASE",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::ValuationInput.lease_liability",
+          "note": "Lease liability is subtracted in the asset lens and published in its evidence block.",
+          "disposition": {
+            "state": "VERIFIED"
+          }
+        },
+        {
+          "name": "NORMALIZATION",
+          "status": "satisfied",
+          "evidence": "modules/avm/domain/valuation.py::normalize_margin",
+          "note": "Weighted TTM/forward blend with a named quality discount and recorded adjustment_reasons.",
+          "disposition": {
+            "state": "VERIFIED"
           }
         }
       ]

@@ -55,12 +55,14 @@ from branch_drift_alarms import check_branch_drift
 from common import (
     agent_config_for,
     authoritative_status_root,
+    classify_reopen_reason,
     cmdline_is_supervisor_process,
     config_path,
     CONFIG_PATH_ENV_VAR,
     display_name_for,
     execution_context_files,
     generate_task_brief_content,
+    is_control_plane_recovery_reason,
     is_github_cli_auth_failure,
     is_task_brief_stale,
     isoformat_utc,
@@ -80,6 +82,7 @@ from common import (
     selected_shared_files,
     shell_quote,
     spawn_background_process,
+    substantive_review_reopen_count,
     summarize_failure_reason,
     supervisor_lock_path,
     supervisor_pid_path,
@@ -91,6 +94,14 @@ from common import (
     write_activity_log,
     write_failure_evidence,
     write_json,
+    REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
+    REOPEN_CATEGORY_OWNER_RESUME,
+    REOPEN_CATEGORY_SUBSTANTIVE_REVIEW,
+    REOPEN_REASON_CONTROL_PLANE_RECOVERY,
+    REOPEN_REASON_OWNER_RESUME,
+    REOPEN_REASON_REVIEW_FINDING,
+    REOPEN_REASON_STALE_REVIEW_SHA,
+    REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
 )
 from coordination_file_watcher import sync_coordination_files
 from dispatch_policy import (
@@ -110,16 +121,24 @@ from github_reconciliation import (
     CI_FAILURE,
     CI_PENDING,
     CI_UNRESOLVED,
+    FAILURE_CONCLUSIONS,
     HEAD_MISMATCH,
     HEAD_UNRESOLVED,
     MISSING_APPROVED_HEAD,
     PR_NOT_MERGED,
     READY,
+    SUCCESS_CONCLUSIONS,
+    correlate_merge_group_task,
     evaluate_finalize_gate,
+    fetch_merge_group_runs,
+    parse_merge_group_pr_number,
+    poll_merge_group_runs,
+    reconcile_merge_group_runs,
 )
 import status_transition
 import dispatch as dispatch_ops
 import worker_lifecycle
+import release_lease_integration
 
 import dispatch_engine
 import worker_workspace
@@ -250,6 +269,9 @@ _FAILURE_HELPER_FUNCTIONS = [
 "mark_provider_dispatch_paused",
 "maybe_reassign_task_after_worker_failure",
 "reassign_tasks_after_review_churn",
+"substantive_review_reopen_count",
+"is_control_plane_recovery_reason",
+"classify_reopen_reason",
 "maybe_trigger_retry_or_fallback",
 "normalized_mapping_values",
 "parse_quota_retry_hint",
@@ -362,15 +384,22 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
     return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
 
 
-def reconcile_capacity_controller(
+def release_dead_helper_claims(
     config: dict[str, Any],
     state: dict[str, Any],
-    provider_report: dict[str, Any] | None = None,
-) -> bool:
-    """Run the governed capacity Chair and materialize its bounded sidecars."""
-    if provider_report is None:
-        provider_report = load_provider_report(config)
-    status = load_status(config)
+    status: dict[str, Any] | None = None,
+) -> tuple[bool, bool]:
+    """Release helper execution leases whose launched run is no longer live.
+
+    Returns ``(released, committed)``. One boolean cannot separate "nothing to
+    release" from "the canonical commit failed", and callers must treat the
+    second as fatal for the tick: the leases have already been popped out of
+    the in-memory ``status`` (and out of every ``tasks`` list derived from it),
+    so continuing would compute capacity and dispatch against a lease-free view
+    that was never persisted.
+    """
+    if status is None:
+        status = load_status(config)
     schema = config.get("schema", {}) or {}
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
@@ -383,21 +412,45 @@ def reconcile_capacity_controller(
             task_id_field=task_id_field,
         )
     )
-    if released_claim_ids:
-        for task in tasks:
-            if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
-                task.pop("helper_execution_lease", None)
-        if not commit_canonical_task_transition(config, status):
-            return False
-        for task_id in sorted(released_claim_ids):
-            write_activity_log(
-                config,
-                {
-                    "type": "helper_claim_released",
-                    "task_id": task_id,
-                    "message": "Helper execution lease released because its launched run is no longer live.",
-                },
-            )
+    if not released_claim_ids:
+        return False, True
+    for task in tasks:
+        if str(task.get(task_id_field) or task.get("id") or "") in released_claim_ids:
+            task.pop("helper_execution_lease", None)
+    if not commit_canonical_task_transition(config, status):
+        return False, False
+    for task_id in sorted(released_claim_ids):
+        write_activity_log(
+            config,
+            {
+                "type": "helper_claim_released",
+                "task_id": task_id,
+                "message": "Helper execution lease released because its launched run is no longer live.",
+            },
+        )
+    return True, True
+
+
+def reconcile_capacity_controller(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    provider_report: dict[str, Any] | None = None,
+) -> bool:
+    """Run the governed capacity Chair and materialize its bounded sidecars."""
+    if provider_report is None:
+        provider_report = load_provider_report(config)
+    status = load_status(config)
+    schema = config.get("schema", {}) or {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    _released, claims_committed = release_dead_helper_claims(config, state, status)
+    if not claims_committed:
+        # Pre-refactor behaviour: a rejected CAS or a failed pipeline sync
+        # aborts the reconcile. `status` no longer carries the leases we just
+        # popped, so letting the Chair size capacity from it would be sizing
+        # against a release that never reached disk.
+        return False
+    tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
     runnable_task_ids = canonical_dispatchable_task_ids(config, tasks)
     controller, state_changed = capacity_controller.evaluate_chair(
         config, state, tasks, runnable_tasks=runnable_task_ids, provider_report=provider_report
@@ -713,6 +766,7 @@ def parse_args() -> argparse.Namespace:
 
 
 CONFIG_DEFAULT_POLL_INTERVAL_SECONDS = 300.0
+DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS = 60.0
 
 
 class FastPollNotAllowedError(SystemExit):
@@ -743,6 +797,37 @@ def resolve_poll_interval(
             "if this is a steady-state change."
         )
     return cli_value, "cli"
+
+
+def resolve_heartbeat_warn_after_seconds(
+    config: dict[str, Any],
+    *,
+    poll_interval: float | None = None,
+) -> float:
+    """Resolve a heartbeat warning threshold for the effective poll cadence.
+
+    A supervisor can only observe a missed heartbeat on its next poll, so the
+    warning floor is one full effective poll interval plus a small grace period.
+    Keep explicitly configured thresholds that meet that floor, while clamping
+    legacy values below it.  The inclusive boundary is intentional: a value
+    exactly at the floor is already valid and must not jump to a different
+    rule than a value just above it.
+    """
+    base_poll = (
+        float(poll_interval)
+        if poll_interval is not None and poll_interval > 0
+        else float(
+            config.get("supervisor", {}).get(
+                "poll_interval_seconds", CONFIG_DEFAULT_POLL_INTERVAL_SECONDS
+            )
+        )
+    )
+    minimum_warn = base_poll + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    raw_warn = config.get("supervisor", {}).get("heartbeat_warn_after_seconds")
+    if raw_warn is not None:
+        configured_warn = float(raw_warn)
+        return max(minimum_warn, configured_warn)
+    return minimum_warn
 
 
 def console_log(message: str, *, quiet: bool = False) -> None:
@@ -1225,7 +1310,9 @@ def log_runtime_summary(
     quiet: bool,
     verbose: bool,
     previous_heartbeat: str | None = None,
-    warn_after_seconds: float = 10.0,
+    warn_after_seconds: float = (
+        CONFIG_DEFAULT_POLL_INTERVAL_SECONDS + DEFAULT_HEARTBEAT_WARN_GRACE_SECONDS
+    ),
     once: bool = False,
 ) -> None:
     summary = summarize_runtime(state, approval_state)
@@ -4114,7 +4201,7 @@ def consume_human_continuation_approvals(
         task.pop("human_continuation_approval", None)
 
         try:
-            reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0))
+            reopen_count = substantive_review_reopen_count(task)
             reassigned_count = max(
                 0,
                 int(task.get("review_churn_reassigned_at_count", 0) or 0),
@@ -4722,6 +4809,23 @@ def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> di
 def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], task_map: dict[str, dict[str, Any]]) -> str | None:
     return dispatch_ops.current_dispatch_event_key(config, event, task_map)
 
+def is_task_review_dispatch_eligible(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    target_agent: str,
+    *,
+    review_statuses: set[str] | None = None,
+    finalize_statuses: set[str] | None = None,
+) -> bool:
+    return dispatch_ops.is_task_review_dispatch_eligible(
+        config,
+        task,
+        target_agent,
+        review_statuses=review_statuses,
+        finalize_statuses=finalize_statuses,
+    )
+
+
 def dispatch_priority_for_task(
     config: dict[str, Any],
     task: dict[str, Any],
@@ -4855,8 +4959,12 @@ def worker_can_be_preempted(
     task = task_map.get(task_id) or {}
     task_status = str(task.get("status") or "").lower()
 
-    # Finalize workers are read-only on repo (immutable approved head)
-    if dispatch_reason == REASON_OWNED_FINALIZE or task_status == "review_approved":
+    # Finalize workers are read-only on repo (immutable approved head),
+    # and review workers are read-only reviewers. Both are safe to preempt when clean.
+    if (
+        dispatch_reason in {REASON_REVIEW_READY, REASON_OWNED_FINALIZE}
+        or task_status in {"review", "review_approved"}
+    ):
         return worker_worktree_is_clean(config, worker)
 
     # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
@@ -4983,6 +5091,7 @@ def run_once(
     quiet: bool = False,
     verbose: bool = False,
     once: bool = False,
+    poll_interval: float | None = None,
 ) -> bool:
     write_supervisor_pid(config)
     loop_started_at = utc_now()
@@ -5080,6 +5189,14 @@ def run_once(
                 # dispatcher. The dispatcher then re-reads canonical status and
                 # remains the only path that decides whether execution starts.
                 changed = consume_human_continuation_approvals(config, state) or changed
+                # This is intentionally the only release-lease scheduler: the
+                # bridge remains disabled until its public configuration is
+                # explicitly enabled, and it can dispatch only the existing
+                # Runtime Release after signed GCS-CAS issuance and a
+                # secret-free canonical receipt have both committed.
+                changed = release_lease_integration.process_release_lease_issuance(
+                    config, commit_status=commit_canonical_task_transition
+                ) or changed
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             # An in-memory cycle cache fixes every repository base to exactly
@@ -5128,7 +5245,9 @@ def run_once(
             quiet=quiet,
             verbose=verbose,
             previous_heartbeat=previous_heartbeat,
-            warn_after_seconds=float(config.get("supervisor", {}).get("heartbeat_warn_after_seconds", 10.0)),
+            warn_after_seconds=resolve_heartbeat_warn_after_seconds(
+                config, poll_interval=poll_interval
+            ),
             once=once,
         )
         return changed
@@ -5155,9 +5274,18 @@ def run_supervisor_cycle(
     replay: bool = False,
     quiet: bool = False,
     verbose: bool = False,
+    poll_interval: float | None = None,
 ) -> bool:
     try:
-        return run_once(config, watch=watch, replay=replay, quiet=quiet, verbose=verbose, once=False)
+        return run_once(
+            config,
+            watch=watch,
+            replay=replay,
+            quiet=quiet,
+            verbose=verbose,
+            once=False,
+            poll_interval=poll_interval,
+        )
     except Exception as exc:
         console_log(
             f"supervisor cycle failed: {type(exc).__name__}: {exc}; continuing after next poll",
@@ -5275,6 +5403,7 @@ def main() -> int:
             quiet=args.quiet,
             verbose=args.verbose,
             once=True,
+            poll_interval=poll_interval,
         )
         return 0
     run_supervisor_cycle(
@@ -5283,6 +5412,7 @@ def main() -> int:
         replay=args.replay,
         quiet=args.quiet,
         verbose=args.verbose,
+        poll_interval=poll_interval,
     )
     while True:
         sleep_until_work_or_interval(config, poll_interval)
@@ -5292,6 +5422,7 @@ def main() -> int:
             replay=False,
             quiet=args.quiet,
             verbose=args.verbose,
+            poll_interval=poll_interval,
         )
 
 

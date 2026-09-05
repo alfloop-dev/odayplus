@@ -165,6 +165,11 @@ class NetPlanScenario:
     feature_version: str = NETPLAN_FEATURE_VERSION
     solver_version: str = NETPLAN_SOLVER_VERSION
     status_history: tuple[StatusTransition, ...] = ()
+    # The candidate whose actions are being advanced through approval. The
+    # primary solve and its alternatives share one ScenarioSolveRecord, so the
+    # selected candidate must be durable state rather than an Operator-only
+    # display flag.
+    selected_candidate_id: str | None = None
 
     @classmethod
     def create(
@@ -235,6 +240,7 @@ class NetPlanScenario:
             "model_version": self.model_version,
             "feature_version": self.feature_version,
             "solver_version": self.solver_version,
+            "selected_candidate_id": self.selected_candidate_id,
             "status_history": [transition.to_dict() for transition in self.status_history],
         }
 
@@ -325,6 +331,12 @@ class ConstraintDisclosureAcknowledgement:
     approval_receipt_id: str
     acknowledged_at: datetime
     receipt_hash: str = ""
+    # Alternatives share the solver problem hash. Bind the signature to the
+    # exact candidate as well, otherwise a primary acknowledgement could be
+    # replayed for a different Operator row.
+    selected_candidate_id: str = ""
+    selected_action_signature: tuple[tuple[str, str], ...] = ()
+    selected_baseline_content_hash: str = ""
 
     def compute_receipt_hash(self) -> str:
         """Canonical digest of everything the acknowledgement asserts.
@@ -352,6 +364,11 @@ class ConstraintDisclosureAcknowledgement:
                 "model_version": self.model_version,
                 "approval_receipt_id": self.approval_receipt_id,
                 "acknowledged_at": self.acknowledged_at.isoformat(),
+                "selected_candidate_id": self.selected_candidate_id,
+                "selected_action_signature": [
+                    list(item) for item in sorted(self.selected_action_signature)
+                ],
+                "selected_baseline_content_hash": self.selected_baseline_content_hash,
             }
         )
 
@@ -370,6 +387,7 @@ class ConstraintDisclosureAcknowledgement:
         classes: Sequence[ConstraintClass],
         solver_problem_hash: str,
         policy_version_id: str,
+        selected_action_signature: Sequence[tuple[str, str]] = (),
     ) -> bool:
         """Whether this signature answers for `classes` on this solve under this policy.
 
@@ -386,6 +404,10 @@ class ConstraintDisclosureAcknowledgement:
         if self.solver_problem_hash != solver_problem_hash or not solver_problem_hash:
             return False
         if self.policy_version_id != policy_version_id or not policy_version_id:
+            return False
+        if tuple(sorted(self.selected_action_signature)) != tuple(
+            sorted(selected_action_signature)
+        ):
             return False
         return set(classes).issubset(set(self.acknowledged_classes))
 
@@ -409,6 +431,11 @@ class ConstraintDisclosureAcknowledgement:
             "acknowledged_at": self.acknowledged_at.isoformat(),
             "receipt_hash": self.receipt_hash,
             "integrity_verified": self.integrity_verified,
+            "selected_candidate_id": self.selected_candidate_id,
+            "selected_action_signature": [
+                list(item) for item in sorted(self.selected_action_signature)
+            ],
+            "selected_baseline_content_hash": self.selected_baseline_content_hash,
         }
 
 
@@ -438,6 +465,12 @@ class ApprovalRecord:
     disclosure_policy_version: str = ""
     disclosure_acknowledgement_id: str = ""
     solver_problem_hash: str = ""
+    # The selected candidate is part of the durable approval subject. The
+    # solve's problem hash alone is intentionally insufficient because all
+    # alternatives come from the same optimization problem.
+    selected_candidate_id: str = ""
+    selected_action_signature: tuple[tuple[str, str], ...] = ()
+    selected_baseline_content_hash: str = ""
 
     @property
     def is_approved(self) -> bool:
@@ -453,6 +486,21 @@ class ApprovalRecord:
             and self.scenario_id == self.authority_receipt.scenario_id
             and self.actor_id == self.authority_receipt.principal_id
             and self.policy_version == self.authority_receipt.policy_version
+            and (
+                not self.selected_action_signature
+                or tuple(
+                    sorted(
+                        (entity_id, action.value)
+                        for entity_id, action in self.authority_receipt.actions_by_entity.items()
+                    )
+                )
+                == tuple(sorted(self.selected_action_signature))
+            )
+            and (
+                not self.selected_baseline_content_hash
+                or self.selected_baseline_content_hash
+                == self.authority_receipt.baseline_content_hash
+            )
             and self.authority_verification.authority_attests_receipt(
                 self.authority_receipt
             )
@@ -521,6 +569,11 @@ class ApprovalRecord:
             "disclosure_policy_version": self.disclosure_policy_version,
             "disclosure_acknowledgement_id": self.disclosure_acknowledgement_id,
             "solver_problem_hash": self.solver_problem_hash,
+            "selected_candidate_id": self.selected_candidate_id,
+            "selected_action_signature": [
+                list(item) for item in sorted(self.selected_action_signature)
+            ],
+            "selected_baseline_content_hash": self.selected_baseline_content_hash,
             "business_uat_status": (
                 BUSINESS_UAT_VERIFIED
                 if self.authentic_approval_verified
