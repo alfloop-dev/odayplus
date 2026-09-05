@@ -117,6 +117,18 @@ ACTIVE_CONFLICT_STATUSES = frozenset(
     }
 )
 
+# Active intervention statuses that are approved / executing / observing and thus
+# permitted to be stopped or adjusted (ODP-FR-INTV-006). Pre-activation (CANDIDATE,
+# ELIGIBLE, PENDING_APPROVAL, etc.), evaluation, completed, and terminal states
+# are not active interventions.
+ACTIVE_INTERVENTION_STATUSES = frozenset(
+    {
+        InterventionStatus.APPROVED,
+        InterventionStatus.EXECUTING,
+        InterventionStatus.OBSERVING,
+    }
+)
+
 
 class PretrendStatus(StrEnum):
     PASS = "PASS"
@@ -156,6 +168,7 @@ class Recommendation(StrEnum):
     SCALE = "SCALE"
     STOP = "STOP"
     CHANGE_CHANNEL = "CHANGE_CHANNEL"
+    ADJUST = "ADJUST"
     INCONCLUSIVE = "INCONCLUSIVE"
 
 
@@ -474,6 +487,37 @@ class LabelRecord:
 
 
 @dataclass(frozen=True)
+class AdjustmentRecord:
+    """Lineage and audit record for an adjusted intervention (ODP-FR-INTV-006).
+
+    When an active intervention is adjusted, operational practice stops the
+    original intervention and opens a replacement intervention to preserve
+    clean observation windows and causal attribution. This record links
+    the predecessor and replacement with reasons, actor, timestamp,
+    policy version, and rollback plan.
+    """
+
+    predecessor_id: str
+    replacement_id: str
+    actor: str
+    reason: str
+    adjusted_at: datetime
+    policy_version: str
+    rollback_plan: str | dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "predecessor_id": self.predecessor_id,
+            "replacement_id": self.replacement_id,
+            "actor": self.actor,
+            "reason": self.reason,
+            "adjusted_at": self.adjusted_at.isoformat(),
+            "policy_version": self.policy_version,
+            "rollback_plan": self.rollback_plan,
+        }
+
+
+@dataclass(frozen=True)
 class InterventionTransition:
     from_status: InterventionStatus
     to_status: InterventionStatus
@@ -524,6 +568,9 @@ class Intervention:
     assigned_at: datetime | None = None
     assigned_by: str | None = None
     assignment_role: str | None = None
+    predecessor_id: str | None = None
+    replacement_id: str | None = None
+    adjustment: AdjustmentRecord | None = None
     version: int = 1
     history: tuple[InterventionTransition, ...] = ()
 
@@ -595,6 +642,9 @@ class Intervention:
             "assigned_at": self.assigned_at.isoformat() if self.assigned_at else None,
             "assigned_by": self.assigned_by,
             "assignment_role": self.assignment_role,
+            "predecessor_id": self.predecessor_id,
+            "replacement_id": self.replacement_id,
+            "adjustment": self.adjustment.to_dict() if self.adjustment else None,
             "version": self.version,
             "history": [transition.to_dict() for transition in self.history],
         }
@@ -613,6 +663,9 @@ def new_intervention(
     action_spec: dict[str, Any] | None = None,
     policy_version: str = POLICY_VERSION,
     intervention_id: str | None = None,
+    predecessor_id: str | None = None,
+    replacement_id: str | None = None,
+    adjustment: AdjustmentRecord | None = None,
 ) -> Intervention:
     """Create a CANDIDATE intervention.
 
@@ -624,7 +677,7 @@ def new_intervention(
     if not expected_outcome.strip():
         raise InterventionError("expected_outcome (outcome definition) is required")
     return Intervention(
-        intervention_id=intervention_id or f"intervention-{uuid4()}",
+        intervention_id=intervention_id or str(uuid4()),
         store_id=store_id,
         kind=kind,
         status=InterventionStatus.CANDIDATE,
@@ -637,6 +690,9 @@ def new_intervention(
         created_at=datetime.now(UTC),
         policy_version=policy_version,
         action_spec=dict(action_spec or {}),
+        predecessor_id=predecessor_id,
+        replacement_id=replacement_id,
+        adjustment=adjustment,
     )
 
 
@@ -715,6 +771,7 @@ def can_claim_causal(level: EvidenceLevel) -> bool:
 
 __all__ = [
     "ACTIVE_CONFLICT_STATUSES",
+    "ACTIVE_INTERVENTION_STATUSES",
     "CAUSAL_CLAIM_MIN_RANK",
     "DEFAULT_WINDOWS",
     "EFFECT_CLAIM_MIN_RANK",
@@ -722,6 +779,7 @@ __all__ = [
     "MEASUREMENT_METHOD_DEFAULT",
     "POLICY_VERSION",
     "TERMINAL_STATUSES",
+    "AdjustmentRecord",
     "ApprovalRecord",
     "CloseDisposition",
     "CloseRecord",

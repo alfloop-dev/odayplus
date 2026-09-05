@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
@@ -52,6 +54,7 @@ class SqliteEngine:
         if self._path.parent and str(self._path.parent) not in ("", "."):
             self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._transaction_depth = 0
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -97,10 +100,44 @@ class SqliteEngine:
                         raise exc
             self._conn.commit()
 
+    @contextmanager
+    def transaction(self) -> Iterator[SqliteEngine]:
+        """Group writes into one all-or-nothing unit.
+
+        ``execute`` commits every statement on its own, which is what makes a
+        write durable the instant it returns -- and also what makes a
+        multi-statement invariant impossible to hold: a failure halfway
+        through leaves the earlier statements already committed. Inside this
+        block the per-statement commit is suspended, so the group commits once
+        on a clean exit and rolls back entirely if the block raises.
+
+        The lock is held for the whole block, so no other thread can commit
+        into the middle of the group. Re-entering joins the outermost
+        transaction rather than opening a nested one, matching
+        :meth:`PostgresEngine.transaction`.
+        """
+        with self._lock:
+            self._transaction_depth += 1
+            try:
+                yield self
+            except BaseException:
+                if self._transaction_depth == 1:
+                    self._conn.rollback()
+                raise
+            else:
+                if self._transaction_depth == 1:
+                    self._conn.commit()
+            finally:
+                self._transaction_depth -= 1
+
+    def _commit_unless_in_transaction(self) -> None:
+        if self._transaction_depth == 0:
+            self._conn.commit()
+
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self._conn.execute(sql, params)
-            self._conn.commit()
+            self._commit_unless_in_transaction()
             return cur
 
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
@@ -122,7 +159,7 @@ class SqliteEngine:
             row = self._conn.execute(
                 "SELECT counter FROM durable_sequences WHERE name = ?", (name,)
             ).fetchone()
-            self._conn.commit()
+            self._commit_unless_in_transaction()
             return int(row["counter"])
 
     def close(self) -> None:

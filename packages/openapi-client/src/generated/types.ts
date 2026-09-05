@@ -103,6 +103,18 @@ export type AddressRollbackPayload = {
   reason: string;
 };
 
+/** AdjustPayload */
+export type AdjustPayload = {
+  action_spec?: Record<string, unknown> | null;
+  actor: string;
+  expected_outcome?: string | null;
+  expected_version?: number | null;
+  planned_end?: string | null;
+  planned_start?: string | null;
+  reason: string;
+  rollback_plan?: string | Record<string, unknown> | null;
+};
+
 /** ApiError */
 export type ApiError = {
   code: "AUTHENTICATION_REQUIRED" | "ROLE_DENIED" | "TENANT_SCOPE_DENIED" | "SCOPE_DENIED" | "OWNERSHIP_REQUIRED" | "ASSIGNMENT_SCOPE_DENIED" | "SOURCE_SCOPE_DENIED" | "FIELD_MASKED" | "DATA_CLASSIFICATION_DENIED" | "PURPOSE_REQUIRED" | "PRECONDITION_REQUIRED" | "VERSION_CONFLICT" | "WORKFLOW_STATE_DENIED" | "OWNER_CONFLICT" | "SECOND_ACTOR_REQUIRED" | "SELF_REVIEW_DENIED" | "RISK_ACKNOWLEDGEMENT_REQUIRED" | "SOURCE_POLICY_DENIED" | "SOURCE_POLICY_UNKNOWN" | "SOURCE_AUTH_REQUIRED" | "LEGAL_HOLD_CONFLICT" | "RETENTION_NOT_REACHED" | "RESIDENCY_DENIED" | "EXPORT_APPROVAL_REQUIRED" | "PURGE_APPROVAL_REQUIRED" | "QUARANTINE_RELEASE_DENIED" | "PROMOTION_APPROVAL_REQUIRED" | "RESTRICTED_EXPORT_DENIED" | "BREAK_GLASS_DENIED" | "DEPENDENCY_CONFLICT" | "DUPLICATE_CANDIDATE" | "IDEMPOTENCY_KEY_REUSED" | "RETRY_BUDGET_EXHAUSTED" | "CHECKPOINT_UNAVAILABLE" | "JOB_FENCE_REJECTED" | "SLA_PAUSE_DENIED" | "DECISION_INCOMPLETE" | "BACKPRESSURE_ACTIVE" | "RATE_LIMITED" | "RESOURCE_NOT_FOUND" | "VALIDATION_FAILED" | "FIELD_REQUIRED" | "CURSOR_INVALID" | "CURSOR_EXPIRED" | "INTERNAL_ERROR";
@@ -1557,6 +1569,12 @@ export type RoleWorkspacesRequest = {
   allowedWorkspaces: string[];
 };
 
+/** RollbackPayload */
+export type RollbackPayload = {
+  actor: string;
+  reason: string;
+};
+
 /** SavedView */
 export type SavedView = {
   created_at: string;
@@ -1675,6 +1693,12 @@ export type SplitRequest = {
   risk_acknowledged: true;
   source_property_id: string;
   source_property_version?: number;
+};
+
+/** StopPayload */
+export type StopPayload = {
+  actor: string;
+  reason: string;
 };
 
 /** StoreOpsCameraPurposePayload */
@@ -1999,6 +2023,7 @@ export const API_PATHS = {
   "/api/v1/interventions": ["GET", "POST"],
   "/api/v1/interventions/{intervention_id}": ["GET"],
   "/api/v1/interventions/{intervention_id}/action": ["POST"],
+  "/api/v1/interventions/{intervention_id}/adjust": ["POST"],
   "/api/v1/interventions/{intervention_id}/approve": ["POST"],
   "/api/v1/interventions/{intervention_id}/assign": ["POST"],
   "/api/v1/interventions/{intervention_id}/close": ["POST"],
@@ -2008,6 +2033,8 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}/execute": ["POST"],
   "/api/v1/interventions/{intervention_id}/label": ["GET"],
   "/api/v1/interventions/{intervention_id}/outcomes": ["POST"],
+  "/api/v1/interventions/{intervention_id}/rollback": ["POST"],
+  "/api/v1/interventions/{intervention_id}/stop": ["POST"],
   "/api/v1/interventions/{intervention_id}/submit": ["POST"],
   "/api/v1/interventions/{intervention_id}/unassign": ["POST"],
   "/api/v1/jobs": ["POST"],

@@ -9,6 +9,8 @@ or mark in its organic baseline (ODP-MOD-05 AC-05-05).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
@@ -27,6 +29,25 @@ class InMemoryInterventionRepository:
             )
         self._by_id[intervention.intervention_id] = intervention
         return intervention
+
+    @contextmanager
+    def atomic(self) -> Iterator[None]:
+        """Apply every ``save`` made inside the block together, or none.
+
+        Mirrors ``DurableInterventionRepository.atomic`` so a caller that needs
+        two saves to land as a pair -- stopping an intervention and opening its
+        replacement -- behaves identically on both repositories. The indexes
+        are restored from a snapshot rather than undone write by write, so a
+        failure anywhere in the block is equivalent to never having entered it.
+        """
+        by_id = dict(self._by_id)
+        by_store = {store: list(ids) for store, ids in self._by_store.items()}
+        try:
+            yield
+        except BaseException:
+            self._by_id = by_id
+            self._by_store = by_store
+            raise
 
     def get(self, intervention_id: str) -> Intervention | None:
         return self._by_id.get(intervention_id)

@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -532,15 +532,175 @@ class DurableAdLiftRepository:
         return self._store.list_by_group(self._C, campaign_id)
 
 
+# ``operations.interventions`` (PostgreSQL) and ``interventions`` (SQLite) are the
+# only relations this repository is allowed to write.  The upsert for each one is
+# held here as a fully literal statement keyed by that identifier, so the table
+# name is never interpolated into SQL and every bound value stays a parameter.
+# An identifier outside this map has no statement and fails closed rather than
+# being composed into a query.
+_INTERVENTION_UPSERT_SQL: dict[str, str] = {
+    "interventions": (
+        "INSERT INTO interventions ("
+        "  intervention_id, store_id, intervention_type, eligibility_status, "
+        "  action_set_json, approved_action_json, start_time, end_time, "
+        "  observation_start_time, observation_end_time, status, "
+        "  predecessor_id, replacement_id, adjustment_json, "
+        "  created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(intervention_id) DO UPDATE SET "
+        "  store_id = excluded.store_id, "
+        "  intervention_type = excluded.intervention_type, "
+        "  eligibility_status = excluded.eligibility_status, "
+        "  action_set_json = excluded.action_set_json, "
+        "  approved_action_json = excluded.approved_action_json, "
+        "  start_time = excluded.start_time, "
+        "  end_time = excluded.end_time, "
+        "  observation_start_time = excluded.observation_start_time, "
+        "  observation_end_time = excluded.observation_end_time, "
+        "  status = excluded.status, "
+        "  predecessor_id = excluded.predecessor_id, "
+        "  replacement_id = excluded.replacement_id, "
+        "  adjustment_json = excluded.adjustment_json, "
+        "  updated_at = CURRENT_TIMESTAMP"
+    ),
+    "operations.interventions": (
+        "INSERT INTO operations.interventions ("
+        "  intervention_id, store_id, intervention_type, eligibility_status, "
+        "  action_set_json, approved_action_json, start_time, end_time, "
+        "  observation_start_time, observation_end_time, status, "
+        "  predecessor_id, replacement_id, adjustment_json, "
+        "  created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(intervention_id) DO UPDATE SET "
+        "  store_id = excluded.store_id, "
+        "  intervention_type = excluded.intervention_type, "
+        "  eligibility_status = excluded.eligibility_status, "
+        "  action_set_json = excluded.action_set_json, "
+        "  approved_action_json = excluded.approved_action_json, "
+        "  start_time = excluded.start_time, "
+        "  end_time = excluded.end_time, "
+        "  observation_start_time = excluded.observation_start_time, "
+        "  observation_end_time = excluded.observation_end_time, "
+        "  status = excluded.status, "
+        "  predecessor_id = excluded.predecessor_id, "
+        "  replacement_id = excluded.replacement_id, "
+        "  adjustment_json = excluded.adjustment_json, "
+        "  updated_at = CURRENT_TIMESTAMP"
+    ),
+}
+
+
+@contextmanager
+def _atomic_write(engine: Any) -> Iterator[None]:
+    """Run a group of statements as one all-or-nothing unit.
+
+    ``engine.lock`` is a real transaction on PostgreSQL (``_TransactionalLock``
+    opens one on entry) but plain serialization on SQLite, where every
+    ``execute`` commits on its own -- the same code, different durability.
+    Entering ``engine.transaction()`` as well closes that gap: it is a no-op
+    re-entry on PostgreSQL and the actual transaction on SQLite, so on both
+    engines a statement that raises part-way through leaves nothing behind.
+    """
+    with ExitStack() as stack:
+        lock = getattr(engine, "lock", None)
+        if lock is not None:
+            stack.enter_context(lock)
+        begin = getattr(engine, "transaction", None)
+        if callable(begin):
+            stack.enter_context(begin())
+        yield
+
+
 class DurableInterventionRepository:
-    """Durable mirror of ``InMemoryInterventionRepository``."""
+    """Durable mirror of ``InMemoryInterventionRepository`` with migration-backed relational persistence."""
 
     _C = "intervention.interventions"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def table(self) -> str:
+        if str(getattr(self._store.engine, "dialect", "")).lower() == "postgresql":
+            return "operations.interventions"
+        return "interventions"
+
+    def _sync_sql(self, intervention: Intervention) -> None:
+        engine = self._store.engine
+        table = self.table
+        statement = _INTERVENTION_UPSERT_SQL.get(table)
+        if statement is None:
+            raise RuntimeError(
+                f"intervention relational persistence has no statement for table {table!r}"
+            )
+
+        if str(getattr(engine, "dialect", "")).lower() == "postgresql":
+            row = engine.query_one("SELECT to_regclass(?) AS regclass", (table,))
+            if not row or not row.get("regclass"):
+                raise RuntimeError(
+                    f"intervention relational persistence schema is missing table {table!r}"
+                )
+        else:
+            row = engine.query_one(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+            if not row:
+                raise RuntimeError(
+                    f"intervention relational persistence schema is missing table {table!r}"
+                )
+
+        eligibility_status = (
+            "eligible"
+            if intervention.eligibility and intervention.eligibility.eligible
+            else ("ineligible" if intervention.eligibility else "eligible")
+        )
+        action_set_json = json.dumps(intervention.action_spec or {})
+        approved_action_json = json.dumps(
+            intervention.approval.to_dict() if intervention.approval else {}
+        )
+        adjustment_json = (
+            json.dumps(intervention.adjustment.to_dict())
+            if intervention.adjustment
+            else None
+        )
+        obs_start = (
+            intervention.observation_window.opened_at.isoformat()
+            if intervention.observation_window
+            else intervention.planned_start.isoformat()
+        )
+        obs_end = (
+            intervention.observation_window.maturity_time.isoformat()
+            if intervention.observation_window
+            else intervention.effective_window_end().isoformat()
+        )
+
+        engine.execute(
+            statement,
+            (
+                intervention.intervention_id,
+                intervention.store_id,
+                intervention.kind.value if hasattr(intervention.kind, "value") else str(intervention.kind),
+                eligibility_status,
+                action_set_json,
+                approved_action_json,
+                intervention.planned_start.isoformat(),
+                intervention.planned_end.isoformat(),
+                obs_start,
+                obs_end,
+                intervention.status.value.lower() if hasattr(intervention.status, "value") else str(intervention.status).lower(),
+                intervention.predecessor_id,
+                intervention.replacement_id,
+                adjustment_json,
+                intervention.created_at.isoformat() if hasattr(intervention, "created_at") else datetime.now(UTC).isoformat(),
+            ),
+        )
+
     def save(self, intervention: Intervention) -> Intervention:
+        self._sync_sql(intervention)
+        # Relational persistence is the production contract.  Write the
+        # document mirror only after it succeeds so a migration/driver/FK
+        # failure cannot leave a seemingly durable but unindexed aggregate.
         self._store.put(
             self._C,
             intervention.intervention_id,
@@ -548,6 +708,18 @@ class DurableInterventionRepository:
             group_key=intervention.store_id,
         )
         return intervention
+
+    @contextmanager
+    def atomic(self) -> Iterator[None]:
+        """Commit every ``save`` made inside the block together, or none.
+
+        An adjustment is two writes -- stop the original, open the
+        replacement -- that are only meaningful as a pair, so the caller needs
+        a way to say "both or neither" without knowing which engine is behind
+        the store.
+        """
+        with _atomic_write(self._store.engine):
+            yield
 
     def get(self, intervention_id: str) -> Intervention | None:
         return self._store.get(self._C, intervention_id)
@@ -557,6 +729,7 @@ class DurableInterventionRepository:
 
     def list_by_store(self, store_id: str) -> list[Intervention]:
         return self._store.list_by_group(self._C, store_id)
+
 
 
 class DurablePriceOpsRepository:

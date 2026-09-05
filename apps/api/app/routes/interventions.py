@@ -103,6 +103,24 @@ else:
         follow_up: bool = False
         follow_up_kind: str | None = None
 
+    class AdjustPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+        action_spec: dict[str, Any] | None = None
+        planned_start: str | None = None
+        planned_end: str | None = None
+        expected_outcome: str | None = None
+        rollback_plan: str | dict[str, Any] | None = None
+        expected_version: int | None = None
+
+    class StopPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+
+    class RollbackPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+
     def _parse_time(value: str) -> datetime:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
@@ -595,6 +613,95 @@ else:
                         reason=body.reason,
                         follow_up=body.follow_up,
                         follow_up_kind=body.follow_up_kind,
+                        correlation_id=request.state.correlation_id,
+                    )
+                ),
+            )
+
+        @router.post(
+            "/{intervention_id}/adjust",
+            dependencies=[
+                Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine)),
+                Depends(require_permission("intervention", Action.CREATE, engine=authz_engine)),
+            ],
+        )
+        def adjust_case(
+            intervention_id: str,
+            body: AdjustPayload,
+            request: Request,
+            idempotency_key: str | None = Header(
+                default=None,
+                alias="Idempotency-Key",
+            ),
+        ) -> dict[str, Any]:
+            planned_start = _parse_time(body.planned_start) if body.planned_start else None
+            planned_end = _parse_time(body.planned_end) if body.planned_end else None
+            return run_command(
+                request=request,
+                scope=f"interventions:{intervention_id}:adjust",
+                payload=body.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+                operation=lambda: _run(
+                    lambda: active_workflow.adjust_case(
+                        intervention_id,
+                        actor=body.actor,
+                        reason=body.reason,
+                        action_spec=body.action_spec,
+                        planned_start=planned_start,
+                        planned_end=planned_end,
+                        expected_outcome=body.expected_outcome,
+                        rollback_plan=body.rollback_plan,
+                        expected_version=body.expected_version,
+                        correlation_id=request.state.correlation_id,
+                    )
+                ),
+            )
+
+        @router.post("/{intervention_id}/stop", dependencies=[Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine))])
+        def stop_case(
+            intervention_id: str,
+            body: StopPayload,
+            request: Request,
+            idempotency_key: str | None = Header(
+                default=None,
+                alias="Idempotency-Key",
+            ),
+        ) -> dict[str, Any]:
+            return run_command(
+                request=request,
+                scope=f"interventions:{intervention_id}:stop",
+                payload=body.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+                operation=lambda: _run(
+                    lambda: active_workflow.stop(
+                        intervention_id,
+                        actor=body.actor,
+                        reason=body.reason,
+                        correlation_id=request.state.correlation_id,
+                    )
+                ),
+            )
+
+        @router.post("/{intervention_id}/rollback", dependencies=[Depends(require_permission("intervention", Action.EXECUTE, engine=authz_engine))])
+        def rollback_case(
+            intervention_id: str,
+            body: RollbackPayload,
+            request: Request,
+            idempotency_key: str | None = Header(
+                default=None,
+                alias="Idempotency-Key",
+            ),
+        ) -> dict[str, Any]:
+            return run_command(
+                request=request,
+                scope=f"interventions:{intervention_id}:rollback",
+                payload=body.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+                operation=lambda: _run(
+                    lambda: active_workflow.rollback(
+                        intervention_id,
+                        actor=body.actor,
+                        reason=body.reason,
                         correlation_id=request.state.correlation_id,
                     )
                 ),

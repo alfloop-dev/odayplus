@@ -16,13 +16,16 @@ maintenance, cleaning). It enforces the ODP-MOD-05 / ODP-ML-05 guardrails:
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 from uuid import uuid4
 
 from modules.intervention.domain.lifecycle import (
+    ACTIVE_INTERVENTION_STATUSES,
     POLICY_VERSION,
+    AdjustmentRecord,
     ApprovalRecord,
     CloseDisposition,
     CloseRecord,
@@ -59,6 +62,26 @@ IROMI_BREAKEVEN = 1.0
 
 class LabelRegistryHook(Protocol):
     def __call__(self, label: LabelRecord) -> None: ...
+
+
+@dataclass(frozen=True)
+class AdjustmentOutcome:
+    """Outcome contract for an intervention adjustment (ODP-FR-INTV-006)."""
+
+    original: Intervention
+    replacement: Intervention
+    audit_event_id: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "original_intervention_id": self.original.intervention_id,
+            "original_status": self.original.status.value,
+            "replacement_intervention_id": self.replacement.intervention_id,
+            "replacement_status": self.replacement.status.value,
+            "audit_event_id": self.audit_event_id,
+            "original": self.original.to_dict(),
+            "replacement": self.replacement.to_dict(),
+        }
 
 
 @dataclass(frozen=True)
@@ -852,6 +875,159 @@ class InterventionWorkflow:
             correlation_id=correlation_id,
         )
 
+    # -- adjust / replacement ---------------------------------------------
+
+    def adjust_case(
+        self,
+        intervention_id: str,
+        *,
+        actor: str,
+        reason: str,
+        action_spec: dict[str, Any] | None = None,
+        planned_start: datetime | None = None,
+        planned_end: datetime | None = None,
+        expected_outcome: str | None = None,
+        window_spec: ObservationWindowSpec | None = None,
+        rollback_plan: str | dict[str, Any] | None = None,
+        expected_version: int | None = None,
+        correlation_id: str = "",
+    ) -> AdjustmentOutcome:
+        """Adjust an active intervention with durable lineage (ODP-FR-INTV-006).
+
+        Operational practice stops the original in-flight intervention and opens
+        a replacement intervention with durable lineage linking both cases.
+        This preserves observation windows and clean causal attribution while
+        retaining the original intervention parameters, reason, actor, policy
+        version, and rollback specifications.
+        """
+        original = self._require(intervention_id)
+        self._require_status(original, ACTIVE_INTERVENTION_STATUSES, "adjust")
+        self._check_version(original, expected_version)
+        if not reason.strip():
+            raise InterventionError("adjusting an intervention requires a reason")
+
+        now = datetime.now(UTC)
+        replacement_id = str(uuid4())
+        effective_rollback = rollback_plan or original.action_spec.get("rollback_plan")
+
+        adjustment_record = AdjustmentRecord(
+            predecessor_id=original.intervention_id,
+            replacement_id=replacement_id,
+            actor=actor,
+            reason=reason,
+            adjusted_at=now,
+            policy_version=self.policy_version,
+            rollback_plan=effective_rollback,
+        )
+
+        stopped_original = original.with_transition(
+            to_status=InterventionStatus.STOPPED,
+            actor=actor,
+            action="adjust",
+            reason=f"adjusted by replacement {replacement_id}: {reason}",
+            correlation_id=correlation_id,
+            replacement_id=replacement_id,
+            adjustment=adjustment_record,
+        )
+
+        merged_action_spec = dict(original.action_spec)
+        if action_spec is not None:
+            merged_action_spec.update(action_spec)
+        if rollback_plan is not None:
+            merged_action_spec["rollback_plan"] = rollback_plan
+        elif "rollback_plan" not in merged_action_spec and effective_rollback is not None:
+            merged_action_spec["rollback_plan"] = effective_rollback
+
+        new_start = planned_start or now
+        duration = original.planned_end - original.planned_start
+        new_end = planned_end or (new_start + duration)
+
+        replacement = new_intervention(
+            store_id=original.store_id,
+            kind=original.kind,
+            trigger_ref=f"adjust:{original.intervention_id}",
+            expected_outcome=expected_outcome
+            or f"adjusted from {original.intervention_id}: {original.expected_outcome}",
+            planned_start=new_start,
+            planned_end=new_end,
+            created_by=actor,
+            window_spec=window_spec or original.window_spec,
+            action_spec=merged_action_spec,
+            policy_version=self.policy_version,
+            intervention_id=replacement_id,
+            predecessor_id=original.intervention_id,
+            adjustment=adjustment_record,
+        )
+
+        with self._atomic_lineage_write():
+            # The replacement is written first so its ``predecessor_id`` always
+            # resolves against a row that already exists, which is exactly what
+            # makes a failure on the second write dangerous: the replacement
+            # would be live while the original stayed active -- two running
+            # cases for one store, and a lineage that only points one way.
+            # Either both land or neither does.
+            self.repository.save(replacement)
+            self.repository.save(stopped_original)
+
+        # Audit is appended only after the lineage it describes is durable, and
+        # is never rolled back with it: the log is append-only, so a failed
+        # adjustment must leave no audit trace rather than a compensating one.
+        self._audit(
+            stopped_original,
+            action="adjust",
+            outcome="stopped",
+            actor=actor,
+            correlation_id=correlation_id,
+            reason=reason,
+            extra={
+                "replacement_id": replacement_id,
+                "policy_version": self.policy_version,
+                "rollback_plan": effective_rollback,
+                "version": stopped_original.version,
+            },
+        )
+        audit_event = self._audit(
+            replacement,
+            action="create",
+            outcome="candidate",
+            actor=actor,
+            correlation_id=correlation_id,
+            reason=f"adjusted from {original.intervention_id}: {reason}",
+            extra={
+                "predecessor_id": original.intervention_id,
+                "policy_version": self.policy_version,
+                "rollback_plan": effective_rollback,
+                "version": replacement.version,
+            },
+        )
+        return AdjustmentOutcome(
+            original=stopped_original,
+            replacement=replacement,
+            audit_event_id=audit_event.event_id,
+        )
+
+    def _atomic_lineage_write(self) -> AbstractContextManager[None]:
+        """Context manager that makes the adjustment's two saves all-or-nothing.
+
+        Both shipped repositories provide ``atomic``. A repository that does
+        not cannot express "stop the original and open the replacement as one
+        unit", and silently degrading to two independent saves is what produces
+        half-written lineage, so the adjustment is refused before anything is
+        written rather than after.
+        """
+        atomic = getattr(self.repository, "atomic", None)
+        if not callable(atomic):
+            raise InterventionError(
+                "adjusting an intervention needs a repository that can persist the "
+                "stop and its replacement atomically; "
+                f"{type(self.repository).__name__} does not provide atomic()"
+            )
+        return atomic()
+
+    def adjust(self, *args: Any, **kwargs: Any) -> AdjustmentOutcome:
+        """Alias for adjust_case."""
+        return self.adjust_case(*args, **kwargs)
+
     # -- stop / rollback --------------------------------------------------
 
     def stop(
@@ -869,11 +1045,7 @@ class InterventionWorkflow:
             actor=actor,
             reason=reason,
             correlation_id=correlation_id,
-            allowed={
-                InterventionStatus.APPROVED,
-                InterventionStatus.EXECUTING,
-                InterventionStatus.OBSERVING,
-            },
+            allowed=ACTIVE_INTERVENTION_STATUSES,
         )
 
     def rollback(
@@ -1022,6 +1194,7 @@ class InterventionWorkflow:
 
 __all__ = [
     "IROMI_BREAKEVEN",
+    "AdjustmentOutcome",
     "EffectEvaluationOutcome",
     "InterventionWorkflow",
     "LabelRegistryHook",
