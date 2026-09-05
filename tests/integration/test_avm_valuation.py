@@ -20,6 +20,20 @@ from shared.infrastructure.persistence import build_persistence
 from tests.integration._authz import AVM_HEADERS
 
 
+def _as_pre_status_payload(item):
+    """Strip the quality status fields the way a pre-nullability pickle would.
+
+    ``__init__`` always writes them, so removing the keys from the instance
+    dict reproduces exactly what unpickling a record stored by the previous
+    release yields, without pretending a freshly built object is legacy.
+    """
+
+    for field_name in ("quality_score_status", "quality_disposition"):
+        if field_name in item.__dict__:
+            object.__delattr__(item, field_name)
+    return item
+
+
 def _valuation_payload() -> dict:
     return {
         "store_id": "store-red-001",
@@ -493,14 +507,15 @@ def test_legacy_unknown_quality_score_disposition_and_durable_migration(tmp_path
     repo = DurableAVMRepository(store)
 
     # Simulate an opaque legacy pickled case without quality_score_status
-    raw_legacy_input = ValuationInput(
-        store_id="store-legacy-durable",
-        gm_ttm=800_000,
-        forecast_gm_next_12m=800_000,
-        asset_book_value=400_000,
-        equipment_fair_value=50_000,
-        quality_score=1.0,
-        quality_score_status=None,
+    raw_legacy_input = _as_pre_status_payload(
+        ValuationInput(
+            store_id="store-legacy-durable",
+            gm_ttm=800_000,
+            forecast_gm_next_12m=800_000,
+            asset_book_value=400_000,
+            equipment_fair_value=50_000,
+            quality_score=1.0,
+        )
     )
     raw_case = ValuationCase.create(
         raw_legacy_input,
@@ -598,14 +613,15 @@ def test_legacy_report_and_dataroom_are_downgraded_on_every_read_path(tmp_path) 
 
     def old_case(case_id: str, status: ValuationCaseStatus) -> ValuationCase:
         case = ValuationCase.create(
-            ValuationInput(
-                store_id=f"store-{case_id}",
-                gm_ttm=1_000_000,
-                forecast_gm_next_12m=1_000_000,
-                asset_book_value=500_000,
-                equipment_fair_value=100_000,
-                quality_score=1.0,
-                quality_score_status=None,
+            _as_pre_status_payload(
+                ValuationInput(
+                    store_id=f"store-{case_id}",
+                    gm_ttm=1_000_000,
+                    forecast_gm_next_12m=1_000_000,
+                    asset_book_value=500_000,
+                    equipment_fair_value=100_000,
+                    quality_score=1.0,
+                )
             ),
             created_by="legacy-system",
             correlation_id=f"corr-{case_id}",
@@ -646,9 +662,7 @@ def test_legacy_report_and_dataroom_are_downgraded_on_every_read_path(tmp_path) 
             ),
         )
         # Simulate a pickle written before the status/disposition fields existed.
-        object.__delattr__(report, "quality_score_status")
-        object.__delattr__(report, "quality_disposition")
-        return report
+        return _as_pre_status_payload(report)
 
     review_case = old_case("legacy-review-case", ValuationCaseStatus.REVIEW_REQUIRED)
     review_report = old_high_confidence_report(review_case)
@@ -691,9 +705,7 @@ def test_legacy_report_and_dataroom_are_downgraded_on_every_read_path(tmp_path) 
         group_key=dataroom_case.case_id,
         seq=1,
     )
-    old_dataroom = generate_data_room(dataroom_report)
-    object.__delattr__(old_dataroom, "quality_score_status")
-    object.__delattr__(old_dataroom, "quality_disposition")
+    old_dataroom = _as_pre_status_payload(generate_data_room(dataroom_report))
     store.put(repository._DATAROOMS, dataroom_case.case_id, old_dataroom)
 
     read_dataroom = service.dataroom(dataroom_case.case_id)
@@ -782,4 +794,102 @@ def test_persisted_legacy_margin_is_downgraded_before_valuation(tmp_path) -> Non
     assert persisted_report is not None
     assert persisted_report.confidence == "low"
     assert persisted_report.quality_disposition == LEGACY_QUALITY_DISPOSITION
+    engine.close()
+
+
+def test_fresh_input_with_omitted_status_is_measured_not_legacy(tmp_path) -> None:
+    """An omitted status on a fresh input must not be read as legacy_unknown.
+
+    Only a record stored before ``quality_score_status`` existed is opaque.  A
+    caller that supplies a measured ``quality_score`` and leaves the status out
+    is still supplying a measurement and must keep its confidence and price.
+    """
+
+    from modules.avm.domain import ValuationCase, ValuationInput, normalize_margin
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.repositories import DurableAVMRepository
+
+    def fresh_input(store_id: str) -> ValuationInput:
+        return ValuationInput(
+            store_id=store_id,
+            gm_ttm=1_000_000,
+            forecast_gm_next_12m=1_000_000,
+            asset_book_value=500_000,
+            equipment_fair_value=100_000,
+            quality_score=0.95,
+        )
+
+    domain_input = fresh_input("store-fresh-measured")
+    assert domain_input.quality_score_status is None
+    assert domain_input.is_pre_status_payload is False
+    assert domain_input.effective_quality_score_status == "measured"
+
+    domain_case = ValuationCase.create(
+        domain_input,
+        created_by="operator-1",
+        correlation_id="corr-fresh-domain",
+    )
+    domain_margin = normalize_margin(domain_case)
+    assert domain_margin.confidence == "high"
+    assert "legacy_quality_unknown_discount" not in domain_margin.adjustment_reasons
+    assert domain_margin.normalized_gm == pytest.approx(1_000_000, abs=1)
+
+    # In-memory entry path.
+    memory_service = AVMService()
+    memory_case = memory_service.create_case(
+        fresh_input("store-fresh-memory"),
+        created_by="operator-1",
+        correlation_id="corr-fresh-memory",
+    )
+    memory_report = memory_service.value(
+        memory_case.case_id,
+        actor="operator-1",
+        correlation_id="corr-fresh-memory-value",
+    )
+    assert memory_report.confidence == "high"
+    assert memory_report.quality_score_status == "measured"
+    assert memory_report.quality_disposition is None
+    assert (
+        "legacy_quality_unknown_discount"
+        not in memory_report.normalized_margin.adjustment_reasons
+    )
+    memory_latest = memory_service.repository.latest_report(memory_case.case_id)
+    assert memory_latest is not None
+    assert memory_latest.confidence == "high"
+    assert memory_latest.quality_disposition is None
+
+    # Durable entry path: the read-time legacy migration must leave it alone.
+    engine = SqliteEngine(tmp_path / "fresh-measured.sqlite3")
+    store = SqliteDocumentStore(engine)
+    repository = DurableAVMRepository(store)
+    durable_service = AVMService(repository=repository)
+    durable_case = durable_service.create_case(
+        fresh_input("store-fresh-durable"),
+        created_by="operator-1",
+        correlation_id="corr-fresh-durable",
+    )
+    reloaded = repository.get_case(durable_case.case_id)
+    assert reloaded is not None
+    assert reloaded.valuation_input.effective_quality_score_status == "measured"
+    assert repository.list_cases()[0].valuation_input.effective_quality_score_status == (
+        "measured"
+    )
+
+    durable_report = durable_service.value(
+        durable_case.case_id,
+        actor="operator-1",
+        correlation_id="corr-fresh-durable-value",
+    )
+    assert durable_report.confidence == "high"
+    assert durable_report.quality_score_status == "measured"
+    assert durable_report.quality_disposition is None
+    assert (
+        "legacy_quality_unknown_discount"
+        not in durable_report.normalized_margin.adjustment_reasons
+    )
+    durable_latest = repository.latest_report(durable_case.case_id)
+    assert durable_latest is not None
+    assert durable_latest.confidence == "high"
+    assert repository.report_history(durable_case.case_id)[0].confidence == "high"
     engine.close()

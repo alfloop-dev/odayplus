@@ -15,6 +15,8 @@ QUALITY_SCORE_REQUIRED_MESSAGE = (
 )
 LEGACY_UNKNOWN_QUALITY_STATUS = "legacy_unknown"
 LEGACY_QUALITY_DISPOSITION = "legacy_unknown_downgraded"
+MEASURED_QUALITY_STATUS = "measured"
+UNMEASURED_QUALITY_STATUS = "unmeasured"
 
 
 class ValuationCaseStatus(StrEnum):
@@ -44,13 +46,29 @@ class ValuationInput:
     prediction_origin_time: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
+    def is_pre_status_payload(self) -> bool:
+        """True when this input predates ``quality_score_status``.
+
+        ``__init__`` always writes every field into the instance dict, so a
+        missing key can only come from unpickling a record stored before the
+        field existed.  That is the sole case where a stored ``quality_score``
+        may in fact be the former implicit perfect-score default rather than a
+        measurement, and it must not be inferred from a caller merely leaving
+        the status out when constructing a fresh input.
+        """
+
+        return "quality_score_status" not in self.__dict__
+
+    @property
     def effective_quality_score_status(self) -> str:
         status = getattr(self, "quality_score_status", None)
         if status is not None:
             return status
         if self.quality_score is None:
-            return "unmeasured"
-        return "legacy_unknown"
+            return UNMEASURED_QUALITY_STATUS
+        if self.is_pre_status_payload:
+            return LEGACY_UNKNOWN_QUALITY_STATUS
+        return MEASURED_QUALITY_STATUS
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> ValuationInput:
@@ -61,9 +79,9 @@ class ValuationInput:
         if explicit_status:
             quality_score_status = str(explicit_status)
         elif quality_score is None:
-            quality_score_status = "unmeasured"
+            quality_score_status = UNMEASURED_QUALITY_STATUS
         else:
-            quality_score_status = "measured"
+            quality_score_status = MEASURED_QUALITY_STATUS
         return cls(
             store_id=str(data["store_id"]),
             gm_ttm=float(data.get("gm_ttm", data.get("gross_margin_ttm", 0.0))),
@@ -482,7 +500,7 @@ def normalize_margin(case: ValuationCase) -> NormalizedMargin:
     status = item.effective_quality_score_status
     normalized = round((item.gm_ttm * 0.45) + (item.forecast_gm_next_12m * 0.55), 2)
     reasons = ["weighted_ttm_and_forecast_gm"]
-    if status == "legacy_unknown":
+    if status == LEGACY_UNKNOWN_QUALITY_STATUS:
         normalized = round(normalized * 0.92, 2)
         reasons.append("legacy_quality_unknown_discount")
         confidence = "low"

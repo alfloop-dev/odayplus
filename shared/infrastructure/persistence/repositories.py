@@ -224,16 +224,20 @@ class DurableAVMRepository:
         self._store = store
 
     def _migrate_legacy_case(self, case: ValuationCase | None) -> ValuationCase | None:
+        """Stamp a durable status on cases stored before the field existed.
+
+        Only a payload that predates ``quality_score_status`` is opaque; a case
+        written by the current code carries an explicit status, and a freshly
+        built input that simply omitted it is a measured input, not a legacy
+        one.  Rewriting the latter would apply the legacy discount to current
+        valuations.
+        """
+
         if case is None:
             return None
         inp = case.valuation_input
-        status = getattr(inp, "quality_score_status", None)
-        if status is None:
-            legacy_status = (
-                "unmeasured"
-                if getattr(inp, "quality_score", None) is None
-                else LEGACY_UNKNOWN_QUALITY_STATUS
-            )
+        if getattr(inp, "is_pre_status_payload", False):
+            legacy_status = inp.effective_quality_score_status
             new_input = ValuationInput(
                 store_id=inp.store_id,
                 gm_ttm=inp.gm_ttm,
