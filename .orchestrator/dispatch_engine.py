@@ -13,6 +13,7 @@ from dispatch_policy import (
     task_priority_rank,
     worker_logical_dispatch_agent_id,
 )
+from worker_failure_policy import owner_preference_ranks
 
 
 def _supervisor_module():
@@ -1073,7 +1074,20 @@ def reassign_unavailable_reviewers(
 
         replacement = ""
         replacement_id = ""
-        for candidate_id in candidate_agent_ids:
+        # The owner branch picks the first candidate that survives the filters
+        # below, so its ordering *is* its preference. Rank it through the same
+        # policy the reassignment selector uses instead of growing a second one;
+        # the sort is stable, so within a rank the configured dispatch order is
+        # untouched, and the reviewer branch keeps its existing ordering.
+        candidate_sequence = candidate_agent_ids
+        if claimed_role == "owner":
+            owner_ranks = owner_preference_ranks(
+                config, candidate_agent_ids, state=state, task=task, role="owner"
+            )
+            candidate_sequence = sorted(
+                candidate_agent_ids, key=lambda agent_id: owner_ranks.get(agent_id, 1)
+            )
+        for candidate_id in candidate_sequence:
             candidate = display_name_for(config, candidate_id)
             candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
             owner_for_independence = candidate if claimed_role == "owner" else counterpart
