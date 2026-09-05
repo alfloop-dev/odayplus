@@ -224,9 +224,15 @@ Revert 後行為完全回到現況（衝突且無 CI 的 review 會再度無限�
 收據的 head、命令與 exit code 一併記在送審的 status note 與 PR 說明中，
 commit 的 `Verified:` trailer 則記錄實際跑過的命令。
 
-重跑方式（注意：本 repo 需要 Python 3.12，`cp314` 缺 `pgserver` wheel；
-`.orchestrator` 的測試需要把 `scripts` 放進 `PYTHONPATH` 才 import 得到
-`ai_status`）：
+收據裡的 pytest 命令帶 `env ` 前綴（`env PYTHONPATH=scripts uv run ...`）：
+`verification_evidence.run_verification_command()` 在沒有 shell 控制運算子時走
+`shlex.split` + argv，因此 `VAR=value cmd` 這種 shell 專屬前綴會被當成執行檔而得到
+exit 127。`env` 是同一件事的 argv 寫法。同一個 head 上留有一筆該前綴問題造成的
+`exit 127` 失敗收據，刻意保留不刪除。
+
+重跑方式（在互動 shell 裡兩種前綴皆可。注意：本 repo 需要 Python 3.12，
+`cp314` 缺 `pgserver` wheel；`.orchestrator` 的測試需要把 `scripts` 放進
+`PYTHONPATH` 才 import 得到 `ai_status`）：
 
 ```bash
 PYTHONPATH=scripts uv run --frozen --python 3.12 pytest -q -o addopts= \
