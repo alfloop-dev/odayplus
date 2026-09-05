@@ -1548,10 +1548,10 @@ def test_stale_wake_for_review_ready_skipped_when_task_approved_or_merge_routed(
         assert skip_msg is not None
         assert "no longer eligible" in skip_msg
 
-    # Case 2: Task has merge_route=queued
+    # Case 2: Task has merge_route=queued matching current submitted head
     task["status"] = "review"
     task.pop("approved_head", None)
-    task["merge_route"] = {"head": "1111111122222222333333334444444455555555", "route": "queued"}
+    task["merge_route"] = {"head": "a" * 40, "route": "queued"}
     with (
         mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
         mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
@@ -1560,6 +1560,143 @@ def test_stale_wake_for_review_ready_skipped_when_task_approved_or_merge_routed(
         skip_msg = supervisor.stale_dispatch_skip_message(cfg, event, task_map)
         assert skip_msg is not None
         assert "no longer eligible" in skip_msg
+
+    # Case 3: Task has stale merge_route for a prior head (PR#1175 pattern)
+    # The wake is NOT stale and the task IS eligible for review on the new head
+    task["merge_route"] = {"head": "b" * 40, "route": "queued"}
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert supervisor.current_dispatch_event_key(cfg, event, task_map) == event["key"]
+        assert supervisor.stale_dispatch_skip_message(cfg, event, task_map) is None
+
+
+def test_pr1175_reproduction_prior_queued_route_does_not_block_repaired_new_head_review() -> None:
+    """PR#1175: prior queued route head a801faf5经owner CI repair后current submitted head 0b3e1987,
+
+    CI success, mergeQueueEntry null. The stale prior merge_route must not suppress reviewer dispatch.
+    """
+    cfg = _base_test_config()
+    stale_head = "a801faf568b66e700f8691b02ceeec8358fa2aa9"
+    new_head = "0b3e19870b3e19870b3e19870b3e19870b3e1987"
+    task = {
+        "id": "ODP-TEST-PR1175-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 1175,
+            "branch": "task/ODP-TEST-PR1175-001",
+            "base_branch": "dev",
+            "remote_sha": new_head,
+        },
+        "merge_route": {
+            "head": stale_head,
+            "route": "queued",
+            "pr_number": 1175,
+            "at": "2026-09-05T00:10:56Z",
+            "attempts": 1,
+        },
+        "depends_on": [],
+        "last_update": "2026-09-05T00:53:14Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    # 1. Verification: is_task_review_dispatch_eligible is True on new head despite stale merge_route
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"ODP-TEST-PR1175-001": task}) == 0
+
+    # 2. Verification: dispatch_ready_tasks dispatches reviewer Codex
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert changed is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["task_id"] == "ODP-TEST-PR1175-001"
+    assert queued_events[0]["target_agent"] == "Codex"
+    assert queued_events[0]["reason"] == REASON_REVIEW_READY
+
+    # 3. Fail-closed verification: failing CI, pending CI, missing CI, and SHA drift fail closed
+    for bad_ci in ["failure", "pending", "none", "unknown", "error"]:
+        with (
+            mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+            mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", bad_ci)),
+        ):
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+
+    # SHA drift check: remote SHA != submitted SHA
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="c" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+
+    # 4. Currently queued head remains immutable: matching head merge_route suppresses review dispatch
+    task["merge_route"]["head"] = new_head
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+
+
+def test_ci_repair_requeue_and_transition_clears_stale_merge_route() -> None:
+    """Queue ejection / CI repair requeue and submit_review cleanly clear merge_route."""
+    cfg = _base_test_config()
+    task = {
+        "id": "ODP-TRANSITION-001",
+        "status": "review_approved",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "approved_head": "a" * 40,
+        "merge_route": {
+            "head": "a" * 40,
+            "route": "queued",
+            "pr_number": 123,
+            "at": "2026-09-05T00:00:00Z",
+            "attempts": 1,
+        },
+        "depends_on": [],
+    }
+    status = {"tasks": [task]}
+
+    with (
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        # CI repair requeue with clear_approval=True
+        changed = supervisor.requeue_task_for_ci_repair(
+            cfg,
+            status,
+            task,
+            message="CI failed, owner repair required.",
+            clear_approval=True,
+        )
+        assert changed is True
+        assert task["status"] == "in_progress"
+        assert "approved_head" not in task
+        assert "merge_route" not in task
 
 
 def test_reconcile_runtime_on_boot_completes_stale_review_event_when_approved_or_merge_routed() -> None:
