@@ -219,21 +219,24 @@ def test_dev_go_decision_requires_dev_boundary_gates_cleared() -> None:
 def test_blocking_gates_filters_by_target() -> None:
     registry = load_committed_registry()
     module = load_checker_module()
-    # All gates are blocked in committed registry
-    assert module.blocking_gates(registry, target="dev") == [f"gate-{i}" for i in range(7)]
-    assert module.blocking_gates(registry, target="staging") == []
-
-    # If gate-2 is assigned to staging, target=dev omits gate-2
-    registry["gates"][2]["admission_target"] = "staging"
-    assert "gate-2" not in module.blocking_gates(registry, target="dev")
+    # Staged gates mapped per rollout plan §6.1
+    assert module.blocking_gates(registry, target="dev") == ["gate-0", "gate-1", "gate-4"]
     assert module.blocking_gates(registry, target="staging") == ["gate-2"]
+    assert module.blocking_gates(registry, target="production") == ["gate-3", "gate-5", "gate-6"]
+
+    # If gate-2 is assigned to dev, target=dev includes gate-2
+    registry["gates"][2]["admission_target"] = "dev"
+    assert "gate-2" in module.blocking_gates(registry, target="dev")
+    assert module.blocking_gates(registry, target="staging") == []
 
 
 def test_go_decision_with_no_gates_bound_to_admission_target_is_rejected() -> None:
     """Fail-closed guard: GO decision is rejected if no gate is bound to release.admission_target."""
     def mutate(registry: dict[str, Any]) -> None:
-        # All 7 gates are cleared but bound to dev
+        # All 7 gates are cleared and bound to dev
         clear_all_gates(registry)
+        for gate in registry["gates"]:
+            gate.update({"stage": "candidate-built", "environment": "dev", "admission_target": "dev"})
         # Release targets staging, but 0 gates are bound to staging
         registry["release"]["stage"] = "dev-verified"
         registry["release"]["environment"] = "dev"
@@ -252,6 +255,8 @@ def test_go_decision_with_no_gates_bound_to_admission_target_is_rejected() -> No
 def test_blocked_gates_with_unmatched_target_fails_closed_under_require_go(tmp_path: Path) -> None:
     """When all gates are blocked and bound to dev, staging GO target fails closed and does not exit 0."""
     registry = load_committed_registry()
+    for gate in registry["gates"]:
+        gate.update({"stage": "candidate-built", "environment": "dev", "admission_target": "dev"})
     registry["release"]["stage"] = "dev-verified"
     registry["release"]["environment"] = "dev"
     registry["release"]["admission_target"] = "staging"
@@ -675,7 +680,7 @@ def test_cli_json_report_lists_blocking_gates() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert report["release_state"] == "NO-GO"
     assert report["cleared_gates"] == []
-    assert report["blocking_gates"] == [f"gate-{index}" for index in range(7)]
+    assert report["blocking_gates"] == ["gate-0", "gate-1", "gate-4"]
     assert report["candidate_sha"] == CANDIDATE_SHA
 
 
