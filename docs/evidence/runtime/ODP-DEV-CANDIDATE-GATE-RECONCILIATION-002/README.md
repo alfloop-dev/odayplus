@@ -1,11 +1,11 @@
 # ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 — 真實 build artifact 與 dev gate registry 的 exact candidate reconciliation
 
 - Owner: Antigravity4
-- Reviewer: Claude
+- Reviewer: Codex (Claude)
 - 記錄日期: 2026-09-05
 - Candidate SHA: `04e1572f802a54c2646ba678fe2975226dfbd7c4`
 - Build run: [Runtime Release 33942097235](https://github.com/alfloop-dev/odayplus/actions/runs/33942097235)
-- 結論: **維持 NO-GO。本次只做 candidate exact binding 重整，不清任何 gate、不偽造 Human/Ops GO、不簽發 lease、不執行部署。**
+- 結論: **維持 NO-GO。本次只做 candidate exact binding 重整與 staged gate 語意校準，不清任何 gate、不偽造 Human/Ops GO、不簽發 lease、不執行部署。**
 
 ## 這次做了什麼
 
@@ -14,10 +14,28 @@
 artifact，以及 build 實際推上 Artifact Registry 的四個 image digest，指向最新的
 exact dev candidate SHA `04e1572f802a54c2646ba678fe2975226dfbd7c4`。
 
-前一版 candidate 綁定為 `ebc4fca5…`，隨 dev tip 前進至 `04e1572f…`，Runtime Release
-建置了新版本的 immutable container images、Cosign 簽章、CycloneDX SBOM、
-`initial_release_recovery` readback 與 `sources_off_attestation`。
-依循 release gate 治理規範，更換 candidate 會重開所有七道 gate；**有最新 artifact 不等於通過 gate**。
+依據部署規劃《EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md》§6.1，修正 gate 階段與 admission target，解除首次部署循環依賴：
+- Gate 0 (Code Gate), Gate 1 (Contract Gate), Gate 4 (Security Gate) 屬於 `candidate-built` / `dev` -> 阻擋 `dev` 初始部署；
+- Gate 2 (Data Gate) 屬於 `dev-verified` / `dev` -> 需 dev live deployment 證據，用於阻擋後續 `staging`；
+- Gate 3 (Model & Solver Gate), Gate 5 (E2E/UAT Gate), Gate 6 (Ops & Audit Gate) 屬於 `staging-verified` / `staging` -> 需 staging 演練與 UAT 證據，用於阻擋 `production`。
+- 所有七道 gate 均維持 `status: "blocked"`、`receipts: []`，`release.decision` 維持 `no-go`。
+
+## 原始 Artifact 來源與 Raw-Byte 比對索引
+
+GitHub Artifact API 回傳下列三個 artifact（均來自 run 33942097235，head SHA `04e1572f802a54c2646ba678fe2975226dfbd7c4`）：
+
+| Artifact 名稱 | Artifact ID | API Archive Digest | 解壓檔 Raw SHA-256 |
+|---|---|---|---|
+| `runtime-release-manifest-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288831 | `sha256:40f743e32ac9c44faa0fec03d0c73c6ebd9103e3a479ff7fa2143d2aa66b5791` | `efe7bed05df8f176b053f448acc0c303d8b81786212a98fc5e56f27031e1f124` |
+| `runtime-release-images-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288660 | `sha256:192d7c227764201461af005c08fb261502dc8a264a7cce69b2d352b2cf607548` | `e177983c92b64b8bd1e9da524010d47712192237adf58c19fa56cbf5550ad23e` |
+| `initial-release-absence-readback-04e1572f802a54c2646ba678fe2975226dfbd7c4` | 9962288978 | `sha256:e732be9f4fecffe179729f885c75514d6786c12d46e3d2aa2dbfc0ceb7eec9ee` | `5e6aba3b690ecbbac394ea2706036bc3319a650a0dfdbad25a61785dca01897f` |
+
+使用 `gh run download 33942097235 --repo alfloop-dev/odayplus` 下載至 `/tmp/odp-release-binding-check.YKEX6i` 後進行比對：
+- `cmp docs/evidence/gates/RELEASE_MANIFEST.json /tmp/odp-release-binding-check.YKEX6i/.../RELEASE_MANIFEST.json` -> EXIT=0
+- `cmp docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/runtime-release-images.json /tmp/odp-release-binding-check.YKEX6i/.../runtime-release-images.json` -> EXIT=0
+- `cmp docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/initial-release-absence-readback.json /tmp/odp-release-binding-check.YKEX6i/.../initial-release-absence-readback.json` -> EXIT=0
+
+另以 `gcloud artifacts docker images describe` 確認 manifest 內 API、Web、worker、scheduler 四個完整 image digest 均存在於 GCP Artifact Registry（各 command exit 0，此為 registry 存在性證明，非已部署或 live network 證明）。
 
 ## 綁定內容
 
@@ -34,10 +52,10 @@ exact dev candidate SHA `04e1572f802a54c2646ba678fe2975226dfbd7c4`。
 
 | Component | Image digest |
 |---|---|
-| api | `oday-api@sha256:2ee5821c06dd24f4deadc27483189a981a98a1efe2b6ab077f70f57090935d21` |
-| web | `oday-web@sha256:c3b58183ba903952452832cec8db959b46527d0a25c2d0e24736a08d2e48f974` |
-| worker | `oday-worker@sha256:db93d0bf31266706d68decab20fe97754667a3602eb5477116693cd7693693e5` |
-| scheduler | `oday-scheduler@sha256:51a3908a2034901d7e0a6b89378c7e5ad9326765230b29738b544f6111928476` |
+| api | `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:2ee5821c06dd24f4deadc27483189a981a98a1efe2b6ab077f70f57090935d21` |
+| web | `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:c3b58183ba903952452832cec8db959b46527d0a25c2d0e24736a08d2e48f974` |
+| worker | `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:db93d0bf31266706d68decab20fe97754667a3602eb5477116693cd7693693e5` |
+| scheduler | `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:51a3908a2034901d7e0a6b89378c7e5ad9326765230b29738b544f6111928476` |
 
 Registry host 一律為
 `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev`。
@@ -52,21 +70,36 @@ Registry host 一律為
 
 1. **repo 內的 manifest 就是 run 的 artifact**：`cmp` 與 `sha256sum` 顯示
    `docs/evidence/gates/RELEASE_MANIFEST.json` 與 run 下載的
-   `runtime-release-manifest-04e1572f802a54c2646ba678fe2975226dfbd7c4` artifact 位元組完全相同。無人工編輯。
+   `runtime-release-manifest-04e1572f802a54c2646ba678fe2975226dfbd7c4` artifact 位元組完全相同（Raw SHA-256 `efe7bed05df8f176b053f448acc0c303d8b81786212a98fc5e56f27031e1f124`）。無人工編輯。
 2. **manifest digest 可自我驗證**：`manifest_digest` 等於移除該欄位後的
-   canonical JSON 的 SHA-256，任何一個字元被改動都會失效。
-3. **三個內容 digest 可從這份 checkout 重算**：`migration_digest`、
-   `data_contract_digest`、`source_policy_digest` 重算結果與 manifest 記錄一致。
-   這是把 manifest 綁到 candidate **原始碼樹**、而不只是綁到 commit 標籤。
+   canonical JSON 的 SHA-256（`sha256:1aeadb35512f819ba3aca92dc72fe2834226eb8b83e4d4b286408fa67a870908`），任何一個字元被改動都會失效。
+3. **三個內容 digest 可從 candidate tree 重算**：`migration_digest`（`sha256:b3bb608d7895f127766536e92d1f35d04c2b37c10db16d501f54923e87abb316`）、
+   `data_contract_digest`（`sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73`）、`source_policy_digest`（`sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824`）重算結果與 manifest 記錄一致。
+   這是把 manifest 綁到 candidate **原始碼樹**（`04e1572f802a54c2646ba678fe2975226dfbd7c4`）、而不只是綁到 commit 標籤。
 4. **image digest 與 build handoff 一致**：`component_binding_errors()` 對
    `runtime-release-images.json` 回傳空 list，代表 manifest 不可能引用 build 沒產出的 digest。
 5. **簽章與透明日誌**：build job 安裝 cosign，`sign_images.sh verify` 驗證通過
    （4 次 `Verification PASSED.`），Rekor 透明日誌留下 8 筆項目，憑證中的
    `githubWorkflowSha` 為 `04e1572f802a54c2646ba678fe2975226dfbd7c4`。
-6. **Sources-off Attestation**：16 個來源全部 audited 為 disabled、零 credentials、public egress 為 default-deny。
-7. **Initial Release Recovery**：包含 dev target 5 個 Cloud Run resources 的 absence readback，確認不存在前版時採 delete-candidate-zero-traffic。
-8. **fail-closed 仍然成立**：
+6. **Sources-off Attestation**：16 個來源全部 audited 為 disabled、零 credentials、public egress 為 default-deny。此證明 build 靜態 contract 與 dev-build environment 設定，dev runtime provider-off 與 egress live readback 仍待部署後取得。
+7. **Initial Release Recovery**：包含 dev target 5 個 Cloud Run resources 的 absence readback，確認不存在前版時採 delete-candidate-zero-traffic（target absence 為資源存在性 readback，非網路/防火牆實測）。
+8. **fail-closed 與分階段 admission 仍然成立**：
    `check_release_gate_registry.py --expected-sha 04e1572f802a54c2646ba678fe2975226dfbd7c4` EXIT=0，而 release 促轉呼叫的 `--require-go` EXIT=1。
+
+## Scope 邊界與交接
+
+- **本 PR 僅限於 owned_paths 內的證據與驗證檔案**：
+  - `docs/evidence/gates/RELEASE_MANIFEST.json`
+  - `docs/evidence/gates/RELEASE_GATE_REGISTRY.json`
+  - `docs/evidence/gates/README.md`
+  - `docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/*`
+- **移出所有 code、test、inventory 修改**：
+  - `delivery_toolchain/release/release_manifest.py`
+  - `docs/audits/code-boundary-inventory.csv`
+  - `tests/release/test_probe_release_target_absence.py`
+  - `tests/release/test_release_manifest.py`
+  - `tests/release/test_release_manifest_cli.py`
+  上述程式與測試 fixture 修復交由 PR #1206 / `ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001` 統一處理，避免雙 owner 同時修改或在 evidence-only PR 內夾帶程式變更。
 
 ## 沒有驗證到、也沒有做的事
 
@@ -93,4 +126,5 @@ Registry host 一律為
 | `release-environment-receipt.json` | build 階段 environment 綁定 receipt（原始 artifact） |
 | `initial-release-absence-readback.json` | dev 初始部署目標不存在證明（原始 artifact） |
 | `npm-audit-receipt.json` | build 階段 npm audit receipt（原始 artifact） |
+
 

@@ -62,15 +62,15 @@ The seven gates collapse the eleven checklist rows in
 gates in `docs/architecture/ODAY_PLUS_EXECUTION_BASELINE.md` into the
 release-ordered sequence the plan refers to as Gate 0-6.
 
-| Gate | Name | Collapses checklist rows |
-|---|---|---|
-| `gate-0` | Code Gate | Code Gate |
-| `gate-1` | Contract Gate | Contract Gate |
-| `gate-2` | Data Gate | Data Gate |
-| `gate-3` | Model and Solver Gate | Model Gate, Solver Gate |
-| `gate-4` | Security and Privacy Gate | Security Gate |
-| `gate-5` | E2E, Performance and UAT Gate | E2E Gate, Performance Gate, UAT Gate |
-| `gate-6` | Ops, Release and Audit Gate | Ops Gate, Audit Gate |
+| Gate | Name | Stage | Environment | Admission Target | Collapses checklist rows |
+|---|---|---|---|---|---|
+| `gate-0` | Code Gate | `candidate-built` | `dev` | `dev` | Code Gate |
+| `gate-1` | Contract Gate | `candidate-built` | `dev` | `dev` | Contract Gate |
+| `gate-2` | Data Gate | `dev-verified` | `dev` | `staging` | Data Gate |
+| `gate-3` | Model and Solver Gate | `staging-verified` | `staging` | `production` | Model Gate, Solver Gate |
+| `gate-4` | Security and Privacy Gate | `candidate-built` | `dev` | `dev` | Security Gate |
+| `gate-5` | E2E, Performance and UAT Gate | `staging-verified` | `staging` | `production` | E2E Gate, Performance Gate, UAT Gate |
+| `gate-6` | Ops, Release and Audit Gate | `staging-verified` | `staging` | `production` | Ops Gate, Audit Gate |
 
 Gate owners and reviewers are seeded from the owners of the corresponding P0
 tasks in program `ODP-PLAN-GAP-CLOSEOUT-2026-07-30`. Human/Ops confirms or

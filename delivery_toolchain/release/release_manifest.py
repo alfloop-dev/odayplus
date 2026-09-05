@@ -15,14 +15,9 @@ import copy
 import hashlib
 import json
 import re
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 SUPPORTED_SCHEMA_VERSIONS = (1, 2)
 CURRENT_SCHEMA_VERSION = 2
