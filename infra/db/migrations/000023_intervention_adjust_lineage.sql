@@ -1,4 +1,4 @@
--- 000017_intervention_adjust_lineage.sql
+-- 000023_intervention_adjust_lineage.sql
 -- ODP-INTV006-ADJUST-WORKFLOW-001: Add lineage, predecessor/replacement relations, and adjustment metadata for interventions
 --
 -- When an active intervention is adjusted, operational practice stops the

@@ -1,7 +1,7 @@
 """Persist intervention adjustment lineage and audit metadata.
 
-Revision ID: 0016
-Revises: 0015
+Revision ID: 0017
+Revises: 0016
 Create Date: 2026-09-05
 
 Task: ODP-INTV006-ADJUST-WORKFLOW-001
@@ -15,8 +15,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0016"
-down_revision: str = "0015"
+revision: str = "0017"
+down_revision: str = "0016"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -24,7 +24,7 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     sql_file_path = os.path.join(
         os.path.dirname(os.path.realpath(__file__)),
-        "../000017_intervention_adjust_lineage.sql",
+        "../000023_intervention_adjust_lineage.sql",
     )
     with open(sql_file_path, encoding="utf-8") as migration_file:
         sql_content = migration_file.read()

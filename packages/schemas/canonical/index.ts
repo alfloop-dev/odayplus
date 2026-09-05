@@ -31,6 +31,27 @@ export interface AddressLocation {
   h3_res_9: string;
   h3_res_10: string;
   manual_override_flag: boolean;
+  tenant_id?: string;
+  revision?: number;
+}
+
+export interface ManualCorrection {
+  correction_id: string;
+  entity_type: string;
+  entity_id: string;
+  tenant_id: string;
+  field_name: string;
+  old_value: unknown;
+  new_value: unknown;
+  reason: string;
+  actor_id: string;
+  occurred_at: string; // ISO 8601 DateTime
+  source_revision: number;
+  applied_revision: number;
+  status: 'applied' | 'rolled_back';
+  correlation_id?: string | null;
+  decision_card_hash?: string | null;
+  audit_event_id?: string | null;
 }
 
 export interface Store {

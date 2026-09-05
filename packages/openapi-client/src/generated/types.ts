@@ -74,6 +74,35 @@ export type AdLiftIncrementalityJobPayload = {
   idempotency_key?: string | null;
 };
 
+/** AddressCorrectionPayload */
+export type AddressCorrectionPayload = {
+  actor?: string | null;
+  actorName?: string | null;
+  actorRoleId?: string | null;
+  actor_id?: string | null;
+  city?: string | null;
+  district?: string | null;
+  expected_revision?: number | null;
+  geocode_confidence?: number | null;
+  geocode_precision?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  normalized_address?: string | null;
+  raw_address?: string | null;
+  reason: string;
+  risk_acknowledged?: boolean;
+  road?: string | null;
+  village?: string | null;
+};
+
+/** AddressRollbackPayload */
+export type AddressRollbackPayload = {
+  actor?: string | null;
+  actor_id?: string | null;
+  expected_revision?: number | null;
+  reason: string;
+};
+
 /** AdjustPayload */
 export type AdjustPayload = {
   action_spec?: Record<string, unknown> | null;
@@ -2022,6 +2051,9 @@ export const API_PATHS = {
   "/api/v1/learninghub/oss-capabilities": ["GET"],
   "/api/v1/learninghub/releases": ["GET", "POST"],
   "/api/v1/learninghub/releases/{release_id}/monitor": ["POST"],
+  "/api/v1/listings/addresses/{address_id}": ["GET"],
+  "/api/v1/listings/addresses/{address_id}/corrections": ["GET", "POST"],
+  "/api/v1/listings/addresses/{address_id}/corrections/{correction_id}/rollback": ["POST"],
   "/api/v1/listings/candidates": ["GET"],
   "/api/v1/listings/import": ["POST"],
   "/api/v1/listings/import-jobs": ["POST"],
