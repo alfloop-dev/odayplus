@@ -804,8 +804,6 @@ shared/infrastructure/persistence/operator_shell.py,product_system,product_requi
 shared/infrastructure/persistence/outbox.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/postgresql.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/infrastructure/persistence/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
-shared/infrastructure/persistence/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
-shared/infrastructure/persistence/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/integrity.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/jobs/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/jobs/queue.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1002,8 +1000,6 @@ tests/integration/test_netplan_hard_constraints.py,verification,verification_onl
 tests/integration/test_netplan_production_constraints.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_netplan_solver.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_official_real_estate_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
-tests/integration/test_official_real_estate_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
-tests/integration/test_official_real_estate_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_operator_canonical_wiring.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_operator_comments_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_operator_live_domain_modules.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -1054,8 +1050,6 @@ tests/ops/test_dev_rollout.py,verification,verification_only,false,product_opera
 tests/ops/test_ephemeral_staging_lifecycle.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_first_release_recovery.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_heatzone_composition_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
-tests/ops/test_migration_backfill.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
-tests/ops/test_migration_backfill.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_migration_backfill.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_prediction_drift_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_price_exploration_gate_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
