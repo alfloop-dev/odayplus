@@ -93,7 +93,7 @@ PR_CONFLICT_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
 #: The single PR read the conflicted-review recovery is allowed to act on.
 _REVIEW_CONFLICT_PR_JSON_FIELDS = "state,mergeStateStatus,headRefOid"
 
-_UNSET = object()
+_MARKER_UNSET = object()
 
 
 def _pr_changed_paths(pr_number: int) -> list[str] | None:
@@ -781,7 +781,7 @@ def recover_conflicted_review_prs(
             "owner to advance the base, resolve the conflict, and resubmit the same PR "
             "for an independent review."
         )
-        previous_marker = task.get(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, _UNSET)
+        previous_marker = task.get(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, _MARKER_UNSET)
         task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = submitted_sha
         if not requeue_task_for_ci_repair(
             config,
@@ -794,7 +794,7 @@ def recover_conflicted_review_prs(
             # Refused, or the canonical commit did not land. The marker is only
             # true once that commit persisted it; leaving it behind would make
             # this head permanently unrecoverable.
-            if previous_marker is _UNSET:
+            if previous_marker is _MARKER_UNSET:
                 task.pop(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, None)
             else:
                 task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = previous_marker
