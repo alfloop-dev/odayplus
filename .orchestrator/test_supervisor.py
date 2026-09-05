@@ -13655,6 +13655,9 @@ class RuntimeSettingsAreReachableFromConfigTests(unittest.TestCase):
         cases = {
             ("worker_reassignment", "review_churn"): supervisor.review_churn_settings({}),
             ("worker_worktree_housekeeping",): supervisor.worker_worktree_housekeeping_settings({}),
+            ("ready_dispatcher", "owner_provider_preference"): (
+                worker_failure_policy.owner_provider_preference_settings({})
+            ),
         }
         for path, settings in cases.items():
             with self.subTest(path=".".join(path)):
@@ -13663,6 +13666,41 @@ class RuntimeSettingsAreReachableFromConfigTests(unittest.TestCase):
                     node = node["properties"][part]
                 self.assertEqual(set(settings), set(node["properties"]))
 
+
+
+class ShippedOwnerProviderPreferenceTests(unittest.TestCase):
+    """The shipped example is the only place the intended group is written down.
+
+    Live config is applied separately and is not readable from here, so this
+    guards the documented intent: implementation work prefers the agy and Claude
+    lanes, and every provider named resolves against the shipped fleet rather
+    than against an agent's spelling.
+    """
+
+    CONFIG = json.loads(
+        (Path(supervisor.__file__).parent / "config.example.json").read_text(encoding="utf-8")
+    )
+
+    def test_example_prefers_the_agy_and_claude_lanes_for_implementation(self) -> None:
+        settings = worker_failure_policy.owner_provider_preference_settings(self.CONFIG)
+        self.assertIs(settings["enabled"], True)
+        self.assertEqual(settings["preferred_providers"], ["antigravity", "claude"])
+        self.assertEqual(
+            settings["task_classes"], ["implementation", "remediation", "documentation"]
+        )
+
+    def test_every_preferred_provider_names_a_configured_lane(self) -> None:
+        resolved = {
+            agent.get("display_name") or agent_id
+            for agent_id, agent in self.CONFIG["agents"].items()
+            if worker_failure_policy.agent_is_preferred_owner_provider(self.CONFIG, agent_id)
+        }
+        # The antigravity2 alias is a distinct provider key; it must still
+        # resolve into the group, and no Codex lane may.
+        self.assertIn("Antigravity2", resolved)
+        self.assertIn("Claude", resolved)
+        self.assertTrue({"Antigravity", "Claude2"}.issubset(resolved))
+        self.assertFalse({"Codex", "Codex2"} & resolved)
 
 
 class ResolvePollIntervalTests(unittest.TestCase):

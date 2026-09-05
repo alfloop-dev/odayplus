@@ -582,6 +582,11 @@
       "stalled"
     ],
     "max_active_workers_per_task": 1,
+    "owner_provider_preference": {
+      "enabled": true,
+      "preferred_providers": ["antigravity", "claude"],
+      "task_classes": ["implementation", "remediation", "documentation"]
+    },
     "helper_execution_lease": {
       "enabled": true,
       "claimable_statuses": ["todo", "in_progress"],
