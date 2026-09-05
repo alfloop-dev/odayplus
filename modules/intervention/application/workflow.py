@@ -16,6 +16,7 @@ maintenance, cleaning). It enforces the ODP-MOD-05 / ODP-ML-05 guardrails:
 from __future__ import annotations
 
 from collections.abc import Iterable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -958,9 +959,19 @@ class InterventionWorkflow:
             adjustment=adjustment_record,
         )
 
-        self.repository.save(replacement)
-        self.repository.save(stopped_original)
+        with self._atomic_lineage_write():
+            # The replacement is written first so its ``predecessor_id`` always
+            # resolves against a row that already exists, which is exactly what
+            # makes a failure on the second write dangerous: the replacement
+            # would be live while the original stayed active -- two running
+            # cases for one store, and a lineage that only points one way.
+            # Either both land or neither does.
+            self.repository.save(replacement)
+            self.repository.save(stopped_original)
 
+        # Audit is appended only after the lineage it describes is durable, and
+        # is never rolled back with it: the log is append-only, so a failed
+        # adjustment must leave no audit trace rather than a compensating one.
         self._audit(
             stopped_original,
             action="adjust",
@@ -994,6 +1005,24 @@ class InterventionWorkflow:
             replacement=replacement,
             audit_event_id=audit_event.event_id,
         )
+
+    def _atomic_lineage_write(self) -> AbstractContextManager[None]:
+        """Context manager that makes the adjustment's two saves all-or-nothing.
+
+        Both shipped repositories provide ``atomic``. A repository that does
+        not cannot express "stop the original and open the replacement as one
+        unit", and silently degrading to two independent saves is what produces
+        half-written lineage, so the adjustment is refused before anything is
+        written rather than after.
+        """
+        atomic = getattr(self.repository, "atomic", None)
+        if not callable(atomic):
+            raise InterventionError(
+                "adjusting an intervention needs a repository that can persist the "
+                "stop and its replacement atomically; "
+                f"{type(self.repository).__name__} does not provide atomic()"
+            )
+        return atomic()
 
     def adjust(self, *args: Any, **kwargs: Any) -> AdjustmentOutcome:
         """Alias for adjust_case."""

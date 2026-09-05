@@ -2056,3 +2056,276 @@ def test_api_production_entry_durable_persistence_roundtrip(tmp_path: pytest.Tem
     assert repl_sql is not None
     assert repl_sql["status"] == "candidate"
     assert repl_sql["predecessor_id"] == iid
+
+
+def _insert_intervention_row(
+    engine: SqliteEngine, intervention_id: str, store_id: str, status: str = "candidate"
+) -> None:
+    """Minimal direct row insert used to exercise engine-level transactions."""
+    engine.execute(
+        "INSERT INTO interventions ("
+        "  intervention_id, store_id, start_time, end_time, "
+        "  observation_start_time, observation_end_time, status"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            intervention_id,
+            store_id,
+            START.isoformat(),
+            END.isoformat(),
+            START.isoformat(),
+            END.isoformat(),
+            status,
+        ),
+    )
+
+
+def _intervention_row(engine: SqliteEngine, intervention_id: str):
+    return engine.query_one(
+        "SELECT * FROM interventions WHERE intervention_id = ?", (intervention_id,)
+    )
+
+
+def test_sqlite_engine_transaction_is_all_or_nothing(tmp_path) -> None:
+    """ODP-FR-INTV-006: the durable engine can group writes, not just serialize them.
+
+    ``execute`` commits per statement, so without a real transaction a
+    multi-row invariant cannot survive a failure half way through.
+    """
+    engine = SqliteEngine(tmp_path / "engine_transaction.db")
+    _seed_store(engine, store_id="store-engine-txn")
+
+    with engine.transaction():
+        _insert_intervention_row(engine, "txn-commit-a", "store-engine-txn")
+        _insert_intervention_row(engine, "txn-commit-b", "store-engine-txn")
+    assert _intervention_row(engine, "txn-commit-a") is not None
+    assert _intervention_row(engine, "txn-commit-b") is not None
+
+    with pytest.raises(RuntimeError, match="rolled back"):
+        with engine.transaction():
+            _insert_intervention_row(engine, "txn-abort-a", "store-engine-txn")
+            # Visible to this transaction before it aborts...
+            assert _intervention_row(engine, "txn-abort-a") is not None
+            _insert_intervention_row(engine, "txn-abort-b", "store-engine-txn")
+            raise RuntimeError("group rolled back")
+    # ...and gone afterwards, including the write that already "succeeded".
+    assert _intervention_row(engine, "txn-abort-a") is None
+    assert _intervention_row(engine, "txn-abort-b") is None
+
+    # A nested block joins the outer transaction instead of committing early.
+    with pytest.raises(RuntimeError, match="outer rolled back"):
+        with engine.transaction():
+            _insert_intervention_row(engine, "txn-outer", "store-engine-txn")
+            with engine.transaction():
+                _insert_intervention_row(engine, "txn-inner", "store-engine-txn")
+            raise RuntimeError("outer rolled back")
+    assert _intervention_row(engine, "txn-outer") is None
+    assert _intervention_row(engine, "txn-inner") is None
+
+    # Ordinary writes outside a transaction still commit on their own.
+    _insert_intervention_row(engine, "txn-autocommit", "store-engine-txn")
+    assert _intervention_row(engine, "txn-autocommit") is not None
+    engine.close()
+
+
+def test_adjust_lineage_write_is_atomic_when_the_stop_write_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure on the second write must not leave a live replacement behind.
+
+    The replacement is saved first so its ``predecessor_id`` resolves, so a
+    failure stopping the original is precisely the case that would otherwise
+    leave two active cases for one store and one-way lineage.
+    """
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    _drive_to_approved(workflow, case.intervention_id)
+    repo = workflow.repository
+    approved = repo.get(case.intervention_id)
+    audit_before = len(workflow.audit_log.list_events())
+
+    unpatched_save = repo.save
+
+    def fail_the_stop(intervention):
+        if intervention.status is InterventionStatus.STOPPED:
+            raise RuntimeError("relational stop write failed")
+        return unpatched_save(intervention)
+
+    monkeypatch.setattr(repo, "save", fail_the_stop)
+    with pytest.raises(RuntimeError, match="relational stop write failed"):
+        workflow.adjust_case(
+            case.intervention_id,
+            actor="ops-hero",
+            reason="competitor cut price again",
+            action_spec={"price_change_pct": -12},
+        )
+    monkeypatch.undo()
+
+    # No replacement anywhere: not by id, not in the per-store index.
+    assert [item.intervention_id for item in repo.list_all()] == [case.intervention_id]
+    assert repo.list_by_store(case.store_id) == [approved]
+
+    # The original is untouched and still adjustable.
+    still_active = repo.get(case.intervention_id)
+    assert still_active.status is InterventionStatus.APPROVED
+    assert still_active.replacement_id is None
+    assert still_active.adjustment is None
+    assert still_active.version == approved.version
+
+    # A rolled-back adjustment leaves no audit trace of a replacement.
+    assert len(workflow.audit_log.list_events()) == audit_before
+
+    # And the retry after the injected fault still succeeds.
+    outcome = workflow.adjust_case(
+        case.intervention_id,
+        actor="ops-hero",
+        reason="competitor cut price again",
+        action_spec={"price_change_pct": -12},
+    )
+    assert outcome.original.status is InterventionStatus.STOPPED
+    assert outcome.original.replacement_id == outcome.replacement.intervention_id
+    assert outcome.replacement.predecessor_id == case.intervention_id
+
+
+class _NonAtomicInterventionRepository:
+    """Repository surface without the atomic pair-write contract."""
+
+    def __init__(self) -> None:
+        self._inner = InMemoryInterventionRepository()
+
+    def save(self, intervention):
+        return self._inner.save(intervention)
+
+    def get(self, intervention_id: str):
+        return self._inner.get(intervention_id)
+
+    def list_all(self):
+        return self._inner.list_all()
+
+    def list_by_store(self, store_id: str):
+        return self._inner.list_by_store(store_id)
+
+
+def test_adjust_refuses_a_repository_that_cannot_write_the_pair_atomically() -> None:
+    """Degrading to two independent saves is what produces half lineage."""
+    repo = _NonAtomicInterventionRepository()
+    workflow = InterventionWorkflow(repository=repo)
+    case = _open_case(workflow)
+    _drive_to_approved(workflow, case.intervention_id)
+    audit_before = len(workflow.audit_log.list_events())
+
+    with pytest.raises(InterventionError, match="atomic"):
+        workflow.adjust_case(
+            case.intervention_id,
+            actor="ops-hero",
+            reason="cannot be persisted as a pair",
+        )
+
+    assert [item.intervention_id for item in repo.list_all()] == [case.intervention_id]
+    assert repo.get(case.intervention_id).status is InterventionStatus.APPROVED
+    assert repo.get(case.intervention_id).replacement_id is None
+    assert len(workflow.audit_log.list_events()) == audit_before
+
+
+def test_api_adjust_relational_stop_failure_leaves_no_half_lineage(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Production entry: a driver failure stopping the original rolls the whole adjust back.
+
+    Exercises the same ordering hazard through API -> workflow -> durable
+    persistence, where the replacement upsert and its document mirror have
+    already been written when the stop write fails.
+    """
+    engine = SqliteEngine(tmp_path / "adjust_stop_failure.db")
+    _seed_store(engine, store_id="store-adjust-atomic")
+    store = SqliteDocumentStore(engine)
+    repo = DurableInterventionRepository(store)
+
+    app = create_app(intervention_repository=repo)
+    client = TestClient(
+        app, headers=INTERVENTION_HEADERS, raise_server_exceptions=False
+    )
+
+    create_res = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-adjust-atomic",
+            "kind": "PRICE_CHANGE",
+            "expected_outcome": "hold margin through the promo window",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+        },
+    )
+    assert create_res.status_code == 201
+    iid = create_res.json()["intervention_id"]
+    client.post(f"/interventions/{iid}/eligibility", json={"eligible": True, "actor": "ops-hero"})
+    client.post(
+        f"/interventions/{iid}/action",
+        json={"action_spec": {"price_change_pct": -5}, "actor": "ops-hero"},
+    )
+    client.post(f"/interventions/{iid}/conflict-check", json={"actor": "ops-hero"})
+    client.post(f"/interventions/{iid}/submit", json={"actor": "ops-hero"})
+    client.post(
+        f"/interventions/{iid}/approve",
+        json={"action": "APPROVE", "actor": "sup-hero", "reason": "approved"},
+    )
+
+    approved_row = _intervention_row(engine, iid)
+    assert approved_row["status"] == "approved"
+
+    # Fail only the upsert that stops the original -- the second of the pair,
+    # after the replacement row and its document mirror are already written.
+    unpatched_execute = engine.execute
+
+    def fail_the_stop_upsert(sql: str, params: tuple = ()):
+        if "INTO interventions" in sql and len(params) > 10 and params[10] == "stopped":
+            raise RuntimeError("relational stop write failed")
+        return unpatched_execute(sql, params)
+
+    monkeypatch.setattr(engine, "execute", fail_the_stop_upsert)
+    adjust_res = client.post(
+        f"/interventions/{iid}/adjust",
+        json={
+            "actor": "ops-hero",
+            "reason": "competitor cut price again",
+            "action_spec": {"price_change_pct": -12},
+        },
+    )
+    monkeypatch.undo()
+
+    assert adjust_res.status_code == 500
+
+    # The original is exactly as it was: still approved, no lineage, no audit payload.
+    after_row = _intervention_row(engine, iid)
+    assert after_row["status"] == "approved"
+    assert after_row["replacement_id"] is None
+    assert after_row["adjustment_json"] is None
+
+    # The replacement was rolled back out of both the relation and the document mirror.
+    assert [
+        row["intervention_id"]
+        for row in engine.query("SELECT intervention_id FROM interventions")
+    ] == [iid]
+    assert (
+        engine.query_one(
+            "SELECT intervention_id FROM interventions WHERE predecessor_id = ?", (iid,)
+        )
+        is None
+    )
+    assert [item.intervention_id for item in repo.list_all()] == [iid]
+    assert [item.intervention_id for item in repo.list_by_store("store-adjust-atomic")] == [iid]
+
+    # The retry after the injected fault completes and writes full lineage.
+    retry_res = client.post(
+        f"/interventions/{iid}/adjust",
+        json={
+            "actor": "ops-hero",
+            "reason": "competitor cut price again",
+            "action_spec": {"price_change_pct": -12},
+        },
+    )
+    assert retry_res.status_code == 200
+    replacement_id = retry_res.json()["replacement_intervention_id"]
+    assert _intervention_row(engine, iid)["replacement_id"] == replacement_id
+    assert _intervention_row(engine, replacement_id)["predecessor_id"] == iid
+    engine.close()

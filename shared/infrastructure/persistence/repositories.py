@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -590,6 +590,27 @@ _INTERVENTION_UPSERT_SQL: dict[str, str] = {
 }
 
 
+@contextmanager
+def _atomic_write(engine: Any) -> Iterator[None]:
+    """Run a group of statements as one all-or-nothing unit.
+
+    ``engine.lock`` is a real transaction on PostgreSQL (``_TransactionalLock``
+    opens one on entry) but plain serialization on SQLite, where every
+    ``execute`` commits on its own -- the same code, different durability.
+    Entering ``engine.transaction()`` as well closes that gap: it is a no-op
+    re-entry on PostgreSQL and the actual transaction on SQLite, so on both
+    engines a statement that raises part-way through leaves nothing behind.
+    """
+    with ExitStack() as stack:
+        lock = getattr(engine, "lock", None)
+        if lock is not None:
+            stack.enter_context(lock)
+        begin = getattr(engine, "transaction", None)
+        if callable(begin):
+            stack.enter_context(begin())
+        yield
+
+
 class DurableInterventionRepository:
     """Durable mirror of ``InMemoryInterventionRepository`` with migration-backed relational persistence."""
 
@@ -687,6 +708,18 @@ class DurableInterventionRepository:
             group_key=intervention.store_id,
         )
         return intervention
+
+    @contextmanager
+    def atomic(self) -> Iterator[None]:
+        """Commit every ``save`` made inside the block together, or none.
+
+        An adjustment is two writes -- stop the original, open the
+        replacement -- that are only meaningful as a pair, so the caller needs
+        a way to say "both or neither" without knowing which engine is behind
+        the store.
+        """
+        with _atomic_write(self._store.engine):
+            yield
 
     def get(self, intervention_id: str) -> Intervention | None:
         return self._store.get(self._C, intervention_id)
