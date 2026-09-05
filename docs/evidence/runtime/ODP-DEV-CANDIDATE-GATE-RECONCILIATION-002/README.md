@@ -104,6 +104,7 @@ bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live
   - `docs/evidence/gates/RELEASE_GATE_REGISTRY.json`
   - `docs/evidence/gates/README.md`
   - `docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/*`
+  - `tests/e2e/test_release_gate_registry.py`（§6.1 階段配置對應測試）
 - **移出所有 code、test、inventory 修改**：
   - `delivery_toolchain/release/release_manifest.py`
   - `docs/audits/code-boundary-inventory.csv`
@@ -111,6 +112,12 @@ bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live
   - `tests/release/test_release_manifest.py`
   - `tests/release/test_release_manifest_cli.py`
   上述程式與測試 fixture 修復交由 PR #1206 / `ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001` 統一處理，避免雙 owner 同時修改或在 evidence-only PR 內夾帶程式變更。
+- **關於 contract_digest 的技術說明與邊界**：
+  凍結 artifact `RELEASE_MANIFEST.json` 是在 candidate SHA `04e1572f802a54c2646ba678fe2975226dfbd7c4` 時由 Runtime Release run 33942097235 產出，其 `sources_off_attestation.egress_evidence.contract_digest` 記錄 `sha256:ff71103d410c1682acae61b5091130ddfb6bf849fbeca6abb015abcfbd421f57`（即 candidate tree 04e1572f 上 6 個合約檔案的真實 hash）。
+  當前 workspace/HEAD 隨 dev 前進已有新增提交，若以 HEAD 檔案重算會得到不同 digest。本 PR 遵守真實性與邊界原則：
+  1. 絕不弱化 `release_manifest.py` 的 producer binding 或降級為格式檢查；
+  2. 絕不篡改凍結 artifact 內的真實 digest；
+  3. 將合約比對層級與 candidate tree 重算機制交由 toolchain PR #1206 / `ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001` 承接處理。
 
 ## 沒有驗證到、也沒有做的事
 
