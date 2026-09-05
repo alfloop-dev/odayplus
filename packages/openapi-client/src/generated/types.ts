@@ -1480,6 +1480,8 @@ export type RebalanceStore = {
   avmP10?: number | null;
   avmP50?: number | null;
   avmP90?: number | null;
+  avmQualityDisposition?: string | null;
+  avmQualityScoreStatus?: string | null;
   avmRequestId?: string | null;
   avmReserve?: string | null;
   avmSnapshotId?: string | null;

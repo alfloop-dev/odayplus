@@ -7767,6 +7767,28 @@
             ],
             "title": "Avmp90"
           },
+          "avmQualityDisposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmqualitydisposition"
+          },
+          "avmQualityScoreStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmqualityscorestatus"
+          },
           "avmRequestId": {
             "anyOf": [
               {

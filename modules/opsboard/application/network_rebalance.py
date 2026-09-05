@@ -120,6 +120,11 @@ _STATUS_LABELS = {
     "closed": "結案",
 }
 
+# The card names a report that the canonical store cannot produce. Nothing else
+# can substantiate the confidence it was written with, so it is neither a
+# measured card nor a legacy-quality one -- it is a card we refuse to vouch for.
+_UNVERIFIABLE_QUALITY_DISPOSITION = "unverifiable_report_reference"
+
 _AVM_MODEL = {
     "modelVersion": "avm-rebalance-income-market-v1.0.0",
     "snapshotId": "AVM-SNAP-20260714-0600",
@@ -543,6 +548,8 @@ class NetworkRebalanceService:
                 "p50": report.fair_price.p50,
                 "p90": report.fair_price.p90,
                 "confidence": report.confidence,
+                "qualityScoreStatus": getattr(report, "quality_score_status", None),
+                "qualityDisposition": getattr(report, "quality_disposition", None),
                 "reservePrice": report.reserve_price,
                 "modelVersion": report.model_version,
                 "featureVersion": report.feature_version,
@@ -2049,8 +2056,52 @@ class NetworkRebalanceService:
             row["canonicalNetPlanScenarioIds"] = [
                 scenario.scenario_id for scenario in linked_scenarios
             ]
+            self._reproject_avm_card(row)
             refreshed.append(row)
         self._state["stores"] = refreshed
+
+    def _reproject_avm_card(self, row: dict[str, Any]) -> None:
+        """Re-derive a stored AVM card's quality claim from its own report.
+
+        The card is a projection kept in Operator state, so a restart restores
+        whatever confidence was written when the valuation was first completed.
+        A card produced before quality-score handling existed therefore keeps
+        claiming high confidence even though its case's ``1.0`` score cannot be
+        told apart from an omitted measurement. Re-read the exact report the
+        card names -- never the case's latest report, which describes a
+        different valuation and cannot speak for this card -- and carry that
+        report's current disposition over. Prices are left untouched: the card
+        remains the record of the numbers the operator was shown.
+        """
+
+        avm = row.get("avm")
+        if not isinstance(avm, dict) or not avm:
+            return
+        report_id = avm.get("reportId")
+        case_id = avm.get("requestId") or row.get("canonicalAvmCaseId")
+        report = None
+        if report_id and case_id:
+            report = next(
+                (
+                    item
+                    for item in self._avm_repository.report_history(str(case_id))
+                    if item.report_id == report_id
+                ),
+                None,
+            )
+        if report is None:
+            # Fail closed. An unresolvable reference cannot support the
+            # confidence stored on the card, and substituting another report
+            # would be exactly the impersonation this projection must avoid.
+            avm["confidence"] = None
+            avm["qualityScoreStatus"] = None
+            avm["qualityDisposition"] = _UNVERIFIABLE_QUALITY_DISPOSITION
+            return
+        # `report_history` already applies the legacy disposition, so a measured
+        # card keeps its confidence and only an opaque one is downgraded.
+        avm["confidence"] = report.confidence
+        avm["qualityScoreStatus"] = getattr(report, "quality_score_status", None)
+        avm["qualityDisposition"] = getattr(report, "quality_disposition", None)
 
     def _canonical_avm_metadata(self) -> dict[str, Any]:
         if not self._require_canonical:
@@ -2126,6 +2177,8 @@ class NetworkRebalanceService:
             "avmP50": avm.get("p50"),
             "avmP90": avm.get("p90"),
             "avmConf": avm.get("confidence"),
+            "avmQualityScoreStatus": avm.get("qualityScoreStatus"),
+            "avmQualityDisposition": avm.get("qualityDisposition"),
             "avmReserve": avm.get("reserve"),
             "avmModelVersion": avm.get("modelVersion"),
             "avmSnapshotId": avm.get("snapshotId"),
