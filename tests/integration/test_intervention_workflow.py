@@ -1895,6 +1895,65 @@ def test_durable_intervention_persistence_sql_table_lineage_and_audit(tmp_path: 
     assert reloaded_repl.adjustment is not None
 
 
+def test_durable_intervention_repository_fails_closed_without_relational_schema(
+    tmp_path: pytest.TempPathFactory,
+) -> None:
+    """A missing migration must not leave a document-only intervention."""
+    engine = SqliteEngine(tmp_path / "missing_intervention_schema.db")
+    engine.execute("DROP TABLE interventions")
+    repo = DurableInterventionRepository(SqliteDocumentStore(engine))
+    case = _open_case(InterventionWorkflow(repository=InMemoryInterventionRepository()))
+
+    with pytest.raises(RuntimeError, match="schema is missing table 'interventions'"):
+        repo.save(case)
+
+    assert repo.get(case.intervention_id) is None
+
+
+def test_api_production_entry_relational_write_failure_does_not_leave_document(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relational driver failure is observable and cannot create a half-write."""
+    engine = SqliteEngine(tmp_path / "failed_intervention_write.db")
+    _seed_store(engine, store_id="store-api-write-failure")
+    store = SqliteDocumentStore(engine)
+    repo = DurableInterventionRepository(store)
+    original_execute = engine.execute
+
+    def fail_intervention_write(sql: str, params: tuple = ()):
+        if sql.lstrip().upper().startswith("INSERT INTO interventions"):
+            raise RuntimeError("relational intervention write failed")
+        return original_execute(sql, params)
+
+    monkeypatch.setattr(engine, "execute", fail_intervention_write)
+    app = create_app(intervention_repository=repo)
+    client = TestClient(
+        app,
+        headers=INTERVENTION_HEADERS,
+        raise_server_exceptions=False,
+    )
+
+    response = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-api-write-failure",
+            "kind": "PRICE_CHANGE",
+            "trigger_ref": "alert-write-failure",
+            "expected_outcome": "must not be document-only",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "ops-hero",
+        },
+    )
+
+    assert response.status_code == 500
+    assert repo.list_all() == []
+    assert engine.query_one(
+        "SELECT intervention_id FROM interventions WHERE store_id = ?",
+        ("store-api-write-failure",),
+    ) is None
+
+
 def test_api_production_entry_durable_persistence_roundtrip(tmp_path: pytest.TempPathFactory) -> None:
     """ODP-FR-INTV-006: API production entry with DurableInterventionRepository verifies
     end-to-end adjust workflow and SQL persistence round-trip."""
@@ -1961,4 +2020,3 @@ def test_api_production_entry_durable_persistence_roundtrip(tmp_path: pytest.Tem
     assert repl_sql is not None
     assert repl_sql["status"] == "candidate"
     assert repl_sql["predecessor_id"] == iid
-
