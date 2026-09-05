@@ -15,9 +15,14 @@ import copy
 import hashlib
 import json
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 SUPPORTED_SCHEMA_VERSIONS = (1, 2)
 CURRENT_SCHEMA_VERSION = 2
@@ -1838,6 +1843,8 @@ def _sources_off_egress_contract_errors(root: Path = ROOT) -> list[str]:
         errors.append("cloud_run.tf does not enforce ALL_TRAFFIC VPC egress")
 
     network = paths["infra/terraform/network.tf"].read_text(encoding="utf-8")
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
     try:
         from infra.terraform.validate_contract import validate_egress_contract
     except ImportError as exc:  # pragma: no cover - repository packaging failure

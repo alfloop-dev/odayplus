@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -44,6 +44,28 @@ from modules.forecastops.domain.forecasting import (
     ForecastOutput,
     ForecastSeries,
     InterventionHandoff,
+)
+from modules.heatzone.application.absorption_outcome_recorder import (
+    AbsorptionOutcomeConflictError,
+    AbsorptionOutcomeWriteError,
+    UnregisteredCellError,
+    measurement_differences,
+)
+from modules.heatzone.application.merge_split_evidence import (
+    AbsorptionOutcomeRecord,
+    CellOutcomeSeries,
+)
+from modules.heatzone.domain.composition import (
+    COMPOSITION_MODEL_VERSION,
+    CompositionKind,
+    CompositionValidationError,
+    HeatZoneCompositionRecord,
+    MergeSplitProposalRecord,
+    ProposalStatus,
+    ZoneLineage,
+    approval_zone_assignments,
+    parse_datetime,
+    validate_composition_record,
 )
 from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
@@ -3539,6 +3561,871 @@ class DurableHeatZoneResultStore:
         return self._store.get(self._JOBS, snapshot_id)
 
 
+class DurableHeatZoneCompositionRepository:
+    """Durable mirror of HeatZoneCompositionRepository executing direct SQL (ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001)."""
+
+    def __init__(self, engine_or_store: Any) -> None:
+        if hasattr(engine_or_store, "engine"):
+            self._engine = engine_or_store.engine
+        elif hasattr(engine_or_store, "_store") and hasattr(engine_or_store._store, "engine"):
+            self._engine = engine_or_store._store.engine
+        else:
+            self._engine = engine_or_store
+        self._is_postgres = _requires_tenant_scope(self._engine)
+        if not self._is_postgres:
+            self._init_sqlite_tables()
+
+    def _init_sqlite_tables(self) -> None:
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_composition (
+                composition_id TEXT PRIMARY KEY,
+                zone_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                member_cell_id TEXT NOT NULL,
+                composition_kind TEXT NOT NULL,
+                parent_zone_id TEXT,
+                decided_by TEXT NOT NULL,
+                decided_at TEXT NOT NULL,
+                decision_policy_version_id TEXT NOT NULL,
+                model_version TEXT NOT NULL DEFAULT 'heatzone-composition-v1',
+                override_reason TEXT,
+                reverted_at TEXT,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        self._engine.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_heatzone_composition_active_member
+                ON heatzone_composition(tenant_id, member_cell_id) WHERE reverted_at IS NULL;
+            """
+        )
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_proposals (
+                proposal_id TEXT PRIMARY KEY,
+                zone_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                composition_kind TEXT NOT NULL,
+                member_cell_ids TEXT NOT NULL,
+                parent_zone_id TEXT,
+                ndcg_gain REAL NOT NULL DEFAULT 0.0,
+                cannibalization_variance_reduction REAL NOT NULL DEFAULT 0.0,
+                correlation_rho REAL NOT NULL DEFAULT 0.0,
+                disconnect_index REAL NOT NULL DEFAULT 0.0,
+                split_density_ratio REAL,
+                child_partitions TEXT NOT NULL DEFAULT '[]',
+                confidence REAL NOT NULL DEFAULT 0.0,
+                model_version TEXT NOT NULL,
+                policy_version_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'PROPOSED',
+                reasons TEXT NOT NULL DEFAULT '[]',
+                warnings TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                approved_by TEXT,
+                approved_at TEXT,
+                rejection_reason TEXT
+            );
+            """
+        )
+
+    @property
+    def table_composition(self) -> str:
+        return "expansion.heatzone_composition" if self._is_postgres else "heatzone_composition"
+
+    @property
+    def table_proposals(self) -> str:
+        return "expansion.heatzone_proposals" if self._is_postgres else "heatzone_proposals"
+
+    def _row_to_record(self, row: Mapping[str, Any]) -> HeatZoneCompositionRecord:
+        return HeatZoneCompositionRecord.from_dict(dict(row))
+
+    def _row_to_proposal(self, row: Mapping[str, Any]) -> MergeSplitProposalRecord:
+        data = dict(row)
+        if isinstance(data.get("member_cell_ids"), str):
+            try:
+                data["member_cell_ids"] = json.loads(data["member_cell_ids"])
+            except Exception:
+                data["member_cell_ids"] = [data["member_cell_ids"]]
+        if isinstance(data.get("reasons"), str):
+            try:
+                data["reasons"] = json.loads(data["reasons"])
+            except Exception:
+                data["reasons"] = []
+        if isinstance(data.get("warnings"), str):
+            try:
+                data["warnings"] = json.loads(data["warnings"])
+            except Exception:
+                data["warnings"] = []
+        if isinstance(data.get("child_partitions"), str):
+            try:
+                data["child_partitions"] = json.loads(data["child_partitions"])
+            except Exception:
+                data["child_partitions"] = []
+        return MergeSplitProposalRecord.from_dict(data)
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        if hasattr(self._engine, "transaction"):
+            with self._engine.transaction():
+                yield
+        elif hasattr(self._engine, "lock"):
+            with self._engine.lock:
+                yield
+        else:
+            yield
+
+    def save_composition(self, record: HeatZoneCompositionRecord) -> HeatZoneCompositionRecord:
+        validate_composition_record(record)
+        if record.is_active:
+            existing_active = self.get_active_for_cell(record.member_cell_id, record.tenant_id)
+            if existing_active is not None and existing_active.composition_id != record.composition_id:
+                raise CompositionValidationError(
+                    f"cell '{record.member_cell_id}' is already an active member of zone '{existing_active.zone_id}'"
+                )
+        self._engine.execute(
+            f"INSERT INTO {self.table_composition} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "composition_id, zone_id, tenant_id, member_cell_id, "
+            "composition_kind, parent_zone_id, decided_by, decided_at, "
+            "decision_policy_version_id, model_version, override_reason, "
+            "reverted_at, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.composition_id,
+                record.zone_id,
+                record.tenant_id,
+                record.member_cell_id,
+                record.composition_kind.value,
+                record.parent_zone_id,
+                record.decided_by,
+                record.decided_at.isoformat(),
+                record.decision_policy_version_id,
+                record.model_version,
+                record.override_reason,
+                record.reverted_at.isoformat() if record.reverted_at else None,
+                record.created_at.isoformat(),
+            ),
+        )
+        return record
+
+    def save_composition_batch(
+        self, records: Sequence[HeatZoneCompositionRecord]
+    ) -> list[HeatZoneCompositionRecord]:
+        with self._transaction():
+            saved: list[HeatZoneCompositionRecord] = []
+            for record in records:
+                saved.append(self.save_composition(record))
+            return saved
+
+    def get_composition(self, zone_id: str, tenant_id: str) -> list[HeatZoneCompositionRecord]:
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_composition} WHERE zone_id = ? AND tenant_id = ? ORDER BY decided_at DESC",  # nosec B608
+            (zone_id, tenant_id),
+        )
+        return [self._row_to_record(row) for row in rows]
+
+    def get_active_for_cell(
+        self, cell_id: str, tenant_id: str
+    ) -> HeatZoneCompositionRecord | None:
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_composition} WHERE member_cell_id = ? AND tenant_id = ? AND reverted_at IS NULL LIMIT 1",  # nosec B608
+            (cell_id, tenant_id),
+        )
+        if not row:
+            return None
+        return self._row_to_record(row)
+
+    def list_compositions(
+        self, tenant_id: str, active_only: bool = True
+    ) -> list[HeatZoneCompositionRecord]:
+        clause = " AND reverted_at IS NULL" if active_only else ""
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_composition} WHERE tenant_id = ?{clause} ORDER BY decided_at DESC",  # nosec B608
+            (tenant_id,),
+        )
+        return [self._row_to_record(row) for row in rows]
+
+    def revert_composition(
+        self, zone_id: str, tenant_id: str, reverted_at: datetime | None = None
+    ) -> list[HeatZoneCompositionRecord]:
+        now = reverted_at or datetime.now(UTC)
+        with self._transaction():
+            records = self.get_composition(zone_id, tenant_id)
+            active = [r for r in records if r.is_active]
+            if not active:
+                raise CompositionValidationError(f"no active composition found for zone '{zone_id}'")
+
+            self._engine.execute(
+                f"UPDATE {self.table_composition} SET reverted_at = ? WHERE zone_id = ? AND tenant_id = ? AND reverted_at IS NULL",  # nosec B608
+                (now.isoformat(), zone_id, tenant_id),
+            )
+            return self.get_composition(zone_id, tenant_id)
+
+    def override_composition(
+        self,
+        zone_id: str,
+        tenant_id: str,
+        decided_by: str,
+        override_reason: str,
+        decision_policy_version_id: str,
+        new_kind: CompositionKind | None = None,
+        new_cells: Sequence[str] | None = None,
+        parent_zone_id: str | None = None,
+    ) -> list[HeatZoneCompositionRecord]:
+        now = datetime.now(UTC)
+        with self._transaction():
+            records = self.get_composition(zone_id, tenant_id)
+            active = [r for r in records if r.is_active]
+            if not active:
+                raise CompositionValidationError(f"no active composition found for zone '{zone_id}' to override")
+
+            self.revert_composition(zone_id, tenant_id, reverted_at=now)
+
+            effective_kind = new_kind or active[0].composition_kind
+            effective_cells = new_cells or [r.member_cell_id for r in active]
+            effective_parent = parent_zone_id if parent_zone_id is not None else active[0].parent_zone_id
+
+            created: list[HeatZoneCompositionRecord] = []
+            for cell_id in effective_cells:
+                record = HeatZoneCompositionRecord(
+                    zone_id=zone_id,
+                    tenant_id=tenant_id,
+                    member_cell_id=cell_id,
+                    composition_kind=effective_kind,
+                    parent_zone_id=effective_parent,
+                    decided_by=decided_by,
+                    decided_at=now,
+                    decision_policy_version_id=decision_policy_version_id,
+                    model_version=COMPOSITION_MODEL_VERSION,
+                    override_reason=override_reason,
+                    reverted_at=None,
+                    created_at=now,
+                )
+                created.append(self.save_composition(record))
+            return created
+
+    def get_lineage(self, zone_id: str, tenant_id: str) -> ZoneLineage | None:
+        records = self.get_composition(zone_id, tenant_id)
+        if not records:
+            return None
+
+        sorted_records = sorted(records, key=lambda r: r.decided_at, reverse=True)
+        active_records = [r for r in sorted_records if r.is_active]
+        latest_record = active_records[0] if active_records else sorted_records[0]
+        member_cells = tuple(sorted({r.member_cell_id for r in (active_records or sorted_records)}))
+
+        return ZoneLineage(
+            zone_id=zone_id,
+            tenant_id=tenant_id,
+            composition_kind=latest_record.composition_kind,
+            member_cell_ids=member_cells,
+            parent_zone_id=latest_record.parent_zone_id,
+            decided_by=latest_record.decided_by,
+            decided_at=latest_record.decided_at,
+            decision_policy_version_id=latest_record.decision_policy_version_id,
+            model_version=latest_record.model_version,
+            override_reason=latest_record.override_reason,
+            reverted_at=latest_record.reverted_at,
+            is_active=len(active_records) > 0,
+            records=tuple(sorted_records),
+        )
+
+    def save_proposal(self, proposal: MergeSplitProposalRecord) -> MergeSplitProposalRecord:
+        member_cells_json = json.dumps(list(proposal.member_cell_ids))
+        reasons_json = json.dumps(list(proposal.reasons))
+        warnings_json = json.dumps(list(proposal.warnings))
+        child_partitions_json = json.dumps([list(part) for part in proposal.child_partitions])
+        self._engine.execute(
+            f"INSERT INTO {self.table_proposals} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "proposal_id, zone_id, tenant_id, composition_kind, "
+            "member_cell_ids, parent_zone_id, ndcg_gain, "
+            "cannibalization_variance_reduction, correlation_rho, "
+            "disconnect_index, split_density_ratio, child_partitions, confidence, "
+            "model_version, policy_version_id, status, reasons, "
+            "warnings, created_at, approved_by, approved_at, rejection_reason"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(proposal_id) DO UPDATE SET "
+            "status = excluded.status, "
+            "approved_by = excluded.approved_by, "
+            "approved_at = excluded.approved_at, "
+            "rejection_reason = excluded.rejection_reason",
+            (
+                proposal.proposal_id,
+                proposal.zone_id,
+                proposal.tenant_id,
+                proposal.composition_kind.value,
+                member_cells_json,
+                proposal.parent_zone_id,
+                proposal.ndcg_gain,
+                proposal.cannibalization_variance_reduction,
+                proposal.correlation_rho,
+                proposal.disconnect_index,
+                proposal.split_density_ratio,
+                child_partitions_json,
+                proposal.confidence,
+                proposal.model_version,
+                proposal.policy_version_id,
+                proposal.status.value,
+                reasons_json,
+                warnings_json,
+                proposal.created_at.isoformat(),
+                proposal.approved_by,
+                proposal.approved_at.isoformat() if proposal.approved_at else None,
+                proposal.rejection_reason,
+            ),
+        )
+        return proposal
+
+    def get_proposal(self, proposal_id: str, tenant_id: str) -> MergeSplitProposalRecord | None:
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_proposals} WHERE proposal_id = ? AND tenant_id = ?",  # nosec B608
+            (proposal_id, tenant_id),
+        )
+        if not row:
+            return None
+        return self._row_to_proposal(row)
+
+    def list_proposals(
+        self, tenant_id: str, status: ProposalStatus | str | None = None
+    ) -> list[MergeSplitProposalRecord]:
+        status_val = status.value if isinstance(status, ProposalStatus) else str(status) if status else None
+        if status_val:
+            rows = self._engine.query(
+                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC",  # nosec B608
+                (tenant_id, status_val),
+            )
+        else:
+            rows = self._engine.query(
+                f"SELECT * FROM {self.table_proposals} WHERE tenant_id = ? ORDER BY created_at DESC",  # nosec B608
+                (tenant_id,),
+            )
+        return [self._row_to_proposal(row) for row in rows]
+
+    def approve_proposal(
+        self,
+        proposal_id: str,
+        tenant_id: str,
+        approved_by: str,
+        notes: str | None = None,
+    ) -> tuple[MergeSplitProposalRecord, list[HeatZoneCompositionRecord]]:
+        with self._transaction():
+            prop = self.get_proposal(proposal_id, tenant_id)
+            if prop is None:
+                raise CompositionValidationError(f"proposal '{proposal_id}' not found for tenant '{tenant_id}'")
+            if prop.status != ProposalStatus.PROPOSED:
+                raise CompositionValidationError(f"proposal '{proposal_id}' is already {prop.status.value}")
+
+            now = datetime.now(UTC)
+            reason = notes or f"Operator approval for proposal {proposal_id}"
+
+            # Identify all active zones touched by the proposal's member cells
+            touched_zones: set[str] = set()
+            for cell_id in prop.member_cell_ids:
+                active_comp = self.get_active_for_cell(cell_id, tenant_id)
+                if active_comp is not None:
+                    touched_zones.add(active_comp.zone_id)
+
+            if prop.composition_kind == CompositionKind.SPLIT_CHILD and prop.parent_zone_id:
+                touched_zones.add(prop.parent_zone_id)
+
+            # Reject partial replacement: every active member cell of every touched zone
+            # must be covered by the proposal.
+            for zone_id in sorted(touched_zones):
+                active_members = {
+                    r.member_cell_id for r in self.get_composition(zone_id, tenant_id) if r.is_active
+                }
+                missing_siblings = active_members - set(prop.member_cell_ids)
+                if missing_siblings:
+                    raise CompositionValidationError(
+                        f"cannot approve {prop.composition_kind.value} proposal '{prop.proposal_id}': "
+                        f"partial replacement of active zone '{zone_id}' would strand "
+                        f"sibling cell(s) {sorted(missing_siblings)}"
+                    )
+
+            # Soft-revert touched active zones
+            for zone_id in sorted(touched_zones):
+                parent_comps = self.get_composition(zone_id, tenant_id)
+                if any(r.is_active for r in parent_comps):
+                    self.revert_composition(zone_id, tenant_id, reverted_at=now)
+
+            # A split lands one zone per child partition, a merge one zone; the
+            # whole assignment happens inside this transaction, so an approval
+            # that cannot create every child creates none of them and leaves the
+            # parent standing.
+            created_records: list[HeatZoneCompositionRecord] = []
+            for zone_id, member_ids in approval_zone_assignments(prop):
+                for cell_id in member_ids:
+                    rec = HeatZoneCompositionRecord(
+                        zone_id=zone_id,
+                        tenant_id=tenant_id,
+                        member_cell_id=cell_id,
+                        composition_kind=prop.composition_kind,
+                        parent_zone_id=prop.parent_zone_id,
+                        decided_by=approved_by,
+                        decided_at=now,
+                        decision_policy_version_id=prop.policy_version_id,
+                        model_version=prop.model_version,
+                        override_reason=reason,
+                        reverted_at=None,
+                        created_at=now,
+                    )
+                    created_records.append(self.save_composition(rec))
+
+            updated_prop = MergeSplitProposalRecord(
+                proposal_id=prop.proposal_id,
+                zone_id=prop.zone_id,
+                tenant_id=prop.tenant_id,
+                composition_kind=prop.composition_kind,
+                member_cell_ids=prop.member_cell_ids,
+                parent_zone_id=prop.parent_zone_id,
+                ndcg_gain=prop.ndcg_gain,
+                cannibalization_variance_reduction=prop.cannibalization_variance_reduction,
+                correlation_rho=prop.correlation_rho,
+                disconnect_index=prop.disconnect_index,
+                confidence=prop.confidence,
+                model_version=prop.model_version,
+                policy_version_id=prop.policy_version_id,
+                status=ProposalStatus.APPROVED,
+                split_density_ratio=prop.split_density_ratio,
+                child_partitions=prop.child_partitions,
+                reasons=prop.reasons,
+                warnings=prop.warnings,
+                created_at=prop.created_at,
+                approved_by=approved_by,
+                approved_at=now,
+                rejection_reason=None,
+            )
+            self.save_proposal(updated_prop)
+            return updated_prop, created_records
+
+    def reject_proposal(
+        self,
+        proposal_id: str,
+        tenant_id: str,
+        rejected_by: str,
+        reason: str,
+    ) -> MergeSplitProposalRecord:
+        with self._transaction():
+            prop = self.get_proposal(proposal_id, tenant_id)
+            if prop is None:
+                raise CompositionValidationError(f"proposal '{proposal_id}' not found for tenant '{tenant_id}'")
+            if prop.status != ProposalStatus.PROPOSED:
+                raise CompositionValidationError(f"proposal '{proposal_id}' is already {prop.status.value}")
+            if not reason or not reason.strip():
+                raise CompositionValidationError("Rejection requires a non-empty reason")
+
+            now = datetime.now(UTC)
+            updated_prop = MergeSplitProposalRecord(
+                proposal_id=prop.proposal_id,
+                zone_id=prop.zone_id,
+                tenant_id=prop.tenant_id,
+                composition_kind=prop.composition_kind,
+                member_cell_ids=prop.member_cell_ids,
+                parent_zone_id=prop.parent_zone_id,
+                ndcg_gain=prop.ndcg_gain,
+                cannibalization_variance_reduction=prop.cannibalization_variance_reduction,
+                correlation_rho=prop.correlation_rho,
+                disconnect_index=prop.disconnect_index,
+                confidence=prop.confidence,
+                model_version=prop.model_version,
+                policy_version_id=prop.policy_version_id,
+                status=ProposalStatus.REJECTED,
+                split_density_ratio=prop.split_density_ratio,
+                child_partitions=prop.child_partitions,
+                reasons=prop.reasons,
+                warnings=prop.warnings,
+                created_at=prop.created_at,
+                approved_by=rejected_by,
+                approved_at=now,
+                rejection_reason=reason,
+            )
+            self.save_proposal(updated_prop)
+            return updated_prop
+
+
+def _as_date(value: Any) -> date:
+    """Coerce a stored period bound to a date, whatever the driver returned."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    return date.fromisoformat(str(value).split("T")[0])
+
+
+class DurableMergeSplitEvidenceRepository:
+    """Durable reader for persisted HZ-004 absorption evidence (ODP-FR-HZ-006).
+
+    Read-only by construction. The merge/split API must not be able to write the
+    evidence it is judged against, so the outcome rows arrive from the
+    absorption pipeline and this class only selects them; PostgreSQL enforces
+    the same rule with an append-only trigger on the relation.
+    """
+
+    def __init__(self, engine_or_store: Any) -> None:
+        if hasattr(engine_or_store, "engine"):
+            self._engine = engine_or_store.engine
+        elif hasattr(engine_or_store, "_store") and hasattr(engine_or_store._store, "engine"):
+            self._engine = engine_or_store._store.engine
+        else:
+            self._engine = engine_or_store
+        self._is_postgres = _requires_tenant_scope(self._engine)
+        if not self._is_postgres:
+            self._init_sqlite_tables()
+
+    def _init_sqlite_tables(self) -> None:
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS heatzone_absorption_outcomes (
+                outcome_id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL,
+                geo_cell_id TEXT NOT NULL,
+                period_start TEXT NOT NULL,
+                period_end TEXT NOT NULL,
+                original_demand REAL NOT NULL,
+                absorbed_demand REAL NOT NULL,
+                remaining_demand REAL NOT NULL,
+                absorption_ratio REAL NOT NULL,
+                absorbing_store_count INTEGER NOT NULL,
+                under_realized INTEGER NOT NULL DEFAULT 0,
+                barrier_side TEXT,
+                barrier_description TEXT,
+                basis_source_ids TEXT NOT NULL,
+                basis_at TEXT NOT NULL,
+                absorption_policy_version_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            """
+        )
+        # `h3_cells` is not created here: the SQLite engine already bootstraps
+        # the geo tables from 000004, and shadowing that definition with a
+        # narrower one would silently diverge from the relation the geo pipeline
+        # writes.
+        self._engine.execute(
+            """
+            CREATE TABLE IF NOT EXISTS h3_cell_adjacency (
+                adjacency_id TEXT PRIMARY KEY,
+                cell_id TEXT NOT NULL,
+                neighbor_cell_id TEXT NOT NULL,
+                k_ring INTEGER NOT NULL DEFAULT 1,
+                CHECK (cell_id < neighbor_cell_id),
+                UNIQUE (cell_id, neighbor_cell_id)
+            );
+            """
+        )
+
+    @property
+    def table_outcomes(self) -> str:
+        return (
+            "expansion.heatzone_absorption_outcomes"
+            if self._is_postgres
+            else "heatzone_absorption_outcomes"
+        )
+
+    @property
+    def table_cells(self) -> str:
+        return "geo.h3_cells" if self._is_postgres else "h3_cells"
+
+    @property
+    def table_adjacency(self) -> str:
+        return "geo.h3_cell_adjacency" if self._is_postgres else "h3_cell_adjacency"
+
+    def _row_to_outcome(self, row: Mapping[str, Any]) -> AbsorptionOutcomeRecord:
+        data = dict(row)
+        basis = data.get("basis_source_ids")
+        if isinstance(basis, str):
+            try:
+                basis = json.loads(basis)
+            except json.JSONDecodeError:
+                basis = [basis]
+        side = data.get("barrier_side")
+        return AbsorptionOutcomeRecord(
+            cell_id=str(data["geo_cell_id"]),
+            period_start=_as_date(data["period_start"]),
+            period_end=_as_date(data["period_end"]),
+            original_demand=float(data["original_demand"]),
+            absorbed_demand=float(data["absorbed_demand"]),
+            remaining_demand=float(data["remaining_demand"]),
+            absorption_ratio=float(data["absorption_ratio"]),
+            absorbing_store_count=int(data["absorbing_store_count"]),
+            basis_source_ids=tuple(str(item) for item in (basis or ())),
+            absorption_policy_version_id=str(data["absorption_policy_version_id"]),
+            basis_at=parse_datetime(data["basis_at"]),
+            under_realized=bool(data.get("under_realized")),
+            barrier_side=str(side) if side else None,
+            barrier_description=str(data.get("barrier_description") or ""),
+        )
+
+    def list_absorption_outcomes(self, tenant_id: str) -> list[AbsorptionOutcomeRecord]:
+        rows = self._engine.query(
+            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? "  # nosec B608 -- fixed dialect-selected relation; values are bound
+            "ORDER BY geo_cell_id, period_start",
+            (tenant_id,),
+        )
+        return [self._row_to_outcome(row) for row in rows]
+
+    def get_cell(self, tenant_id: str, cell_id: str) -> Any | None:
+        from modules.heatzone.infrastructure.absorption_evidence_repository import CellRegistration
+
+        row = self._engine.query_one(
+            f"SELECT geo_cell_id, h3_index, admin_city, admin_district "  # nosec B608 -- fixed dialect-selected relation; values are bound
+            f"FROM {self.table_cells} WHERE geo_cell_id = ?",
+            (cell_id,),
+        )
+        if not row:
+            return None
+        rec = dict(row)
+        return CellRegistration(
+            cell_id=str(rec["geo_cell_id"]),
+            h3_index=str(rec.get("h3_index") or ""),
+            admin_city=str(rec.get("admin_city") or ""),
+            admin_district=str(rec.get("admin_district") or ""),
+        )
+
+    def _get_tenant_target_cell_ids(self, tenant_id: str) -> set[str]:
+        target_cells: set[str] = set()
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT geo_cell_id FROM {self.table_outcomes} WHERE tenant_id = ?",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["geo_cell_id"]))
+        except Exception:
+            pass
+
+        comp_table = (
+            "expansion.heatzone_composition"
+            if self._is_postgres
+            else "heatzone_composition"
+        )
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT member_cell_id FROM {comp_table} WHERE tenant_id = ? AND reverted_at IS NULL",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["member_cell_id"]))
+        except Exception:
+            pass
+
+        scores_table = (
+            "expansion.heatzone_scores"
+            if self._is_postgres
+            else "heatzone_scores"
+        )
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT geo_cell_id FROM {scores_table} WHERE tenant_id = ?",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["geo_cell_id"]))
+        except Exception:
+            pass
+
+        return target_cells
+
+    def list_cells(self, tenant_id: str) -> list[CellOutcomeSeries]:
+        target_cells = self._get_tenant_target_cell_ids(tenant_id)
+        adjacency_edges = self.list_adjacency(tenant_id)
+        graph_cells = {cell for edge in adjacency_edges for cell in edge}
+        all_cell_ids = sorted(target_cells | graph_cells)
+        if not all_cell_ids:
+            return []
+
+        outcomes = self.list_absorption_outcomes(tenant_id)
+        placeholders = ", ".join("?" for _ in all_cell_ids)
+        rows = self._engine.query(
+            f"SELECT geo_cell_id, h3_index, admin_city, admin_district "  # nosec B608 -- fixed dialect-selected relation; values are bound
+            f"FROM {self.table_cells} WHERE geo_cell_id IN ({placeholders})",
+            tuple(all_cell_ids),
+        )
+        identities = {}
+        for row in rows:
+            # sqlite3.Row has no .get, so normalise before reading optionals.
+            record = dict(row)
+            identities[str(record["geo_cell_id"])] = (
+                str(record.get("h3_index") or ""),
+                str(record.get("admin_city") or ""),
+                str(record.get("admin_district") or ""),
+            )
+
+        whole: dict[str, list[AbsorptionOutcomeRecord]] = {}
+        sided: dict[str, list[AbsorptionOutcomeRecord]] = {}
+        for outcome in outcomes:
+            bucket = sided if outcome.barrier_side else whole
+            bucket.setdefault(outcome.cell_id, []).append(outcome)
+
+        series: list[CellOutcomeSeries] = []
+        for cell_id in all_cell_ids:
+            # A cell the geo registry does not know is dropped rather than
+            # defaulted: without its admin identity the cross-boundary rule
+            # cannot be applied, and merging across it would be a guess.
+            identity = identities.get(cell_id)
+            if identity is None:
+                continue
+            h3_index, admin_city, admin_district = identity
+            series.append(
+                CellOutcomeSeries(
+                    cell_id=cell_id,
+                    h3_index=h3_index,
+                    admin_city=admin_city,
+                    admin_district=admin_district,
+                    outcomes=tuple(
+                        sorted(whole.get(cell_id, []), key=lambda o: o.period_start)
+                    ),
+                    side_outcomes=tuple(
+                        sorted(
+                            sided.get(cell_id, []),
+                            key=lambda o: (o.barrier_side or "", o.period_start),
+                        )
+                    ),
+                )
+            )
+        return series
+
+    def list_adjacency(self, tenant_id: str) -> list[tuple[str, str]]:
+        target_cells = self._get_tenant_target_cell_ids(tenant_id)
+        if not target_cells:
+            return []
+        placeholders = ", ".join("?" for _ in target_cells)
+        rows = self._engine.query(
+            f"SELECT cell_id, neighbor_cell_id FROM {self.table_adjacency} "  # nosec B608
+            f"WHERE cell_id IN ({placeholders}) OR neighbor_cell_id IN ({placeholders})",
+            (*target_cells, *target_cells),
+        )
+        edges: set[tuple[str, str]] = set()
+        for row in rows:
+            left = str(row["cell_id"])
+            right = str(row["neighbor_cell_id"])
+            # Adjacency is geographic and tenant-scoped to target region;
+            # candidate pairs will be filtered when evaluating co-movement.
+            edges.add((left, right) if left <= right else (right, left))
+        return sorted(edges)
+
+
+class DurableAbsorptionOutcomeWriter:
+    """Append-only durable sink for computed HZ-004 outcomes (ODP-FR-HZ-006).
+
+    A separate class from `DurableMergeSplitEvidenceRepository` on purpose. The
+    reader is what the merge/split request path resolves, so keeping the INSERT
+    off that object means no route that evaluates or approves a composition has
+    a writer for the evidence it is judged against, even by accident.
+
+    Re-recording a period is a no-op when the stored row agrees and a refusal
+    when it does not. A pipeline re-run should be safe; a pipeline that now
+    computes a different number for a period a merge was already decided on is
+    a finding, not something to overwrite -- PostgreSQL would reject the UPDATE
+    anyway, and refusing here says why rather than surfacing a trigger error.
+    """
+
+    def __init__(self, engine_or_store: Any) -> None:
+        # Share the reader's engine resolution and its SQLite bootstrap, so the
+        # writer cannot end up pointed at a relation the reader does not see.
+        self._reader = DurableMergeSplitEvidenceRepository(engine_or_store)
+        self._engine = self._reader._engine
+        self._is_postgres = self._reader._is_postgres
+
+    @property
+    def table_outcomes(self) -> str:
+        return self._reader.table_outcomes
+
+    def _find_existing(
+        self, tenant_id: str, outcome: AbsorptionOutcomeRecord
+    ) -> AbsorptionOutcomeRecord | None:
+        side_clause = (
+            "barrier_side IS NULL" if outcome.barrier_side is None else "barrier_side = ?"
+        )
+        params: tuple[Any, ...] = (
+            tenant_id,
+            outcome.cell_id,
+            outcome.period_start.isoformat(),
+            outcome.period_end.isoformat(),
+        )
+        if outcome.barrier_side is not None:
+            params = (*params, outcome.barrier_side)
+        row = self._engine.query_one(
+            f"SELECT * FROM {self.table_outcomes} WHERE tenant_id = ? AND geo_cell_id = ? "  # nosec B608
+            f"AND period_start = ? AND period_end = ? AND {side_clause}",
+            params,
+        )
+        if not row:
+            return None
+        return self._reader._row_to_outcome(row)
+
+    def _cell_is_registered(self, cell_id: str) -> bool:
+        return (
+            self._engine.query_one(
+                f"SELECT 1 FROM {self._reader.table_cells} WHERE geo_cell_id = ?",  # nosec B608
+                (cell_id,),
+            )
+            is not None
+        )
+
+    def append_absorption_outcome(
+        self, tenant_id: str, outcome: AbsorptionOutcomeRecord
+    ) -> AbsorptionOutcomeRecord:
+        if not outcome.basis_source_ids:
+            raise AbsorptionOutcomeWriteError(
+                f"absorption outcome for cell {outcome.cell_id} carries no basis snapshot ids; "
+                "HZ-004 outcomes must be traceable to their source"
+            )
+
+        if not self._cell_is_registered(outcome.cell_id):
+            # PostgreSQL refuses this through the geo.h3_cells foreign key.
+            # Checking it here means SQLite refuses it the same way and says
+            # why, rather than accepting a row the evidence reader's join then
+            # silently drops.
+            raise UnregisteredCellError(
+                f"cell '{outcome.cell_id}' is not a registered geo cell; HZ-004 outcomes "
+                "attach to cells the geo pipeline published, not to identifiers a caller "
+                "invents"
+            )
+
+        existing = self._find_existing(tenant_id, outcome)
+        if existing is not None:
+            differing = measurement_differences(existing, outcome)
+            if differing:
+                raise AbsorptionOutcomeConflictError(
+                    f"cell {outcome.cell_id} already holds a different recorded outcome for "
+                    f"{outcome.period_start.isoformat()}..{outcome.period_end.isoformat()} "
+                    f"(side={outcome.barrier_side}); differing: {sorted(differing)}. HZ-004 "
+                    "history is append-only, so a recomputation that disagrees is a finding, "
+                    "not an update"
+                )
+            return existing
+
+        self._engine.execute(
+            f"INSERT INTO {self.table_outcomes} ("  # nosec B608 -- table is a fixed dialect-selected relation; values are bound
+            "outcome_id, tenant_id, geo_cell_id, period_start, period_end, "
+            "original_demand, absorbed_demand, remaining_demand, absorption_ratio, "
+            "absorbing_store_count, under_realized, barrier_side, barrier_description, "
+            "basis_source_ids, basis_at, absorption_policy_version_id, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                str(uuid4()),
+                tenant_id,
+                outcome.cell_id,
+                outcome.period_start.isoformat(),
+                outcome.period_end.isoformat(),
+                outcome.original_demand,
+                outcome.absorbed_demand,
+                outcome.remaining_demand,
+                outcome.absorption_ratio,
+                outcome.absorbing_store_count,
+                outcome.under_realized,
+                outcome.barrier_side,
+                outcome.barrier_description,
+                json.dumps(list(outcome.basis_source_ids)),
+                outcome.basis_at.isoformat(),
+                outcome.absorption_policy_version_id,
+                datetime.now(UTC).isoformat(),
+            ),
+        )
+        return outcome
+
+
 class DurableListingRepository:
     """Durable mirror of ``InMemoryListingRepository`` (ODP-FLOW-002).
 
@@ -3659,11 +4546,13 @@ __all__ = [
     "DurableArtifactStore",
     "DurableDecisionStore",
     "DurableForecastOpsRepository",
+    "DurableHeatZoneCompositionRepository",
     "DurableHeatZoneResultStore",
     "DurableInterventionRepository",
     "DurableLabelRegistry",
     "DurableLearningHubRepository",
     "DurableListingRepository",
+    "DurableMergeSplitEvidenceRepository",
     "DurableNetPlanRepository",
     "DurablePriceOpsRepository",
     "DurableRealizedSiteStore",

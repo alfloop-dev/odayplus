@@ -554,6 +554,7 @@ def requeue_task_for_ci_repair(
     clear_approval: bool,
     requeued_head: str | None = None,
     now_ts: float | None = None,
+    allow_conflicted_review: bool = False,
 ) -> bool:
     sv = _supervisor_module()
     task_id = str(task.get("id") or "")
@@ -566,8 +567,25 @@ def requeue_task_for_ci_repair(
     ):
         return False
 
-    if str(task.get("status") or "").lower() != "review_approved":
-        return False
+    task_status = str(task.get("status") or "").lower()
+    from_review = False
+    if task_status != "review_approved":
+        # One canonical CI-repair transition entered from one more place, not a
+        # second status guard. A review PR that conflicts with its base has no
+        # merge commit, so GitHub runs no check on it -- the same "CI cannot
+        # answer and only the owner can" failure as a queue ejection, one step
+        # earlier in the lane. The guard widens for this named entry alone, and
+        # only while the review is still unapproved and unqueued: an approved or
+        # queued head is frozen and may only be moved by an explicit re-review.
+        if not (
+            allow_conflicted_review
+            and task_status == "review"
+            and sv.review_submission_is_complete(config, task)
+            and not str(task.get("approved_head") or "").strip()
+            and task.get("merge_route") is None
+        ):
+            return False
+        from_review = True
 
     task["status"] = "in_progress"
     task["last_update"] = sv.utc_now()
@@ -587,6 +605,16 @@ def requeue_task_for_ci_repair(
     if clear_approval:
         task.pop("approved_head", None)
         stale_route = task.pop("merge_route", None)
+    if from_review:
+        # `submit_review` opens a pending owner -> reviewer handoff. Returning
+        # the task to its owner without resolving it would leave a reviewer
+        # holding work that is no longer theirs, which is how a reviewer keeps
+        # being woken for a task that is back in implementation.
+        task.pop("waiting_for", None)
+        for handoff in status.get("handoffs", []) or []:
+            if handoff.get("task_id") == task_id and handoff.get("status") != "done":
+                handoff["status"] = "done"
+                handoff["resolved_at"] = task["last_update"]
     if not _supervisor_module().commit_canonical_task_transition(config, status):
         return False
     sv.write_activity_log(
@@ -599,6 +627,7 @@ def requeue_task_for_ci_repair(
             "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "approval_cleared": clear_approval,
             "stale_merge_route_cleared": bool(stale_route),
+            "entry": "conflicted_review" if from_review else "review_approved",
         },
     )
     return True
