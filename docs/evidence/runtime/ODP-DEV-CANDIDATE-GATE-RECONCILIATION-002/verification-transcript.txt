@@ -1,0 +1,79 @@
+=== ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 Verification Transcript ===
+Timestamp: 2026-09-05T03:54:00Z
+Candidate SHA: 04e1572f802a54c2646ba678fe2975226dfbd7c4
+Manifest Digest: sha256:1aeadb35512f819ba3aca92dc72fe2834226eb8b83e4d4b286408fa67a870908
+GHA Run ID: 33942097235
+
+================================================================================
+1. python3 docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live_artifact_binding.py
+Exit code: 0
+Output:
+candidate: 04e1572f802a54c2646ba678fe2975226dfbd7c4  build run: 33942097235
+
+[PASS] manifest schema is valid -- []
+[PASS] manifest_digest equals the SHA-256 of its own canonical payload -- sha256:1aeadb35512f819ba3aca92dc72fe2834226eb8b83e4d4b286408fa67a870908
+[PASS] manifest.candidate_sha is the live candidate -- 04e1572f802a54c2646ba678fe2975226dfbd7c4
+[PASS] manifest was created by the deploy-dev workflow at the candidate SHA -- github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@04e1572f802a54c2646ba678fe2975226dfbd7c4
+[PASS] migration_digest recomputes from this checkout -- sha256:b3bb608d7895f127766536e92d1f35d04c2b37c10db16d501f54923e87abb316
+[PASS] data_contract_digest recomputes from this checkout -- sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73
+[PASS] source_policy_digest recomputes from this checkout -- sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824
+[PASS] the four build-handoff images are exactly the manifest components -- []
+[PASS] handoff covers every deployable component -- ['api', 'scheduler', 'web', 'worker']
+[PASS] migration reuses the worker image rather than introducing a fifth artifact
+[PASS] sbom_refs: one reference per component repository -- ['asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker']
+[PASS] sbom_refs: every reference is digest-pinned
+[PASS] sbom_refs: no reference reuses an image digest
+[PASS] signature_refs: one reference per component repository -- ['asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api', 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web']
+[PASS] signature_refs: every reference is digest-pinned
+[PASS] signature_refs: no reference reuses an image digest
+[PASS] no external source is enabled for this release
+[PASS] sources_off_attestation is valid and bound -- []
+[PASS] initial_release_recovery is valid and bound -- []
+[PASS] registry candidate SHA matches the manifest -- 04e1572f802a54c2646ba678fe2975226dfbd7c4
+[PASS] registry manifest_digest matches the manifest -- sha256:1aeadb35512f819ba3aca92dc72fe2834226eb8b83e4d4b286408fa67a870908
+[PASS] registry manifest_ref points at the manifest this script verified -- docs/evidence/gates/RELEASE_MANIFEST.json
+[PASS] registry still records seven gates -- 7
+[PASS] every gate is re-opened against the live candidate
+[PASS] no gate carries a receipt
+[PASS] every gate is blocked and names a blocker
+[PASS] release decision is fail-closed -- no-go
+[PASS] the artifact itself is complete (admission is still blocked by the registry, not by a broken artifact) -- []
+
+Live-artifact binding verified; the release remains NO-GO.
+
+================================================================================
+2. python3 delivery_toolchain/e2e/check_release_gate_registry.py
+Exit code: 0
+Output:
+Release gate registry: ODP-RELEASE-GATE-REGISTRY
+Release candidate SHA: 04e1572f802a54c2646ba678fe2975226dfbd7c4
+Admission boundary: candidate-built / dev -> dev
+Recorded decision: no-go
+Gates cleared: 0/7
+- [OPEN] gate-0 Code Gate: blocked
+- [OPEN] gate-1 Contract Gate: blocked
+- [OPEN] gate-2 Data Gate: blocked
+- [OPEN] gate-3 Model and Solver Gate: blocked
+- [OPEN] gate-4 Security and Privacy Gate: blocked
+- [OPEN] gate-5 E2E, Performance and UAT Gate: blocked
+- [OPEN] gate-6 Ops, Release and Audit Gate: blocked
+RELEASE STATE: NO-GO
+Release gate registry checks passed.
+
+================================================================================
+3. python3 delivery_toolchain/e2e/check_release_gate_registry.py --require-go
+Exit code: 1 (expected fail-closed behavior)
+Output:
+Release is NO-GO: --require-go was requested but the registry does not record a cleared GO state.
+
+================================================================================
+4. uv run --python 3.12 pytest tests/release/
+Exit code: 0
+Output:
+357 passed in 18.18s
+
+================================================================================
+5. python3 delivery_toolchain/governance/check_code_boundaries.py
+Exit code: 0
+Output:
+Code boundary checks passed for 1109 files.

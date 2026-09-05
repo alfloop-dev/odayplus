@@ -102,10 +102,15 @@ def blocked_manifest() -> dict:
     """
 
     manifest = load_manifest()
+    manifest["schema_version"] = 1
     manifest["release_status"] = "blocked"
     manifest["components"] = {}
     manifest["sbom_refs"] = []
     manifest["signature_refs"] = []
+    manifest.pop("sources_off_attestation", None)
+    manifest.pop("initial_release_recovery", None)
+    manifest.pop("rollback_release", None)
+    manifest.pop("data_snapshot", None)
     manifest["blockers"] = [
         {
             "id": "TEST-BLOCKER-001",
@@ -143,8 +148,7 @@ def test_committed_manifest_is_honest_about_whether_it_has_an_artifact() -> None
     """Whichever state the candidate of the day is in, it must be consistent.
 
     ``ready`` means the build really published immutable images plus SBOM and
-    signature references. Legacy v1 remains readable for historical audit, but
-    admission fails closed without snapshot and rollback bindings.
+    signature references.
     """
 
     manifest = load_manifest()
@@ -154,8 +158,8 @@ def test_committed_manifest_is_honest_about_whether_it_has_an_artifact() -> None
         assert manifest["sbom_refs"]
         assert manifest["signature_refs"]
         assert validate_manifest(manifest) == []
-        # Committed v1 manifest lacks snapshot and rollback bindings, so admission fails closed
-        assert validate_release_admission(manifest)
+        # A ready v2 manifest with initial_release_recovery and sources_off_attestation is admissible
+        assert validate_release_admission(manifest) == []
     else:
         assert manifest["blockers"], "a blocked manifest must record why it is blocked"
         assert validate_release_admission(manifest)

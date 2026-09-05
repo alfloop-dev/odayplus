@@ -27,21 +27,21 @@ record and the checklist is the explanation.
 
 **NO-GO.** All seven gates are `blocked`, none carries a receipt, and
 `release.decision` is `no-go` against candidate SHA
-`ebc4fca5c2dd5871275aee39a18406dd67464f04`. Deterministic product-E2E readiness
+`04e1572f802a54c2646ba678fe2975226dfbd7c4`. Deterministic product-E2E readiness
 (`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness. The
 current state is `candidate-built` in `dev`, with admission target `dev`.
 
-The candidate was rebound from `a027fa1c3935360e6fc4b3bd073cd91cbee07548` by
-ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001. This is the first candidate
-with a real artifact behind it: `RELEASE_MANIFEST.json` is now the byte-exact
-`runtime-release-manifest` artifact of Runtime Release run
-[33003734045](https://github.com/alfloop-dev/odayplus/actions/runs/33003734045),
+The candidate was rebound from `ebc4fca5c2dd5871275aee39a18406dd67464f04` by
+ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002. This candidate is backed by real
+artifacts: `RELEASE_MANIFEST.json` is now the byte-exact `runtime-release-manifest`
+artifact of Runtime Release run
+[33942097235](https://github.com/alfloop-dev/odayplus/actions/runs/33942097235),
 so it records `release_status: ready`, four `@sha256:`-pinned component images,
-four Cosign signature references, and four CycloneDX SBOM attestation
-references. `registry.candidate_rebind` records what that does *not* mean: no
-gate was re-attested, no receipt was written, and no status moved toward
-cleared. The build run ran its build phase only -- its lease-verification and
-deploy jobs are `skipped` -- so nothing was deployed.
+four Cosign signature references, four CycloneDX SBOM attestation references,
+initial release recovery, and sources-off attestation. `registry.candidate_rebind`
+records what that does *not* mean: no gate was re-attested, no receipt was written,
+and no status moved toward cleared. The build run ran its build phase only -- its
+lease-verification and deploy jobs are `skipped` -- so nothing was deployed.
 
 A `ready` manifest is an admissible *artifact*, not an admitted *release*.
 Admission additionally requires this registry to record a cleared `go` decision
@@ -51,7 +51,7 @@ to `manifest_digest`. Both are absent, so the release stays fail-closed:
 
 Re-resolving the image, SBOM, and signature digests against Artifact Registry
 needs a registry credential and has not been done outside the build run itself;
-`docs/evidence/runtime/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001/`
+`docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/`
 records that probe failing closed rather than reporting it as a pass, and leaves
 it as an open item for whoever attests Gate 4.
 

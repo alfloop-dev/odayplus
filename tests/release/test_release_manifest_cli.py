@@ -56,6 +56,8 @@ def ready_manifest(tmp_path: Path) -> Path:
     manifest["schema_version"] = 2
     manifest["release_status"] = "ready"
     manifest.pop("blockers", None)
+    manifest.pop("sources_off_attestation", None)
+    manifest.pop("initial_release_recovery", None)
     # Synthetic references keep the positive path independent of whichever
     # artifact the current candidate happens to have published.
     manifest["components"] = {
@@ -118,10 +120,15 @@ def blocked_manifest(tmp_path: Path) -> Path:
     """
 
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest["schema_version"] = 1
     manifest["release_status"] = "blocked"
     manifest["components"] = {}
     manifest["sbom_refs"] = []
     manifest["signature_refs"] = []
+    manifest.pop("sources_off_attestation", None)
+    manifest.pop("initial_release_recovery", None)
+    manifest.pop("rollback_release", None)
+    manifest.pop("data_snapshot", None)
     manifest["blockers"] = BLOCKERS
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
     return write_manifest(tmp_path, manifest, "blocked-manifest.json")

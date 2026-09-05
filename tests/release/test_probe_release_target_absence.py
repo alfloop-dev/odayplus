@@ -33,6 +33,7 @@ from delivery_toolchain.release.release_manifest import (
     INITIAL_RELEASE_READBACK_KIND,
     INITIAL_RELEASE_RECOVERY_METHOD,
     INITIAL_RELEASE_TARGET_INVENTORY,
+    compute_manifest_digest,
     initial_release_readback_errors,
     release_candidate_job_name,
     validate_release_admission,
@@ -367,10 +368,13 @@ def test_an_ordinary_release_is_not_asked_about_an_empty_target(
 
     set_cloud_state(monkeypatch, present=list(TARGETS.values()))
     manifest_path = tmp_path / "RELEASE_MANIFEST.json"
-    manifest_path.write_text(
-        (ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json").read_text(encoding="utf-8"),
-        encoding="utf-8",
+    manifest = json.loads(
+        (ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json").read_text(encoding="utf-8")
     )
+    manifest["schema_version"] = 1
+    manifest.pop("initial_release_recovery", None)
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
     assert main(probe_argv(fake_gcloud, manifest=str(manifest_path))) == 0
 
