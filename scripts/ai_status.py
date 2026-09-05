@@ -6189,6 +6189,8 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     timestamp = iso_now()
     if task["status"] in {"todo", "review_approved"}:
         task["status"] = "in_progress"
+        task.pop("approved_head", None)
+        task.pop("merge_route", None)
     task["last_update"] = timestamp
     task["next"] = message
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -6388,6 +6390,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task["next"] = message
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
+    task.pop("merge_route", None)
     task["last_reopened_by"] = actor
     task["last_reopened_reason"] = reason
     task["last_reopen_category"] = category
@@ -6549,6 +6552,7 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task["pr_number"] = submission["pr_number"]
     task["pr_url"] = submission["pr_url"]
     task.pop("approved_head", None)
+    task.pop("merge_route", None)
     task.pop("handoff_seal", None)
     task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
@@ -6712,6 +6716,7 @@ def command_re_review(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("approved_head", None)
+    task.pop("merge_route", None)
     task.pop("waiting_for", None)
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)

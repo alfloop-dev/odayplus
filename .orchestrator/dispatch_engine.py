@@ -726,8 +726,6 @@ def is_task_review_dispatch_eligible(
         return False
     if task.get("approved_head"):
         return False
-    if task.get("merge_route"):
-        return False
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
@@ -750,6 +748,18 @@ def is_task_review_dispatch_eligible(
     submitted_sha = str(submission.get("remote_sha") or "").strip()
     if not submitted_sha:
         return False
+
+    # Merge route on current submitted head suppresses redundant review dispatch.
+    # Stale merge route records from prior/repaired heads must not block new head review.
+    # Malformed/unknown route metadata or routes missing an explicit head fail closed.
+    route = task.get("merge_route")
+    if route is not None:
+        if isinstance(route, dict):
+            route_head = str(route.get("head") or "").strip()
+            if not route_head or route_head == submitted_sha:
+                return False
+        else:
+            return False
 
     task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
     try:
