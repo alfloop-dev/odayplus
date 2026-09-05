@@ -33,6 +33,14 @@
     "external_command_timeout_seconds": 30,
     "auto_refresh_provider_capabilities": true
   },
+  "release_lease_issuer": {
+    "enabled": false,
+    "secret_reference": "projects/767864276141/secrets/odp-release-lease-private-key",
+    "state_uri": "",
+    "github_repository": "",
+    "workflow": ".github/workflows/deploy-dev.yml",
+    "ttl_seconds": 300
+  },
   "worker_runtime": {
     "worker_lease_seconds": 1800,
     "queue_lease_seconds": 1800,
