@@ -72,12 +72,66 @@ margin production-entry path is covered for persisted legacy data. The remaining
 migrations. The governance checker was run to ensure the AVM dataclass exemption is no
 longer live.
 
+## Base advance (2026-09-05)
+
+PR #1149 was ejected from the merge queue as `CONFLICTING` after
+ODP-INT-MANUAL-CORRECTION-AUDIT-001 landed on `dev`. Current `dev`
+(`6c4a8be8`) was composed into this branch as a merge commit; the approved head
+`974c8904` is preserved as the first parent and nothing was rebased or reset.
+
+The two branches had reserved the same migration slots, so this task renumbered
+itself off the collision (it is the later arrival):
+
+| Before | After |
+|---|---|
+| `infra/db/migrations/000021_avm_quality_score_nullable.sql` | `000023_avm_quality_score_nullable.sql` |
+| `infra/db/migrations/000021_avm_quality_score_nullable_sqlite.sql` | `000023_avm_quality_score_nullable_sqlite.sql` |
+| `infra/db/migrations/versions/0016_avm_quality_score_nullable.py` | `versions/0017_avm_quality_score_nullable.py` |
+| Alembic `revision="0016"`, `down_revision="0015"` | `revision="0017"`, `down_revision="0016"` |
+
+`ScriptDirectory.get_heads()` returns the single head `('0017',)`, so the two
+tasks form the chain `0015 -> 0016 (manual corrections) -> 0017 (this task)`
+rather than two revisions sharing id `0016`.
+
+Cross-layer checks made on the composed tree, not assumed from the pre-merge head:
+
+- `shared/infrastructure/persistence/engine.py` keeps both SQLite bootstrap
+  entries, with `000023_..._sqlite.sql` last. The PRAGMA `foreign_keys`
+  commit-fencing fix from review round 7 survived the merge verbatim, and dev's
+  `000022_durable_manual_corrections.sql` declares no foreign key into
+  `data_snapshots`, so running the table rebuild after it is safe.
+- `packages/openapi-client/openapi.json` and `src/generated/types.ts` were
+  regenerated from the composed app and came out byte-identical to the
+  auto-merged files, so neither branch narrowed the other's schema. The
+  contract gate reports `0 additive, 1 approved breaking, 0 unapproved
+  breaking` — this task's approved `quality_score` nullability change.
+- `docs/audits/code-boundary-inventory.csv` was regenerated only after the
+  merge index was fully resolved. Regenerating while unmerged paths remain
+  produces duplicate rows, because `git ls-files` prints a conflicted path once
+  per stage, and the checker still passes on that polluted output.
+- `tests/ops/test_migration_backfill.py` needed a hand fix that git did not
+  flag: both branches appended a literally identical `"0016",` to the expected
+  revision list, so the merge collapsed them into one line instead of
+  conflicting. The list is now explicit through `"0017"`.
+
 ## Verification
 
 All commands below were run from the task worktree on the current head. The
 project virtualenv is CPython 3.12; the repository's default CPython 3.14
 environment cannot install the pinned `pgserver==0.1.4` wheel, so every command
 is routed through `uv run --frozen`.
+
+### Composed head (base advance onto dev 6c4a8be8)
+
+Re-run in full on the merged tree, not carried over from the pre-merge head:
+
+- `uv run --frozen pytest -q tests/ops/test_migration_backfill.py tests/ops/test_avm_quality_nullable_migration.py tests/integration/test_avm_valuation.py tests/integration/test_avm_deal_outcome.py tests/integration/test_model_ready_materialization.py tests/integration/test_operator_canonical_wiring.py tests/contract/test_openapi_artifact_and_client.py modules/avm/tests/test_deal_outcome_and_calibration.py modules/avm/tests/test_avm_production_execution.py tests/contract/test_manual_correction_contract.py tests/integration/test_manual_correction_persistence.py delivery_toolchain/governance/test_check_measurement_defaults.py` — 208 passed, 0 failed. The last two files are the incoming base's own manual-correction contract and persistence suites, run here to show this task's SQLite table rebuild does not break them.
+- `uv run --frozen python delivery_toolchain/openapi/check_drift.py` — API contract gate PASS; artifact and generated client both fresh, `0 additive, 1 approved breaking, 0 unapproved breaking`.
+- `uv run --frozen python delivery_toolchain/governance/check_code_boundaries.py` — passed for 1112 files; `cut -d, -f1 docs/audits/code-boundary-inventory.csv | sort | uniq -d` is empty.
+- `uv run --frozen python delivery_toolchain/governance/check_measurement_defaults.py` — passed: 15 known (dataclass 6, mapper 4, sql 5), 15 exempted with an owner; next expiry 2026-10-31.
+- `uv run --frozen ruff check <the 20 .py files changed vs origin/dev>` — All checks passed. Repository-wide `ruff check .` reports 8 errors, all in five `docs/evidence/runtime/**` scripts owned by other tasks; `git diff origin/dev HEAD -- <each file>` is empty for all five, so this branch neither introduced nor can fix them.
+- `git diff --check origin/dev...HEAD` — clean.
+- Alembic graph: single head `0017`, chain `0015 -> 0016 -> 0017`.
 
 ### Current head (fresh-vs-legacy status discrimination)
 
