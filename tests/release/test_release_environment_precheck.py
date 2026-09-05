@@ -336,3 +336,71 @@ def test_staging_scope_admits_distinct_valid_buckets() -> None:
     )
     assert errors == []
 
+
+def test_staging_scope_refusal_receipt_redacts_identical_bucket_values(tmp_path: Path) -> None:
+    secret_bucket = "secret-staging-shared-bucket-name-999"
+    values = resolved(
+        "staging",
+        ODP_STAGING_TERRAFORM_STATE_BUCKET=secret_bucket,
+        ODP_STAGING_RECOVERY_BUNDLE_BUCKET=secret_bucket,
+    )
+    code, receipt = _run(
+        tmp_path,
+        values,
+        "--scope",
+        "staging",
+        "--environment",
+        "staging",
+        "--github-environment",
+        "staging",
+        "--release-sha",
+        SHA,
+        "--task-id",
+        "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert receipt["secret_values_redacted"] is True
+    assert receipt["blockers_zh_tw"]
+
+    # Presence-only guarantee: raw bucket values must never appear in the serialized receipt.
+    serialized = json.dumps(receipt, ensure_ascii=False)
+    assert secret_bucket not in serialized
+    for name, value in values.items():
+        if name == "ODP_CLOUD_RUN_VPC_EGRESS":
+            continue
+        assert value not in serialized
+
+
+def test_staging_scope_refusal_receipt_redacts_placeholder_bucket_values(tmp_path: Path) -> None:
+    secret_state_bucket = "secret-staging-state-bucket-only-888"
+    placeholder_val = "changeme"
+    values = resolved(
+        "staging",
+        ODP_STAGING_TERRAFORM_STATE_BUCKET=secret_state_bucket,
+        ODP_STAGING_RECOVERY_BUNDLE_BUCKET=placeholder_val,
+    )
+    code, receipt = _run(
+        tmp_path,
+        values,
+        "--scope",
+        "staging",
+        "--environment",
+        "staging",
+        "--github-environment",
+        "staging",
+        "--release-sha",
+        SHA,
+        "--task-id",
+        "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+    )
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert receipt["secret_values_redacted"] is True
+    assert receipt["blockers_zh_tw"]
+
+    serialized = json.dumps(receipt, ensure_ascii=False)
+    assert secret_state_bucket not in serialized
+    assert placeholder_val not in serialized
+    assert "佔位值" in receipt["blockers_zh_tw"][0]
+
