@@ -1661,6 +1661,73 @@ def test_pr1175_reproduction_prior_queued_route_does_not_block_repaired_new_head
         assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
 
 
+def test_merge_route_without_head_or_malformed_fails_closed() -> None:
+    """Ensure is_task_review_dispatch_eligible fails closed when merge_route lacks a valid head or is malformed."""
+    cfg = _base_test_config()
+    new_head = "0b3e19870b3e19870b3e19870b3e19870b3e1987"
+    task = {
+        "id": "ODP-TEST-MALFORMED-ROUTE-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 1175,
+            "branch": "task/ODP-TEST-MALFORMED-ROUTE-001",
+            "base_branch": "dev",
+            "remote_sha": new_head,
+        },
+        "depends_on": [],
+        "last_update": "2026-09-05T00:53:14Z",
+    }
+
+    # Helper context manager for happy-path SHA and CI
+    def _happy_path_mocks():
+        return (
+            mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+            mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+        )
+
+    # 1. No merge_route at all -> eligible
+    with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+
+    # 2. Malformed / headless dicts fail closed
+    headless_routes = [
+        {"route": "queued"},
+        {"head": "", "route": "queued"},
+        {"head": "   ", "route": "queued"},
+        {"head": None, "route": "queued"},
+        {},
+    ]
+    for bad_route in headless_routes:
+        task["merge_route"] = bad_route
+        with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False, f"Failed for {bad_route}"
+
+    # 3. Malformed non-dict values fail closed
+    malformed_routes = [
+        "queued",
+        123,
+        True,
+        ["queued"],
+    ]
+    for bad_route in malformed_routes:
+        task["merge_route"] = bad_route
+        with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False, f"Failed for {bad_route}"
+
+    # 4. Valid route for prior stale head allows review
+    task["merge_route"] = {"head": "a801faf568b66e700f8691b02ceeec8358fa2aa9", "route": "queued"}
+    with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+
+    # 5. Valid route for current head suppresses review
+    task["merge_route"] = {"head": new_head, "route": "queued"}
+    with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+
+
 def test_ci_repair_requeue_and_transition_clears_stale_merge_route() -> None:
     """Queue ejection / CI repair requeue and submit_review cleanly clear merge_route."""
     cfg = _base_test_config()
