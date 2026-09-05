@@ -645,7 +645,7 @@ def _client_with_populated_sources(
     store_coords: dict[str, tuple[float, float]] | None = None,
     skip_store_refs: bool = False,
     skip_cell_profile: bool = False,
-    original_demand: float = 100_000.0,
+    original_demand: float | None = 100_000.0,
     cell_id: str = HZ004_CELL,
     h3_index: str = HZ004_H3,
 ) -> TestClient:
@@ -740,7 +740,11 @@ def _client_with_populated_sources(
                         "first_observed_at": "2026-01-01T00:00:00Z",
                         "last_observed_at": "2026-01-31T00:00:00Z",
                     },
-                    "metadata": {"original_demand": original_demand},
+                    "metadata": (
+                        {"original_demand": original_demand}
+                        if original_demand is not None
+                        else {"provider": "emgi"}
+                    ),
                 }
             ],
             "source_support": {
@@ -1644,7 +1648,7 @@ def test_recording_outcome_refuses_when_store_belongs_to_different_cell() -> Non
 
 
 def test_recording_outcome_refuses_when_demand_baseline_not_published() -> None:
-    """If authoritative MarketCellProfile demand baseline is missing, fail closed (422)."""
+    """If authoritative MarketCellProfile is not published at all, fail closed (422)."""
     bundle = _bundle_with_registered_cell()
     client = _client_with_populated_sources(bundle, skip_cell_profile=True)
 
@@ -1661,6 +1665,27 @@ def test_recording_outcome_refuses_when_demand_baseline_not_published() -> None:
     )
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "HZ004_DEMAND_BASELINE_NOT_FOUND"
+
+
+def test_recording_outcome_refuses_when_published_cell_profile_has_no_demand_baseline() -> None:
+    """If authoritative MarketCellProfile exists but lacks demand baseline in metadata, fail closed (422)."""
+    bundle = _bundle_with_registered_cell()
+    client = _client_with_populated_sources(bundle, original_demand=None)
+
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id="cell-hz004-00",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            store_ids=("store-1", "store-2"),
+            original_demand=100_000.0,
+            daily_revenue=500.0,
+        ),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_DEMAND_BASELINE_NOT_FOUND"
+    assert "contains no authoritative demand baseline" in response.json()["detail"]["message"]
 
 
 def test_recording_outcome_refuses_when_original_demand_disagrees_with_published_baseline() -> None:
@@ -1682,5 +1707,27 @@ def test_recording_outcome_refuses_when_original_demand_disagrees_with_published
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "HZ004_INPUT_REFUSED"
     assert "does not match published demand baseline" in response.json()["detail"]["message"]
+
+
+def test_recording_outcome_refuses_when_registered_cell_has_invalid_h3_index() -> None:
+    """If registered cell has an invalid/malformed H3 index, refuse fail-closed (422)."""
+    bundle = _bundle_with_registered_cell(h3_index="NOT-AN-H3-IDX")
+    client = _client_with_populated_sources(bundle, h3_index="NOT-AN-H3-IDX")
+
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id="cell-hz004-00",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            store_ids=("store-1", "store-2"),
+            original_demand=100_000.0,
+            daily_revenue=500.0,
+        ),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_INPUT_REFUSED"
+    assert "invalid H3 index" in response.json()["detail"]["message"]
+
 
 

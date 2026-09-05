@@ -987,7 +987,7 @@ else:
                             "message": f"Principal is not authorized to read market data sources: {exc}",
                         },
                     ) from exc
-                except (MarketDataNotFoundError, Exception) as exc:
+                except MarketDataNotFoundError as exc:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail={
@@ -1006,24 +1006,34 @@ else:
                     )
 
                 reg_h3 = getattr(registered_cell, "h3_index", "") or ""
-                if h3.is_valid_cell(reg_h3):
-                    res = h3.get_resolution(reg_h3)
-                    store_h3 = h3.latlng_to_cell(
-                        store_ref.geolocation.latitude,
-                        store_ref.geolocation.longitude,
-                        res,
+                if not h3.is_valid_cell(reg_h3):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_INPUT_REFUSED",
+                            "message": (
+                                f"Registered cell '{body.cell_id}' has invalid H3 index '{reg_h3}'; "
+                                "cannot verify store-to-cell attribution"
+                            ),
+                        },
                     )
-                    if store_h3 != reg_h3:
-                        raise HTTPException(
-                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail={
-                                "code": "HZ004_STORE_CELL_MISMATCH",
-                                "message": (
-                                    f"Store '{s_id}' (h3={store_h3}) does not belong to "
-                                    f"target cell '{body.cell_id}' ({reg_h3})"
-                                ),
-                            },
-                        )
+                res = h3.get_resolution(reg_h3)
+                store_h3 = h3.latlng_to_cell(
+                    store_ref.geolocation.latitude,
+                    store_ref.geolocation.longitude,
+                    res,
+                )
+                if store_h3 != reg_h3:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_STORE_CELL_MISMATCH",
+                            "message": (
+                                f"Store '{s_id}' (h3={store_h3}) does not belong to "
+                                f"target cell '{body.cell_id}' ({reg_h3})"
+                            ),
+                        },
+                    )
 
             # Validate cell-period demand baseline and provenance against authoritative MarketCellProfile
             period_key = f"{period_start.year:04d}-{period_start.month:02d}"
@@ -1043,7 +1053,7 @@ else:
                         "message": f"Principal is not authorized to read market cell profile: {exc}",
                     },
                 ) from exc
-            except (MarketDataNotFoundError, Exception):
+            except MarketDataNotFoundError:
                 try:
                     cell_profile = facade.get_market_cell_profile(
                         cell_id=registered_cell.h3_index,
@@ -1060,7 +1070,7 @@ else:
                             "message": f"Principal is not authorized to read market cell profile: {exc}",
                         },
                     ) from exc
-                except (MarketDataNotFoundError, Exception) as exc:
+                except MarketDataNotFoundError as exc:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                         detail={
@@ -1074,11 +1084,29 @@ else:
                 "original_demand" in cell_profile.metadata
                 or "baseline_demand" in cell_profile.metadata
             ):
-                expected_demand = float(
-                    cell_profile.metadata.get("original_demand")
-                    or cell_profile.metadata.get("baseline_demand")
+                raw_demand = cell_profile.metadata.get("original_demand")
+                if raw_demand is None:
+                    raw_demand = cell_profile.metadata.get("baseline_demand")
+                if raw_demand is not None:
+                    try:
+                        expected_demand = float(raw_demand)
+                    except (TypeError, ValueError):
+                        expected_demand = None
+
+            if expected_demand is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "HZ004_DEMAND_BASELINE_NOT_FOUND",
+                        "message": (
+                            f"Published market cell profile for cell '{body.cell_id}' in period '{period_key}' "
+                            "contains no authoritative demand baseline (metadata.original_demand or metadata.baseline_demand); "
+                            "caller-supplied values cannot substitute for canonical baseline"
+                        ),
+                    },
                 )
-            if expected_demand is not None and abs(body.original_demand - expected_demand) > 1e-4:
+
+            if abs(body.original_demand - expected_demand) > 1e-4:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={
@@ -1120,7 +1148,7 @@ else:
                         "message": f"Principal is not authorized to read market data sources: {exc}",
                     },
                 ) from exc
-            except (MarketDataNotFoundError, Exception) as exc:
+            except MarketDataNotFoundError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={

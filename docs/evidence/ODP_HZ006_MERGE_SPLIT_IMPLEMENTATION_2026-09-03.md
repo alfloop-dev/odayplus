@@ -235,6 +235,29 @@ Stamped baseline fixture（`tests/integration/test_official_real_estate_postgres
    - `tests/models/test_heatzone_merge_split.py`：
      - `test_durable_evidence_repository_calculates_true_spatial_contiguity_and_abstains_when_incomplete`（包含無實績之真實相鄰單元時，連通率下降且評估引擎棄權）。
 
+---
 
+## 11. 審查回應與需求基準權威性／Fail-Closed 防護（Round 13）
 
+針對第十三輪審查（Claude: HZ-004 demand baseline missing metadata fail-open & malformed H3 validation; narrowed exception handling）處置如下：
 
+### 11.1 Base Advance 與歷史完整性
+- 依正常任務工作流程將 `origin/dev`（`e946a35abcd6`）乾淨合併至本任務分支（Commit 包含必要之 trailers：`LLM-Agent: Antigravity2`, `Task-ID: ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001`, `Reviewer: Claude`），完整保留任務歷史。
+
+### 11.2 需求基準來源權威性與發布契約對齊（HZ-004 實績寫入）
+1. **發布契約現狀與 Fail-Closed 防護**：
+   - 權威空間單元剖面契約 `MarketCellProfile`（`emgi.market-cell-profile.v1`）本體未宣告原生需求基準欄位，需求基準僅能存在於 `metadata.original_demand` 或 `metadata.baseline_demand`。
+   - 當單元發布之 `MarketCellProfile` 未包含權威需求基準 metadata 時，`record_heatzone_absorption_outcome` 路由明確拋出 `422 HZ004_DEMAND_BASELINE_NOT_FOUND`（訊息載明：`contains no authoritative demand baseline (metadata.original_demand or metadata.baseline_demand); caller-supplied values cannot substitute for canonical baseline`）。
+   - 杜絕呼叫端在無權威需求基準時自填數字充當基準；在契約正式擴充或需求生產端正式接入前，該路徑維持嚴格 fail-closed，未捏造任何假 provider 或假來源。
+2. **空間單元 H3 索引格式嚴格防護**：
+   - 於店鋪－單元歸屬校驗前，嚴格檢驗註冊空間單元之 `h3.is_valid_cell(reg_h3)`；若 `h3_index` 格式不合法或損毀，立即拋出 `422 HZ004_INPUT_REFUSED`（訊息：`Registered cell has invalid H3 index; cannot verify store-to-cell attribution`），杜絕因格式異常導致店鋪歸屬檢查被繞過而發生 fail-open。
+3. **例外捕捉精準化**：
+   - 移除 `apps/api/oday_api/routes/heatzone.py` 中廣泛捕捉 `Exception` 並誤報為 `HZ004_SOURCE_NOT_FOUND`／`HZ004_DEMAND_BASELINE_NOT_FOUND` 之處，精確限定僅捕捉 `MarketDataAuthorizationError`（403）與 `MarketDataNotFoundError`（422），確保真實程式錯誤能如實暴露而不被遮蔽。
+4. **架構邊界與未交付項目宣告**：
+   - 鄰接資料生產端（adjacency producer / pipeline / scheduler）尚未隨本任務交付；`_get_tenant_target_cell_ids` 依據既有實績、活躍熱區與評分單元界定目標範圍，在無實績或無鄰接之區域，評估引擎如實評定空間連通率不足並安全棄權（`eligible=False`，`abstained=True`），不發出猜測性提案。
+5. **測試保證**：
+   - `tests/integration/test_heatzone_composition_api.py`：
+     - `test_recording_outcome_refuses_when_demand_baseline_not_published`（未發布 MarketCellProfile 時 422 拒絕）。
+     - `test_recording_outcome_refuses_when_published_cell_profile_has_no_demand_baseline`（發布之 MarketCellProfile 無需求基準 metadata 時 422 拒絕）。
+     - `test_recording_outcome_refuses_when_original_demand_disagrees_with_published_baseline`（需求基準不符時 422 拒絕）。
+     - `test_recording_outcome_refuses_when_registered_cell_has_invalid_h3_index`（空間單元 H3 索引損毀時 422 拒絕）。
