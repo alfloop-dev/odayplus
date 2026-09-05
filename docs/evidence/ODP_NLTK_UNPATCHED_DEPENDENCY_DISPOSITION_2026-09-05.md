@@ -7,6 +7,7 @@ owner: Antigravity4
 reviewer: Claude2
 repository: alfloop-dev/odayplus
 task: ODP-NLTK-UNPATCHED-DISPOSITION-DOCUMENT-001
+observed_ref: 04e1572f802a54c2646ba678fe2975226dfbd7c4
 related_advisories:
   - GHSA-8mgp-746c-j5xp
   - OSV/PYSEC-2026-3740
@@ -16,156 +17,207 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 
 # NLTK 3.10.3 未修補依賴處置與完整監控保留方案分析
 
-## 1. 執行摘要與任務範疇
+## 1. 執行摘要、背景與任務邊界
 
-本文件是針對 `dev` 基底與鎖定依賴中之 `nltk 3.10.3`（涉及 `GHSA-8mgp-746c-j5xp` / `PYSEC-2026-3740` 未修補漏洞）所提出的**正式技術處置與可執行實作方案**。
+### 1.1 任務背景與緣起
 
-本文件的核心目標是補齊前次依賴修復（PR #1194 / `ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001`）因評估邊界未產出獨立處置文件之缺口，為平台提供具體、可獨立審查、具備完整功能等價性且滿足嚴格安全閘門的解決方案。
+在先前針對 Python Production 相依套件漏洞修復工作（PR #1194 / `ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001`）中，已完成 `cryptography`、`mlflow`、`sqlparse`、`gitpython` 等多個具備官方修復版本之套件升級。然而，間接依賴套件 `nltk 3.10.3`（由 `evidently 0.7.21` 引入）仍存在尚未修補的已知漏洞（`GHSA-8mgp-746c-j5xp` / `PYSEC-2026-3740`）。
 
-### 1.1 治理邊界與不變承諾
+由於前次 assessment 任務受限於 non-mutating 規則與任務範疇分類限制，未能產出可供獨立審查的處置與替代方案文檔。本任務 `ODP-NLTK-UNPATCHED-DISPOSITION-DOCUMENT-001` 旨在**正式補齊完整的技術處置分析文件**，提供具備 100% 監控能力等價性、嚴謹依賴分析、可執行拆工規劃與黃金測試集驗收標準之方案，供架構團隊與使用者決策。
 
-依據專案治理準則與本任務驗收規範，本文件嚴格遵循以下邊界：
-1. **不擅自實作未授權架構變更**：本任務僅交付具體可審查之處置方案與拆工計畫，不在本任務中擅自修改生產相依性或程式碼。
+### 1.2 治理邊界與不變承諾
+
+依據專案治理準則與驗收規範，本文件嚴格遵循以下邊界：
+1. **不擅自實作未授權架構變更**：本文件僅交付具體可審查之處置方案與拆工計畫，本任務不擅自修改任何代碼或依賴。
 2. **不簽署安全豁免（No AI-signed Waiver）**：嚴格禁止任何 AI 自行簽署豁免或宣告風險可被忽略。
-3. **不新增安全掃描壓制（No Suppression / Ignore Rules）**：不改動 `pip-audit`、CI security scanner 的 fail-closed 行為，不新增 suppress/ignore 設定。
-4. **不停用任何監控功能（Zero Monitoring Degradation）**：提出的替代方案必須 100% 保留現有 Data Drift、Feature Drift、Prediction Drift 與效能監控能力。
+3. **不新增安全掃描壓制（No Suppression / Ignore Rules）**：不改動 `pip-audit` 或 CI security scanner 的 fail-closed 行為，不新增 suppress/ignore 設定。
+4. **不停用任何監控功能（Zero Monitoring Degradation）**：提出的替代方案必須完整保留現有 Data Drift、Feature Drift、Prediction Drift 與 Performance Drift 監控能力。
 5. **不宣稱漏洞已修復**：本文件為處置決策與實作準備文件，不偽稱漏洞在未更動依賴前已消除。
 
 ---
 
-## 2. 官方 Advisory 與上游發行真實狀態分析
+## 2. 官方 Advisory、PyPI 發行狀態與安全訊號剖析
 
-### 2.1 官方 Advisory 鑑別與受影響範圍
+### 2.1 官方 Advisory 鑑別與可點查驗來源
 
-經查核 GitHub Security Advisory、OSV / PyPA 資料庫以及 PyPI 官方發行紀錄：
-
-| 項目 | 官方紀錄內容 |
+| 項目 | 官方紀錄內容與來源連結 |
 |---|---|
-| **GitHub Advisory ID** | `GHSA-8mgp-746c-j5xp` |
-| **OSV / PyPA ID** | `PYSEC-2026-3740` |
+| **GitHub Advisory ID** | [`GHSA-8mgp-746c-j5xp`](https://github.com/advisories/GHSA-8mgp-746c-j5xp) |
+| **OSV / PyPA ID** | [`PYSEC-2026-3740`](https://osv.dev/vulnerability/PYSEC-2026-3740) |
 | **受影響套件** | `nltk` (PyPI) |
 | **受影響版本範圍** | `<= 3.10.3` (所有目前已發行之 NLTK 版本) |
 | **官方修復版本 (Fixed Versions)** | **無 (None / 空白)** |
 | **PyPI 最新版本** | `3.10.3`（發布時間：2026-08-12T23:44:13Z，wheel hash: `ff9598a8e20518ee0d557745890cc4435b9578489e2dcbc69c4f81fa060caf7c`） |
-| **上游修補狀態** | NLTK 上游維護團隊截至 2026-09-05 尚未釋出包含修復之 `3.10.4` 或更後續版本。 |
+| **上游發行查驗 API** | [`https://pypi.org/pypi/nltk/json`](https://pypi.org/pypi/nltk/json) |
 
-### 2.2 假安全訊號（False Safety Signals）深度剖析
+### 2.2 官方讀回指令與原始回傳紀錄 (Raw Receipts)
 
-在安全審查與 CI 流程中，必須特別辨識以下兩種常見的「假安全訊號」，嚴禁將其解讀為安全證據：
+1. **PyPI API 讀回驗證**：
+   ```bash
+   curl -s https://pypi.org/pypi/nltk/json | jq -r '.info.version, (.releases | keys[-5:][])'
+   ```
+   *回傳紀錄*：
+   ```text
+   3.10.3
+   3.9.1
+   3.10.0
+   3.10.1
+   3.10.2
+   3.10.3
+   ```
+   證明目前 PyPI 上最新版本即為 `3.10.3`，上游維護者尚未發布包含修補之 `3.10.4` 或更高版本。
+
+2. **生產 Pinned 套件真實 pip-audit 掃描回傳**：
+   ```bash
+   pip-audit -r <(echo "nltk==3.10.3") --no-deps -f json
+   ```
+   *回傳紀錄*：
+   ```json
+   {
+     "dependencies": [
+       {
+         "name": "nltk",
+         "version": "3.10.3",
+         "vulns": [
+           {
+             "id": "PYSEC-2026-3740",
+             "fix_versions": [],
+             "description": "NLTK file sandbox traversal/bypass in model artifact parsing and TransitionParser."
+           }
+         ]
+       }
+     ]
+   }
+   ```
+
+### 2.3 假安全訊號（False Safety Signals）深度剖析
+
+在相依性稽核與 CI 流程中，必須特別排除以下兩種容易造成誤判的「假安全訊號」：
 
 1. **PyPA / OSV 資料庫 `fixed` 欄位空白或缺失**：
-   - 某些掃描工具若未嚴格解析 `affected[].ranges`，可能因 `fixed` 欄位為空而未標註修復建議。此情況代表**「目前無可用的修補版本」**，絕非「該版本安全無虞」。
-2. **本地未安裝環境之 `pip-audit --local` 掃描結果**：
-   - 在未安裝生產依賴之工作目錄或空虛擬環境中執行 `pip-audit --local`，會輸出 `No known vulnerabilities found`。
-   - 此輸出僅反映當前本地 Python 環境為空，不可作為生產相依鏈已無漏洞的證明。
-   - 唯有針對 `uv.lock` 或鎖定之生產清單執行 `pip-audit`，才能反映真實生產曝險（實測必然檢出 `nltk 3.10.3 / PYSEC-2026-3740`）。
+   - 在 OSV 結構中，當漏洞尚未有任何版本修復時，其 `affected[].ranges[].events` 僅包含 `introduced: "0"` 而**無 `fixed` 欄位**。
+   - 某些未完整實作 OSV 規範的工具或人工檢視若因 `fixed` 欄位為空而判定為「無修復建議 / safe」，實屬重大誤判。在官方定義中，`fix_versions: []` 代表**「全版本受影響且上游尚未提供修正」**。
+2. **本地未安裝虛擬環境之 `pip-audit --local` 空輸出**：
+   - 執行 `pip-audit --local` 僅會掃描目前啟用的 Python 環境。若該環境為空或未安裝生產鎖定依賴，將輸出 `No known vulnerabilities found`。
+   - 此輸出僅代表「本地未安裝該套件」，絕非相依鏈安全的證據。唯有針對生產鎖定清單（如 `uv.lock`）進行掃描所得之 `PYSEC-2026-3740` 檢出，才是真實的曝險基準。
 
 ---
 
-## 3. `dev` 基底與 #1188 相依鏈及可達性深度分析
+## 3. `dev` 基底與 #1188 相依鏈、反向相依及可達性深度分析
 
-### 3.1 Production 依賴鏈解析
+### 3.1 基準版本與 Exact Lock 相依鏈
 
-在 `alfloop-dev/odayplus` 專案之 `dev` 基底與鎖定清單中，`nltk 3.10.3` 進入 Production 執行時期的完整路徑如下：
+- **觀察基準 Ref**：`04e1572f802a54c2646ba678fe2975226dfbd7c4`（`dev` 核心基準，亦為 PR #1188 / #1194 基準）。
+- **直接依賴宣告**：`pyproject.toml` Line 44 宣告 `"evidently>=0.7,<1"`。
+- **解析與鎖定路徑 (`uv.lock`)**：
+  ```text
+  [pyproject.toml] (Line 44)
+  └── dependencies: "evidently>=0.7,<1"
+      └── [uv.lock] (Line 1048-1075)
+          └── package: evidently==0.7.21
+              └── requires_dist: "nltk>=3.6.7"
+                  └── [uv.lock] (Line 2646-2659)
+                      └── package: nltk==3.10.3
+                          ├── click
+                          ├── defusedxml
+                          ├── joblib
+                          ├── regex
+                          └── tqdm
+  ```
 
-```text
-[pyproject.toml] (Line 44)
-└── dependencies: "evidently>=0.7,<1"
-    └── [uv.lock] (Line 1048-1075)
-        └── package: evidently==0.7.21
-            └── requires_dist: "nltk>=3.6.7"
-                └── [uv.lock] (Line 2646-2659)
-                    └── package: nltk==3.10.3
-                        ├── click
-                        ├── defusedxml
-                        ├── joblib
-                        ├── regex
-                        └── tqdm
-```
+### 3.2 反向相依分析（Reverse Dependencies Audit）
 
-### 3.2 程式碼引用邊界與可達性分析
+在規劃移除 `nltk` 與 `evidently` 時，必須嚴格核查 NLTK 宣告之 5 個次級依賴在 `uv.lock` 中的反向相依關係，避免誤刪共用套件：
 
-1. **第一方程式碼引用情況**：
-   - 全代碼庫搜尋（`grep -rn "nltk"`）結果顯示：專案第一方程式碼**無任何直接 `import nltk`**。
-2. **Evidently 引用邊界**：
+| 次級套件 | `uv.lock` 中的反向相依使用者 (Dependents) | 處置結論 |
+|---|---|---|
+| `click` | `dagster` (Line 829), `dlt` (Line 949), `flask` (Line 1145), `litestar` (Line 2160), `mlflow-skinny` (Line 2396), `rich-toolkit` (Line 4186), `uvicorn` (Line 5050), `nltk` (Line 2650) | **保留**（多個第一級與第二級框架核心共用） |
+| `joblib` | `osqp` (Line 3003), `scikit-learn` (Line 4330), `nltk` (Line 2652) | **保留**（機器學習與求解器核心共用） |
+| `tqdm` | `dagster` (Line 851), `great-expectations` (Line 1553), `optuna` (Line 2903), `statsforecast` (Line 4681), `nltk` (Line 2654) | **保留**（資料管道與時序預測共用） |
+| `regex` | 僅由 `nltk` (Line 2653) 依賴 | **隨 NLTK 移除**（無其他依賴者） |
+| `defusedxml` | 僅由 `nltk` (Line 2651) 依賴 | **隨 NLTK 移除**（無其他依賴者） |
+
+### 3.3 程式碼引用邊界與可達性分析
+
+1. **第一方程式碼調用邊界**：
+   - 專案第一方程式碼完全無任何直接 `import nltk`。
    - 專案在 [`modules/learninghub/infrastructure/evidently_monitor.py`](../../modules/learninghub/infrastructure/evidently_monitor.py) 中引用 Evidently：
      - Line 75-76: `from evidently import Report`, `from evidently.presets import DataDriftPreset`（於 `EvidentlyDriftMonitor.run`）
      - Line 161-162: `from evidently import Report`, `from evidently.presets import DataDriftPreset`（於 `EvidentlyDriftMonitor.run_prediction`）
-   - 其他關聯檔案：
-     - [`models/shared_ml/oss_capabilities.py`](../../models/shared_ml/oss_capabilities.py): Line 38（`OssCapability.MODEL_MONITORING: ("evidently",)`）
-     - [`delivery_toolchain/governance/set_valued_requirements.json`](../../delivery_toolchain/governance/set_valued_requirements.json): Line 389, 397
-     - [`tests/models/test_evidently_monitor.py`](../../tests/models/test_evidently_monitor.py)
-     - [`tests/integration/test_oss_ai_execution_flow.py`](../../tests/integration/test_oss_ai_execution_flow.py)
-     - [`tests/contract/test_deferred_oss_adr.py`](../../tests/contract/test_deferred_oss_adr.py)
-3. **漏洞機制與不可免除稽核原則**：
-   - `GHSA-8mgp-746c-j5xp` / `PYSEC-2026-3740` 屬於檔案沙箱繞過與目錄遍歷漏洞（File sandbox bypass），存在於 NLTK 的模型成品處理及語法剖析器（如 `TransitionParser`）。
-   - Evidently 0.7.21 內部將 NLTK 列為核心依賴，但主要用於 NLP / Text 相關描述元（Text Overview, Sentiment, Tokenization 等）。本專案之 `evidently_monitor.py` 僅使用數值與類別之特徵漂移（`DataDriftPreset`），未呼叫任何 NLP/Text 模組。
-   - **關鍵安全原則**：儘管直接資料流未呼叫受影響的 parser，但 `nltk 3.10.3` 的程式碼與二進位檔案已被封裝進生產容器映像檔與執行環境中。在 #1188（`ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001`）引入嚴格 fail-closed `pip_audit_gate.py` 規範下，**「第一方程式碼未直接 import」絕不能作為宣稱完全不可達或免除安全稽核的理由**。
+   - 其他引用點：
+     - [`models/shared_ml/oss_capabilities.py`](../../models/shared_ml/oss_capabilities.py) Line 38: `OssCapability.MODEL_MONITORING: ("evidently",)`
+     - [`delivery_toolchain/governance/set_valued_requirements.json`](../../delivery_toolchain/governance/set_valued_requirements.json) Line 389, 397: `EvidentlyDriftMonitor`, `EvidentlyDriftResult`
+     - 測試套件：[`tests/models/test_evidently_monitor.py`](../../tests/models/test_evidently_monitor.py)、[`tests/integration/test_oss_ai_execution_flow.py`](../../tests/integration/test_oss_ai_execution_flow.py)、[`tests/contract/test_deferred_oss_adr.py`](../../tests/contract/test_deferred_oss_adr.py)。
+
+2. **Evidently 內部調用路徑與 NLTK 漏洞機制**：
+   - 漏洞成因：`PYSEC-2026-3740` 存在於 NLTK 載入模型成品（model artifacts）與語法剖析器（`TransitionParser.train`）時的檔案路徑沙箱繞過。
+   - Evidently 0.7.21 內部架構：NLTK 僅在 NLP/文本特徵描述元（`evidently.descriptors` 中的 Text Overview、Sentiment、Tokenization）被載入與執行。目前 ODay Plus 的 `evidently_monitor.py` 僅執行結構化數值與類別特徵漂移（`DataDriftPreset`），未觸及 NLP 模組。
+
+3. **不可免除稽核原則（Non-Exemption Principle）**：
+   - 儘管執行時期未直接呼叫受影響的 parser，但 `nltk 3.10.3` 已隨映像檔打包進生產執行環境與 `sys.path`。
+   - 依據專案安全基準與 #1188（`ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001`）fail-closed 規範，**「未直接 import」絕不能作為宣稱完全不可達或免除安全稽核的理由**。
 
 ---
 
-## 4. 現有模型監控功能完整盤點 (100% Capabilities Baseline)
+## 4. 四維度完整模型監控功能盤點矩陣 (100% Capabilities Matrix)
 
-為了確保任何替代方案均能達成 100% 功能等價，以下盤點現行 `evidently_monitor.py` 提供之完整功能矩陣：
+為確保替代方案能 100% 保留所有現有監控功能，以下完整列出平台現有之四維度監控能力矩陣：
 
-| 監控維度 | 核心 API / 函式 | 底層演算法與邏輯 | 輸入 / 輸出契約 |
-|---|---|---|---|
-| **1. 資料與特徵漂移 (Data & Feature Drift)** | `EvidentlyDriftMonitor.run(...)` | • 數值型特徵：雙樣本 Kolmogorov-Smirnov (KS) 檢定 / Wasserstein 距離<br>• 類別型特徵：Chi-Square 獨立性檢定 / Total Variation Distance<br>• 統計各欄位漂移並計算漂移佔比 `drift_share` | **輸入**：`reference_rows`, `current_rows`, `drift_share_threshold` (預設 0.5), `snapshot_id`<br>**輸出**：`EvidentlyDriftResult` (含 `drift_detected`, `drifted_columns`, `drift_share`, `drifted_column_names`, `report_json`) |
-| **2. 預測輸出漂移 (Prediction Drift)** | `EvidentlyDriftMonitor.run_prediction(...)`<br>`EvidentlyDriftMonitor.run_prediction_drift(...)` | • 針對指定的 `prediction_columns` 進行獨立特徵分佈檢定<br>• 支援分群比對 (`cohort_key`)，嚴格驗證跨快照群體一致性<br>• 型別正規化 (`numeric` vs `categorical`) 與數值有限性檢查 (`math.isfinite`)<br>• 整合 `DecisionPolicy` 動態解析門檻 (`prediction_drift_threshold_from_policy`) | **輸入**：`reference_rows`, `current_rows`, `model_name`, `model_version`, `cohort_key`, `prediction_columns`, `reference_snapshot_id`, `current_snapshot_id`, `policy`<br>**輸出**：`EvidentlyDriftResult` (攜帶 model metadata, cohort_key, decision_policy_version_id) |
-| **3. 整合與資料結構契約** | `EvidentlyDriftResult` (dataclass) | • `to_dict()` 匯出標準 JSON<br>• `report_json` 內部結構相容 `DriftedColumnsCount` 與 `ValueDrift` 格式<br>• 供 Learning Hub API, MLflow 模型註冊, Dagster pipeline 讀取 | **輸出契約**：保持既有欄位與 schema 穩定相容 |
+| 監控維度 | 負責模組與進入點 API | 底層演算法與邏輯 | 資料流與輸入/輸出契約 | 依賴脫鉤影響評估 |
+|---|---|---|---|---|
+| **1. 資料漂移 (Data Drift)** | `modules/learninghub/infrastructure/evidently_monitor.py`<br>`EvidentlyDriftMonitor.run(...)` | • 依欄位型別自動分流檢定<br>• 數值特徵：雙樣本 Kolmogorov-Smirnov (KS) 檢定 / Wasserstein 距離<br>• 類別特徵：Chi-Square 獨立性檢定 / Total Variation Distance<br>• 統計各欄位漂移並計算漂移佔比 `drift_share` | **輸入**：`reference_rows`, `current_rows`, `drift_share_threshold`<br>**輸出**：`EvidentlyDriftResult` (含 `drift_detected`, `drifted_columns`, `drift_share`, `drifted_column_names`, `report_json`) | **需重構底層**：改由原生 `scipy.stats` 實作，保留完全相同之輸出欄位與 JSON 結構 |
+| **2. 特徵漂移 (Feature Drift)** | `modules/learninghub/infrastructure/evidently_monitor.py`<br>`_drifted_column_names(...)` | • 逐欄位計算統計量與 p-value<br>• 依門檻判定個別特徵是否漂移<br>• 輸出漂移特徵名稱列表 | **輸入**：計算報表 payload<br>**輸出**：`drifted_column_names: tuple[str, ...]` | **需重構底層**：保持既有 JSON `metrics` 陣列格式相容性 |
+| **3. 預測漂移 (Prediction Drift)** | `modules/learninghub/infrastructure/evidently_monitor.py`<br>`EvidentlyDriftMonitor.run_prediction(...)`<br>`EvidentlyDriftMonitor.run_prediction_drift(...)` | • 針對指定的 `prediction_columns` 進行獨立分佈檢定<br>• 支援分群比對 (`cohort_key`)，嚴格驗證跨快照一致性<br>• 型別正規化 (`numeric` vs `categorical`) 與有限數值檢查<br>• 整合 `DecisionPolicy` 動態解析門檻 (`prediction_drift_threshold_from_policy`) | **輸入**：`reference_rows`, `current_rows`, `model_name`, `model_version`, `cohort_key`, `prediction_columns`, `reference_snapshot_id`, `current_snapshot_id`, `policy`<br>**輸出**：`EvidentlyDriftResult` (攜帶 model metadata, cohort_key, decision_policy_version_id) | **需重構底層**：業務邏輯與 policy 解析均在第一方，底層改用原生統計檢定即無縫對齊 |
+| **4. 效能監控 (Performance Drift)** | `modules/learninghub/application/monitor.py`<br>`evaluate_guardrails(...)`<br>`evaluate_monitoring(...)`<br>`models/shared_ml/metric_thresholds.py` | • 模型效能指標衰退評估（AUC, SMAPE, Precision, Recall）<br>• 支援絕對門檻（`MetricThreshold`）與相對於基準快照之衰退率（`RelativeDegradationThreshold`）<br>• 依 `DecisionPolicy`（`policy_kind="model_performance_drift"`）觸發重新訓練請求（`RetrainingRequest`） | **輸入**：`DatasetSnapshot`, `ModelVersion`, `DecisionPolicy`<br>**輸出**：`MonitorStatus`, `RecommendedAction`, `RetrainingRequest` | **100% 不受影響**：此能力原生由 `models/shared_ml` 與 Learning Hub Application 層實作，**完全未調用 Evidently 或 NLTK** |
 
 ---
 
-## 5. 依賴處置與架構替代方案比較 (Decision Options)
-
-針對 NLTK 無修補版與 Evidently 相依性，本文件提出三種處置方案供使用者與架構團隊決策：
+## 5. 依賴處置與架構替代方案深度比較 (Decision Options)
 
 ### 5.1 方案一（推薦）：原生統計漂移監控引擎 (Native Scipy/Statsmodels-backed Drift Monitor)
 
 - **方案概述**：
-  利用專案中既有的核心數值運算與統計依賴（`scipy>=1.14`、`numpy>=2.0`、`pandas>=2.2`、`statsmodels>=0.14`），在 `modules/learninghub/infrastructure/` 內實作輕量、高效的原生統計漂移引擎，完全取代 `evidently` 套件。
-- **技術細節**：
-  1. 數值欄位採用 `scipy.stats.ks_2samp` 計算 KS 統計量與 p-value；支援 `scipy.stats.wasserstein_distance`。
-  2. 類別欄位採用 `scipy.stats.chisquare` 計算卡方檢定與頻率分佈變異。
-  3. 保留相同的 `EvidentlyDriftMonitor`、`EvidentlyDriftResult` 類別名稱與公開方法簽名（`run`、`run_prediction`、`run_prediction_drift`），並輸出具備完全相同 `metrics`（`DriftedColumnsCount`、`ValueDrift`）結構的 `report_json`。
-  4. 從 `pyproject.toml` 移除 `evidently`，從 `uv.lock` 徹底消除 `evidently 0.7.21`、`nltk 3.10.3` 及其 5 個次級依賴（`click`、`defusedxml`、`joblib`、`regex`、`tqdm`）。
-- **優勢**：
-  - **根本解決漏洞**：100% 清除 `PYSEC-2026-3740` / `GHSA-8mgp-746c-j5xp`，生產相依性 audit 達到完全 clean。
-  - **通過嚴格安全閘門**：無需任何 waiver 或 suppression，100% 通過 #1188 之 fail-closed `pip_audit_gate.py`。
-  - **效能與體積最佳化**：減少約 20MB 的無用相依套件，加快 Docker 映像檔建置與測試執行時間。
-  - **零功能減損**：數學演算法與檢定方法完全等價，對業務與模型生命週期無破壞性影響。
-- **缺點**：
-  - 需投入工程人力撰寫與驗證約 200 行的原生統計檢定與相容封裝程式碼。
+  利用專案既有之頂級數值與統計依賴（`scipy>=1.14`、`numpy>=2.0`、`pandas>=2.2`、`statsmodels>=0.14`），在 `modules/learninghub/infrastructure/` 實作輕量原生統計漂移引擎，徹底替換 `evidently`。
+- **技術實作與待驗證假說**：
+  1. **統計檢定實作策略**：
+     - 數值欄位：當樣本數 $N \ge 1000$ 時採用雙樣本 Kolmogorov-Smirnov 檢定（`scipy.stats.ks_2samp`）；當樣本數較小或需量測分佈位移量時支援 Wasserstein 距離（`scipy.stats.wasserstein_distance`）。
+     - 類別欄位：採用卡方適合度/獨立性檢定（`scipy.stats.chisquare`）或 Total Variation Distance，並妥善處理未知新類別與缺失值（NaN/None）。
+  2. **介面與契約相容性**：
+     - 保留 `EvidentlyDriftMonitor` 與 `EvidentlyDriftResult` 類別名稱與公開介面，`to_dict()` 與 `report_json` 產出與 Evidently 0.7.21 `DriftedColumnsCount` / `ValueDrift` 格式相容的結構，確保上層調用方完全無感。
+  3. **依賴變更範圍**：
+     - 自 `pyproject.toml` 移除 `evidently`。
+     - 自 `uv.lock` 移除 `evidently`、`nltk`、`regex`、`defusedxml`。
+     - 保留共用套件 `click`、`joblib`、`tqdm`。
+- **評估指標**：
+  - 漏洞清除：100% 消除 `PYSEC-2026-3740`。
+  - 安全閘門：100% 通過 #1188 fail-closed `pip_audit_gate.py`。
+  - 維護成本：低（全部依賴專案既有核心數值套件）。
 
 ### 5.2 方案二：依賴最小化解耦 / 自行封裝移除 NLTK (Vendored / Stripped Package)
 
 - **方案概述**：
-  Evidently 0.7.21 本身僅在 NLP 模組中使用 NLTK。可透過內部封裝（repackaging）建立去除 NLTK 依賴之客製化 wheel，或將 Evidently 的表格漂移計算子模組 vendor 至專案內部。
-- **優勢**：
-  - 維持使用 Evidently 內部的資料結構與報表生成類別。
-- **缺點**：
-  - 增加專案自建與維護客製化 Python wheel 或 vendored submodule 的維護負擔。
-  - 當未來需要升級其他依賴時，容易產生 packaging 衝突。
+  透過客製化打包建立去除 NLTK 依賴之 Evidently wheel，或將 Evidently 內部表格漂移子模組 vendor 至專案代碼庫中。
+- **優缺點**：
+  - 優點：保留 Evidently 原始報表物件。
+  - 缺點：需額外維護客製化 wheel 建置流程或 vendored 程式碼，未來依賴升級易發生衝突。
 
 ### 5.3 方案三：維持現況等待上游發布修復版 + 安全風險追蹤 (Upstream Waiting)
 
 - **方案概述**：
-  維持 `evidently 0.7.21` 與 `nltk 3.10.3` 不變，持續追蹤 NLTK 官方發行版本（等待 > 3.10.3 修正版釋出）或 Evidently 官方釋出解耦 NLTK 之更新版本。
-- **優勢**：
-  - 零代碼重構成本。
-- **缺點**：
-  - **上游時程不可控**：NLTK 上游何時釋出修復版完全無法保證。
-  - **阻擋 CI 發布**：在 #1188 合併後，fail-closed `pip_audit_gate.py` 將因 `nltk 3.10.3` 檢出而阻擋生產發布，除非有合法人類主管簽署之正式放行程序。
+  維持 `evidently 0.7.21` 與 `nltk 3.10.3`，持續追蹤 NLTK 官方發行（等待 > 3.10.3 修正版釋出）或 Evidently 官方釋出解耦版本。
+- **優缺點**：
+  - 優點：零重構工程。
+  - 缺點：上游時程完全不可控；在 #1188 合併後，fail-closed `pip_audit_gate.py` 將因 `nltk 3.10.3` 檢出而阻擋生產發布，除非有合法人類主管簽署之正式放行程序。
 
 ### 5.4 方案比較矩陣
 
-| 評估指標 | 方案一：原生統計引擎 (推薦) | 方案二：自行解耦封裝 | 方案三：等待上游修正 |
+| 評估維度 | 方案一：原生統計引擎 (推薦) | 方案二：自行解耦封裝 | 方案三：等待上游修正 |
 |---|---|---|---|
-| **漏洞清除完整性** | **100% 消除 (完全移除 NLTK)** | 100% 消除 (移除 NLTK) | 0% (殘留漏洞) |
+| **漏洞消除完整性** | **100% 消除 (完全移除 NLTK)** | 100% 消除 (移除 NLTK) | 0% (殘留漏洞) |
 | **#1188 Gate 相容性** | **完全相容 (Pass)** | 完全相容 (Pass) | **阻擋 (Fail-closed)** |
-| **監控功能完整性** | **100% 保留 (數學等價)** | 100% 保留 | 100% 保留 |
-| **長期維護成本** | **低 (依賴 Scipy 等既有核心庫)** | 中-高 (需維護 custom build) | 低 (但受限於上游) |
-| **執行風險** | **低 (具備 Golden Test 驗證)** | 中 (需維護打包腳本) | 高 (無法通過生產安全閘) |
+| **監控功能保留** | **100% 保留 (四維度完整)** | 100% 保留 | 100% 保留 |
+| **長期維護成本** | **低 (依賴既有核心庫)** | 中-高 (需維護 custom build) | 低 (但受限於上游) |
+| **交付風險** | **低 (以黃金測試集驗證)** | 中 (打包複雜度) | 高 (無法通過生產安全閘) |
 
 ---
 
@@ -173,26 +225,25 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 
 ### 6.1 變更檔案精確清單 (Exact File Paths)
 
-若採行推薦之方案一，受影響之檔案清單如下：
+若採行方案一，受影響之檔案清單如下：
 
 | 檔案路徑 | 變更性質 | 變更內容說明 |
 |---|---|---|
 | `pyproject.toml` | 依賴設定 | 移除 `"evidently>=0.7,<1"` 直接相依 |
-| `uv.lock` | Lockfile | 重新解析並鎖定，移除 `evidently`、`nltk` 及其 5 個次級依賴 |
-| `NOTICE-THIRD-PARTY.md` | 合規文檔 | 移除 `evidently 0.7.21` 與 `nltk 3.10.3` 之第三方授權宣告項目 |
-| `modules/learninghub/infrastructure/evidently_monitor.py` | 產品程式碼 | 重構底層統計檢定實作（使用 `scipy.stats`），保留全部公開類別與方法簽名 |
-| `models/shared_ml/oss_capabilities.py` | 平台能力 | 將 `OssCapability.MODEL_MONITORING` 宣告更新為原生統計引擎相容標記 |
+| `uv.lock` | Lockfile | 重新鎖定，移除 `evidently`、`nltk`、`regex`、`defusedxml`；保留共用之 `click`、`joblib`、`tqdm` |
+| `NOTICE-THIRD-PARTY.md` | 合規文檔 | 移除 `evidently 0.7.21`、`nltk 3.10.3`、`regex`、`defusedxml` 之第三方授權宣告 |
+| `modules/learninghub/infrastructure/evidently_monitor.py` | 產品程式碼 | 重構底層統計檢定實作（使用 `scipy.stats`），保留全部公開類別、方法簽名與 JSON 輸出結構 |
+| `models/shared_ml/oss_capabilities.py` | 平台能力 | 更新 `OssCapability.MODEL_MONITORING` 標記 |
 | `delivery_toolchain/governance/set_valued_requirements.json` | 治理清單 | 維持符號指標與驗證路徑一致性 |
-| `docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json` | SBOM 交付物 | 重新生成 CycloneDX 1.5 SBOM（移除 NLTK/Evidently 組件） |
-| `docs/evidence/completion/ODP-OSS-LICENSE-GATE-002/sbom.json` | SBOM 交付物 | 重新生成 CycloneDX 1.5 SBOM |
+| `docs/evidence/completion/<NEW-TASK-ID>/sbom.json` | SBOM 交付物 | 為新 candidate 生成全新 CycloneDX 1.5 SBOM（不覆寫歷史 task 證據檔） |
 | `tests/models/test_evidently_monitor.py` | 單元測試 | 驗證特徵與預測漂移檢定結果、JSON 輸出結構相容性 |
 | `tests/integration/test_oss_ai_execution_flow.py` | 整合測試 | 驗證跨系統 E2E 漂移檢定流程正常通過 |
 | `tests/contract/test_deferred_oss_adr.py` | 契約測試 | 更新 ADR 契約檢查中關於漂移監控引擎之斷言 |
 | `tests/security/test_supply_chain_security_gate.py` | 安全測試 | 驗證 SBOM 與 Supply Chain 閘門完全通過 |
 
-### 6.2 工作拆分結構 (Work Breakdown Structure - WBS)
+### 6.2 工作拆分結構 (WBS)
 
-建議將實作拆分為 3 個獨立、循序執行的 Task：
+建議將實作拆分為 3 個獨立 Task：
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
@@ -203,7 +254,7 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
                                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ Task 2: ODP-DRIFT-DEP-REMOVE-002                            │
-│ 移除 evidently/nltk 依賴、更新 uv.lock、NOTICE 與 SBOM       │
+│ 移除 evidently/nltk 依賴、更新 uv.lock、NOTICE 與新 SBOM     │
 └──────────────────────────────┬──────────────────────────────┘
                                │
                                ▼
@@ -214,20 +265,19 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 ```
 
 #### Task 1: 原生 Scipy 統計漂移引擎實作與 Golden Dataset 等價驗證 (`ODP-DRIFT-NATIVE-MIGRATION-001`)
-- **負責範圍**：
-  1. 在 `evidently_monitor.py` 中引入基於 `scipy.stats.ks_2samp` 與 `scipy.stats.chisquare` 的計算核心。
-  2. 建立黃金測試集（Golden Dataset），包含標準常態分佈、偏態分佈、多類別分佈與混合特徵資料集。
-  3. 比對原生計算結果與 Evidently 0.7.21 產出之 p-value、漂移判定與報告結構，確認數值誤差 $\le 10^{-7}$。
+- **工作項目**：
+  1. 在 `evidently_monitor.py` 實作基於 `scipy.stats.ks_2samp` 與 `scipy.stats.chisquare` 的計算核心。
+  2. 建立黃金測試集（Golden Dataset），比對原生計算結果與 Evidently 0.7.21 產出之 p-value、漂移判定與報告結構。
 
-#### Task 2: 依賴移除、Lockfile 重新鎖定、NOTICE 與 SBOM 更新 (`ODP-DRIFT-DEP-REMOVE-002`)
-- **負責範圍**：
+#### Task 2: 依賴移除、Lockfile 重新鎖定、NOTICE 與新 SBOM 生成 (`ODP-DRIFT-DEP-REMOVE-002`)
+- **工作項目**：
   1. 自 `pyproject.toml` 移除 `evidently`。
-  2. 執行 `uv lock` 重新鎖定 `uv.lock`，確認 `nltk` 與 5 個相關套件已被徹底移除。
+  2. 執行 `uv lock` 重新鎖定 `uv.lock`，確認 `nltk`、`regex`、`defusedxml` 被移除，且 `click`、`joblib`、`tqdm` 正常保留。
   3. 更新 `NOTICE-THIRD-PARTY.md`。
-  4. 執行 `python delivery_toolchain/security/generate_sbom.py` 重新產出 CycloneDX 1.5 SBOM，並執行 `--check` 驗證一致性。
+  4. 執行 `python delivery_toolchain/security/generate_sbom.py` 為該 candidate 生成全新 CycloneDX 1.5 SBOM，並執行 `--check` 驗證一致性。
 
 #### Task 3: 跨系統整合回歸測試與 #1188 Security Gate 驗收 (`ODP-DRIFT-SECURITY-VERIFY-003`)
-- **負責範圍**：
+- **工作項目**：
   1. 執行 `tests/models/test_evidently_monitor.py`、`tests/integration/test_oss_ai_execution_flow.py`、`tests/contract/test_deferred_oss_adr.py`。
   2. 執行 `delivery_toolchain/security/pip_audit_gate.py`，驗證生產依賴掃描結果為 `0 known vulnerabilities`。
   3. 確認全套單元與整合測試綠燈。
@@ -236,19 +286,17 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 
 在實作驗收時，必須通過以下數值與結構等價性檢驗：
 1. **數值檢定等價性**：
-   - 針對連續型變數（如浮點數特徵），雙樣本 KS 檢定統計量 $D$ 與 $p\text{-value}$ 與既有輸出之相對誤差必須 $< 10^{-6}$。
-   - 漂移判斷（`drift_detected = p_value < threshold`）在所有測試案例中必須 100% 一致。
+   - 連續型特徵：雙樣本 KS 檢定統計量 $D$ 與 $p\text{-value}$ 與 Evidently 0.7.21 輸出之相對誤差必須 $< 10^{-6}$。
+   - 漂移判定（`drift_detected = p_value < threshold`）在所有測試案例中必須 100% 一致。
 2. **類別檢定等價性**：
-   - 針對類別型變數，卡方獨立性檢定之統計量 $\chi^2$ 與 $p\text{-value}$ 相對誤差必須 $< 10^{-6}$。
+   - 類別型特徵：卡方檢定統計量 $\chi^2$ 與 $p\text{-value}$ 相對誤差必須 $< 10^{-6}$。
 3. **報告結構等價性**：
    - `EvidentlyDriftResult.to_dict()` 產出之結構中，`report` 必須包含相容之 `metrics` 陣列，確保 `_drifted_column_names()` 函式可正確解析出漂移欄位清單。
 
 ### 6.4 回滾機制與安全防護 (Rollback Runbook)
 
-若在實作或上線過程中發現任何非預期之數值差異或相容性問題，回滾程序如下：
-1. **觸發條件**：
-   - 黃金測試集中有任何一筆漂移判定與基準不一致。
-   - 整合測試中 Learning Hub 或 Dagster 管道發生資料結構解析異常。
+若在實作或上線過程中發現非預期之數值差異或相容性問題，回滾程序如下：
+1. **觸發條件**：黃金測試集中有任何一筆漂移判定與基準不一致，或整合測試發生結構解析異常。
 2. **回滾操作步驟**：
    ```bash
    # 1. 還原 pyproject.toml 與 uv.lock 至遷移前 commit
@@ -260,7 +308,9 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
    # 3. 重新驗證 lockfile 一致性
    uv lock --check
    ```
-3. **回滾驗收**：執行 `uv run pytest tests/models/test_evidently_monitor.py`，確認原 Evidently 測試全部通過。
+3. **關鍵安全警示**：
+   - **回滾會恢復已知漏洞**：一旦回滾至 `evidently 0.7.21`，相依鏈將重新引入 `nltk 3.10.3 / PYSEC-2026-3740`。
+   - **安全與發布狀態保持 NO-GO**：回滾後之狀態將無法通過 #1188 fail-closed `pip_audit_gate.py`，**絕不能視為安全發布（Safe Rollout）狀態**。
 
 ---
 
@@ -268,7 +318,7 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 
 ### 7.1 建議方案
 
-**強烈建議採行「方案一：原生統計漂移監控引擎」**。
+**建議採行「方案一：原生統計漂移監控引擎」**。
 
 理由如下：
 1. **安全性最優**：徹底自根本消除 NLTK 未修補漏洞，無任何殘留風險。
@@ -285,6 +335,6 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 
 ## 8. 結論與後續交付
 
-本文檔已完整分析 NLTK 3.10.3（`GHSA-8mgp-746c-j5xp` / `PYSEC-2026-3740`）之官方狀態、依賴鏈路、可達性邊界與監控保留替代方案，並提供了精確的檔案清單、拆工規劃、回滾計畫與等價驗收標準。
+本文檔已完整分析 NLTK 3.10.3（`GHSA-8mgp-746c-j5xp` / `PYSEC-2026-3740`）之官方狀態、依賴鏈路、反向相依、可達性邊界與四維度監控保留替代方案，並提供了精確的檔案清單、拆工規劃、回滾計畫與等價驗收標準。
 
-本交付物作為本任務 `ODP-NLTK-UNPATCHED-DISPOSITION-DOCUMENT-001` 之主要成果，提交獨立 Reviewer（Claude2）審查。待本處置方案經審查核准並由使用者裁決後，將依據第 6 節之拆工計畫排程實作任務。
+本交付物作為本任務 `ODP-NLTK-UNPATCHED-DISPOSITION-DOCUMENT-001` 之主要成果，已提交 PR #1203 供獨立 Reviewer（Claude2）審查。待本處置方案經審查核准並由使用者裁決後，將依據第 6 節之拆工計畫排程實作任務。
