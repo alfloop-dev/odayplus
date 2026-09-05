@@ -272,3 +272,67 @@ def test_the_receipt_reports_the_scope_it_checked(tmp_path: Path) -> None:
     assert receipt["scope"] == "deploy"
     assert receipt["environment"] == "production"
     assert receipt["github_environment"] == "production"
+
+
+# --------------------------------------------------------------------------
+# Staging scope storage boundary validation
+# --------------------------------------------------------------------------
+
+
+def test_staging_scope_requires_foundation_variables_including_recovery_bundle_bucket() -> None:
+    required = required_variables("staging")
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in required
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET" in required
+    assert "ODP_STAGING_KMS_KEY_ID" in required
+    assert "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT" in required
+
+
+def test_staging_scope_fails_closed_when_recovery_and_state_buckets_are_identical() -> None:
+    errors = errors_for(
+        "staging",
+        environment="staging",
+        github_environment="staging",
+        values=resolved(
+            "staging",
+            ODP_STAGING_TERRAFORM_STATE_BUCKET="odayplus-staging-bucket",
+            ODP_STAGING_RECOVERY_BUNDLE_BUCKET="odayplus-staging-bucket",
+        ),
+    )
+    assert errors
+    joined = "\n".join(errors)
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET" in joined
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in joined
+    assert "不得與" in joined
+    assert "相同" in joined
+
+
+@pytest.mark.parametrize("placeholder", ["placeholder", "changeme", "dummy", "todo", "PLACEHOLDER"])
+def test_staging_scope_fails_closed_on_placeholder_recovery_bucket(placeholder: str) -> None:
+    errors = errors_for(
+        "staging",
+        environment="staging",
+        github_environment="staging",
+        values=resolved(
+            "staging",
+            ODP_STAGING_TERRAFORM_STATE_BUCKET="odayplus-staging-state-bucket",
+            ODP_STAGING_RECOVERY_BUNDLE_BUCKET=placeholder,
+        ),
+    )
+    assert errors
+    joined = "\n".join(errors)
+    assert "placeholder" in joined or "佔位值" in joined
+
+
+def test_staging_scope_admits_distinct_valid_buckets() -> None:
+    errors = errors_for(
+        "staging",
+        environment="staging",
+        github_environment="staging",
+        values=resolved(
+            "staging",
+            ODP_STAGING_TERRAFORM_STATE_BUCKET="odayplus-staging-state-bucket",
+            ODP_STAGING_RECOVERY_BUNDLE_BUCKET="odayplus-staging-recovery-bucket",
+        ),
+    )
+    assert errors == []
+

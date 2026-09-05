@@ -984,6 +984,7 @@ def test_staging_skips_static_preflight_and_uses_foundation_binding_scope() -> N
     assert "ODP_STAGING_KMS_KEY_ID" in staging_gate["env"]
     assert "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT" in staging_gate["env"]
     assert "ODP_STAGING_TERRAFORM_STATE_BUCKET" in staging_gate["env"]
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET" in staging_gate["env"]
 
 
 def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sidecars() -> None:
@@ -995,7 +996,7 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "--terraform-backend-prefix" in create_run
     assert "${STAGING_BACKEND_PREFIX}" in create_run
     assert "${RUNNER_TEMP}" not in create_run
-    persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected state storage")
+    persist = next(step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage")
     assert "gcloud storage cp" in str(persist["run"])
     assert "STAGING_BUNDLE_URI" in str(persist["run"])
 
@@ -1006,6 +1007,60 @@ def test_staging_uses_release_scoped_remote_backend_and_persists_recovery_sideca
     assert "verify_watch_window_receipt" in closeout_run
     assert "ODP_PRODUCTION_WATCH_CLOSEOUT_URI" in closeout_run
     assert "MANIFEST_DIGEST" in closeout_run
+
+
+def test_staging_recovery_bundle_storage_boundary_contract() -> None:
+    """Staging recovery bundle storage must be strictly separated from Terraform state bucket across deploy and closeout."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+
+    # 1. deploy job environment exports and path preparation checks
+    deploy_job = parsed["jobs"]["deploy"]
+    assert deploy_job["env"]["ODP_STAGING_TERRAFORM_STATE_BUCKET"] == "${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}"
+    assert deploy_job["env"]["ODP_STAGING_RECOVERY_BUNDLE_BUCKET"] == "${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}"
+
+    deploy_steps = deploy_job["steps"]
+    prep_handoff = next(
+        step for step in deploy_steps if step.get("name") == "Prepare release-scoped staging handoff paths"
+    )
+    prep_handoff_run = str(prep_handoff["run"])
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET is required" in prep_handoff_run
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required" in prep_handoff_run
+    assert '"${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}"' in prep_handoff_run
+    assert 'staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"' in prep_handoff_run
+
+    # 2. Producer persistence steps use protected recovery storage
+    persist_create = next(
+        step for step in deploy_steps if step.get("name") == "Persist staging recovery bundle to protected recovery storage"
+    )
+    assert persist_create.get("if") == "${{ success() && inputs.environment == 'staging' }}"
+    assert 'gcloud storage cp "${STAGING_OUTPUTS_FILE}" "${STAGING_BUNDLE_URI}/staging-terraform-outputs.json"' in str(persist_create["run"])
+
+    persist_hold = next(
+        step for step in deploy_steps if step.get("name") == "Persist staging hold state to protected recovery storage"
+    )
+    assert persist_hold.get("if") == "${{ always() && inputs.environment == 'staging' }}"
+    assert 'gcloud storage cp "${sidecar}" "${STAGING_BUNDLE_URI}/$(basename "${sidecar}")"' in str(persist_hold["run"])
+
+    # 3. closeout job environment exports and path preparation checks
+    closeout_job = parsed["jobs"]["staging_closeout"]
+    assert closeout_job["env"]["ODP_STAGING_TERRAFORM_STATE_BUCKET"] == "${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}"
+    assert closeout_job["env"]["ODP_STAGING_RECOVERY_BUNDLE_BUCKET"] == "${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}"
+
+    closeout_steps = closeout_job["steps"]
+    prep_closeout = next(
+        step for step in closeout_steps if step.get("name") == "Prepare release-scoped staging closeout paths"
+    )
+    prep_closeout_run = str(prep_closeout["run"])
+    assert "ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout" in prep_closeout_run
+    assert "ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required for staging closeout" in prep_closeout_run
+    assert '"${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}"' in prep_closeout_run
+    assert 'staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"' in prep_closeout_run
+
+    # 4. Consumer reads recovery bundle from STAGING_BUNDLE_URI
+    read_bundle = next(
+        step for step in closeout_steps if step.get("name") == "Read staging recovery bundle with staging identity"
+    )
+    assert 'gcloud storage cp "${STAGING_BUNDLE_URI}/*" "${STAGING_STATE_DIR}/"' in str(read_bundle["run"])
 
 
 def test_staging_identity_rejects_dev_operator_impersonation() -> None:

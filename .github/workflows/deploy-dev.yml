@@ -1006,6 +1006,7 @@ jobs:
       ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
       ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
       ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+      ODP_STAGING_RECOVERY_BUNDLE_BUCKET: ${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}
       API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
       WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
       MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
@@ -1161,6 +1162,7 @@ jobs:
           ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
           ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
           ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+          ODP_STAGING_RECOVERY_BUNDLE_BUCKET: ${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}
         run: |
           set -euo pipefail
           python3 delivery_toolchain/release/check_release_environment.py \
@@ -1203,10 +1205,15 @@ jobs:
         run: |
           set -euo pipefail
           : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required}"
+          : "${ODP_STAGING_RECOVERY_BUNDLE_BUCKET:?ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required}"
+          if [ "${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" ]; then
+            echo "Error: ODP_STAGING_RECOVERY_BUNDLE_BUCKET cannot be identical to ODP_STAGING_TERRAFORM_STATE_BUCKET (state bucket separation violation)" >&2
+            exit 1
+          fi
           staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
           staging_outputs_file="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/staging-terraform-outputs.json"
           staging_backend_prefix="oday-plus/ephemeral-staging/odp-${ODAY_RELEASE_SHA:0:12}"
-          staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
+          staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"
           mkdir -p "${staging_state_dir}"
           {
             echo "STAGING_RELEASE_ID=odp-${ODAY_RELEASE_SHA:0:12}"
@@ -1242,7 +1249,7 @@ jobs:
             --outputs-out "${STAGING_OUTPUTS_FILE}" \
             --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-create.json"
 
-      - name: Persist staging recovery bundle to protected state storage
+      - name: Persist staging recovery bundle to protected recovery storage
         if: ${{ success() && inputs.environment == 'staging' }}
         run: |
           set -euo pipefail
@@ -1304,7 +1311,7 @@ jobs:
             --terraform-backend-prefix "${STAGING_BACKEND_PREFIX}" \
             --receipt "${RELEASE_RECEIPT_DIR}/staging-lifecycle-hold.json"
 
-      - name: Persist staging hold state to protected state storage
+      - name: Persist staging hold state to protected recovery storage
         if: ${{ always() && inputs.environment == 'staging' }}
         run: |
           set -euo pipefail
@@ -1400,6 +1407,7 @@ jobs:
       ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
       ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
       ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+      ODP_STAGING_RECOVERY_BUNDLE_BUCKET: ${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}
       ODP_PRODUCTION_WATCH_CLOSEOUT_URI: ${{ vars.ODP_PRODUCTION_WATCH_CLOSEOUT_URI }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
       MANIFEST_DIGEST: ${{ needs.deploy.outputs.manifest_digest }}
@@ -1442,6 +1450,7 @@ jobs:
           ODP_STAGING_KMS_KEY_ID: ${{ vars.ODP_STAGING_KMS_KEY_ID }}
           ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT }}
           ODP_STAGING_TERRAFORM_STATE_BUCKET: ${{ vars.ODP_STAGING_TERRAFORM_STATE_BUCKET }}
+          ODP_STAGING_RECOVERY_BUNDLE_BUCKET: ${{ vars.ODP_STAGING_RECOVERY_BUNDLE_BUCKET }}
         run: |
           set -euo pipefail
           python3 delivery_toolchain/release/check_release_environment.py \
@@ -1465,11 +1474,16 @@ jobs:
         run: |
           set -euo pipefail
           : "${ODP_STAGING_TERRAFORM_STATE_BUCKET:?ODP_STAGING_TERRAFORM_STATE_BUCKET is required for staging closeout}"
+          : "${ODP_STAGING_RECOVERY_BUNDLE_BUCKET:?ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required for staging closeout}"
+          if [ "${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}" = "${ODP_STAGING_TERRAFORM_STATE_BUCKET}" ]; then
+            echo "Error: ODP_STAGING_RECOVERY_BUNDLE_BUCKET cannot be identical to ODP_STAGING_TERRAFORM_STATE_BUCKET (state bucket separation violation)" >&2
+            exit 1
+          fi
           : "${ODP_PRODUCTION_WATCH_CLOSEOUT_URI:?ODP_PRODUCTION_WATCH_CLOSEOUT_URI is required for staging closeout}"
           staging_release_id="odp-${ODAY_RELEASE_SHA:0:12}"
           staging_backend_prefix="oday-plus/ephemeral-staging/${staging_release_id}"
           staging_state_dir="${GITHUB_WORKSPACE}/.odp_data/staging-lifecycle/state"
-          staging_bundle_uri="gs://${ODP_STAGING_TERRAFORM_STATE_BUCKET}/${staging_backend_prefix}/bundle"
+          staging_bundle_uri="gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/${staging_backend_prefix}/bundle"
           watch_receipt="${GITHUB_WORKSPACE}/.odp_data/release/production-watch-window-receipt.json"
           mkdir -p "${staging_state_dir}" "$(dirname "${watch_receipt}")"
           {

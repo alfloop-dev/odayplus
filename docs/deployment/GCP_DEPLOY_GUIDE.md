@@ -63,6 +63,12 @@ The deployment pipeline is configured via GitHub Environment Variables and Secre
 | `ODP_FORECAST_MODEL` | Environment | Default forecasting model. | `seasonal_naive` |
 | `ODP_AUTH_MODE` | Environment | Authoritative authentication mode. Password-first `local` is the default and needs no Google OAuth client; `oidc` additionally requires the OIDC variables below. | *(unset)* / `oidc` |
 | `ODP_WEB_BASE_URL` | Environment | Canonical HTTPS web origin backing cookies, CSRF, and redirects. Required in **both** auth modes; the Web runtime fails closed without it in production. | `https://oday-web-dev.example.run.app` |
+| `ODP_STAGING_TERRAFORM_STATE_BUCKET` | Environment (`staging`) | Dedicated protected GCS bucket for Terraform remote backend state/lock. Strictly separated from recovery bundle storage. | `odayplus-staging-tfstate-asia-east1` |
+| `ODP_STAGING_RECOVERY_BUNDLE_BUCKET` | Environment (`staging`) | Dedicated protected GCS bucket for release recovery bundles (tfvars, inventory, lifecycle markers, output handoff). Strictly separated from Terraform state bucket; missing or identical bucket fails closed. | `odayplus-staging-recovery-asia-east1` |
+| `ODP_STAGING_VPC_NETWORK` | Environment (`staging`) | Foundation VPC network name for staging ephemeral resources. | `oday-staging-vpc` |
+| `ODP_STAGING_VPC_SUBNETWORK` | Environment (`staging`) | Foundation VPC subnetwork name for staging ephemeral resources. | `oday-staging-subnet` |
+| `ODP_STAGING_KMS_KEY_ID` | Environment (`staging`) | Customer Managed Encryption Key (CMEK) resource ID for staging data protection. | `projects/.../locations/asia-east1/keyRings/.../cryptoKeys/...` |
+| `ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT` | Environment (`staging`) | Deployer service account email for staging foundation Terraform execution. | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` |
 
 #### Authentication mode resolution
 
@@ -218,7 +224,11 @@ In accordance with Rollout Plan §16, Auto-Workers must **fail-closed** and not 
    - Verify Web operator console loads and authentication flows succeed.
    - Redacted JSON validation receipts are published as workflow artifacts (`runtime-release-${environment}-validation`).
 
-Staging 的 Terraform state 必須使用受保護的 GCS backend，prefix 固定包含完整 release id（`oday-plus/ephemeral-staging/<release_id>`）；state 內含 generated credentials，不能放在 runner `/tmp`、git 或一般 artifact。`create` 產生的 tfvars/inventory/lifecycle sidecar 與 output handoff 會寫入同一 release recovery bundle，供 failure hold、orphan recovery 及 production closeout 使用。Staging 驗證成功後不立即 cleanup；必須先驗證 production watch-window durable closeout receipt，再由同一 lifecycle cleanup 以 exact release labels 執行銷毀。
+Staging 的 Terraform state 與 recovery bundle 必須使用嚴格隔離的受保護 GCS bucket：
+- **Terraform state backend**：必須使用專屬受保護 GCS bucket（`ODP_STAGING_TERRAFORM_STATE_BUCKET`），prefix 固定包含完整 release id（`oday-plus/ephemeral-staging/<release_id>`）；state 內含 generated credentials，僅供 Terraform state/lock 使用，禁止寫入 recovery sidecar 或其他非 state 物件。
+- **Recovery Bundle 儲存**：`create` 產生的 tfvars/inventory/lifecycle sidecar 與 output handoff 必須寫入獨立受治理的受保護非 state GCS bucket（`ODP_STAGING_RECOVERY_BUNDLE_BUCKET`），路徑為 `gs://${ODP_STAGING_RECOVERY_BUNDLE_BUCKET}/oday-plus/ephemeral-staging/<release_id>/bundle`，供 failure hold、orphan recovery 及 production closeout 使用。若未設定或與 state bucket 相同時一律 fail-closed，嚴禁混用或 fallback 至 state/snapshot/model/lease bucket。
+
+Staging 驗證成功後不立即 cleanup；必須先驗證 production watch-window durable closeout receipt，再由同一 lifecycle cleanup 以 exact release labels 執行銷毀。
 
 ---
 
