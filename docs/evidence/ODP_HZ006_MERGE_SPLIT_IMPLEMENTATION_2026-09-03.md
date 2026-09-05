@@ -171,4 +171,32 @@ Stamped baseline fixture（`tests/integration/test_official_real_estate_postgres
 - **RBAC 授權修正**：於 `shared/auth/rbac.py` 中，將 `Role.SITE_REVIEWER`（對應 Operator Console 之 `expansion-manager` persona）補上 `heatzone` 之 `Action.OVERRIDE` 與 `Action.ROLLBACK` 權限，消除前端 `canDecideHeatZoneComposition` 允許 `expansion-manager` 但後端在生產模式下因缺少權限而 403 的語意矛盾。
 - **職責分離與核准者集合測試**：於 `tests/integration/test_heatzone_composition_api.py` 新增 `test_heatzone_composition_approver_set_is_pinned()`，嚴格鎖定具決策權限之角色集合（`Role.SITE_REVIEWER`、`Role.EXPANSION_USER`、`Role.EXECUTIVE` 可進行 preview/approve/override/rollback；`Role.AUDITOR`、`Role.MARKETING_MANAGER`、`Role.REGIONAL_SUPERVISOR` 確實驗證為 403 拒絕），並於 `test_the_roles_that_decide_a_merge_cannot_write_its_evidence` 斷言決策者皆不可寫入 HZ-004 實績證據。
 
+---
+
+## 9. 審查回應與部分覆蓋熱區拒絕處置（Round 9）
+
+針對第九輪審查退回（Codex: merge approval partially replaces active multi-cell zone stranding sibling cells）處置如下：
+
+### 9.1 缺陷分析
+在既有 active multi-cell zone（如 $Z = \{a, b, c\}$）存在的情況下，若核准僅涵蓋部分成員的合併提案（如 $\{a, x\}$），先前的 `_apply_approval` 與 `approve_proposal` 在軟撤銷 $a$ 所屬的活躍熱區時，會將 $Z$ 內的所有成員記錄（包含 $b, c$）一併軟撤銷；而新產生的合併熱區僅包含 $\{a, x\}$，導致兄弟成員 $b, c$ 自此遺失、落於任何活躍熱區之外。
+
+### 9.2 處置與防護機制
+1. **核准防護（Fail-Closed）**：
+   - 在 `InMemoryHeatZoneCompositionRepository._apply_approval` 與 `DurableHeatZoneCompositionRepository.approve_proposal` 中，核准前收集提案中所有 cell 觸及的 active zone（以及 split 的 parent zone）。
+   - 對每一觸及之 active zone，斷言其所有活躍成員 cell 均被提案之 `member_cell_ids` 完整涵蓋。
+   - 若存在未涵蓋之兄弟成員（partial replacement），立即拋出 `CompositionValidationError` 拒絕核准，維持原拓樸不變且不產生任何寫入。
+2. **候選評估閘門**：
+   - 於 `modules/heatzone/application/merge_split_engine.py` 中，在評估相鄰 pair 合併時，若任一側單元屬於既有多單元熱區（`len > 1`），且該 candidate 未涵蓋該熱區全體成員，則將其歸入 `declined`（理由：`partial_replacement_of_multi_cell_zone:{zone_id}`），防止產出無法被核准的部分替換提案。
+3. **InMemory override_composition 快照保護**：
+   - 在 `InMemoryHeatZoneCompositionRepository.override_composition` 增加例外捕捉與 `_records` 快照復原，確保原子性。
+
+### 9.3 回歸驗證
+- `tests/models/test_heatzone_merge_split.py`：
+  - `test_merge_approval_rejects_partial_replacement_of_active_multi_cell_zone`（in-memory / durable 參數化：部分替換拒絕核准，原熱區及其所有成員保持 active）。
+  - `test_merge_approval_succeeds_when_all_sibling_cells_of_active_zones_are_covered`（in-memory / durable 參數化：完整涵蓋所有觸及熱區成員時成功合併並退場舊熱區）。
+  - `test_merge_candidate_declined_if_cell_is_part_of_multi_cell_zone`（評估引擎對多單元熱區的部分替換候選拒絕提案）。
+- `tests/integration/test_heatzone_composition_api.py`：
+  - `test_approve_refuses_partial_replacement_of_active_multi_cell_zone`（API 端點核准部分替換提案回傳 422，原有拓樸完好無損）。
+
+
 

@@ -485,6 +485,7 @@ def evaluate_merge_split(
     allow_cross_admin = _require_bool(policy, "allow_cross_admin_boundary")
 
     cell_map = evidence.cell_map()
+    existing_zone_map = {zone.zone_id: zone for zone in evidence.existing_zones}
     zone_of_cell = {
         cell_id: zone.zone_id
         for zone in evidence.existing_zones
@@ -520,6 +521,28 @@ def evaluate_merge_split(
                     "candidate": f"{left_id}+{right_id}",
                     "kind": CompositionKind.MERGED.value,
                     "reason": f"already_composed_into_zone:{active_zone}",
+                }
+            )
+            continue
+
+        active_right_zone = zone_of_cell.get(right_id)
+        left_zone_obj = existing_zone_map.get(active_zone) if active_zone else None
+        right_zone_obj = existing_zone_map.get(active_right_zone) if active_right_zone else None
+        if left_zone_obj and len(left_zone_obj.member_cell_ids) > 1:
+            declined.append(
+                {
+                    "candidate": f"{left_id}+{right_id}",
+                    "kind": CompositionKind.MERGED.value,
+                    "reason": f"partial_replacement_of_multi_cell_zone:{active_zone}",
+                }
+            )
+            continue
+        if right_zone_obj and len(right_zone_obj.member_cell_ids) > 1:
+            declined.append(
+                {
+                    "candidate": f"{left_id}+{right_id}",
+                    "kind": CompositionKind.MERGED.value,
+                    "reason": f"partial_replacement_of_multi_cell_zone:{active_right_zone}",
                 }
             )
             continue

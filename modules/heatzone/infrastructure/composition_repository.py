@@ -210,32 +210,37 @@ class InMemoryHeatZoneCompositionRepository:
         if not active:
             raise CompositionValidationError(f"no active composition found for zone '{zone_id}' to override")
 
-        # Step 1: soft rollback existing active rows
-        self.revert_composition(zone_id, tenant_id, reverted_at=now)
+        records_before = list(self._records)
+        try:
+            # Step 1: soft rollback existing active rows
+            self.revert_composition(zone_id, tenant_id, reverted_at=now)
 
-        # Step 2: append new override records
-        effective_kind = new_kind or active[0].composition_kind
-        effective_cells = new_cells or [r.member_cell_id for r in active]
-        effective_parent = parent_zone_id if parent_zone_id is not None else active[0].parent_zone_id
+            # Step 2: append new override records
+            effective_kind = new_kind or active[0].composition_kind
+            effective_cells = new_cells or [r.member_cell_id for r in active]
+            effective_parent = parent_zone_id if parent_zone_id is not None else active[0].parent_zone_id
 
-        created: list[HeatZoneCompositionRecord] = []
-        for cell_id in effective_cells:
-            record = HeatZoneCompositionRecord(
-                zone_id=zone_id,
-                tenant_id=tenant_id,
-                member_cell_id=cell_id,
-                composition_kind=effective_kind,
-                parent_zone_id=effective_parent,
-                decided_by=decided_by,
-                decided_at=now,
-                decision_policy_version_id=decision_policy_version_id,
-                model_version=COMPOSITION_MODEL_VERSION,
-                override_reason=override_reason,
-                reverted_at=None,
-            )
-            created.append(self.save_composition(record))
+            created: list[HeatZoneCompositionRecord] = []
+            for cell_id in effective_cells:
+                record = HeatZoneCompositionRecord(
+                    zone_id=zone_id,
+                    tenant_id=tenant_id,
+                    member_cell_id=cell_id,
+                    composition_kind=effective_kind,
+                    parent_zone_id=effective_parent,
+                    decided_by=decided_by,
+                    decided_at=now,
+                    decision_policy_version_id=decision_policy_version_id,
+                    model_version=COMPOSITION_MODEL_VERSION,
+                    override_reason=override_reason,
+                    reverted_at=None,
+                )
+                created.append(self.save_composition(record))
 
-        return created
+            return created
+        except Exception:
+            self._records = records_before
+            raise
 
     def get_lineage(self, zone_id: str, tenant_id: str) -> ZoneLineage | None:
         matching = [
@@ -298,20 +303,34 @@ class InMemoryHeatZoneCompositionRepository:
         now: datetime,
     ) -> list[HeatZoneCompositionRecord]:
         """Retire what the proposal replaces and create everything it proposes."""
-        # Soft-revert any existing active compositions for member cells
+        # Identify all active zones touched by the proposal's member cells
+        touched_zones: set[str] = set()
         for cell_id in prop.member_cell_ids:
             active_comp = self.get_active_for_cell(cell_id, tenant_id)
             if active_comp is not None:
-                self.revert_composition(active_comp.zone_id, tenant_id, reverted_at=now)
+                touched_zones.add(active_comp.zone_id)
 
-        # If SPLIT_CHILD and parent zone is active, soft-revert parent zone
         if prop.composition_kind == CompositionKind.SPLIT_CHILD and prop.parent_zone_id:
-            parent_active = [
-                r for r in self._records
-                if r.tenant_id == tenant_id and r.zone_id == prop.parent_zone_id and r.is_active
-            ]
-            if parent_active:
-                self.revert_composition(prop.parent_zone_id, tenant_id, reverted_at=now)
+            touched_zones.add(prop.parent_zone_id)
+
+        # Reject partial replacement: every active member cell of every touched zone
+        # must be covered by the proposal.
+        for zone_id in sorted(touched_zones):
+            active_members = {
+                r.member_cell_id for r in self.get_composition(zone_id, tenant_id) if r.is_active
+            }
+            missing_siblings = active_members - set(prop.member_cell_ids)
+            if missing_siblings:
+                raise CompositionValidationError(
+                    f"cannot approve {prop.composition_kind.value} proposal '{prop.proposal_id}': "
+                    f"partial replacement of active zone '{zone_id}' would strand "
+                    f"sibling cell(s) {sorted(missing_siblings)}"
+                )
+
+        # Soft-revert touched active zones
+        for zone_id in sorted(touched_zones):
+            if any(r.is_active for r in self.get_composition(zone_id, tenant_id)):
+                self.revert_composition(zone_id, tenant_id, reverted_at=now)
 
         created_records: list[HeatZoneCompositionRecord] = []
         for zone_id, member_ids in approval_zone_assignments(prop):

@@ -29,8 +29,11 @@ from modules.external_data.infrastructure.data_platform_client import (
 )
 from modules.heatzone.application.merge_split_evidence import AbsorptionOutcomeRecord
 from modules.heatzone.domain.composition import (
+    COMPOSITION_MODEL_VERSION,
     CompositionKind,
     HeatZoneCompositionRecord,
+    MergeSplitProposalRecord,
+    generate_merged_zone_id,
 )
 from modules.heatzone.infrastructure import CellRegistration
 from shared.auth import Role
@@ -1498,3 +1501,57 @@ def test_override_refuses_a_policy_version_of_the_wrong_kind() -> None:
 
     assert response.status_code == 422
     assert "not 'heatzone_merge'" in response.json()["detail"]
+
+
+def test_approve_refuses_partial_replacement_of_active_multi_cell_zone() -> None:
+    """API endpoint rejects proposal approval when it would strand sibling cells (422)."""
+    bundle = _bundle_with_evidence()
+    multi_cells = ("cell-api-a", "cell-api-b", "cell-api-c")
+    zone_id = generate_merged_zone_id(multi_cells)
+    for cell_id in multi_cells:
+        bundle.heatzone_composition_repository.save_composition(
+            HeatZoneCompositionRecord(
+                zone_id=zone_id,
+                tenant_id=TENANT_ID,
+                member_cell_id=cell_id,
+                composition_kind=CompositionKind.MERGED,
+                decided_by="system",
+                decision_policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+            )
+        )
+
+    # Save a partial merge proposal
+    partial_proposal = MergeSplitProposalRecord(
+        proposal_id="prop-partial-api",
+        zone_id=generate_merged_zone_id(("cell-api-a", "cell-api-x")),
+        tenant_id=TENANT_ID,
+        composition_kind=CompositionKind.MERGED,
+        member_cell_ids=("cell-api-a", "cell-api-x"),
+        parent_zone_id=None,
+        ndcg_gain=0.08,
+        cannibalization_variance_reduction=0.30,
+        correlation_rho=0.85,
+        disconnect_index=0.05,
+        confidence=0.80,
+        model_version=COMPOSITION_MODEL_VERSION,
+        policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+    )
+    bundle.heatzone_composition_repository.save_proposal(partial_proposal)
+
+    client = TestClient(create_app(persistence=bundle))
+    response = client.post(
+        f"/api/v1/heatzones/merge-split/proposals/{partial_proposal.proposal_id}/approve",
+        json={"notes": "attempted partial merge via API"},
+        headers=HEATZONE_HEADERS,
+    )
+
+    assert response.status_code == 422
+    assert "partial replacement of active zone" in response.json()["detail"]
+
+    # Original zone and cells remain active
+    active = bundle.heatzone_composition_repository.list_compositions(
+        TENANT_ID, active_only=True
+    )
+    assert len(active) == 3
+    assert {r.zone_id for r in active} == {zone_id}
+

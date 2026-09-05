@@ -1044,3 +1044,140 @@ def test_a_split_child_can_be_rolled_back_to_nothing_active(tmp_path, durable) -
     # Reverting twice is refused rather than quietly appending a second revert.
     with pytest.raises(CompositionValidationError):
         repository.revert_composition(child_zone_id, TENANT_ID)
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_merge_approval_rejects_partial_replacement_of_active_multi_cell_zone(
+    tmp_path, durable
+) -> None:
+    """Approval must fail closed if retiring a zone leaves sibling cells stranded."""
+    repository = (
+        _durable_composition_repository(tmp_path)
+        if durable
+        else InMemoryHeatZoneCompositionRepository()
+    )
+    multi_cells = ("cell-mc-a", "cell-mc-b", "cell-mc-c")
+    parent_zone_id = _seed_parent_zone(repository, cells=multi_cells)
+
+    merge_proposal = MergeSplitProposalRecord(
+        proposal_id="partial-merge-proposal",
+        zone_id=generate_merged_zone_id(("cell-mc-a", "cell-mc-x")),
+        tenant_id=TENANT_ID,
+        composition_kind=CompositionKind.MERGED,
+        member_cell_ids=("cell-mc-a", "cell-mc-x"),
+        parent_zone_id=None,
+        ndcg_gain=0.08,
+        cannibalization_variance_reduction=0.30,
+        correlation_rho=0.85,
+        disconnect_index=0.05,
+        confidence=0.80,
+        model_version=COMPOSITION_MODEL_VERSION,
+        policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+    )
+    repository.save_proposal(merge_proposal)
+
+    with pytest.raises(CompositionValidationError, match="partial replacement of active zone"):
+        repository.approve_proposal(
+            proposal_id="partial-merge-proposal",
+            tenant_id=TENANT_ID,
+            approved_by="operator-a",
+            notes="attempted partial merge",
+        )
+
+    # All 3 original cells remain active in the original zone
+    parent_records = repository.get_composition(parent_zone_id, TENANT_ID)
+    assert len(parent_records) == 3
+    assert all(r.is_active for r in parent_records)
+    assert sorted(r.member_cell_id for r in parent_records) == sorted(multi_cells)
+
+    active = repository.list_compositions(TENANT_ID, active_only=True)
+    assert len(active) == 3
+    assert {r.zone_id for r in active} == {parent_zone_id}
+
+    # Proposal remains PROPOSED
+    prop = repository.get_proposal("partial-merge-proposal", TENANT_ID)
+    assert prop is not None
+    assert prop.status == ProposalStatus.PROPOSED
+
+
+@pytest.mark.parametrize("durable", [False, True])
+def test_merge_approval_succeeds_when_all_sibling_cells_of_active_zones_are_covered(
+    tmp_path, durable
+) -> None:
+    """Approval succeeds when the proposal covers all members of all touched active zones."""
+    repository = (
+        _durable_composition_repository(tmp_path)
+        if durable
+        else InMemoryHeatZoneCompositionRepository()
+    )
+    zone1_cells = ("cell-z1-a", "cell-z1-b")
+    zone2_cells = ("cell-z2-x", "cell-z2-y")
+    zone1_id = _seed_parent_zone(repository, cells=zone1_cells)
+    zone2_id = _seed_parent_zone(repository, cells=zone2_cells)
+
+    all_cells = (*zone1_cells, *zone2_cells)
+    merged_zone_id = generate_merged_zone_id(all_cells)
+    full_merge_proposal = MergeSplitProposalRecord(
+        proposal_id="full-merge-proposal",
+        zone_id=merged_zone_id,
+        tenant_id=TENANT_ID,
+        composition_kind=CompositionKind.MERGED,
+        member_cell_ids=all_cells,
+        parent_zone_id=None,
+        ndcg_gain=0.10,
+        cannibalization_variance_reduction=0.35,
+        correlation_rho=0.88,
+        disconnect_index=0.04,
+        confidence=0.85,
+        model_version=COMPOSITION_MODEL_VERSION,
+        policy_version_id=f"heatzone-merge-v1:{TENANT_ID}",
+    )
+    repository.save_proposal(full_merge_proposal)
+
+    updated, created = repository.approve_proposal(
+        proposal_id="full-merge-proposal",
+        tenant_id=TENANT_ID,
+        approved_by="operator-a",
+        notes="full merge of both zones",
+    )
+
+    assert updated.status == ProposalStatus.APPROVED
+    assert len(created) == 4
+    assert all(r.zone_id == merged_zone_id for r in created)
+
+    # Both old zones are reverted
+    z1_records = repository.get_composition(zone1_id, TENANT_ID)
+    assert not any(r.is_active for r in z1_records)
+    z2_records = repository.get_composition(zone2_id, TENANT_ID)
+    assert not any(r.is_active for r in z2_records)
+
+    # All 4 cells are active under the new merged zone
+    active = repository.list_compositions(TENANT_ID, active_only=True)
+    assert len(active) == 4
+    assert sorted(r.member_cell_id for r in active) == sorted(all_cells)
+    assert all(r.zone_id == merged_zone_id for r in active)
+
+
+def test_merge_candidate_declined_if_cell_is_part_of_multi_cell_zone(tmp_path) -> None:
+    """Merge engine declines candidates that would partially replace a multi-cell zone."""
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    zone_id = generate_merged_zone_id((MERGE_LEFT, "cell-extra-sibling"))
+    zones = (
+        ExistingZoneComposition(
+            zone_id, "MERGED", (MERGE_LEFT, "cell-extra-sibling")
+        ),
+    )
+
+    evaluation = evaluate_merge_split(
+        _mature_evidence(tmp_path, existing_zones=zones), policy=policy
+    )
+
+    # No merge proposal for MERGE_LEFT + MERGE_RIGHT because MERGE_LEFT is in a multi-cell zone
+    assert not any(
+        MERGE_LEFT in p.member_cell_ids and p.composition_kind == CompositionKind.MERGED
+        for p in evaluation.proposals
+    )
+    assert any(
+        entry.get("reason") == f"partial_replacement_of_multi_cell_zone:{zone_id}"
+        for entry in evaluation.declined
+    )

@@ -2473,16 +2473,35 @@ class DurableHeatZoneCompositionRepository:
             now = datetime.now(UTC)
             reason = notes or f"Operator approval for proposal {proposal_id}"
 
-            # Soft-revert active member cells
+            # Identify all active zones touched by the proposal's member cells
+            touched_zones: set[str] = set()
             for cell_id in prop.member_cell_ids:
                 active_comp = self.get_active_for_cell(cell_id, tenant_id)
                 if active_comp is not None:
-                    self.revert_composition(active_comp.zone_id, tenant_id, reverted_at=now)
+                    touched_zones.add(active_comp.zone_id)
 
             if prop.composition_kind == CompositionKind.SPLIT_CHILD and prop.parent_zone_id:
-                parent_comps = self.get_composition(prop.parent_zone_id, tenant_id)
+                touched_zones.add(prop.parent_zone_id)
+
+            # Reject partial replacement: every active member cell of every touched zone
+            # must be covered by the proposal.
+            for zone_id in sorted(touched_zones):
+                active_members = {
+                    r.member_cell_id for r in self.get_composition(zone_id, tenant_id) if r.is_active
+                }
+                missing_siblings = active_members - set(prop.member_cell_ids)
+                if missing_siblings:
+                    raise CompositionValidationError(
+                        f"cannot approve {prop.composition_kind.value} proposal '{prop.proposal_id}': "
+                        f"partial replacement of active zone '{zone_id}' would strand "
+                        f"sibling cell(s) {sorted(missing_siblings)}"
+                    )
+
+            # Soft-revert touched active zones
+            for zone_id in sorted(touched_zones):
+                parent_comps = self.get_composition(zone_id, tenant_id)
                 if any(r.is_active for r in parent_comps):
-                    self.revert_composition(prop.parent_zone_id, tenant_id, reverted_at=now)
+                    self.revert_composition(zone_id, tenant_id, reverted_at=now)
 
             # A split lands one zone per child partition, a merge one zone; the
             # whole assignment happens inside this transaction, so an approval
