@@ -703,6 +703,7 @@ def test_public_example_stays_disabled_and_workflow_has_no_issuer_secret() -> No
     config = json.loads((root / ".orchestrator/config.example.json").read_text(encoding="utf-8"))
     assert config["release_lease_issuer"]["enabled"] is False
     assert config["release_lease_issuer"]["secret_reference"] == bridge.DEFAULT_SECRET_REFERENCE
+    assert config["release_lease_issuer"]["dispatch_ref"] == "dev"
     assert validate_config(config, source="focused test public example") == config
     workflow = (root / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
     assert bridge.DEFAULT_SECRET_REFERENCE not in workflow

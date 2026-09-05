@@ -105,8 +105,6 @@ def issuer_settings(config: dict[str, Any]) -> tuple[dict[str, Any] | None, list
     repository = str(raw.get("github_repository") or "").strip()
     workflow = str(raw.get("workflow") or RUNTIME_RELEASE_WORKFLOW_PATH).strip()
     raw_ref = raw.get("dispatch_ref")
-    if raw_ref is None:
-        raw_ref = raw.get("ref")
     dispatch_ref = str(raw_ref if raw_ref is not None else DEFAULT_DISPATCH_REF).strip()
     errors: list[str] = []
     if not _SECRET_REFERENCE.fullmatch(secret_reference):

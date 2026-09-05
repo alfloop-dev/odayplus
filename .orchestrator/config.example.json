@@ -39,6 +39,7 @@
     "state_uri": "",
     "github_repository": "",
     "workflow": ".github/workflows/deploy-dev.yml",
+    "dispatch_ref": "dev",
     "ttl_seconds": 300
   },
   "worker_runtime": {

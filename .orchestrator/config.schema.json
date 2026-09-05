@@ -925,6 +925,9 @@
         "workflow": {
           "type": "string"
         },
+        "dispatch_ref": {
+          "type": "string"
+        },
         "ttl_seconds": {
           "type": "integer"
         }
