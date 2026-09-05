@@ -3164,7 +3164,13 @@ def _quarantine_and_preserve_dirty_worktree(
         check=False,
     )
     if status_proc.returncode != 0:
-        return _quarantine_refused("status_unreadable")
+        return _quarantine_refused(
+            "status_unreadable",
+            # git's own words for the genuine failure. Without them the reason
+            # says a read failed but not why, which is one step better than the
+            # bare False it replaced and one step short of actionable.
+            (status_proc.stderr or b"").decode("utf-8", errors="replace").strip()[:200],
+        )
     if not status_proc.stdout:
         # A clean worktree is the ordinary case at worker death, not a failure
         # to read it. Folding both into "status_unreadable" made the routine
