@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -277,6 +278,27 @@ def write_audit_receipt(
     temporary.replace(target)
 
 
+def require_positive_finite(label: str, value: float) -> float:
+    """Reject NaN, infinity and non-positive values for a timeout-like parameter.
+
+    ``float("inf")`` and ``float("nan")`` both parse successfully and both slip
+    past a plain ``value <= 0`` check, because every comparison against NaN is
+    False and infinity is greater than zero. Either one reaching
+    ``subprocess.run(timeout=...)`` removes the per-attempt execution bound this
+    gate exists to enforce.
+    """
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{label} must be a positive finite number of seconds, got {value!r}")
+    return value
+
+
+def require_non_negative_finite(label: str, value: float) -> float:
+    """Reject NaN, infinity and negative values for a backoff-like parameter."""
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{label} must be a non-negative finite number of seconds, got {value!r}")
+    return value
+
+
 def _parse_env_float(name: str, default: float) -> float:
     if name in os.environ:
         val = os.environ[name]
@@ -347,22 +369,16 @@ def main(argv: list[str] | None = None) -> int:
             if args.timeout is not None
             else _parse_env_float("ODP_NPM_AUDIT_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS)
         )
+        require_positive_finite("timeout", timeout)
+        require_non_negative_finite("backoff", backoff)
+        if attempts <= 0:
+            raise ValueError(f"attempts must be a positive integer, got {attempts!r}")
     except ValueError as exc:
         print(f"[FAIL CLOSED] Invalid configuration: {exc}", file=sys.stderr)
         if args.receipt:
             outcome = AuditOutcome(UNAVAILABLE, None, f"invalid configuration: {exc}")
             write_audit_receipt(
                 args.receipt, outcome, EXIT_AUDIT_UNAVAILABLE, str(exc), args.threshold
-            )
-        return EXIT_AUDIT_UNAVAILABLE
-
-    if attempts <= 0 or backoff < 0 or timeout <= 0:
-        msg = "attempts and timeout must be positive, backoff must be non-negative"
-        print(f"[FAIL CLOSED] Invalid configuration: {msg}", file=sys.stderr)
-        if args.receipt:
-            outcome = AuditOutcome(UNAVAILABLE, None, f"invalid configuration: {msg}")
-            write_audit_receipt(
-                args.receipt, outcome, EXIT_AUDIT_UNAVAILABLE, msg, threshold
             )
         return EXIT_AUDIT_UNAVAILABLE
 

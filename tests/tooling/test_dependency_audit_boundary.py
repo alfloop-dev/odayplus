@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -368,63 +370,132 @@ def test_npm_audit_fails_closed_on_invalid_env_or_args(monkeypatch) -> None:
     assert code == npm_audit_gate.EXIT_AUDIT_UNAVAILABLE
 
 
-def test_pip_audit_waiver_loading_active_passes() -> None:
-    waivers, errors = pip_audit_gate.load_recorded_waivers(as_of="2026-09-05")
-    assert not errors
-    waiver_ids = [w.id for w in waivers]
-    assert "PYSEC-2026-3740" in waiver_ids
+# --- No-suppression contract regressions (ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001) ---
 
 
-def test_pip_audit_waiver_loading_expired_fails_closed(tmp_path: Path) -> None:
-    expired_waivers_file = tmp_path / "pip_audit_waivers.json"
-    expired_waivers_file.write_text(
-        json.dumps(
-            {
-                "waivers": [
-                    {
-                        "id": "PYSEC-2026-9999",
-                        "package": "old-pkg",
-                        "aliases": [],
-                        "decider": "Human/Ops",
-                        "owner": "Tester",
-                        "reason": "Old waiver",
-                        "expires": "2026-01-01",
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+def test_pip_audit_gate_exposes_no_suppression_surface() -> None:
+    """The gate must offer no waiver/allowlist path for silencing a finding.
+
+    A prior revision of this gate added a recorded-waiver loader, an
+    ``--ignore-vuln`` flag and an ``ODP_PIP_AUDIT_IGNORE_VULNS`` environment
+    bypass. Those are AI-signed risk acceptances, which this repository already
+    rejects (docs/evidence/completion/ODP-ENG-DEPENDENCY-REMEDIATION-001).
+    """
+    for removed in ("load_recorded_waivers", "VulnerabilityWaiver", "DEFAULT_WAIVERS_PATH"):
+        assert not hasattr(pip_audit_gate, removed), (
+            f"pip_audit_gate must not expose {removed}: suppression requires a human decision "
+            "recorded outside this gate, not a code path inside it"
+        )
+
+    assert not (ROOT / "delivery_toolchain/security/pip_audit_waivers.json").exists()
+
+    source = (ROOT / "delivery_toolchain/security/pip_audit_gate.py").read_text(encoding="utf-8")
+    assert "--ignore-vuln" not in source
+    assert "ODP_PIP_AUDIT_IGNORE_VULNS" not in source
+
+
+def test_pip_audit_cli_rejects_ignore_vuln_flag() -> None:
+    res = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "delivery_toolchain/security/pip_audit_gate.py"),
+            "--ignore-vuln",
+            "PYSEC-2026-3740",
+        ],
+        capture_output=True,
+        text=True,
     )
-    waivers, errors = pip_audit_gate.load_recorded_waivers(
-        waivers_file=expired_waivers_file, as_of="2026-09-05"
-    )
-    assert len(errors) == 1
-    assert "expired on 2026-01-01" in errors[0]
+    assert res.returncode != pip_audit_gate.EXIT_OK
+    assert "unrecognized arguments" in res.stderr
 
 
-def test_pip_audit_applies_waivers_to_command_args() -> None:
-    calls: list[tuple[list[str], dict[str, Any]]] = []
+def test_pip_audit_advisory_finding_fails_closed_despite_env_bypass_attempt(monkeypatch) -> None:
+    """An existing advisory still fails the gate, and no ignore flag reaches pip-audit."""
+    monkeypatch.setenv("ODP_PIP_AUDIT_IGNORE_VULNS", "PYSEC-2026-3740,GHSA-8mgp-746c-j5xp")
+    calls: list[list[str]] = []
 
     def fake_runner(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        calls.append((cmd, kwargs))
+        calls.append(cmd)
         return subprocess.CompletedProcess(
             cmd,
-            0,
+            1,
             stdout=json.dumps(
-                {"dependencies": [{"name": "safe-pkg", "version": "1.0.0", "vulns": []}]}
+                {
+                    "dependencies": [
+                        {
+                            "name": "nltk",
+                            "version": "3.10.3",
+                            "vulns": [{"id": "PYSEC-2026-3740", "description": "unpatched"}],
+                        },
+                        {"name": "safe-pkg", "version": "1.0.0", "vulns": []},
+                    ]
+                }
             ),
             stderr="",
         )
 
-    outcome = pip_audit_gate.run_pip_audit(
-        cwd=ROOT,
-        ignore_vulns=["PYSEC-2026-3740", "GHSA-8mgp-746c-j5xp"],
-        runner=fake_runner,
-    )
-    assert outcome.has_report
+    outcome = pip_audit_gate.run_pip_audit(cwd=ROOT, runner=fake_runner)
     assert len(calls) == 1
-    cmd, _ = calls[0]
-    assert "--ignore-vuln" in cmd
-    assert "PYSEC-2026-3740" in cmd
-    assert "GHSA-8mgp-746c-j5xp" in cmd
+    assert "--ignore-vuln" not in calls[0]
+    assert "PYSEC-2026-3740" not in calls[0]
 
+    code, verdict = pip_audit_gate.evaluate(outcome)
+    assert code == pip_audit_gate.EXIT_VULNERABLE
+    assert "nltk 3.10.3 (PYSEC-2026-3740)" in verdict
+
+
+# --- Non-finite configuration regressions ---
+
+
+def _run_pip_gate(args: list[str], env_overrides: dict[str, str] | None = None):
+    env = dict(os.environ)
+    env.pop("ODP_PIP_AUDIT_SOCKET_TIMEOUT_SECONDS", None)
+    env.pop("ODP_PIP_AUDIT_PROCESS_TIMEOUT_SECONDS", None)
+    env.update(env_overrides or {})
+    return subprocess.run(
+        [sys.executable, str(ROOT / "delivery_toolchain/security/pip_audit_gate.py"), *args],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+@pytest.mark.parametrize(
+    ("args", "env_overrides"),
+    [
+        (["--socket-timeout", "inf"], None),
+        (["--socket-timeout", "nan"], None),
+        (["--process-timeout", "inf"], None),
+        (["--process-timeout", "nan"], None),
+        (["--attempts", "0"], None),
+        ([], {"ODP_PIP_AUDIT_PROCESS_TIMEOUT_SECONDS": "inf"}),
+        ([], {"ODP_PIP_AUDIT_BACKOFF_SECONDS": "nan"}),
+        ([], {"ODP_PIP_AUDIT_BACKOFF_SECONDS": "-1"}),
+    ],
+)
+def test_pip_audit_rejects_non_finite_configuration(
+    args: list[str], env_overrides: dict[str, str] | None
+) -> None:
+    """NaN/infinity parse as floats and slip past a bare ``<= 0`` check.
+
+    Reaching ``subprocess.run(timeout=inf)`` would remove the execution bound
+    this gate exists to enforce, so an unbounded audit must not look healthy.
+    """
+    res = _run_pip_gate(args, env_overrides)
+    assert res.returncode == pip_audit_gate.EXIT_AUDIT_UNAVAILABLE
+    assert "[FAIL CLOSED]" in res.stderr
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--timeout", "inf"],
+        ["--timeout", "nan"],
+        ["--backoff", "inf"],
+        ["--backoff", "nan"],
+        ["--backoff", "-1"],
+        ["--attempts", "0"],
+    ],
+)
+def test_npm_audit_rejects_non_finite_configuration(argv: list[str]) -> None:
+    assert npm_audit_gate.main(argv) == npm_audit_gate.EXIT_AUDIT_UNAVAILABLE

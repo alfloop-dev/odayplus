@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -47,7 +48,6 @@ DEFAULT_BACKOFF_SECONDS = 5.0
 DEFAULT_SOCKET_TIMEOUT = 15.0
 DEFAULT_PROCESS_TIMEOUT = 300.0
 DEFAULT_SERVICE = "pypi"
-DEFAULT_WAIVERS_PATH = ROOT / "delivery_toolchain/security/pip_audit_waivers.json"
 
 
 def get_default_installation_path() -> str:
@@ -81,88 +81,6 @@ DEFAULT_INSTALLATION_PATH = get_default_installation_path()
 
 REPORT = "report"
 UNAVAILABLE = "unavailable"
-
-
-@dataclass(frozen=True)
-class VulnerabilityWaiver:
-    """A recorded, time-bounded waiver for an unpatched or unreachable vulnerability."""
-
-    id: str
-    package: str
-    aliases: tuple[str, ...]
-    decider: str
-    owner: str
-    reason: str
-    expires: str
-
-    def is_expired(self, as_of: str | None = None) -> bool:
-        today = as_of or time.strftime("%Y-%m-%d", time.gmtime())
-        return self.expires < today
-
-
-def load_recorded_waivers(
-    waivers_file: Path = DEFAULT_WAIVERS_PATH,
-    as_of: str | None = None,
-) -> tuple[list[VulnerabilityWaiver], list[str]]:
-    """Load and validate recorded waivers from a JSON registry.
-
-    Returns (active_waivers, error_messages).
-    Any expired waiver or invalid schema entry generates a validation error.
-    """
-    if not waivers_file.is_file():
-        return ([], [])
-    try:
-        data = json.loads(waivers_file.read_text(encoding="utf-8"))
-    except Exception as exc:
-        return ([], [f"Failed to parse waivers file {waivers_file}: {exc}"])
-
-    if not isinstance(data, dict) or "waivers" not in data:
-        return ([], [f"Malformed waivers file {waivers_file}: missing 'waivers' list"])
-
-    waivers_list = data.get("waivers")
-    if not isinstance(waivers_list, list):
-        return ([], [f"Malformed waivers file {waivers_file}: 'waivers' is not a list"])
-
-    active_waivers: list[VulnerabilityWaiver] = []
-    errors: list[str] = []
-    today = as_of or time.strftime("%Y-%m-%d", time.gmtime())
-
-    for idx, item in enumerate(waivers_list):
-        if not isinstance(item, dict):
-            errors.append(f"Waiver #{idx} is not an object")
-            continue
-        vid = item.get("id")
-        pkg = item.get("package", "")
-        raw_aliases = item.get("aliases", [])
-        aliases = tuple(raw_aliases) if isinstance(raw_aliases, list) else ()
-        decider = item.get("decider", "")
-        owner = item.get("owner", "")
-        reason = item.get("reason", "")
-        expires = item.get("expires", "")
-
-        if not vid or not expires or not decider or not reason:
-            errors.append(
-                f"Waiver {vid or f'#{idx}'} missing required fields (id, expires, decider, reason)"
-            )
-            continue
-
-        waiver = VulnerabilityWaiver(
-            id=str(vid),
-            package=str(pkg),
-            aliases=aliases,
-            decider=str(decider),
-            owner=str(owner),
-            reason=str(reason),
-            expires=str(expires),
-        )
-        if waiver.is_expired(today):
-            errors.append(
-                f"Waiver for {waiver.id} ({waiver.package}) expired on {waiver.expires} (as of {today})"
-            )
-        else:
-            active_waivers.append(waiver)
-
-    return (active_waivers, errors)
 
 
 @dataclass(frozen=True)
@@ -263,7 +181,6 @@ def run_pip_audit(
     process_timeout: float = DEFAULT_PROCESS_TIMEOUT,
     service: str = DEFAULT_SERVICE,
     installation_path: str = DEFAULT_INSTALLATION_PATH,
-    ignore_vulns: list[str] | None = None,
     runner=subprocess.run,
 ) -> AuditOutcome:
     """Run pip-audit once with bounded socket and process timeouts.
@@ -289,10 +206,6 @@ def run_pip_audit(
     ]
     if service and service != "pypi":
         cmd.extend(["--vulnerability-service", service])
-    if ignore_vulns:
-        for vuln_id in ignore_vulns:
-            if vuln_id:
-                cmd.extend(["--ignore-vuln", vuln_id])
 
     try:
         res = runner(
@@ -332,7 +245,6 @@ def audit_with_retry(
     process_timeout: float = DEFAULT_PROCESS_TIMEOUT,
     service: str = DEFAULT_SERVICE,
     installation_path: str = DEFAULT_INSTALLATION_PATH,
-    ignore_vulns: list[str] | None = None,
     sleep=time.sleep,
     runner=subprocess.run,
 ) -> AuditOutcome:
@@ -345,7 +257,6 @@ def audit_with_retry(
             process_timeout=process_timeout,
             service=service,
             installation_path=installation_path,
-            ignore_vulns=ignore_vulns,
             runner=runner,
         )
         if outcome.has_report:
@@ -389,6 +300,27 @@ def evaluate(
         EXIT_OK,
         f"PASS: no Python package vulnerabilities found ({outcome.total_dependencies} dependencies audited).",
     )
+
+
+def require_positive_finite(label: str, value: float) -> float:
+    """Reject NaN, infinity and non-positive values for a timeout-like parameter.
+
+    ``float("inf")`` and ``float("nan")`` both parse successfully and both slip
+    past a plain ``value <= 0`` check, because every comparison against NaN is
+    False and infinity is greater than zero. Either one reaching
+    ``subprocess.run(timeout=...)`` removes the execution bound this gate exists
+    to enforce, so an unbounded audit would look like a healthy one.
+    """
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{label} must be a positive finite number of seconds, got {value!r}")
+    return value
+
+
+def require_non_negative_finite(label: str, value: float) -> float:
+    """Reject NaN, infinity and negative values for a backoff-like parameter."""
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{label} must be a non-negative finite number of seconds, got {value!r}")
+    return value
 
 
 def _parse_env_float(name: str, default: float, fallback_name: str | None = None) -> float:
@@ -444,12 +376,6 @@ def main() -> int:
         default=None,
         help="Path to the site-packages directory to audit",
     )
-    parser.add_argument(
-        "--ignore-vuln",
-        action="append",
-        default=[],
-        help="Vulnerability ID to ignore (can be specified multiple times)",
-    )
     args = parser.parse_args()
 
     try:
@@ -477,6 +403,11 @@ def main() -> int:
             else _parse_env_int("ODP_PIP_AUDIT_ATTEMPTS", DEFAULT_ATTEMPTS)
         )
         backoff = _parse_env_float("ODP_PIP_AUDIT_BACKOFF_SECONDS", DEFAULT_BACKOFF_SECONDS)
+        require_positive_finite("socket timeout", socket_timeout)
+        require_positive_finite("process timeout", process_timeout)
+        require_non_negative_finite("backoff", backoff)
+        if attempts <= 0:
+            raise ValueError(f"attempts must be a positive integer, got {attempts!r}")
     except ValueError as exc:
         print(f"[FAIL CLOSED] Invalid timeout or attempt configuration: {exc}", file=sys.stderr)
         return EXIT_AUDIT_UNAVAILABLE
@@ -492,32 +423,6 @@ def main() -> int:
         else os.environ.get("ODP_PIP_AUDIT_PATH", DEFAULT_INSTALLATION_PATH)
     )
 
-    if socket_timeout <= 0 or process_timeout <= 0 or attempts <= 0 or backoff < 0:
-        print("[FAIL CLOSED] Invalid timeout or attempt configuration", file=sys.stderr)
-        return EXIT_AUDIT_UNAVAILABLE
-
-    # Load recorded waivers and fail closed on any expired waiver or parse error
-    waivers, waiver_errors = load_recorded_waivers()
-    if waiver_errors:
-        for err in waiver_errors:
-            print(f"[FAIL CLOSED] Waiver validation error: {err}", file=sys.stderr)
-        return EXIT_AUDIT_UNAVAILABLE
-
-    ignore_vulns: list[str] = []
-    for w in waivers:
-        ignore_vulns.append(w.id)
-        ignore_vulns.extend(w.aliases)
-
-    if args.ignore_vuln:
-        ignore_vulns.extend(args.ignore_vuln)
-    if "ODP_PIP_AUDIT_IGNORE_VULNS" in os.environ:
-        env_ignores = [
-            x.strip()
-            for x in os.environ["ODP_PIP_AUDIT_IGNORE_VULNS"].split(",")
-            if x.strip()
-        ]
-        ignore_vulns.extend(env_ignores)
-
     outcome = audit_with_retry(
         attempts=attempts,
         backoff=backoff,
@@ -525,7 +430,6 @@ def main() -> int:
         process_timeout=process_timeout,
         service=service,
         installation_path=installation_path,
-        ignore_vulns=ignore_vulns if ignore_vulns else None,
     )
     code, verdict = evaluate(outcome, installation_path=installation_path)
     print(verdict, file=sys.stderr if code else sys.stdout)
