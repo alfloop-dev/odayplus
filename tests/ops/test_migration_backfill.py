@@ -39,6 +39,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0014",
         "0015",
         "0016",
+        "0017",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
