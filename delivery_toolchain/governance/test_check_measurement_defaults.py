@@ -790,7 +790,7 @@ class TestTheCheckedInRepositoryStaysClean:
         from delivery_toolchain.governance.check_measurement_defaults import REPO_ROOT
 
         found = {violation.layer for violation in scan(REPO_ROOT)}
-        assert {"dataclass", "pydantic", "mapper", "sql", "openapi"} <= found
+        assert {"dataclass", "mapper", "sql"} <= found
 
 
 class TestTheLedgerIsItsOwnCanonicalForm:

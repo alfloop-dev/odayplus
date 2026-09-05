@@ -292,6 +292,7 @@ def _seed_rebalance_inputs(
             lease_liability=150_000,
             working_capital=80_000,
             comparable_multiples=(2.1, 2.4, 2.7),
+            quality_score=0.95,
             source_snapshot_ids=("finance-snapshot-live-1",),
         ),
         created_by="finance-live",
@@ -489,6 +490,152 @@ def test_rebalance_invokes_avm_and_netplan_oss_and_persists_results(
         assert reopened.netplan("tenant-b").get_solve(scenario_id) is None
     finally:
         reopened.close()
+
+
+def _rebalance_row(payload: dict[str, Any], store_id: str) -> dict[str, Any]:
+    row = next(
+        (item for item in payload["stores"] if item["storeId"] == store_id),
+        None,
+    )
+    assert row is not None, f"{store_id} missing from rebalance snapshot"
+    return row
+
+
+def _strip_quality_status(item: Any) -> Any:
+    """Reproduce a record pickled before ``quality_score_status`` existed.
+
+    ``__init__`` always writes the field, so deleting it from the instance dict
+    is what unpickling a previous-release record actually yields -- as opposed
+    to constructing a fresh object that merely left the argument out, which is
+    a measured input and must not be treated as legacy.
+    """
+
+    for field_name in ("quality_score_status", "quality_disposition"):
+        if field_name in item.__dict__:
+            object.__delattr__(item, field_name)
+    return item
+
+
+def test_durable_rebalance_card_cannot_outlive_the_quality_claim_it_was_written_with(
+    tmp_path: Path,
+) -> None:
+    """A restored AVM card must re-derive its quality claim from its own report.
+
+    The Operator card is a projection persisted in rebalance state, so a restart
+    brings back whatever confidence was written when the valuation completed.
+    That is the whole failure: a card produced before quality-score handling
+    keeps advertising high confidence even though its case cannot tell a
+    measured perfect score from an omitted one. The measured card must survive
+    the same restart untouched, or the downgrade would just be a blanket
+    pessimism that says nothing.
+    """
+
+    database_path = tmp_path / "operator-canonical-rebalance-quality.sqlite3"
+    harness = CanonicalHarness(database_path)
+    store_id, _ = _seed_rebalance_inputs(harness, "tenant-a")
+    try:
+        with TestClient(harness.app()) as client:
+            requested = client.post(
+                f"{BASE}/network-rebalance/stores/{store_id}/avm/request",
+                headers=_headers("tenant-a", idempotency_key="avm-request-quality-1"),
+                json={"actorRoleId": "operationsManager"},
+            )
+            completed = client.post(
+                f"{BASE}/network-rebalance/stores/{store_id}/avm/complete",
+                headers=_headers("tenant-a", idempotency_key="avm-complete-quality-1"),
+                json={"actorRoleId": "operationsManager"},
+            )
+        assert requested.status_code == 200, requested.text
+        assert completed.status_code == 200, completed.text
+        card = completed.json()["store"]
+        case_id = card["canonicalAvmCaseId"]
+        report_id = card["avm"]["reportId"]
+        measured_confidence = card["avmConf"]
+        assert measured_confidence
+        assert card["avmQualityScoreStatus"] == "measured"
+        assert card["avmQualityDisposition"] is None
+    finally:
+        harness.close()
+
+    # A measured card is not collateral damage: restarting must not downgrade it.
+    restarted = CanonicalHarness(database_path)
+    try:
+        with TestClient(restarted.app()) as client:
+            snapshot = client.get(
+                f"{BASE}/network-rebalance",
+                headers=_headers("tenant-a"),
+            )
+        assert snapshot.status_code == 200, snapshot.text
+        row = _rebalance_row(snapshot.json(), store_id)
+        assert row["avmConf"] == measured_confidence
+        assert row["avmQualityDisposition"] is None
+        assert row["avmP50"] is not None
+    finally:
+        restarted.close()
+
+    # Make the stored case opaque exactly the way a pre-nullability pickle is,
+    # while leaving the already-written card claiming its original confidence.
+    opaque = CanonicalHarness(database_path)
+    try:
+        scoped = opaque.scoped("tenant-a")
+        stored_case = scoped.get("avm.cases", case_id)
+        assert stored_case is not None
+        _strip_quality_status(stored_case.valuation_input)
+        scoped.put("avm.cases", case_id, stored_case)
+    finally:
+        opaque.close()
+
+    legacy = CanonicalHarness(database_path)
+    try:
+        with TestClient(legacy.app()) as client:
+            snapshot = client.get(
+                f"{BASE}/network-rebalance",
+                headers=_headers("tenant-a"),
+            )
+        assert snapshot.status_code == 200, snapshot.text
+        row = _rebalance_row(snapshot.json(), store_id)
+        assert row["avmQualityScoreStatus"] == "legacy_unknown"
+        assert row["avmQualityDisposition"] == "legacy_unknown_downgraded"
+        assert row["avmConf"] == "low"
+        assert row["avmConf"] != measured_confidence
+        # The historical price the operator was shown is still the record.
+        assert row["avmP50"] is not None
+        # The downgrade came from this card's own report, not from a newer one.
+        disposed = legacy.avm("tenant-a").latest_report(case_id)
+        assert disposed is not None
+        assert disposed.report_id == report_id
+        assert disposed.quality_disposition == "legacy_unknown_downgraded"
+    finally:
+        legacy.close()
+
+    # A card naming a report the canonical store cannot produce is unverifiable,
+    # so it claims nothing -- rather than borrowing the case's latest report.
+    dangling = CanonicalHarness(database_path)
+    try:
+        scoped = dangling.scoped("tenant-a")
+        state = scoped.get("operator.live_domain_state", "network-rebalance")
+        assert state is not None
+        for entry in state["stores"]:
+            if entry.get("storeId") == store_id:
+                entry["avm"]["reportId"] = "avm-report-does-not-exist"
+        scoped.put("operator.live_domain_state", "network-rebalance", state)
+    finally:
+        dangling.close()
+
+    unverifiable = CanonicalHarness(database_path)
+    try:
+        with TestClient(unverifiable.app()) as client:
+            snapshot = client.get(
+                f"{BASE}/network-rebalance",
+                headers=_headers("tenant-a"),
+            )
+        assert snapshot.status_code == 200, snapshot.text
+        row = _rebalance_row(snapshot.json(), store_id)
+        assert row["avmConf"] is None
+        assert row["avmQualityScoreStatus"] is None
+        assert row["avmQualityDisposition"] == "unverifiable_report_reference"
+    finally:
+        unverifiable.close()
 
 
 def test_growth_and_governance_aggregate_canonical_priceops_and_decisions(

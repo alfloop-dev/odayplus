@@ -40,6 +40,7 @@ def test_migration_plan_indexes_revision_hashes_and_rollback() -> None:
         "0015",
         "0016",
         "0017",
+        "0018",
     ]
     assert len(plan.manifest_sha256) == 64
     assert all(len(step.sha256) == 64 for step in plan.steps)
@@ -205,6 +206,18 @@ def test_heatzone_composition_ddl_is_reachable_from_alembic_head() -> None:
         for asset in heatzone_step.assets
         if asset.role == "sql"
     } == {"infra/db/migrations/000023_heatzone_composition.sql"}
+
+
+def test_avm_quality_nullable_migration_is_reachable_from_alembic_head() -> None:
+    plan = build_migration_plan(environment="dev")
+    quality_step = next(step for step in plan.steps if step.revision == "0018")
+
+    assert quality_step.path.endswith("0018_avm_quality_score_nullable.py")
+    assert {
+        asset.path
+        for asset in quality_step.assets
+        if asset.role == "sql"
+    } == {"infra/db/migrations/000024_avm_quality_score_nullable.sql"}
 
 
 def test_migration_plan_uses_explicit_alembic_sql_references() -> None:

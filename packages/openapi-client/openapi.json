@@ -64,9 +64,15 @@
             "title": "Prediction Origin Time"
           },
           "quality_score": {
-            "default": 1.0,
-            "title": "Quality Score",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Score"
           },
           "source_snapshot_ids": {
             "items": {
@@ -7760,6 +7766,28 @@
               }
             ],
             "title": "Avmp90"
+          },
+          "avmQualityDisposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmqualitydisposition"
+          },
+          "avmQualityScoreStatus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avmqualityscorestatus"
           },
           "avmRequestId": {
             "anyOf": [

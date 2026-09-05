@@ -549,6 +549,7 @@ class TestAVMServiceIntegration:
             forecast_gm_next_12m=1_100_000.0,
             asset_book_value=2_000_000.0,
             equipment_fair_value=500_000.0,
+            quality_score=0.95,
         )
         case = service.create_case(val_input, created_by="operator-1", correlation_id="corr-1")
         report = service.value(case.case_id, actor="operator-1", correlation_id="corr-2")

@@ -192,6 +192,8 @@ export type RebalanceQueueRow = {
   avmP50?: number;
   avmP90?: number;
   avmConf?: string;
+  avmQualityScoreStatus?: string;
+  avmQualityDisposition?: string;
   avmReserve?: string;
   avmModelVersion?: string;
   avmSnapshotId?: string;
@@ -656,6 +658,8 @@ function buildRebalanceQueue(rebalanceStores: RebalanceStore[]): RebalanceQueueR
     avmP50: typeof store.avmP50 === "number" ? store.avmP50 : undefined,
     avmP90: typeof store.avmP90 === "number" ? store.avmP90 : undefined,
     avmConf: store.avmConf,
+    avmQualityScoreStatus: store.avmQualityScoreStatus,
+    avmQualityDisposition: store.avmQualityDisposition,
     avmReserve: store.avmReserve,
     netPlanScenarios: store.netPlanScenarios,
   }));

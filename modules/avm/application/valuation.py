@@ -15,6 +15,8 @@ from modules.avm.application.calibration import (
 )
 from modules.avm.application.production import AVMProductionExecutor
 from modules.avm.domain import (
+    LEGACY_UNKNOWN_QUALITY_STATUS,
+    QUALITY_SCORE_REQUIRED_MESSAGE,
     ApprovalDecision,
     DataRoom,
     DealOutcome,
@@ -24,6 +26,7 @@ from modules.avm.domain import (
     ValuationInput,
     ValuationReport,
     build_valuation_view,
+    ensure_legacy_quality_disposition,
     generate_data_room,
     normalize_margin,
     value_store,
@@ -81,6 +84,8 @@ class AVMService:
             {ValuationCaseStatus.DATA_READY},
             action="normalize valuation inputs",
         )
+        if case.valuation_input.quality_score is None:
+            raise AVMError(QUALITY_SCORE_REQUIRED_MESSAGE)
         active = self.repository.save_case(
             case.transition(
                 ValuationCaseStatus.NORMALIZING,
@@ -113,6 +118,14 @@ class AVMService:
                 raise AVMError("normalized margin required before valuation")
             margin = self.normalize(case_id, actor=actor, correlation_id=correlation_id)
             case = self._case(case_id)
+        else:
+            # A legacy case may already have a persisted margin produced under
+            # the former implicit-perfect quality default.  Do not let the
+            # presence of that margin bypass the legacy discount and low
+            # confidence disposition.
+            disposed_margin = ensure_legacy_quality_disposition(case, margin)
+            if disposed_margin != margin:
+                margin = self.repository.save_margin(disposed_margin)
         valuing = case.transition(
             ValuationCaseStatus.VALUING,
             actor=actor,
@@ -127,6 +140,8 @@ class AVMService:
             report = executor.execute(valuing, margin)
         else:
             report = value_store(valuing, margin)
+        if case.valuation_input.effective_quality_score_status == LEGACY_UNKNOWN_QUALITY_STATUS:
+            report = report.with_legacy_quality_disposition()
         self.repository.save_case(valuing)
         report = self.repository.save_report(report)
         self.repository.save_case(
@@ -161,6 +176,11 @@ class AVMService:
         report = self.repository.latest_report(case_id)
         if report is None:
             raise AVMError("valuation report required before finance approval")
+        if report.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy valuation report is downgraded; recompute with measured quality "
+                "before finance approval"
+            )
         if report.finance_approval is not None:
             raise AVMError("latest valuation report is already finance approved")
         approval = ApprovalDecision(
@@ -192,15 +212,20 @@ class AVMService:
             {ValuationCaseStatus.APPROVED, ValuationCaseStatus.DATAROOM_READY},
             action="build data room",
         )
+        report = self.repository.latest_report(case_id)
+        if report is None:
+            raise AVMError("valuation report required before data room")
+        if report.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy valuation report is downgraded; recompute with measured quality "
+                "before building a data room"
+            )
+        if report.finance_approval is None:
+            raise AVMError("finance approval required before data room")
         if case.status is ValuationCaseStatus.DATAROOM_READY:
             existing = self.repository.get_dataroom(case_id)
             if existing is not None:
                 return existing
-        report = self.repository.latest_report(case_id)
-        if report is None:
-            raise AVMError("valuation report required before data room")
-        if report.finance_approval is None:
-            raise AVMError("finance approval required before data room")
         dataroom = self.repository.save_dataroom(generate_data_room(report))
         self.repository.save_case(
             case.transition(
@@ -231,6 +256,10 @@ class AVMService:
         dataroom = self.repository.get_dataroom(case_id)
         if dataroom is None:
             raise AVMError("data room must be built before export")
+        if dataroom.is_legacy_quality_unknown:
+            raise AVMError(
+                "legacy data room is downgraded; recompute valuation before export"
+            )
         return self.repository.save_dataroom(
             dataroom.with_export(actor=actor, reason=reason, correlation_id=correlation_id)
         )

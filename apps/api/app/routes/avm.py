@@ -38,7 +38,7 @@ else:
         working_capital: float = 0.0
         comparable_multiples: list[float] = Field(default_factory=list)
         liquidity_discount: float = 0.1
-        quality_score: float = 1.0
+        quality_score: float | None = None
         source_snapshot_ids: list[str] = Field(default_factory=list)
         prediction_origin_time: str | None = None
         created_by: str = Field(min_length=1)

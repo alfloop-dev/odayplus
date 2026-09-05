@@ -91,6 +91,7 @@ class LineageManifest:
 
     def to_audit_snapshot_row(self) -> dict[str, Any]:
         """Row shaped for the canonical ``audit.data_snapshots`` registry."""
+        status = "measured" if self.quality_score is not None else "unmeasured"
         return {
             "snapshot_type": self.snapshot_type,
             "source_id": ",".join(self.source_snapshot_ids),
@@ -98,7 +99,8 @@ class LineageManifest:
             "storage_uri": self.storage_uri,
             "schema_version": self.schema_version,
             "row_count": self.row_count,
-            "quality_score": round(self.quality_score, 2),
+            "quality_score": round(self.quality_score, 2) if self.quality_score is not None else None,
+            "quality_score_status": status,
             "created_by_run_id": self.run_id,
         }
 

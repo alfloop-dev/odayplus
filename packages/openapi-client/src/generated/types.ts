@@ -33,7 +33,7 @@ export type AVMCasePayload = {
   lease_liability?: number;
   liquidity_discount?: number;
   prediction_origin_time?: string | null;
-  quality_score?: number;
+  quality_score?: number | null;
   source_snapshot_ids?: string[];
   store_id: string;
   working_capital?: number;
@@ -1480,6 +1480,8 @@ export type RebalanceStore = {
   avmP10?: number | null;
   avmP50?: number | null;
   avmP90?: number | null;
+  avmQualityDisposition?: string | null;
+  avmQualityScoreStatus?: string | null;
   avmRequestId?: string | null;
   avmReserve?: string | null;
   avmSnapshotId?: string | null;

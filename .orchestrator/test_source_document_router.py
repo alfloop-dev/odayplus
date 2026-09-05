@@ -116,7 +116,7 @@ class SourceDocumentRouterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             status_root, _, authority_sha, config = self._workspace(tmpdir)
             task = {
-                "id": "DPF-GOV-001",
+                "id": "DPF-TEST-GOV-001",
                 "title": "Governance",
                 "repository": "alfloop-dev/oday-data-platform",
                 "base_branch": "dev",
@@ -131,7 +131,7 @@ class SourceDocumentRouterTests(unittest.TestCase):
                 json.dumps({"tasks": [task]}), encoding="utf-8"
             )
             with mock.patch.object(common, "load_status", return_value={"tasks": [task]}):
-                files = common.execution_context_files(config, "DPF-GOV-001")
+                files = common.execution_context_files(config, "DPF-TEST-GOV-001")
             cached = [item for item in files if item.startswith(".orchestrator/source-doc-cache/")]
             self.assertEqual(1, len(cached))
             self.assertTrue((status_root / cached[0]).is_file())

@@ -10,6 +10,13 @@ from uuid import uuid4
 AVM_MODEL_VERSION = "dealroom-avm-baseline-v1"
 AVM_FEATURE_VERSION = "valuation-view-v1"
 AVM_POLICY_VERSION = "avm-finance-approval-policy-v1"
+QUALITY_SCORE_REQUIRED_MESSAGE = (
+    "quality_score is required before AVM valuation; input quality is unmeasured"
+)
+LEGACY_UNKNOWN_QUALITY_STATUS = "legacy_unknown"
+LEGACY_QUALITY_DISPOSITION = "legacy_unknown_downgraded"
+MEASURED_QUALITY_STATUS = "measured"
+UNMEASURED_QUALITY_STATUS = "unmeasured"
 
 
 class ValuationCaseStatus(StrEnum):
@@ -33,12 +40,48 @@ class ValuationInput:
     working_capital: float = 0.0
     comparable_multiples: tuple[float, ...] = ()
     liquidity_discount: float = 0.1
-    quality_score: float = 1.0
+    quality_score: float | None = None
+    quality_score_status: str | None = None
     source_snapshot_ids: tuple[str, ...] = ()
     prediction_origin_time: datetime = field(default_factory=lambda: datetime.now(UTC))
 
+    @property
+    def is_pre_status_payload(self) -> bool:
+        """True when this input predates ``quality_score_status``.
+
+        ``__init__`` always writes every field into the instance dict, so a
+        missing key can only come from unpickling a record stored before the
+        field existed.  That is the sole case where a stored ``quality_score``
+        may in fact be the former implicit perfect-score default rather than a
+        measurement, and it must not be inferred from a caller merely leaving
+        the status out when constructing a fresh input.
+        """
+
+        return "quality_score_status" not in self.__dict__
+
+    @property
+    def effective_quality_score_status(self) -> str:
+        status = getattr(self, "quality_score_status", None)
+        if status is not None:
+            return status
+        if self.quality_score is None:
+            return UNMEASURED_QUALITY_STATUS
+        if self.is_pre_status_payload:
+            return LEGACY_UNKNOWN_QUALITY_STATUS
+        return MEASURED_QUALITY_STATUS
+
     @classmethod
     def from_mapping(cls, data: Mapping[str, Any]) -> ValuationInput:
+        quality_score = _optional_bounded(
+            data.get("quality_score", data.get("data_quality_score"))
+        )
+        explicit_status = data.get("quality_score_status")
+        if explicit_status:
+            quality_score_status = str(explicit_status)
+        elif quality_score is None:
+            quality_score_status = UNMEASURED_QUALITY_STATUS
+        else:
+            quality_score_status = MEASURED_QUALITY_STATUS
         return cls(
             store_id=str(data["store_id"]),
             gm_ttm=float(data.get("gm_ttm", data.get("gross_margin_ttm", 0.0))),
@@ -55,7 +98,8 @@ class ValuationInput:
             liquidity_discount=_bounded(
                 data.get("liquidity_discount", 0.1), minimum=0.0, maximum=0.5
             ),
-            quality_score=_bounded(data.get("quality_score", data.get("data_quality_score", 1.0))),
+            quality_score=quality_score,
+            quality_score_status=quality_score_status,
             source_snapshot_ids=tuple(str(v) for v in data.get("source_snapshot_ids", ())),
             prediction_origin_time=_parse_datetime(
                 data.get("prediction_origin_time") or datetime.now(UTC)
@@ -74,6 +118,7 @@ class ValuationInput:
             "comparable_multiples": list(self.comparable_multiples),
             "liquidity_discount": self.liquidity_discount,
             "quality_score": self.quality_score,
+            "quality_score_status": self.effective_quality_score_status,
             "source_snapshot_ids": list(self.source_snapshot_ids),
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
             "feature_version": AVM_FEATURE_VERSION,
@@ -172,6 +217,30 @@ class NormalizedMargin:
             "feature_version": AVM_FEATURE_VERSION,
         }
 
+    def with_legacy_quality_disposition(self) -> NormalizedMargin:
+        """Apply the conservative disposition to an opaque persisted margin.
+
+        A margin written before ``quality_score_status`` existed can carry a
+        high-confidence value even when its case's former ``1.0`` default was
+        actually an omitted measurement.  Make that margin safe for every
+        valuation entry point.  The reason guard keeps the operation
+        idempotent when a repository and a domain consumer both enforce it.
+        """
+
+        reasons = tuple(self.adjustment_reasons)
+        normalized_gm = self.normalized_gm
+        if "legacy_quality_unknown_discount" not in reasons:
+            normalized_gm = round(normalized_gm * 0.92, 2)
+            reasons += ("legacy_quality_unknown_discount",)
+        return NormalizedMargin(
+            **{
+                **self.__dict__,
+                "normalized_gm": normalized_gm,
+                "adjustment_reasons": reasons,
+                "confidence": "low",
+            }
+        )
+
 
 @dataclass(frozen=True)
 class LensValuation:
@@ -243,6 +312,8 @@ class ValuationReport:
     execution_metadata: dict[str, Any] = field(default_factory=dict)
     finance_approval: ApprovalDecision | None = None
     valuation_version: int = 1
+    quality_score_status: str | None = None
+    quality_disposition: str | None = None
 
     def with_version(self, *, valuation_version: int, report_id: str) -> ValuationReport:
         return ValuationReport(
@@ -251,6 +322,51 @@ class ValuationReport:
 
     def with_approval(self, approval: ApprovalDecision) -> ValuationReport:
         return ValuationReport(**{**self.__dict__, "finance_approval": approval})
+
+    @property
+    def is_legacy_quality_unknown(self) -> bool:
+        return (
+            getattr(self, "quality_score_status", None) == LEGACY_UNKNOWN_QUALITY_STATUS
+            or getattr(self, "quality_disposition", None) == LEGACY_QUALITY_DISPOSITION
+        )
+
+    def with_legacy_quality_disposition(self) -> ValuationReport:
+        """Downgrade an opaque historical report without rewriting its prices.
+
+        Reports created before ``quality_score_status`` existed may contain a
+        high confidence value that cannot be distinguished from the former
+        perfect-score default. Keep the historical numbers for audit, but make
+        every consumer see a named, low-confidence disposition and do not carry
+        an old approval as if it were still actionable.
+        """
+
+        reasons = tuple(self.normalized_margin.adjustment_reasons)
+        if "legacy_quality_unknown_discount" not in reasons:
+            reasons += ("legacy_quality_unknown_discount",)
+        normalized_margin = NormalizedMargin(
+            **{
+                **self.normalized_margin.__dict__,
+                "adjustment_reasons": reasons,
+                "confidence": "low",
+            }
+        )
+        metadata = dict(getattr(self, "execution_metadata", {}) or {})
+        previous_approval = getattr(self, "finance_approval", None)
+        if previous_approval is not None:
+            metadata.setdefault("legacy_finance_approval", previous_approval.to_dict())
+        metadata["quality_score_status"] = LEGACY_UNKNOWN_QUALITY_STATUS
+        metadata["quality_disposition"] = LEGACY_QUALITY_DISPOSITION
+        return ValuationReport(
+            **{
+                **self.__dict__,
+                "normalized_margin": normalized_margin,
+                "confidence": "low",
+                "execution_metadata": metadata,
+                "finance_approval": None,
+                "quality_score_status": LEGACY_UNKNOWN_QUALITY_STATUS,
+                "quality_disposition": LEGACY_QUALITY_DISPOSITION,
+            }
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -265,6 +381,8 @@ class ValuationReport:
             "reserve_price": self.reserve_price,
             "asking_price": self.asking_price,
             "confidence": self.confidence,
+            "quality_score_status": getattr(self, "quality_score_status", None),
+            "quality_disposition": getattr(self, "quality_disposition", None),
             "model_version": self.model_version,
             "feature_version": self.feature_version,
             "prediction_origin_time": self.prediction_origin_time.isoformat(),
@@ -300,6 +418,36 @@ class DataRoom:
     valuation_card: dict[str, Any]
     export_audit: tuple[dict[str, Any], ...] = ()
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    quality_score_status: str | None = None
+    quality_disposition: str | None = None
+
+    @property
+    def is_legacy_quality_unknown(self) -> bool:
+        return (
+            getattr(self, "quality_score_status", None) == LEGACY_UNKNOWN_QUALITY_STATUS
+            or getattr(self, "quality_disposition", None) == LEGACY_QUALITY_DISPOSITION
+            or self.valuation_card.get("quality_disposition") == LEGACY_QUALITY_DISPOSITION
+        )
+
+    def with_legacy_quality_disposition(self) -> DataRoom:
+        """Make an old data room safe to read while retaining an audit marker."""
+
+        card = dict(self.valuation_card)
+        previous_approval = card.get("finance_approval")
+        if previous_approval is not None:
+            card.setdefault("legacy_finance_approval", previous_approval)
+        card["finance_approval"] = None
+        card["confidence"] = "low"
+        card["quality_score_status"] = LEGACY_UNKNOWN_QUALITY_STATUS
+        card["quality_disposition"] = LEGACY_QUALITY_DISPOSITION
+        return DataRoom(
+            **{
+                **self.__dict__,
+                "valuation_card": card,
+                "quality_score_status": LEGACY_UNKNOWN_QUALITY_STATUS,
+                "quality_disposition": LEGACY_QUALITY_DISPOSITION,
+            }
+        )
 
     @property
     def completeness(self) -> float:
@@ -335,6 +483,8 @@ class DataRoom:
             "is_complete": self.is_complete,
             "missing_documents": list(self.missing_documents),
             "valuation_card": self.valuation_card,
+            "quality_score_status": getattr(self, "quality_score_status", None),
+            "quality_disposition": getattr(self, "quality_disposition", None),
             "export_audit": list(self.export_audit),
             "created_at": self.created_at.isoformat(),
         }
@@ -346,11 +496,20 @@ def build_valuation_view(data: Mapping[str, Any]) -> ValuationInput:
 
 def normalize_margin(case: ValuationCase) -> NormalizedMargin:
     item = case.valuation_input
+    quality_score = _require_quality_score(item.quality_score)
+    status = item.effective_quality_score_status
     normalized = round((item.gm_ttm * 0.45) + (item.forecast_gm_next_12m * 0.55), 2)
     reasons = ["weighted_ttm_and_forecast_gm"]
-    if item.quality_score < 0.8:
+    if status == LEGACY_UNKNOWN_QUALITY_STATUS:
+        normalized = round(normalized * 0.92, 2)
+        reasons.append("legacy_quality_unknown_discount")
+        confidence = "low"
+    elif quality_score < 0.8:
         normalized = round(normalized * 0.92, 2)
         reasons.append("quality_discount")
+        confidence = _confidence(quality_score)
+    else:
+        confidence = _confidence(quality_score)
     return NormalizedMargin(
         case_id=case.case_id,
         store_id=case.store_id,
@@ -358,12 +517,26 @@ def normalize_margin(case: ValuationCase) -> NormalizedMargin:
         gm_fwd=item.forecast_gm_next_12m,
         normalized_gm=normalized,
         adjustment_reasons=tuple(reasons),
-        confidence=_confidence(item.quality_score),
+        confidence=confidence,
     )
+
+
+def ensure_legacy_quality_disposition(
+    case: ValuationCase,
+    normalized_margin: NormalizedMargin,
+) -> NormalizedMargin:
+    """Do not let an opaque legacy margin bypass AVM quality handling."""
+
+    if case.valuation_input.effective_quality_score_status != LEGACY_UNKNOWN_QUALITY_STATUS:
+        return normalized_margin
+    return normalized_margin.with_legacy_quality_disposition()
 
 
 def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> ValuationReport:
     item = case.valuation_input
+    _require_quality_score(item.quality_score)
+    normalized_margin = ensure_legacy_quality_disposition(case, normalized_margin)
+    quality_status = item.effective_quality_score_status
     income_p50 = normalized_margin.normalized_gm * 2.8
     asset_p50 = max(
         item.asset_book_value
@@ -442,6 +615,12 @@ def value_store(case: ValuationCase, normalized_margin: NormalizedMargin) -> Val
         reserve_price=round(p10 * 0.97, 2),
         asking_price=round(p90 * 1.05, 2),
         confidence=normalized_margin.confidence,
+        quality_score_status=quality_status,
+        quality_disposition=(
+            LEGACY_QUALITY_DISPOSITION
+            if quality_status == LEGACY_UNKNOWN_QUALITY_STATUS
+            else None
+        ),
         model_version=AVM_MODEL_VERSION,
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=item.prediction_origin_time,
@@ -460,6 +639,10 @@ def build_model_valuation_report(
     execution_metadata: Mapping[str, Any],
 ) -> ValuationReport:
     """Build policy outputs from an already executed approved model interval."""
+
+    _require_quality_score(case.valuation_input.quality_score)
+    normalized_margin = ensure_legacy_quality_disposition(case, normalized_margin)
+    quality_status = case.valuation_input.effective_quality_score_status
 
     fair = PriceBand(
         p10=round(float(p10), 2),
@@ -484,6 +667,12 @@ def build_model_valuation_report(
         reserve_price=round(fair.p10 * 0.97, 2),
         asking_price=round(fair.p90 * 1.05, 2),
         confidence=normalized_margin.confidence,
+        quality_score_status=quality_status,
+        quality_disposition=(
+            LEGACY_QUALITY_DISPOSITION
+            if quality_status == LEGACY_UNKNOWN_QUALITY_STATUS
+            else None
+        ),
         model_version=model_version,
         feature_version=AVM_FEATURE_VERSION,
         prediction_origin_time=case.valuation_input.prediction_origin_time,
@@ -538,12 +727,17 @@ def generate_data_room(report: ValuationReport) -> DataRoom:
             "fair_price": report.fair_price.to_dict(),
             "reserve_price": report.reserve_price,
             "asking_price": report.asking_price,
+            "confidence": report.confidence,
+            "quality_score_status": getattr(report, "quality_score_status", None),
+            "quality_disposition": getattr(report, "quality_disposition", None),
             "model_version": report.model_version,
             "valuation_version": report.valuation_version,
             "finance_approval": (
                 report.finance_approval.to_dict() if report.finance_approval else None
             ),
         },
+        quality_score_status=getattr(report, "quality_score_status", None),
+        quality_disposition=getattr(report, "quality_disposition", None),
     )
 
 
@@ -602,6 +796,18 @@ def _report_source_snapshot_ids(report: ValuationReport) -> tuple[str, ...]:
 
 def _bounded(value: Any, *, minimum: float = 0.0, maximum: float = 1.0) -> float:
     return min(max(float(value), minimum), maximum)
+
+
+def _optional_bounded(
+    value: Any, *, minimum: float = 0.0, maximum: float = 1.0
+) -> float | None:
+    return None if value is None else _bounded(value, minimum=minimum, maximum=maximum)
+
+
+def _require_quality_score(value: float | None) -> float:
+    if value is None:
+        raise ValueError(QUALITY_SCORE_REQUIRED_MESSAGE)
+    return value
 
 
 def _parse_datetime(value: Any) -> datetime:
