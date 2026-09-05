@@ -3,7 +3,7 @@ evidence_id: ODP-NLTK-UNPATCHED-DISPOSITION-DOCUMENT-001
 title: "NLTK 3.10.3 未修補依賴處置與完整監控保留方案分析"
 date: 2026-09-05
 status: IMPLEMENTATION_PROPOSAL
-owner: Codex2
+owner: Claude2
 reviewer: Codex
 repository: alfloop-dev/odayplus
 task: ODP-NLTK-UNPATCHED-DISPOSITION-DOCUMENT-001
@@ -55,7 +55,7 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
    ```bash
    curl -s https://pypi.org/pypi/nltk/json | jq -r '.info.version'
    ```
-   *2026-09-05 讀回紀錄（本次 assessment 的 immutable receipt；僅採信 `.info.version`）*：
+   *2026-09-05 讀回紀錄（僅採信 `.info.version`）。本文件記錄了命令與輸出，但未附工具版本與輸出 hash，故不稱為 immutable receipt*：
    ```text
    3.10.3
    ```
@@ -65,7 +65,7 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
    ```bash
    curl -s https://api.osv.dev/v1/vulns/PYSEC-2026-3740 | jq '{id: .id, affected: .affected[0].ranges[0].events}'
    ```
-   *2026-09-05 讀回紀錄（本次 assessment 的 immutable receipt）*：
+   *2026-09-05 讀回紀錄。本文件記錄了命令與輸出，但未附工具版本與輸出 hash，故不稱為 immutable receipt*：
    ```json
    {
      "id": "PYSEC-2026-3740",
@@ -91,30 +91,19 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
    }
    ```
 
-4. **CI/scanner receipt（僅記錄差異，不作安全證據）**：
-   ```bash
-   pip-audit -r <(echo "nltk==3.10.3") --no-deps -f json
+4. **CI/scanner 歷史紀錄（未核實歷史摘要，不作實測證據）**：
+   - **可追溯的原始出處**：本專案唯一可追溯的 NLTK scanner 紀錄位於
+     [`docs/evidence/security/ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001.md`](./security/ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001.md)
+     §5.2「升級後真實掃描輸出」，其記載之命令形式為 `pip-audit -r ... --no-deps`，輸出原文為：
+   ```text
+   Found 1 known vulnerability in 1 package
+   Name  Version  ID                Fix Versions
+   ----  -------  ----------------  -----------
+   nltk  3.10.3   PYSEC-2026-3740   (none)
    ```
-   *先前 assessment 留存的 2026-09-05 receipt*：
-   ```json
-   {
-     "dependencies": [
-       {
-         "name": "nltk",
-         "version": "3.10.3",
-         "vulns": [
-           {
-             "id": "PYSEC-2026-3740",
-             "fix_versions": [
-               "3.10.3"
-             ],
-             "description": "NLTK file sandbox traversal/bypass in model artifact parsing and TransitionParser."
-           }
-         ]
-       }
-     ]
-   }
-   ```
+   - **證據等級判定：未核實歷史摘要，不作實測證據**。該紀錄未附 CI run id / job URL、輸出檔路徑、`pip-audit` 版本、advisory DB 版本或快照時間，也沒有輸出 hash；本文件無從核實它由哪一次執行產生，因此**不得稱為 immutable receipt**，也不得作為本 task 的實測安全證據。依本 task 邊界，不為了補齊文件而重新執行任何掃描。
+   - **本文件先前版本的轉錄錯誤（已更正）**：先前版本在此處放置一段 JSON，將 `fix_versions` 記為 `["3.10.3"]` 並附一段 `description`。可追溯的原始紀錄顯示 `Fix Versions` 欄位為 `(none)`，與該 JSON 不一致，且該 JSON 無可追溯出處；已移除，不得再被引用為 receipt。
+   - 需要真實 scanner 證據時，必須另行由獲授權的 task 執行並保存含 exact scope、工具與 advisory DB 版本/快照時間、輸出檔與 hash 的完整 receipt。
 
 ### 2.3 OSV/PyPA 與 GitHub GHSA 官方紀錄之矛盾剖析與假安全訊號排除
 
@@ -125,9 +114,14 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
    - **矛盾根源（不作臆測）**：目前可證實的是兩個資料來源對 fixed 邊界不一致；沒有足夠證據把原因歸因於同步時序、commit 或 tag。處置上以 NLTK 官方 advisory（受影響 `<=3.10.3`、patched `None`）及實際發布的 3.10.3 artifact 為較保守的安全基準，並保留 OSV/PyPA 原始 fixed 欄位供追溯。
    - **禁止將 OSV Fixed 或單一 CI scanner 結果視為安全證據**：工具可能依其資料快照將 `3.10.3` 標成 fixed，也可能依 GHSA/CI policy 報警；兩者都不能推翻 NLTK 官方 advisory。只有 NLTK 發布 patched version 且官方 advisory 更新，或經授權的移除/替代實作完成並通過 gate，才可改變 NO-GO 判定。
 
-2. **本地未安裝虛擬環境之 `pip-audit --local` 空輸出**：
-   - 執行 `pip-audit --local` 僅會掃描目前啟用的 Python 環境。若該環境未安裝生產鎖定依賴，將輸出 `No known vulnerabilities found`。
-   - 此輸出僅代表「本地環境未安裝該套件」，絕非相依鏈安全的證據。唯有針對生產鎖定清單（如 `uv.lock`）進行掃描所得之 `PYSEC-2026-3740` 檢出，才是真實的曝險基準。
+2. **`pip-audit` 回報 clean 不是安全證據，且其成因不可單一化**：
+   - **可追溯紀錄**：[`ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001.md`](./security/ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001.md) §5.2 記載，該 worktree 的 `pip-audit --local` 路徑會得到 `No known vulnerabilities found`，並把成因描述為「稽核的是空的／未對應的 local 環境」。
+   - **不可把「未安裝」當成唯一解釋**：一次 clean 輸出至少有下列成因，且在既有紀錄中**沒有任何一項被 receipt 排除**；任一成因都足以產生 clean 而與實際曝險無關：
+     - (a) 掃描環境確實未安裝該套件；
+     - (b) 掃描 scope 不等於生產鎖定清單——`--local` 只看目前啟用環境，`-r` 只看給定 requirement 檔，`--no-deps` 不展開相依鏈；
+     - (c) 掃描當下的 advisory DB 快照未收錄該筆，或已把該版本標記為已修復（OSV/PyPA 對 `PYSEC-2026-3740` 記 `fixed: "3.10.3"`，見本節第 1 點，足以讓依該快照判讀的工具對 `3.10.3` 不報 finding）；
+     - (d) `pip-audit` 版本或資料源（PyPI / OSV）設定差異。
+   - **結論**：clean 既不能證明相依鏈安全，其成因也不能未經量測即歸因為「未安裝」。真實曝險基準來自 exact lock 的解析結果（`evidently 0.7.21 -> nltk 3.10.3`，見第 3 節）與官方 advisory 狀態（受影響 `<= 3.10.3`、patched `None`），而不是任何單一 scanner 的紅或綠；任何 scanner 結論都必須連同 exact scope、資料快照與實測 receipt 一併記錄才可引用。
 
 ---
 
@@ -183,7 +177,8 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
    - NLTK 受影響公開 API（逐一列入驗收範圍）：`TransitionParser.train`、`TransitionParser.parse`、`AveragedPerceptron.save`、`AveragedPerceptron.load`、`PerceptronTagger.save_to_json`、`save_maxent_params`；官方 advisory 明確描述這些 model-artifact 讀寫路徑。是否由 Evidently 內部任一 descriptor 實際觸發，必須以 pinned 0.7.21 的可執行 probe/trace 驗證，不以未直接 import 推論。
 
 3. **不可免除稽核原則（Non-Exemption Principle）**：
-   - 儘管執行時期未直接呼叫受影響的 parser，但 `nltk 3.10.3` 已隨映像檔打包進生產執行環境與 `sys.path`。
+   - 第一方原始碼中未發現直接呼叫受影響 parser 的證據。這是**靜態範圍證據，不等於 runtime 不可能觸發**：第三方（Evidently 或其相依）內部 code path、動態載入、descriptor 與未列示的間接呼叫都未被排除。先前的 [`ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001.md`](./security/ODP-PYTHON-PRODUCTION-DEPENDENCY-REMEDIATION-001.md) §4.2 曾據此判定為「不可達（Unreachable / Non-exploitable）」，**本文件不採用該推論**；可達性只能由 pinned runtime 的 probe/trace 決定。
+   - 且 `nltk 3.10.3` 已隨映像檔打包進生產執行環境與 `sys.path`。
    - 依據專案安全基準與 #1188（`ODP-CI-DEPENDENCY-AUDIT-BOUNDARY-001`）fail-closed 規範，**「未直接 import」絕不能作為宣稱完全不可達或免除安全稽核的理由**。
 
 ---
@@ -194,7 +189,7 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 
 | 監控維度 | 負責模組與進入點 API | 底層演算法與邏輯 (Pinned Evidently 0.7.21 語意) | 資料流與輸入/輸出契約 | 依賴脫鉤影響評估 |
 |---|---|---|---|---|
-| **1. 資料漂移 (Data Drift)** | `modules/learninghub/infrastructure/evidently_monitor.py`<br>`EvidentlyDriftMonitor.run(...)` | 目前已確認的語意只有：呼叫 pinned `Report([DataDriftPreset(...)])`、傳入 `drift_share_threshold`，並解析 evaluation。KS/Wasserstein/卡方/TVD 的實際選擇、樣本分流、缺失值與門檻不能由本 wrapper 推定；須從 0.7.21 source/runtime receipt 建立 baseline。 | **輸入**：`reference_rows: Sequence[Mapping]`, `current_rows: Sequence[Mapping]`, `drift_share_threshold: float = 0.5`<br>**輸出**：`EvidentlyDriftResult`（含 `drift_detected`、`drifted_columns`、`drift_share`、`drifted_column_names`、`report_json`） | **需重構底層**：先凍結 pinned 0.7.21 golden baseline，再以原生實作逐 case 對齊；未通過前不得宣稱等價 |
+| **1. 資料漂移 (Data Drift)** | `modules/learninghub/infrastructure/evidently_monitor.py`<br>`EvidentlyDriftMonitor.run(...)` | 目前已確認的語意只有：呼叫 pinned `Report([DataDriftPreset(...)])`、傳入 `drift_share_threshold`，並解析 evaluation。實際的檢定選擇與樣本分流不能由本 wrapper 推定：算法分流已由 §5.1 第 1 點的 source receipt 確認（含 z-test、Jensen–Shannon 與 Text 分支），但 threshold 解析、缺失值行為與 report serialization 仍須從 0.7.21 runtime receipt 建立 baseline。 | **輸入**：`reference_rows: Sequence[Mapping]`, `current_rows: Sequence[Mapping]`, `drift_share_threshold: float = 0.5`<br>**輸出**：`EvidentlyDriftResult`（含 `drift_detected`、`drifted_columns`、`drift_share`、`drifted_column_names`、`report_json`） | **需重構底層**：先凍結 pinned 0.7.21 golden baseline，再以原生實作逐 case 對齊；未通過前不得宣稱等價 |
 | **2. 特徵漂移 (Feature Drift)** | `modules/learninghub/infrastructure/evidently_monitor.py`<br>`_drifted_column_names(...)`<br>`_drift_metric_detected(...)` | • 解析報表 payload 中每個 `ValueDrift(column=..., method=..., threshold=...)` 欄位指標<br>• 依據檢定方法（$p$-value 檢定小於門檻，或距離檢定大於等於門檻）判定個別特徵漂移<br>• 輸出漂移特徵名稱列表 `drifted_column_names` | **輸入**：計算報表 payload 字典<br>**輸出**：`drifted_column_names: tuple[str, ...]` | **需重構底層**：保持既有 JSON `metrics` 陣列格式與 `ValueDrift` 命名相容性 |
 | **3. 預測漂移 (Prediction Drift)** | `modules/learninghub/infrastructure/evidently_monitor.py`<br>`EvidentlyDriftMonitor.run_prediction(...)`<br>`EvidentlyDriftMonitor.run_prediction_drift(...)` | 第一方已確認：只選取 caller 指定的 prediction columns，驗證 model/version/cohort/snapshot、output type 與 policy；最後仍以 `DataDriftPreset` 評估 output-only frame。底層統計算法與閾值仍須由 pinned runtime baseline 證實。 | **輸入**：`reference_rows`, `current_rows`, `model_name`, `model_version`, `cohort_key`, `prediction_columns`, `reference_snapshot_id`, `current_snapshot_id`, `policy`<br>**輸出**：`EvidentlyDriftResult`（攜帶 model metadata、cohort、policy version、output types） | **需重構底層**：保留所有第一方驗證與 policy 行為；統計替換須逐案例比對，不得以 wrapper 行為宣稱無縫等價 |
 | **4. 效能監控 (Performance Drift)** | **真實 Owner 與 API**：<br>1. 門檻定義與評估：[`models/shared_ml/validation.py`](../../models/shared_ml/validation.py) (`MetricThreshold`, `SegmentMetricThreshold`)<br>2. 護欄評估：[`modules/learninghub/application/monitor.py`](../../modules/learninghub/application/monitor.py) (`evaluate_guardrails`, `ReleaseMonitorAssessment`)<br>3. 服務評估與重訓觸發：[`modules/learninghub/application/release.py`](../../modules/learninghub/application/release.py) (`LearningHubService.evaluate_monitoring`)<br>4. 領域模型：[`modules/learninghub/domain/monitoring.py`](../../modules/learninghub/domain/monitoring.py) (`MonitoringEvaluation`, `MonitoringBreach`, `RetrainingRequest`) | • 模型效能指標衰退評估（AUC, SMAPE, Precision, Recall, Coverage）<br>• 支援絕對門檻（`min_value`, `max_value`）與相對於基準快照之衰退率（`max_degradation`, `max_relative_degradation`）<br>• 依 `DecisionPolicy`（`policy_kind="model_performance_drift"`）觸發重新訓練請求（`RetrainingRequest`）或 Rollback 建議 | **輸入**：`DatasetSnapshot`, `ModelVersion`, `DecisionPolicy`, `observed_metrics`, `baseline_metrics`<br>**輸出**：`ReleaseMonitorAssessment`, `GuardrailBreach`, `RetrainingRequest` | source inspection 顯示這些 owner/API 是第一方實作且未在列示檔案中呼叫 Evidently/NLTK；這是範圍證據，不是 runtime 零迴歸證明。後續 candidate 必須執行效能 regression，才能宣稱保留 |
@@ -208,21 +203,41 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 - **方案概述**：
   利用專案既有之頂級數值與統計依賴（`scipy>=1.14`、`numpy>=2.0`、`pandas>=2.2`、`statsmodels>=0.14`），在 `modules/learninghub/infrastructure/evidently_monitor.py` 實作輕量原生統計漂移引擎，徹底替換 `evidently`。
 - **Pinned Evidently 0.7.21 演算法實作與等價語意細節**：
-  1. coordination precheck 的 pinned package source inspection receipt（`evidently/.../registry.py:137-159`，版本 `0.7.21`）記錄：`N <= 1000` 且 numeric unique > 5 使用 KS，否則使用 chi/z；`N > 1000` 且 numeric unique > 5 使用 Wasserstein，否則使用 Jensen–Shannon；Wasserstein scale 為 `max(std(reference), 0.001)`。這是算法選擇/scale 的 source receipt，不等於全功能等價已驗證；threshold、categorical/NaN 行為及 report serialization 仍必須由 runtime baseline 讀回。
-  2. 後續實作者必須在隔離環境 pin `evidently==0.7.21`，用固定 reference/current fixtures 執行實際 `DataDriftPreset`，保存每欄位 metric、統計量、p-value/距離、threshold、drift share、缺失值與 dtype 結果；再以 source inspection/trace 解釋每個結果。`N=200`、`20MB` 與 `100% clean` 只是待驗證的測試條件/門檻，不是本文件已證實的算法或安全結果。
-  2. **介面與報表結構契約相容性**：
+  1. **Pinned source inspection receipt（算法分流）**。本文件於本 task worktree 的 `.venv` 直接讀取已安裝的 pinned 套件核實（`evidently-*.dist-info/METADATA` 讀回 `Version: 0.7.21`）：
+     - **分流函式完整路徑**：`evidently/legacy/calculations/stattests/registry.py:137-159`（`_get_default_stattest`）。
+     - **`N` 與 `unique` 的精確定義（基數不同，不可混用）**：分流條件用的 `N` 是 `reference_data.shape[0]`，即 **reference 欄位「清理後」的樣本數**——`evidently/legacy/calculations/data_drift.py:138-140` 先對 reference 欄位做 `replace([-inf, inf], nan).dropna()`（current 欄位於 `:147-149` 同樣處理），再於 `:173` 呼叫 `get_stattest`；而 `unique` 是 `pd.concat([reference_data, current_data]).nunique()`，即 **reference 與 current 合併後的相異值數**。
+     - **完整分流表（不得只取 KS/Wasserstein/chi）**：
+
+       | 條件 | 選用檢定 |
+       |---|---|
+       | `ColumnType.Text`、`N > 1000` | `abs_text_content_drift_stat_test` |
+       | `ColumnType.Text`、`N <= 1000` | `perc_text_content_drift_stat_test` |
+       | `N <= 1000`、Numerical、`unique > 5` | KS（`ks_stat_test`） |
+       | `N <= 1000`、Numerical、`2 < unique <= 5` | chi-square（`chi_stat_test`） |
+       | `N <= 1000`、Numerical、`unique <= 2` | **z-test（`z_stat_test`）** |
+       | `N <= 1000`、Categorical、`unique > 2` | chi-square |
+       | `N <= 1000`、Categorical、`unique <= 2` | **z-test** |
+       | `N > 1000`、Numerical、`unique > 5` | Wasserstein（`wasserstein_stat_test`） |
+       | `N > 1000`、Numerical、`unique <= 5` | **Jensen–Shannon（`jensenshannon_stat_test`）** |
+       | `N > 1000`、Categorical | **Jensen–Shannon** |
+       | 其他 feature type | `raise ValueError` |
+
+     - **Wasserstein 尺度**：`evidently/legacy/calculations/stattests/wasserstein_distance_norm.py` 的 `_wasserstein_distance_norm` 以 `norm = max(float(np.std(reference_data)), 0.001)` 正規化，判定條件為 `wd_norm >= threshold`，`StatTest` 宣告 `default_threshold=0.1`。
+     - **範圍限制**：以上僅是算法選擇與 Wasserstein 尺度的 source receipt，**不等於全功能等價已驗證**；各 stattest 的實際 threshold 解析（`options.get_threshold`）、categorical/NaN 行為與 report serialization 仍必須由 runtime baseline 讀回。
+  2. **Runtime baseline 的產出義務**。後續實作者必須在隔離環境 pin `evidently==0.7.21`，用固定 reference/current fixtures 執行實際 `DataDriftPreset`，保存每欄位 metric、統計量、p-value/距離、threshold、drift share、缺失值與 dtype 結果；再以 source inspection/trace 解釋每個結果。`N=200`、`20MB` 與 `100% clean` 只是待驗證的測試條件/門檻，不是本文件已證實的算法或安全結果。
+  3. **介面與報表結構契約相容性**：
      - 保留 `EvidentlyDriftMonitor`、`EvidentlyDriftResult` 類別名稱與公開方法簽名（`run`, `run_prediction`, `run_prediction_drift`）。
      - 生成之 `report_json` 必須包含 `metrics` 陣列，內含 `DriftedColumnsCount` 與各欄位之 `ValueDrift(column=...)` 字典，使 `_drifted_column_names()` 及上層調用方完全無感相容。
-  3. **已知未知項與實作差異管理（Unknowns & Nuances）**：
-     - 已知 source receipt 不涵蓋 thresholds、categorical 分支、缺失值、ties、zero-variance、全新 category 與 report serialization；這些項目在 baseline 未產出前維持 `UNKNOWN`。
-     - 替代引擎不得把上述算法選擇改寫成 KS/Wasserstein/卡方/TVD 的簡化假設；必須逐 case 對齊實際 0.7.21 receipt。
+  4. **已知未知項與實作差異管理（Unknowns & Nuances）**：
+     - 本節第 1 點的 source receipt 只涵蓋「選哪個檢定」與 Wasserstein 尺度（含 categorical 與 Text 的分流條件）。它**不涵蓋**：各 stattest 的實際 threshold 值與 `options.get_threshold` 解析、每個檢定內部對缺失值/ties/zero-variance/全新 category 的處理、以及 report serialization 欄位命名；這些項目在 runtime baseline 未產出前一律維持 `UNKNOWN`。
+     - 替代引擎不得把上述算法選擇簡化成 KS/Wasserstein/卡方/TVD 的假設；本節第 1 點的分流表含 **z-test、Jensen–Shannon 與 Text 分支**，必須逐 case 對齊實際 0.7.21 receipt。
 - **依賴變更範圍**：
   - 自 `pyproject.toml` 移除 `evidently`。
   - 自 `uv.lock` 移除 `evidently`、`nltk`、`regex`、`defusedxml`。
   - 保留共用套件 `click`、`joblib`、`tqdm`。
 - **評估指標**：
   - 漏洞清除（candidate 驗收目標，非本 task 已證實結果）：完成後必須以 SBOM 與 fail-closed gate receipt 證明已消除 `PYSEC-2026-3740`。
-  - 安全閘門（candidate 驗收目標，非本 task 已證實結果）：完成後必須通過 #1188 `pip_audit_gate.py`；本 assessment 不預宣稱通過。
+  - 安全閘門（candidate 驗收目標，非本 task 已證實結果）：完成後必須執行 #1188 `pip_audit_gate.py` 並保存含 exact scope 與 advisory DB 快照的實測 receipt；本 assessment 不預宣稱通過，且 gate 回報 clean 本身不構成安全授權（見 §2.3 第 2 點）。
   - 維護成本：低（全部依賴專案既有核心數值套件，無新增第三方依賴）。
 
 ### 5.2 方案二：依賴最小化解耦 / 自行封裝移除 NLTK (Vendored / Stripped Package)
@@ -239,17 +254,17 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
   維持 `evidently 0.7.21` 與 `nltk 3.10.3`，持續追蹤 NLTK 官方發行（等待 > 3.10.3 修正版釋出）或 Evidently 官方釋出解耦版本。
 - **優缺點**：
   - 優點：零重構工程。
-  - 缺點：上游時程完全不可控；在 #1188 合併後，fail-closed `pip_audit_gate.py` 將因 `nltk 3.10.3` 檢出而阻擋生產發布，除非有合法人類主管簽署之正式放行程序。
+  - 缺點：上游時程完全不可控。`nltk 3.10.3` 的 advisory 風險未解除，**發布治理判定維持 NO-GO**，除非有合法人類主管簽署之正式放行程序。至於 #1188 `pip_audit_gate.py` 合併後實際會檢出或回報 clean，取決於該 gate 的 exact 掃描 scope 與當下 advisory DB 快照（見 §2.3 第 2 點），必須以實測 receipt 記錄，本文件不預判；即使 CI 實際回報 clean，也**不構成安全授權**、不解除本項 NO-GO。
 
 ### 5.4 方案比較矩陣
 
 | 評估維度 | 方案一：原生統計引擎 (推薦) | 方案二：自行解耦封裝 | 方案三：等待上游修正 |
 |---|---|---|---|
 | **漏洞消除完整性** | 目標為移除 NLTK；須以 candidate SBOM/gate 證明 | 目標為移除 NLTK；須以 candidate SBOM/gate 證明 | 0%（漏洞保留，NO-GO） |
-| **#1188 Gate 相容性** | 待實作後驗證 | 待實作後驗證 | 阻擋（Fail-closed） |
+| **#1188 Gate 相容性** | 待實作後以實測 receipt 驗證 | 待實作後以實測 receipt 驗證 | 不改變曝險；gate 實際結果依 exact scope 與資料快照，須以實測 receipt 記錄（clean 亦非安全授權） |
 | **監控功能保留** | 待 golden baseline 驗證四維度契約 | 待 golden baseline 驗證 | 現有功能保留但不解除安全風險 |
 | **長期維護成本** | **低 (依賴既有核心庫)** | 中-高 (需維護 custom build) | 低 (但受限於上游) |
-| **交付風險** | **低 (以黃金測試集驗證)** | 中 (打包複雜度) | 高 (無法通過生產安全閘) |
+| **交付風險** | **低 (以黃金測試集驗證)** | 中 (打包複雜度) | 高（advisory 風險未解除，發布治理 NO-GO） |
 
 ---
 
@@ -303,7 +318,14 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 
 #### Task 1: 原生 Scipy 統計漂移引擎實作與 Golden Dataset 等價驗證 (`ODP-DRIFT-NATIVE-MIGRATION-001`)
 - **工作項目**：
-  1. 在 `evidently_monitor.py` 實作基於 `scipy.stats.ks_2samp`、`scipy.stats.wasserstein_distance` 與 `scipy.stats.chisquare` 的計算核心。
+  1. 在 `evidently_monitor.py` 實作計算核心，且必須覆蓋 §5.1 第 1 點分流表之**完整分流**，不得只做 KS/Wasserstein/chi-square：
+     - KS → `scipy.stats.ks_2samp`
+     - Wasserstein（依 §5.1 以 `max(std(reference), 0.001)` 正規化）→ `scipy.stats.wasserstein_distance`
+     - chi-square → `scipy.stats.chisquare`
+     - **z-test**（`unique <= 2` 的 numerical 與 categorical 分支）
+     - **Jensen–Shannon 散度**（`N > 1000` 的低基數 numerical 分支與全部 `N > 1000` categorical 分支）
+     - **Text 欄位分流**（`abs_/perc_text_content_drift`）的取捨必須明示：若 candidate 不支援 `ColumnType.Text`，須先證明生產路徑不會傳入 Text 欄位，否則屬監控功能降級，違反 §1.2 第 4 點。
+     `N` 與 `unique` 的基數定義依 §5.1（reference 清理後樣本數 vs. reference+current 合併相異值數），不可混用。
   2. 建立包含數值與類別特徵之黃金測試集（Golden Dataset），比對原生計算結果與 Evidently 0.7.21 產出之 p-value、統計量、漂移判定與報告結構。
 
 #### Task 2: 依賴移除、Lockfile 重新鎖定、NOTICE 與新 SBOM 生成 (`ODP-DRIFT-DEP-REMOVE-002`)
@@ -316,14 +338,14 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
 #### Task 3: 跨系統整合回歸測試與 #1188 Security Gate 驗收 (`ODP-DRIFT-SECURITY-VERIFY-003`)
 - **工作項目**：
   1. 執行 `tests/models/test_evidently_monitor.py`、`modules/learninghub/tests/test_prediction_drift.py`、`tests/integration/test_oss_ai_execution_flow.py`、`tests/contract/test_deferred_oss_adr.py`。
-  2. 執行 `delivery_toolchain/security/pip_audit_gate.py`，驗證生產依賴掃描結果為 `0 known vulnerabilities`。
+  2. 執行 `delivery_toolchain/security/pip_audit_gate.py`，並保存含 exact 掃描 scope、`pip-audit` 版本與 advisory DB 版本/快照時間的實測 receipt。驗收條件不是單看輸出是否為 `0 known vulnerabilities`：必須同時以重鎖後的 `uv.lock` 與 candidate SBOM 證明 `nltk` 已不在生產相依鏈中；scanner clean 本身不構成安全授權（見 §2.3 第 2 點）。
   3. 確認全套單元與整合測試綠燈。
 
 ### 6.3 黃金結果等價驗收標準 (Golden-Result Equivalence Criteria)
 
 在實作驗收時，必須通過以下數值與結構等價性檢驗：
 1. **數值檢定等價性標準**：
-   - 先以 pinned 0.7.21 對 numeric/categorical、缺失值、常數欄位、新類別、不同樣本量建立 immutable golden JSON；不得預設 KS、Wasserstein、卡方或 TVD，實際方法/閾值必須從 receipt 讀回。
+   - 先以 pinned 0.7.21 對 numeric/categorical、缺失值、常數欄位、新類別、不同樣本量建立固定且具 hash 的 golden JSON；不得預設 KS、Wasserstein、卡方或 TVD，實際方法/閾值必須從 receipt 讀回，且須涵蓋 §5.1 分流表的 z-test、Jensen–Shannon 與 Text 分支（含 `N`/`unique` 的邊界值 2、5、1000）。
    - 替代引擎逐欄比對統計量、p-value/距離、threshold、drift flag、share 與欄位名稱；容差須按實際算法決定並由 reviewer 核准，不能先宣稱 `<10^-6`。
    - 漂移判定一致性：`drift_detected`（`drift_share >= drift_share_threshold`）在所有測試案例中必須 100% 一致。
 2. **報告結構等價性標準**：
@@ -351,7 +373,7 @@ upstream_dependency_path: "evidently 0.7.21 -> nltk 3.10.3"
    ```
 3. **關鍵安全警示**：
    - **回滾會恢復已知漏洞**：一旦回滾至 `evidently 0.7.21`，相依鏈將重新引入 `nltk 3.10.3 / PYSEC-2026-3740`。
-   - **安全與發布狀態保持 NO-GO**：回滾後之狀態將無法通過 #1188 fail-closed `pip_audit_gate.py`，**絕不能視為安全發布（Safe Rollout）狀態**。
+   - **安全與發布狀態保持 NO-GO**：回滾後 `nltk 3.10.3` 的 advisory 風險未解除，發布治理判定回到 NO-GO，**絕不能視為安全發布（Safe Rollout）狀態**。#1188 `pip_audit_gate.py` 屆時回報檢出或 clean，取決於 exact 掃描 scope 與 advisory DB 快照，須以實測 receipt 記錄；即使回報 clean 也不解除本項 NO-GO。
 
 ---
 
