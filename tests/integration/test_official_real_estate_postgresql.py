@@ -3,9 +3,11 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from alembic import command
@@ -84,9 +86,15 @@ def _alembic_config(database: Any) -> Config:
 # the later revisions reference, or `upgrade("head")` fails on a table the
 # revision it claims to have applied was supposed to create. Only the
 # referenced shape is needed, which is what keeps this postgis-free.
+#
+# 0017 (INTV-006 adjustment lineage) binds into the baseline the same way: it
+# alters `operations.interventions` from 0001 to add the predecessor /
+# replacement self-references, so the `operations` schema and that table have
+# to exist here too.
 _BASELINE_OBJECTS_LATER_REVISIONS_BIND_TO = """
 CREATE SCHEMA IF NOT EXISTS core;
 CREATE SCHEMA IF NOT EXISTS workflow;
+CREATE SCHEMA IF NOT EXISTS operations;
 
 CREATE TABLE IF NOT EXISTS core.tenants (
     tenant_id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -130,6 +138,22 @@ CREATE TABLE IF NOT EXISTS workflow.approvals (
 CREATE TABLE IF NOT EXISTS core.work_orders (
     work_order_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     root_cause TEXT
+);
+
+CREATE TABLE IF NOT EXISTS operations.interventions (
+    intervention_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    store_id UUID NOT NULL REFERENCES core.stores(store_id),
+    intervention_type VARCHAR(100) NOT NULL DEFAULT 'price',
+    eligibility_status VARCHAR(100) NOT NULL DEFAULT 'eligible',
+    action_set_json JSONB NOT NULL,
+    approved_action_json JSONB NOT NULL,
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    end_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    observation_start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    observation_end_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'proposed',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
 
@@ -190,6 +214,150 @@ def test_root_cause_reserved_migration_round_trips_on_postgresql(
     assert comment_after_rollback == (None,)
     assert current_revision == ("0011",)
     assert column_still_exists == (1,)
+
+
+_INTERVENTION_ROW_COLUMNS = (
+    "intervention_id, store_id, intervention_type, eligibility_status, "
+    "action_set_json, approved_action_json, start_time, end_time, "
+    "observation_start_time, observation_end_time, status"
+)
+_INTERVENTION_ROW_VALUES = (
+    "%s, %s, 'price', 'eligible', '{}'::jsonb, '{}'::jsonb, "
+    "now(), now(), now(), now(), %s"
+)
+
+
+def test_intervention_adjust_lineage_migration_binds_to_production_interventions(
+    intake_blank_db: Any,
+) -> None:
+    """ODP-FR-INTV-006: the lineage columns must reach production PostgreSQL.
+
+    The migration alters the baseline `operations.interventions` table rather
+    than creating a table beside it, so the only thing that proves it works is
+    running the real Alembic chain and then writing a stop-plus-recreate pair
+    through the columns it added. The self-referencing foreign key is asserted
+    from both directions: a real predecessor links, and an intervention_id that
+    does not exist is refused instead of being stored as a dangling lineage.
+    """
+    _upgrade_official_schema(intake_blank_db)
+
+    with intake_blank_db.connect() as connection:
+        columns = connection.execute(
+            "SELECT column_name, data_type FROM information_schema.columns "
+            "WHERE table_schema = 'operations' AND table_name = 'interventions' "
+            "AND column_name IN ('predecessor_id', 'replacement_id', "
+            "'adjustment_json') ORDER BY column_name"
+        ).fetchall()
+        assert [tuple(row) for row in columns] == [
+            ("adjustment_json", "jsonb"),
+            ("predecessor_id", "uuid"),
+            ("replacement_id", "uuid"),
+        ]
+
+        foreign_keys = connection.execute(
+            "SELECT kcu.column_name, ccu.table_schema || '.' || ccu.table_name "
+            "FROM information_schema.table_constraints AS tc "
+            "JOIN information_schema.key_column_usage AS kcu "
+            "  ON tc.constraint_name = kcu.constraint_name "
+            "JOIN information_schema.constraint_column_usage AS ccu "
+            "  ON tc.constraint_name = ccu.constraint_name "
+            "WHERE tc.constraint_type = 'FOREIGN KEY' "
+            "AND tc.table_schema = 'operations' "
+            "AND tc.table_name = 'interventions' "
+            "AND kcu.column_name IN ('predecessor_id', 'replacement_id') "
+            "ORDER BY kcu.column_name"
+        ).fetchall()
+        assert [tuple(row) for row in foreign_keys] == [
+            ("predecessor_id", "operations.interventions"),
+            ("replacement_id", "operations.interventions"),
+        ]
+
+        indexes = connection.execute(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = 'operations' "
+            "AND tablename = 'interventions' AND indexname IN "
+            "('idx_interventions_predecessor_id', "
+            "'idx_interventions_replacement_id') ORDER BY indexname"
+        ).fetchall()
+        assert [tuple(row) for row in indexes] == [
+            ("idx_interventions_predecessor_id",),
+            ("idx_interventions_replacement_id",),
+        ]
+
+    tenant_id = str(uuid4())
+    store_id = str(uuid4())
+    stopped_id = str(uuid4())
+    replacement_id = str(uuid4())
+    adjustment = {
+        "reason": "footfall assumption revised after week 1",
+        "actor": "ops-analyst-7",
+        "policy_version": "intervention-policy-v3",
+        "rollback_plan": "restore the stopped price ladder",
+    }
+
+    with intake_blank_db.connect() as connection:
+        connection.execute(
+            "INSERT INTO core.tenants (tenant_id, tenant_name) VALUES (%s, %s)",
+            (tenant_id, "INTV-006 lineage tenant"),
+        )
+        connection.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, store_name) "
+            "VALUES (%s, %s, %s)",
+            (store_id, tenant_id, "INTV-006 lineage store"),
+        )
+        connection.execute(
+            f"INSERT INTO operations.interventions ({_INTERVENTION_ROW_COLUMNS}) "
+            f"VALUES ({_INTERVENTION_ROW_VALUES})",
+            (stopped_id, store_id, "stopped"),
+        )
+        connection.execute(
+            f"INSERT INTO operations.interventions ({_INTERVENTION_ROW_COLUMNS}, "
+            "predecessor_id, adjustment_json) "
+            f"VALUES ({_INTERVENTION_ROW_VALUES}, %s, %s::jsonb)",
+            (
+                replacement_id,
+                store_id,
+                "executing",
+                stopped_id,
+                json.dumps(adjustment),
+            ),
+        )
+        connection.execute(
+            "UPDATE operations.interventions SET replacement_id = %s "
+            "WHERE intervention_id = %s",
+            (replacement_id, stopped_id),
+        )
+
+        lineage = connection.execute(
+            "SELECT stopped.status, stopped.replacement_id, "
+            "replacement.status, replacement.predecessor_id, "
+            "replacement.adjustment_json "
+            "FROM operations.interventions AS stopped "
+            "JOIN operations.interventions AS replacement "
+            "  ON replacement.intervention_id = stopped.replacement_id "
+            "WHERE stopped.intervention_id = %s",
+            (stopped_id,),
+        ).fetchone()
+
+    assert lineage is not None
+    stopped_status, stored_replacement, replacement_status, stored_predecessor, stored_adjustment = lineage
+    assert stopped_status == "stopped"
+    assert replacement_status == "executing"
+    assert str(stored_replacement) == replacement_id
+    assert str(stored_predecessor) == stopped_id
+    # The audit payload survives the round trip in full: an adjustment that
+    # loses its reason, actor, policy version or rollback plan is not an audit
+    # record.
+    assert stored_adjustment == adjustment
+
+    with intake_blank_db.connect() as connection:
+        with pytest.raises(Exception) as dangling:
+            connection.execute(
+                f"INSERT INTO operations.interventions ({_INTERVENTION_ROW_COLUMNS}, "
+                "predecessor_id) "
+                f"VALUES ({_INTERVENTION_ROW_VALUES}, %s)",
+                (str(uuid4()), store_id, "executing", str(uuid4())),
+            )
+    assert "foreign key" in str(dangling.value).lower()
 
 
 def _create_model_view_prerequisites(database: Any) -> None:
