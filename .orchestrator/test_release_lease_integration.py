@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -55,10 +56,11 @@ def _manifest() -> dict:
 
 
 def _registry(manifest: dict) -> dict:
+    cand_sha = manifest.get("candidate_sha") or CANDIDATE_SHA
     return {
         "schema_version": "2.0.0",
         "release": {
-            "candidate_sha": CANDIDATE_SHA,
+            "candidate_sha": cand_sha,
             "manifest_digest": manifest["manifest_digest"],
             "stage": "candidate-built",
             "environment": "dev",
@@ -66,7 +68,7 @@ def _registry(manifest: dict) -> dict:
             "decision": "go",
         },
         "candidate_rebind": {
-            "to_candidate_sha": CANDIDATE_SHA,
+            "to_candidate_sha": cand_sha,
             "to_manifest_digest": manifest["manifest_digest"],
             "build_run": {
                 "run_id": int(RUN_ID),
@@ -79,14 +81,14 @@ def _registry(manifest: dict) -> dict:
             {
                 "id": f"gate-{index}",
                 "status": "passed",
-                "release_sha": CANDIDATE_SHA,
+                "release_sha": cand_sha,
                 "stage": "candidate-built",
                 "environment": "dev",
                 "admission_target": "dev",
                 "receipts": [
                     {
                         "receipt_id": f"receipt-{index}",
-                        "release_sha": CANDIDATE_SHA,
+                        "release_sha": cand_sha,
                         "result": "pass",
                     }
                 ],
@@ -205,12 +207,13 @@ def _set_task_status(harness: dict, task_id: str, status: str) -> None:
     raise AssertionError(f"missing task {task_id}")
 
 
-def _run(harness: dict, dispatch, *, loader=None) -> bool:
+def _run(harness: dict, dispatch, *, loader=None, ref_resolver=None) -> bool:
     return bridge.process_release_lease_issuance(
         harness["config"],
         commit_status=harness["commit"],
         private_key_loader=loader or (lambda _: harness["private_key"]),
         dispatch=dispatch,
+        ref_resolver=ref_resolver or (lambda root, ref: harness["request"]["candidate_sha"]),
         now=NOW,
     )
 
@@ -395,7 +398,7 @@ def test_gh_dispatch_uses_stdin_json_and_static_workflow_identifier(monkeypatch:
         lease=lease,
         request=request,
         manifest=manifest,
-        settings={"github_repository": "example/odayplus"},
+        settings={"github_repository": "example/odayplus", "dispatch_ref": "dev"},
     )
     command = captured["command"]
     assert command[-2:] == ["--input", "-"]
@@ -403,9 +406,296 @@ def test_gh_dispatch_uses_stdin_json_and_static_workflow_identifier(monkeypatch:
     assert "release_lease" not in " ".join(command)
     assert "stdin" not in captured["kwargs"]
     payload = json.loads(captured["kwargs"]["input"].decode("utf-8"))
-    assert payload["ref"] == CANDIDATE_SHA
+    assert payload["ref"] == "dev"
     assert payload["inputs"]["phase"] == "deploy"
+    assert payload["inputs"]["environment"] == "dev"
+    assert payload["inputs"]["release_sha"] == CANDIDATE_SHA
+    assert payload["inputs"]["task_id"] == TASK_ID
+    assert payload["inputs"]["manifest_run_id"] == RUN_ID
+    assert payload["inputs"]["manifest_digest"] == manifest["manifest_digest"]
+    for comp in ("api", "web", "worker", "scheduler"):
+        assert f"{comp}_image" in payload["inputs"]
+        assert payload["inputs"][f"{comp}_image"] == manifest["components"][comp]["image"]
     assert json.loads(base64.b64decode(payload["inputs"]["release_lease"])) == lease
+
+
+def test_dispatch_ref_raw_sha_is_rejected_in_settings_and_never_dispatches(harness: dict) -> None:
+    harness["config"]["release_lease_issuer"]["dispatch_ref"] = "a" * 40
+    settings, errors = bridge.issuer_settings(harness["config"])
+    assert settings is None
+    assert any("not a commit SHA" in err for err in errors)
+
+    assert not _run(
+        harness,
+        lambda **_: pytest.fail("raw SHA dispatch_ref must not dispatch"),
+        loader=lambda _: pytest.fail("raw SHA dispatch_ref must not load key"),
+    )
+    activity = harness["activity_path"].read_text(encoding="utf-8")
+    assert "release_lease_issuer_configuration_blocked" in activity
+
+
+def test_dispatch_ref_invalid_characters_rejected(harness: dict) -> None:
+    harness["config"]["release_lease_issuer"]["dispatch_ref"] = "bad ref with spaces"
+    settings, errors = bridge.issuer_settings(harness["config"])
+    assert settings is None
+    assert any("not a valid git branch or tag reference" in err for err in errors)
+
+
+def test_dispatch_ref_custom_branch_is_used_in_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    manifest = _manifest()
+    request = _request(manifest)
+    lease = {
+        "candidate_sha": CANDIDATE_SHA,
+        "manifest_digest": manifest["manifest_digest"],
+        "task_id": TASK_ID,
+    }
+    captured: dict = {}
+
+    class Result:
+        returncode = 0
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr(bridge.subprocess, "run", fake_run)
+    bridge.dispatch_runtime_release(
+        lease=lease,
+        request=request,
+        manifest=manifest,
+        settings={"github_repository": "example/odayplus", "dispatch_ref": "release/v1.0"},
+    )
+    payload = json.loads(captured["kwargs"]["input"].decode("utf-8"))
+    assert payload["ref"] == "release/v1.0"
+
+
+def make_repo(tmp_path: Path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+    return repo, run_git
+
+
+def test_dispatch_ref_ancestry_real_git_evidence_only_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, run_git = make_repo(tmp_path)
+    (repo / "docs/evidence/gates").mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / "src/app.py").write_text("print('app')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate base commit")
+    cand_sha = run_git("rev-parse", "HEAD")
+
+    manifest = _manifest()
+    manifest["candidate_sha"] = cand_sha
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    registry = _registry(manifest)
+    (repo / "docs/evidence/gates/RELEASE_MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (repo / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json").write_text(json.dumps(registry), encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "record evidence for candidate")
+    dev_sha = run_git("rev-parse", "HEAD")
+
+    request = _request(manifest)
+    request["candidate_sha"] = cand_sha
+    request["manifest_digest"] = manifest["manifest_digest"]
+    status = _status(request)
+    status_path = repo / "ai-status.json"
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    activity_path = repo / "ai-activity-log.jsonl"
+    state_dir = repo / "durable-state"
+    state_dir.mkdir()
+    store = LeaseStateStore(state_dir, require_existing=True)
+    private_pem, _ = generate_keypair()
+    key_path = repo / "test-key.pem"
+    key_path.write_bytes(private_pem)
+    private_key = load_private_key(key_path=key_path)
+    key_path.unlink()
+
+    monkeypatch.setattr(bridge, "LeaseStateStore", lambda uri, *, require_existing: store)
+
+    config = {
+        "paths": {
+            "status_file": str(status_path),
+            "activity_log": str(activity_path),
+        },
+        "release_lease_issuer": {
+            "enabled": True,
+            "secret_reference": "projects/999999999999/secrets/test-release-lease-key",
+            "state_uri": "gs://unit-test-existing-bucket/release-leases",
+            "github_repository": "example/odayplus",
+            "workflow": ".github/workflows/deploy-dev.yml",
+            "ttl_seconds": 300,
+            "dispatch_ref": "dev",
+        },
+    }
+
+    dispatched: list[dict] = []
+    assert bridge.process_release_lease_issuance(
+        config,
+        commit_status=lambda _, cand: status_path.write_text(json.dumps(cand), encoding="utf-8") or True,
+        private_key_loader=lambda _: private_key,
+        dispatch=lambda **kwargs: dispatched.append(kwargs),
+        ref_resolver=lambda root, ref: dev_sha,
+        now=NOW,
+    )
+    assert len(dispatched) == 1
+    assert dispatched[0]["lease"]["candidate_sha"] == cand_sha
+
+    record = json.loads(status_path.read_text(encoding="utf-8"))["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "dispatched"
+    assert record["dispatch_ref"] == "dev"
+    assert record["dispatch_ref_sha"] == dev_sha
+    assert record["receipt"]["dispatch_ref"] == "dev"
+    assert record["receipt"]["dispatch_ref_sha"] == dev_sha
+
+
+def test_resolve_ref_sha_remote_and_local(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, run_git = make_repo(tmp_path)
+    (repo / "file.txt").write_text("hello\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "init")
+    head_sha = run_git("rev-parse", "HEAD")
+
+    # 1. Local resolution when git ls-remote fails/times out
+    resolved = bridge.resolve_ref_sha(repo, "HEAD")
+    assert resolved == head_sha
+
+    # 2. Remote resolution when git ls-remote returns heads
+    class FakeProc:
+        returncode = 0
+        stdout = f"{head_sha}\trefs/heads/dev\n"
+
+    monkeypatch.setattr(bridge.subprocess, "run", lambda *args, **kwargs: FakeProc())
+    resolved_remote = bridge.resolve_ref_sha(repo, "dev", repository="example/odayplus")
+    assert resolved_remote == head_sha
+
+
+
+def test_dispatch_ref_ancestry_real_git_non_evidence_drift_blocks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, run_git = make_repo(tmp_path)
+    (repo / "docs/evidence/gates").mkdir(parents=True)
+    (repo / "src").mkdir()
+    (repo / "src/app.py").write_text("print('app')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate base commit")
+    cand_sha = run_git("rev-parse", "HEAD")
+
+    manifest = _manifest()
+    manifest["candidate_sha"] = cand_sha
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    registry = _registry(manifest)
+    (repo / "docs/evidence/gates/RELEASE_MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+    (repo / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json").write_text(json.dumps(registry), encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "record evidence for candidate")
+
+    # Advance dev with product code changes (non-evidence)
+    (repo / "product_feature.py").write_text("print('drift')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "product code drift")
+    dev_sha = run_git("rev-parse", "HEAD")
+
+    request = _request(manifest)
+    request["candidate_sha"] = cand_sha
+    request["manifest_digest"] = manifest["manifest_digest"]
+    status = _status(request)
+    status_path = repo / "ai-status.json"
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    activity_path = repo / "ai-activity-log.jsonl"
+    state_dir = repo / "durable-state"
+    state_dir.mkdir()
+    store = LeaseStateStore(state_dir, require_existing=True)
+
+    monkeypatch.setattr(bridge, "LeaseStateStore", lambda uri, *, require_existing: store)
+
+    config = {
+        "paths": {
+            "status_file": str(status_path),
+            "activity_log": str(activity_path),
+        },
+        "release_lease_issuer": {
+            "enabled": True,
+            "secret_reference": "projects/999999999999/secrets/test-release-lease-key",
+            "state_uri": "gs://unit-test-existing-bucket/release-leases",
+            "github_repository": "example/odayplus",
+            "workflow": ".github/workflows/deploy-dev.yml",
+            "ttl_seconds": 300,
+            "dispatch_ref": "dev",
+        },
+    }
+
+    dispatched: list[dict] = []
+    assert bridge.process_release_lease_issuance(
+        config,
+        commit_status=lambda _, cand: status_path.write_text(json.dumps(cand), encoding="utf-8") or True,
+        private_key_loader=lambda _: pytest.fail("non-evidence drift must not load signing key"),
+        dispatch=lambda **kwargs: dispatched.append(kwargs),
+        ref_resolver=lambda root, ref: dev_sha,
+        now=NOW,
+    )
+    assert dispatched == []
+    record = json.loads(status_path.read_text(encoding="utf-8"))["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("non-evidence paths" in error for error in record["receipt"]["errors"])
+
+
+
+def test_dispatch_ref_non_ancestor_blocks(harness: dict) -> None:
+    dispatched: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatched.append(kwargs),
+        ref_resolver=lambda root, ref: "f" * 40,
+        loader=lambda _: pytest.fail("non-ancestor ref must stop before Secret Manager"),
+    )
+    assert dispatched == []
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("not an ancestor" in error for error in record["receipt"]["errors"])
+
+
+def test_dispatch_ref_unresolvable_blocks(harness: dict) -> None:
+    dispatched: list[dict] = []
+    assert _run(
+        harness,
+        lambda **kwargs: dispatched.append(kwargs),
+        ref_resolver=lambda root, ref: None,
+        loader=lambda _: pytest.fail("unresolvable ref must stop before Secret Manager"),
+    )
+    assert dispatched == []
+    record = _read_status(harness)["tasks"][1][bridge.ISSUANCE_FIELD]
+    assert record["state"] == "blocked"
+    assert any("cannot be resolved" in error for error in record["receipt"]["errors"])
+
+
+def test_runtime_release_inputs_missing_components_raises_dispatch_error() -> None:
+    manifest = _manifest()
+    request = _request(manifest)
+    lease = {
+        "candidate_sha": CANDIDATE_SHA,
+        "manifest_digest": manifest["manifest_digest"],
+        "task_id": TASK_ID,
+    }
+    broken_manifest = dict(manifest)
+    broken_manifest["components"] = {"api": {"image": "invalid-image-without-digest"}}
+
+    with pytest.raises(bridge.RuntimeReleaseDispatchError, match="every immutable Runtime Release image"):
+        bridge.dispatch_runtime_release(
+            lease=lease,
+            request=request,
+            manifest=broken_manifest,
+            settings={"github_repository": "example/odayplus", "dispatch_ref": "dev"},
+        )
 
 
 def test_public_example_stays_disabled_and_workflow_has_no_issuer_secret() -> None:

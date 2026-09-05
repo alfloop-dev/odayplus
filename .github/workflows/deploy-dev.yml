@@ -691,6 +691,22 @@ jobs:
             exit 1
           fi
 
+      - name: Validate candidate ancestry against dispatch GITHUB_SHA
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "${GITHUB_SHA:-}" ] && [ "${GITHUB_SHA}" != "${RELEASE_SHA}" ]; then
+            python3 -c "
+          import sys
+          from delivery_toolchain.e2e.check_release_gate_registry import check_candidate_ancestry
+          errors = check_candidate_ancestry('${RELEASE_SHA}', '${GITHUB_SHA}')
+          if errors:
+              print('Error: candidate release_sha is not an evidence-only ancestor of event GITHUB_SHA:', errors, file=sys.stderr)
+              sys.exit(1)
+          "
+          fi
+
       - name: Validate immutable image handoff
         env:
           API_IMAGE_INPUT: ${{ inputs.api_image }}
