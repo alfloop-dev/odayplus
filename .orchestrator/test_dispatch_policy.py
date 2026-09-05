@@ -1,3 +1,4 @@
+import json
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1548,10 +1549,10 @@ def test_stale_wake_for_review_ready_skipped_when_task_approved_or_merge_routed(
         assert skip_msg is not None
         assert "no longer eligible" in skip_msg
 
-    # Case 2: Task has merge_route=queued
+    # Case 2: Task has merge_route=queued matching current submitted head
     task["status"] = "review"
     task.pop("approved_head", None)
-    task["merge_route"] = {"head": "1111111122222222333333334444444455555555", "route": "queued"}
+    task["merge_route"] = {"head": "a" * 40, "route": "queued"}
     with (
         mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
         mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
@@ -1560,6 +1561,210 @@ def test_stale_wake_for_review_ready_skipped_when_task_approved_or_merge_routed(
         skip_msg = supervisor.stale_dispatch_skip_message(cfg, event, task_map)
         assert skip_msg is not None
         assert "no longer eligible" in skip_msg
+
+    # Case 3: Task has stale merge_route for a prior head (PR#1175 pattern)
+    # The wake is NOT stale and the task IS eligible for review on the new head
+    task["merge_route"] = {"head": "b" * 40, "route": "queued"}
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="a" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert supervisor.current_dispatch_event_key(cfg, event, task_map) == event["key"]
+        assert supervisor.stale_dispatch_skip_message(cfg, event, task_map) is None
+
+
+def test_pr1175_reproduction_prior_queued_route_does_not_block_repaired_new_head_review() -> None:
+    """PR#1175: prior queued route head a801faf5经owner CI repair后current submitted head 0b3e1987,
+
+    CI success, mergeQueueEntry null. The stale prior merge_route must not suppress reviewer dispatch.
+    """
+    cfg = _base_test_config()
+    stale_head = "a801faf568b66e700f8691b02ceeec8358fa2aa9"
+    new_head = "0b3e19870b3e19870b3e19870b3e19870b3e1987"
+    task = {
+        "id": "ODP-TEST-PR1175-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 1175,
+            "branch": "task/ODP-TEST-PR1175-001",
+            "base_branch": "dev",
+            "remote_sha": new_head,
+        },
+        "merge_route": {
+            "head": stale_head,
+            "route": "queued",
+            "pr_number": 1175,
+            "at": "2026-09-05T00:10:56Z",
+            "attempts": 1,
+        },
+        "depends_on": [],
+        "last_update": "2026-09-05T00:53:14Z",
+    }
+    status = {"tasks": [task]}
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    # 1. Verification: is_task_review_dispatch_eligible is True on new head despite stale merge_route
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+        assert supervisor.dispatch_priority_for_task(cfg, task, "Codex", task_map={"ODP-TEST-PR1175-001": task}) == 0
+
+    # 2. Verification: dispatch_ready_tasks dispatches reviewer Codex
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            supervisor, "queue_delivery_event", side_effect=lambda _c, evt: queued_events.append(evt) or True
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["codex"])
+
+    assert changed is True
+    assert len(queued_events) == 1
+    assert queued_events[0]["task_id"] == "ODP-TEST-PR1175-001"
+    assert queued_events[0]["target_agent"] == "Codex"
+    assert queued_events[0]["reason"] == REASON_REVIEW_READY
+
+    # 3. Fail-closed verification: failing CI, pending CI, missing CI, and SHA drift fail closed
+    for bad_ci in ["failure", "pending", "none", "unknown", "error"]:
+        with (
+            mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+            mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", bad_ci)),
+        ):
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+
+    # SHA drift check: remote SHA != submitted SHA
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value="c" * 40),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+
+    # 4. Currently queued head remains immutable: matching head merge_route suppresses review dispatch
+    task["merge_route"]["head"] = new_head
+    with (
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+    ):
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+
+
+def test_merge_route_without_head_or_malformed_fails_closed() -> None:
+    """Ensure is_task_review_dispatch_eligible fails closed when merge_route lacks a valid head or is malformed."""
+    cfg = _base_test_config()
+    new_head = "0b3e19870b3e19870b3e19870b3e19870b3e1987"
+    task = {
+        "id": "ODP-TEST-MALFORMED-ROUTE-001",
+        "priority": "P1",
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "review_submission": {
+            "pr_number": 1175,
+            "branch": "task/ODP-TEST-MALFORMED-ROUTE-001",
+            "base_branch": "dev",
+            "remote_sha": new_head,
+        },
+        "depends_on": [],
+        "last_update": "2026-09-05T00:53:14Z",
+    }
+
+    # Helper context manager for happy-path SHA and CI
+    def _happy_path_mocks():
+        return (
+            mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", return_value=new_head),
+            mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", return_value=("OPEN", "success")),
+        )
+
+    # 1. No merge_route at all -> eligible
+    with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+
+    # 2. Malformed / headless dicts fail closed
+    headless_routes = [
+        {"route": "queued"},
+        {"head": "", "route": "queued"},
+        {"head": "   ", "route": "queued"},
+        {"head": None, "route": "queued"},
+        {},
+    ]
+    for bad_route in headless_routes:
+        task["merge_route"] = bad_route
+        with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False, f"Failed for {bad_route}"
+
+    # 3. Malformed non-dict values fail closed
+    malformed_routes = [
+        "queued",
+        123,
+        True,
+        ["queued"],
+    ]
+    for bad_route in malformed_routes:
+        task["merge_route"] = bad_route
+        with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+            assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False, f"Failed for {bad_route}"
+
+    # 4. Valid route for prior stale head allows review
+    task["merge_route"] = {"head": "a801faf568b66e700f8691b02ceeec8358fa2aa9", "route": "queued"}
+    with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is True
+
+    # 5. Valid route for current head suppresses review
+    task["merge_route"] = {"head": new_head, "route": "queued"}
+    with _happy_path_mocks()[0], _happy_path_mocks()[1]:
+        assert dispatch_engine.is_task_review_dispatch_eligible(cfg, task, "Codex") is False
+
+
+def test_ci_repair_requeue_and_transition_clears_stale_merge_route() -> None:
+    """Queue ejection / CI repair requeue and submit_review cleanly clear merge_route."""
+    cfg = _base_test_config()
+    task = {
+        "id": "ODP-TRANSITION-001",
+        "status": "review_approved",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "approved_head": "a" * 40,
+        "merge_route": {
+            "head": "a" * 40,
+            "route": "queued",
+            "pr_number": 123,
+            "at": "2026-09-05T00:00:00Z",
+            "attempts": 1,
+        },
+        "depends_on": [],
+    }
+    status = {"tasks": [task]}
+
+    with (
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        # CI repair requeue with clear_approval=True
+        changed = supervisor.requeue_task_for_ci_repair(
+            cfg,
+            status,
+            task,
+            message="CI failed, owner repair required.",
+            clear_approval=True,
+        )
+        assert changed is True
+        assert task["status"] == "in_progress"
+        assert "approved_head" not in task
+        assert "merge_route" not in task
 
 
 def test_reconcile_runtime_on_boot_completes_stale_review_event_when_approved_or_merge_routed() -> None:
@@ -2024,3 +2229,497 @@ def test_review_dispatch_eligible_when_task_review_gate_pending_but_other_ci_gre
     assert queued_events[0]["reason"] == "review_ready_dispatch"
 
 
+
+
+# --- Conflicted review PR recovery (ODP-REVIEW-CONFLICT-CI-RECOVERY-001) -----
+#
+# A review PR that conflicts with its base has no merge commit, so GitHub runs
+# no workflow on that head: check-runs, check-suites and Actions runs are all
+# zero, `task_pr_ci_status` answers `none`, and reviewer dispatch - which
+# requires terminal CI success on the exact submitted head - waits forever.
+# These cover the one restricted recovery entry and, at least as importantly,
+# every reading it must decline to act on.
+
+#: The exact head #1170 sat on: OPEN, CONFLICTING, zero checks, waiting on a
+#: check that could not arrive.
+CONFLICT_HEAD = "847d498493343d0e8c1227f4eb3bf64a04448fa6"
+CONFLICT_REPO = "alfloop-dev/odayplus"
+CONFLICT_TASK_ID = "ODP-CONFLICT-001"
+
+
+def _conflicted_review_task(**overrides) -> dict:
+    """A review whose PR provenance is verified and whose head is unmerged."""
+    task = {
+        "id": CONFLICT_TASK_ID,
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "repository": CONFLICT_REPO,
+        "branch": f"task/{CONFLICT_TASK_ID}",
+        "pr_number": 1170,
+        "depends_on": [],
+        "acceptance": ["the original acceptance must survive recovery"],
+        "review_reopen_count": 2,
+        "review_churn_reassigned_at_count": 2,
+        "human_continuation_approval_history": [
+            {"approval_id": "hc-1", "status": "consumed"}
+        ],
+        "waiting_for": "Codex",
+        "review_submission": {
+            "pr_number": 1170,
+            "branch": f"task/{CONFLICT_TASK_ID}",
+            "base_branch": "dev",
+            "remote_sha": CONFLICT_HEAD,
+            "pr_url": f"https://github.com/{CONFLICT_REPO}/pull/1170",
+        },
+    }
+    task.update(overrides)
+    return task
+
+
+def _pr_facts(state="OPEN", merge_state="CONFLICTING", head=CONFLICT_HEAD) -> dict:
+    payload = {"state": state, "mergeStateStatus": merge_state, "headRefOid": head}
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def _run_recovery(
+    task,
+    *,
+    ci=("OPEN", "none"),
+    ci_error=None,
+    reads=None,
+    status=None,
+    busy_task_ids=frozenset(),
+    commit_ok=True,
+):
+    """Drive the recovery over one task and report what it did.
+
+    `reads` is the sequence of `gh pr view` answers: a dict is a JSON payload,
+    a str is raw stdout, and None makes `gh` fail. The last entry repeats, so a
+    single-element list means both reads agree.
+    """
+    import github_bus
+
+    cfg = _base_test_config()
+    if status is None:
+        status = {
+            "tasks": [task],
+            "handoffs": [
+                {
+                    "task_id": task["id"],
+                    "from": task.get("owner"),
+                    "to": task.get("reviewer"),
+                    "status": "pending",
+                }
+            ],
+        }
+    # `recover_conflicted_review_prs` resolves supervisor-owned names through
+    # the module scope its entrypoint caller syncs, so sync it here too.
+    dispatch_engine._sync_supervisor_scope()
+
+    remaining = list(reads if reads is not None else [_pr_facts()])
+    gh_calls: list[list[str]] = []
+
+    def fake_run_gh(args, **_kwargs):
+        gh_calls.append(list(args))
+        answer = remaining.pop(0) if len(remaining) > 1 else (remaining[0] if remaining else {})
+        if answer is None:
+            raise github_bus.GitHubBusOffline("gh could not reach api.github.com")
+        stdout = answer if isinstance(answer, str) else json.dumps(answer)
+        return subprocess.CompletedProcess(
+            args=["gh", *args], returncode=0, stdout=stdout, stderr=""
+        )
+
+    def fake_ci(_task_id, *_args, **_kwargs):
+        if ci_error is not None:
+            raise ci_error
+        return ci
+
+    logged: list[dict] = []
+    record = lambda _cfg, event: logged.append(event)  # noqa: E731
+
+    with (
+        mock.patch.object(github_bus, "run_gh", side_effect=fake_run_gh),
+        mock.patch.object(
+            supervisor.runtime_ai_status, "task_pr_ci_status", side_effect=fake_ci
+        ),
+        mock.patch.object(
+            supervisor, "commit_canonical_task_transition", return_value=commit_ok
+        ),
+        mock.patch.object(supervisor, "write_activity_log", side_effect=record),
+        mock.patch.object(dispatch_engine, "write_activity_log", create=True, side_effect=record),
+    ):
+        changed = dispatch_engine.recover_conflicted_review_prs(
+            cfg, status, {"review"}, busy_task_ids=set(busy_task_ids)
+        )
+    return changed, gh_calls, logged, status
+
+
+def test_conflicted_review_with_no_ci_is_returned_to_its_owner() -> None:
+    """#1170's exact shape: OPEN, conflicting, zero checks, waiting forever."""
+    task = _conflicted_review_task()
+
+    changed, gh_calls, logged, status = _run_recovery(task)
+
+    assert changed is True
+    assert task["status"] == "in_progress"
+    # Handed back to the same owner; nothing about the review is rewritten.
+    assert task["owner"] == "Claude"
+    assert task["reviewer"] == "Codex"
+    assert task["acceptance"] == ["the original acceptance must survive recovery"]
+    assert task["review_reopen_count"] == 2
+    assert task["review_churn_reassigned_at_count"] == 2
+    assert task["human_continuation_approval_history"] == [
+        {"approval_id": "hc-1", "status": "consumed"}
+    ]
+    assert task["review_submission"]["remote_sha"] == CONFLICT_HEAD
+    assert task[dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] == CONFLICT_HEAD
+    # The reviewer must not keep holding work that went back to its owner.
+    assert "waiting_for" not in task
+    assert status["handoffs"][0]["status"] == "done"
+    # `next` has to say what an owner must do, not just that something happened.
+    assert "conflicts with its base" in task["next"]
+    assert CONFLICT_HEAD[:8] in task["next"]
+    assert "advance the base" in task["next"]
+    # The transition is the canonical one, entered by its named restricted door,
+    # under the reopen category that review churn deliberately does not count.
+    requeued = [event for event in logged if event["type"] == "ci_repair_requeued"]
+    assert len(requeued) == 1
+    assert requeued[0]["entry"] == "conflicted_review"
+    assert requeued[0]["category"] == "control_plane_recovery"
+    assert requeued[0]["approval_cleared"] is False
+    recovered = [event for event in logged if event["type"] == "review_conflict_ci_recovered"]
+    assert len(recovered) == 1
+    assert recovered[0]["pr_number"] == 1170
+    assert recovered[0]["head"] == CONFLICT_HEAD
+    # Both reads are bound to the task's own repository and PR number: asking
+    # this checkout's origin about #1170 answers about an unrelated PR.
+    assert len(gh_calls) == 2
+    for call in gh_calls:
+        assert call[:3] == ["pr", "view", "1170"]
+        assert call[call.index("--repo") + 1] == CONFLICT_REPO
+
+
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        # Every CI answer other than "GitHub has run nothing here".
+        ("ci_pending", {"ci": ("OPEN", "pending")}),
+        ("ci_success", {"ci": ("OPEN", "success")}),
+        ("ci_failure", {"ci": ("OPEN", "failure")}),
+        ("ci_unknown", {"ci": ("OPEN", "unknown")}),
+        ("ci_unreadable_pr", {"ci": (None, "unknown")}),
+        ("ci_probe_raises", {"ci_error": RuntimeError("gh unreachable")}),
+        # The PR is no longer an open review.
+        ("pr_closed_by_ci_probe", {"ci": ("CLOSED", "none")}),
+        ("pr_closed", {"reads": [_pr_facts(state="CLOSED")]}),
+        ("pr_merged", {"reads": [_pr_facts(state="MERGED")]}),
+        # Merge states that resolve without an owner touching the branch.
+        ("merge_state_clean", {"reads": [_pr_facts(merge_state="CLEAN")]}),
+        ("merge_state_blocked", {"reads": [_pr_facts(merge_state="BLOCKED")]}),
+        ("merge_state_behind", {"reads": [_pr_facts(merge_state="BEHIND")]}),
+        ("merge_state_unknown", {"reads": [_pr_facts(merge_state="UNKNOWN")]}),
+        # GitHub could not be read, or did not answer the whole question.
+        ("gh_offline", {"reads": [None]}),
+        ("gh_malformed_json", {"reads": ["not json"]}),
+        ("gh_empty_payload", {"reads": [{}]}),
+        ("missing_head", {"reads": [_pr_facts(head=None)]}),
+        ("missing_merge_state", {"reads": [_pr_facts(merge_state=None)]}),
+        ("missing_state", {"reads": [_pr_facts(state=None)]}),
+        # The branch moved past what was submitted for review.
+        ("head_drift", {"reads": [_pr_facts(head="b" * 40)]}),
+    ],
+)
+def test_recovery_declines_every_unconfirmable_reading(label: str, kwargs: dict) -> None:
+    """Only facts GitHub states outright may move a review. Otherwise, wait."""
+    task = _conflicted_review_task()
+
+    changed, _gh_calls, logged, status = _run_recovery(task, **kwargs)
+
+    assert changed is False, label
+    assert task["status"] == "review", label
+    assert dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD not in task, label
+    assert task["waiting_for"] == "Codex", label
+    assert status["handoffs"][0]["status"] == "pending", label
+    assert logged == [], label
+
+
+def test_recovery_declines_when_the_facts_change_between_the_two_reads() -> None:
+    """A head that moves, a PR that closes, or a conflict resolved mid-check."""
+    for second_read in (
+        _pr_facts(head="c" * 40),
+        _pr_facts(state="CLOSED"),
+        _pr_facts(merge_state="CLEAN"),
+        None,
+    ):
+        task = _conflicted_review_task()
+
+        changed, gh_calls, _logged, _status = _run_recovery(
+            task, reads=[_pr_facts(), second_read]
+        )
+
+        assert changed is False
+        assert task["status"] == "review"
+        assert dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD not in task
+        assert len(gh_calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("label", "task_overrides", "busy_task_ids"),
+    [
+        ("human_gate_class", {"task_class": "human_gate"}, frozenset()),
+        ("human_required_roles", {"human_required_roles": ["ops"]}, frozenset()),
+        ("pending_human_gate", {"gate_status": "pending_human_review"}, frozenset()),
+        ("non_dispatchable", {"non_dispatchable": True}, frozenset()),
+        ("active_or_pending_worker", {}, frozenset({CONFLICT_TASK_ID})),
+        (
+            "live_helper_lease",
+            {
+                "helper_execution_lease": {
+                    "claimed_by": "Antigravity7",
+                    "lease_expires_at": (
+                        datetime.now(UTC) + timedelta(minutes=20)
+                    ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+            },
+            frozenset(),
+        ),
+        ("frozen_approved_head", {"approved_head": CONFLICT_HEAD}, frozenset()),
+        (
+            "queued_merge_route",
+            {"merge_route": {"head": CONFLICT_HEAD, "route": "queued"}},
+            frozenset(),
+        ),
+        ("unsubmitted_review", {"review_submission": None}, frozenset()),
+        (
+            "submission_head_not_a_sha",
+            {
+                "review_submission": {
+                    "pr_number": 1170,
+                    "branch": f"task/{CONFLICT_TASK_ID}",
+                    "base_branch": "dev",
+                    "remote_sha": "HEAD",
+                }
+            },
+            frozenset(),
+        ),
+        ("already_in_progress", {"status": "in_progress"}, frozenset()),
+        ("already_approved", {"status": "review_approved"}, frozenset()),
+    ],
+)
+def test_recovery_never_acts_on_a_gated_frozen_or_busy_task(
+    label: str, task_overrides: dict, busy_task_ids: frozenset
+) -> None:
+    """These are decided locally, so GitHub is never asked about them at all."""
+    original_status = str(_conflicted_review_task(**task_overrides)["status"])
+    task = _conflicted_review_task(**task_overrides)
+
+    changed, gh_calls, logged, status = _run_recovery(task, busy_task_ids=busy_task_ids)
+
+    assert changed is False, label
+    assert task["status"] == original_status, label
+    assert dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD not in task, label
+    assert status["handoffs"][0]["status"] == "pending", label
+    assert gh_calls == [], label
+    assert logged == [], label
+
+
+def test_recovery_declines_when_the_task_repository_cannot_be_resolved() -> None:
+    """A PR number is only meaningful against a known repository."""
+    task = _conflicted_review_task()
+    task.pop("repository")
+
+    with mock.patch.object(dispatch_engine, "_task_repository_slug", return_value=""):
+        changed, gh_calls, _logged, _status = _run_recovery(task)
+
+    assert changed is False
+    assert task["status"] == "review"
+    assert gh_calls == []
+
+
+def test_repeated_polls_and_restarts_recover_one_head_exactly_once() -> None:
+    """The marker is written by the same commit that moves the status."""
+    task = _conflicted_review_task()
+    status = {
+        "tasks": [task],
+        "handoffs": [
+            {"task_id": CONFLICT_TASK_ID, "from": "Claude", "to": "Codex", "status": "pending"}
+        ],
+    }
+
+    first, _calls, _logged, _status = _run_recovery(task, status=status)
+    assert first is True
+    assert task["status"] == "in_progress"
+
+    # Same tick, polled again: the task is no longer in review.
+    second, second_calls, _logged, _status = _run_recovery(task, status=status)
+    assert second is False
+    assert second_calls == []
+
+    # After a supervisor restart the owner has resubmitted the identical
+    # conflicting head. Bouncing it again would be a loop, not a recovery.
+    resubmitted = _conflicted_review_task(
+        **{
+            dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD: CONFLICT_HEAD,
+        }
+    )
+    third, third_calls, third_logged, _status = _run_recovery(resubmitted)
+    assert third is False
+    assert resubmitted["status"] == "review"
+    assert third_calls == []
+    assert third_logged == []
+
+    # A genuinely new head is a new fact and is recovered on its own merits.
+    advanced_head = "d" * 40
+    advanced = _conflicted_review_task(
+        **{dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD: CONFLICT_HEAD}
+    )
+    advanced["review_submission"]["remote_sha"] = advanced_head
+    fourth, _calls, _logged, _status = _run_recovery(
+        advanced, reads=[_pr_facts(head=advanced_head)]
+    )
+    assert fourth is True
+    assert advanced[dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] == advanced_head
+
+
+def test_a_recovery_that_does_not_persist_leaves_the_head_recoverable() -> None:
+    """Marking a head recovered on a commit that never landed would strand it."""
+    task = _conflicted_review_task()
+
+    changed, _calls, logged, _status = _run_recovery(task, commit_ok=False)
+
+    assert changed is False
+    assert dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD not in task
+    assert logged == []
+
+
+def test_canonical_ci_repair_transition_keeps_its_review_approved_guard() -> None:
+    """The widened guard belongs to the named entry, not to every caller."""
+    cfg = _base_test_config()
+
+    def _requeue(task, **kwargs):
+        status = {"tasks": [task], "handoffs": []}
+        logged: list[dict] = []
+        with (
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(
+                supervisor, "write_activity_log", side_effect=lambda _c, e: logged.append(e)
+            ),
+        ):
+            return supervisor.requeue_task_for_ci_repair(
+                cfg, status, task, message="repair", **kwargs
+            ), logged
+
+    # A review is still refused by every existing caller.
+    task = _conflicted_review_task()
+    changed, logged = _requeue(task, clear_approval=True)
+    assert changed is False
+    assert task["status"] == "review"
+    assert logged == []
+
+    # And the queue-ejection lane is unchanged.
+    approved = _conflicted_review_task(
+        status="review_approved",
+        approved_head=CONFLICT_HEAD,
+        merge_route={"head": CONFLICT_HEAD, "route": "queued"},
+    )
+    changed, logged = _requeue(approved, clear_approval=True)
+    assert changed is True
+    assert approved["status"] == "in_progress"
+    assert "approved_head" not in approved
+    assert "merge_route" not in approved
+    assert logged[0]["entry"] == "review_approved"
+
+
+@pytest.mark.parametrize(
+    ("label", "overrides"),
+    [
+        ("frozen_approved_head", {"approved_head": CONFLICT_HEAD}),
+        ("queued_merge_route", {"merge_route": {"head": CONFLICT_HEAD, "route": "queued"}}),
+        ("unsubmitted_review", {"review_submission": None}),
+        ("human_gate", {"task_class": "human_gate"}),
+        ("non_dispatchable", {"non_dispatchable": True}),
+        ("wrong_status", {"status": "in_progress"}),
+    ],
+)
+def test_named_entry_still_refuses_a_review_it_must_not_move(
+    label: str, overrides: dict
+) -> None:
+    """Even through the restricted door, the transition guards itself."""
+    cfg = _base_test_config()
+    task = _conflicted_review_task(**overrides)
+    original_status = task["status"]
+    status = {"tasks": [task], "handoffs": []}
+
+    with (
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        changed = supervisor.requeue_task_for_ci_repair(
+            cfg,
+            status,
+            task,
+            message="repair",
+            clear_approval=False,
+            allow_conflicted_review=True,
+        )
+
+    assert changed is False, label
+    assert task["status"] == original_status, label
+
+
+def test_dispatch_ready_tasks_recovers_a_conflicted_review_without_a_reviewer_slot() -> None:
+    """The wait is on the reviewer's slot, so the repair must not need one.
+
+    Dispatch runs with only an unrelated agent in the rotation: neither the
+    owner nor the reviewer is considered, nothing is queued, and the recovery
+    still lands - which is the point of it living in the reconciliation stage
+    rather than the per-agent loop.
+    """
+    import github_bus
+
+    cfg = _base_test_config()
+    task = _conflicted_review_task()
+    status = {
+        "tasks": [task],
+        "handoffs": [
+            {"task_id": CONFLICT_TASK_ID, "from": "Claude", "to": "Codex", "status": "pending"}
+        ],
+    }
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    def fake_run_gh(args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["gh", *args], returncode=0, stdout=json.dumps(_pr_facts()), stderr=""
+        )
+
+    with (
+        mock.patch.object(github_bus, "run_gh", side_effect=fake_run_gh),
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "task_pr_ci_status",
+            return_value=("OPEN", "none"),
+        ),
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            dispatch_engine, "task_reality_reconcile_is_due", return_value=False
+        ),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
+
+    assert changed is True
+    assert queued_events == []
+    assert task["status"] == "in_progress"
+    assert task["owner"] == "Claude"
+    assert task[dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] == CONFLICT_HEAD
+    assert status["handoffs"][0]["status"] == "done"

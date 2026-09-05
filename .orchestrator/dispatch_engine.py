@@ -13,6 +13,7 @@ from dispatch_policy import (
     task_priority_rank,
     worker_logical_dispatch_agent_id,
 )
+from worker_failure_policy import owner_preference_ranks
 
 
 def _supervisor_module():
@@ -79,6 +80,21 @@ MERGE_ROUTE_MAX_ATTEMPTS = 4
 #: cadence rather than every tick. Drift is measured in hours, not seconds.
 TASK_REALITY_RECONCILE_INTERVAL_SECONDS = 900.0
 
+#: Records the exact submitted head a conflicted-review recovery already acted
+#: on. Written by the same canonical commit that moves the status, so repeated
+#: polls and supervisor restarts recover one head exactly once.
+REVIEW_CONFLICT_RECOVERY_HEAD_FIELD = "review_conflict_recovery_head"
+
+#: GitHub stating outright that a head cannot be merged because it conflicts
+#: with its base. Deliberately not BLOCKED, BEHIND or UNKNOWN: those describe a
+#: PR that later events resolve without an owner touching the branch.
+PR_CONFLICT_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
+
+#: The single PR read the conflicted-review recovery is allowed to act on.
+_REVIEW_CONFLICT_PR_JSON_FIELDS = "state,mergeStateStatus,headRefOid"
+
+_MARKER_UNSET = object()
+
 
 def _pr_changed_paths(pr_number: int) -> list[str] | None:
     """Return the repository paths a PR touches, or None if GitHub cannot say."""
@@ -121,6 +137,54 @@ def _pr_merge_state(pr_number: int) -> str | None:
     except ValueError:
         return None
     return str(payload.get("mergeStateStatus") or "").strip().upper() or None
+
+
+def _review_pr_facts(slug: str, pr_number: int) -> tuple[str, str, str] | None:
+    """`(state, mergeStateStatus, headRefOid)` for a PR, or None when unreadable.
+
+    Bound to the repository the task declares rather than this checkout's
+    `origin`: `gh pr view 6` run from the wrong checkout answers about an
+    unrelated PR number, and a confident wrong answer is worse here than none.
+
+    The three facts come from one read so they describe one moment. Asked twice
+    around a CI verdict they are also the caller's race check: a head that
+    moved, a PR that closed, or a conflict that was resolved all show up as a
+    changed tuple.
+    """
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    if not slug or "/" not in slug or pr_number <= 0:
+        return None
+    try:
+        proc = run_gh(
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                slug,
+                "--json",
+                _REVIEW_CONFLICT_PR_JSON_FIELDS,
+            ]
+        )
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    state = str(payload.get("state") or "").strip().upper()
+    merge_state = str(payload.get("mergeStateStatus") or "").strip().upper()
+    head = str(payload.get("headRefOid") or "").strip().lower()
+    if not state or not merge_state or not head:
+        # A partial answer is an unreadable one. Treating a missing
+        # `mergeStateStatus` as "not conflicting" would be a guess either way.
+        return None
+    return state, merge_state, head
 
 
 def _remote_branch_names() -> set[str] | None:
@@ -615,6 +679,141 @@ def advance_approved_prs_to_merge(
     return changed
 
 
+def recover_conflicted_review_prs(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    review_statuses: set[str],
+    *,
+    busy_task_ids: set[str],
+) -> bool:
+    """Return a review whose PR GitHub will never check back to its owner.
+
+    A PR that conflicts with its base has no merge commit, so no workflow ever
+    starts on that head: check-runs, check-suites and Actions runs are all zero
+    and `task_pr_ci_status` answers `none` indefinitely. Reviewer dispatch
+    requires terminal CI success on the exact submitted head, so the task waits
+    for a check that cannot arrive. #1170 sat that way at head 847d4984.
+
+    The queue-ejection repair is this same failure one step later in the lane
+    and only accepts `review_approved`, so nothing covered a review. This runs
+    in the reconciliation stage rather than the per-agent loop, because the task
+    is waiting on the reviewer's slot and must not be gated by it.
+
+    Only the owner can advance a base, and a wrong recovery discards a real
+    review, so this repairs only what GitHub states outright: an OPEN PR at
+    exactly the submitted head, called conflicting, with no check on that head.
+    Anything unreadable, drifting, pending, or already closed keeps waiting.
+    """
+    changed = False
+    for task in list(status.get("tasks", []) or []):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if not task_id or task_id in busy_task_ids:
+            continue
+        if str(task.get("status") or "").strip().lower() not in review_statuses:
+            continue
+        # Human gates and non-dispatchable tasks are never handed to an owner by
+        # the control plane; the transition refuses them too, but asking GitHub
+        # about them first would be a probe with no reachable outcome.
+        if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+            continue
+        # An approved or queued head is frozen, and a live helper lease means
+        # someone already holds this branch.
+        if task.get("approved_head") or task.get("merge_route") is not None:
+            continue
+        if helper_claim_is_live(task.get("helper_execution_lease")):
+            continue
+        # A review with no verified remote PR belongs to
+        # `repair_unsubmitted_review_tasks`; without that provenance there is no
+        # PR number or submitted head worth asking GitHub about.
+        if not review_submission_is_complete(config, task):
+            continue
+        submission = task.get("review_submission") or {}
+        submitted_sha = str(submission.get("remote_sha") or "").strip().lower()
+        try:
+            pr_number = int(submission.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pr_number <= 0 or not submitted_sha:
+            continue
+        # One recovery per head. Repeated polls and supervisor restarts see the
+        # marker the transition's own commit persisted; an owner who resubmits
+        # the identical conflicting head is not bounced a second time.
+        if str(task.get(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD) or "").strip().lower() == submitted_sha:
+            continue
+        slug = _task_repository_slug(config, task)
+        if not slug:
+            continue
+
+        # Cheapest disqualifier first, and through the canonical CI reader so
+        # there is one spelling of "what is CI saying". Any answer other than
+        # "GitHub has run nothing here" - success, failure, pending, or the
+        # `unknown` that means `gh` could not answer - ends this lane's business.
+        try:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        except Exception:
+            continue
+        if ci_status != "none" or str(pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        before = _review_pr_facts(slug, pr_number)
+        if before is None:
+            continue
+        state, merge_state, head = before
+        if state != "OPEN" or merge_state not in PR_CONFLICT_MERGE_STATES:
+            continue
+        if head != submitted_sha:
+            # Head drift: the branch has moved past what was reviewed, and what
+            # GitHub is describing is not the submission this task recorded.
+            continue
+        # Read again. Between the CI verdict and here the owner may have pushed,
+        # the PR may have closed, or the conflict may have been resolved and the
+        # checks started. Acting on a fact that has already changed is how a
+        # repair becomes a corruption, so an unstable read keeps waiting.
+        if _review_pr_facts(slug, pr_number) != before:
+            continue
+
+        message = (
+            f"Review PR #{pr_number} for task {task_id} conflicts with its base "
+            f"({merge_state.lower()}), so GitHub has run no check on the submitted head "
+            f"{submitted_sha[:8]} and review readiness can never resolve. Returned to the "
+            "owner to advance the base, resolve the conflict, and resubmit the same PR "
+            "for an independent review."
+        )
+        previous_marker = task.get(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, _MARKER_UNSET)
+        task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = submitted_sha
+        if not requeue_task_for_ci_repair(
+            config,
+            status,
+            task,
+            message=message,
+            clear_approval=False,
+            allow_conflicted_review=True,
+        ):
+            # Refused, or the canonical commit did not land. The marker is only
+            # true once that commit persisted it; leaving it behind would make
+            # this head permanently unrecoverable.
+            if previous_marker is _MARKER_UNSET:
+                task.pop(REVIEW_CONFLICT_RECOVERY_HEAD_FIELD, None)
+            else:
+                task[REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] = previous_marker
+            continue
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "review_conflict_ci_recovered",
+                "task_id": task_id,
+                "pr_number": pr_number,
+                "head": submitted_sha,
+                "merge_state": merge_state,
+                "message": message,
+            },
+        )
+    return changed
+
+
 @_entrypoint
 
 def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -726,8 +925,6 @@ def is_task_review_dispatch_eligible(
         return False
     if task.get("approved_head"):
         return False
-    if task.get("merge_route"):
-        return False
     schema = config.get("schema", {})
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
@@ -750,6 +947,18 @@ def is_task_review_dispatch_eligible(
     submitted_sha = str(submission.get("remote_sha") or "").strip()
     if not submitted_sha:
         return False
+
+    # Merge route on current submitted head suppresses redundant review dispatch.
+    # Stale merge route records from prior/repaired heads must not block new head review.
+    # Malformed/unknown route metadata or routes missing an explicit head fail closed.
+    route = task.get("merge_route")
+    if route is not None:
+        if isinstance(route, dict):
+            route_head = str(route.get("head") or "").strip()
+            if not route_head or route_head == submitted_sha:
+                return False
+        else:
+            return False
 
     task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
     try:
@@ -1063,7 +1272,20 @@ def reassign_unavailable_reviewers(
 
         replacement = ""
         replacement_id = ""
-        for candidate_id in candidate_agent_ids:
+        # The owner branch picks the first candidate that survives the filters
+        # below, so its ordering *is* its preference. Rank it through the same
+        # policy the reassignment selector uses instead of growing a second one;
+        # the sort is stable, so within a rank the configured dispatch order is
+        # untouched, and the reviewer branch keeps its existing ordering.
+        candidate_sequence = candidate_agent_ids
+        if claimed_role == "owner":
+            owner_ranks = owner_preference_ranks(
+                config, candidate_agent_ids, state=state, task=task, role="owner"
+            )
+            candidate_sequence = sorted(
+                candidate_agent_ids, key=lambda agent_id: owner_ranks.get(agent_id, 1)
+            )
+        for candidate_id in candidate_sequence:
             candidate = display_name_for(config, candidate_id)
             candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
             owner_for_independence = candidate if claimed_role == "owner" else counterpart
@@ -1906,6 +2128,20 @@ def dispatch_ready_tasks(
             task_map = {task.get(task_id_field): task for task in tasks}
 
     if advance_approved_prs_to_merge(config, status, finalize_statuses):
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
+    # Same stage, and deliberately not the per-agent loop below: the task this
+    # recovers is waiting on its reviewer's slot, so gating it by that slot
+    # would make the wait its own cause.
+    if recover_conflicted_review_prs(
+        config,
+        status,
+        review_statuses,
+        busy_task_ids=active_task_ids | pending_task_ids,
+    ):
         changed = True
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
