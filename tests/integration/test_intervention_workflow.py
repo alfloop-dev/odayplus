@@ -43,7 +43,10 @@ from modules.intervention import (
 from shared.auth import Role
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 from shared.infrastructure.persistence.engine import SqliteEngine
-from shared.infrastructure.persistence.repositories import DurableInterventionRepository
+from shared.infrastructure.persistence.repositories import (
+    _INTERVENTION_UPSERT_SQL,
+    DurableInterventionRepository,
+)
 from tests.integration._authz import INTERVENTION_HEADERS, auth_headers
 
 START = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
@@ -1906,6 +1909,38 @@ def test_durable_intervention_repository_fails_closed_without_relational_schema(
     case = _open_case(InterventionWorkflow(repository=InMemoryInterventionRepository()))
 
     with pytest.raises(RuntimeError, match="schema is missing table 'interventions'"):
+        repo.save(case)
+
+    assert repo.get(case.intervention_id) is None
+
+
+def test_intervention_upsert_statements_are_literal_and_allowlisted() -> None:
+    """The relational upsert must never interpolate a table identifier into SQL.
+
+    Each dialect-selected relation carries its own literal statement, so a table
+    name can only reach the database by being one of the two allowed keys.
+    """
+    assert set(_INTERVENTION_UPSERT_SQL) == {"interventions", "operations.interventions"}
+    for table, statement in _INTERVENTION_UPSERT_SQL.items():
+        assert statement.startswith(f"INSERT INTO {table} (")
+        # Values are bound, never formatted in.
+        assert "{" not in statement and "%s" not in statement
+        assert statement.count("?") == 15
+
+
+def test_durable_intervention_repository_fails_closed_for_unallowlisted_table(
+    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relation outside the allowlist has no statement and must not be composed."""
+    engine = SqliteEngine(tmp_path / "unallowlisted_intervention_table.db")
+    _seed_store(engine, store_id="store-durable-1")
+    repo = DurableInterventionRepository(SqliteDocumentStore(engine))
+    monkeypatch.setattr(
+        type(repo), "table", property(lambda self: "interventions_shadow")
+    )
+    case = _open_case(InterventionWorkflow(repository=InMemoryInterventionRepository()))
+
+    with pytest.raises(RuntimeError, match="no statement for table 'interventions_shadow'"):
         repo.save(case)
 
     assert repo.get(case.intervention_id) is None

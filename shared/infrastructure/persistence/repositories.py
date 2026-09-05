@@ -491,6 +491,64 @@ class DurableAdLiftRepository:
         return self._store.list_by_group(self._C, campaign_id)
 
 
+# ``operations.interventions`` (PostgreSQL) and ``interventions`` (SQLite) are the
+# only relations this repository is allowed to write.  The upsert for each one is
+# held here as a fully literal statement keyed by that identifier, so the table
+# name is never interpolated into SQL and every bound value stays a parameter.
+# An identifier outside this map has no statement and fails closed rather than
+# being composed into a query.
+_INTERVENTION_UPSERT_SQL: dict[str, str] = {
+    "interventions": (
+        "INSERT INTO interventions ("
+        "  intervention_id, store_id, intervention_type, eligibility_status, "
+        "  action_set_json, approved_action_json, start_time, end_time, "
+        "  observation_start_time, observation_end_time, status, "
+        "  predecessor_id, replacement_id, adjustment_json, "
+        "  created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(intervention_id) DO UPDATE SET "
+        "  store_id = excluded.store_id, "
+        "  intervention_type = excluded.intervention_type, "
+        "  eligibility_status = excluded.eligibility_status, "
+        "  action_set_json = excluded.action_set_json, "
+        "  approved_action_json = excluded.approved_action_json, "
+        "  start_time = excluded.start_time, "
+        "  end_time = excluded.end_time, "
+        "  observation_start_time = excluded.observation_start_time, "
+        "  observation_end_time = excluded.observation_end_time, "
+        "  status = excluded.status, "
+        "  predecessor_id = excluded.predecessor_id, "
+        "  replacement_id = excluded.replacement_id, "
+        "  adjustment_json = excluded.adjustment_json, "
+        "  updated_at = CURRENT_TIMESTAMP"
+    ),
+    "operations.interventions": (
+        "INSERT INTO operations.interventions ("
+        "  intervention_id, store_id, intervention_type, eligibility_status, "
+        "  action_set_json, approved_action_json, start_time, end_time, "
+        "  observation_start_time, observation_end_time, status, "
+        "  predecessor_id, replacement_id, adjustment_json, "
+        "  created_at, updated_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
+        "ON CONFLICT(intervention_id) DO UPDATE SET "
+        "  store_id = excluded.store_id, "
+        "  intervention_type = excluded.intervention_type, "
+        "  eligibility_status = excluded.eligibility_status, "
+        "  action_set_json = excluded.action_set_json, "
+        "  approved_action_json = excluded.approved_action_json, "
+        "  start_time = excluded.start_time, "
+        "  end_time = excluded.end_time, "
+        "  observation_start_time = excluded.observation_start_time, "
+        "  observation_end_time = excluded.observation_end_time, "
+        "  status = excluded.status, "
+        "  predecessor_id = excluded.predecessor_id, "
+        "  replacement_id = excluded.replacement_id, "
+        "  adjustment_json = excluded.adjustment_json, "
+        "  updated_at = CURRENT_TIMESTAMP"
+    ),
+}
+
+
 class DurableInterventionRepository:
     """Durable mirror of ``InMemoryInterventionRepository`` with migration-backed relational persistence."""
 
@@ -508,6 +566,12 @@ class DurableInterventionRepository:
     def _sync_sql(self, intervention: Intervention) -> None:
         engine = self._store.engine
         table = self.table
+        statement = _INTERVENTION_UPSERT_SQL.get(table)
+        if statement is None:
+            raise RuntimeError(
+                f"intervention relational persistence has no statement for table {table!r}"
+            )
+
         if str(getattr(engine, "dialect", "")).lower() == "postgresql":
             row = engine.query_one("SELECT to_regclass(?) AS regclass", (table,))
             if not row or not row.get("regclass"):
@@ -550,28 +614,7 @@ class DurableInterventionRepository:
         )
 
         engine.execute(
-            f"INSERT INTO {table} ("
-            "  intervention_id, store_id, intervention_type, eligibility_status, "
-            "  action_set_json, approved_action_json, start_time, end_time, "
-            "  observation_start_time, observation_end_time, status, "
-            "  predecessor_id, replacement_id, adjustment_json, "
-            "  created_at, updated_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP) "
-            "ON CONFLICT(intervention_id) DO UPDATE SET "
-            "  store_id = excluded.store_id, "
-            "  intervention_type = excluded.intervention_type, "
-            "  eligibility_status = excluded.eligibility_status, "
-            "  action_set_json = excluded.action_set_json, "
-            "  approved_action_json = excluded.approved_action_json, "
-            "  start_time = excluded.start_time, "
-            "  end_time = excluded.end_time, "
-            "  observation_start_time = excluded.observation_start_time, "
-            "  observation_end_time = excluded.observation_end_time, "
-            "  status = excluded.status, "
-            "  predecessor_id = excluded.predecessor_id, "
-            "  replacement_id = excluded.replacement_id, "
-            "  adjustment_json = excluded.adjustment_json, "
-            "  updated_at = CURRENT_TIMESTAMP",
+            statement,
             (
                 intervention.intervention_id,
                 intervention.store_id,
