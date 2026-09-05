@@ -198,5 +198,43 @@ Stamped baseline fixture（`tests/integration/test_official_real_estate_postgres
 - `tests/integration/test_heatzone_composition_api.py`：
   - `test_approve_refuses_partial_replacement_of_active_multi_cell_zone`（API 端點核准部分替換提案回傳 422，原有拓樸完好無損）。
 
+---
+
+## 10. 審查回應與空間歸屬／鄰接圖分母防護（Round 10）
+
+針對第十輪審查（Codex: Store-to-cell attribution & demand baseline provenance in HZ-004 recording; spatial contiguity denominator & durable adjacency graph）處置如下：
+
+### 10.1 Base Advance 與歷史完整性
+- 依正常工作流程將 `origin/dev`（`74530caf5bbf`）乾淨合併至本任務分支（Commit 包含必要之 trailers：`LLM-Agent: Antigravity2`, `Task-ID: ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001`, `Reviewer: Codex`），完全保留歷史。
+
+### 10.2 店鋪空間歸屬與需求基準來源權威校驗（HZ-004 吸收實績寫入）
+1. **店鋪－單元歸屬校驗（Store-to-Cell Attribution）**：
+   - 於 `apps/api/oday_api/routes/heatzone.py` 之 `record_heatzone_absorption_outcome` 路由中，對請求中之每個 `store_id` 透過權威 `MarketDataFacade.get_store_reference()` 查詢其經緯度地理座標。
+   - 比對店鋪座標所計算之 H3 索引（解析度由註冊空間單元 `h3_index` 決定）是否與目標 cell 之 `h3_index` 完全吻合。
+   - 若店鋪座標落於其他單元（例如拿台北店鋪冒充高雄單元實績），拒絕寫入並回傳 `422 HZ004_STORE_CELL_MISMATCH`；若店鋪無發布之地理座標，回傳 `422 HZ004_INPUT_REFUSED`。
+2. **需求基準來源校驗（Demand Baseline Provenance）**：
+   - 透過 `MarketDataFacade.get_market_cell_profile()` 查詢目標單元在該期間之權威發布契約 `emgi.market-cell-profile.v1`，確保租戶隔離與發布事實。
+   - 若查無對應之權威空間單元剖面資料，立即回傳 `422 HZ004_DEMAND_BASELINE_NOT_FOUND`。
+   - 若發布之剖面 metadata 含有 `original_demand` 或 `baseline_demand`，比對請求之 `original_demand` 是否與權威發布基準一致；若不一致（例如客戶端造假膨脹基準），回傳 `422 HZ004_INPUT_REFUSED`。
+3. **測試保證**：
+   - `tests/integration/test_heatzone_composition_api.py`：
+     - `test_recording_outcome_refuses_when_store_belongs_to_different_cell`（跨單元店鋪實績遭 422 拒絕）。
+     - `test_recording_outcome_refuses_when_demand_baseline_not_published`（未發布需求基準之期間遭 422 拒絕）。
+     - `test_recording_outcome_refuses_when_original_demand_disagrees_with_published_baseline`（需求基準不符遭 422 拒絕）。
+
+### 10.3 空間連通率（Spatial Contiguity Ratio）真實分母與 Durable 鄰接圖
+1. **持久層鄰接圖完整保留**：
+   - 先前 `DurableMergeSplitEvidenceRepository.list_adjacency()` 將邊過濾為「兩端點皆有實績記錄」之邊，導致未觀測之鄰近單元被剔除，使計算出來之空間連通率 $observed / |graph\_cells|$ 虛假飽和為 100%。
+   - 修正為：以租戶目標區域單元為基準查詢權威鄰接圖（`cell_id IN (...) OR neighbor_cell_id IN (...)`），完整保留目標區域內所有相鄰邊。
+   - `list_cells()` 亦如實回傳包含無實績之鄰近單元（以空 outcomes series 表示）。
+2. **未觀測單元拉低連通率並 Fail-Closed**：
+   - 當目標區域中存在未被觀測到實績的相鄰單元時，空間連通率如實下降；若低於門檻（0.80），評估引擎的 readiness gate 判定 `eligible=False`，評估結果明確棄權（`abstained=True`，理由含 `spatial_contiguity_insufficient`），杜絕在邊界資訊不足時盲目合併。
+3. **架構宣告與邊界清晰**：
+   - 鄰接資料生產端（adjacency producer / pipeline / scheduler）尚未隨本任務交付；持久層拆分路徑在缺少受信任地理障礙證據前，依舊維持嚴格 fail-closed，未捏造任何無契約支撐的排程或品質閘門。
+4. **測試保證**：
+   - `tests/models/test_heatzone_merge_split.py`：
+     - `test_durable_evidence_repository_calculates_true_spatial_contiguity_and_abstains_when_incomplete`（包含無實績之真實相鄰單元時，連通率下降且評估引擎棄權）。
+
+
 
 

@@ -4067,17 +4067,82 @@ class DurableMergeSplitEvidenceRepository:
         )
         return [self._row_to_outcome(row) for row in rows]
 
+    def get_cell(self, tenant_id: str, cell_id: str) -> Any | None:
+        from modules.heatzone.infrastructure.absorption_evidence_repository import CellRegistration
+
+        row = self._engine.query_one(
+            f"SELECT geo_cell_id, h3_index, admin_city, admin_district "  # nosec B608 -- fixed dialect-selected relation; values are bound
+            f"FROM {self.table_cells} WHERE geo_cell_id = ?",
+            (cell_id,),
+        )
+        if not row:
+            return None
+        rec = dict(row)
+        return CellRegistration(
+            cell_id=str(rec["geo_cell_id"]),
+            h3_index=str(rec.get("h3_index") or ""),
+            admin_city=str(rec.get("admin_city") or ""),
+            admin_district=str(rec.get("admin_district") or ""),
+        )
+
+    def _get_tenant_target_cell_ids(self, tenant_id: str) -> set[str]:
+        target_cells: set[str] = set()
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT geo_cell_id FROM {self.table_outcomes} WHERE tenant_id = ?",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["geo_cell_id"]))
+        except Exception:
+            pass
+
+        comp_table = (
+            "expansion.heatzone_composition"
+            if self._is_postgres
+            else "heatzone_composition"
+        )
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT member_cell_id FROM {comp_table} WHERE tenant_id = ? AND reverted_at IS NULL",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["member_cell_id"]))
+        except Exception:
+            pass
+
+        scores_table = (
+            "expansion.heatzone_scores"
+            if self._is_postgres
+            else "heatzone_scores"
+        )
+        try:
+            rows = self._engine.query(
+                f"SELECT DISTINCT geo_cell_id FROM {scores_table} WHERE tenant_id = ?",  # nosec B608
+                (tenant_id,),
+            )
+            for r in rows:
+                target_cells.add(str(r["geo_cell_id"]))
+        except Exception:
+            pass
+
+        return target_cells
+
     def list_cells(self, tenant_id: str) -> list[CellOutcomeSeries]:
-        outcomes = self.list_absorption_outcomes(tenant_id)
-        cell_ids = sorted({outcome.cell_id for outcome in outcomes})
-        if not cell_ids:
+        target_cells = self._get_tenant_target_cell_ids(tenant_id)
+        adjacency_edges = self.list_adjacency(tenant_id)
+        graph_cells = {cell for edge in adjacency_edges for cell in edge}
+        all_cell_ids = sorted(target_cells | graph_cells)
+        if not all_cell_ids:
             return []
 
-        placeholders = ", ".join("?" for _ in cell_ids)
+        outcomes = self.list_absorption_outcomes(tenant_id)
+        placeholders = ", ".join("?" for _ in all_cell_ids)
         rows = self._engine.query(
             f"SELECT geo_cell_id, h3_index, admin_city, admin_district "  # nosec B608 -- fixed dialect-selected relation; values are bound
             f"FROM {self.table_cells} WHERE geo_cell_id IN ({placeholders})",
-            tuple(cell_ids),
+            tuple(all_cell_ids),
         )
         identities = {}
         for row in rows:
@@ -4096,7 +4161,7 @@ class DurableMergeSplitEvidenceRepository:
             bucket.setdefault(outcome.cell_id, []).append(outcome)
 
         series: list[CellOutcomeSeries] = []
-        for cell_id in cell_ids:
+        for cell_id in all_cell_ids:
             # A cell the geo registry does not know is dropped rather than
             # defaulted: without its admin identity the cross-boundary rule
             # cannot be applied, and merging across it would be a guess.
@@ -4124,23 +4189,22 @@ class DurableMergeSplitEvidenceRepository:
         return series
 
     def list_adjacency(self, tenant_id: str) -> list[tuple[str, str]]:
-        observed = {
-            outcome.cell_id for outcome in self.list_absorption_outcomes(tenant_id)
-        }
-        if not observed:
+        target_cells = self._get_tenant_target_cell_ids(tenant_id)
+        if not target_cells:
             return []
+        placeholders = ", ".join("?" for _ in target_cells)
         rows = self._engine.query(
-            f"SELECT cell_id, neighbor_cell_id FROM {self.table_adjacency}", ()  # nosec B608
+            f"SELECT cell_id, neighbor_cell_id FROM {self.table_adjacency} "  # nosec B608
+            f"WHERE cell_id IN ({placeholders}) OR neighbor_cell_id IN ({placeholders})",
+            (*target_cells, *target_cells),
         )
         edges: set[tuple[str, str]] = set()
         for row in rows:
             left = str(row["cell_id"])
             right = str(row["neighbor_cell_id"])
-            # Adjacency is geographic and untenanted; scoping it to the cells
-            # this tenant has outcomes for keeps one tenant's graph from
-            # widening another's candidate set.
-            if left in observed and right in observed:
-                edges.add((left, right) if left <= right else (right, left))
+            # Adjacency is geographic and tenant-scoped to target region;
+            # candidate pairs will be filtered when evaluating co-movement.
+            edges.add((left, right) if left <= right else (right, left))
         return sorted(edges)
 
 

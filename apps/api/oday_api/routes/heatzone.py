@@ -12,6 +12,10 @@ from models.shared_ml import (
     production_model_execution_required,
     require_live_inputs,
 )
+from modules.external_data.application.market_data_facade import (
+    MarketDataAuthorizationError,
+    MarketDataNotFoundError,
+)
 from modules.heatzone.application.absorption_inputs import (
     AbsorptionInputError,
     assemble_zone_absorption,
@@ -922,6 +926,170 @@ else:
                 except Exception:
                     principal = None
 
+            evidence_repo = evidence_repo_for_request(request)
+            registered_cell = None
+            if evidence_repo is not None and hasattr(evidence_repo, "get_cell"):
+                registered_cell = evidence_repo.get_cell(tid, body.cell_id)
+
+            if registered_cell is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "HZ004_UNREGISTERED_CELL",
+                        "message": (
+                            f"cell '{body.cell_id}' is not a registered geo cell for tenant "
+                            f"'{tid}'; HZ-004 outcomes attach to cells the geo pipeline "
+                            "published, not to identifiers a caller invents"
+                        ),
+                    },
+                )
+
+            target_barrier_side = body.barrier_side
+            target_barrier_desc = body.barrier_description
+
+            reg_side = getattr(registered_cell, "barrier_side", None)
+            reg_desc = getattr(registered_cell, "barrier_description", "") or ""
+            if reg_side is None:
+                if target_barrier_side is not None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_BARRIER_UNBACKED",
+                            "message": f"Cell '{body.cell_id}' has no registered geo barrier; side-labelled outcomes require trusted geo evidence",
+                        },
+                    )
+            else:
+                if target_barrier_side is not None and target_barrier_side != reg_side:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_BARRIER_UNBACKED",
+                            "message": f"Supplied barrier side '{target_barrier_side}' does not match registered geo barrier '{reg_side}'",
+                        },
+                    )
+                target_barrier_side = reg_side
+                target_barrier_desc = reg_desc or target_barrier_desc
+
+            import h3
+            from packages.oday_data_product_contracts_client.models.market_cell_profile import (
+                PeriodGrain,
+            )
+
+            # Validate store-to-cell attribution against authoritative StoreReference
+            for s_id in body.store_ids:
+                try:
+                    store_ref = facade.get_store_reference(s_id, principal=principal)
+                except MarketDataAuthorizationError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "HZ004_SOURCE_UNAUTHORIZED",
+                            "message": f"Principal is not authorized to read market data sources: {exc}",
+                        },
+                    ) from exc
+                except (MarketDataNotFoundError, Exception) as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_SOURCE_NOT_FOUND",
+                            "message": f"Store reference not found for store '{s_id}': {exc}",
+                        },
+                    ) from exc
+
+                if store_ref.geolocation is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_INPUT_REFUSED",
+                            "message": f"Store '{s_id}' has no published geolocation; cannot verify store-to-cell attribution",
+                        },
+                    )
+
+                reg_h3 = getattr(registered_cell, "h3_index", "") or ""
+                if h3.is_valid_cell(reg_h3):
+                    res = h3.get_resolution(reg_h3)
+                    store_h3 = h3.latlng_to_cell(
+                        store_ref.geolocation.latitude,
+                        store_ref.geolocation.longitude,
+                        res,
+                    )
+                    if store_h3 != reg_h3:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "code": "HZ004_STORE_CELL_MISMATCH",
+                                "message": (
+                                    f"Store '{s_id}' (h3={store_h3}) does not belong to "
+                                    f"target cell '{body.cell_id}' ({reg_h3})"
+                                ),
+                            },
+                        )
+
+            # Validate cell-period demand baseline and provenance against authoritative MarketCellProfile
+            period_key = f"{period_start.year:04d}-{period_start.month:02d}"
+            try:
+                cell_profile = facade.get_market_cell_profile(
+                    cell_id=body.cell_id,
+                    period_grain=PeriodGrain.MONTHLY,
+                    period_key=period_key,
+                    tenant_id=tid,
+                    principal=principal,
+                )
+            except MarketDataAuthorizationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "HZ004_SOURCE_UNAUTHORIZED",
+                        "message": f"Principal is not authorized to read market cell profile: {exc}",
+                    },
+                ) from exc
+            except (MarketDataNotFoundError, Exception):
+                try:
+                    cell_profile = facade.get_market_cell_profile(
+                        cell_id=registered_cell.h3_index,
+                        period_grain=PeriodGrain.MONTHLY,
+                        period_key=period_key,
+                        tenant_id=tid,
+                        principal=principal,
+                    )
+                except MarketDataAuthorizationError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "HZ004_SOURCE_UNAUTHORIZED",
+                            "message": f"Principal is not authorized to read market cell profile: {exc}",
+                        },
+                    ) from exc
+                except (MarketDataNotFoundError, Exception) as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "code": "HZ004_DEMAND_BASELINE_NOT_FOUND",
+                            "message": f"Published market cell profile / demand baseline not found for cell '{body.cell_id}' in period '{period_key}': {exc}",
+                        },
+                    ) from exc
+
+            expected_demand = None
+            if cell_profile.metadata and (
+                "original_demand" in cell_profile.metadata
+                or "baseline_demand" in cell_profile.metadata
+            ):
+                expected_demand = float(
+                    cell_profile.metadata.get("original_demand")
+                    or cell_profile.metadata.get("baseline_demand")
+                )
+            if expected_demand is not None and abs(body.original_demand - expected_demand) > 1e-4:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={
+                        "code": "HZ004_INPUT_REFUSED",
+                        "message": (
+                            f"Supplied original_demand ({body.original_demand}) does not match "
+                            f"published demand baseline ({expected_demand}) for cell '{body.cell_id}'"
+                        ),
+                    },
+                )
+
             p_start = period_start
             p_end = period_end
             dates_in_period = [
@@ -931,11 +1099,6 @@ else:
 
             server_perfs: list[dict[str, Any]] = []
             server_op_starts: list[dict[str, Any]] = []
-
-            from modules.external_data.application.market_data_facade import (
-                MarketDataAuthorizationError,
-                MarketDataNotFoundError,
-            )
 
             try:
                 for s_id in body.store_ids:
@@ -1057,47 +1220,6 @@ else:
                         ),
                     },
                 )
-
-            evidence_repo = evidence_repo_for_request(request)
-            registered_cell = None
-            if evidence_repo is not None and hasattr(evidence_repo, "get_cell"):
-                registered_cell = evidence_repo.get_cell(tid, body.cell_id)
-
-            target_barrier_side = body.barrier_side
-            target_barrier_desc = body.barrier_description
-
-            if registered_cell is not None:
-                reg_side = getattr(registered_cell, "barrier_side", None)
-                reg_desc = getattr(registered_cell, "barrier_description", "") or ""
-                if reg_side is None:
-                    if target_barrier_side is not None:
-                        raise HTTPException(
-                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail={
-                                "code": "HZ004_BARRIER_UNBACKED",
-                                "message": f"Cell '{body.cell_id}' has no registered geo barrier; side-labelled outcomes require trusted geo evidence",
-                            },
-                        )
-                else:
-                    if target_barrier_side is not None and target_barrier_side != reg_side:
-                        raise HTTPException(
-                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail={
-                                "code": "HZ004_BARRIER_UNBACKED",
-                                "message": f"Supplied barrier side '{target_barrier_side}' does not match registered geo barrier '{reg_side}'",
-                            },
-                        )
-                    target_barrier_side = reg_side
-                    target_barrier_desc = reg_desc or target_barrier_desc
-            else:
-                if target_barrier_side is not None:
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail={
-                            "code": "HZ004_BARRIER_UNBACKED",
-                            "message": f"Cannot record side-labelled outcome for cell '{body.cell_id}' without trusted geo registration",
-                        },
-                    )
 
             try:
                 recorded = record_absorption_outcome(

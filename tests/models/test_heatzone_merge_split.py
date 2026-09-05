@@ -722,6 +722,62 @@ def test_durable_evidence_repository_refuses_split_when_cells_lack_barrier_sides
     )
 
 
+def test_durable_evidence_repository_calculates_true_spatial_contiguity_and_abstains_when_incomplete(
+    tmp_path,
+) -> None:
+    """When adjacent neighbor cells in the authoritative graph lack absorption outcomes,
+    spatial_contiguity_ratio drops below the threshold and evaluation abstains fail-closed."""
+    from shared.infrastructure.persistence.repositories import (
+        DurableMergeSplitEvidenceRepository,
+    )
+    from tests.integration._heatzone_evidence import build_evidence_repository
+
+    engine = SqliteEngine(tmp_path / "contiguity.sqlite3")
+    durable = DurableMergeSplitEvidenceRepository(engine)
+    reference = build_evidence_repository()
+    _populate_durable_sqlite_evidence(engine, reference)
+
+    # Insert 10 additional adjacent cells in the geographic registry connected to MERGE_LEFT
+    # but with NO outcomes recorded for them (30 / 40 = 0.75 < 0.80 threshold).
+    unobserved_neighbors = [f"cell-neighbor-{i}" for i in range(10)]
+    for i, cell_id in enumerate(unobserved_neighbors):
+        engine.execute(
+            "INSERT INTO h3_cells (geo_cell_id, h3_index, centroid_latitude, "
+            "centroid_longitude, admin_city, admin_district) "
+            "VALUES (?, ?, 25.03, 121.56, 'Taipei', 'Xinyi')",
+            (cell_id, f"894ba0a4e7{i:02d}ffff"),
+        )
+        left, right = min(MERGE_LEFT, cell_id), max(MERGE_LEFT, cell_id)
+        engine.execute(
+            "INSERT INTO h3_cell_adjacency (adjacency_id, cell_id, neighbor_cell_id, k_ring) "
+            "VALUES (?, ?, ?, 1)",
+            (f"extra-edge-{i}", left, right),
+        )
+
+    # The adjacency query should include the extra edges connected to MERGE_LEFT
+    adj = durable.list_adjacency(TENANT_ID)
+    for neighbor in unobserved_neighbors:
+        pair = (min(MERGE_LEFT, neighbor), max(MERGE_LEFT, neighbor))
+        assert pair in adj
+
+    evidence = assemble_merge_split_evidence(
+        durable,
+        tenant_id=TENANT_ID,
+        receipt_path=matured_receipt(tmp_path / "receipt.json"),
+    )
+
+    policy = default_heatzone_merge_policy(TENANT_ID)
+    evaluation = evaluate_merge_split(evidence, policy=policy)
+
+    # Total graph cells = cells from reference + 10 unobserved neighbors
+    # Since unobserved neighbors have no outcomes, spatial_contiguity_ratio drops significantly below 0.80
+    assert evaluation.readiness.eligible is False
+    assert evaluation.readiness.metrics["spatial_contiguity_ratio"] < 0.80
+    assert evaluation.abstained is True
+    assert evaluation.proposals == ()
+    assert any("spatial_contiguity_insufficient" in r for r in evaluation.abstain_reasons)
+
+
 def test_counterfactual_gates_bind_when_their_signal_is_removed(tmp_path) -> None:
     """Take away one signal at a time and the matching rule refuses the pair.
 

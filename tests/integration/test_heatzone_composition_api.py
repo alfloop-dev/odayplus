@@ -598,6 +598,7 @@ WINDOW_END = date(2026, 2, 1)
 
 
 HZ004_CELL = "cell-hz004-00"
+HZ004_H3 = "894ba0a4e77ffff"
 
 
 def _record_outcome(client: TestClient, body: dict, *, headers=ABSORPTION_HEADERS):
@@ -609,6 +610,7 @@ def _record_outcome(client: TestClient, body: dict, *, headers=ABSORPTION_HEADER
 def _bundle_with_registered_cell(
     cell_id: str = HZ004_CELL,
     *,
+    h3_index: str = HZ004_H3,
     barrier_side: str | None = None,
     barrier_description: str = "",
 ):
@@ -618,7 +620,7 @@ def _bundle_with_registered_cell(
         TENANT_ID,
         CellRegistration(
             cell_id,
-            f"8a{cell_id}",
+            h3_index,
             "Taipei",
             "Xinyi",
             barrier_side=barrier_side,
@@ -640,6 +642,12 @@ def _client_with_populated_sources(
     confidence: str = "HIGH",
     drop_date: str | None = None,
     facade_override: Any = None,
+    store_coords: dict[str, tuple[float, float]] | None = None,
+    skip_store_refs: bool = False,
+    skip_cell_profile: bool = False,
+    original_demand: float = 100_000.0,
+    cell_id: str = HZ004_CELL,
+    h3_index: str = HZ004_H3,
 ) -> TestClient:
     if facade_override is not None:
         return TestClient(
@@ -669,6 +677,86 @@ def _client_with_populated_sources(
         transport.store_document(
             "oday.operational-start-observation.v1", op["store_id"], op
         )
+
+    if not skip_store_refs:
+        for s_id in stores:
+            coords = (store_coords or {}).get(s_id, (25.03, 121.56))
+            transport.store_document(
+                "oday.store-reference.v1",
+                s_id,
+                {
+                    "store_id": s_id,
+                    "store_name": f"Test Store {s_id}",
+                    "effective_from": "2025-01-01",
+                    "registered_at": "2025-01-01T00:00:00Z",
+                    "source_row_digest": f"digest-{s_id}",
+                    "geolocation": {
+                        "latitude": coords[0],
+                        "longitude": coords[1],
+                        "srid": 4326,
+                    },
+                    "time_contract": {
+                        "contract_version": "emgi.time-contract.v4",
+                        "materialization_kind": "observation",
+                        "materialization_environment": "development",
+                        "store_timezone": "Asia/Taipei",
+                    },
+                },
+            )
+
+    if not skip_cell_profile:
+        period_key = f"{window_start.year:04d}-{window_start.month:02d}"
+        doc_payload = {
+            "contract_version": "emgi.market-cell-profile.v1",
+            "profile_id": f"mcp-{cell_id}-{period_key}",
+            "product_version": "0.4.1",
+            "period_grain": "MONTHLY",
+            "period_key": period_key,
+            "h3_resolution": 9,
+            "generated_at": "2026-01-01T00:00:00Z",
+            "tenant_id": TENANT_ID,
+            "cells": [
+                {
+                    "cell_id": cell_id,
+                    "h3_index": h3_index,
+                    "h3_resolution": 9,
+                    "period_grain": "MONTHLY",
+                    "period_key": period_key,
+                    "demographics": {"total_population": 5000.0},
+                    "competitors": {
+                        "total_competitors": 2,
+                        "active_competitors": 2,
+                        "brands_present": ["BrandA"],
+                        "stores_by_brand": {"BrandA": 2},
+                        "stores_by_category": {"convenience": 2},
+                    },
+                    "rent": {"sample_count": 10},
+                    "mobility": {},
+                    "coverage": {"overall_readiness": "ready", "domain_coverage": {}},
+                    "source_support": {
+                        "source_dataset_ids": ["ds-1"],
+                        "observation_count": 10,
+                        "sample_count": 10,
+                        "first_observed_at": "2026-01-01T00:00:00Z",
+                        "last_observed_at": "2026-01-31T00:00:00Z",
+                    },
+                    "metadata": {"original_demand": original_demand},
+                }
+            ],
+            "source_support": {
+                "source_dataset_ids": ["ds-1"],
+                "observation_count": 10,
+                "sample_count": 10,
+                "first_observed_at": "2026-01-01T00:00:00Z",
+                "last_observed_at": "2026-01-31T00:00:00Z",
+            },
+        }
+        transport.store_document(
+            "emgi.market-cell-profile.v1",
+            f"mcp-{cell_id}-{period_key}",
+            doc_payload,
+        )
+
     facade = MarketDataFacade(transport=transport)
     return TestClient(create_app(persistence=bundle, market_intelligence_facade=facade))
 
@@ -1218,29 +1306,8 @@ def test_record_outcome_enforces_market_data_principal_authorization() -> None:
 def test_record_outcome_with_server_side_facade_lookup_and_verification() -> None:
     """The route hydrates and verifies rows from the server-side published source repository."""
     bundle = _bundle_with_registered_cell()
-    transport = InMemoryDataPlatformTransport()
+    client = _client_with_populated_sources(bundle)
     stores = ("store-1", "store-2")
-    perfs = performance_rows(
-        store_ids=stores,
-        window_start=WINDOW_START,
-        window_end=WINDOW_END,
-        daily_revenue=500.0,
-    )
-    op_starts = operational_start_rows(
-        store_ids=stores,
-        window_start=WINDOW_START,
-        window_end=WINDOW_END,
-    )
-    for p in perfs:
-        doc_id = f"{p['store_id']}:{p['business_date']}"
-        transport.store_document("oday.store-daily-performance.v1", doc_id, p)
-    for op in op_starts:
-        transport.store_document("oday.operational-start-observation.v1", op["store_id"], op)
-
-    facade = MarketDataFacade(transport=transport)
-    client = TestClient(
-        create_app(persistence=bundle, market_intelligence_facade=facade)
-    )
 
     # 1. Caller only names the store_ids and period; server looks up from facade
     response = _record_outcome(
@@ -1264,7 +1331,7 @@ def test_record_outcome_with_server_side_facade_lookup_and_verification() -> Non
 def test_record_outcome_refuses_client_tampered_performance_row() -> None:
     """If client supplies fabricated rows that disagree with the published source, fail closed."""
     bundle = _bundle_with_registered_cell()
-    transport = InMemoryDataPlatformTransport()
+    client = _client_with_populated_sources(bundle)
     stores = ("store-1", "store-2")
     perfs = performance_rows(
         store_ids=stores,
@@ -1276,15 +1343,6 @@ def test_record_outcome_refuses_client_tampered_performance_row() -> None:
         store_ids=stores,
         window_start=WINDOW_START,
         window_end=WINDOW_END,
-    )
-    for p in perfs:
-        transport.store_document("oday.store-daily-performance.v1", f"{p['store_id']}:{p['business_date']}", p)
-    for op in op_starts:
-        transport.store_document("oday.operational-start-observation.v1", op["store_id"], op)
-
-    facade = MarketDataFacade(transport=transport)
-    client = TestClient(
-        create_app(persistence=bundle, market_intelligence_facade=facade)
     )
 
     # Client tries to pass inflated revenue (tampering)
@@ -1554,4 +1612,75 @@ def test_approve_refuses_partial_replacement_of_active_multi_cell_zone() -> None
     )
     assert len(active) == 3
     assert {r.zone_id for r in active} == {zone_id}
+
+
+def test_recording_outcome_refuses_when_store_belongs_to_different_cell() -> None:
+    """Store with geolocation in Taipei cannot be attributed to a Kaohsiung cell."""
+    bundle = _bundle_with_registered_cell(
+        cell_id="cell-kh-01",
+        h3_index="894bb10a1c3ffff",
+    )
+    # Populate sources with store coordinates in Taipei (25.03, 121.56)
+    client = _client_with_populated_sources(
+        bundle,
+        cell_id="cell-kh-01",
+        h3_index="894bb10a1c3ffff",
+        store_coords={"store-1": (25.03, 121.56), "store-2": (25.03, 121.56)},
+    )
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id="cell-kh-01",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            store_ids=("store-1", "store-2"),
+            original_demand=100_000.0,
+            daily_revenue=500.0,
+        ),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_STORE_CELL_MISMATCH"
+    assert "does not belong to target cell" in response.json()["detail"]["message"]
+
+
+def test_recording_outcome_refuses_when_demand_baseline_not_published() -> None:
+    """If authoritative MarketCellProfile demand baseline is missing, fail closed (422)."""
+    bundle = _bundle_with_registered_cell()
+    client = _client_with_populated_sources(bundle, skip_cell_profile=True)
+
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id="cell-hz004-00",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            store_ids=("store-1", "store-2"),
+            original_demand=100_000.0,
+            daily_revenue=500.0,
+        ),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_DEMAND_BASELINE_NOT_FOUND"
+
+
+def test_recording_outcome_refuses_when_original_demand_disagrees_with_published_baseline() -> None:
+    """If caller provides original_demand that contradicts published baseline metadata, refuse."""
+    bundle = _bundle_with_registered_cell()
+    client = _client_with_populated_sources(bundle, original_demand=100_000.0)
+
+    response = _record_outcome(
+        client,
+        outcome_request(
+            cell_id="cell-hz004-00",
+            window_start=WINDOW_START,
+            window_end=WINDOW_END,
+            store_ids=("store-1", "store-2"),
+            original_demand=250_000.0,
+            daily_revenue=500.0,
+        ),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "HZ004_INPUT_REFUSED"
+    assert "does not match published demand baseline" in response.json()["detail"]["message"]
+
 
