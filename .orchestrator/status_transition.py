@@ -448,6 +448,7 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
         task["last_update"] = timestamp
         task["next"] = message
         task.pop("approved_head", None)
+        task.pop("merge_route", None)
         task["last_reopened_by"] = "Supervisor"
         task["last_reopened_reason"] = REOPEN_REASON_CONTROL_PLANE_RECOVERY
         task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
@@ -517,6 +518,7 @@ def reject_unsealed_worker_handoff(
     }
     task.pop("waiting_for", None)
     task.pop("approved_head", None)
+    task.pop("merge_route", None)
     task["last_reopened_by"] = "Supervisor"
     task["last_reopened_reason"] = reopen_reason
     task["last_reopen_category"] = REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY
@@ -581,8 +583,10 @@ def requeue_task_for_ci_repair(
     )
     if requeued_head is not None:
         task["ci_repair_requeued_head"] = requeued_head
+    stale_route = None
     if clear_approval:
         task.pop("approved_head", None)
+        stale_route = task.pop("merge_route", None)
     if not _supervisor_module().commit_canonical_task_transition(config, status):
         return False
     sv.write_activity_log(
@@ -594,6 +598,7 @@ def requeue_task_for_ci_repair(
             "reason": REOPEN_REASON_CONTROL_PLANE_RECOVERY,
             "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "approval_cleared": clear_approval,
+            "stale_merge_route_cleared": bool(stale_route),
         },
     )
     return True
