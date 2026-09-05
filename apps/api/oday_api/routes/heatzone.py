@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from typing import Any
 
+import h3
+
 from models.shared_ml import (
     ModelBinding,
     ProductionModelInputError,
@@ -44,6 +46,9 @@ from modules.heatzone.infrastructure import (
     HeatZoneCompositionRepository,
     HeatZoneResultStore,
     InMemoryHeatZoneCompositionRepository,
+)
+from packages.oday_data_product_contracts_client.models.market_cell_profile import (
+    PeriodGrain,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.governance import (
@@ -969,11 +974,6 @@ else:
                     )
                 target_barrier_side = reg_side
                 target_barrier_desc = reg_desc or target_barrier_desc
-
-            import h3
-            from packages.oday_data_product_contracts_client.models.market_cell_profile import (
-                PeriodGrain,
-            )
 
             # Validate store-to-cell attribution against authoritative StoreReference
             for s_id in body.store_ids:
