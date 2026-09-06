@@ -2072,6 +2072,158 @@ class ManagedOutputCheckpointTests(RecoveryFixture):
         self.assertEqual("applied", result["status"])
 
 
+DOCS_SITE_MIRROR_NAMES = (
+    "ai-status.json",
+    "current-work.md",
+    "dashboard-bundle.json",
+    "orchestrator-state.json",
+    "approval-queue.json",
+    "planning-state.json",
+    "ai-activity-log.jsonl",
+)
+
+
+class ManagedMirrorHardlinkTests(RecoveryFixture):
+    """A hard link is the same file under a second name, and resolves to it.
+
+    `Path.resolve()` follows symlinks; it cannot follow a hard link, because a
+    hard link is not a reference to a path but a second directory entry for the
+    same inode. So a checkpoint outside `docs-site/` that is hard-linked to a
+    mirror inside it passes every path-shaped check while still being the
+    mirror: the final `write_checkpoint` truncates it. Only an inode comparison
+    sees this, and it has to run during admission, before any write.
+    """
+
+    def blocked_batch(self, task_id: str) -> Path:
+        self.write_board()
+        return self.write_batch(
+            self.plan_batch([inventory_entry(task_id)], subjects=["unrelated"])
+        )
+
+    def seed_mirror(self, name: str) -> Path:
+        mirror = ai_status.DOCS_SITE_DIR / name
+        mirror.parent.mkdir(parents=True, exist_ok=True)
+        mirror.write_bytes(f'{{"sentinel": "docs-site mirror {name}"}}\n'.encode())
+        return mirror
+
+    def assert_refused_without_writing(
+        self, batch: Path, checkpoint: Path, mirror: Path, task_id: str
+    ) -> None:
+        before = mirror.read_bytes()
+        board_before = self.board_path.read_bytes()
+
+        with self.assertRaises(SystemExit):
+            self.run_apply(batch, "--checkpoint", str(checkpoint), "--confirm")
+
+        self.assertEqual(before, mirror.read_bytes(), f"{mirror.name} was overwritten")
+        self.assertEqual(board_before, self.board_path.read_bytes())
+        board = json.loads(self.board_path.read_text(encoding="utf-8"))
+        self.assertNotIn(task_id, [task["id"] for task in board["tasks"]])
+
+    def test_hard_link_to_any_docs_site_mirror_is_refused(self) -> None:
+        for index, name in enumerate(DOCS_SITE_MIRROR_NAMES):
+            with self.subTest(mirror=name):
+                task_id = f"TASK-CHK-HARDLINK-{index:03d}"
+                batch = self.blocked_batch(task_id)
+                mirror = self.seed_mirror(name)
+                checkpoint = self.root / "receipts" / f"hardlink-{index}.json"
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                os.link(mirror, checkpoint)
+
+                self.assert_refused_without_writing(batch, checkpoint, mirror, task_id)
+
+    def test_symlink_to_any_docs_site_mirror_is_refused(self) -> None:
+        """The same destination named through a symlink, for completeness."""
+
+        for index, name in enumerate(DOCS_SITE_MIRROR_NAMES):
+            with self.subTest(mirror=name):
+                task_id = f"TASK-CHK-SYMLINK-{index:03d}"
+                batch = self.blocked_batch(task_id)
+                mirror = self.seed_mirror(name)
+                checkpoint = self.root / "receipts" / f"symlink-{index}.json"
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                checkpoint.symlink_to(mirror)
+
+                self.assert_refused_without_writing(batch, checkpoint, mirror, task_id)
+
+    def test_hard_link_to_a_canonical_output_is_refused(self) -> None:
+        """The sources the mirrors copy from are the same inode problem."""
+
+        canonical = {
+            "board": lambda: ai_status.STATUS_FILE,
+            "log": lambda: ai_status.LOG_FILE,
+            "current-work": lambda: ai_status.CURRENT_WORK_FILE,
+            "dashboard bundle": lambda: ai_status.DASHBOARD_BUNDLE_FILE,
+            "orchestrator state": lambda: ai_status.ORCHESTRATOR_STATE_FILE,
+            "approval queue": lambda: ai_status.APPROVAL_QUEUE_FILE,
+            "planning state": lambda: ai_status.PLANNING_STATE_FILE,
+        }
+        for index, (label, resolve_path) in enumerate(canonical.items()):
+            with self.subTest(output=label):
+                task_id = f"TASK-CHK-CANON-{index:03d}"
+                batch = self.blocked_batch(task_id)
+                target = resolve_path()
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if not target.exists():
+                    target.write_bytes(f'{{"sentinel": "{label}"}}\n'.encode())
+                checkpoint = self.root / "receipts" / f"canonical-{index}.json"
+                checkpoint.parent.mkdir(parents=True, exist_ok=True)
+                os.link(target, checkpoint)
+
+                self.assert_refused_without_writing(batch, checkpoint, target, task_id)
+
+    def test_hard_link_to_an_unlisted_docs_site_file_is_refused(self) -> None:
+        """The gate covers the mirror directory, not only the seven names.
+
+        A file that lands in `docs-site/` without being one of the mirrors is
+        still published output; refusing it costs nothing and means a mirror
+        added later is covered before anyone remembers to list it.
+        """
+
+        batch = self.blocked_batch("TASK-CHK-DOCSITE-EXTRA-001")
+        extra = self.seed_mirror("index.html")
+        checkpoint = self.root / "receipts" / "docs-site-extra.json"
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        os.link(extra, checkpoint)
+
+        self.assert_refused_without_writing(
+            batch, checkpoint, extra, "TASK-CHK-DOCSITE-EXTRA-001"
+        )
+
+    def test_the_gate_and_the_mirror_writer_share_one_destination_list(self) -> None:
+        """Drift between the two lists is what re-opens this hole silently."""
+
+        pairs = ai_status.docs_site_mirror_pairs()
+        self.assertEqual(
+            sorted(DOCS_SITE_MIRROR_NAMES),
+            sorted(target.name for _, target in pairs),
+        )
+        for _, target in pairs:
+            self.assertEqual(ai_status.DOCS_SITE_DIR, target.parent)
+
+    def test_a_checkpoint_that_is_merely_near_a_mirror_still_works(self) -> None:
+        """The control group: an ordinary receipt path is untouched by this."""
+
+        batch = self.blocked_batch("TASK-CHK-HARDLINK-OK-001")
+        for name in DOCS_SITE_MIRROR_NAMES:
+            self.seed_mirror(name)
+        receipt = self.root / "receipts" / "ai-status.json"
+
+        self.assertEqual(
+            0, self.run_apply(batch, "--checkpoint", str(receipt), "--confirm")
+        )
+
+        result = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual("task_history_recovery_checkpoint", result["type"])
+        self.assertEqual("applied", result["status"])
+        for name in DOCS_SITE_MIRROR_NAMES:
+            self.assertNotEqual(
+                receipt.read_bytes(),
+                (ai_status.DOCS_SITE_DIR / name).read_bytes(),
+                f"{name} received the checkpoint",
+            )
+
+
 class NestedLockTests(unittest.TestCase):
     def test_apply_never_re_enters_the_canonical_status_lock(self) -> None:
         """`main()` already holds it; taking it again would deadlock on flock.

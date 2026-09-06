@@ -5959,6 +5959,32 @@ def dashboard_orchestrator_state(state: dict[str, Any], orchestrator_state: dict
     return dashboard_state
 
 
+def docs_site_mirror_pairs() -> list[tuple[Path, Path]]:
+    """Every `(source, published mirror)` pair `sync_docs_site` writes.
+
+    One list, read at call time so relocated roots are honoured, because two
+    callers need exactly the same answer: the mirror writer below, and the
+    checkpoint-destination gate that has to refuse those same destinations.
+    Keeping them apart is how a mirror added to one list quietly becomes a
+    destination the other no longer protects.
+    """
+
+    rename_map = {"state.json": "orchestrator-state.json"}
+    sources = [
+        STATUS_FILE,
+        CURRENT_WORK_FILE,
+        DASHBOARD_BUNDLE_FILE,
+        ORCHESTRATOR_STATE_FILE,
+        APPROVAL_QUEUE_FILE,
+        PLANNING_STATE_FILE,
+        LOG_FILE,
+    ]
+    return [
+        (source, DOCS_SITE_DIR / rename_map.get(source.name, source.name))
+        for source in sources
+    ]
+
+
 def sync_docs_site(state: dict[str, Any]) -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
     config = status_runtime_config()
@@ -5966,30 +5992,20 @@ def sync_docs_site(state: dict[str, Any]) -> None:
         runtime_state = load_runtime_state(config)
     except KeyError:
         runtime_state = {}
-    mirror_files = [
-        STATUS_FILE,
-        CURRENT_WORK_FILE,
-        DASHBOARD_BUNDLE_FILE,
-        ORCHESTRATOR_STATE_FILE,
-        APPROVAL_QUEUE_FILE,
-        PLANNING_STATE_FILE,
-    ]
-    rename_map = {
-        "state.json": "orchestrator-state.json",
-        "approval-queue.json": "approval-queue.json",
-    }
-    for path in mirror_files:
-        if path.exists():
-            target_name = rename_map.get(path.name, path.name)
-            if path.name == "state.json":
-                dashboard_state = dashboard_orchestrator_state(state, runtime_state)
-                (DOCS_SITE_DIR / target_name).write_text(
-                    json.dumps(dashboard_state, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8",
-                )
-            else:
-                shutil.copy2(path, DOCS_SITE_DIR / target_name)
-    _mirror_log_tail(LOG_FILE, DOCS_SITE_DIR / LOG_FILE.name, DASHBOARD_LOG_TAIL_LINES)
+    for source, target in docs_site_mirror_pairs():
+        if source == LOG_FILE:
+            # The log is mirrored as a bounded tail, not a whole-file copy.
+            _mirror_log_tail(source, target, DASHBOARD_LOG_TAIL_LINES)
+        elif not source.exists():
+            continue
+        elif source == ORCHESTRATOR_STATE_FILE:
+            dashboard_state = dashboard_orchestrator_state(state, runtime_state)
+            target.write_text(
+                json.dumps(dashboard_state, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            shutil.copy2(source, target)
 
 
 def sync_all(state: dict[str, Any]) -> None:
@@ -8085,6 +8101,15 @@ def _validate_checkpoint_destination(
         ("planning state", PLANNING_STATE_FILE),
         ("archive index", archive_root / "index.json"),
     ]
+    # The published mirrors, by name and therefore by inode. The directory
+    # check above only sees paths that *spell* their way into `docs-site/`;
+    # `Path.resolve()` follows symlinks but cannot follow a hard link, because
+    # a hard link is not a reference to a path, it is a second directory entry
+    # for the same file. A checkpoint hard-linked to a mirror from anywhere on
+    # the same filesystem therefore resolves outside the directory while still
+    # being the mirror, and the final receipt write truncates it.
+    for source, mirror in docs_site_mirror_pairs():
+        protected_named.append((f"docs-site mirror of {source.name}", mirror))
     if batch_path is not None:
         protected_named.append(("recovery batch", batch_path))
     if hold_path is not None:
@@ -8114,6 +8139,23 @@ def _validate_checkpoint_destination(
                 if _is_same_or_alias(checkpoint_path, snap):
                     problems.append(
                         f"checkpoint path {checkpoint_path} aliases existing archive snapshot {snap}"
+                    )
+        except OSError:
+            pass
+
+    # Everything else already published under `docs-site/`, so that a mirror
+    # added to the dashboard later is covered by inode from its first sync
+    # rather than from whenever someone remembers this gate exists.
+    already_named = {mirror for _, mirror in docs_site_mirror_pairs()}
+    if DOCS_SITE_DIR.is_dir():
+        try:
+            for published in DOCS_SITE_DIR.rglob("*"):
+                if published in already_named or not published.is_file():
+                    continue
+                if _is_same_or_alias(checkpoint_path, published):
+                    problems.append(
+                        f"checkpoint path {checkpoint_path} aliases published "
+                        f"docs-site file {published}"
                     )
         except OSError:
             pass

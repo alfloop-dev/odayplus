@@ -16,7 +16,7 @@
 archive 寫入沿用 `task_archive.archive_task_snapshot()`，board 寫入沿用 `main()` 已持有的
 `status_write_transaction()`（因此 apply 指令本身**不得**再取一次鎖，已由靜態測試釘住）。
 
-### 2. 本輪修正（回應 Codex 四輪審查，PR #1231）
+### 2. 本輪修正（回應 Codex 五輪審查，PR #1231）
 
 ### 第一輪審查修正（commit ec9ffacc）
 
@@ -84,6 +84,41 @@ archive 寫入沿用 `task_archive.archive_task_snapshot()`，board 寫入沿用
     `gh pr edit 1231 --body-file ...` 在本 background auto worker 需要人工核可而未取得，
     因此**遠端 PR 描述目前仍是舊的英文開頭**。這裡不宣稱已修正。
     詳見 §10。
+
+### 第五輪審查修正（本輪 Claude2 實作）
+
+- **P2 受管鏡像的 hardlink 別名可繞過 admission 並破壞輸出**：
+  `Path.resolve()` 會跟隨 symlink，但**跟不了 hardlink**——hardlink 不是「對某個路徑的參照」，
+  而是同一個 inode 的第二個目錄項。因此 `_validate_checkpoint_destination()` 對 `docs-site/`
+  的目錄判斷（`resolve()` + `is_relative_to()`）看不到目錄**外**的 hardlink；而當時
+  `protected_named` 的 `os.path.samefile` 清單只涵蓋 canonical 輸出與現存 archive snapshot，
+  沒有涵蓋七個 `docs-site/` 鏡像的 inode。
+  結果：把 `--checkpoint` 路徑 hardlink 到任一鏡像後，一份合法的 blocked-only 批次仍通過
+  admission，`main()` 返回 0、board 佔位落盤、checkpoint 記為 `applied`，而最後的
+  `write_checkpoint()` 以 `open(..., "w")` **就地截斷**該 inode，鏡像內容被覆寫為
+  `task_history_recovery_checkpoint`。七個鏡像（`ai-status.json`、`current-work.md`、
+  `dashboard-bundle.json`、`orchestrator-state.json`、`approval-queue.json`、
+  `planning-state.json`、`ai-activity-log.jsonl`）全部重現，見 §6 的反向驗證。
+
+  改法（三層，全部在 admission 階段、任何寫入之前，整批拒絕）：
+  1. 新增 `docs_site_mirror_pairs()`，把「`sync_docs_site()` 到底寫哪些鏡像」變成**單一來源清單**，
+     鏡像寫入端與 admission 端讀同一份。清單在**呼叫時**讀取模組 globals，因此測試重新綁定
+     status root 之後仍然成立。兩份清單各自維護正是這個洞當初悄悄打開的方式。
+  2. admission 把七個鏡像目的地逐一加入 `protected_named`，於是它們改由 `os.path.samefile`
+     以 inode 比對，hardlink 與 symlink 一併拒絕。
+  3. 另外對 `docs-site/` 內其餘已發佈檔案做 inode 掃描（跳過已具名者），讓日後新增的鏡像
+     從第一次 sync 起就被涵蓋，而不是等到有人想起這道閘存在。
+
+  回歸覆蓋（`ManagedMirrorHardlinkTests`，6 個測試方法 / 21 個 subtest）：
+  七個鏡像的 hardlink 各一、七個鏡像的 symlink 各一、七個 canonical 來源檔的 hardlink 各一、
+  `docs-site/` 內未列名檔案（`index.html`）的 hardlink；每則都要求 `SystemExit`、
+  **目標 byte 不變**、**board bytes 不變且佔位未落盤**。另有兩則守護：
+  `docs_site_mirror_pairs()` 的目的地集合必須恰為那七個具名鏡像且都在 `DOCS_SITE_DIR` 下
+  （釘住兩份清單不得漂移），以及對照組——路徑剛好叫 `receipts/ai-status.json`、
+  但**不是**任何鏡像別名的正常 checkpoint 仍須成功寫出 `applied` 收據，
+  且其內容不等於任何一個鏡像。
+
+- **未修正項目**：PR #1231 遠端描述的英文開頭。本輪再次嘗試，再次被權限擋下，見 §10。
 
 ## 3. 證據分級規則
 
@@ -186,39 +221,39 @@ PYTHONPATH=scripts/orchestrator:scripts uv run --frozen --python 3.12 pytest \
 `ORCH_CONFIG_PATH`、`PANTHEON_CONFIG_PATH`）已指向臨時 fixture 目錄與 repo 的
 `.orchestrator/config.example.json`；未把真實 canonical 目錄當測試輸入。
 
-結果：**342 passed, 106 subtests passed**，exit code 0，9.97s。
-（上一輪同三套件為 335 passed；本輪新增 7 則回歸 → 342。）
+結果：**348 passed, 127 subtests passed**，exit code 0，9.88s。
+（上一輪同三套件為 342 passed / 106 subtests；本輪新增 6 個測試方法、21 個 subtest → 348 / 127。）
 未執行產品全套測試。
 
 本輪三次量測，逐項揭露（不宣稱「只跑過一次」）：
 
 | # | 內容 | 樹狀態 | 結果 |
 | --- | --- | --- | --- |
-| 1 | 上表三套件整批 | 修正後、commit 前 | exit 0，342 passed / 106 subtests，8.85s |
-| 2 | 反向驗證：`-k "FinalReceiptTests or ManagedOutputCheckpointTests"` | `scripts/ai_status.py` 暫時還原成修正前版本 | exit 1，**6 failed, 1 passed** |
-| 3 | 上表三套件整批（採信本收據的那一次） | commit `4c0bf873` | exit 0，342 passed / 106 subtests，9.97s |
+| 1 | 反向驗證：`-k ManagedMirrorHardlink` | 新回歸已寫入、`scripts/ai_status.py` **尚未修正** | exit 1，**9 failed / 4 passed / 14 subtests passed**，2.40s |
+| 2 | 同一組 `-k ManagedMirrorHardlink` | 修正後 | exit 0，6 passed / 21 subtests，1.13s |
+| 3 | 上表三套件整批（採信本收據的那一次） | 最終樹（含 ruff UP012 修正後） | exit 0，**348 passed / 127 subtests**，9.88s |
 
-第 3 次是本收據引用的量測，跑在 `4c0bf873`；此後只再改動本收據這份 `.md` 文字，
+第 3 次是本收據引用的量測，跑在與本次提交完全相同的工作樹上；此後只再改動本收據這份 `.md` 文字，
 沒有任何程式或批次變動。三次都以原 terminal 的 exit code 判定，未以輸出摘要推斷。
-執行後 `git status --short` 為空，確認測試沒有改動任何被追蹤檔案。
+執行後 `git status --short` 只有本輪要提交的兩個檔案，確認測試沒有改動任何其他被追蹤檔案。
 
-上表第 2 次的用意：綠測試不代表碰到過缺陷路徑。把 `scripts/ai_status.py` 暫時還原成修正前的
-commit 版本（`git show HEAD:...`）、測試檔維持本輪版本，單獨執行本輪新增的 7 則，
-失敗的正是針對 P2-1/P2-2 的那 6 則，通過的 1 則是刻意設置的對照組
-（`test_a_checkpoint_outside_the_managed_outputs_still_works`，正常位置的 checkpoint 仍應成功）。
-逐則結果：
+上表第 1 次是本輪的反向驗證，用意是證明新回歸真的碰到了缺陷路徑而不是恰好通過：
+測試檔已是本輪版本、`scripts/ai_status.py` 還是修正前版本時，失敗的正是七個鏡像 hardlink
+的 subtest、未列名 `docs-site/` 檔案那則，以及取用尚不存在的 `docs_site_mirror_pairs()`
+那則守護；而 symlink 那則與 canonical 來源檔 hardlink 那則**在修正前就已通過**
+（前幾輪的 `_is_same_or_alias()` 已涵蓋），對照組也照樣通過。逐則結果：
 
 | 回歸 | 修正前 | 修正後 |
 | --- | --- | --- |
-| `FinalReceiptTests::test_receipt_revision_matches_the_board_the_command_leaves` | FAILED | PASSED |
-| `FinalReceiptTests::test_second_sync_failure_is_not_swallowed_as_a_warning` | FAILED | PASSED |
-| `FinalReceiptTests::test_second_sync_failure_on_a_done_batch_is_not_swallowed` | FAILED | PASSED |
-| `ManagedOutputCheckpointTests::test_checkpoint_must_not_target_the_dashboard_bundle` | FAILED | PASSED |
-| `ManagedOutputCheckpointTests::test_checkpoint_must_not_target_the_docs_site_mirror` | FAILED | PASSED |
-| `ManagedOutputCheckpointTests::test_checkpoint_must_not_alias_a_managed_output` | FAILED | PASSED |
-| `ManagedOutputCheckpointTests::test_a_checkpoint_outside_the_managed_outputs_still_works`（對照組） | PASSED | PASSED |
+| `ManagedMirrorHardlinkTests::test_hard_link_to_any_docs_site_mirror_is_refused`（7 subtests） | FAILED（7/7 subtest 全數 SUBFAILED：`ai-status.json`、`current-work.md`、`dashboard-bundle.json`、`orchestrator-state.json`、`approval-queue.json`、`planning-state.json`、`ai-activity-log.jsonl`） | PASSED |
+| `ManagedMirrorHardlinkTests::test_hard_link_to_an_unlisted_docs_site_file_is_refused` | FAILED（`SystemExit not raised`） | PASSED |
+| `ManagedMirrorHardlinkTests::test_the_gate_and_the_mirror_writer_share_one_destination_list` | FAILED（`AttributeError: module 'ai_status' has no attribute 'docs_site_mirror_pairs'`） | PASSED |
+| `ManagedMirrorHardlinkTests::test_symlink_to_any_docs_site_mirror_is_refused`（7 subtests） | PASSED（前輪已修） | PASSED |
+| `ManagedMirrorHardlinkTests::test_hard_link_to_a_canonical_output_is_refused`（7 subtests） | PASSED（前輪已修） | PASSED |
+| `ManagedMirrorHardlinkTests::test_a_checkpoint_that_is_merely_near_a_mirror_still_works`（對照組） | PASSED | PASSED |
 
-還原後 `scripts/ai_status.py` 已復原為修正版，`git diff` 確認無殘留。
+修正前的失敗訊息全部是 `AssertionError: SystemExit not raised`——也就是 Codex 描述的
+「返回 0、鏡像被覆寫」而非零寫入拒絕，與審查意見一致。
 
 覆蓋：證據不足不得合併為 done、blocked 佔位形狀（`non_dispatchable` / `waiting_for` / 依賴保留）、
 未知 actor 與 Human GO 補造拒絕、缺 candidate provenance 欄位（`url`/`pr_number`/`head_ref`/`merged_at`/`merge_commit`/型別/空物件）逐一拒絕、
@@ -229,7 +264,9 @@ idempotency（第二次 apply 必拒）、partial failure 的各失敗點留 che
 純 archive 與混合批次在 `sync_all` 失敗或未落盤時正確記錄 `partial` 且 `board_persistence_verified: false`、
 外層 board 未落盤時的 post-commit 讀回與 revision 嚴格比對、既有 6 筆 byte 不變、`--confirm` 缺 checkpoint 拒絕、
 checkpoint 輸出目的地防護（禁止覆寫倖存 snapshot、board、index、archive 目錄、
-dashboard bundle、`docs-site/` 鏡像及 symlink/hardlink 別名，並含正常位置仍可成功的對照組）、
+dashboard bundle、七個 `docs-site/` 鏡像與 `docs-site/` 內其餘已發佈檔案，
+symlink 與 **hardlink** 別名皆以 inode 比對拒絕，並含正常位置仍可成功的對照組）、
+鏡像目的地清單與 `sync_docs_site()` 共用單一來源（清單漂移即測試轉紅）、
 最終收據排在全部必要持久化之後（正常返回時 revision 與磁碟一致）、
 第二次必要 `sync_all()` 失敗不得被當成 status-check warning 吞掉（純 blocked 與含 done 批次各一）、
 maintenance hold 的八種拒絕與成功入帳、不得重入 canonical lock（靜態）、未註冊 actor 拒絕、
@@ -246,6 +283,7 @@ attestation verifier 逐項驗證與 UNREGISTERED-REVIEWER 拒絕、
 - 未宣稱任何 PR 的 acceptance/CI/runtime/approval 已通過；未補造 Human GO、核准者或歷史 owner/reviewer。
 - 未動 Supervisor（無 SIGCONT/restart/kill）、未改 watchdog 或模型設定、未刪鎖、未刪依賴、未派工部署。
 - 本收據不是簽章授權或 lease verifier 的 receipt。
+- **PR #1231 遠端描述仍是英文開頭，未修正**（`gh pr edit` 被權限擋下，第四、五輪各嘗試一次）。見 §10。
 
 ## 8. 給下一階段（apply）的注意事項
 
@@ -274,7 +312,7 @@ transaction 一次寫入。因此失敗時只會留下 checkpoint 記錄**從磁
 
 | 路徑 | 理由 | 本輪是否再變動 |
 | --- | --- | --- |
-| `scripts/orchestrator/test_archive_history_recovery.py` | 驗收要求的焦點測試。放在 `scripts/orchestrator/` 是因為 `config/code-boundaries.yaml` 的 `verification_ownership` 用萬用字元涵蓋 `scripts/orchestrator/test_*.py`；放在 `scripts/` 會被判為 `development_platform` bundle 內的 foreign scope，且需要改動治理 manifest 的顯式白名單。 | 是（新增 `FinalReceiptTests` 3 則與 `ManagedOutputCheckpointTests` 4 則，共 88 則測試） |
+| `scripts/orchestrator/test_archive_history_recovery.py` | 驗收要求的焦點測試。放在 `scripts/orchestrator/` 是因為 `config/code-boundaries.yaml` 的 `verification_ownership` 用萬用字元涵蓋 `scripts/orchestrator/test_*.py`；放在 `scripts/` 會被判為 `development_platform` bundle 內的 foreign scope，且需要改動治理 manifest 的顯式白名單。 | 是（新增 `ManagedMirrorHardlinkTests` 6 則測試方法／21 個 subtest，共 94 則測試） |
 | `scripts/test_ai_status.py` | 被既有測試強制。`ActorCommandMutationGuardTests.test_ai_name_case_table_covers_every_actor_bearing_command` 要求每個新增的 mutating command 都要進 `AI_NAME_CASES` 表，否則既有套件必紅。只加了一列表項。 | 否 |
 | `delivery_toolchain/git/task_finalize.sh` | 依 Codex 審查意見與驗收要求，將 PR 自動產生範本本地化為繁體中文。範本只影響**新建**的 PR；已存在的 #1231 描述無法由本 worker 改動，見 §10。 | 否 |
 | `docs/audits/code-boundary-inventory.csv` | 被 `check_code_boundaries.py` 強制：新增任何 .py 都必須重產，否則 CI `orchestrator` job 與 task_finalize 的必過閘會擋。差異為 1 行。 | 否 |
@@ -285,17 +323,43 @@ transaction 一次寫入。因此失敗時只會留下 checkpoint 記錄**從磁
 驗收要求「PR 與 receipt 全中文」。收據（本檔）與批次皆為中文，`task_finalize.sh` 的
 PR 範本也已中文化，但**該範本只在建立新 PR 時使用**；#1231 早已存在，`task_finalize.sh`
 對既有 PR 只會重用，不會改寫描述（見該腳本 `re-using open PR` 分支）。
+Orchestrator 這邊也沒有可用管道：`.orchestrator/github_bus.py` 的 `reconcile_pr_body()`
+只會就地更新 `<!-- pantheon-bus -->` 區塊，並**刻意原樣保留**該區塊之前的 prefix，
+也就是那段英文開頭。
 
-本輪已備妥中文描述並保留 orchestrator 管理的 `<!-- pantheon-bus -->` 區塊原文，
-但送出所需的 `gh pr edit 1231 --body-file ...` 在 background auto worker 需要人工核可，
-本次未取得核可，因此**沒有執行**。遠端 PR 描述目前仍是舊的英文開頭
-（`Task: ...` / `Branch ... -> dev` / `Commits:` / `Opened by ...`）。
+因此唯一出路是 `gh pr edit`，而它在本 background auto worker 被權限擋下。
+本輪（第五輪）**再次嘗試、再次被擋**，兩種呼叫形式的實際結果：
 
-這裡刻意不宣稱已修正。要補上時，執行：
+| 嘗試 | 結果 |
+| --- | --- |
+| `SCRATCH=... && gh pr edit 1231 --body-file "$SCRATCH/pr-body-zh.md"` | 被擋：`This Bash command contains multiple operations. The following part requires approval: ... gh pr edit 1231 ...` |
+| `gh pr edit 1231 --body-file <絕對路徑>`（單一命令，無複合） | 被擋：`Claude requested permissions to use Bash, but you haven't granted it yet.` |
+
+沒有繞道（未改用 `gh api` PATCH 之類的等效寫法去規避已作出的權限判定）。
+**遠端 PR 描述目前仍是舊的英文開頭**（`Task: ...` / `Branch ... -> dev` / `Commits:` /
+`Opened by ...`），且其提交清單停在建立當時的 1 個提交，早已過期。
+這裡刻意不宣稱已修正。
+
+要補上時，由有權限者執行下列片段即可。它會即時從 git 重算中文開頭（因此提交清單永遠對得上
+當下的 head），並把 `<!-- pantheon-bus -->` 區塊連同其後內容原樣保留：
 
 ```bash
-gh pr edit 1231 --body-file <中文描述檔>
+CUR="$(mktemp)"; NEW="$(mktemp)"
+gh pr view 1231 --json body --jq .body > "$CUR"
+{
+  echo "任務：\`ORCH-ARCHIVE-HISTORY-RECOVERY-001\`"
+  echo
+  echo "分支 \`task/ORCH-ARCHIVE-HISTORY-RECOVERY-001\` -> \`dev\` ($(git rev-list --count origin/dev..HEAD) 個提交)。"
+  echo
+  echo "提交記錄："
+  git log --no-merges --format='- %h %s' origin/dev..HEAD
+  echo
+  echo "由 \`delivery_toolchain/git/task_finalize.sh\` 開啟。合併仍需指派審查者的 \`task-review-gate\` 狀態與必要 CI 通過。"
+  echo
+  echo "本輪未對 canonical board 或 archive 執行任何 recovery apply；歷史尚未恢復。"
+  echo
+  sed -n '/^---$/,$p' "$CUR"
+} > "$NEW"
+gh pr edit 1231 --body-file "$NEW"
+rm -f "$CUR" "$NEW"
 ```
-
-中文描述內容與本輪 head 一致（8 個提交、精確 head `cd7482b2`），並在開頭載明
-本輪未對 canonical board 或 archive 執行任何 recovery apply。
