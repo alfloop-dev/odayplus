@@ -16,7 +16,7 @@
 archive 寫入沿用 `task_archive.archive_task_snapshot()`，board 寫入沿用 `main()` 已持有的
 `status_write_transaction()`（因此 apply 指令本身**不得**再取一次鎖，已由靜態測試釘住）。
 
-### 2. 本輪修正（回應 Codex 三輪審查，PR #1231）
+### 2. 本輪修正（回應 Codex 四輪審查，PR #1231）
 
 ### 第一輪審查修正（commit ec9ffacc）
 
@@ -47,6 +47,39 @@ archive 寫入沿用 `task_archive.archive_task_snapshot()`，board 寫入沿用
   `verify_board_persistence()` 在提交後讀回 `STATUS_FILE`，嚴格比對磁碟上的 `_status_write_revision` 與本交易寫入的 `expected_revision`，並在收據中記錄 `board_revision_expected` 與 `board_revision_on_disk`。純 archive 批次在 `save_state` 未落盤（fault injection/no-op）時必標記 `status: partial` 且 `board_persistence_verified: false`，不以檔案存在代替落盤驗證。
   回歸覆蓋：`save_state` mock fault injection 讀回 revision 不一致時記錄 `partial` 與 `board_persistence_verified: false`；正常 apply 時記錄 `applied` 與 `board_persistence_verified: true`。
 
+### 第四輪審查修正（本輪 Claude2 實作，commit 646798c1）
+
+- **P2-1 最終收據排到全部必要持久化之後，第二次必要同步失敗不再被吞掉**：
+  `main()` 在同一把鎖內會 sync 兩次——一次是指令本身的寫入，一次是 status-check outbox pass 之後。
+  原本 `finally` 的 `run_post_commit_verifiers()` 夾在兩次之間，所以收據記下的
+  `board_revision_on_disk` 在指令返回前就已被第二次 `sync_all()` 取代；而第二次 `sync_all()`
+  失敗時只會印 `Warning: Failed to emit status checks` 並 exit 0，收據仍留在
+  `applied` / `board_persistence_verified: true`。
+  改法：只有 `reconcile_status_check_outbox()` 與 `emit_status_checks_for_changed_tasks()`
+  兩步維持既有 outbox 語義（GitHub 不可達仍降級為 warning，不影響 canonical transition）；
+  其後的 `sync_all()` 屬於必要持久化，已移入交易的 try 內，失敗即設定 `tx_error` 並走交易失敗路徑。
+  post-commit verifier 移到全部必要持久化完成之後才執行，因此收據描述的是**指令實際留下的檔案**，
+  而不是中途被後續寫入取代的版本；失敗路徑照樣寫 `partial`，並保留從磁碟讀回的實際落盤內容。
+  沒有為此新增第二套 writer，仍是既有 `status_write_transaction()` 這一把鎖。
+  回歸覆蓋：無 fault injection 的正常 apply 收據 revision 必須等於指令返回後 board 磁碟上的
+  `_status_write_revision`；純 blocked 批次與含 done 的批次在第二次 `sync_all()` 失敗時，
+  必須拋出、收據為 `partial`、`board_persistence_verified: false`，且仍記錄實際已落盤的
+  board 佔位與 archive snapshot。
+- **P2-2 零寫入 admission 排除所有 `sync_all` 管理的輸出**：
+  `_validate_checkpoint_destination()` 原本只排除 board/lock/log/current-work/archive；
+  漏了同一支 `sync_all()` 也會重寫的 `dashboard-bundle.json` 與 `docs-site/` 鏡像。
+  `--checkpoint` 指向 dashboard bundle 時 admission 會通過、blocked row 落盤、exit 0，
+  但結束後該檔案是 dashboard bundle，`type` 不再是 `task_history_recovery_checkpoint`，收據遺失。
+  改法：受保護目錄改為清單（archive tasks 目錄、`docs-site/` 鏡像目錄），受保護檔案補上
+  `DASHBOARD_BUNDLE_FILE`、`ORCHESTRATOR_STATE_FILE`、`APPROVAL_QUEUE_FILE`、`PLANNING_STATE_FILE`；
+  一律在**任何寫入之前**於 admission 階段拒絕，symlink 與 hardlink 別名沿用既有
+  `_is_same_or_alias()` 一併拒絕。
+  回歸覆蓋：checkpoint 指向 dashboard bundle、指向 `docs-site/` 內檔案、以 symlink 別名指向
+  dashboard bundle，三者皆整批零寫入拒絕且目標 byte 不變、佔位未落盤；另有對照組確認
+  正常位置的 checkpoint 仍可寫出 `task_history_recovery_checkpoint` 收據。
+- **附帶文件修正**：§5 的 baseline 表改為與本輪重產批次同一次執行的實測值（前一版收據
+  記的是更早一次規劃的 board revision/hash，與已提交批次不一致）；PR #1231 的遠端描述已改為中文。
+
 ## 3. 證據分級規則
 
 | 等級 | 條件 | 處置 |
@@ -76,7 +109,12 @@ archive 寫入沿用 `task_archive.archive_task_snapshot()`，board 寫入沿用
   每一筆既有 snapshot 的 SHA-256、pinned ref 的 commit、盤點 JSON 與授權文件的 SHA-256，
   任一改變即整批拒絕，一個 byte 都不寫。
 - 缺 maintenance hold、hold 未綁定本批次 hash、hold 已過期或未經 reviewer 核准 → 拒絕。
-- checkpoint 路徑指向或 alias 任何受保護路徑（board/lock/log/current-work/index/tasks/batch/hold/provenance）→ 拒絕。
+- checkpoint 路徑指向或 alias 任何受保護路徑 → 拒絕。受保護集合為：canonical board、
+  `ai-status.json.lock`、activity log、`current-work.md`、archive `index.json`、archive `tasks/` 目錄
+  及其內現存全部 snapshot、batch 檔、hold 檔、baseline 宣告的全部來源與授權文件，
+  以及同一支 `sync_all()` 管理的派生輸出：`dashboard-bundle.json`、`docs-site/` 鏡像目錄、
+  `.orchestrator/state.json`、`.orchestrator/approval-queue.json`、`.orchestrator/planning-state.json`。
+  symlink 與 hardlink 別名一併拒絕。
 - attestation verifier 未註冊或為 UNKNOWN-HISTORICAL → 拒絕。
 
 歷史 actor 一律記為 `UNKNOWN-HISTORICAL`，與現任恢復 owner/reviewer（`history_recovery.recovery_actors`）
@@ -94,8 +132,11 @@ uv run --frozen --python 3.12 python scripts/orchestrator/backfill_task_archive_
   --recovery-inventory /tmp/odayplus-archive-incident.CYD1gq/RECOVERY_DEPENDENCY_CANDIDATES_20260906_1523.json \
   --authorization /tmp/odayplus-archive-incident.CYD1gq/RECOVERY_AUTHORIZATION_ZH_TW.md \
   --batch-out docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json \
-  --recovery-owner Antigravity3 --recovery-reviewer Codex
+  --recovery-owner Claude2 --recovery-reviewer Codex
 ```
+
+（recovery owner 隨本任務改派由 Antigravity3 改為 Claude2；`recovery_actors` 與各佔位的
+現任 owner/reviewer 一致，仍與 `UNKNOWN-HISTORICAL` 分屬不同欄位。）
 
 結果：**38 筆規劃、0 筆重建 done、38 筆 blocked 佔位、0 筆拒絕**，exit 0（與上一輪的保守分類相同）。
 分級：`merge_verified` 36 筆、`merge_claimed` 2 筆（`DPF-EMGI-LIVE-ROLLOUT-001` 為 oday-data-platform 跨 repo；
@@ -111,13 +152,18 @@ uv run --frozen --python 3.12 python scripts/orchestrator/backfill_task_archive_
 | 項目 | 值 |
 | --- | --- |
 | `ref` / `ref_commit` | `origin/dev` / `bd4fb5aa11404519ff1d8ae97fa796eb6d40e12a` |
-| board `_status_write_revision` | `dfae2bd337244419ae9a5df80890c1be` |
-| board SHA-256 | `746e826c5f8bbe8422e27516f0d07c10fa96a67b39d49258e7aba48acb5e060f` |
+| board `_status_write_revision` | `9add1fbb7b0a430cb3e2b54f1e1f759b` |
+| board SHA-256 | `6b02ed8850bbac207438f953cc9c70718873142ceef3c96a9eafd255387efefe` |
 | archive `index.json` SHA-256 | `5e5b59dbf423056aee1dfc57a739a2f740ff2fad6bc7ac87df084413bc02c44a` |
 | 盤點 JSON SHA-256 | `116f583e238e309b9f818403fe60cc135870ba1e72f396a8df66e78d7e2b0685` |
 | 授權文件 SHA-256 | `134adcb8098397b9a4b74542b9b4903a32cb07a82e0675ef54d9194dbdd2aba5` |
-| 批次檔本身 SHA-256 | `e9921a9d9bef6c6d5f24c4c9402334ec6ec3e29c1178afd0a7584084fa2a561c` |
+| 批次檔本身 SHA-256 | `dd1a9c1c8375318151c6d997311af60f013e97a3c146eb0896760247f4de20e5` |
 | 既有 snapshot | 6 筆，各自 SHA-256 已逐筆釘入 `baseline.archive_snapshot_digests` |
+
+上表全部取自本輪重產批次的同一次執行（`baseline` 區塊），與已提交的
+`ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json` 逐項一致；
+前一版收據記的是更早一次規劃的 board revision/hash，本輪已更正。
+盤點與批次的對帳：38 個 ID、44 條 `known_dependents`、6 筆既有 snapshot 摘要，與輸入盤點完全相符。
 
 執行後複驗：`ai-task-archive/index.json` 摘要不變、`tasks/` 仍為 6 筆、board 未被本任務寫入。
 
@@ -128,13 +174,23 @@ PYTHONPATH=scripts/orchestrator:scripts uv run --frozen --python 3.12 pytest \
   scripts/orchestrator/test_archive_history_recovery.py \
   scripts/test_ai_status.py \
   scripts/orchestrator/test_backfill_task_archive_snapshots.py \
-  "$ORCH_SCRATCH_DIR/test_review_recovery_regressions.py" \
-  --junitxml="$ORCH_SCRATCH_DIR/review-results.xml"
+  --junitxml="$SCRATCH/focused-results.xml"
 ```
 
-結果：**338 passed, 106 subtests passed**，exit code 0，9.45s。
-（既有三大套件為 335 passed, 106 subtests passed，加上 reviewer 回歸套件 3 passed，共 338 passed）。
+啟動前四個 status/config 環境變數（`PANTHEON_STATUS_ROOT`、`ORCH_STATUS_ROOT`、
+`ORCH_CONFIG_PATH`、`PANTHEON_CONFIG_PATH`）已指向臨時 fixture 目錄與 repo 的
+`.orchestrator/config.example.json`；未把真實 canonical 目錄當測試輸入。
+
+結果：**342 passed, 106 subtests passed**，exit code 0，8.85s。
+（上一輪同三套件為 335 passed；本輪新增 7 則回歸 → 342。）
 本輪只整批執行這一次；未執行產品全套測試。
+
+**反向驗證（確認新回歸確實咬得到缺陷，而不是在已修好的碼上空跑綠）**：
+把 `scripts/ai_status.py` 暫時還原成修正前的 commit 版本（`git show HEAD:...`）、測試檔維持本輪版本，
+單獨執行 `FinalReceiptTests` 與 `ManagedOutputCheckpointTests` 共 7 則：
+**6 failed, 1 passed**（exit code 1）。失敗的正是本輪針對 P2-1/P2-2 的 6 則；
+通過的 1 則是刻意設置的對照組（正常位置的 checkpoint 仍應成功）。
+還原後 `scripts/ai_status.py` 已復原為修正版，`git diff` 確認無殘留。
 
 覆蓋：證據不足不得合併為 done、blocked 佔位形狀（`non_dispatchable` / `waiting_for` / 依賴保留）、
 未知 actor 與 Human GO 補造拒絕、缺 candidate provenance 欄位（`url`/`pr_number`/`head_ref`/`merged_at`/`merge_commit`/型別/空物件）逐一拒絕、
@@ -144,7 +200,10 @@ baseline 六類漂移各自拒絕（board revision、同 revision 不同 board b
 idempotency（第二次 apply 必拒）、partial failure 的各失敗點留 checkpoint 且不宣稱 rollback、
 純 archive 與混合批次在 `sync_all` 失敗或未落盤時正確記錄 `partial` 且 `board_persistence_verified: false`、
 外層 board 未落盤時的 post-commit 讀回與 revision 嚴格比對、既有 6 筆 byte 不變、`--confirm` 缺 checkpoint 拒絕、
-checkpoint 輸出目的地防護（禁止覆寫倖存 snapshot、board、index、archive 目錄及別名）、
+checkpoint 輸出目的地防護（禁止覆寫倖存 snapshot、board、index、archive 目錄、
+dashboard bundle、`docs-site/` 鏡像及 symlink/hardlink 別名，並含正常位置仍可成功的對照組）、
+最終收據排在全部必要持久化之後（正常返回時 revision 與磁碟一致）、
+第二次必要 `sync_all()` 失敗不得被當成 status-check warning 吞掉（純 blocked 與含 done 批次各一）、
 maintenance hold 的八種拒絕與成功入帳、不得重入 canonical lock（靜態）、未註冊 actor 拒絕、
 attestation verifier 逐項驗證與 UNREGISTERED-REVIEWER 拒絕、
 重建 archive 記錄不得寫入現任 actor、佔位 actor 必須與批次 recovery pair 一致，
@@ -187,8 +246,8 @@ transaction 一次寫入。因此失敗時只會留下 checkpoint 記錄**從磁
 
 | 路徑 | 理由 | 本輪是否再變動 |
 | --- | --- | --- |
-| `scripts/orchestrator/test_archive_history_recovery.py` | 驗收要求的焦點測試。放在 `scripts/orchestrator/` 是因為 `config/code-boundaries.yaml` 的 `verification_ownership` 用萬用字元涵蓋 `scripts/orchestrator/test_*.py`；放在 `scripts/` 會被判為 `development_platform` bundle 內的 foreign scope，且需要改動治理 manifest 的顯式白名單。 | 是（+7 則 ReviewRegressions 回歸，共 81 則測試） |
+| `scripts/orchestrator/test_archive_history_recovery.py` | 驗收要求的焦點測試。放在 `scripts/orchestrator/` 是因為 `config/code-boundaries.yaml` 的 `verification_ownership` 用萬用字元涵蓋 `scripts/orchestrator/test_*.py`；放在 `scripts/` 會被判為 `development_platform` bundle 內的 foreign scope，且需要改動治理 manifest 的顯式白名單。 | 是（新增 `FinalReceiptTests` 3 則與 `ManagedOutputCheckpointTests` 4 則，共 88 則測試） |
 | `scripts/test_ai_status.py` | 被既有測試強制。`ActorCommandMutationGuardTests.test_ai_name_case_table_covers_every_actor_bearing_command` 要求每個新增的 mutating command 都要進 `AI_NAME_CASES` 表，否則既有套件必紅。只加了一列表項。 | 否 |
-| `delivery_toolchain/git/task_finalize.sh` | 依 Codex 審查意見與驗收要求，將 PR 自動產生範本本地化為繁體中文。 | 是 |
+| `delivery_toolchain/git/task_finalize.sh` | 依 Codex 審查意見與驗收要求，將 PR 自動產生範本本地化為繁體中文。範本只影響**新建**的 PR；已存在的 #1231 描述本輪另以 `gh pr edit` 直接改為中文。 | 否 |
 | `docs/audits/code-boundary-inventory.csv` | 被 `check_code_boundaries.py` 強制：新增任何 .py 都必須重產，否則 CI `orchestrator` job 與 task_finalize 的必過閘會擋。差異為 1 行。 | 否 |
-| `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json` | 驗收要求交付的離線批次本身；`.md` 收據無法承載 38 筆逐項 provenance。與宣告的 `.md` 同目錄同前綴。 | 是（依新 validator 與新 recovery pair 重產） |
+| `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json` | 驗收要求交付的離線批次本身；`.md` 收據無法承載 38 筆逐項 provenance。與宣告的 `.md` 同目錄同前綴。 | 是（以本輪 baseline 重產，recovery owner 改為 Claude2） |
