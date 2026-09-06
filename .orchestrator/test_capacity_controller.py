@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+# ruff: noqa: E402,I001
 import os
 import shutil
 import tempfile
@@ -1134,7 +1136,7 @@ def test_sidecar_candidates_excludes_archived_three_exact_ids_across_multiple_ro
         "ODP-STAGING-FOUNDATION-IAC-REME-SIDECAR-D7ED3693",
     ]
     # Archive the 3 exact sidecars as completed
-    for sid, parent in zip(exact_sidecar_ids, parents):
+    for sid, parent in zip(exact_sidecar_ids, parents, strict=True):
         task_archive.archive_task_snapshot(
             {
                 "id": sid,
