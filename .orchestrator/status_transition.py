@@ -2,9 +2,11 @@ from __future__ import annotations
 # ruff: noqa: F401,F821,F841,I001
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import fcntl
+import os
 import subprocess
 import sys
 import uuid
@@ -30,12 +32,47 @@ from common import (
 
 STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 AGENT_OPEN_TASK_STATUSES = ("todo", "in_progress", "review", "review_approved", "blocked")
+STATUS_LAUNCHER_NAME = "ai-status.sh"
 
 
 def _supervisor_module():
     import supervisor
 
     return supervisor
+
+
+def _resolve_status_launcher(config: dict[str, Any]) -> tuple[Path, str | None]:
+    """Locate the canonical status launcher under the configured status root.
+
+    ``scripts/ai-status.sh`` is the entry point that routes to the selected
+    runtime code authority. The sibling ``scripts/ai_status.py`` is only
+    whatever revision that checkout happens to hold, so calling it directly can
+    execute an older writer against a newer config. Returns the launcher path
+    plus a diagnostic when it cannot be executed, letting each caller keep its
+    own activity-log event type and fail closed.
+    """
+
+    sv = _supervisor_module()
+    launcher = sv.config_path(config, "status_file").parent / "scripts" / STATUS_LAUNCHER_NAME
+    if not launcher.exists():
+        return launcher, f"launcher not found at {launcher}"
+    if not os.access(launcher, os.X_OK):
+        return launcher, f"launcher at {launcher} is not executable"
+    return launcher, None
+
+
+def _status_launcher_env(config: dict[str, Any]) -> dict[str, str]:
+    """Pin the launcher to the status root this config selected.
+
+    The launcher honours an inherited ``PANTHEON_STATUS_ROOT`` before falling
+    back to its own location, so supervisor writes stay addressed to the
+    configured board even when the process inherited a different root.
+    """
+
+    sv = _supervisor_module()
+    env = os.environ.copy()
+    env["PANTHEON_STATUS_ROOT"] = str(sv.config_path(config, "status_file").parent)
+    return env
 
 
 def write_status_snapshot_if_current(config: dict[str, Any], status: dict[str, Any]) -> bool:
@@ -96,13 +133,13 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
         if not (external_module == "supervisor" and external_name == "sync_status_pipeline"):
             return bool(external_sync(config))
 
-    script = sv.config_path(config, "status_file").parent / "scripts" / "ai_status.py"
-    if not script.exists():
+    launcher, launcher_error = _resolve_status_launcher(config)
+    if launcher_error:
         sv.write_activity_log(
             config,
             {
                 "type": "task_reassignment_sync_failed",
-                "message": f"Status sync script not found at {script}.",
+                "message": f"Status sync {launcher_error}.",
             },
         )
         return False
@@ -110,10 +147,11 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
     timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
     try:
         result = subprocess.run(
-            [sys.executable, str(script), "sync"],
+            [str(launcher), "sync"],
             cwd=str(sv.config_path(config, "status_file").parent),
             capture_output=True,
             text=True,
+            env=_status_launcher_env(config),
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired:
@@ -166,14 +204,14 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     if not config.get("paths", {}).get("status_file"):
         return False
 
-    script = sv.config_path(config, "status_file").parent / "scripts" / "ai_status.py"
-    if not script.exists():
+    launcher, launcher_error = _resolve_status_launcher(config)
+    if launcher_error:
         sv.write_activity_log(
             config,
             {
                 "type": "task_dispatch_sync_failed",
                 "task_id": event.get("task_id"),
-                "message": f"Dispatch status sync script not found at {script}.",
+                "message": f"Dispatch status sync {launcher_error}.",
             },
         )
         return False
@@ -200,12 +238,12 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
         REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
         REASON_HELPER_CLAIM: f"Supervisor started {task_id} under a bounded helper execution lease.",
     }[reason]
-    env = __import__("os").environ.copy()
+    env = _status_launcher_env(config)
     env["AI_NAME"] = target_agent
     timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
     try:
         result = subprocess.run(
-            [sys.executable, str(script), command_name, task_id, message],
+            [str(launcher), command_name, task_id, message],
             cwd=str(sv.config_path(config, "status_file").parent),
             capture_output=True,
             text=True,
