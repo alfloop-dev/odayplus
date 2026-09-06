@@ -730,6 +730,7 @@ scripts/orchestrator/finalize_lane_doctor.py,development_platform_system,develop
 scripts/orchestrator/migrate_worker_worktree_config.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/register_emgi_v041_catalog.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/rollout_supervisor_runtime.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+scripts/orchestrator/test_archive_history_recovery.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_backfill_task_archive_snapshots.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_check_runtime_freshness.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_check_task_dependency_resolvability.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

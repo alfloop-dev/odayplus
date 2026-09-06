@@ -35,19 +35,34 @@ Writing snapshot files does **not** race with a running supervisor:
 untouched on purpose -- it is a shared display cache that
 ``rebuild_archive_index()`` reconstructs by globbing this directory.
 
+A second mode plans a *controlled task-history recovery batch* from a
+read-only recovery inventory. It grades evidence instead of trusting it, and
+it writes only the batch file: applying a batch is
+``ai_status.py archive_recovery_apply``, which does it inside the canonical
+status lock. See the "Controlled task-history recovery" section below.
+
 Usage::
 
     python3 scripts/orchestrator/backfill_task_archive_snapshots.py \
         --archive-dir /path/to/ai-task-archive/tasks --repo . --dry-run
+
+    python3 scripts/orchestrator/backfill_task_archive_snapshots.py \
+        --archive-dir /path/to/ai-task-archive/tasks --repo . \
+        --board /path/to/ai-status.json \
+        --recovery-inventory inventory.json --batch-out batch.json \
+        --recovery-owner Claude --recovery-reviewer Codex
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import subprocess
 import sys
+from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -310,6 +325,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default=".", help="repository providing merge evidence")
     parser.add_argument("--ref", default="origin/dev", help="ref to search for merges")
     parser.add_argument("--task", action="append", default=[], help="restrict to these ids")
+    parser.add_argument(
+        "--recovery-inventory",
+        help="read-only recovery inventory; switches the tool to recovery-batch planning",
+    )
+    parser.add_argument("--batch-out", help="where to write the recovery batch plan")
+    parser.add_argument("--board", help="ai-status.json the batch is planned against")
+    parser.add_argument("--recovery-owner", help="present-day recovery owner")
+    parser.add_argument("--recovery-reviewer", help="present-day recovery reviewer")
+    parser.add_argument("--attestations", help="JSON file of per-task acceptance/CI/runtime/approval attestations")
+    parser.add_argument("--authorization", help="recovery authorization document to pin by hash")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--dry-run", action="store_true", default=True)
     group.add_argument("--apply", action="store_true", help="actually write snapshots")
@@ -324,6 +349,9 @@ def main(argv: list[str] | None = None) -> int:
     if not (repo / ".git").exists():
         print(f"FAIL: not a git repository: {repo}", file=sys.stderr)
         return 1
+
+    if args.recovery_inventory:
+        return run_recovery_plan(args, repo=repo, archive_dir=archive_dir)
 
     task_ids = tuple(args.task) if args.task else CANDIDATE_TASK_IDS
     to_write, existing, unverified = plan(repo, archive_dir, task_ids, args.ref)
@@ -361,6 +389,693 @@ def main(argv: list[str] | None = None) -> int:
         print(
             f"{len(unverified)} task(s) had no merge evidence and were not archived."
         )
+    return 0
+
+
+
+# ---------------------------------------------------------------------------
+# Controlled task-history recovery
+# ---------------------------------------------------------------------------
+#
+# The 2026-09-06 archive incident left 38 task ids that resolve in neither the
+# live board nor ``ai-task-archive/``. A read-only inventory found a merged
+# candidate PR for every one of them, but a merged PR is *delivery* evidence,
+# not acceptance: it says nothing about the CI, runtime rollout or review
+# approval the original ``done`` transition stood on.
+#
+# So this half of the tool never decides "close enough". It grades each id and
+# emits an offline *batch* for a second reviewer:
+#
+# * ``reconstructable_done`` -- an own-branch merge proven in local git on the
+#   pinned ref *and* an explicit attestation for all four of acceptance, CI,
+#   runtime and approval. Only this tier may enter the terminal archive.
+# * ``merge_verified`` / ``merge_claimed`` / ``no_evidence`` -- everything else.
+#   These become active ``blocked`` + ``non_dispatchable`` recovery
+#   placeholders carrying their gaps, never a terminal record.
+#
+# Nothing here writes to the canonical board or archive: the batch is a plan,
+# and ``ai_status.py archive_recovery_apply`` is the only writer.
+
+RECOVERY_SOURCE = "ORCH-ARCHIVE-HISTORY-RECOVERY-001"
+RECOVERY_BATCH_SCHEMA_VERSION = 1
+RECOVERY_BATCH_TYPE = "task_history_recovery_batch"
+RECOVERY_INVENTORY_TYPE = "read_only_recovery_inventory"
+
+TIER_RECONSTRUCTABLE_DONE = "reconstructable_done"
+TIER_MERGE_VERIFIED = "merge_verified"
+TIER_MERGE_CLAIMED = "merge_claimed"
+TIER_NO_EVIDENCE = "no_evidence"
+
+ACTION_ARCHIVE_DONE = "archive_reconstructed_done"
+ACTION_BLOCKED_PLACEHOLDER = "active_blocked_placeholder"
+
+# A merged PR alone is never enough for a reconstructed `done`; all four of
+# these must be attested, each with a traceable source and a verification time.
+REQUIRED_DONE_ATTESTATIONS = ("acceptance", "ci", "runtime", "approval")
+ATTESTATION_REQUIRED_FIELDS = ("source", "verified_at", "verifier")
+
+# Fields an attestation may never carry. The recovery authorization excludes
+# inventing a historical owner, reviewer, approver or Human GO, so an input
+# that supplies one is refused rather than quietly ignored -- ignoring it would
+# let the same fabrication back in through a later, less careful reader.
+FABRICATION_FIELDS = (
+    "historical_owner",
+    "historical_reviewer",
+    "human_go",
+    "approver",
+    "review_approval",
+)
+
+CANDIDATE_REQUIRED_FIELDS = ("number", "url", "headRefName", "mergedAt")
+
+REFUSAL_ACTIVE_CONFLICT = "active_task_id_conflict"
+REFUSAL_ARCHIVE_CONFLICT = "archive_snapshot_exists"
+REFUSAL_DUPLICATE_ID = "duplicate_inventory_id"
+REFUSAL_MISSING_PROVENANCE = "missing_candidate_provenance"
+REFUSAL_FABRICATED_ACTOR = "fabricated_historical_actor"
+
+RECOVERY_WAITING_FOR = "Human/Ops"
+RECOVERY_PHASE = "History Recovery"
+
+
+class RecoveryInputError(Exception):
+    """An input that cannot be trusted to plan a recovery batch from."""
+
+
+def iso_now() -> str:
+    return (
+        datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 16), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_recovery_inventory(path: Path) -> dict[str, Any]:
+    """Load the read-only recovery inventory, refusing anything unrecognised."""
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RecoveryInputError(f"recovery inventory unreadable: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RecoveryInputError("recovery inventory must be a JSON object")
+    if str(payload.get("type") or "") != RECOVERY_INVENTORY_TYPE:
+        raise RecoveryInputError(
+            f"recovery inventory type must be {RECOVERY_INVENTORY_TYPE!r}"
+        )
+    if not str(payload.get("observed_at") or "").strip():
+        raise RecoveryInputError("recovery inventory is missing observed_at")
+    entries = payload.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise RecoveryInputError("recovery inventory has no entries")
+    return payload
+
+
+def normalize_candidate(candidate: Any) -> tuple[dict[str, Any], list[str]]:
+    """Return (normalized candidate, missing provenance fields)."""
+
+    if not isinstance(candidate, dict):
+        return {}, list(CANDIDATE_REQUIRED_FIELDS) + ["mergeCommit.oid"]
+    merge_commit = candidate.get("mergeCommit")
+    merge_oid = ""
+    if isinstance(merge_commit, dict):
+        merge_oid = str(merge_commit.get("oid") or "").strip()
+    normalized = {
+        "pr_number": candidate.get("number"),
+        "url": str(candidate.get("url") or "").strip(),
+        "title": str(candidate.get("title") or "").strip(),
+        "head_ref": str(candidate.get("headRefName") or "").strip(),
+        "head_oid": str(candidate.get("headRefOid") or "").strip(),
+        "merge_commit": merge_oid,
+        "merged_at": str(candidate.get("mergedAt") or "").strip(),
+        "state": str(candidate.get("state") or "").strip(),
+    }
+    missing = [field for field in CANDIDATE_REQUIRED_FIELDS if not candidate.get(field)]
+    if not merge_oid:
+        missing.append("mergeCommit.oid")
+    return normalized, missing
+
+
+def _attestation_gaps(attestation: dict[str, Any] | None) -> list[str]:
+    """Return the required attestations this input does not actually carry."""
+
+    gaps: list[str] = []
+    attestation = attestation if isinstance(attestation, dict) else {}
+    for name in REQUIRED_DONE_ATTESTATIONS:
+        item = attestation.get(name)
+        if not isinstance(item, dict):
+            gaps.append(name)
+            continue
+        if any(not str(item.get(field) or "").strip() for field in ATTESTATION_REQUIRED_FIELDS):
+            gaps.append(name)
+    return gaps
+
+
+def grade_recovery_entry(
+    repo: Path,
+    entry: dict[str, Any],
+    ref: str,
+    *,
+    attestation: dict[str, Any] | None = None,
+    scan_limit: int = SCAN_LIMIT,
+) -> dict[str, Any]:
+    """Grade one missing task id into an evidence tier plus its gaps.
+
+    The grading never upgrades itself on similarity: local git is the only
+    thing that can produce ``merge_verified``, and only an explicit attestation
+    for every one of :data:`REQUIRED_DONE_ATTESTATIONS` can lift that to
+    ``reconstructable_done``.
+    """
+
+    task_id = str(entry.get("missing_id") or "").strip()
+    refusals: list[str] = []
+    if not task_id:
+        return {
+            "task_id": "",
+            "evidence_tier": TIER_NO_EVIDENCE,
+            "action": None,
+            "gaps": ["task_id"],
+            "refusals": [REFUSAL_MISSING_PROVENANCE],
+            "candidates": [],
+            "local_merge": None,
+            "dependents": [],
+        }
+
+    candidates: list[dict[str, Any]] = []
+    raw_candidates = entry.get("candidates")
+    raw_candidates = raw_candidates if isinstance(raw_candidates, list) else []
+    for raw in raw_candidates:
+        normalized, missing = normalize_candidate(raw)
+        if missing:
+            refusals.append(REFUSAL_MISSING_PROVENANCE)
+            normalized["missing_provenance"] = missing
+        candidates.append(normalized)
+
+    if isinstance(attestation, dict):
+        fabricated = [field for field in FABRICATION_FIELDS if attestation.get(field)]
+        if fabricated:
+            refusals.append(REFUSAL_FABRICATED_ACTOR)
+
+    local_merge = find_merge_evidence(repo, task_id, ref, scan_limit=scan_limit)
+    gaps: list[str] = []
+    if local_merge is not None:
+        tier = TIER_MERGE_VERIFIED
+        declared = {c["merge_commit"] for c in candidates if c.get("merge_commit")}
+        if declared and local_merge["merge_commit"] not in declared:
+            # Not a refusal -- a cross-repo or rebased candidate legitimately
+            # names a different commit -- but it is a gap, so it also keeps the
+            # id out of `reconstructable_done`. Two sources disagree about what
+            # delivered this task; promoting on one of them would be picking a
+            # winner silently, which is the whole failure mode this tool exists
+            # to avoid.
+            gaps.append("candidate_merge_commit_mismatch")
+    elif candidates:
+        tier = TIER_MERGE_CLAIMED
+        gaps.append("merge_not_verifiable_on_ref")
+    else:
+        tier = TIER_NO_EVIDENCE
+        gaps.append("no_candidate_delivery_evidence")
+
+    gaps.extend(_attestation_gaps(attestation))
+    # Every gap counts, not only the missing attestations: a verified merge
+    # promotes to `reconstructable_done` only when nothing at all is open.
+    if tier == TIER_MERGE_VERIFIED and not gaps:
+        tier = TIER_RECONSTRUCTABLE_DONE
+
+    dependents = [
+        {
+            "id": str((item or {}).get("id") or "").strip(),
+            "status": str((item or {}).get("status") or "").strip(),
+        }
+        for item in (entry.get("dependents") or [])
+        if isinstance(item, dict) and str((item or {}).get("id") or "").strip()
+    ]
+
+    action = (
+        ACTION_ARCHIVE_DONE
+        if tier == TIER_RECONSTRUCTABLE_DONE
+        else ACTION_BLOCKED_PLACEHOLDER
+    )
+    return {
+        "task_id": task_id,
+        "evidence_tier": tier,
+        "action": action,
+        "gaps": gaps,
+        "refusals": sorted(set(refusals)),
+        "candidates": candidates,
+        "local_merge": dict(local_merge) if local_merge else None,
+        "dependents": dependents,
+    }
+
+
+def _history_recovery_block(
+    grading: dict[str, Any],
+    *,
+    record_kind: str,
+    recovery_owner: str,
+    recovery_reviewer: str,
+    generated_at: str,
+    baseline: dict[str, Any],
+    attestation: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """The provenance block every reconstructed record carries.
+
+    ``historical_actors`` and ``recovery_actors`` are deliberately separate
+    keys. Collapsing them would put a present-day name where an unrecoverable
+    one belongs, which is the single change that would make a reconstructed
+    record indistinguishable from an original one.
+    """
+
+    return {
+        "reconstructed": True,
+        "record_kind": record_kind,
+        "created_by": RECOVERY_SOURCE,
+        "generated_at": generated_at,
+        "evidence_tier": grading["evidence_tier"],
+        "gaps": list(grading["gaps"]),
+        "historical_actors": {
+            "owner": UNKNOWN_ACTOR,
+            "reviewer": UNKNOWN_ACTOR,
+            "human_go": UNKNOWN_ACTOR,
+        },
+        "recovery_actors": {"owner": recovery_owner, "reviewer": recovery_reviewer},
+        "evidence": {
+            "local_merge": grading["local_merge"],
+            "candidates": grading["candidates"],
+            "attestations": deepcopy(attestation) if isinstance(attestation, dict) else None,
+            "verified_at": generated_at,
+            "verifier": recovery_owner,
+        },
+        "known_dependents": list(grading["dependents"]),
+        "baseline": {
+            "ref": baseline.get("ref"),
+            "ref_commit": baseline.get("ref_commit"),
+            "inventory_sha256": baseline.get("inventory_sha256"),
+            "authorization_sha256": baseline.get("authorization_sha256"),
+        },
+        "note": (
+            "重建記錄，來源為 PR/commit 等可驗證證據，不是原始 archive bytes，"
+            "也不代表原始驗收、CI、部署或核准已完成。"
+        ),
+    }
+
+
+def build_recovery_placeholder(
+    grading: dict[str, Any],
+    *,
+    recovery_owner: str,
+    recovery_reviewer: str,
+    generated_at: str,
+    baseline: dict[str, Any],
+    attestation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the active ``blocked`` + ``non_dispatchable`` recovery record."""
+
+    task_id = grading["task_id"]
+    return {
+        "id": task_id,
+        "title": f"歷史復原佔位：{task_id}",
+        "summary_zh": (
+            "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，"
+            "維持 blocked 並保留已知依賴與候選來源，等待人工裁決。"
+        ),
+        "phase": RECOVERY_PHASE,
+        "owner": recovery_owner,
+        "reviewer": recovery_reviewer,
+        "status": "blocked",
+        "non_dispatchable": True,
+        "waiting_for": RECOVERY_WAITING_FOR,
+        "priority": "P2",
+        "depends_on": [],
+        "artifacts": [],
+        "acceptance": [
+            "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；"
+            "否則由人類裁決以 blocked 收尾。",
+        ],
+        "next": (
+            "等待人工裁決：補齊 "
+            + "/".join(REQUIRED_DONE_ATTESTATIONS)
+            + " 證據，或確認此 ID 以 blocked 結案。"
+        ),
+        "last_update": generated_at,
+        "history_recovery": _history_recovery_block(
+            grading,
+            record_kind="recovery_placeholder",
+            recovery_owner=recovery_owner,
+            recovery_reviewer=recovery_reviewer,
+            generated_at=generated_at,
+            baseline=baseline,
+            attestation=attestation,
+        ),
+    }
+
+
+def build_recovery_done_task(
+    grading: dict[str, Any],
+    *,
+    recovery_owner: str,
+    recovery_reviewer: str,
+    generated_at: str,
+    baseline: dict[str, Any],
+    artifacts: list[str],
+    attestation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the task record a ``reconstructable_done`` id would be archived as.
+
+    ``owner``/``reviewer`` stay :data:`UNKNOWN_ACTOR`: the people who ran the
+    original task are not recoverable, and the present-day recovery pair is
+    recorded separately under ``history_recovery.recovery_actors``.
+    """
+
+    local_merge = grading["local_merge"] or {}
+    return {
+        "id": grading["task_id"],
+        "title": local_merge.get("subject") or grading["task_id"],
+        "phase": RECOVERY_PHASE,
+        "owner": UNKNOWN_ACTOR,
+        "reviewer": UNKNOWN_ACTOR,
+        "status": TERMINAL_STATUS_DONE,
+        "terminal_outcome": TERMINAL_OUTCOME_COMPLETED,
+        "depends_on": [],
+        "artifacts": artifacts,
+        "next": "Reconstructed from verifiable delivery and acceptance evidence.",
+        "last_update": local_merge.get("merged_at") or generated_at,
+        "history_recovery": _history_recovery_block(
+            grading,
+            record_kind="reconstructed_done",
+            recovery_owner=recovery_owner,
+            recovery_reviewer=recovery_reviewer,
+            generated_at=generated_at,
+            baseline=baseline,
+            attestation=attestation,
+        ),
+    }
+
+
+def capture_recovery_baseline(
+    *,
+    repo: Path,
+    ref: str,
+    board_path: Path,
+    archive_dir: Path,
+    inventory_path: Path,
+    authorization_path: Path | None,
+) -> dict[str, Any]:
+    """Pin every input the batch is only valid against.
+
+    ``archive_snapshot_digests`` is the guard that keeps the six snapshots that
+    survived the incident intact: the apply step recomputes it and refuses the
+    whole batch if any existing byte moved.
+    """
+
+    try:
+        board = json.loads(board_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RecoveryInputError(f"board unreadable: {exc}") from exc
+    if not isinstance(board, dict):
+        raise RecoveryInputError("board must be a JSON object")
+    board_revision = str(board.get("_status_write_revision") or "").strip()
+    if not board_revision:
+        raise RecoveryInputError(
+            "board has no _status_write_revision; refusing to plan against an "
+            "unpinnable baseline"
+        )
+
+    ref_commit = _git(repo, "rev-parse", ref)
+    if not ref_commit:
+        raise RecoveryInputError(f"cannot resolve ref {ref!r} in {repo}")
+
+    index_path = archive_dir.parent / "index.json"
+    digests = {
+        path.stem: sha256_file(path) for path in sorted(archive_dir.glob("*.json"))
+    }
+    return {
+        "repo": str(repo),
+        "ref": ref,
+        "ref_commit": ref_commit,
+        "board_path": str(board_path),
+        "board_sha256": sha256_file(board_path),
+        "board_revision": board_revision,
+        "board_active_task_ids": sorted(
+            str((task or {}).get("id") or "").strip()
+            for task in (board.get("tasks") or [])
+            if isinstance(task, dict) and str((task or {}).get("id") or "").strip()
+        ),
+        "archive_tasks_dir": str(archive_dir),
+        "archive_index_path": str(index_path),
+        "archive_index_sha256": sha256_file(index_path) if index_path.exists() else None,
+        "archive_snapshot_digests": digests,
+        "inventory_path": str(inventory_path),
+        "inventory_sha256": sha256_file(inventory_path),
+        "authorization_path": str(authorization_path) if authorization_path else None,
+        "authorization_sha256": (
+            sha256_file(authorization_path)
+            if authorization_path and authorization_path.exists()
+            else None
+        ),
+    }
+
+
+def build_recovery_batch(
+    *,
+    repo: Path,
+    archive_dir: Path,
+    board_path: Path,
+    inventory_path: Path,
+    ref: str,
+    recovery_owner: str,
+    recovery_reviewer: str,
+    attestations: dict[str, Any] | None = None,
+    authorization_path: Path | None = None,
+    generated_at: str | None = None,
+    scan_limit: int = SCAN_LIMIT,
+) -> dict[str, Any]:
+    """Grade the whole inventory into one reviewable, apply-ready batch."""
+
+    owner = str(recovery_owner or "").strip()
+    reviewer = str(recovery_reviewer or "").strip()
+    if not owner or not reviewer:
+        raise RecoveryInputError("recovery owner and reviewer are both required")
+    if owner == reviewer:
+        raise RecoveryInputError("recovery reviewer cannot equal recovery owner")
+    if UNKNOWN_ACTOR in {owner, reviewer}:
+        raise RecoveryInputError(
+            f"{UNKNOWN_ACTOR} names the unrecoverable historical actor and can "
+            "never be the present-day recovery owner or reviewer"
+        )
+    if authorization_path is not None and not authorization_path.exists():
+        raise RecoveryInputError(f"authorization document not found: {authorization_path}")
+
+    inventory = load_recovery_inventory(inventory_path)
+    baseline = capture_recovery_baseline(
+        repo=repo,
+        ref=ref,
+        board_path=board_path,
+        archive_dir=archive_dir,
+        inventory_path=inventory_path,
+        authorization_path=authorization_path,
+    )
+    generated_at = generated_at or iso_now()
+    attestations = attestations if isinstance(attestations, dict) else {}
+    active_ids = set(baseline["board_active_task_ids"])
+    archived_ids = set(baseline["archive_snapshot_digests"])
+
+    entries: list[dict[str, Any]] = []
+    refusals: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for raw_entry in inventory["entries"]:
+        if not isinstance(raw_entry, dict):
+            refusals.append(
+                {"task_id": "", "reasons": [REFUSAL_MISSING_PROVENANCE], "detail": "entry is not an object"}
+            )
+            continue
+        grading = grade_recovery_entry(
+            repo,
+            raw_entry,
+            ref,
+            attestation=attestations.get(str(raw_entry.get("missing_id") or "").strip()),
+            scan_limit=scan_limit,
+        )
+        task_id = grading["task_id"]
+        reasons = list(grading["refusals"])
+        if not task_id:
+            refusals.append({"task_id": "", "reasons": reasons or [REFUSAL_MISSING_PROVENANCE], "detail": "missing_id"})
+            continue
+        if task_id in seen:
+            reasons.append(REFUSAL_DUPLICATE_ID)
+        seen.add(task_id)
+        if task_id in active_ids:
+            reasons.append(REFUSAL_ACTIVE_CONFLICT)
+        if task_id in archived_ids:
+            reasons.append(REFUSAL_ARCHIVE_CONFLICT)
+        if reasons:
+            refusals.append(
+                {
+                    "task_id": task_id,
+                    "reasons": sorted(set(reasons)),
+                    "evidence_tier": grading["evidence_tier"],
+                }
+            )
+            continue
+
+        attestation = attestations.get(task_id)
+        if grading["action"] == ACTION_ARCHIVE_DONE:
+            record = build_recovery_done_task(
+                grading,
+                recovery_owner=owner,
+                recovery_reviewer=reviewer,
+                generated_at=generated_at,
+                baseline=baseline,
+                artifacts=find_repo_artifacts(repo, task_id),
+                attestation=attestation,
+            )
+            archived_at = (grading["local_merge"] or {}).get("merged_at") or generated_at
+        else:
+            record = build_recovery_placeholder(
+                grading,
+                recovery_owner=owner,
+                recovery_reviewer=reviewer,
+                generated_at=generated_at,
+                baseline=baseline,
+                attestation=attestation,
+            )
+            archived_at = None
+
+        entries.append(
+            {
+                "task_id": task_id,
+                "action": grading["action"],
+                "evidence_tier": grading["evidence_tier"],
+                "gaps": grading["gaps"],
+                "archived_at": archived_at,
+                "record": record,
+            }
+        )
+
+    counts = {
+        "inventory_entries": len(inventory["entries"]),
+        "planned": len(entries),
+        ACTION_ARCHIVE_DONE: sum(1 for item in entries if item["action"] == ACTION_ARCHIVE_DONE),
+        ACTION_BLOCKED_PLACEHOLDER: sum(
+            1 for item in entries if item["action"] == ACTION_BLOCKED_PLACEHOLDER
+        ),
+        "refused": len(refusals),
+    }
+    return {
+        "schema_version": RECOVERY_BATCH_SCHEMA_VERSION,
+        "type": RECOVERY_BATCH_TYPE,
+        "generated_at": generated_at,
+        "generated_by": RECOVERY_SOURCE,
+        "requires_maintenance_hold": True,
+        "canonical_apply_performed": False,
+        "recovery_actors": {"owner": owner, "reviewer": reviewer},
+        "authorization": {
+            "path": str(authorization_path) if authorization_path else None,
+            "sha256": baseline["authorization_sha256"],
+            "scope": (
+                "依可驗證證據受控重建歷史；缺證據維持 blocked。不含補造 Human GO、"
+                "核准者身分或 production 授權。"
+            ),
+        },
+        "inventory": {
+            "observed_at": inventory.get("observed_at"),
+            "authoritative": bool(inventory.get("authoritative")),
+            "limitations": list(inventory.get("limitations") or []),
+        },
+        "baseline": baseline,
+        "counts": counts,
+        "entries": entries,
+        "refusals": refusals,
+    }
+
+
+def run_recovery_plan(args: argparse.Namespace, *, repo: Path, archive_dir: Path) -> int:
+    """Plan a recovery batch. Writes the plan file and nothing else.
+
+    ``--apply`` is refused here on purpose. The legacy backfill mode writes
+    archive snapshots directly because it only ever adds a file per verified
+    merge; a recovery batch also creates *board* rows, so its only writer is
+    ``ai_status.py archive_recovery_apply``, which does that inside the
+    canonical status lock.
+    """
+
+    if args.apply:
+        print(
+            "FAIL: --apply is not available in recovery mode. Plan the batch here, "
+            "then apply it with `ai_status.py archive_recovery_apply`.",
+            file=sys.stderr,
+        )
+        return 1
+    missing = [
+        name
+        for name, value in (
+            ("--batch-out", args.batch_out),
+            ("--board", args.board),
+            ("--recovery-owner", args.recovery_owner),
+            ("--recovery-reviewer", args.recovery_reviewer),
+        )
+        if not value
+    ]
+    if missing:
+        print(f"FAIL: recovery mode requires {', '.join(missing)}", file=sys.stderr)
+        return 1
+
+    attestations: dict[str, Any] = {}
+    if args.attestations:
+        try:
+            loaded = json.loads(Path(args.attestations).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"FAIL: attestations unreadable: {exc}", file=sys.stderr)
+            return 1
+        if not isinstance(loaded, dict):
+            print("FAIL: attestations must be a JSON object keyed by task id", file=sys.stderr)
+            return 1
+        attestations = loaded
+
+    try:
+        batch = build_recovery_batch(
+            repo=repo,
+            archive_dir=archive_dir,
+            board_path=Path(args.board).resolve(),
+            inventory_path=Path(args.recovery_inventory).resolve(),
+            ref=args.ref,
+            recovery_owner=args.recovery_owner,
+            recovery_reviewer=args.recovery_reviewer,
+            attestations=attestations,
+            authorization_path=Path(args.authorization).resolve() if args.authorization else None,
+        )
+    except RecoveryInputError as exc:
+        print(f"FAIL: {exc}", file=sys.stderr)
+        return 1
+
+    out_path = Path(args.batch_out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(batch, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+    counts = batch["counts"]
+    for entry in batch["entries"]:
+        print(
+            f"  plan {entry['action']}: {entry['task_id']} "
+            f"tier={entry['evidence_tier']} gaps={','.join(entry['gaps']) or 'none'}"
+        )
+    for refusal in batch["refusals"]:
+        print(f"  REFUSE {refusal['task_id'] or '<no id>'}: {','.join(refusal['reasons'])}")
+    print(
+        f"\nPLAN ONLY: {counts['planned']} entr(ies) planned "
+        f"({counts[ACTION_ARCHIVE_DONE]} reconstructed done, "
+        f"{counts[ACTION_BLOCKED_PLACEHOLDER]} blocked placeholders), "
+        f"{counts['refused']} refused. Nothing was written to the canonical "
+        f"board or archive. Batch: {out_path}"
+    )
     return 0
 
 
