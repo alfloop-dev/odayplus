@@ -156,7 +156,7 @@ live config `.orchestrator/config.json` 本次**完全未修改**。以下經 re
 | `providers.codex.codex.model_reasoning_effort` | `ultra` |
 | `providers.codex.codex.cli` | `"codex"` |
 | `providers.codex.codex.ask_for_approval` / `sandbox_mode` / `dangerously_bypass` | `never` / `workspace-write` / `true` |
-| `supervisor.role_provider_policy` | 不變（reviewer→`codex`；owner/helper→`antigravity`,`claude`） |
+| `ready_dispatcher.role_provider_policy` | 不變（reviewer→`codex`；owner/helper→`antigravity`,`claude`） |
 | `account_pools.codex_bjoe.max_concurrent` | `2` |
 | `account_pools.codex_lupin.max_concurrent` | `2` |
 | `account_pools.antigravity_main.max_concurrent` | `5` |
@@ -174,6 +174,7 @@ Codex 雙 pool 四 slots、Agy 5、Claude 5 與 quota 皆未變動。
 - **回滾範圍**：僅此一個全域 npm 套件。由於 symlink、npm prefix 與 orchestrator config 皆未變動，回滾不需要改動任何 config、launcher 或 link，也不需要重啟 Supervisor。
 - **未保留私有備份於版本庫**：本 PR 只 commit 這份 receipt，未 commit 任何全域 CLI／package／auth／config 的私有備份。回滾依據為上方記錄的官方版本號與 `dist.integrity`。
 - **失敗處置**：若升級後 backend 仍拒絕，維持 Codex review hold，不靜默降模型或降 effort。
+- **回滾邊界的明確排除**：本節的「回滾」只指 npm 套件版本 pin（`0.153.4` ⇄ `0.147.0`）。退回 Luna、移除／降低 `model_reasoning_effort=ultra`、還原舊 `role_provider_policy` 或還原舊 config **不在本次回滾範圍內**，且會違反現行模型與角色政策；CLI 不相容的正解是修 CLI 版本，任何模型／effort／角色政策降級都需要另有明確授權。
 
 ---
 
@@ -183,16 +184,69 @@ Codex 雙 pool 四 slots、Agy 5、Claude 5 與 quota 皆未變動。
 
 僅 `codex --version` 或 features list 成功**不足以結案**。結案需要一次**正常的** Codex review 派工實際進入模型工作（不再是 HTTP 400 拒絕），且不得以假 task 或 API probe 取得。
 
-### 7.2 目前狀態
+### 7.2 backend 成功證據：已取得（正常 review 派工，terminal exit 0）
 
-本 receipt 提交（PR 建立 + review submission）本身即會觸發本任務 reviewer `Codex` 的正常 review 派工，該 run 使用的正是 §4 核對過的 `/usr/bin/codex` 0.153.4 與 `gpt-6-astra` / `ultra`。該 run 的 run id 與 terminal 結果將以 canonical CLI note 記錄於本任務。
+本 receipt 的 PR #1224 submission 觸發了本任務 reviewer `Codex` 的**正常** review 派工（dispatch 原因 `review_ready_dispatch`），該 run 使用的正是 §4 核對過的 `/usr/bin/codex` 0.153.4 與 `gpt-6-astra` / `ultra`。**這不是假 task，也不是 API probe**，而是本任務自己的正式審查工作。
 
-**在取得該 backend 成功證據之前，本項如實標示為未完成。**
+| 項目 | 數值 |
+| --- | --- |
+| Run ID | `codex-20260906T062839Z-f98b97cc` |
+| Provider / 邏輯 agent | `codex` / `Codex` |
+| Dispatch slot | `codex_bjoe_slot_1`（quota group `codex_bjoe`） |
+| Dispatch 原因 | `review_ready_dispatch`（PR #1224 的正常 review） |
+| 啟動 | `2026-09-06T06:28:39Z` |
+| 結束 | `2026-09-06T06:31:04Z` |
+| Terminal status | `completed` |
+| `exit_code` / `signal` | `0` / `null` |
+| `progress_outcome` | `review_decided` |
+| PID / child PID | `1717437` / `1717438` |
+
+Terminal 依據為 runner 自己的收據 `.orchestrator/worker-runtime/status/codex-20260906T062839Z-f98b97cc.json`（`status=completed`、`finished_at=2026-09-06T06:31:04Z`、`exit_code=0`、`signal=null`），與 canonical `state.json` 的 worker 記錄一致；非以摘要或行為推論。
+
+Run log（runtime `64f3b2399442` 的 `.orchestrator/logs/20260906T062839303947Z-codex-codex_bjoe_slot_1-e1ff05.log`）第 5–12 行為 session header，直接顯示 CLI 版本與生效的模型／effort：
+
+```
+OpenAI Codex v0.153.4
+--------
+workdir: /tmp/pantheon-worker-worktrees/pantheon/odp-codex-cli-astra-compat-upgrade-001
+model: gpt-6-astra
+provider: openai
+approval: never
+sandbox: danger-full-access
+reasoning effort: ultra
+```
+
+同一份 log 第 61 行起為**模型實際回應**（reviewer 的中文工作計畫），第 63–70 行起為模型發起並 `succeeded` 的工具 `exec` 呼叫，代表已完整進入模型工作而非在請求階段被拒。
+
+與 §2 的對照（同一 CLI，不同版本）：
+
+| 檢查點 | 升級前 run `…T060804Z-2ab90176` | 升級後 run `…T062839Z-f98b97cc` |
+| --- | --- | --- |
+| CLI 版本 | `0.147.0` | `0.153.4` |
+| Quota group / slot | `codex_lupin` / `codex_lupin_slot_1` | `codex_bjoe` / `codex_bjoe_slot_1` |
+| `Unknown model gpt-6-astra … fallback` 警告 | 有 | **無** |
+| backend HTTP 400 `invalid_request_error` | 有（log 69–70） | **無** |
+| Terminal | `failed` / exit `1` | `completed` / exit `0` |
+
+log 全長 5040 行，全文僅第 150 與 4574 行出現 `invalid_request_error` 字串，且兩處都是 reviewer 讀取 task brief 與 `ai-status.json` 時回顯的**本任務 acceptance 文字**，不是本次 run 的 backend 錯誤。
+
+**判定**：acceptance「需要一次正常 Codex review 成功進入模型工作（非 HTTP 400 拒絕）」已滿足。兩個 pool 各有一次真實 run 佐證：`codex_lupin` 在 0.147.0 被 backend 拒絕、`codex_bjoe` 在 0.153.4 正常完成。該 run 的 review 決定是把 PR #1224 reopen 退回本任務 owner，本 receipt 的 §5 L159 欄位更正與本節證據補入即為回應該次退回。
 
 ### 7.3 `ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001` hold 解除：未完成，需操作者授權
 
-- 該任務目前仍為 `status=review`、`owner=Antigravity`、`reviewer=Codex2`、`non_dispatchable=true`，PR #1223（`review_submission.remote_sha=03ef1d01`）未被其他 actor 核准或重新指派，歷史未被改寫。
-- 解除 hold 的唯一 canonical 路徑為以相同 owner／reviewer 呼叫：
+本輪已依 reviewer 要求**重新讀取**該任務的當時狀態（讀自 live canonical `ai-status.json`，非引用前一輪結論）：
+
+| 欄位 | 目前值（2026-09-06 本輪 readback） |
+| --- | --- |
+| `status` | `review` |
+| `owner` / `reviewer` | `Antigravity` / `Codex2` |
+| `non_dispatchable` | `true` |
+| `pr_number` | `1223` |
+| `review_submission.remote_sha` / `review_gate_sha` | `03ef1d0151ac50ba928c6e7df796404985df4684` |
+| `last_update` | `2026-09-06T06:17:16Z` |
+
+- 該任務**未**被其他 actor 核准、重新提交或改派；owner／reviewer／submission／CI 與失敗歷史皆與 hold 當時一致，未被改寫。
+- 解除 hold 的唯一 canonical 路徑為以相同 owner／reviewer 呼叫（不手改 canonical JSON／state／queue，不清失敗計數）：
 
 ```bash
 AI_NAME=Claude TASK_METADATA_JSON='{"non_dispatchable": false}' \
@@ -200,9 +254,23 @@ AI_NAME=Claude TASK_METADATA_JSON='{"non_dispatchable": false}' \
   assign ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001 Antigravity Codex2
 ```
 
-- 此命令在本次背景 worker 執行時**被 harness 的權限分類器拒絕**（`Blocked by classifier`），非 canonical CLI 拒絕、亦非政策拒絕；已嘗試兩次後停止，**未以任何方式繞過**，也未手改 canonical JSON。
-- 因此該 hold **仍為 `non_dispatchable=true`**。需操作者授權此命令後由本任務 owner 執行；執行時維持原 owner／reviewer／submission／CI 不變，不清失敗計數。
+- 此命令在前一輪背景 worker 執行時**被 harness 的權限分類器拒絕**（`Blocked by classifier`）——非 canonical CLI 拒絕、亦非 role/provider 政策拒絕；當時嘗試兩次後停止，**未以任何方式繞過**。
+- **本輪（reopen 後）刻意未重試該命令。** 依 reviewer 於 `2026-09-06T06:32:05Z` 的 note：尚未收到操作者對 PR #1223 解除 hold 的新回覆，且不得把 goal 自動續行或本次 review 退回當作新授權，也不得重試已被 classifier 拒絕的同一動作。因此本輪只完成 §7.2 證據補入與 §5 欄位更正，並如實保留此項為未完成。
+- **現況**：該 hold **仍為 `non_dispatchable=true`**。此項需操作者明確授權上述命令後，由本任務 owner 執行；執行時維持原 owner／reviewer／submission／CI 不變。
 - 依 task 規範，本任務**未**將 `depends_on` 指向該 live rollout，以免造成 review／CI 升級的循環依賴。
+
+### 7.4 結案狀態總結（如實）
+
+| 驗收項 | 狀態 |
+| --- | --- |
+| 失敗事實與非 quota 判定（§2） | 已完成 |
+| 官方 pinned CLI 升級 `0.147.0 → 0.153.4`（§3） | 已完成 |
+| 兩 pool／四 physical slot binary 與模型／effort readback（§4） | 已完成 |
+| 未變動欄位與 rollback 邊界（§5／§6） | 已完成 |
+| 一次正常 review 成功進入模型工作、非 HTTP 400（§7.2） | **已完成**（run `codex-20260906T062839Z-f98b97cc`，terminal exit 0） |
+| 恢復 `ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001` 的 `non_dispatchable=false`（§7.3） | **未完成 — 被 harness 權限分類器阻擋，待操作者授權** |
+
+CLI 升級本身與 backend 接受度驗證已完整成立；**唯一未完成項為 hold 解除**，且原因是工具權限而非技術或政策問題。本 receipt 不宣稱 full rollout 完成，也未刪除或弱化該項驗收。
 
 ---
 
