@@ -10,7 +10,7 @@
 | 證據分級 / 批次規劃（延伸既有 backfill planner） | `scripts/orchestrator/backfill_task_archive_snapshots.py` |
 | 唯一寫入者（延伸 canonical ai_status writer transaction） | `scripts/ai_status.py` → `archive_recovery_apply` |
 | 焦點測試 | `scripts/orchestrator/test_archive_history_recovery.py` |
-| 離線批次（本輪產出，供 Codex 審查） | `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_2026-09-06-batch.json` |
+| 離線批次（本輪產出，供 Codex 審查） | `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json` |
 
 沒有新增第二套 writer、dispatcher 或 maintenance workspace manager：
 archive 寫入沿用 `task_archive.archive_task_snapshot()`，board 寫入沿用 `main()` 已持有的
@@ -57,7 +57,7 @@ uv run --frozen --python 3.12 python scripts/orchestrator/backfill_task_archive_
   --board /home/lupin/odayplus/ai-status.json \
   --recovery-inventory /tmp/odayplus-archive-incident.CYD1gq/RECOVERY_DEPENDENCY_CANDIDATES_20260906_1523.json \
   --authorization /tmp/odayplus-archive-incident.CYD1gq/RECOVERY_AUTHORIZATION_ZH_TW.md \
-  --batch-out docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_2026-09-06-batch.json \
+  --batch-out docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json \
   --recovery-owner Claude --recovery-reviewer Codex
 ```
 
@@ -126,3 +126,19 @@ import-order sentinel 用另一個 python 進程重跑真實 import 順序：
 apply 為多檔案操作，不是單一原子交易：archive snapshot 是各自的檔案，board 由外層 canonical
 transaction 一次寫入。因此失敗時只會留下 checkpoint 記錄實際落地的項目，並明講**沒有執行 rollback**；
 成功時的 checkpoint 也標記 `board_persistence_verified: false`，因為 board 是在指令回傳後才由外層交易寫入。
+
+## 8. 相對 owned_paths 的範圍偏離（已揭露）
+
+派工宣告的 owned_paths 為 `scripts/ai_status.py`、
+`scripts/orchestrator/backfill_task_archive_snapshots.py`、
+`scripts/orchestrator/test_backfill_task_archive_snapshots.py`、
+`.orchestrator/task_archive.py`、
+`docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906.md`。
+本次實際改動多出四項，逐項理由如下；`.orchestrator/task_archive.py` 未修改（只作為來源閱讀）。
+
+| 路徑 | 理由 |
+| --- | --- |
+| `scripts/orchestrator/test_archive_history_recovery.py` | 驗收要求的焦點測試。放在 `scripts/orchestrator/` 是因為 `config/code-boundaries.yaml` 的 `verification_ownership` 用萬用字元涵蓋 `scripts/orchestrator/test_*.py`；放在 `scripts/` 會被判為 `development_platform` bundle 內的 foreign scope，且需要改動治理 manifest 的顯式白名單。 |
+| `scripts/test_ai_status.py` | 被既有測試強制。`ActorCommandMutationGuardTests.test_ai_name_case_table_covers_every_actor_bearing_command` 要求每個新增的 mutating command 都要進 `AI_NAME_CASES` 表，否則既有套件必紅。只加了一列表項。 |
+| `docs/audits/code-boundary-inventory.csv` | 被 `check_code_boundaries.py` 強制：新增任何 .py 都必須重產，否則 CI `orchestrator` job 與 task_finalize 的必過閘會擋。差異為 1 行。 |
+| `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json` | 驗收要求交付的離線批次本身；`.md` 收據無法承載 38 筆逐項 provenance。與宣告的 `.md` 同目錄同前綴。 |
