@@ -597,11 +597,10 @@
         },
         {
           "roles": ["owner", "helper"],
-          "task_classes": ["implementation", "remediation", "documentation"],
           "providers": ["antigravity", "claude"]
         }
       ],
-      "unclassified_owned_work": "allow"
+      "unclassified_owned_work": ["antigravity", "claude"]
     },
     "helper_execution_lease": {
       "enabled": true,

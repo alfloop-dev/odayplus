@@ -104,6 +104,12 @@ from common import (
     REOPEN_REASON_WORKTREE_LEASE_MISMATCH,
 )
 from coordination_file_watcher import sync_coordination_files
+# The account-pool resolver (`agent_account_pool_id` and the three functions it
+# is built from) and `review_is_independent` live in `dispatch_policy` rather
+# than here: the canonical CLI has to answer "are these two names the same real
+# account?" before it writes an assignment, and it must be able to do that
+# without importing the supervisor. They stay bound in this module's namespace,
+# which is the one every existing caller -- and every test patch point -- uses.
 from dispatch_policy import (
     DISPATCH_STATUS_ACTIONS,
     REASON_HELPER_CLAIM,
@@ -114,13 +120,19 @@ from dispatch_policy import (
     ROLE_HELPER,
     ROLE_OWNER,
     ROLE_REVIEWER,
+    agent_account_pool_id,
+    agent_provider_id,
+    agent_quota_group_id,
     dispatch_reason_priority,
     dispatch_reason_role,
     is_execution_dispatch_reason,
     normalized_status_set,
+    provider_dispatch_group_id,
     ready_dispatch_settings,
+    review_is_independent,
     role_provider_block_reason,
     task_priority_rank,
+    task_submitted_author,
 )
 from github_reconciliation import (
     CI_FAILURE,
@@ -1412,44 +1424,6 @@ def provider_runtime_config_block_reason(config: dict[str, Any], provider: str |
     return str(health.get("error") or f"{provider_key or provider} provider config is invalid.")
 
 
-def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> str:
-    provider_id = normalize_agent_id(provider or "")
-    if not provider_id:
-        return ""
-    provider_cfg = provider_config(config, provider)
-    group = (
-        provider_cfg.get("quota_group")
-        or provider_cfg.get("dispatch_group")
-        or provider_cfg.get("account_group")
-    )
-    return normalize_agent_id(str(group or provider_id))
-
-
-def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
-    normalized = normalize_agent_id(agent_id or "")
-    if not normalized:
-        return ""
-    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
-    return normalize_agent_id(str(agent.get("provider") or normalized))
-
-
-def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
-    """Return the real account pool for an execution identity.
-
-    `quota_group` was historically provider-scoped, which made aliases such as
-    Antigravity2..7 look like independent accounts.  An explicit agent
-    `account_pool` is authoritative and lets multiple logical roles share one
-    provider account, quota budget, and worker-slot set.
-    """
-    normalized = normalize_agent_id(agent_id or "")
-    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
-    explicit_pool = agent.get("account_pool") or agent.get("quota_group")
-    if explicit_pool:
-        return normalize_agent_id(str(explicit_pool))
-    provider_id = agent_provider_id(config, agent_id)
-    return provider_dispatch_group_id(config, provider_id or agent_id)
-
-
 def account_pool_settings(config: dict[str, Any], agent_id: str | None) -> tuple[str, dict[str, Any]]:
     """Return the configured real-account pool for an execution identity.
 
@@ -1691,17 +1665,6 @@ def account_pool_dispatch_block_reason(
         detail = str(runtime.get("reason") or "").strip()
         return f"account pool {pool_id} is {lifecycle}" + (f": {detail}" if detail else "")
     return None
-
-
-def agent_account_pool_id(config: dict[str, Any], agent_id: str | None) -> str:
-    """Semantic alias used for independence checks and dashboard reporting."""
-    return agent_quota_group_id(config, agent_id)
-
-
-def review_is_independent(config: dict[str, Any], owner: str | None, reviewer: str | None) -> bool:
-    owner_pool = agent_account_pool_id(config, owner)
-    reviewer_pool = agent_account_pool_id(config, reviewer)
-    return bool(owner_pool and reviewer_pool and owner_pool != reviewer_pool)
 
 
 def active_quota_group_counts(
@@ -3963,7 +3926,26 @@ def normalize_task_assignment_integrity(
     new_waiting_for: str | None = None
     changes: list[str] = []
 
-    if "owner_unavailable" in assignment_issues and not is_human_gate_agent(owner):
+    # Once work has been submitted, the owner field is the author of the commits
+    # under review, not a slot the reconciler may re-fill. Replacing it here
+    # would do more than relabel the record: the reviewer search below excludes
+    # the *new* owner's pool, so rewriting a Codex author to Claude would leave
+    # the author's own Codex pool eligible to review its own commits -- exactly
+    # the self-review a provider policy is supposed to prevent, reached by
+    # obeying that policy. The author is therefore pinned for every reason, not
+    # only for policy ones: a disabled or out-of-quota author on a pinned head
+    # is a task that waits, not a task that changes hands.
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)} if submitted_author else set()
+    )
+    author_is_pinned = bool(submitted_author) and submitted_author == owner
+
+    if (
+        "owner_unavailable" in assignment_issues
+        and not is_human_gate_agent(owner)
+        and not author_is_pinned
+    ):
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement = first_viable_agent(
             config,
@@ -3995,12 +3977,17 @@ def normalize_task_assignment_integrity(
         replacement = first_viable_agent(
             config,
             reviewer_candidates,
-            exclude={new_owner, reviewer},
+            exclude={new_owner, reviewer} | ({submitted_author} if submitted_author else set()),
             state=state,
             task=task,
             status=status,
             role="reviewer",
-            exclude_pools={agent_account_pool_id(config, new_owner)},
+            # The submitted author's pool is excluded alongside the current
+            # owner's. They are the same pool while the author is still the
+            # owner; they differ exactly when an earlier pass already moved the
+            # owner, and that is the case where dropping it would hand the
+            # review back to whoever wrote the branch.
+            exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
         )
         if replacement:
             new_reviewer = replacement
@@ -4398,8 +4385,18 @@ def normalize_mainline_task_assignment(
     new_reviewer = reviewer
     changed_fields: list[str] = []
 
+    # A reopen returns the task to `in_progress` -- an eligible status here --
+    # while `review_submission` and `approved_head` stay on the record. So this
+    # path can also reach work whose owner is the author of an already-submitted
+    # branch, and the same rule applies: the author is preserved, and its pool
+    # stays out of the reviewer search.
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)} if submitted_author else set()
+    )
+
     if owner and not owner_allowed:
-        if is_human_gate_agent(owner):
+        if is_human_gate_agent(owner) or submitted_author == owner:
             return False
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
         replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task, role="owner")
@@ -4418,7 +4415,14 @@ def normalize_mainline_task_assignment(
         if owner:
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="reviewer", task=task))
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="owner", task=task))
-        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task, role="reviewer")
+        replacement_reviewer = first_viable_agent(
+            config,
+            reviewer_candidates,
+            exclude={new_owner} | ({submitted_author} if submitted_author else set()),
+            task=task,
+            role="reviewer",
+            exclude_pools=author_pool_exclusions or None,
+        )
         if not replacement_reviewer or is_human_gate_agent(replacement_reviewer):
             return False
         new_reviewer = replacement_reviewer

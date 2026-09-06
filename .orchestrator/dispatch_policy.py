@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from common import normalize_agent_id
-from provider_runtime import provider_config_entry
+from provider_runtime import provider_config, provider_config_entry
 
 REASON_REVIEW_READY = "review_ready_dispatch"
 REASON_OWNED_FINALIZE = "owned_finalize_dispatch"
@@ -120,6 +120,52 @@ def task_closeout_is_frozen(config: dict[str, Any], task: dict[str, Any] | None)
     return task_status in frozen
 
 
+#: Statuses in which the owner field has stopped being a question about who
+#: should build something and has become a claim about who already did.
+DEFAULT_SUBMITTED_AUTHOR_STATUSES = ("review", "review_approved")
+
+
+def task_submitted_author(config: dict[str, Any], task: dict[str, Any] | None) -> str:
+    """The agent whose already-submitted work this task record attests to.
+
+    Empty when nothing has been submitted yet. Once a branch is in review the
+    owner names the author of the commits under review, and the review is only
+    independent as long as that name survives. Rewriting it -- for any reason,
+    including a newly enabled provider policy -- does not merely relabel the
+    record: the replacement's account pool becomes the pool the reviewer search
+    excludes, which frees the original author's own pool to review its own
+    commits. So the author is read once, here, and every path that could
+    reassign an actor consults it rather than deciding for itself.
+
+    A reopen returns the task to `in_progress` while `review_submission` and
+    `approved_head` stay on the record, so status alone is not enough: the
+    submission evidence is checked too, and it is read in preference to the
+    owner field because it is the only part of the record an owner rewrite
+    cannot erase.
+    """
+    if not isinstance(task, dict):
+        return ""
+    owner = str(task.get("owner") or "").strip()
+    submission = task.get("review_submission")
+    if isinstance(submission, dict) and submission:
+        # The recorded submitter outranks the owner field: it is the one name
+        # that still identifies the author after the owner has been rewritten,
+        # which is exactly the state this has to keep working in. Records written
+        # before it was captured fall back to the owner.
+        return str(submission.get("submitted_by") or "").strip() or owner
+    if not owner:
+        return ""
+    if task_closeout_is_frozen(config, task):
+        return owner
+    statuses = normalized_status_set(
+        ready_dispatch_settings(config).get("review_statuses"), list(DEFAULT_REVIEW_STATUSES)
+    )
+    statuses.update(DEFAULT_SUBMITTED_AUTHOR_STATUSES)
+    if str(task.get("status") or "").strip().lower() in statuses:
+        return owner
+    return ""
+
+
 def dispatch_reason_role(reason: str | None) -> str | None:
     """The role an agent plays when it receives this dispatch reason."""
     return DISPATCH_REASON_ROLES.get(str(reason or ""))
@@ -154,6 +200,105 @@ def agent_provider_identity_ids(config: dict[str, Any], agent_name: str | None) 
     }
     identities.discard("")
     return identities
+
+
+def agent_provider_identity_conflict(config: dict[str, Any], agent_name: str | None) -> str | None:
+    """Why this agent record names one provider but runs another, or None.
+
+    `agent_provider_identity_ids` returns a *union* of aliases on purpose:
+    `antigravity2` and `antigravity` are the same lane under two spellings, and
+    a policy naming either must match. That union is also the hole. An agent
+    record that omits `provider` has its provider inferred from its own agent
+    id, so a lane called `claude` carrying `adapter: codex` resolves to the
+    identity set {claude, claude_cli, codex} and satisfies an owner rule written
+    for Claude -- while `codex exec` is what actually launches.
+
+    The adapter is what runs. When it is not one of the identities the record's
+    *configured* provider entry resolves to, the record says two different
+    things about who does the work, and the friendlier reading must not be the
+    one that wins. That is a configuration error, so it is described here and
+    the caller fails closed rather than guessing.
+    """
+    agent_id = normalize_agent_id(agent_name or "")
+    if not agent_id:
+        return None
+    agent = (config.get("agents", {}) or {}).get(agent_id, {}) or {}
+    adapter = normalize_agent_id(str(agent.get("adapter") or ""))
+    if not adapter:
+        return None
+    declared_provider = str(agent.get("provider") or "").strip()
+    provider_id = declared_provider or agent_id
+    canonical_key, provider_cfg = provider_config_entry(config, provider_id)
+    provider_identities = {
+        normalize_agent_id(provider_id),
+        normalize_agent_id(str(canonical_key or "")),
+        normalize_agent_id(str(provider_cfg.get("delivery_mode") or "")),
+        normalize_agent_id(str(provider_cfg.get("adapter") or provider_cfg.get("type") or "")),
+    }
+    provider_identities.discard("")
+    if adapter in provider_identities:
+        return None
+    source = (
+        f"provider {normalize_agent_id(provider_id)}"
+        if declared_provider
+        else f"provider inferred from the agent id {agent_id} (no `provider` is declared)"
+    )
+    resolved = ", ".join(sorted(provider_identities)) or "nothing"
+    return f"adapter {adapter} is not one of the identities its configured {source} resolves to ({resolved})"
+
+
+def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> str:
+    provider_id = normalize_agent_id(provider or "")
+    if not provider_id:
+        return ""
+    provider_cfg = provider_config(config, provider)
+    group = (
+        provider_cfg.get("quota_group")
+        or provider_cfg.get("dispatch_group")
+        or provider_cfg.get("account_group")
+    )
+    return normalize_agent_id(str(group or provider_id))
+
+
+def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
+    normalized = normalize_agent_id(agent_id or "")
+    if not normalized:
+        return ""
+    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
+    return normalize_agent_id(str(agent.get("provider") or normalized))
+
+
+def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
+    """Return the real account pool for an execution identity.
+
+    `quota_group` was historically provider-scoped, which made aliases such as
+    Antigravity2..7 look like independent accounts.  An explicit agent
+    `account_pool` is authoritative and lets multiple logical roles share one
+    provider account, quota budget, and worker-slot set.
+
+    This is the leaf implementation; `supervisor` re-exports it under the names
+    its callers already use. It lives here so the canonical CLI can ask "are
+    these two names the same account?" before it writes an assignment, without
+    importing the supervisor and without growing a second answer to it.
+    """
+    normalized = normalize_agent_id(agent_id or "")
+    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
+    explicit_pool = agent.get("account_pool") or agent.get("quota_group")
+    if explicit_pool:
+        return normalize_agent_id(str(explicit_pool))
+    provider_id = agent_provider_id(config, agent_id)
+    return provider_dispatch_group_id(config, provider_id or agent_id)
+
+
+def agent_account_pool_id(config: dict[str, Any], agent_id: str | None) -> str:
+    """Semantic alias used for independence checks and dashboard reporting."""
+    return agent_quota_group_id(config, agent_id)
+
+
+def review_is_independent(config: dict[str, Any], owner: str | None, reviewer: str | None) -> bool:
+    owner_pool = agent_account_pool_id(config, owner)
+    reviewer_pool = agent_account_pool_id(config, reviewer)
+    return bool(owner_pool and reviewer_pool and owner_pool != reviewer_pool)
 
 
 def known_provider_identity_ids(config: dict[str, Any]) -> set[str]:
@@ -337,6 +482,7 @@ def role_provider_block_reason(
     role: str | None,
     task_class: str | None = None,
     task: dict[str, Any] | None = None,
+    grants_new_authority: bool = False,
 ) -> str | None:
     """Why this agent may not hold `role` here, or None when the policy allows it.
 
@@ -349,6 +495,14 @@ def role_provider_block_reason(
     Pass `task` when there is one; `task_class` is then read from it, and an
     explicit `task_class` still wins for callers that know the class an
     assignment is about to acquire.
+
+    `grants_new_authority` separates the two questions a caller can be asking.
+    The default -- False -- asks "may this actor keep doing what the record
+    already says it does", and a frozen closeout is exempt from it, because
+    there the answer is history rather than a choice. True asks "may this actor
+    be given something it does not have yet": a different agent written onto an
+    approved task, or a fresh approval signature. A pinned head is no
+    justification for either, so the exemption does not apply to those.
     """
     if role_provider_policy_settings(config) is None:
         return None
@@ -359,8 +513,9 @@ def role_provider_block_reason(
     # policy would not be choosing who should do the work -- the work is done and
     # its head is pinned. Applying it would evict the owner from finalizing its
     # own approved commit, or rewrite which reviewer approved it, which is the
-    # one thing a change of policy must never do retroactively.
-    if task_closeout_is_frozen(config, task):
+    # one thing a change of policy must never do retroactively. It stops being an
+    # exemption the moment the call is about to hand out something new.
+    if not grants_new_authority and task_closeout_is_frozen(config, task):
         return None
     if task_class is None and isinstance(task, dict):
         task_class = str(task.get("task_class") or "")
@@ -385,6 +540,12 @@ def role_provider_block_reason(
         # An agent whose provider cannot be resolved is an unknown provider, and
         # an unknown provider is not evidence of permission.
         return f"{label} has no resolvable provider identity, so {scope} fails closed"
+    conflict = agent_provider_identity_conflict(config, name)
+    if conflict:
+        # Matching is a union over aliases, so a record that names two different
+        # providers would be admitted by whichever of them the rule happens to
+        # allow. Refuse before that intersection is taken.
+        return f"{label} provider identity is contradictory ({conflict}), so {scope} fails closed"
     if not identities & allowed:
         return (
             f"{label} provider {', '.join(sorted(identities))} is not permitted for "
