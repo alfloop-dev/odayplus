@@ -1,25 +1,10 @@
-"""Executable baseline for the pinned Evidently 0.7.21 drift-monitoring stack.
+"""Replay immutable Evidently 0.7.21 goldens against production native monitoring.
 
-Scope. This suite freezes what the *current* engine actually does. It calls the
-real ``EvidentlyDriftMonitor.run`` / ``run_prediction`` against the locked
-``evidently==0.7.21`` (which is what drags in the unpatched ``nltk 3.10.3``), and
-compares every statistic, method, threshold and drift verdict against golden
-files that were read back from a live run -- never hand-authored.
-
-Non-scope, stated so no reader over-reads a green run:
-
-* This is a *baseline*, not an equivalence proof. A green run says the pinned
-  engine still behaves the way it behaved when the fixtures were generated. It
-  says nothing about whether any replacement engine is equivalent, and it is not
-  a security result: ``nltk 3.10.3`` remains present and unpatched, and this
-  suite neither changes nor consults any security gate.
-* The float tolerance below exists because BLAS/CPU differences are not
-  bit-guaranteed for the *same* engine. It must not be reused as an accepted
-  tolerance for a different engine; §6.3 of the disposition requires that
-  tolerance to be derived per algorithm and approved by a reviewer.
-* Everything the fixtures do not cover is recorded as a limitation in
-  ``docs/evidence/completion/ODP-NLTK-MONITORING-BASELINE-001/``. Absence of a
-  case here means "not measured", never "does not exist".
+Reference files and hashes remain unchanged. Engine names, implementation type
+prefixes and metric fingerprints change explicitly; every statistical value,
+method, threshold, verdict, column and governed metadata field is compared.
+The candidate never installs or imports Evidently/NLTK. Reference regeneration
+must use the isolated historical source and environment described in the receipt.
 """
 
 from __future__ import annotations
@@ -31,7 +16,8 @@ import os
 import subprocess
 import sys
 from collections.abc import Mapping
-from importlib.metadata import version
+from copy import deepcopy
+from importlib.metadata import distributions, version
 from pathlib import Path
 from typing import Any
 
@@ -42,9 +28,9 @@ CASES_DIR = FIXTURE_DIR / "cases"
 MANIFEST_PATH = FIXTURE_DIR / "manifest.json"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-#: Same-engine reproducibility tolerance only. See the module docstring.
-FLOAT_REL_TOL = 1e-9
-FLOAT_ABS_TOL = 1e-12
+# Exact arithmetic parity with the pinned numerical stack; no relaxed tolerance.
+FLOAT_REL_TOL = 0.0
+FLOAT_ABS_TOL = 0.0
 
 
 def _load_cases_module() -> Any:
@@ -116,7 +102,7 @@ def _assert_matches_baseline(observed: Mapping[str, Any], expected: Mapping[str,
     _compare(observed, expected, "$", failures)
     if failures:
         raise AssertionError(
-            "live Evidently 0.7.21 run diverged from the recorded baseline:\n  "
+            "native production run diverged from the recorded Evidently baseline:\n  "
             + "\n  ".join(failures)
         )
 
@@ -126,22 +112,33 @@ def _assert_matches_baseline(observed: Mapping[str, Any], expected: Mapping[str,
 # ---------------------------------------------------------------------------
 
 
-def test_manifest_pins_the_runtime_the_baseline_was_recorded_against() -> None:
-    """The recorded statistics are only meaningful under the recorded versions."""
-
-    for package, recorded in MANIFEST["packages"].items():
-        assert recorded is not None, f"manifest has no version for {package}"
-        assert version(package) == recorded, (
-            f"{package} is {version(package)} but the baseline was recorded against "
-            f"{recorded}; regenerate the baseline instead of relaxing this assertion"
-        )
-    # evidently 0.7.21 is the reason nltk 3.10.3 is in the dependency graph at
-    # all, so both are pinned explicitly rather than left to the loop above.
+def test_manifest_pins_reference_and_candidate_numerical_stack() -> None:
+    for package in ("numpy", "pandas", "scikit-learn", "scipy"):
+        assert version(package) == MANIFEST["packages"][package]
     assert MANIFEST["packages"]["evidently"] == "0.7.21"
     assert MANIFEST["packages"]["nltk"] == "3.10.3"
-
+    installed = {dist.metadata["Name"].lower() for dist in distributions()}
+    assert not {"evidently", "nltk"} & installed
     recorded_python = MANIFEST["environment"]["python_version"].split(".")[:2]
     assert list(sys.version_info[:2]) == [int(part) for part in recorded_python]
+
+
+def _native_golden_contract(expected: Mapping[str, Any]) -> dict[str, Any]:
+    """Translate only explicitly changed provenance; keep fixture bytes intact."""
+    native = deepcopy(expected)
+    native["result"]["engine"] = "native_drift"
+    native["to_dict"]["engine"] = "native_drift"
+    report = native["to_dict"]["report"]
+    report["engine"] = "native_drift"
+    report["engine_version"] = "1"
+    for metric in report["metrics"]:
+        assert metric["config"]["type"].startswith("evidently:metric_v2:")
+        metric["config"]["type"] = metric["config"]["type"].replace(
+            "evidently:metric_v2:", "native_drift:metric_v2:", 1
+        )
+        metric["id"] = hashlib.sha256(metric["metric_name"].encode()).hexdigest()[:32]
+    native["metrics_index"] = cases.metrics_index(report)
+    return native
 
 
 def test_fixture_files_match_the_hashes_recorded_in_the_manifest() -> None:
@@ -202,7 +199,7 @@ def test_normalization_policy_is_recorded_and_narrow() -> None:
 def test_case_reproduces_the_recorded_baseline(case: Any) -> None:
     """Replay the case against the live engine and diff the whole contract."""
 
-    expected = _golden(case.case_id)
+    expected = _native_golden_contract(_golden(case.case_id))
     assert expected["outcome"] == "completed"
 
     result = cases.execute(case)
@@ -225,7 +222,19 @@ def test_failure_case_reproduces_the_recorded_failure(case: Any) -> None:
     with pytest.raises(Exception) as caught:  # noqa: B017 - the type is the assertion
         cases.execute(case)
 
-    assert cases.normalize_failure(caught.value) == expected["failure"]
+    if case.case_id == "failure_run_all_values_missing":
+        # The old engine divided by zero. The replacement still rejects the
+        # input, now with an explicit error; this is an explicit contract delta for independent review.
+        from modules.learninghub.infrastructure.native_drift import NativeDriftError
+
+        assert isinstance(caught.value, NativeDriftError)
+        assert str(caught.value) == (
+            "no drift-eligible columns remain after column typing; "
+            "the drifted-column share has no denominator"
+        )
+        assert expected["failure"]["exception_type"] == "ZeroDivisionError"
+    else:
+        assert cases.normalize_failure(caught.value) == expected["failure"]
 
 
 # ---------------------------------------------------------------------------
@@ -580,21 +589,8 @@ print("PROBE" + json.dumps({
 """
 
 
-def test_a_plain_numeric_drift_run_loads_nltk_into_the_process() -> None:
-    """Measured import reachability, in a fresh interpreter.
-
-    The disposition (§3.3) requires reachability to be decided by a probe
-    against the pinned runtime rather than inferred from the absence of a
-    first-party ``import nltk``. This runs the most ordinary call the platform
-    makes -- a numeric ``DataDriftPreset`` with no text column anywhere -- and
-    records what ends up in ``sys.modules``.
-
-    What this asserts: the modules that define the advisory's affected APIs are
-    imported into the production process by an ordinary monitoring call. What it
-    does **not** assert: that any of those APIs is invoked, that the flaw is
-    exploitable, or anything at all about remediation status. Module import is
-    reachability evidence, not an exploitability finding.
-    """
+def test_production_drift_run_does_not_load_nltk_into_the_process() -> None:
+    """Exercise the production entry in a fresh process without NLTK installed."""
 
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(REPO_ROOT)
@@ -612,12 +608,11 @@ def test_a_plain_numeric_drift_run_loads_nltk_into_the_process() -> None:
     assert probe_lines, completed.stdout[-2000:]
     probe = json.loads(probe_lines[-1][len("PROBE") :])
 
-    # Importing the first-party monitor alone does not pull nltk in; the
-    # Evidently import inside run() does.
+    # Neither importing nor executing the production monitor loads NLTK.
     assert probe["before_run"] == []
-    assert probe["loaded_count"] > 0
+    assert probe["loaded_count"] == 0
     assert probe["vulnerable_api_modules"] == {
-        "nltk.parse.transitionparser": True,
-        "nltk.tag.perceptron": True,
-        "nltk.classify.maxent": True,
+        "nltk.parse.transitionparser": False,
+        "nltk.tag.perceptron": False,
+        "nltk.classify.maxent": False,
     }

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_DIR = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001"
+OUTPUT_DIR = ROOT / "docs/evidence"
 RELEASE_BINDINGS_PATH = ROOT / "docs/security/release_bindings.json"
 NODE_MODULES = ROOT / "node_modules"
 UV_LOCK = ROOT / "uv.lock"

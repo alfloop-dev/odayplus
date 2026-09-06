@@ -75,7 +75,7 @@ def test_sast_scan_passes() -> None:
 
 
 def test_sbom_and_provenance_present_and_valid() -> None:
-    sbom_path = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json"
+    sbom_path = ROOT / "docs/evidence/sbom.json"
     assert sbom_path.exists(), "SBOM JSON file must be generated"
 
     data = json.loads(sbom_path.read_text(encoding="utf-8"))
@@ -188,7 +188,7 @@ def test_unsigned_images_rejected_negative() -> None:
 
 def test_invalid_provenance_rejected_negative(tmp_path: Path) -> None:
     # Modify a component in a copy of sbom.json
-    sbom_src = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json"
+    sbom_src = ROOT / "docs/evidence/sbom.json"
     data = json.loads(sbom_src.read_text(encoding="utf-8"))
 
     # Modify version of first component
