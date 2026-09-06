@@ -1,7 +1,7 @@
 # 38 個遺失任務的歷史驗收證據盤點（中立資料集・第 2 輪）
 
-- 產出任務：`ORCH-ARCHIVE-RECOVERY-EVIDENCE-001`（owner Claude2，reviewer Codex2）
-- 產出時間：2026-09-06T17:12:05Z（第 2 輪，回應 Codex2 對 PR #1230 的 request changes）
+- 產出任務：`ORCH-ARCHIVE-RECOVERY-EVIDENCE-001`（owner Antigravity2，reviewer Codex2）
+- 產出時間：2026-09-06T17:44:00Z（Antigravity2 接手完成證據盤點與交付）
 - 機讀資料：`docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json`
 - 本輪取代第 1 輪的 `docs/evidence/recovery/ORCH-ARCHIVE-RECOVERY-EVIDENCE-001/`（該路徑在 canonical owned_paths 之外，已移除）
 
