@@ -628,6 +628,18 @@
               "model": {
                 "type": "string"
               },
+              "model_reasoning_effort": {
+                "description": "Reasoning effort passed to `codex exec` as -c model_reasoning_effort=\"<level>\". Applies to every account pool and physical dispatch slot that resolves to this provider. Omit the key to send nothing and leave the Codex CLI on its own default.",
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max",
+                  "ultra"
+                ]
+              },
               "sandbox_mode": {
                 "type": "string"
               }
@@ -816,6 +828,80 @@
               "items": {
                 "type": "string"
               }
+            }
+          },
+          "additionalProperties": false
+        },
+        "role_provider_policy": {
+          "description": "Hard role/task_class provider eligibility. owner_provider_preference only orders lanes that are already eligible; this block decides which providers may hold a role at all, and the preference then ranks whatever survives it. Omit the block entirely to keep the previous eligibility behaviour. An enabled but unreadable policy fails closed rather than degrading to no policy.",
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "roles": {
+                    "description": "Which roles the rule constrains. helper covers helper-execution-lease claims.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "owner",
+                        "reviewer",
+                        "helper"
+                      ]
+                    }
+                  },
+                  "task_classes": {
+                    "description": "Restrict the rule to these task_class values. Omit the key to constrain the role on every task regardless of class.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "providers": {
+                    "description": "Provider or adapter ids, not agent display names. Every id must resolve in this configuration. Two rules matching the same role and task_class intersect, so a lane must satisfy both.",
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "required": [
+                  "roles",
+                  "providers"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "unclassified_owned_work": {
+              "description": "Disposition for owner/helper work carrying no task_class, which no class-scoped rule can reach. \"allow\" keeps the previous behaviour, \"deny\" makes such work undispatchable until it is classified, and a provider list restricts it. Required whenever the policy is enabled, so unclassified work is never left to fall back implicitly.",
+              "oneOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "allow",
+                    "deny"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              ]
             }
           },
           "additionalProperties": false

@@ -3608,6 +3608,35 @@ def task_metadata_from_env() -> dict[str, Any]:
     return metadata
 
 
+def role_provider_assignment_block_reason(
+    agent_name: str | None,
+    *,
+    role: str,
+    task_class: str | None = None,
+    task: dict[str, Any] | None = None,
+) -> str | None:
+    """Ask the dispatcher's own role/provider policy about a canonical assignment.
+
+    The board and the dispatcher have to agree on who may hold a role. If the
+    CLI could record an assignment the dispatcher will never act on, the task
+    just sits there looking owned, and the supervisor's reconcile pass spends
+    every tick trying to repair a record the operator keeps re-creating.
+
+    `dispatch_policy` is the leaf module the supervisor reads this from, so it
+    is imported directly rather than through `worker_failure_policy` -- the CLI
+    must not drag the supervisor into its process to answer a config question.
+    """
+    from dispatch_policy import role_provider_block_reason
+
+    return role_provider_block_reason(
+        merged_orchestrator_config(),
+        agent_name,
+        role=role,
+        task_class=task_class,
+        task=task,
+    )
+
+
 def validate_assignment_source_docs(
     task_id: str,
     task: dict[str, Any] | None,
@@ -6017,6 +6046,28 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
 
+    # The task_class this assignment will actually land on: an explicit value in
+    # this invocation wins, otherwise whatever the existing record already
+    # carries. Reading only one of the two would judge the assignment against a
+    # class the task will not have.
+    effective_task_class = str(
+        metadata.get("task_class")
+        if "task_class" in metadata
+        else ((task or {}).get("task_class") or "")
+    ).strip()
+    for actor_name, actor_role, field in (
+        (owner, "owner", "owner"),
+        (reviewer, "reviewer", "reviewer"),
+    ):
+        block_reason = role_provider_assignment_block_reason(
+            actor_name, role=actor_role, task_class=effective_task_class, task=task
+        )
+        if block_reason:
+            raise SystemExit(
+                f"Cannot assign {task_id}: {field} {actor_name} 不符合 role/provider 派工政策"
+                f"（{block_reason}）。未寫入任何 assignment。"
+            )
+
     timestamp = iso_now()
     if task is None:
         validate_dependency_update(state, task_id, requested_dependencies)
@@ -7287,6 +7338,18 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}")
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
+    # Same policy the dispatcher applies when it decides who may be woken for a
+    # review. Without it, a reviewer the policy excludes could still land the
+    # approval by hand, and the approval -- not the dispatch -- is the thing the
+    # merge gate trusts.
+    reviewer_block_reason = role_provider_assignment_block_reason(
+        task.get("reviewer"), role="reviewer", task=task
+    )
+    if reviewer_block_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: reviewer {task.get('reviewer')} 不符合 role/provider "
+            f"審查政策（{reviewer_block_reason}）。未記錄任何 approval。"
+        )
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 

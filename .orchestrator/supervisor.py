@@ -111,10 +111,15 @@ from dispatch_policy import (
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
     REASON_REVIEW_READY,
+    ROLE_HELPER,
+    ROLE_OWNER,
+    ROLE_REVIEWER,
     dispatch_reason_priority,
+    dispatch_reason_role,
     is_execution_dispatch_reason,
     normalized_status_set,
     ready_dispatch_settings,
+    role_provider_block_reason,
     task_priority_rank,
 )
 from github_reconciliation import (
@@ -3800,12 +3805,19 @@ def task_actor_assignment_block_reason(
     agent_name: str | None,
     *,
     require_dispatch_eligibility: bool = True,
+    role: str | None = None,
 ) -> str | None:
     """Return a stable assignment problem, excluding momentary slot occupancy.
 
     Non-dispatchable and human-gate tasks still need registered actors for
     durable ownership and audit history, but their actors must not be judged
     by the dispatch predicate that deliberately rejects those task classes.
+
+    `role` names which side of the assignment is being audited, so an actor that
+    a role/provider policy excludes is reported here as a stable assignment
+    problem rather than only being skipped later by the selector. That is what
+    makes a reviewer left on an excluded lane get repaired instead of sitting on
+    the board looking assigned while no dispatch will ever reach it.
     """
     name = str(agent_name or "").strip()
     if not name:
@@ -3820,7 +3832,7 @@ def task_actor_assignment_block_reason(
         return f"actor {name} is a dispatch slot"
     if not require_dispatch_eligibility:
         return None
-    if not agent_can_take_task(config, name, task):
+    if not agent_can_take_task(config, name, task, role=role):
         return f"actor {name} is disabled or not eligible for this task"
     pool_reason = account_pool_dispatch_block_reason(config, name, runtime_state=state)
     if pool_reason:
@@ -3849,6 +3861,7 @@ def task_assignment_integrity_issues(
         task,
         owner,
         require_dispatch_eligibility=requires_dispatch,
+        role=ROLE_OWNER,
     )
     reviewer_reason = task_actor_assignment_block_reason(
         config,
@@ -3856,6 +3869,7 @@ def task_assignment_integrity_issues(
         task,
         reviewer,
         require_dispatch_eligibility=requires_dispatch,
+        role=ROLE_REVIEWER,
     )
     if owner_reason:
         issues.append(f"owner_unavailable:{owner_reason}")
@@ -3877,7 +3891,18 @@ def task_assignment_integrity_issues(
         and waiting_for
         and not is_human_gate_agent(waiting_for)
     ):
-        waiting_reason = task_actor_assignment_block_reason(config, state, task, waiting_for)
+        # `waiting_for` is not a third role. It names whichever of the two
+        # actors the board is currently waiting on, so it is audited as that
+        # actor's role; a label matching neither is audited without one rather
+        # than being assumed to be owner work.
+        waiting_role = (
+            ROLE_REVIEWER
+            if reviewer and waiting_for == reviewer
+            else (ROLE_OWNER if owner and waiting_for == owner else None)
+        )
+        waiting_reason = task_actor_assignment_block_reason(
+            config, state, task, waiting_for, role=waiting_role
+        )
         if waiting_reason:
             issues.append(f"waiting_for_unavailable:{waiting_reason}")
     elif str(task.get("status") or "").strip().lower() == "blocked" and not waiting_for:
@@ -4357,14 +4382,14 @@ def normalize_mainline_task_assignment(
     reopen_blocked = blocked_task_auto_recovery_eligible(config, task, task_map)
     owner_allowed = (
         task_status not in {"todo", "in_progress", "review_approved", "blocked"}
-        or agent_can_take_task(config, owner, task)
+        or agent_can_take_task(config, owner, task, role=ROLE_OWNER)
     )
     # A reviewer label is only executable while the task is in review.  Older
     # task records commonly keep a coordinator/placeholder reviewer on todo
     # work; that metadata must not trigger an unnecessary owner reassignment.
     reviewer_allowed = (
         task_status != "review"
-        or agent_can_take_task(config, reviewer, task)
+        or agent_can_take_task(config, reviewer, task, role=ROLE_REVIEWER)
     )
     if owner_allowed and reviewer_allowed and not reopen_blocked:
         return False
@@ -4405,8 +4430,8 @@ def normalize_mainline_task_assignment(
 
     blocked_agents = [
         agent_name
-        for agent_name in (owner, reviewer)
-        if agent_name and not agent_can_take_task(config, agent_name, task)
+        for agent_name, agent_role in ((owner, ROLE_OWNER), (reviewer, ROLE_REVIEWER))
+        if agent_name and not agent_can_take_task(config, agent_name, task, role=agent_role)
     ]
     blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
     if changed_fields:
@@ -4525,7 +4550,7 @@ def _dispatcher_owner_execution_priority(
     if is_human_gate_agent(owner) or is_human_gate_agent(waiting_for):
         return None
 
-    if not owner or not agent_can_take_task(config, owner, task):
+    if not owner or not agent_can_take_task(config, owner, task, role=ROLE_OWNER):
         return None
 
     settings_map = ready_dispatch_settings(config)

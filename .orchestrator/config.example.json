@@ -540,7 +540,8 @@
       "codex": {
         "cli": "codex",
         "ask_for_approval": "never",
-        "model": "gpt-5.3-codex-spark",
+        "model": "gpt-6-astra",
+        "model_reasoning_effort": "ultra",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
       },
@@ -586,6 +587,21 @@
       "enabled": true,
       "preferred_providers": ["antigravity", "claude"],
       "task_classes": ["implementation", "remediation", "documentation"]
+    },
+    "role_provider_policy": {
+      "enabled": false,
+      "rules": [
+        {
+          "roles": ["reviewer"],
+          "providers": ["codex"]
+        },
+        {
+          "roles": ["owner", "helper"],
+          "task_classes": ["implementation", "remediation", "documentation"],
+          "providers": ["antigravity", "claude"]
+        }
+      ],
+      "unclassified_owned_work": "allow"
     },
     "helper_execution_lease": {
       "enabled": true,
