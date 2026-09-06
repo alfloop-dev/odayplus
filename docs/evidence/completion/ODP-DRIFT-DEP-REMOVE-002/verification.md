@@ -22,3 +22,24 @@ Worker Manager task checkout. The prerequisite PRs still require their
 ordinary review/merge flow; these results do not authorize merge or deployment.
 
 `committed-audit.json` records a second complete 215-package scan at implementation commit `e18aa6948d4569ba8e37888e0e5291d18931048d`, using its own synchronized environment. `committed-inputs.json` binds the implementation files, generated current SBOM and NOTICE. This follow-up commit adds evidence and refreshes the SBOM source identity; it does not change the audited implementation or lock.
+
+
+## Complete strict-gate integration preview
+
+A separate isolated preview combines this cutover with every changed path in
+PR #1188 at `24899e86f04a0b0e70a92e451317e17f93931b93` (including CI timeouts,
+test wiring and the regenerated code-boundary inventory). It retains the
+current SBOM path. `make security` completed with exit 0: **215 installed
+Python dependencies audited with no vulnerabilities; 334 security tests
+passed**, with 5 existing Starlette deprecation warnings. The 69 audit-boundary
+tests also passed. Input and log hashes are in `final-integration-inputs.json`.
+The native module's AST matches the formal cutover; only attribution comments
+differ. These suites overlap earlier focused coverage and their counts should
+not be added as if every test were unique.
+
+Two setup failures are preserved for traceability: the first preview omitted
+the updated supply-chain test file (327 passed, 1 failed), and the next omitted
+CI timeout/inventory wiring (104 passed, 2 failed). After completing the
+integration, the full security suite was rerun successfully. No gate behavior
+was weakened to resolve those incomplete-assembly failures. The actual PRs
+still require their own CI, review and merge records.

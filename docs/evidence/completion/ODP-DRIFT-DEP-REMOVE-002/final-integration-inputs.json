@@ -1,0 +1,35 @@
+{
+  "kind": "isolated uncommitted final integration preview",
+  "base_sha": "ba58ed6723960244d567c5314bfc200ffdf7bae8",
+  "pr_1188_source_sha": "24899e86f04a0b0e70a92e451317e17f93931b93",
+  "cutover_implementation_source_sha": "e18aa6948d4569ba8e37888e0e5291d18931048d",
+  "sha256": {
+    ".github/workflows/ci.yml": "550ccc833a772ea1bb4607a957325797d256f86625ecb589cd668f431e536d0f",
+    ".orchestrator/test_source_document_router.py": "8609af2446677c302b5c2716e2c3bd13d83e09358e9132aa855e74d41b7a1ece",
+    "Makefile": "e7f51eb7b2d98eaf33dd41561174358720663733646dfdec1d2537f865394b27",
+    "delivery_toolchain/security/pip_audit_gate.py": "7116063f67c6c8310e2d165787f934a9eea4642fcd3d968a657afb51182a7c64",
+    "delivery_toolchain/security/npm_audit_gate.py": "c271444e4b3c7f04a745836ec00d947ef6ac211497dc4d8723f64302d5435e26",
+    "docs/audits/code-boundary-inventory.csv": "1f132754ad655a18756570ac7db37fab838efa7ef8ead649291d88ac9ead420d",
+    "tests/security/test_supply_chain_security_gate.py": "3db48de627c1fb2a941e325f17f33e63b90ffbd966130d20b9de5d3913b3589d",
+    "tests/tooling/test_dependency_audit_boundary.py": "84df86c96136cde3d1075771c2fc144b0c67eb2265d3fa39cfee6feb23bd04ff",
+    "pyproject.toml": "130f024b80d55f439aa5467f4f469bb127aec955ef71444d2951a93d0f5d0391",
+    "uv.lock": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d",
+    "modules/learninghub/infrastructure/evidently_monitor.py": "7f4a6d5f4a4f64cf2bd169ecef1405dde5a757b1795957484ca1a2314faf4e66",
+    "modules/learninghub/infrastructure/native_drift.py": "dc01ad12c840ccec71c65b0ef3e877082e488089e18efd02f051820e71e293a8",
+    "docs/evidence/sbom.json": "d93ada380b6a90953dc4da2b4900a4568e8bdefb2799e50da82cc3be9552c5d1"
+  },
+  "limitations": "This is an isolated, uncommitted integration preview of cutover implementation plus the complete PR1188 diff. The formal cutover additionally retains upstream licensing in comments and documents; its native module AST equals the tested preview. This is not an independent review, merge or deployment receipt.",
+  "result": {
+    "make_security_exit_code": 0,
+    "audited_python_dependencies": 215,
+    "security_tests_passed": 334,
+    "security_tests_warnings": 5,
+    "boundary_tests_passed": 69
+  },
+  "log_sha256": {
+    "final-integration-security.txt": "4b1592a15e09156b123f22a95249856f4e32f2ddb3811ed0e65cb949cbbbc4df",
+    "final-integration-boundary-tests.txt": "f16b5a48a286f9e00d2126e4ef9da1a253272165d5fdd535e8394bc0beb3b136",
+    "incomplete-integration-security.txt": "7905de396db2ad49a6abb2ef008ad97b235c69b8b553e99f7de11671b5f6dd6f",
+    "incomplete-integration-gate-tests.txt": "288e52ef3814c70c4a375bdda0e228c1680fffff39266112decf4a2b8aa92891"
+  }
+}

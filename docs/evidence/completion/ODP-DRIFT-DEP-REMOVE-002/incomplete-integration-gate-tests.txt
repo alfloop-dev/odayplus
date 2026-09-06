@@ -1,0 +1,38 @@
+.....................................F....F............................. [ 67%]
+..................................                                       [100%]
+=================================== FAILURES ===================================
+____________________ test_ci_workflow_enforces_job_timeouts ____________________
+
+    def test_ci_workflow_enforces_job_timeouts() -> None:
+        ci_yml_path = ROOT / ".github/workflows/ci.yml"
+        assert ci_yml_path.is_file(), "ci.yml must exist"
+    
+        content = ci_yml_path.read_text(encoding="utf-8")
+        data = yaml.safe_load(content)
+    
+        jobs = data.get("jobs", {})
+        assert "product" in jobs, "CI must contain product job"
+        assert "orchestrator" in jobs, "CI must contain orchestrator job"
+        assert "performance-gate" in jobs, "CI must contain performance-gate job"
+        assert "product-e2e-gate" in jobs, "CI must contain product-e2e-gate job"
+    
+        # Verify all execution jobs have bounded timeout-minutes
+>       assert jobs["product"].get("timeout-minutes") is not None
+E       assert None is not None
+E        +  where None = <built-in method get of dict object at 0x7fc82bd58a80>('timeout-minutes')
+E        +    where <built-in method get of dict object at 0x7fc82bd58a80> = {'needs': 'change-scope', 'if': "${{ needs.change-scope.outputs.scope != 'development_tooling' }}", 'runs-on': 'ubuntu...'5432:5432'], 'options': '--health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5'}}, ...}.get
+
+tests/tooling/test_dependency_audit_boundary.py:36: AssertionError
+_______________ test_code_boundary_inventory_tracks_audit_gates ________________
+
+    def test_code_boundary_inventory_tracks_audit_gates() -> None:
+        inventory = (ROOT / "docs/audits/code-boundary-inventory.csv").read_text(encoding="utf-8")
+        assert "delivery_toolchain/security/npm_audit_gate.py" in inventory
+>       assert "delivery_toolchain/security/pip_audit_gate.py" in inventory
+E       AssertionError: assert 'delivery_toolchain/security/pip_audit_gate.py' in 'path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profiles,removable,removal_condition\n.orche...alse,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.\n'
+
+tests/tooling/test_dependency_audit_boundary.py:111: AssertionError
+=========================== short test summary info ============================
+FAILED tests/tooling/test_dependency_audit_boundary.py::test_ci_workflow_enforces_job_timeouts
+FAILED tests/tooling/test_dependency_audit_boundary.py::test_code_boundary_inventory_tracks_audit_gates
+2 failed, 104 passed in 49.17s
