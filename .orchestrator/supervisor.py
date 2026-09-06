@@ -477,7 +477,14 @@ def reconcile_capacity_controller(
     )
     if additions:
         known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
-        additions = [task for task in additions if str(task.get(task_id_field) or task.get("id") or "") not in known]
+        additions = [
+            task
+            for task in additions
+            if (
+                str(task.get(task_id_field) or task.get("id") or "") not in known
+                and load_archived_task(str(task.get(task_id_field) or task.get("id") or "")) is None
+            )
+        ]
     if additions:
         status.setdefault(tasks_path, []).extend(additions)
         if not commit_canonical_task_transition(config, status):
@@ -526,7 +533,7 @@ from runtime_state import (
     replace_event_queue,
     save_runtime_state,
 )
-from task_archive import TaskResolver
+from task_archive import TaskResolver, load_archived_task
 from watch_events import (
     enqueue_runtime_events_enabled,
     queue_delivery_event,

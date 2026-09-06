@@ -38,6 +38,7 @@ import common
 import github_bus
 import runtime_state
 import supervisor
+import task_archive
 import watch_events
 import worker_failure_policy
 import worker_workspace
@@ -19916,10 +19917,48 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
 
 
 class CapacityControllerReconciliationTests(unittest.TestCase):
-    def _config(self) -> dict[str, Any]:
+    def setUp(self) -> None:
+        # task_archive resolves its archive paths once, at import time, and this
+        # module is not always the first importer: the capacity suite imports it
+        # first and binds those globals to whatever root that caller had, then
+        # restores exactly that root when its scoped fixture unwinds. Clearing
+        # the globals in place would therefore clear a real canonical archive.
+        # These tests own a private archive root instead, so the worst they can
+        # delete is their own temporary directory.
+        handle = tempfile.TemporaryDirectory(prefix="pantheon-capacity-reconcile-")
+        self.addCleanup(handle.cleanup)
+        archive_root = Path(handle.name).resolve()
+        archive_dir = archive_root / "ai-task-archive"
+        tasks_dir = archive_dir / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        for attribute, value in (
+            ("STATUS_ROOT", archive_root),
+            ("ARCHIVE_DIR", archive_dir),
+            ("ARCHIVE_TASKS_DIR", tasks_dir),
+            ("ARCHIVE_INDEX_FILE", archive_dir / "index.json"),
+        ):
+            patcher = mock.patch.object(task_archive, attribute, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.archive_root = archive_root
+
+    def _config(self, slot_count: int = 2) -> dict[str, Any]:
         return {
             "schema": {"tasks_path": "tasks"},
             "agents": {
+                "claude": {"provider": "claude", "slot_id": "slot-0"},
+                "codex": {"provider": "codex", "slot_id": "slot-1"},
+                "claude2": {"provider": "claude", "slot_id": "slot-2"},
+                "antigravity": {"provider": "antigravity", "slot_id": "slot-3"},
+                "antigravity2": {"provider": "antigravity", "slot_id": "slot-4"},
+                "antigravity3": {"provider": "antigravity", "slot_id": "slot-5"},
+                "antigravity4": {"provider": "antigravity", "slot_id": "slot-6"},
+                "gemini": {"provider": "gemini", "slot_id": "slot-7"},
+                **{
+                    f"slot-{index}": {"slot_id": f"slot-{index}"}
+                    for index in range(8, slot_count)
+                },
+            } if slot_count >= 8 else {
                 "claude": {"slot_id": "slot-0"},
                 "codex": {"slot_id": "slot-1"},
             },
@@ -20106,6 +20145,249 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             self.assertEqual(snapshot.get("configured_slot_total"), 2)
             self.assertEqual(snapshot.get("slot_total"), 1)
             self.assertEqual(snapshot.get("available_slots"), 1)
+
+    def test_reconcile_capacity_controller_excludes_archived_sidecars_and_writes_no_logs(self) -> None:
+        """Archived sidecars are excluded in reconcile_capacity_controller under valid chair & positive budget."""
+        parent_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
+        sidecar_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549"
+        tasks = [
+            {"id": parent_id, "status": "blocked", "blocked_reason": "staging validation", "owner": "claude"},
+        ]
+        task_archive.archive_task_snapshot(
+            {
+                "id": sidecar_id,
+                "status": "done",
+                "owner": "claude",
+                "reviewer": "codex",
+                "title": f"Diagnose and verify blocker for {parent_id}",
+                "task_class": "sidecar",
+                "helper_parent": parent_id,
+                "helper_kind": "blocked_task_diagnostics",
+            }
+        )
+        # 8 slots * 0.25 ratio = 2 sidecar budget (positive budget)
+        config = self._config(slot_count=8)
+        now = datetime.now(UTC)
+        valid_until_str = (now + timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
+        state: dict[str, Any] = {
+            "workers": {},
+            "capacity_controller": {
+                "underutilization_since": "2020-01-01T00:00:00Z",
+                "chair_decision": {
+                    "issued_at": now.isoformat().replace("+00:00", "Z"),
+                    "valid_until": valid_until_str,
+                    "sidecar_wave": {"approved": True},
+                },
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit_mock,
+            mock.patch.object(supervisor, "write_activity_log") as log_mock,
+        ):
+            supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertNotIn(sidecar_id, [t.get("id") for t in tasks])
+        commit_mock.assert_not_called()
+        sidecar_created_logs = [
+            call for call in log_mock.call_args_list
+            if isinstance(call.args, tuple) and len(call.args) > 1 and isinstance(call.args[1], dict) and call.args[1].get("type") == "capacity_sidecar_created"
+        ]
+        self.assertEqual(len(sidecar_created_logs), 0)
+
+    def test_reconcile_capacity_controller_generates_and_commits_sidecar_when_not_archived(self) -> None:
+        """Control test: under the exact same valid chair & positive budget conditions,
+
+        if the sidecar is NOT archived, reconcile_capacity_controller MUST generate,
+        commit to status, and record capacity_sidecar_created activity log.
+        """
+        parent_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
+        sidecar_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549"
+        tasks = [
+            {"id": parent_id, "status": "blocked", "blocked_reason": "staging validation", "owner": "claude"},
+        ]
+        # sidecar is NOT archived
+        config = self._config(slot_count=8)
+        now = datetime.now(UTC)
+        valid_until_str = (now + timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
+        state: dict[str, Any] = {
+            "workers": {},
+            "capacity_controller": {
+                "underutilization_since": "2020-01-01T00:00:00Z",
+                "chair_decision": {
+                    "issued_at": now.isoformat().replace("+00:00", "Z"),
+                    "valid_until": valid_until_str,
+                    "sidecar_wave": {"approved": True},
+                },
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit_mock,
+            mock.patch.object(supervisor, "write_activity_log") as log_mock,
+        ):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(len(tasks), 2)
+        created_task = tasks[1]
+        self.assertEqual(created_task.get("id"), sidecar_id)
+        self.assertEqual(created_task.get("task_class"), "sidecar")
+        self.assertEqual(created_task.get("helper_parent"), parent_id)
+        commit_mock.assert_called_once()
+        sidecar_created_logs = [
+            call for call in log_mock.call_args_list
+            if isinstance(call.args, tuple) and len(call.args) > 1 and isinstance(call.args[1], dict) and call.args[1].get("type") == "capacity_sidecar_created"
+        ]
+        self.assertEqual(len(sidecar_created_logs), 1)
+        self.assertEqual(sidecar_created_logs[0].args[1].get("task_id"), sidecar_id)
+
+    def test_reconcile_capacity_controller_filters_sidecar_archived_before_cas_commit(self) -> None:
+        """Race condition: candidate generated by sidecar_candidates is archived before CAS commit.
+
+        reconcile_capacity_controller must filter it out, not commit it to status, and not write activity log.
+        """
+        candidate = {
+            "id": "RACE-SIDECAR-001",
+            "title": "Diagnose race condition",
+            "task_class": "sidecar",
+            "status": "todo",
+            "owner": "AUTO_ASSIGN",
+            "helper_parent": "BLOCKED-PARENT-001",
+        }
+        tasks = [
+            {"id": "BLOCKED-PARENT-001", "status": "blocked", "blocked_reason": "api defect", "owner": "claude"},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+
+        # Archive the candidate right after sidecar_candidates returns it
+        def fake_sidecar_candidates(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            task_archive.archive_task_snapshot(
+                {
+                    "id": "RACE-SIDECAR-001",
+                    "status": "done",
+                    "owner": "claude",
+                    "reviewer": "codex",
+                    "title": "Diagnose race condition",
+                    "task_class": "sidecar",
+                    "helper_parent": "BLOCKED-PARENT-001",
+                }
+            )
+            return [candidate]
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor.capacity_controller, "evaluate_chair", return_value=({}, False)),
+            mock.patch.object(supervisor.capacity_controller, "sidecar_candidates", side_effect=fake_sidecar_candidates),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit_mock,
+            mock.patch.object(supervisor, "write_activity_log") as log_mock,
+        ):
+            supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertNotIn("RACE-SIDECAR-001", [t.get("id") for t in tasks])
+        commit_mock.assert_not_called()
+        sidecar_created_logs = [
+            call for call in log_mock.call_args_list
+            if isinstance(call.args, tuple) and len(call.args) > 1 and isinstance(call.args[1], dict) and call.args[1].get("type") == "capacity_sidecar_created"
+        ]
+        self.assertEqual(len(sidecar_created_logs), 0)
+
+
+
+class CanonicalArchiveTestIsolationTests(unittest.TestCase):
+    """The orchestration suites must not destroy the archive they are pointed at.
+
+    `task_archive` binds ARCHIVE_* once, at import time, from the ambient status
+    root, and the capacity suite gets there first: by the time this module's
+    import-time isolation runs, task_archive is already in sys.modules and keeps
+    the earlier binding. That makes "which root do the archive globals point at"
+    an import-order property rather than a per-module one, which no assertion
+    inside a single module can observe. So this runs the real ordering in a
+    separate interpreter against a throwaway canonical root, and checks that an
+    archive which was already there is still byte-identical afterwards.
+    """
+
+    def test_capacity_then_supervisor_reconcile_leaves_a_preexisting_archive_intact(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-archive-isolation-") as raw_root:
+            status_root = Path(raw_root).resolve()
+            archive_dir = status_root / "ai-task-archive"
+            tasks_dir = archive_dir / "tasks"
+            tasks_dir.mkdir(parents=True)
+            sentinel = tasks_dir / "ARCHIVE-ISOLATION-SENTINEL-001.json"
+            sentinel.write_text(
+                json.dumps(
+                    {
+                        "task_id": "ARCHIVE-ISOLATION-SENTINEL-001",
+                        "terminal_outcome": "completed",
+                        "task": {"id": "ARCHIVE-ISOLATION-SENTINEL-001", "status": "done"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            index_file = archive_dir / "index.json"
+            index_file.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "counts": {"total": 1, "completed": 1, "superseded": 0},
+                        "recent_terminal_ids": ["ARCHIVE-ISOLATION-SENTINEL-001"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            before = (sentinel.read_bytes(), index_file.read_bytes())
+
+            env = {key: value for key, value in os.environ.items() if not key.startswith("PYTEST_")}
+            env["PANTHEON_STATUS_ROOT"] = str(status_root)
+            env["ORCH_STATUS_ROOT"] = str(status_root)
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+            capacity_case = (
+                f"{THIS_DIR / 'test_capacity_controller.py'}"
+                "::test_sidecar_candidates_excludes_archived_three_exact_ids_across_multiple_rounds"
+            )
+            reconcile_case = (
+                f"{THIS_DIR / 'test_supervisor.py'}"
+                "::CapacityControllerReconciliationTests"
+                "::test_reconcile_capacity_controller_excludes_archived_sidecars_and_writes_no_logs"
+            )
+            completed = subprocess.run(
+                [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", capacity_case, reconcile_case],
+                cwd=str(ROOT_DIR),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+
+            self.assertEqual(
+                completed.returncode,
+                0,
+                f"archive dedup subset must pass in an isolated root\n{completed.stdout}\n{completed.stderr}",
+            )
+            self.assertTrue(
+                tasks_dir.is_dir(),
+                "the capacity suites deleted the archive tasks directory of the root they were pointed at",
+            )
+            self.assertTrue(
+                sentinel.is_file(),
+                "an unrelated archived task was deleted by the capacity suites",
+            )
+            self.assertTrue(
+                index_file.is_file(),
+                "the archive index was deleted by the capacity suites",
+            )
+            self.assertEqual(
+                (sentinel.read_bytes(), index_file.read_bytes()),
+                before,
+                "the capacity suites rewrote a canonical archive they do not own",
+            )
 
 
 class WorkerPromptContractTests(unittest.TestCase):
