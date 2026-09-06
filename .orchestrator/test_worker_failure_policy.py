@@ -1129,6 +1129,150 @@ class OwnerPreferenceSharedPoolCapacityTests(unittest.TestCase):
         self.assertIsNone(worker_failure_policy.dispatch_pool_usage(unreadable, self._state()))
         self.assertEqual(self._select(unreadable, self._state()), "Codex")
 
+    def test_a_configured_queue_path_pointing_at_nothing_is_not_an_empty_queue(self) -> None:
+        """A set path is not a read queue.
+
+        `load_jsonl` returns [] for a file that does not exist, so resolving the
+        configured path proves only that an operator wrote it down. A pool whose
+        pending events cannot be counted has to rank as unmeasured; reporting
+        zero would hand rank 0 to whichever lane the queue was hiding.
+        """
+        config = self._config()
+        state = self._state()
+        self.queue_path.unlink()
+
+        # The path is still configured and still resolvable ...
+        self.assertEqual(
+            worker_failure_policy.config_path(config, "event_queue"), self.queue_path
+        )
+        # ... and the queue reader is happy to call that zero pending events.
+        import supervisor
+
+        self.assertEqual(supervisor.queued_quota_group_counts(config, state), {})
+        # The preference must not be built on that zero.
+        self.assertIsNone(worker_failure_policy.dispatch_pool_usage(config, state))
+        self.assertEqual(self._select(config, state), "Codex")
+
+    def test_a_queue_that_cannot_be_read_is_not_an_empty_queue(self) -> None:
+        """The same conclusion when the path exists but the bytes are refused."""
+        config = self._config()
+        state = self._state()
+
+        # A path that is not a file at all: deterministic for every uid.
+        self.queue_path.unlink()
+        self.queue_path.mkdir()
+        self.assertIsNone(worker_failure_policy.dispatch_pool_usage(config, state))
+        self.assertEqual(self._select(config, state), "Codex")
+        self.queue_path.rmdir()
+
+        # A real permission denial, asserted only where this process can
+        # actually be denied -- running as root would make the mode a no-op and
+        # the assertion a decoration.
+        self.queue_path.write_text("", encoding="utf-8")
+        self.queue_path.chmod(0o000)
+        try:
+            self.queue_path.read_text(encoding="utf-8")
+        except PermissionError:
+            self.assertIsNone(worker_failure_policy.dispatch_pool_usage(config, state))
+            self.assertEqual(self._select(config, state), "Codex")
+        finally:
+            self.queue_path.chmod(0o600)
+
+    def test_a_pool_without_a_quota_ceiling_is_still_bounded_by_its_slots(self) -> None:
+        """An absent quota is not an absent pool.
+
+        With no `max_concurrent` the effective limit is None, which used to be
+        read as "unbounded" and returned True on the spot. The five processes
+        behind the account do not disappear because nobody wrote a number: all
+        five are spoken for here, and the two idle aliases still have nowhere
+        to run.
+        """
+        self._queue([self._pending(f"evt-{index}") for index in range(self.SLOT_LIMIT)])
+        config = self._config(max_concurrent=None)
+        state = self._state()
+
+        self.assertIsNone(
+            worker_failure_policy.account_pool_effective_concurrency(config, state, "antigravity")
+        )
+        self.assertEqual(
+            worker_failure_policy.account_pool_physical_capacity(config, "antigravity"),
+            self.SLOT_LIMIT,
+        )
+        self.assertEqual(
+            worker_failure_policy.dispatch_pool_usage(config, state).get("agy_main"),
+            self.SLOT_LIMIT,
+        )
+        for alias in ("Antigravity", "Antigravity3"):
+            with self.subTest(alias=alias):
+                self.assertFalse(
+                    worker_failure_policy.account_pool_has_free_dispatch_slot(
+                        config, state, alias, worker_failure_policy.dispatch_pool_usage(config, state)
+                    )
+                )
+        self.assertEqual(self._select(config, state), "Codex")
+
+    def test_a_quota_ceiling_above_the_slot_count_does_not_create_slots(self) -> None:
+        """Permission to run ten is not ten processes.
+
+        Comparing usage against the quota alone would find five of ten used and
+        call the account free, when the account has exactly five slots and every
+        one of them is claimed. The lower of the two ceilings is the real one.
+        """
+        self._queue([self._pending(f"evt-{index}") for index in range(self.SLOT_LIMIT)])
+        config = self._config(max_concurrent=10)
+        state = self._state()
+
+        self.assertEqual(
+            worker_failure_policy.account_pool_effective_concurrency(config, state, "antigravity"),
+            10,
+        )
+        self.assertEqual(
+            worker_failure_policy.account_pool_physical_capacity(config, "antigravity"),
+            self.SLOT_LIMIT,
+        )
+        # Each alias reports the shared five as if the five were its own, which
+        # is why summing the per-agent capacities would answer fifteen.
+        for alias in ("antigravity", "antigravity2", "antigravity3"):
+            self.assertEqual(worker_failure_policy.agent_dispatch_capacity(config, alias), 5)
+
+        self.assertEqual(self._select(config, state), "Codex")
+
+    def test_room_under_both_ceilings_keeps_the_preference(self) -> None:
+        """Partial capacity is capacity; the guard withholds only on saturation."""
+        self._queue([self._pending(f"evt-{index}") for index in range(3)])
+        config = self._config(max_concurrent=10)
+        state = self._state()
+
+        self.assertEqual(
+            worker_failure_policy.dispatch_pool_usage(config, state).get("agy_main"), 3
+        )
+        self.assertTrue(
+            worker_failure_policy.account_pool_has_free_dispatch_slot(
+                config, state, "Antigravity", worker_failure_policy.dispatch_pool_usage(config, state)
+            )
+        )
+        self.assertEqual(self._select(config, state), "Antigravity")
+
+    def test_a_configured_ceiling_of_zero_is_a_ceiling(self) -> None:
+        """The same rule as the runtime zero, stated in configuration.
+
+        Taking the lower of two ceilings must not let a configured zero be
+        rescued by a slot count of five.
+        """
+        config = self._config(max_concurrent=0)
+        state = self._state()
+
+        self.assertEqual(
+            worker_failure_policy.account_pool_effective_concurrency(config, state, "antigravity"), 0
+        )
+        self.assertEqual(worker_failure_policy.dispatch_pool_usage(config, state), {})
+        self.assertFalse(
+            worker_failure_policy.account_pool_has_free_dispatch_slot(
+                config, state, "Antigravity", {}
+            )
+        )
+        self.assertEqual(self._select(config, state), "Codex")
+
 
 if __name__ == "__main__":
     unittest.main()

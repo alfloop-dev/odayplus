@@ -27,6 +27,22 @@ dispatch 喚醒 owner，禁止改碼與 commit，本任務結構上無法完成�
 2026-09-06T00:33:37Z 確認欄位設置錯誤並更正為 `true`，scope、驗收、owner／reviewer 均未更動。
 此為派工 metadata 恢復，不計入 review churn。
 
+## 0.1 第一次實質退回：容量守衛的兩個洞沒被補到
+
+commit `55975071`／PR #1213 送審後，reviewer Codex 於 2026-09-06T01:04:31Z 對 exact head
+`55975071` 提出正式 review finding 退回。這是本任務**第一次實質退回**，不是 control-plane
+recovery，也不是 metadata 修正——第一版把缺口一宣告為已修補，但守衛本身仍有兩處會在
+真實配置下回到缺陷行為：
+
+| # | 缺陷 | 第一版的錯誤前提 |
+|---|---|---|
+| 1 | `dispatch_pool_usage` 只呼叫 `config_path(config, "event_queue")` | 「路徑解析得出來」＝「佇列讀得到」。路徑已設定但檔案不存在時，`load_jsonl` 回 `[]`，pending 佔用被算成 0，共用 pool 仍取得 rank 0 |
+| 2 | `account_pool_has_free_dispatch_slot` 在 `effective_limit is None` 時直接回 `True`，有 limit 時只比對 limit | 「配額＝容量」。沒寫 `max_concurrent` 不代表沒有 pool；`max_concurrent: 10` 也不會把 5 個 slot 變成 10 個。5 個實體 slot 被 `Antigravity2` 的 pending 佔滿時，`Antigravity` / `Antigravity3` 仍取得 rank 0 |
+
+兩項都在本次同一個 task PR 內修完，缺口二（immutable closeout）與缺口三
+（fresh CI `A → CI → B` 順序）經 reviewer 確認正確，未重寫。以下第 1 節描述的是
+**修正後**的最終實作。
+
 ---
 
 ## 1. 缺口一：共用 account pool 的容量沒有被計入
@@ -61,15 +77,47 @@ slot 全被指向 `Antigravity2` 的 **未投遞 queue event** 佔滿時：
 
 ### 1.2 修法
 
-新增兩個 policy 函式，帳本完全複用 dispatcher 自己的：
+新增三個 policy 函式，帳本完全複用 dispatcher 自己的：
 
 | 函式 | 職責 |
 |---|---|
 | `dispatch_pool_usage(config, state)` | 每個真實 account pool 的 active + pending 佔用數，或 `None` |
+| `account_pool_physical_capacity(config, agent)` | 該帳號背後**實際有幾個 process**（去重後的 slot 身分數） |
 | `account_pool_has_free_dispatch_slot(config, state, agent, pool_usage)` | 該 agent 背後的帳號還能不能再起一個 worker |
 
-`agent_has_free_dispatch_slot` 改為兩道天花板取低者：logical agent 的 slot 數，
-以及 account pool 的 effective concurrency。
+`account_pool_physical_capacity` 是退回後補上的關鍵一環。`agent_dispatch_capacity`
+對同一個 pool 的每個 alias 都回答 5，因為 `logical_worker_slot_ids` 會把每個 alias
+都解析到**同一組** `dispatch_slot_for_pool` slot 上；把三個 5 相加會得到 15，而實際
+只有 5 個 process。因此這裡改為對同 pool 的 logical agent 取 slot 身分的**聯集**，
+數出唯一的實體上限：
+
+```python
+    for member in members:
+        slots.update(logical_worker_slot_ids(config, member) or [member])
+    return len(slots)
+```
+
+沒有宣告 slot 的 logical agent 貢獻它自己（正是 `agent_dispatch_capacity` 給它的
+那 1 個 process），所以真正 unpooled 的配置得到「每個身分 1 格」，pool 上限恰等於
+各 per-agent 上限之和，**永遠不會比原本那道檢查更緊**；只有真的共用 slot 時才會咬住。
+
+`account_pool_has_free_dispatch_slot` 於是對兩道獨立天花板取低者——帳號**有幾個
+process**（physical capacity）與帳號**現在被允許用幾個**（effective concurrency）：
+
+```python
+    if effective_limit is not None and effective_limit <= 0:
+        return False
+    ceiling = account_pool_physical_capacity(config, agent_id)
+    if ceiling <= 0:
+        return False
+    if effective_limit is not None:
+        ceiling = min(ceiling, effective_limit)
+    return pool_usage.get(quota_group, 0) < ceiling
+```
+
+`effective_limit is None` 不再直接回 `True`：沒有寫下配額不代表沒有 pool，此時由
+slot 數獨自定界。`agent_has_free_dispatch_slot` 仍先問 logical agent 的 slot 數，
+再問 account pool。
 
 ```python
     if used >= agent_dispatch_capacity(config, agent_id):
@@ -92,12 +140,26 @@ slot 全被指向 `Antigravity2` 的 **未投遞 queue event** 佔滿時：
 - **`effective_limit == 0` 不是「無上限」**：`account_pool_effective_concurrency`
   對 disabled／paused／exhausted／cooldown 的 pool 就是回 0。final dispatcher 的
   `if quota_limit and ...` 會把 0 當 falsy 略過，本 guard 明確 `<= 0 → False`。
-- **量不到就保守**：`state` 不是 dict、event queue path 缺失或不可讀、計數不是整數，
+- **配額不是容量**：`effective_limit` 是「現在被允許用幾個」，不是「有幾個」。
+  `max_concurrent: 10` 配上 5 個 slot，實際上限仍是 5；沒有 `max_concurrent`
+  則由 slot 數獨自定界，而不是視為無限。兩道天花板取低者，見 1.2。
+- **量不到就保守**：`state` 不是 dict、event queue **讀不到**、計數不是整數，
   一律回 `None`；`owner_preference_ranks` 見 `None` 就讓所有候選人 rank 1，退回原行為。
-  其中 event queue path **缺失** 這條是實作過程中由新測試抓出來的：
-  `queued_quota_group_counts` 內部 `except KeyError: queued_events = []` 會把
-  「讀不到佇列」靜默回報成「沒有 pending」，與「pool 是空的」無法區分，因此
-  `dispatch_pool_usage` 先自行 `config_path(config, "event_queue")` 讓它 fail closed。
+  「讀不到」的判定是本次退回修正的重點：`queued_quota_group_counts` 內部
+  `except KeyError: queued_events = []`，而 `load_jsonl` 對**不存在的檔案**直接回
+  `[]`，兩者都會把「讀不到佇列」靜默回報成「沒有 pending」，與「pool 是空的」無法區分。
+  第一版只做 `config_path(config, "event_queue")`，那只證明「有人把路徑寫下來」，
+  路徑指向不存在的檔案時照樣回報零佔用。改為實際開啟佇列：
+
+  ```python
+        with config_path(config, "event_queue").open("rb"):
+            pass
+  ```
+
+  缺檔、無權限、路徑不是檔案都會拋 `OSError` 而落入 `None`。這裡只做**存在性與可讀性
+  探測**，實際讀取仍是 `load_event_queue` 的職責，沒有新增第二個計數 reader。
+  代價是誠實的：從未寫入過 event queue 檔的全新 fleet 會被判為「量不到」而不啟用偏好，
+  退化成本次修改前的排序，而不是做出錯誤的偏好。
 - **final dispatcher 的最後容量檢查完全保留**，本次沒有移除任何一道既有閘。
 
 ---
@@ -204,7 +266,9 @@ uv run --frozen --python 3.12 ruff check .orchestrator delivery_toolchain script
 uv run --frozen --python 3.12 python delivery_toolchain/governance/check_orchestrator_config.py
 uv run --frozen --python 3.12 python delivery_toolchain/governance/check_config_wiring.py
 uv run --frozen --python 3.12 python delivery_toolchain/governance/check_code_boundaries.py
-uv run --frozen --python 3.12 pytest -m "not requires_live_env" -q \
+# 注意：不要再自行加 -q，pyproject 的 addopts 已經有一個（見 4.0）
+uv run --frozen --python 3.12 pytest -m "not requires_live_env" \
+  --junit-xml=/tmp/focused.xml \
   .orchestrator/test_worker_failure_policy.py \
   .orchestrator/test_dispatch_engine.py \
   .orchestrator/test_dispatch_policy.py \
@@ -213,24 +277,69 @@ uv run --frozen --python 3.12 pytest -m "not requires_live_env" -q \
 
 | 檢查 | 結果 |
 |---|---|
-| `ruff check` | All checks passed! |
-| `check_orchestrator_config.py` | Validated 2 config documents and their merged runtime views. |
-| `check_config_wiring.py` | All 186 config keys are read by production code.（未新增設定鍵） |
-| `check_code_boundaries.py` | Code boundary checks passed for 1126 files.（未新增 .py 檔，inventory 無異動） |
-| 焦點 pytest | 191 passed（51 + 7 + 127 + 6），exit code 0 |
+| `ruff check` | All checks passed!（exit 0） |
+| `check_orchestrator_config.py` | Validated 2 config documents and their merged runtime views.（exit 0） |
+| `check_config_wiring.py` | All 186 config keys are read by production code.（exit 0；未新增設定鍵） |
+| `check_code_boundaries.py` | Code boundary checks passed for 1126 files.（exit 0；未新增 .py 檔，inventory 無異動） |
+| 焦點 pytest | **exit code 0**；JUnit XML 197 個 testcase，`failures=0` `errors=0` `skipped=0` |
+
+焦點 pytest 的 197 = 退回前的 191 加上本次新增的 6 例。這個數字取自
+`--junit-xml` 的 testcase 元素，不是從終端文字數出來的——原因見 4.0。
+
+### 4.0 wait-loop 事故：`-q` 疊成 `-qq`，「N passed」永遠不會出現
+
+實作過程中發生過一次 wait loop：以 `grep passed` 輪詢 pytest 輸出等待完成，但那行
+永遠不會印出來，迴圈因此無限等待一個不存在的字串。根因已定位並可穩定重現：
+
+`pyproject.toml` 的 `[tool.pytest.ini_options]` 已經帶 `addopts = "-q"`，命令列再加
+一個 `-q` 就變成 `-qq`，而 pytest 在第二級 quiet 會**整段拿掉 summary line**：
+
+```
+$ pytest .orchestrator/test_supervisor_scope_injection.py        # addopts 供 -q
+......                                                       [100%]
+6 passed, 12 subtests passed in 2.19s
+
+$ pytest -q .orchestrator/test_supervisor_scope_injection.py     # 實際是 -qq
+......                                                       [100%]
+```
+
+兩次都是成功、exit code 都是 0，差別只在有沒有那行字。四檔焦點 suite 的
+`/tmp/focused2.log` 全檔只有 3 行、`grep -cE "passed|failed"` 得到 **0**，
+而同一次執行的 exit code 是 0、197 個 dot 裡 `F`／`E` 各 0 個。
+
+**結論寫進作業規則**：完成與否的權威是 CLI 的 exit code（背景執行時是
+TaskOutput 回報的 exit code），不是 stdout 裡的文字。需要筆數就用
+`--junit-xml` 這種機器可讀的產物。本次所有結論都據此取得；順帶一提，用
+`while kill -0 ...; do sleep 5; done` 這種前景阻塞等待也不可靠——它自己被 SIGTERM
+砍掉並回報 exit 144，那是量測被中斷，與被等待的工作無關（該背景工作實際 exit 0）。
 
 `test_supervisor_scope_injection.py` 一併執行：`worker_failure_policy` 與
 `dispatch_engine` 靠 `_sync_supervisor_scope()` 注入名稱且整檔 `# ruff: noqa: F821`，
 該測試靜態解析自由名稱並確認 supervisor 供得出來。本次新用到的
 `active_quota_group_counts`、`queued_quota_group_counts`、`agent_quota_group_id`、
-`account_pool_effective_concurrency`、`ready_dispatch_settings`、`config_path`
-都在其涵蓋範圍內。
+`account_pool_effective_concurrency`、`ready_dispatch_settings`、`config_path`，
+以及退回後新用到的 `logical_worker_slot_ids`、`agent_is_dispatch_slot`、
+`agent_dispatch_capacity`，都在其涵蓋範圍內。
 
 ### 4.1 新增／修改的測試與其對應的失效情境
 
 `.orchestrator/test_worker_failure_policy.py`
 
-- `OwnerPreferenceSharedPoolCapacityTests`（新類別，7 例）
+- `OwnerPreferenceSharedPoolCapacityTests`（新類別，13 例，其中 6 例為本次退回後新增）
+
+  退回後新增的 6 例（前 3 例對應 0.1 的兩個缺陷，後 3 例是把既有正確行為鎖住的
+  regression lock）：
+
+  | 測試 | 情境 | 突變下 |
+  |---|---|---|
+  | `test_a_configured_queue_path_pointing_at_nothing_is_not_an_empty_queue` | 路徑已設定、檔案被 unlink；先斷言 `queued_quota_group_counts` 確實回報 `{}`，再要求 `dispatch_pool_usage` 回 `None` | **紅** |
+  | `test_a_pool_without_a_quota_ceiling_is_still_bounded_by_its_slots` | 無 `max_concurrent`（`effective_limit is None`），5 個實體 slot 被 pending 佔滿 | **紅** |
+  | `test_a_quota_ceiling_above_the_slot_count_does_not_create_slots` | `max_concurrent: 10`、實體 5 格全滿；同時斷言三個 alias 的 `agent_dispatch_capacity` 都回 5（相加會得 15） | **紅** |
+  | `test_a_queue_that_cannot_be_read_is_not_an_empty_queue` | 路徑是目錄（所有 uid 皆確定）＋真實 `PermissionError`（只在本行程確實會被拒時斷言，否則不做裝飾性斷言） | 綠（此路徑原本就已 fail closed） |
+  | `test_room_under_both_ceilings_keeps_the_preference` | 10 格配額、5 格實體、佔 3 格 → 偏好仍生效 | 綠（正向對照） |
+  | `test_a_configured_ceiling_of_zero_is_a_ceiling` | 設定層 `max_concurrent: 0`，不得被 5 格實體救回 | 綠（既有行為的 lock） |
+
+  退回前既有的 7 例：
   - `test_pool_saturated_by_another_alias_pending_falls_back_to_a_free_lane`
     ——5 個指向 `Antigravity2` 的 pending event 佔滿共用 pool，`Antigravity` /
     `Antigravity3` 不得取得 rank 0；同時斷言 per-agent 帳仍顯示「有空位」，
@@ -285,6 +394,35 @@ uv run --frozen --python 3.12 pytest -m "not requires_live_env" -q \
 | immutable closeout | `test_frozen_closeout_ordering_is_completely_unchanged`、`test_frozen_closeout_states_keep_the_existing_candidate_order`（各 3 個 subTest：`review_approved` / `approved_head` / `merge_route`；實際訊息為 `'Claude' != 'Codex'`，即偏好確實改派了凍結 task 的 owner） |
 | CI fresh 讀取 | `test_the_authorising_ci_read_is_taken_fresh_and_after_the_first_pr_read` 與 `test_ci_that_starts_after_the_cached_verdict_stops_the_recovery` 的全部 8 個參數化情境 |
 
+**退回後的第二次突變驗證**（針對 0.1 的兩個缺陷，把守衛精確還原成第一版的樣子，
+而不是插入 `return True` 這種粗暴停用）：
+
+1. `dispatch_pool_usage` 的 `with config_path(...).open("rb"): pass` 還原成
+   `config_path(config, "event_queue")`；
+2. `account_pool_has_free_dispatch_slot` 還原成 `if effective_limit is None:
+   return True` ＋ 只比對 `effective_limit`（不取 physical capacity）。
+
+兩處同時還原後執行 `pytest .orchestrator/test_worker_failure_policy.py -k
+OwnerPreferenceSharedPoolCapacityTests`：**exit code 1，5 failed / 10 passed**
+（3 個測試函式加 2 個 `SUBFAILED`），轉紅的正是 4.1 表中標「紅」的三例：
+
+```
+FAILED ...::test_a_configured_queue_path_pointing_at_nothing_is_not_an_empty_queue
+FAILED ...::test_a_pool_without_a_quota_ceiling_is_still_bounded_by_its_slots
+FAILED ...::test_a_quota_ceiling_above_the_slot_count_does_not_create_slots
+SUBFAILED(alias='Antigravity')  ...::test_a_pool_without_a_quota_ceiling_...
+SUBFAILED(alias='Antigravity3') ...::test_a_pool_without_a_quota_ceiling_...
+```
+
+還原後 `md5sum` 比對確認 `worker_failure_policy.py` 回到突變前狀態
+（`a48df3f397adb336e69aceda3b28adc7`），同一組測試重跑 13 passed。
+
+值得誠實記下的一點：`test_a_queue_that_cannot_be_read_is_not_an_empty_queue`
+在突變下**沒有**轉紅。原因是「不可讀」這條路徑第一版就已經 fail closed
+（`load_jsonl` 讀目錄或無權限檔案都會拋 `OSError` 而被既有 `except` 接住），
+真正的缺陷只在「檔案不存在」——`load_jsonl` 對它是靜默回 `[]`。該測試因此是
+regression lock 而非缺陷捕捉，不宜宣稱成後者。
+
 不變式測試在突變後 **維持綠色**，符合預期：
 `test_one_free_slot_in_the_shared_pool_is_still_preferred` 與
 `test_a_pool_with_no_declared_ceiling_keeps_the_previous_behaviour` 斷言的是
@@ -302,6 +440,19 @@ queue event 也算佔用」，不是共用 pool 的跨 alias 加總。跨 alias 
 
 `preferred_providers` 未配置、`enabled: false`、`state` 缺失、event queue 不可讀
 這四種情況的既有測試全部保留且維持綠色，選擇器行為與本次修改前逐字相同。
+
+退回後新增的 `account_pool_physical_capacity` 不影響真正 unpooled 的配置：沒有宣告
+slot 的 logical agent 貢獻它自己 1 格，pool 上限因此等於各 per-agent 上限之和，
+永遠不會比 `used < agent_dispatch_capacity(...)` 那道既有檢查更緊。唯一會被它咬住的
+是真的共用 slot 的配置——那正是本次要修的缺陷。
+
+一個必須誠實揭露的行為差異：單一 unpooled agent 若自身 0 個 active worker 但有 1 個
+**pending queue event**，第一版（`effective_limit is None → True`）會給它 rank 0，
+修正後會判定無空位。這不是相容性破壞而是同一類缺陷的一部分——那個 pending event
+一旦投遞就會吃掉它唯一的 process——但它確實改變了「未設定 `max_concurrent`」配置下
+的排序，故在此列明，由 `test_room_under_both_ceilings_keeps_the_preference` 與
+`test_a_pool_without_a_quota_ceiling_is_still_bounded_by_its_slots` 兩例分別鎖住
+有空位與無空位兩側。
 
 ---
 
@@ -326,7 +477,7 @@ queue event 也算佔用」，不是共用 pool 的跨 alias 加總。跨 alias 
 
 | 缺口 | 回退方式 | 回退後行為 |
 |---|---|---|
-| 共用 pool 容量 | 將 `agent_has_free_dispatch_slot` 末行改回 `return used < agent_dispatch_capacity(...)`；`dispatch_pool_usage` / `account_pool_has_free_dispatch_slot` 可保留為無呼叫者 | 回到只看 logical agent 的容量判斷 |
+| 共用 pool 容量 | 將 `agent_has_free_dispatch_slot` 末行改回 `return used < agent_dispatch_capacity(...)`；`dispatch_pool_usage` / `account_pool_physical_capacity` / `account_pool_has_free_dispatch_slot` 可保留為無呼叫者 | 回到只看 logical agent 的容量判斷 |
 | immutable closeout | 移除 `owner_preference_applies_to_task` 內的 `task_closeout_owner_is_frozen` 短路 | 偏好重新對 `review_approved` 生效 |
 | CI 競態 | 移除 `dispatch_engine` 的 fresh CI 區塊 | 回到單次 cached CI 讀取 |
 

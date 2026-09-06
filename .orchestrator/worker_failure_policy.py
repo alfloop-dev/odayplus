@@ -1864,12 +1864,16 @@ def dispatch_pool_usage(config: dict[str, Any], state: dict[str, Any] | None) ->
     if not isinstance(state, dict):
         return None
     try:
-        # `queued_quota_group_counts` answers "zero pending" when the queue path
-        # is missing, which is indistinguishable from an idle pool. Resolve the
-        # path here so an unconfigured queue fails closed the way an unreadable
-        # one already does, and this function keeps its "None means unmeasured"
-        # contract instead of reporting a shared account as empty.
-        config_path(config, "event_queue")
+        # `queued_quota_group_counts` answers "zero pending" for a queue it
+        # never read: `load_jsonl` returns [] for a missing file, and that is
+        # indistinguishable from an idle pool. Resolving the configured path is
+        # not enough to tell those apart -- a path can be set and point at
+        # nothing -- so the queue is opened here. Reading it is still
+        # `load_event_queue`'s job; this only establishes that there is
+        # something readable to read, which is what "measured zero" requires.
+        # Missing, unreadable, or not a file all raise OSError and become None.
+        with config_path(config, "event_queue").open("rb"):
+            pass
         active = active_quota_group_counts(config, state, active_worker_statuses(config))
         pending = queued_quota_group_counts(config, state)
     except (KeyError, OSError, TypeError, ValueError):
@@ -1885,6 +1889,47 @@ def dispatch_pool_usage(config: dict[str, Any], state: dict[str, Any] | None) ->
 
 
 @_entrypoint
+def account_pool_physical_capacity(config: dict[str, Any], agent_name: str | None) -> int:
+    """How many workers can run at once on the real account behind this agent.
+
+    `agent_dispatch_capacity` answers this for one logical name, but its answer
+    is neither additive across a pool nor a per-name budget:
+    `logical_worker_slot_ids` resolves every alias sharing an account onto the
+    same `dispatch_slot_for_pool` slots, so Antigravity, Antigravity2 and
+    Antigravity3 each report five while five processes exist between them.
+    Counting the distinct slot identities once is what turns three answers of
+    five into the single physical ceiling of five.
+
+    A logical agent that declares no slots contributes itself, which is exactly
+    the one process `agent_dispatch_capacity` grants it. A genuinely unpooled
+    configuration therefore gets one slot per identity and its pool ceiling is
+    the sum of the per-agent ones, so it can never bind tighter than the check
+    that was already there; the pool bound only bites where slots are shared.
+    """
+    pool_id = agent_quota_group_id(config, agent_name)
+    if not pool_id:
+        return 0
+    agents = config.get("agents", {}) or {}
+    members = [
+        normalize_agent_id(name)
+        for name, agent in agents.items()
+        if not agent_is_dispatch_slot(agent if isinstance(agent, dict) else {})
+        and agent_quota_group_id(config, name) == pool_id
+    ]
+    agent_id = normalize_agent_id(agent_name or "")
+    # An agent absent from `agents` still occupies its own process; without this
+    # it would report a capacity of zero and be permanently unpreferred.
+    if agent_id and agent_id not in members and not agent_is_dispatch_slot(agents.get(agent_id)):
+        members.append(agent_id)
+    slots: set[str] = set()
+    for member in members:
+        if not member:
+            continue
+        slots.update(logical_worker_slot_ids(config, member) or [member])
+    return len(slots)
+
+
+@_entrypoint
 def account_pool_has_free_dispatch_slot(
     config: dict[str, Any],
     state: dict[str, Any] | None,
@@ -1897,6 +1942,13 @@ def account_pool_has_free_dispatch_slot(
     the pool's *active* workers against the limit, so a pool whose last slots
     are spoken for by undelivered queue events still passes it, and it skips the
     comparison entirely whenever the effective limit is falsy.
+
+    Two independent ceilings bound one account and the lower one is the truth:
+    how many processes it has (`account_pool_physical_capacity`) and how many it
+    is currently permitted to use (`account_pool_effective_concurrency`). A
+    dynamic quota is not a grant of hardware -- a pool of five slots allowed ten
+    can still only run five -- and an absent quota is not an absent pool, which
+    is why the missing limit is answered by the slot count rather than by yes.
     """
     if pool_usage is None:
         return False
@@ -1908,17 +1960,18 @@ def account_pool_has_free_dispatch_slot(
         # No resolvable account is no evidence about a shared budget.
         return False
     effective_limit = account_pool_effective_concurrency(config, state, agent_id)
-    if effective_limit is None:
-        # Neither configuration nor runtime states a ceiling for this pool, so
-        # the per-agent slot count stays the only bound -- exactly what an
-        # unpooled configuration did before.
-        return True
     # 0 is a stated answer, not a missing one: a disabled, paused, exhausted or
     # cooled-down pool reports it, and reading it as "no limit" would prefer the
     # one lane that certainly cannot run.
-    if effective_limit <= 0:
+    if effective_limit is not None and effective_limit <= 0:
         return False
-    return pool_usage.get(quota_group, 0) < effective_limit
+    ceiling = account_pool_physical_capacity(config, agent_id)
+    if ceiling <= 0:
+        # A pool with no countable process is not an idle one.
+        return False
+    if effective_limit is not None:
+        ceiling = min(ceiling, effective_limit)
+    return pool_usage.get(quota_group, 0) < ceiling
 
 
 @_entrypoint
