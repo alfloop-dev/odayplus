@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_prediction_requested_threshold_weakens_policy",
+  "description": "A caller-supplied threshold looser than the governed one is rejected.",
+  "failure": {
+    "exception_message": "prediction drift threshold cannot weaken the DecisionPolicy threshold",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "prediction_drift",
+  "outcome": "raised",
+  "routing_expectation": "_effective_drift_share_threshold guard"
+}
