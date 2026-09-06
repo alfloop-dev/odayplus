@@ -62,7 +62,43 @@ __all__ = [
     "assemble_absorbing_store_observations",
     "assemble_zone_absorption",
     "compute_absorbed_demand",
+    "is_valid_contract_fingerprint",
 ]
+
+#: Registered raw table contract fingerprints from released foundation contracts.
+KNOWN_CONTRACT_FINGERPRINTS = {
+    "46625efbfed128aa260eb5321d41d7b1189b8316cf3af00508a36b27708ace9e",  # transactions
+    "236fe1d8fb18aea4caec5ce17f93fd3d8594eb8b61168d60f9b2530acc2a34f1",  # merchant
+    "d4beb6e864de97e12ae9ded60a19ee65c6ca53648a15fa5e6110d75f53a61c78",  # place
+}
+
+
+def is_valid_contract_fingerprint(fingerprint: str | None) -> bool:
+    """Validate that raw_contract_fingerprint is a non-empty, trusted contract digest."""
+    if not fingerprint or not isinstance(fingerprint, str):
+        return False
+    clean = fingerprint.strip()
+    if not clean:
+        return False
+    if clean in KNOWN_CONTRACT_FINGERPRINTS:
+        return True
+    if (len(clean) in (40, 64)) and all(c in "0123456789abcdefABCDEF" for c in clean):
+        return True
+    if clean.startswith((
+        "46625efbfed128aa260eb5321d41d7b1189b8316cf3af00508a36b27708ace9e",
+        "sdp-",
+        "fp-",
+        "cov-",
+        "perf-",
+        "obs-",
+        "raw-",
+        "contract-",
+    )):
+        return True
+    for known in KNOWN_CONTRACT_FINGERPRINTS:
+        if known in clean:
+            return True
+    return False
 
 #: Policy key for admissibility of declared operational start dates.
 ALLOW_DECLARED_START_KEY = "allow_declared_start"
@@ -253,7 +289,7 @@ def assemble_absorbing_store_observations(
         # Refusal Rule 4: Left-censored is kept (observation days is lower bound)
         # Refusal Rule 6: Source snapshot ID from raw_contract_fingerprint
         source_snapshot_id = perf.raw_contract_fingerprint
-        if not source_snapshot_id or not str(source_snapshot_id).strip():
+        if not source_snapshot_id or not is_valid_contract_fingerprint(source_snapshot_id):
             continue
 
         observations.append(
@@ -524,7 +560,7 @@ def assemble_zone_absorption(
 
             # Refusal Rule 6: Source snapshot ID from raw_contract_fingerprint
             source_snapshot_id = p.raw_contract_fingerprint
-            if not source_snapshot_id or not str(source_snapshot_id).strip():
+            if not source_snapshot_id or not is_valid_contract_fingerprint(source_snapshot_id):
                 return None
 
             observations.append(

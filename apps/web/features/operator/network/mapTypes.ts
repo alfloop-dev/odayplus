@@ -34,6 +34,11 @@ export type HeatZone = {
   medianListingRent: number;
   existingStoreCount: number;
   dataQualityScore: number;
+  isMerged?: boolean;
+  compositionKind?: "MERGED" | "SPLIT_CHILD" | "ATOMIC";
+  memberCellIds?: string[];
+  parentZoneId?: string;
+  revertedAt?: string;
 };
 
 export type Listing = {

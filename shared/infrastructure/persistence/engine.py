@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 _MIGRATIONS_DIR = Path(__file__).resolve().parents[3] / "infra" / "db" / "migrations"
@@ -52,6 +54,10 @@ class SqliteEngine:
         if self._path.parent and str(self._path.parent) not in ("", "."):
             self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        # Depth of the enclosing `transaction()` blocks. While it is non-zero,
+        # writes stop committing per statement so the whole block can be rolled
+        # back; see `transaction`.
+        self._tx_depth = 0
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -97,10 +103,43 @@ class SqliteEngine:
                         raise exc
             self._conn.commit()
 
+    @contextmanager
+    def transaction(self) -> Iterator[SqliteEngine]:
+        """Run a block as one unit: all of its writes commit, or none do.
+
+        Without this, `execute` commits per statement, so a caller that wrote
+        three rows and then raised would leave the first two behind. Callers
+        that need a multi-statement invariant -- a heat-zone split approval has
+        to retire the parent and create every child together -- would silently
+        get serialization instead of atomicity, which reads the same in the code
+        and is not the same in the data.
+
+        The lock is held for the whole block, matching the engine's
+        serialize-every-statement design, and nesting is safe: only the
+        outermost block commits or rolls back.
+        """
+        with self._lock:
+            self._tx_depth += 1
+            try:
+                yield self
+            except BaseException:
+                self._tx_depth -= 1
+                if self._tx_depth == 0:
+                    self._conn.rollback()
+                raise
+            else:
+                self._tx_depth -= 1
+                if self._tx_depth == 0:
+                    self._conn.commit()
+
+    def _maybe_commit(self) -> None:
+        if self._tx_depth == 0:
+            self._conn.commit()
+
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
             cur = self._conn.execute(sql, params)
-            self._conn.commit()
+            self._maybe_commit()
             return cur
 
     def query(self, sql: str, params: tuple = ()) -> list[sqlite3.Row]:
@@ -122,7 +161,7 @@ class SqliteEngine:
             row = self._conn.execute(
                 "SELECT counter FROM durable_sequences WHERE name = ?", (name,)
             ).fetchone()
-            self._conn.commit()
+            self._maybe_commit()
             return int(row["counter"])
 
     def close(self) -> None:

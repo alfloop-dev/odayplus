@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_run_all_values_missing",
+  "description": "Every value in the only column is missing. Cleaning empties both series and Evidently 0.7.21 raises from inside the stat-test, so this is an unhandled failure of the pinned engine rather than a first-party validation error. Recorded verbatim.",
+  "failure": {
+    "exception_message": "division by zero",
+    "exception_module": "builtins",
+    "exception_type": "ZeroDivisionError"
+  },
+  "kind": "data_drift",
+  "outcome": "raised",
+  "routing_expectation": "cleaned N == 0; pinned Evidently 0.7.21 raises"
+}

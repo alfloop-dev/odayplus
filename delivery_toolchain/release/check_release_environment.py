@@ -66,6 +66,7 @@ STAGING_FOUNDATION_VARIABLES = (
     "ODP_STAGING_KMS_KEY_ID",
     "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
     "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+    "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
 )
 
 REQUIRED_VARIABLES: dict[str, tuple[str, ...]] = {
@@ -168,6 +169,20 @@ def binding_errors(
             "（GitHub 會為未建立的 environment 自動建一個空的），"
             "而不是變數的值有問題；請到該 environment 補齊後重跑。"
         )
+
+    if scope == "staging":
+        state_bucket = (values.get("ODP_STAGING_TERRAFORM_STATE_BUCKET") or "").strip()
+        recovery_bucket = (values.get("ODP_STAGING_RECOVERY_BUNDLE_BUCKET") or "").strip()
+        if state_bucket and recovery_bucket and state_bucket == recovery_bucket:
+            errors.append(
+                "staging 階段儲存邊界檢查失敗：ODP_STAGING_RECOVERY_BUNDLE_BUCKET "
+                "不得與 ODP_STAGING_TERRAFORM_STATE_BUCKET 相同；"
+                "recovery bundle 必須使用獨立受治理非 state 儲存，嚴禁寫入 Terraform state/lock-only bucket。"
+            )
+        if recovery_bucket.lower() in {"placeholder", "changeme", "dummy", "todo"}:
+            errors.append(
+                "staging 階段儲存邊界檢查失敗：ODP_STAGING_RECOVERY_BUNDLE_BUCKET 不得使用 placeholder 佔位值。"
+            )
 
     return errors
 
