@@ -12,7 +12,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import ai_status as runtime_ai_status
-from common import parse_utc_timestamp, utc_now, write_activity_log
+from common import ROOT, parse_utc_timestamp, run_command, utc_now, write_activity_log
 
 
 @dataclass(frozen=True)
@@ -253,6 +253,167 @@ def _record_seen_run_ids(bus_state: dict[str, Any], new_keys: list[str], max_ids
     bus_state["processed_merge_group_run_ids"] = current[-max_ids:]
 
 
+def is_valid_pr_facts(pr_facts: Any) -> bool:
+    """Return true only if pr_facts is a non-empty dictionary containing valid state and head SHA."""
+    if not isinstance(pr_facts, dict) or not pr_facts:
+        return False
+    state = pr_facts.get("state")
+    if not state or not isinstance(state, str) or not state.strip():
+        return False
+    head_sha = (
+        pr_facts.get("headRefOid")
+        or pr_facts.get("head_sha")
+        or (pr_facts.get("head") or {}).get("sha")
+    )
+    if not head_sha or not isinstance(head_sha, str) or not head_sha.strip():
+        return False
+    return True
+
+
+def match_workflow_identity(target: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    """Match workflow identity strictly.
+
+    Requires both runs to have either matching non-None workflow_ids or
+    matching non-empty workflow names. If workflow identity is missing on
+    either run, they do not match.
+    """
+    target_wf_id = target.get("workflow_id")
+    cand_wf_id = candidate.get("workflow_id")
+    if target_wf_id is not None and cand_wf_id is not None:
+        try:
+            return int(target_wf_id) == int(cand_wf_id)
+        except (TypeError, ValueError):
+            return str(target_wf_id).strip() == str(cand_wf_id).strip()
+
+    target_name = str(target.get("name") or "").strip()
+    cand_name = str(candidate.get("name") or "").strip()
+    if target_name and cand_name:
+        return target_name == cand_name
+
+    return False
+
+
+def verify_group_contains_head(repo: str, cand_head_sha: str, approved_head: str) -> bool:
+    """Verify that a merge group head commit contains the full approved PR head SHA."""
+    cand_sha = str(cand_head_sha or "").strip().lower()
+    app_sha = str(approved_head or "").strip().lower()
+    if not cand_sha or not app_sha:
+        return False
+    if cand_sha == app_sha:
+        return True
+
+    # 1. Try local git merge-base check if available
+    try:
+        proc = run_command(
+            ["git", "merge-base", "--is-ancestor", app_sha, cand_sha],
+            cwd=ROOT,
+        )
+        if proc.returncode == 0:
+            return True
+        if proc.returncode == 1:
+            return False
+        # returncode 128 indicates the ref/commit is unknown in local object db
+    except Exception:
+        pass
+
+    # 2. Try GitHub compare API via gh_json
+    try:
+        from github_bus import gh_json
+        data = gh_json(["api", f"repos/{repo}/compare/{app_sha}...{cand_sha}"])
+        if isinstance(data, dict):
+            status = str(data.get("status") or "").strip().lower()
+            behind_by = data.get("behind_by")
+            if status in {"ahead", "identical"} and (behind_by == 0 or behind_by is None):
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
+def find_superseding_merge_group_run(
+    target_run: dict[str, Any],
+    runs: list[dict[str, Any]],
+    pr_number: int,
+    approved_head: str,
+    repo: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Find a newer pending or successful merge group run superseding target_run for the same PR and approved head."""
+    target_run_id = target_run.get("id") or target_run.get("databaseId")
+    target_created_at = target_run.get("created_at") or target_run.get("run_started_at")
+
+    for candidate in runs:
+        if not isinstance(candidate, dict):
+            continue
+        cand_id = candidate.get("id") or candidate.get("databaseId")
+        if cand_id is None or cand_id == target_run_id:
+            continue
+
+        cand_ref = str(
+            candidate.get("head_branch")
+            or candidate.get("headRef")
+            or candidate.get("head_ref")
+            or ""
+        ).strip()
+        cand_pr = parse_merge_group_pr_number(cand_ref)
+        if cand_pr != pr_number:
+            continue
+
+        cand_head_sha = str(
+            candidate.get("head_sha")
+            or candidate.get("headSha")
+            or ""
+        ).strip().lower()
+        if not cand_head_sha:
+            # Candidate lacks head_sha: cannot prove association or ancestry
+            continue
+
+        if not match_workflow_identity(target_run, candidate):
+            continue
+
+        cand_is_newer = False
+        if target_run_id is not None and cand_id is not None:
+            try:
+                if int(cand_id) > int(target_run_id):
+                    cand_is_newer = True
+            except (TypeError, ValueError):
+                pass
+
+        if not cand_is_newer:
+            cand_created_at = candidate.get("created_at") or candidate.get("run_started_at")
+            if cand_created_at and target_created_at:
+                try:
+                    cand_dt = parse_utc_timestamp(cand_created_at)
+                    target_dt = parse_utc_timestamp(target_created_at)
+                    if cand_dt and target_dt and cand_dt > target_dt:
+                        cand_is_newer = True
+                except Exception:
+                    pass
+
+        if not cand_is_newer:
+            continue
+
+        cand_conclusion = str(candidate.get("conclusion") or "").strip().lower()
+        cand_status = str(candidate.get("status") or "").strip().lower()
+
+        is_pending = (
+            cand_status in {"in_progress", "queued", "waiting", "requested", "pending"}
+            and cand_conclusion not in FAILURE_CONCLUSIONS
+        )
+        is_success = cand_conclusion in SUCCESS_CONCLUSIONS
+
+        if not (is_pending or is_success):
+            continue
+
+        if not verify_group_contains_head(repo, cand_head_sha, approved_head):
+            continue
+
+        reason = "pending_group" if is_pending else "successful_group"
+        return candidate, reason
+
+    return None, None
+
+
 def fetch_pr_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
     """Fetch fresh PR state and head commit SHA from GitHub via gh_json."""
     from github_bus import GitHubBusOffline, gh_json
@@ -273,14 +434,19 @@ def fetch_pr_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
 
 def fetch_merge_group_runs(repo: str, limit: int = 30) -> list[dict[str, Any]]:
     """Fetch merge_group workflow runs from GitHub via gh_json."""
-    from github_bus import gh_json
+    from github_bus import GitHubBusOffline, gh_json
 
-    data = gh_json(["api", f"repos/{repo}/actions/runs?event=merge_group&per_page={limit}"])
-    if isinstance(data, dict):
-        runs = data.get("workflow_runs", [])
-        return runs if isinstance(runs, list) else []
-    if isinstance(data, list):
-        return data
+    try:
+        data = gh_json(["api", f"repos/{repo}/actions/runs?event=merge_group&per_page={limit}"])
+        if isinstance(data, dict):
+            runs = data.get("workflow_runs", [])
+            return runs if isinstance(runs, list) else []
+        if isinstance(data, list):
+            return data
+    except GitHubBusOffline:
+        raise
+    except Exception:
+        pass
     return []
 
 
@@ -404,8 +570,8 @@ def reconcile_merge_group_runs(
 
         # Fetch fresh PR facts from GitHub to ensure PR is open and matches reviewed head
         pr_facts = fetch_pr_facts(repo, pr_number)
-        if pr_facts is None or not isinstance(pr_facts, dict):
-            # API or freshness unresolved: do NOT demote, do NOT permanently mark processed
+        if not is_valid_pr_facts(pr_facts):
+            # API or freshness unresolved / empty facts: do NOT demote, do NOT permanently mark processed
             write_activity_log(config, {
                 "type": "merge_group_failure_unresolved",
                 "task_id": task_id,
@@ -417,7 +583,7 @@ def reconcile_merge_group_runs(
                 "url": html_url,
                 "message": (
                     f"Merge group run {run_id} ({conclusion}) on {queue_ref} correlated to PR #{pr_number} "
-                    f"(task {task_id}), but fresh PR facts could not be resolved from GitHub API. "
+                    f"(task {task_id}), but valid fresh PR facts could not be resolved from GitHub API. "
                     f"Retaining for next poll cycle."
                 ),
             })
@@ -490,12 +656,7 @@ def reconcile_merge_group_runs(
             })
             continue
 
-        head_matched = (
-            pr_head_sha == approved_head
-            or pr_head_sha.startswith(approved_head)
-            or approved_head.startswith(pr_head_sha)
-        )
-        if not head_matched:
+        if pr_head_sha != approved_head:
             write_activity_log(config, {
                 "type": "merge_group_failure_unresolved",
                 "task_id": task_id,
@@ -507,80 +668,15 @@ def reconcile_merge_group_runs(
                 "url": html_url,
                 "message": (
                     f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                    f"(task {task_id}) has PR head {pr_head_sha[:8]} mismatching approved head {approved_head[:8]}."
+                    f"(task {task_id}) has PR head {pr_head_sha} mismatching approved head {approved_head}."
                 ),
             })
             continue
 
-        # Check if this failure is superseded by a newer merge group run for the same PR and workflow
-        superseded_run = None
-        superseded_reason = None
-
-        target_run_id = run.get("id") or run.get("databaseId")
-        target_workflow_id = run.get("workflow_id")
-        target_workflow_name = str(run.get("name") or "").strip()
-        target_created_at = run.get("created_at") or run.get("run_started_at")
-
-        for candidate in runs:
-            if not isinstance(candidate, dict):
-                continue
-            cand_id = candidate.get("id") or candidate.get("databaseId")
-            if cand_id is None or cand_id == target_run_id:
-                continue
-
-            cand_ref = str(
-                candidate.get("head_branch")
-                or candidate.get("headRef")
-                or candidate.get("head_ref")
-                or ""
-            ).strip()
-            cand_pr = parse_merge_group_pr_number(cand_ref)
-            if cand_pr != pr_number:
-                continue
-
-            cand_workflow_id = candidate.get("workflow_id")
-            cand_workflow_name = str(candidate.get("name") or "").strip()
-
-            if target_workflow_id is not None and cand_workflow_id is not None:
-                if target_workflow_id != cand_workflow_id:
-                    continue
-            elif target_workflow_name and cand_workflow_name:
-                if target_workflow_name != cand_workflow_name:
-                    continue
-
-            cand_is_newer = False
-            if target_run_id is not None and cand_id is not None:
-                try:
-                    if int(cand_id) > int(target_run_id):
-                        cand_is_newer = True
-                except (TypeError, ValueError):
-                    pass
-
-            if not cand_is_newer:
-                cand_created_at = candidate.get("created_at") or candidate.get("run_started_at")
-                if cand_created_at and target_created_at:
-                    try:
-                        cand_dt = parse_utc_timestamp(cand_created_at)
-                        target_dt = parse_utc_timestamp(target_created_at)
-                        if cand_dt and target_dt and cand_dt > target_dt:
-                            cand_is_newer = True
-                    except Exception:
-                        pass
-
-            if not cand_is_newer:
-                continue
-
-            cand_conclusion = str(candidate.get("conclusion") or "").strip().lower()
-            cand_status = str(candidate.get("status") or "").strip().lower()
-
-            if cand_status in {"in_progress", "queued", "waiting", "requested", "pending"} and cand_conclusion not in FAILURE_CONCLUSIONS:
-                superseded_run = candidate
-                superseded_reason = "pending_group"
-                break
-            elif cand_conclusion in SUCCESS_CONCLUSIONS:
-                superseded_run = candidate
-                superseded_reason = "successful_group"
-                break
+        # Check if this failure is superseded by a newer merge group run in current batch
+        superseded_run, superseded_reason = find_superseding_merge_group_run(
+            run, runs, pr_number, approved_head, repo
+        )
 
         if superseded_run is not None:
             cand_run_id = superseded_run.get("id") or superseded_run.get("databaseId")
@@ -600,11 +696,155 @@ def reconcile_merge_group_runs(
                 "message": (
                     f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
                     f"(task {task_id}) is stale: superseded by newer merge group run {cand_run_id} "
-                    f"({cand_status_str}) for reviewed head {approved_head[:8]}."
+                    f"({cand_status_str}) for reviewed head {approved_head}."
                 ),
             })
             non_mutating_seen.append(run_key)
             continue
+
+        # Pre-CAS and pre-demote fresh live validation:
+        # 1. Fresh PR facts B check
+        pr_facts_b = fetch_pr_facts(repo, pr_number)
+        if not is_valid_pr_facts(pr_facts_b):
+            write_activity_log(config, {
+                "type": "merge_group_failure_unresolved",
+                "task_id": task_id,
+                "run_id": run_id,
+                "queue_ref": queue_ref,
+                "head_sha": head_sha,
+                "pr_number": pr_number,
+                "conclusion": conclusion,
+                "url": html_url,
+                "message": (
+                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} correlated to PR #{pr_number} "
+                    f"(task {task_id}), but pre-demote fresh PR facts B could not be validated. "
+                    f"Retaining for next poll cycle."
+                ),
+            })
+            continue
+
+        pr_state_b = str(pr_facts_b.get("state") or "").strip().upper()
+        merged_at_b = pr_facts_b.get("mergedAt") or pr_facts_b.get("merged_at")
+        is_merged_b = (pr_state_b == "MERGED") or bool(merged_at_b) or (pr_facts_b.get("merged") is True)
+        if is_merged_b:
+            write_activity_log(config, {
+                "type": "merge_group_failure_stale",
+                "task_id": task_id,
+                "run_id": run_id,
+                "queue_ref": queue_ref,
+                "head_sha": head_sha,
+                "pr_number": pr_number,
+                "conclusion": conclusion,
+                "url": html_url,
+                "reason": "already_merged",
+                "message": (
+                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
+                    f"(task {task_id}) is stale: PR was merged during reconciliation."
+                ),
+            })
+            non_mutating_seen.append(run_key)
+            continue
+
+        if pr_state_b != "OPEN":
+            write_activity_log(config, {
+                "type": "merge_group_failure_stale",
+                "task_id": task_id,
+                "run_id": run_id,
+                "queue_ref": queue_ref,
+                "head_sha": head_sha,
+                "pr_number": pr_number,
+                "conclusion": conclusion,
+                "url": html_url,
+                "reason": f"pr_state_{pr_state_b.lower()}",
+                "message": (
+                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
+                    f"(task {task_id}) is stale: PR state transitioned to '{pr_state_b}'."
+                ),
+            })
+            non_mutating_seen.append(run_key)
+            continue
+
+        pr_head_b = str(
+            pr_facts_b.get("headRefOid")
+            or pr_facts_b.get("head_sha")
+            or (pr_facts_b.get("head") or {}).get("sha")
+            or ""
+        ).strip().lower()
+        if pr_head_b != approved_head:
+            write_activity_log(config, {
+                "type": "merge_group_failure_unresolved",
+                "task_id": task_id,
+                "run_id": run_id,
+                "queue_ref": queue_ref,
+                "head_sha": head_sha,
+                "pr_number": pr_number,
+                "conclusion": conclusion,
+                "url": html_url,
+                "message": (
+                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
+                    f"(task {task_id}) has PR head {pr_head_b} drifting from approved head {approved_head}."
+                ),
+            })
+            continue
+
+        # 2. Fresh merge queue enrollment check
+        try:
+            from github_bus import fetch_pr_merge_queue_status, is_in_merge_queue
+            fresh_mq_status = fetch_pr_merge_queue_status(repo, pr_number)
+            if is_in_merge_queue(fresh_mq_status):
+                write_activity_log(config, {
+                    "type": "merge_group_failure_stale",
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "queue_ref": queue_ref,
+                    "head_sha": head_sha,
+                    "pr_number": pr_number,
+                    "conclusion": conclusion,
+                    "url": html_url,
+                    "reason": "enrolled_in_merge_queue",
+                    "message": (
+                        f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
+                        f"(task {task_id}) is stale: PR is currently enrolled in merge queue."
+                    ),
+                })
+                non_mutating_seen.append(run_key)
+                continue
+        except Exception:
+            pass
+
+        # 3. Fresh merge group runs snapshot check
+        try:
+            poll_cfg = (config.get("github_bus", {}) or {}).get("poll_batch_sizes", {})
+            poll_limit = int(poll_cfg.get("merge_group_runs", 30))
+            fresh_runs = fetch_merge_group_runs(repo, limit=poll_limit)
+            fresh_superseded, fresh_reason = find_superseding_merge_group_run(
+                run, fresh_runs, pr_number, approved_head, repo
+            )
+            if fresh_superseded is not None:
+                cand_run_id = fresh_superseded.get("id") or fresh_superseded.get("databaseId")
+                cand_status_str = str(fresh_superseded.get("status") or fresh_superseded.get("conclusion") or "")
+                write_activity_log(config, {
+                    "type": "merge_group_failure_stale",
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "queue_ref": queue_ref,
+                    "head_sha": head_sha,
+                    "pr_number": pr_number,
+                    "conclusion": conclusion,
+                    "url": html_url,
+                    "superseded_by_run_id": cand_run_id,
+                    "superseded_by_status": cand_status_str,
+                    "reason": fresh_reason,
+                    "message": (
+                        f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
+                        f"(task {task_id}) is stale: superseded by newer merge group run {cand_run_id} "
+                        f"({cand_status_str}) in fresh runs snapshot for reviewed head {approved_head}."
+                    ),
+                })
+                non_mutating_seen.append(run_key)
+                continue
+        except Exception:
+            pass
 
         log_entry = {
             "type": "merge_group_failure_reconciled",

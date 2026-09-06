@@ -3500,6 +3500,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
 
                 with (
                     mock.patch("github_reconciliation.fetch_pr_facts", return_value=self.default_pr_facts),
+                    mock.patch("github_reconciliation.verify_group_contains_head", return_value=True),
                     mock.patch("github_reconciliation.write_activity_log") as write_log,
                     mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
                 ):
@@ -3549,6 +3550,7 @@ class MergeGroupReconciliationTests(unittest.TestCase):
 
         with (
             mock.patch("github_reconciliation.fetch_pr_facts", return_value=self.default_pr_facts),
+            mock.patch("github_reconciliation.verify_group_contains_head", return_value=True),
             mock.patch("github_reconciliation.write_activity_log") as write_log,
             mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
         ):
@@ -3974,6 +3976,285 @@ class MergeGroupReconciliationTests(unittest.TestCase):
             ["api", "repos/o/r/actions/runs?event=merge_group&per_page=20"],
         )
         self.assertEqual(len(self.status["handoffs"]), 1)
+
+    def test_is_valid_pr_facts(self) -> None:
+        valid_facts = {
+            "state": "OPEN",
+            "headRefOid": "8eabc9734a000000000000000000000000000000",
+        }
+        self.assertTrue(github_reconciliation.is_valid_pr_facts(valid_facts))
+        self.assertFalse(github_reconciliation.is_valid_pr_facts({}))
+        self.assertFalse(github_reconciliation.is_valid_pr_facts(None))
+        self.assertFalse(github_reconciliation.is_valid_pr_facts({"state": ""}))
+        self.assertFalse(github_reconciliation.is_valid_pr_facts({"state": "OPEN"}))
+        self.assertFalse(github_reconciliation.is_valid_pr_facts({"headRefOid": "8eabc973"}))
+
+    def test_match_workflow_identity(self) -> None:
+        match_wf = github_reconciliation.match_workflow_identity
+        # Matching workflow_id
+        self.assertTrue(match_wf({"workflow_id": 100}, {"workflow_id": 100}))
+        self.assertFalse(match_wf({"workflow_id": 100}, {"workflow_id": 200}))
+        # Matching workflow name when workflow_id is absent
+        self.assertTrue(match_wf({"name": "CI"}, {"name": "CI"}))
+        self.assertFalse(match_wf({"name": "CI"}, {"name": "Deploy"}))
+        # Missing identity on either
+        self.assertFalse(match_wf({}, {}))
+        self.assertFalse(match_wf({"workflow_id": 100}, {}))
+        self.assertFalse(match_wf({}, {"workflow_id": 100}))
+        self.assertFalse(match_wf({"name": "CI"}, {}))
+
+    def test_verify_group_contains_head(self) -> None:
+        verify = github_reconciliation.verify_group_contains_head
+        sha1 = "8eabc9734a000000000000000000000000000000"
+        sha2 = "17393dd400000000000000000000000000000000"
+        # Same SHA
+        self.assertTrue(verify("o/r", sha1, sha1))
+        # Empty/missing SHA
+        self.assertFalse(verify("o/r", "", sha1))
+        self.assertFalse(verify("o/r", sha1, ""))
+        # Local git ancestor success
+        fake_ok = mock.Mock(returncode=0)
+        with mock.patch("github_reconciliation.run_command", return_value=fake_ok):
+            self.assertTrue(verify("o/r", sha2, sha1))
+        # Local git not ancestor (returncode 1)
+        fake_not_ancestor = mock.Mock(returncode=1)
+        with mock.patch("github_reconciliation.run_command", return_value=fake_not_ancestor):
+            self.assertFalse(verify("o/r", sha2, sha1))
+        # Local git missing object (returncode 128) -> GitHub compare API
+        fake_missing = mock.Mock(returncode=128)
+        with (
+            mock.patch("github_reconciliation.run_command", return_value=fake_missing),
+            mock.patch("github_bus.gh_json", return_value={"status": "ahead", "behind_by": 0}),
+        ):
+            self.assertTrue(verify("o/r", sha2, sha1))
+        with (
+            mock.patch("github_reconciliation.run_command", return_value=fake_missing),
+            mock.patch("github_bus.gh_json", return_value={"status": "diverged", "behind_by": 5}),
+        ):
+            self.assertFalse(verify("o/r", sha2, sha1))
+
+    def test_reconcile_merge_group_empty_or_missing_fields_facts_does_not_demote_and_does_not_mark_processed(self) -> None:
+        failed_run = {
+            "id": 31321422749,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
+            "head_sha": "8eabc9734a000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+        }
+        for bad_facts in ({}, {"state": ""}, {"state": "OPEN"}, {"headRefOid": "8eabc973"}):
+            with self.subTest(bad_facts=bad_facts):
+                bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
+                status_obj = {"tasks": [dict(self.task)], "handoffs": []}
+                with (
+                    mock.patch("github_reconciliation.fetch_pr_facts", return_value=bad_facts),
+                    mock.patch("github_reconciliation.write_activity_log") as write_log,
+                    mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
+                ):
+                    changed = github_reconciliation.reconcile_merge_group_runs(
+                        self.config, bus_state, status_obj, "o/r", [failed_run]
+                    )
+                self.assertFalse(changed)
+                commit_trans.assert_not_called()
+                self.assertEqual(status_obj["tasks"][0]["status"], "review_approved")
+                self.assertNotIn("merge_group_run:31321422749", bus_state.get("processed_merge_group_run_ids", []))
+                self.assertEqual(write_log.call_args.args[1]["type"], "merge_group_failure_unresolved")
+
+    def test_reconcile_merge_group_newgroup_different_head_does_not_supersede_failure(self) -> None:
+        """New group whose merge commit does NOT contain approved PR head cannot supersede failure."""
+        old_failed_run = {
+            "id": 34003742537,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-908e99fa",
+            "head_sha": "908e99fa00000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+            "created_at": "2026-09-06T01:25:00Z",
+            "name": "CI",
+            "workflow_id": 100,
+        }
+        new_pending_diff_head = {
+            "id": 34004041183,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-17393dd4",
+            "head_sha": "17393dd400000000000000000000000000000000",
+            "conclusion": None,
+            "status": "in_progress",
+            "created_at": "2026-09-06T01:29:54Z",
+            "name": "CI",
+            "workflow_id": 100,
+        }
+        with (
+            mock.patch("github_reconciliation.fetch_pr_facts", return_value=self.default_pr_facts),
+            mock.patch("github_reconciliation.verify_group_contains_head", return_value=False),
+            mock.patch("github_bus.fetch_pr_merge_queue_status", return_value=None),
+            mock.patch("github_reconciliation.write_activity_log"),
+            mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+            mock.patch("github_reconciliation.runtime_ai_status.emit_task_review_status_check"),
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config, self.bus_state, self.status, "o/r", [old_failed_run, new_pending_diff_head]
+            )
+        self.assertTrue(changed)
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(len(self.status["handoffs"]), 1)
+
+    def test_reconcile_merge_group_newgroup_missing_head_sha_does_not_supersede_failure(self) -> None:
+        """New group without head_sha cannot supersede failure."""
+        old_failed_run = {
+            "id": 34003742537,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-908e99fa",
+            "head_sha": "908e99fa00000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+            "created_at": "2026-09-06T01:25:00Z",
+            "name": "CI",
+            "workflow_id": 100,
+        }
+        new_pending_no_sha = {
+            "id": 34004041183,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-17393dd4",
+            "head_sha": "",
+            "conclusion": None,
+            "status": "in_progress",
+            "created_at": "2026-09-06T01:29:54Z",
+            "name": "CI",
+            "workflow_id": 100,
+        }
+        with (
+            mock.patch("github_reconciliation.fetch_pr_facts", return_value=self.default_pr_facts),
+            mock.patch("github_bus.fetch_pr_merge_queue_status", return_value=None),
+            mock.patch("github_reconciliation.write_activity_log"),
+            mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+            mock.patch("github_reconciliation.runtime_ai_status.emit_task_review_status_check"),
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config, self.bus_state, self.status, "o/r", [old_failed_run, new_pending_no_sha]
+            )
+        self.assertTrue(changed)
+        self.assertEqual(self.task["status"], "review")
+        self.assertEqual(len(self.status["handoffs"]), 1)
+
+    def test_reconcile_merge_group_missing_workflow_identity_does_not_match(self) -> None:
+        """Target and candidate both missing workflow identity must not match."""
+        old_failed_run = {
+            "id": 34003742537,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-908e99fa",
+            "head_sha": "908e99fa00000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+            "created_at": "2026-09-06T01:25:00Z",
+            "workflow_id": None,
+            "name": "",
+        }
+        new_pending_no_wf = {
+            "id": 34004041183,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-17393dd4",
+            "head_sha": "17393dd400000000000000000000000000000000",
+            "conclusion": None,
+            "status": "in_progress",
+            "created_at": "2026-09-06T01:29:54Z",
+            "workflow_id": None,
+            "name": "",
+        }
+        with (
+            mock.patch("github_reconciliation.fetch_pr_facts", return_value=self.default_pr_facts),
+            mock.patch("github_reconciliation.verify_group_contains_head", return_value=True),
+            mock.patch("github_bus.fetch_pr_merge_queue_status", return_value=None),
+            mock.patch("github_reconciliation.write_activity_log"),
+            mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+            mock.patch("github_reconciliation.runtime_ai_status.emit_task_review_status_check"),
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config, self.bus_state, self.status, "o/r", [old_failed_run, new_pending_no_wf]
+            )
+        self.assertTrue(changed)
+        self.assertEqual(self.task["status"], "review")
+
+    def test_reconcile_merge_group_fresh_queue_enrollment_supersedes_failure(self) -> None:
+        """PR enrolled in merge queue at pre-CAS re-verification is treated as stale superseded."""
+        failed_run = {
+            "id": 31321422749,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
+            "head_sha": "8eabc9734a000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+        }
+        fresh_queue_payload = {
+            "isInMergeQueue": True,
+            "mergeQueueEntry": {"position": 1, "state": "AWAITING_CHECKS", "enqueuedAt": "2026-09-06T01:30:00Z"},
+        }
+        with (
+            mock.patch("github_reconciliation.fetch_pr_facts", return_value=self.default_pr_facts),
+            mock.patch("github_bus.fetch_pr_merge_queue_status", return_value=fresh_queue_payload),
+            mock.patch("github_reconciliation.write_activity_log") as write_log,
+            mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config, self.bus_state, self.status, "o/r", [failed_run]
+            )
+        self.assertFalse(changed)
+        commit_trans.assert_not_called()
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertIn("merge_group_run:31321422749", self.bus_state["processed_merge_group_run_ids"])
+        stale_log = write_log.call_args.args[1]
+        self.assertEqual(stale_log["type"], "merge_group_failure_stale")
+        self.assertEqual(stale_log["reason"], "enrolled_in_merge_queue")
+
+    def test_reconcile_merge_group_pr_head_drift_at_facts_b_does_not_demote(self) -> None:
+        """PR head drift discovered during pre-CAS check does not demote and does not mark processed."""
+        failed_run = {
+            "id": 31321422749,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
+            "head_sha": "8eabc9734a000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+        }
+        facts_b_drifted = {
+            "number": 756,
+            "state": "OPEN",
+            "headRefOid": "9999999999000000000000000000000000000000",
+            "url": "https://github.com/o/r/pull/756",
+        }
+        with (
+            mock.patch("github_reconciliation.fetch_pr_facts", side_effect=[self.default_pr_facts, facts_b_drifted]),
+            mock.patch("github_reconciliation.write_activity_log") as write_log,
+            mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config, self.bus_state, self.status, "o/r", [failed_run]
+            )
+        self.assertFalse(changed)
+        commit_trans.assert_not_called()
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertNotIn("merge_group_run:31321422749", self.bus_state.get("processed_merge_group_run_ids", []))
+        self.assertEqual(write_log.call_args.args[1]["type"], "merge_group_failure_unresolved")
+
+    def test_reconcile_merge_group_exact_sha_no_prefix_match(self) -> None:
+        """Short SHA / startswith prefix match must be rejected."""
+        failed_run = {
+            "id": 31321422749,
+            "head_branch": "refs/heads/gh-readonly-queue/dev/pr-756-8eabc973",
+            "head_sha": "8eabc9734a000000000000000000000000000000",
+            "conclusion": "failure",
+            "status": "completed",
+        }
+        short_sha_facts = {
+            "number": 756,
+            "state": "OPEN",
+            "headRefOid": "8eabc973",  # short 8-char SHA prefix
+            "url": "https://github.com/o/r/pull/756",
+        }
+        with (
+            mock.patch("github_reconciliation.fetch_pr_facts", return_value=short_sha_facts),
+            mock.patch("github_reconciliation.write_activity_log") as write_log,
+            mock.patch("status_transition.commit_canonical_task_transition") as commit_trans,
+        ):
+            changed = github_reconciliation.reconcile_merge_group_runs(
+                self.config, self.bus_state, self.status, "o/r", [failed_run]
+            )
+        self.assertFalse(changed)
+        commit_trans.assert_not_called()
+        self.assertEqual(self.task["status"], "review_approved")
+        self.assertNotIn("merge_group_run:31321422749", self.bus_state.get("processed_merge_group_run_ids", []))
+        self.assertEqual(write_log.call_args.args[1]["type"], "merge_group_failure_unresolved")
 
     def test_sync_github_bus_executes_poll_merge_group_runs(self) -> None:
         runtime_state = {}
