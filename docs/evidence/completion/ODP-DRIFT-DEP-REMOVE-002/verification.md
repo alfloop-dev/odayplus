@@ -4,7 +4,7 @@ The isolated integration candidate passed 317 native-core, immutable golden,
 data/feature/prediction/performance monitoring tests, plus the newly added
 lock/installed/SBOM removal regression (1 test). Another 162 OSS execution,
 ADR, SBOM isolation, licence/attestation, supply-chain and release-workflow
-contract tests passed. The attached logs contain the exact test names and
+contract tests passed. The attached logs contain the pytest progress and
 warnings. All historical golden files match PR #1218 byte-for-byte.
 
 Commands:
@@ -20,3 +20,5 @@ pip-audit receipt, not the historical `--local` unit-test path on dev.
 Implementation files were compared byte-for-byte after transfer into the
 Worker Manager task checkout. The prerequisite PRs still require their
 ordinary review/merge flow; these results do not authorize merge or deployment.
+
+`committed-audit.json` records a second complete 215-package scan at implementation commit `e18aa6948d4569ba8e37888e0e5291d18931048d`, using its own synchronized environment. `committed-inputs.json` binds the implementation files, generated current SBOM and NOTICE. This follow-up commit adds evidence and refreshes the SBOM source identity; it does not change the audited implementation or lock.
