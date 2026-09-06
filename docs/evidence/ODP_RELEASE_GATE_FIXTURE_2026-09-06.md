@@ -1,7 +1,7 @@
 # ODP-RELEASE-GATE-FIXTURE-STAGING-002 證據文件
 
 **Task ID**：`ODP-RELEASE-GATE-FIXTURE-STAGING-002`  
-**Owner**：`Antigravity2`  
+**Owner**：`Codex2`
 **Reviewer**：`Codex`  
 **Date**：`2026-09-06`  
 **Target Branch**：`dev`  
@@ -59,7 +59,7 @@
   - `test_cli_require_go_rejects_synthetic_blocked_registry`：使用合成 baseline 檔案驗證 `--require-go` 嚴格拒絕 NO-GO registry（exit code 1）。
   - `test_cli_require_go_matches_committed_registry_posture`：動態根據當前 committed registry 是否為 GO 驗證 `--require-go` 的 exit code。
   - `test_cli_json_report_matches_committed_registry`：動態比對 CLI JSON report 與 committed registry 的 cleared_gates、blocking_gates 及 release_state，並斷言 `integrity_errors == []`。
-  - `test_dev_merge_gate_accepts_valid_registry_and_require_go_checks_packet`：驗證 `--dev-merge` 靜態通過，並確認 `--require-go` 下當 registry 非 GO 或缺少收據 packet 時嚴格 fail closed。
+  - `test_dev_merge_gate_accepts_valid_registry_and_require_go_checks_packet`：驗證 `--dev-merge` 靜態通過，並在目前非 GO registry 姿態下確認 `--require-go` 嚴格 fail closed；product gate 的 GO 分支未在此測試中聲稱已覆蓋收據 packet 缺失情境。
   - `test_registry_does_not_report_archived_done_tasks_as_open`：移除 `"archived done" in blockers` 與 NO-GO 斷言，專注確保已封存任務不被聲稱為 open。
 
 ### 2.3 強化 Negative Mutation 測試獨立性

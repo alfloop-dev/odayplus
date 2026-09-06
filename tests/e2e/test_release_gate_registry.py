@@ -205,7 +205,8 @@ def test_committed_registry_matches_recorded_decision_and_gates() -> None:
     assert registry["release"]["decision"] in module.ALLOWED_DECISIONS
     for gate in registry["gates"]:
         if module.is_cleared(gate):
-            assert gate["receipts"], f"{gate['id']} is cleared and must carry receipts"
+            if gate["status"] in ("passed", "passed-with-deviation"):
+                assert gate["receipts"], f"{gate['id']} is attested and must carry receipts"
             assert not gate["blockers"], f"{gate['id']} is cleared and must not carry blockers"
         else:
             assert gate["blockers"], f"{gate['id']} is open and must name what blocks it"
@@ -568,6 +569,18 @@ def test_not_applicable_gate_requires_a_justification() -> None:
     errors = errors_for(mutated(mutate))
 
     assert any("requires a non-empty justification" in error for error in errors)
+
+
+def test_not_applicable_gate_with_justification_allows_empty_receipts() -> None:
+    """NA is a valid cleared state when justified, without an attestation receipt."""
+    registry = blocked_registry_baseline()
+    gate = registry["gates"][3]
+    gate["status"] = "not-applicable"
+    gate["blockers"] = []
+    gate["receipts"] = []
+    gate["justification"] = "Not applicable to this release boundary"
+
+    assert errors_for(registry) == []
 
 
 def test_passed_with_deviation_requires_an_approved_deviation() -> None:
