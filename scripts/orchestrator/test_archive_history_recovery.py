@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -321,6 +322,17 @@ class RecoveryFixture(unittest.TestCase):
         assert evidence is not None, task_id
         return str(evidence["merge_commit"])
 
+    def authorization_file(self) -> Path:
+        """The authorization the batch is planned under, hashed into it."""
+
+        path = self.root / "RECOVERY_AUTHORIZATION_ZH_TW.md"
+        if not path.exists():
+            path.write_text(
+                "# 授權：依可驗證證據受控重建歷史，缺證據維持 blocked。\n",
+                encoding="utf-8",
+            )
+        return path
+
     def plan_batch(
         self,
         entries: list[dict[str, Any]],
@@ -341,16 +353,46 @@ class RecoveryFixture(unittest.TestCase):
             recovery_owner=owner,
             recovery_reviewer=reviewer,
             attestations=attestations or {},
+            authorization_path=self.authorization_file(),
         )
+
+    def write_hold(self, batch_path: Path, **overrides: Any) -> Path:
+        """A maintenance hold bound by hash to this exact batch file."""
+
+        digest = hashlib.sha256(batch_path.read_bytes()).hexdigest()
+        payload: dict[str, Any] = {
+            "type": ai_status.RECOVERY_MAINTENANCE_HOLD_TYPE,
+            "hold_id": "ORCH-ARCHIVE-HISTORY-RECOVERY-001/hold-1",
+            "declared_by": "Human/Ops",
+            "declared_at": "2026-09-06T15:00:00Z",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "scope": "任務歷史重建期間暫停派工",
+            "dispatch_paused": True,
+            "batch_sha256": digest,
+            "batch_approval": {
+                "reviewer": "Codex",
+                "approved_batch_sha256": digest,
+                "approved_at": "2026-09-06T15:30:00Z",
+                "source": "https://github.com/org/repo/pull/1231#pullrequestreview-1",
+            },
+        }
+        payload.update(overrides)
+        self._hold_seq = getattr(self, "_hold_seq", 0) + 1
+        path = self.root / f"hold-{self._hold_seq}.json"
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        return path
 
     def write_batch(self, batch: dict[str, Any]) -> Path:
         path = self.root / "batch.json"
         path.write_text(json.dumps(batch, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return path
 
-    def run_apply(self, batch_path: Path, *extra: str) -> int:
+    def run_apply(self, batch_path: Path, *extra: str, hold: Path | None = None) -> int:
         """Run the real `main()` so the canonical lock is genuinely taken."""
 
+        hold_path = hold if hold is not None else self.write_hold(batch_path)
         with (
             mock.patch.object(ai_status, "emit_status_checks_for_changed_tasks"),
             mock.patch.object(ai_status, "reconcile_status_check_outbox"),
@@ -362,7 +404,7 @@ class RecoveryFixture(unittest.TestCase):
                     "--batch",
                     str(batch_path),
                     "--maintenance-hold",
-                    "ORCH-ARCHIVE-HISTORY-RECOVERY-001/hold-1",
+                    str(hold_path),
                     *extra,
                 ]
             )
@@ -696,6 +738,13 @@ class RecoveryRecordShapeTests(RecoveryFixture):
         )
         self.assertEqual(self.digest(self.index_file), baseline["archive_index_sha256"])
         self.assertEqual(40, len(baseline["ref_commit"]))
+        self.assertEqual(self.digest(self.board_path), baseline["board_sha256"])
+        self.assertEqual(
+            self.digest(self.root / "inventory.json"), baseline["inventory_sha256"]
+        )
+        self.assertEqual(
+            self.digest(self.authorization_file()), baseline["authorization_sha256"]
+        )
 
 
 # --- apply: the single writer --------------------------------------------
@@ -755,9 +804,12 @@ class RecoveryApplyTests(RecoveryFixture):
         receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
         self.assertEqual("applied", receipt["status"])
         self.assertEqual([], receipt["applied_archive_snapshots"])
-        self.assertEqual(["TASK-APPLY-001"], receipt["staged_board_placeholders"])
+        self.assertEqual(["TASK-APPLY-001"], receipt["board_placeholders_on_disk"])
         self.assertIs(False, receipt["rollback_performed"])
-        self.assertIs(False, receipt["board_persistence_verified"])
+        # Rewritten after the enclosing transaction committed, so this is a
+        # read-back of the board file rather than a claim about a staged row.
+        self.assertIs(True, receipt["board_persistence_verified"])
+        self.assertIs(True, receipt["board_readback"][0]["history_recovery_present"])
 
     def test_reconstructed_done_lands_in_the_archive_and_resolves(self) -> None:
         self.write_board(revision="rev-done")
@@ -903,7 +955,8 @@ class RecoveryApplyTests(RecoveryFixture):
         receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
         self.assertEqual("partial", receipt["status"])
         self.assertEqual(["TASK-P1-001"], receipt["applied_archive_snapshots"])
-        self.assertEqual([], receipt["staged_board_placeholders"])
+        self.assertEqual([], receipt["board_placeholders_on_disk"])
+        self.assertIs(False, receipt["board_persistence_verified"])
         self.assertIs(False, receipt["rollback_performed"])
         # The receipt is the truth: exactly one snapshot is on disk, and the
         # board never advanced.
@@ -947,7 +1000,9 @@ class RecoveryApplyTests(RecoveryFixture):
         self.write_board(revision="rev-actor")
         batch = self.plan_batch([inventory_entry("TASK-ACTOR-001")], subjects=["unrelated"])
         batch["recovery_actors"]["owner"] = "Nessie9"
-        batch["entries"][0]["record"]["owner"] = "Nessie9"
+        record = batch["entries"][0]["record"]
+        record["owner"] = "Nessie9"
+        record["history_recovery"]["recovery_actors"]["owner"] = "Nessie9"
         batch_path = self.write_batch(batch)
 
         with self.assertRaises(SystemExit) as caught:
@@ -1003,6 +1058,598 @@ class RecoveryApplyTests(RecoveryFixture):
 
         self.assertIn("type must be", str(caught.exception))
         self.assertEqual([], self.board_state()["tasks"])
+
+
+# --- apply: admission of a batch that was edited after planning -----------
+
+
+class RecoveryAdmissionTests(RecoveryFixture):
+    """The batch is a file between planning and applying, so it is re-derived.
+
+    Every case here starts from a batch the planner really produced and then
+    makes the single edit that would turn it into something the planner would
+    never emit. The writer has to refuse each one on its own, without help from
+    the grading that produced the file.
+    """
+
+    def forged(self, task_id: str, **_: Any) -> dict[str, Any]:
+        self.write_board(revision=f"rev-{task_id.lower()}")
+        return self.plan_batch([inventory_entry(task_id)], subjects=["unrelated"])
+
+    def refuse(self, batch: dict[str, Any]) -> str:
+        batch_path = self.write_batch(batch)
+        checkpoint = self.root / "c.json"
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+        # Nothing may land, in either store, for any of these.
+        self.assertEqual([], self.board_state()["tasks"])
+        self.assertEqual([], sorted(self.archive_dir.glob("*.json")))
+        self.assertFalse(checkpoint.exists())
+        return str(caught.exception)
+
+    def test_evidence_free_entry_relabelled_as_reconstructed_done_is_refused(self) -> None:
+        """Relabelling a placeholder is the cheapest way to forge history."""
+
+        batch = self.forged("TASK-FORGE-001")
+        entry = batch["entries"][0]
+        self.assertEqual(planner.ACTION_BLOCKED_PLACEHOLDER, entry["action"])
+        entry["action"] = planner.ACTION_ARCHIVE_DONE
+        entry["archived_at"] = "2026-09-01T00:00:00Z"
+        record = entry["record"]
+        record["status"] = "done"
+        record["terminal_outcome"] = "completed"
+        record["owner"] = planner.UNKNOWN_ACTOR
+        record["reviewer"] = planner.UNKNOWN_ACTOR
+        record["history_recovery"]["record_kind"] = planner.RECORD_KIND_DONE
+
+        message = self.refuse(batch)
+        self.assertIn(planner.TIER_RECONSTRUCTABLE_DONE, message)
+        self.assertIn("open gaps", message)
+        self.assertIn("no complete attestation", message)
+
+    def test_evidence_tier_raised_without_the_evidence_is_refused(self) -> None:
+        """A tier is a claim about evidence, so the evidence is re-checked."""
+
+        batch = self.forged("TASK-TIER-001")
+        entry = batch["entries"][0]
+        entry["action"] = planner.ACTION_ARCHIVE_DONE
+        entry["evidence_tier"] = planner.TIER_RECONSTRUCTABLE_DONE
+        entry["gaps"] = []
+        entry["archived_at"] = "2026-09-01T00:00:00Z"
+        record = entry["record"]
+        record["status"] = "done"
+        record["terminal_outcome"] = "completed"
+        record["owner"] = planner.UNKNOWN_ACTOR
+        record["reviewer"] = planner.UNKNOWN_ACTOR
+        history = record["history_recovery"]
+        history["record_kind"] = planner.RECORD_KIND_DONE
+        history["evidence_tier"] = planner.TIER_RECONSTRUCTABLE_DONE
+        history["gaps"] = []
+
+        message = self.refuse(batch)
+        self.assertIn("no complete attestation", message)
+        self.assertIn("no verified local merge commit", message)
+
+    def test_placeholder_flipped_into_dispatchable_work_is_refused(self) -> None:
+        """A todo, dispatchable placeholder is just an invented task."""
+
+        batch = self.forged("TASK-DISPATCH-001")
+        record = batch["entries"][0]["record"]
+        record["status"] = "todo"
+        record["non_dispatchable"] = False
+
+        message = self.refuse(batch)
+        self.assertIn(f"status must be {planner.PLACEHOLDER_STATUS!r}", message)
+        self.assertIn("must be non_dispatchable", message)
+
+    def test_record_id_that_does_not_match_the_entry_is_refused(self) -> None:
+        """The id decides both conflict checks; the record decides what lands."""
+
+        batch = self.forged("TASK-IDSWAP-001")
+        batch["entries"][0]["record"]["id"] = "TASK-SOMETHING-ELSE-999"
+
+        message = self.refuse(batch)
+        self.assertIn("does not match the entry task_id", message)
+
+    def test_duplicate_ids_inside_one_batch_are_refused(self) -> None:
+        batch = self.forged("TASK-DUP-001")
+        batch["entries"].append(deepcopy(batch["entries"][0]))
+
+        self.assertIn("repeats task id(s)", self.refuse(batch))
+
+    def test_record_stripped_of_its_provenance_is_refused(self) -> None:
+        batch = self.forged("TASK-NOPROV-001")
+        del batch["entries"][0]["record"]["history_recovery"]
+
+        self.assertIn("no history_recovery provenance", self.refuse(batch))
+
+    def test_record_naming_a_historical_actor_is_refused(self) -> None:
+        """Provenance says the original actors are unrecoverable; keep it so."""
+
+        batch = self.forged("TASK-HISTACTOR-001")
+        batch["entries"][0]["record"]["history_recovery"]["historical_actors"][
+            "owner"
+        ] = "Claude"
+
+        self.assertIn("historical_actors must stay", self.refuse(batch))
+
+    def test_record_carrying_a_fabricated_human_go_is_refused(self) -> None:
+        batch = self.forged("TASK-HUMANGO-001")
+        batch["entries"][0]["record"]["history_recovery"]["evidence"]["attestations"] = {
+            "human_go": "Human/Ops approved on 2026-01-01"
+        }
+
+        self.assertIn("may not supply", self.refuse(batch))
+
+    def test_record_baseline_rewritten_to_a_different_origin_is_refused(self) -> None:
+        batch = self.forged("TASK-ORIGIN-001")
+        batch["entries"][0]["record"]["history_recovery"]["baseline"][
+            "ref_commit"
+        ] = "f" * 40
+
+        self.assertIn("does not match the batch baseline", self.refuse(batch))
+
+
+# --- apply: a batch is one reviewed unit ----------------------------------
+
+
+class RecoveryAllOrNothingTests(RecoveryFixture):
+    def test_one_planning_refusal_refuses_every_other_entry_too(self) -> None:
+        """A refusal disqualifies the document, not just the id it names.
+
+        The planner reports refusals alongside the entries it could still
+        grade. Applying "the rest" would silently narrow a batch a reviewer
+        approved as a whole, and the narrowing would happen after the review.
+        """
+
+        self.seed_survivor("TASK-CONFLICT-001")
+        self.write_board(revision="rev-mixed")
+        batch = self.plan_batch(
+            [inventory_entry("TASK-VALID-001"), inventory_entry("TASK-CONFLICT-001")],
+            subjects=["unrelated"],
+        )
+        self.assertEqual(["TASK-VALID-001"], [e["task_id"] for e in batch["entries"]])
+        self.assertEqual(["TASK-CONFLICT-001"], [r["task_id"] for r in batch["refusals"]])
+        self.assertIs(False, batch["applicable"])
+        batch_path = self.write_batch(batch)
+        checkpoint = self.root / "c.json"
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+
+        message = str(caught.exception)
+        self.assertIn("planning refusal", message)
+        self.assertIn("TASK-CONFLICT-001", message)
+        # The entry that graded cleanly must not have landed on its own.
+        self.assertEqual([], self.board_state()["tasks"])
+        self.assertFalse(checkpoint.exists())
+
+    def test_a_refusal_blocks_the_batch_even_in_preview(self) -> None:
+        self.seed_survivor("TASK-PREFUSE-001")
+        self.write_board(revision="rev-prefuse")
+        batch_path = self.write_batch(
+            self.plan_batch(
+                [inventory_entry("TASK-PVALID-001"), inventory_entry("TASK-PREFUSE-001")],
+                subjects=["unrelated"],
+            )
+        )
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path)
+
+        self.assertNotIsInstance(caught.exception, ai_status.ArchiveRecoveryPreview)
+        self.assertIn("planning refusal", str(caught.exception))
+
+
+# --- apply: checkpoints describe disk, not intentions ----------------------
+
+
+class RecoveryCheckpointReadbackTests(RecoveryFixture):
+    """Failure receipts are read back from the files, at every failure point."""
+
+    def done_batch(self, task_id: str) -> Path:
+        self.write_board(revision=f"rev-{task_id.lower()}")
+        self.ensure_repo([f"Merge pull request #100 from org/task/{task_id}"])
+        return self.write_batch(
+            self.plan_batch(
+                [inventory_entry(task_id, merge_commit=self.local_merge_oid(task_id))],
+                attestations={task_id: attestation_set()},
+            )
+        )
+
+    def test_index_save_failure_still_reports_the_snapshot_on_disk(self) -> None:
+        """`archive_task_snapshot()` writes the snapshot, then the index.
+
+        A receipt built from this command's own bookkeeping would omit the
+        snapshot, because the writer raised before returning it -- and the
+        operator would go looking for a file the receipt says is not there.
+        """
+
+        batch_path = self.done_batch("TASK-IDXSAVE-001")
+        checkpoint = self.root / "checkpoint.json"
+
+        with mock.patch.object(
+            task_archive, "save_archive_index", side_effect=OSError("index volume gone")
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+
+        self.assertIn("have NOT been rolled back", str(caught.exception))
+        self.assertTrue((self.archive_dir / "TASK-IDXSAVE-001.json").is_file())
+
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual("partial", receipt["status"])
+        self.assertEqual(["TASK-IDXSAVE-001"], receipt["applied_archive_snapshots"])
+        (row,) = receipt["archive_readback"]
+        self.assertIs(True, row["snapshot_on_disk"])
+        self.assertIs(False, row["listed_in_archive_index"])
+        self.assertIs(False, receipt["rollback_performed"])
+        self.assertEqual([], self.board_state()["tasks"])
+
+    def test_index_rebuild_failure_is_checkpointed(self) -> None:
+        """The rebuild used to sit outside every try/except."""
+
+        batch_path = self.done_batch("TASK-IDXBUILD-001")
+        checkpoint = self.root / "checkpoint.json"
+
+        with mock.patch.object(
+            ai_status, "rebuild_archive_index", side_effect=OSError("index unwritable")
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+
+        self.assertIn("could not rebuild the archive index", str(caught.exception))
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual("partial", receipt["status"])
+        self.assertEqual(["TASK-IDXBUILD-001"], receipt["applied_archive_snapshots"])
+        self.assertIs(False, receipt["board_persistence_verified"])
+        self.assertEqual([], self.board_state()["tasks"])
+
+    def test_snapshot_that_cannot_be_read_back_stops_the_apply(self) -> None:
+        """A writer that returns is not the same as a snapshot on disk."""
+
+        batch_path = self.done_batch("TASK-NOREAD-001")
+        checkpoint = self.root / "checkpoint.json"
+        real_writer = ai_status.archive_task_snapshot
+
+        def write_then_vanish(task: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+            snapshot = real_writer(task, **kwargs)
+            (self.archive_dir / f"{task['id']}.json").unlink()
+            return snapshot
+
+        with mock.patch.object(
+            ai_status, "archive_task_snapshot", side_effect=write_then_vanish
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+
+        self.assertIn("could not read back terminal snapshots", str(caught.exception))
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual("partial", receipt["status"])
+        self.assertEqual([], receipt["applied_archive_snapshots"])
+        self.assertEqual([], self.board_state()["tasks"])
+
+    def test_board_that_never_reaches_disk_is_reported_after_the_transaction(self) -> None:
+        """`sync_all()` writes the board after this command returns.
+
+        Until then the placeholders exist only in the state dict, so the
+        command cannot honestly call them applied. The post-commit read-back
+        is what turns the receipt from staged into persisted -- or reports that
+        it never happened.
+        """
+
+        self.write_board(revision="rev-noboard")
+        batch_path = self.write_batch(
+            self.plan_batch([inventory_entry("TASK-NOBOARD-001")], subjects=["unrelated"])
+        )
+        checkpoint = self.root / "checkpoint.json"
+
+        with mock.patch.object(ai_status, "save_state"):
+            with self.assertRaises(SystemExit) as caught:
+                self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+
+        message = str(caught.exception)
+        self.assertIn("TASK-NOBOARD-001", message)
+        self.assertIn("nothing was rolled back", message)
+
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual("partial", receipt["status"])
+        self.assertEqual([], receipt["board_placeholders_on_disk"])
+        self.assertEqual(["TASK-NOBOARD-001"], receipt["board_placeholders_intended"])
+        self.assertIs(False, receipt["board_persistence_verified"])
+        self.assertIs(False, receipt["rollback_performed"])
+
+    def test_successful_apply_reports_both_stores_read_back(self) -> None:
+        batch_path = self.done_batch("TASK-BOTH-001")
+        checkpoint = self.root / "checkpoint.json"
+
+        self.assertEqual(
+            0, self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+        )
+
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual("applied", receipt["status"])
+        self.assertEqual(["TASK-BOTH-001"], receipt["applied_archive_snapshots"])
+        (row,) = receipt["archive_readback"]
+        self.assertIs(True, row["snapshot_on_disk"])
+        self.assertIs(True, row["listed_in_archive_index"])
+        self.assertEqual("done", row["terminal_status"])
+        self.assertIs(True, receipt["board_persistence_verified"])
+        self.assertEqual(receipt["batch_sha256"], self.digest(batch_path))
+
+
+# --- apply: every pinned input is re-checked in the lock -------------------
+
+
+class RecoveryBaselineProvenanceTests(RecoveryFixture):
+    def test_board_bytes_that_moved_at_the_same_revision_are_refused(self) -> None:
+        """Revision equality is not board equality."""
+
+        self.write_board(revision="rev-bytes")
+        batch_path = self.write_batch(
+            self.plan_batch([inventory_entry("TASK-BYTES-001")], subjects=["unrelated"])
+        )
+        board = self.board_state()
+        board["tasks"].append(
+            {"id": "ODP-SNEAKED-IN-001", "status": "todo", "owner": "Claude", "reviewer": "Codex"}
+        )
+        self.board_path.write_text(
+            json.dumps(board, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        self.assertEqual("rev-bytes", self.board_state()["_status_write_revision"])
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+
+        self.assertIn("board bytes moved", str(caught.exception))
+        self.assertEqual(
+            ["ODP-SNEAKED-IN-001"], [t["id"] for t in self.board_state()["tasks"]]
+        )
+
+    def test_evidence_ref_that_moved_after_planning_is_refused(self) -> None:
+        """The batch is only valid against the commit it was graded on."""
+
+        self.write_board(revision="rev-ref")
+        repo = self.ensure_repo(["Merge pull request #100 from org/task/TASK-REFMOVE-001"])
+        batch_path = self.write_batch(
+            self.plan_batch(
+                [
+                    inventory_entry(
+                        "TASK-REFMOVE-001",
+                        merge_commit=self.local_merge_oid("TASK-REFMOVE-001"),
+                    )
+                ],
+                attestations={"TASK-REFMOVE-001": attestation_set()},
+            )
+        )
+        (repo / "later.txt").write_text("later", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-q", "-m", "later work on the same ref")
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+
+        self.assertIn("evidence ref moved", str(caught.exception))
+        self.assertEqual([], sorted(self.archive_dir.glob("*.json")))
+
+    def test_authorization_document_edited_after_planning_is_refused(self) -> None:
+        """The scope the batch was approved under has to still say that."""
+
+        self.write_board(revision="rev-auth")
+        batch_path = self.write_batch(
+            self.plan_batch([inventory_entry("TASK-AUTH-001")], subjects=["unrelated"])
+        )
+        self.authorization_file().write_text(
+            "# 授權：改為允許無證據直接重建 done\n", encoding="utf-8"
+        )
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+
+        self.assertIn("authorization source drifted", str(caught.exception))
+        self.assertEqual([], self.board_state()["tasks"])
+
+    def test_inventory_edited_after_planning_is_refused(self) -> None:
+        self.write_board(revision="rev-inv")
+        batch_path = self.write_batch(
+            self.plan_batch([inventory_entry("TASK-INV-001")], subjects=["unrelated"])
+        )
+        write_inventory(self.root / "inventory.json", [inventory_entry("TASK-INV-002")])
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+
+        self.assertIn("inventory source drifted", str(caught.exception))
+
+    def test_source_document_that_disappeared_is_refused(self) -> None:
+        self.write_board(revision="rev-gone")
+        batch_path = self.write_batch(
+            self.plan_batch([inventory_entry("TASK-GONE-001")], subjects=["unrelated"])
+        )
+        self.authorization_file().unlink()
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+
+        self.assertIn("authorization source is gone", str(caught.exception))
+
+    def test_baseline_stripped_of_a_required_hash_is_refused(self) -> None:
+        """Omitting a pinned input must not buy an unchecked baseline."""
+
+        self.write_board(revision="rev-strip")
+        batch = self.plan_batch([inventory_entry("TASK-STRIP-001")], subjects=["unrelated"])
+        batch["baseline"].pop("board_sha256")
+        batch_path = self.write_batch(batch)
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+
+        self.assertIn("missing required provenance", str(caught.exception))
+        self.assertIn("board_sha256", str(caught.exception))
+
+    def test_reconstructed_done_whose_merge_is_not_on_the_ref_is_refused(self) -> None:
+        """The one claim that creates terminal history is re-proved in the lock."""
+
+        self.write_board(revision="rev-merge")
+        self.ensure_repo(["Merge pull request #100 from org/task/TASK-MERGEPROOF-001"])
+        batch = self.plan_batch(
+            [
+                inventory_entry(
+                    "TASK-MERGEPROOF-001",
+                    merge_commit=self.local_merge_oid("TASK-MERGEPROOF-001"),
+                )
+            ],
+            attestations={"TASK-MERGEPROOF-001": attestation_set()},
+        )
+        self.assertEqual(planner.ACTION_ARCHIVE_DONE, batch["entries"][0]["action"])
+        batch["entries"][0]["record"]["history_recovery"]["evidence"]["local_merge"][
+            "merge_commit"
+        ] = "0" * 40
+        batch_path = self.write_batch(batch)
+
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+
+        self.assertIn("is not contained in the pinned ref", str(caught.exception))
+        self.assertEqual([], sorted(self.archive_dir.glob("*.json")))
+
+
+# --- apply: the maintenance hold is evidence, not a string ----------------
+
+
+class MaintenanceHoldTests(RecoveryFixture):
+    def planned(self, task_id: str, **kwargs: Any) -> Path:
+        self.write_board(revision=f"rev-{task_id.lower()}")
+        return self.write_batch(
+            self.plan_batch([inventory_entry(task_id)], subjects=["unrelated"], **kwargs)
+        )
+
+    def refuse_with(self, batch_path: Path, hold: Path) -> str:
+        checkpoint = self.root / "c.json"
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(
+                batch_path, "--checkpoint", str(checkpoint), "--confirm", hold=hold
+            )
+        self.assertEqual([], self.board_state()["tasks"])
+        self.assertFalse(checkpoint.exists())
+        return str(caught.exception)
+
+    def test_free_text_hold_reference_is_no_longer_accepted(self) -> None:
+        """A string the applying worker types proves nothing about dispatch."""
+
+        batch_path = self.planned("TASK-FREETEXT-001")
+        message = self.refuse_with(
+            batch_path, self.root / "ORCH-ARCHIVE-HISTORY-RECOVERY-001-hold-1"
+        )
+        self.assertIn("Maintenance hold unreadable", message)
+
+    def test_hold_bound_to_a_different_batch_is_refused(self) -> None:
+        """Otherwise a hold approved for a safer batch authorises this one."""
+
+        batch_path = self.planned("TASK-OTHERHOLD-001")
+        other = self.root / "other-batch.json"
+        other.write_text("{}\n", encoding="utf-8")
+
+        message = self.refuse_with(batch_path, self.write_hold(other))
+        self.assertIn("is not this batch", message)
+
+    def test_hold_that_has_expired_is_refused(self) -> None:
+        batch_path = self.planned("TASK-EXPIRED-001")
+        hold = self.write_hold(batch_path, expires_at="2026-09-06T00:00:00Z")
+
+        self.assertIn("no longer held", self.refuse_with(batch_path, hold))
+
+    def test_hold_that_does_not_assert_a_dispatch_pause_is_refused(self) -> None:
+        batch_path = self.planned("TASK-NOPAUSE-001")
+        hold = self.write_hold(batch_path, dispatch_paused=False)
+
+        self.assertIn("dispatch_paused must be true", self.refuse_with(batch_path, hold))
+
+    def test_hold_without_the_reviewer_approval_is_refused(self) -> None:
+        batch_path = self.planned("TASK-NOAPPROVE-001")
+        hold = self.write_hold(batch_path, batch_approval={})
+
+        self.assertIn("carries no batch_approval", self.refuse_with(batch_path, hold))
+
+    def test_approval_of_a_different_batch_hash_is_refused(self) -> None:
+        batch_path = self.planned("TASK-OTHERHASH-001")
+        digest = hashlib.sha256(batch_path.read_bytes()).hexdigest()
+        hold = self.write_hold(
+            batch_path,
+            batch_approval={
+                "reviewer": "Codex",
+                "approved_batch_sha256": "e" * 64,
+                "approved_at": "2026-09-06T15:30:00Z",
+                "source": "https://example.invalid/review",
+            },
+        )
+        self.assertNotEqual("e" * 64, digest)
+
+        self.assertIn("approves a different batch", self.refuse_with(batch_path, hold))
+
+    def test_approval_by_someone_other_than_the_batch_reviewer_is_refused(self) -> None:
+        batch_path = self.planned("TASK-WRONGREVIEWER-001")
+        hold = self.write_hold(
+            batch_path,
+            batch_approval={
+                "reviewer": "Codex2",
+                "approved_batch_sha256": hashlib.sha256(
+                    batch_path.read_bytes()
+                ).hexdigest(),
+                "approved_at": "2026-09-06T15:30:00Z",
+                "source": "https://example.invalid/review",
+            },
+        )
+
+        self.assertIn("is not the batch reviewer", self.refuse_with(batch_path, hold))
+
+    def test_the_applying_actor_cannot_also_be_the_approver(self) -> None:
+        """Two roles, two people: the writer must not approve its own batch."""
+
+        batch_path = self.planned(
+            "TASK-SELFAPPROVE-001", owner="Codex", reviewer="Claude"
+        )
+        hold = self.write_hold(
+            batch_path,
+            batch_approval={
+                "reviewer": "Claude",
+                "approved_batch_sha256": hashlib.sha256(
+                    batch_path.read_bytes()
+                ).hexdigest(),
+                "approved_at": "2026-09-06T15:30:00Z",
+                "source": "https://example.invalid/review",
+            },
+        )
+
+        self.assertIn(
+            "cannot both approve and apply", self.refuse_with(batch_path, hold)
+        )
+
+    def test_the_hold_is_recorded_in_the_checkpoint(self) -> None:
+        """The receipt has to name what authorised the write."""
+
+        self.write_board(revision="rev-holdrecord")
+        batch_path = self.write_batch(
+            self.plan_batch([inventory_entry("TASK-HOLDREC-001")], subjects=["unrelated"])
+        )
+        hold = self.write_hold(batch_path)
+        checkpoint = self.root / "checkpoint.json"
+
+        self.assertEqual(
+            0,
+            self.run_apply(
+                batch_path, "--checkpoint", str(checkpoint), "--confirm", hold=hold
+            ),
+        )
+
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual(str(hold), receipt["maintenance_hold"]["path"])
+        self.assertEqual(self.digest(hold), receipt["maintenance_hold"]["sha256"])
+        self.assertEqual("Codex", receipt["maintenance_hold"]["approved_by"])
+        self.assertEqual(
+            "ORCH-ARCHIVE-HISTORY-RECOVERY-001/hold-1",
+            receipt["maintenance_hold"]["hold_id"],
+        )
 
 
 class NestedLockTests(unittest.TestCase):

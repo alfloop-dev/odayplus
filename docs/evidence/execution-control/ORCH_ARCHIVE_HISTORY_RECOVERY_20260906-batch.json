@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "type": "task_history_recovery_batch",
-  "generated_at": "2026-09-06T16:09:38Z",
+  "generated_at": "2026-09-06T16:47:38Z",
   "generated_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
   "requires_maintenance_hold": true,
   "canonical_apply_performed": false,
@@ -28,8 +28,8 @@
     "ref": "origin/dev",
     "ref_commit": "bd4fb5aa11404519ff1d8ae97fa796eb6d40e12a",
     "board_path": "/home/lupin/odayplus/ai-status.json",
-    "board_sha256": "70bbdc5436715dfdea06a6c5424fa67e8f8ddfc82421e06835c198a1b865c34c",
-    "board_revision": "e5fdf617dba143a6a2c7fc4a6709608f",
+    "board_sha256": "3e82311b1e82242ee9a754eeb622788369e9668d531fe8a633d8b24578a4b698",
+    "board_revision": "3e0d561d8a904e32936fac7f833864bc",
     "board_active_task_ids": [
       "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
       "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
@@ -80,6 +80,7 @@
     "active_blocked_placeholder": 38,
     "refused": 0
   },
+  "applicable": true,
   "entries": [
     {
       "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
@@ -110,12 +111,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_claimed",
           "gaps": [
             "merge_not_verifiable_on_ref",
@@ -148,7 +149,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -199,12 +200,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -242,7 +243,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -289,12 +290,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -332,7 +333,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -379,12 +380,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -422,7 +423,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -469,12 +470,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -512,7 +513,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -559,12 +560,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -602,7 +603,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -649,12 +650,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -692,7 +693,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -739,12 +740,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -782,7 +783,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -829,12 +830,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -872,7 +873,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -923,12 +924,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -966,7 +967,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1017,12 +1018,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1060,7 +1061,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1107,12 +1108,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1150,7 +1151,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1197,12 +1198,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1240,7 +1241,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1287,12 +1288,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1330,7 +1331,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1377,12 +1378,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1420,7 +1421,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1467,12 +1468,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1510,7 +1511,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1557,12 +1558,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1600,7 +1601,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1647,12 +1648,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1690,7 +1691,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1737,12 +1738,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1780,7 +1781,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1827,12 +1828,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1870,7 +1871,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -1917,12 +1918,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1960,7 +1961,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2007,12 +2008,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2050,7 +2051,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2097,12 +2098,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2140,7 +2141,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2187,12 +2188,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2230,7 +2231,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2277,12 +2278,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2320,7 +2321,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2367,12 +2368,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2410,7 +2411,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2457,12 +2458,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2500,7 +2501,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2547,12 +2548,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2590,7 +2591,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2637,12 +2638,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2680,7 +2681,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2731,12 +2732,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2774,7 +2775,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2821,12 +2822,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2864,7 +2865,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -2911,12 +2912,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2954,7 +2955,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -3001,12 +3002,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3044,7 +3045,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -3091,12 +3092,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3134,7 +3135,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -3185,12 +3186,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3228,7 +3229,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -3279,12 +3280,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3322,7 +3323,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -3369,12 +3370,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3412,7 +3413,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [
@@ -3460,12 +3461,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:09:38Z",
+        "last_update": "2026-09-06T16:47:38Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:09:38Z",
+          "generated_at": "2026-09-06T16:47:38Z",
           "evidence_tier": "merge_claimed",
           "gaps": [
             "merge_not_verifiable_on_ref",
@@ -3498,7 +3499,7 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:09:38Z",
+            "verified_at": "2026-09-06T16:47:38Z",
             "verifier": "Claude"
           },
           "known_dependents": [

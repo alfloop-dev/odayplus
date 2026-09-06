@@ -1311,6 +1311,35 @@ def save_state(state: dict[str, Any]) -> None:
     os.replace(temp_path, STATUS_FILE)
 
 
+# Verifications that can only run *after* `sync_all()` has written the board,
+# while the canonical lock is still held. A command that wrote outside the board
+# document (archive snapshots are separate files) cannot otherwise tell whether
+# the rows it staged actually reached disk, and "staged" is not a receipt.
+_POST_COMMIT_VERIFIERS: list[Any] = []
+
+
+def register_post_commit_verifier(verifier) -> None:
+    _POST_COMMIT_VERIFIERS.append(verifier)
+
+
+def run_post_commit_verifiers() -> list[str]:
+    """Run and drain every registered verifier, collecting what they refuse.
+
+    A verifier failing is itself a finding, not a reason to lose the others, so
+    an exception here becomes a problem string rather than propagating: the
+    caller reports every problem after the transaction closes.
+    """
+
+    problems: list[str] = []
+    while _POST_COMMIT_VERIFIERS:
+        verifier = _POST_COMMIT_VERIFIERS.pop(0)
+        try:
+            problems.extend(verifier() or [])
+        except Exception as exc:  # noqa: BLE001 - reported, never swallowed
+            problems.append(f"post-commit verification failed: {exc}")
+    return problems
+
+
 @contextmanager
 def status_write_transaction():
     """Serialize canonical status commands with Supervisor compare-and-swap writes."""
@@ -7579,9 +7608,13 @@ class ArchiveRecoveryPreview(SystemExit):
 
 
 ARCHIVE_RECOVERY_USAGE = (
-    "Usage: archive_recovery_apply --batch <file> --maintenance-hold <ref> "
+    "Usage: archive_recovery_apply --batch <file> --maintenance-hold <hold-file> "
     "[--checkpoint <file>] [--confirm]"
 )
+
+# The maintenance hold is a document, not a reference string: it has to bind a
+# declared dispatch pause and the reviewer's approval to this batch's hash.
+RECOVERY_MAINTENANCE_HOLD_TYPE = "task_history_recovery_maintenance_hold"
 
 
 def _recovery_planner_module():
@@ -7629,6 +7662,129 @@ def _parse_archive_recovery_args(args: list[str]) -> dict[str, Any]:
     return parsed
 
 
+def _archive_recovery_git(repo: Path, *args: str) -> tuple[int, str]:
+    """Run one read-only git command, returning (returncode, stdout).
+
+    Returns a non-zero code rather than raising for every failure mode --
+    missing repo, missing git, timeout -- because every one of them means the
+    same thing to the caller: the pinned evidence could not be re-verified, so
+    the batch is refused.
+    """
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 1, ""
+    return result.returncode, result.stdout.strip()
+
+
+def _archive_recovery_hold(
+    hold_value: str, *, batch_sha256: str, recovery_reviewer: str, actor: str
+) -> tuple[Path, str, dict[str, Any]]:
+    """Load the maintenance hold, or refuse before anything is written.
+
+    A free-text hold reference proves nothing: it is a string the applying
+    worker types. This wants a document that is bound to *this* batch by hash,
+    that declares dispatch actually paused, that has not expired, and that
+    carries the reviewer's approval of the same hash -- from someone other than
+    the actor about to write. Without that binding a hold approved for an
+    earlier, more conservative batch would authorise this one.
+    """
+
+    hold_path = Path(hold_value).expanduser()
+    try:
+        payload = json.loads(hold_path.read_text(encoding="utf-8"))
+        raw = hold_path.read_bytes()
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"Maintenance hold unreadable ({hold_path}): {exc}. --maintenance-hold "
+            "takes the path to a hold document, not a free-text reference. "
+            "Nothing was written."
+        ) from exc
+    hold_sha256 = hashlib.sha256(raw).hexdigest()
+
+    problems: list[str] = []
+    if not isinstance(payload, dict):
+        raise SystemExit("Maintenance hold must be a JSON object; nothing was written.")
+    if str(payload.get("type") or "") != RECOVERY_MAINTENANCE_HOLD_TYPE:
+        problems.append(f"type must be {RECOVERY_MAINTENANCE_HOLD_TYPE!r}")
+    for field in ("hold_id", "declared_by", "declared_at", "expires_at", "scope"):
+        if not str(payload.get(field) or "").strip():
+            problems.append(f"missing {field}")
+    if payload.get("dispatch_paused") is not True:
+        problems.append(
+            "dispatch_paused must be true: a hold that does not assert dispatch is "
+            "paused is not a hold"
+        )
+    if str(payload.get("batch_sha256") or "") != batch_sha256:
+        problems.append(
+            f"batch_sha256 {payload.get('batch_sha256')!r} is not this batch "
+            f"({batch_sha256})"
+        )
+
+    expires_at = _archive_recovery_parse_utc(payload.get("expires_at"))
+    declared_at = _archive_recovery_parse_utc(payload.get("declared_at"))
+    now = datetime.now(UTC)
+    if str(payload.get("expires_at") or "").strip() and expires_at is None:
+        problems.append(f"expires_at {payload.get('expires_at')!r} is not a UTC timestamp")
+    elif expires_at is not None and expires_at <= now:
+        problems.append(f"the hold expired at {payload.get('expires_at')}; it is no longer held")
+    if str(payload.get("declared_at") or "").strip() and declared_at is None:
+        problems.append(f"declared_at {payload.get('declared_at')!r} is not a UTC timestamp")
+    elif declared_at is not None and declared_at > now:
+        problems.append(f"declared_at {payload.get('declared_at')} is in the future")
+
+    approval = payload.get("batch_approval")
+    approval = approval if isinstance(approval, dict) else {}
+    if not approval:
+        problems.append("carries no batch_approval")
+    else:
+        approver = str(approval.get("reviewer") or "").strip()
+        if approver != recovery_reviewer:
+            problems.append(
+                f"batch_approval.reviewer {approver!r} is not the batch reviewer "
+                f"{recovery_reviewer!r}"
+            )
+        if approver and approver == actor:
+            problems.append(
+                f"{actor} cannot both approve and apply this batch"
+            )
+        if str(approval.get("approved_batch_sha256") or "") != batch_sha256:
+            problems.append(
+                "batch_approval.approved_batch_sha256 approves a different batch "
+                f"({approval.get('approved_batch_sha256')!r})"
+            )
+        for field in ("approved_at", "source"):
+            if not str(approval.get(field) or "").strip():
+                problems.append(f"batch_approval is missing {field}")
+
+    if problems:
+        raise SystemExit(
+            f"Maintenance hold refused ({hold_path}); nothing was written: "
+            + "; ".join(problems)
+        )
+    return hold_path, hold_sha256, payload
+
+
+def _archive_recovery_parse_utc(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(UTC)
+
+
 def _archive_snapshot_digests() -> dict[str, str]:
     if not ARCHIVE_TASKS_DIR.exists():
         return {}
@@ -7647,6 +7803,12 @@ def _archive_recovery_baseline_drift(
     canonical status lock against state that was loaded inside that lock, so a
     concurrent writer either finished before the load (and is seen here) or
     cannot start until this transaction commits.
+
+    Every input the plan was derived from is re-checked, not just the ones that
+    are cheap to compare. The board revision can stay put while the board bytes
+    move; the evidence ref can move under a batch that still names its old
+    commit; and the inventory and authorization documents that decided which
+    ids are in scope can be edited after the plan was reviewed.
     """
 
     problems: list[str] = []
@@ -7659,6 +7821,17 @@ def _archive_recovery_baseline_drift(
         problems.append(
             f"board revision moved ({expected_revision} -> {actual_revision or 'unset'})"
         )
+
+    expected_board = str(baseline.get("board_sha256") or "").strip()
+    actual_board = (
+        hashlib.sha256(STATUS_FILE.read_bytes()).hexdigest()
+        if STATUS_FILE.exists()
+        else None
+    )
+    if not expected_board:
+        problems.append("batch carries no baseline board_sha256")
+    elif expected_board != actual_board:
+        problems.append(f"board bytes moved ({expected_board} -> {actual_board})")
 
     # Derived from ARCHIVE_TASKS_DIR rather than bound as its own module global:
     # the tests that relocate this module's archive root rebind that one name,
@@ -7686,6 +7859,85 @@ def _archive_recovery_baseline_drift(
         problems.append(
             f"archive snapshots moved (missing={missing}, added={added}, changed={changed})"
         )
+
+    repo_raw = str(baseline.get("repo") or "").strip()
+    ref = str(baseline.get("ref") or "").strip()
+    expected_commit = str(baseline.get("ref_commit") or "").strip()
+    if not repo_raw or not ref or not expected_commit:
+        problems.append("batch carries no pinned repo/ref/ref_commit for its evidence")
+    else:
+        code, actual_commit = _archive_recovery_git(Path(repo_raw), "rev-parse", ref)
+        if code != 0 or not actual_commit:
+            problems.append(
+                f"cannot resolve {ref!r} in {repo_raw}; the pinned evidence ref is "
+                "no longer verifiable"
+            )
+        elif actual_commit != expected_commit:
+            problems.append(f"evidence ref moved ({ref}: {expected_commit} -> {actual_commit})")
+
+    for label, path_key, digest_key in (
+        ("inventory", "inventory_path", "inventory_sha256"),
+        ("authorization", "authorization_path", "authorization_sha256"),
+    ):
+        source_raw = str(baseline.get(path_key) or "").strip()
+        expected_digest = str(baseline.get(digest_key) or "").strip()
+        if not source_raw or not expected_digest:
+            problems.append(f"batch carries no {label} provenance ({path_key}/{digest_key})")
+            continue
+        source = Path(source_raw)
+        if not source.is_file():
+            problems.append(
+                f"{label} source is gone ({source_raw}); its hash can no longer be checked"
+            )
+            continue
+        actual_digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if actual_digest != expected_digest:
+            problems.append(
+                f"{label} source drifted ({source_raw}: {expected_digest} -> {actual_digest})"
+            )
+    return problems
+
+
+def _archive_recovery_evidence_drift(
+    archive_entries: list[dict[str, Any]], baseline: dict[str, Any]
+) -> list[str]:
+    """Re-verify each reconstructed-done merge against the pinned ref, in the lock.
+
+    The planner proved these merges when it graded the batch. Between then and
+    now the batch file travelled through a review, so the writer re-derives the
+    one claim that turns a placeholder into terminal history: that local git,
+    on the commit the baseline pins, really contains the merge this record is
+    reconstructed from.
+    """
+
+    if not archive_entries:
+        return []
+    repo_raw = str(baseline.get("repo") or "").strip()
+    ref_commit = str(baseline.get("ref_commit") or "").strip()
+    if not repo_raw or not ref_commit:
+        return ["batch carries no pinned repo/ref_commit to re-verify merges against"]
+
+    repo = Path(repo_raw)
+    problems: list[str] = []
+    for entry in archive_entries:
+        task_id = str(entry.get("task_id") or "").strip()
+        evidence = (
+            ((entry.get("record") or {}).get("history_recovery") or {}).get("evidence")
+            or {}
+        )
+        local_merge = evidence.get("local_merge")
+        merge_commit = str((local_merge or {}).get("merge_commit") or "").strip()
+        if not merge_commit:
+            problems.append(f"{task_id}: no local merge commit to re-verify")
+            continue
+        code, _ = _archive_recovery_git(
+            repo, "merge-base", "--is-ancestor", merge_commit, ref_commit
+        )
+        if code != 0:
+            problems.append(
+                f"{task_id}: merge commit {merge_commit[:12]} is not contained in the "
+                f"pinned ref {ref_commit[:12]}"
+            )
     return problems
 
 
@@ -7698,18 +7950,24 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
     enclosing `status_write_transaction()` rather than opening its own. That
     also means it must never re-enter the lock: `main()` already holds it.
 
-    Three honesty properties matter more than convenience here:
+    Four honesty properties matter more than convenience here:
 
+    * **Admission is re-derived, never assumed.** Between planning and applying,
+      the batch is a JSON file anyone can edit, so the planner's own validator
+      is re-run here on the whole document: evidence tier, gaps, attestations,
+      provenance, record shape and record identity all have to hold again.
+    * **All or nothing.** A batch is one reviewed unit. Any planning refusal,
+      any drift, any conflicting id refuses the entire document before a single
+      byte is written -- never just the entry that failed.
     * **Fail closed on drift.** The batch is valid only against the board
-      revision, archive index and per-snapshot digests it was planned from. Any
-      movement refuses the whole batch before a single byte is written.
-    * **No silent overwrite.** The six snapshots that survived the incident are
-      pinned by digest, and a task id that reappeared on the board or in the
-      archive refuses the batch instead of being merged into.
+      revision and bytes, archive index, per-snapshot digests, evidence ref and
+      source documents it was planned from, and only under a maintenance hold
+      bound to this batch's hash.
     * **No rollback theatre.** Archive snapshots are separate files; the board
       is one document written by the enclosing transaction. That is not one
-      atomic unit, so a mid-batch failure writes a checkpoint naming exactly
-      what landed and says plainly that nothing was rolled back.
+      atomic unit, so every checkpoint reports what was read back from disk --
+      not what this function believes it staged -- and says plainly that
+      nothing was rolled back.
     """
 
     actor = current_actor_validated()
@@ -7720,17 +7978,43 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
     planner = _recovery_planner_module()
     batch_path = Path(parsed["batch"]).expanduser()
     try:
-        batch = json.loads(batch_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        batch_bytes = batch_path.read_bytes()
+        batch = json.loads(batch_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SystemExit(f"Recovery batch unreadable: {exc}") from exc
-    if not isinstance(batch, dict) or batch.get("type") != planner.RECOVERY_BATCH_TYPE:
+    batch_sha256 = hashlib.sha256(batch_bytes).hexdigest()
+
+    # The planner's validator is the admission gate, re-run here on the whole
+    # document. Anything it refuses refuses the batch: there is no partial
+    # admission, and no entry is examined on its own merits.
+    admission = planner.validate_recovery_batch(batch, for_apply=True)
+    if admission:
         raise SystemExit(
-            f"Recovery batch type must be {planner.RECOVERY_BATCH_TYPE!r}; nothing was written."
+            "Recovery batch refused; nothing was written: " + "; ".join(admission)
         )
-    if int(batch.get("schema_version") or 0) != planner.RECOVERY_BATCH_SCHEMA_VERSION:
+
+    # The recovery pair is validated the loud way, before anything is staged.
+    # `ensure_agent()` further down the write path is deliberately tolerant so
+    # that loading a corrupt board still works, which means an unknown name in
+    # a hand-edited batch would otherwise be registered rather than refused.
+    actors = batch.get("recovery_actors") if isinstance(batch.get("recovery_actors"), dict) else {}
+    declared_owner = str(actors.get("owner") or "").strip()
+    declared_reviewer = str(actors.get("reviewer") or "").strip()
+    recovery_owner = resolve_actor_reference(declared_owner, field="recovery owner")
+    recovery_reviewer = resolve_actor_reference(declared_reviewer, field="recovery reviewer")
+    if (recovery_owner, recovery_reviewer) != (declared_owner, declared_reviewer):
         raise SystemExit(
-            "Unsupported recovery batch schema_version; nothing was written."
+            "Recovery batch must name canonical actors "
+            f"({declared_owner!r}, {declared_reviewer!r} resolve to "
+            f"{recovery_owner!r}, {recovery_reviewer!r}); nothing was written."
         )
+
+    hold_path, hold_sha256, hold = _archive_recovery_hold(
+        parsed["maintenance_hold"],
+        batch_sha256=batch_sha256,
+        recovery_reviewer=recovery_reviewer,
+        actor=actor,
+    )
 
     baseline = batch.get("baseline") if isinstance(batch.get("baseline"), dict) else {}
     drift = _archive_recovery_baseline_drift(state, baseline)
@@ -7740,54 +8024,14 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
             "batch against the current baseline: " + "; ".join(drift)
         )
 
-    # The recovery pair is validated the loud way, before anything is staged.
-    # `ensure_agent()` further down the write path is deliberately tolerant so
-    # that loading a corrupt board still works, which means an unknown name in
-    # a hand-edited batch would otherwise be registered rather than refused.
-    actors = batch.get("recovery_actors") if isinstance(batch.get("recovery_actors"), dict) else {}
-    recovery_owner = resolve_actor_reference(actors.get("owner"), field="recovery owner")
-    recovery_reviewer = resolve_actor_reference(actors.get("reviewer"), field="recovery reviewer")
-    if recovery_owner == recovery_reviewer:
-        raise SystemExit(
-            "Recovery reviewer cannot equal the recovery owner; nothing was written."
-        )
-
     entries = [item for item in (batch.get("entries") or []) if isinstance(item, dict)]
-    known_actions = {planner.ACTION_ARCHIVE_DONE, planner.ACTION_BLOCKED_PLACEHOLDER}
     conflicts: list[str] = []
     for entry in entries:
         task_id = str(entry.get("task_id") or "").strip()
-        if not task_id:
-            conflicts.append("an entry carries no task_id")
-            continue
-        if entry.get("action") not in known_actions:
-            conflicts.append(f"{task_id}: unknown action {entry.get('action')!r}")
-        record = entry.get("record")
-        if not isinstance(record, dict):
-            conflicts.append(f"{task_id}: entry carries no record")
-            record = {}
         if get_task(state, task_id) is not None:
             conflicts.append(f"{task_id}: already on the active board")
         if archived_task_snapshot(task_id) is not None:
             conflicts.append(f"{task_id}: already has an archive snapshot")
-
-        record_actors = (str(record.get("owner") or ""), str(record.get("reviewer") or ""))
-        if entry.get("action") == planner.ACTION_ARCHIVE_DONE:
-            # A reconstructed terminal record must not name anyone who is alive
-            # today: the people who ran the original task are not recoverable,
-            # and writing a present-day name here is the one edit that would
-            # make the reconstruction indistinguishable from an original.
-            if record_actors != (planner.UNKNOWN_ACTOR, planner.UNKNOWN_ACTOR):
-                conflicts.append(
-                    f"{task_id}: reconstructed archive record must keep owner/reviewer "
-                    f"as {planner.UNKNOWN_ACTOR}, got {record_actors}"
-                )
-        elif entry.get("action") == planner.ACTION_BLOCKED_PLACEHOLDER:
-            if record_actors != (recovery_owner, recovery_reviewer):
-                conflicts.append(
-                    f"{task_id}: placeholder actors {record_actors} do not match the "
-                    f"batch recovery pair ({recovery_owner}, {recovery_reviewer})"
-                )
     if conflicts:
         raise SystemExit(
             "Recovery batch refused; nothing was written: " + "; ".join(conflicts)
@@ -7802,12 +8046,19 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
         if entry.get("action") == planner.ACTION_BLOCKED_PLACEHOLDER
     ]
 
+    evidence_problems = _archive_recovery_evidence_drift(archive_entries, baseline)
+    if evidence_problems:
+        raise SystemExit(
+            "Recovery batch evidence no longer verifies; nothing was written: "
+            + "; ".join(evidence_problems)
+        )
+
     if not parsed["confirm"]:
         print(
             f"PLAN ONLY ({batch_path}): {len(archive_entries)} reconstructed done "
-            f"snapshot(s), {len(board_entries)} blocked placeholder(s), "
-            f"{len(batch.get('refusals') or [])} refused at planning time. "
-            "Baseline matches. Nothing was written; re-run with --confirm."
+            f"snapshot(s), {len(board_entries)} blocked placeholder(s). Baseline, "
+            f"evidence and maintenance hold {hold.get('hold_id')} all match. "
+            "Nothing was written; re-run with --confirm."
         )
         raise ArchiveRecoveryPreview(0)
 
@@ -7819,26 +8070,140 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
 
     checkpoint_path = Path(parsed["checkpoint"]).expanduser()
     started_at = iso_now()
-    applied_archive: list[str] = []
-    staged_board: list[str] = []
+    archive_ids = [str(entry["task_id"]).strip() for entry in archive_entries]
+    board_ids = [str(entry["task_id"]).strip() for entry in board_entries]
+    baseline_digests = dict(baseline.get("archive_snapshot_digests") or {})
+    # Flipped only by the post-commit read-back below. Until then no checkpoint
+    # may claim board persistence, not even a batch with no board rows at all:
+    # "nothing to persist" and "persisted" are different receipts.
+    board_commit_verified = {"value": False}
 
-    def write_checkpoint(status: str, detail: str) -> None:
+    def read_archive_index() -> dict[str, Any]:
+        index_path = ARCHIVE_TASKS_DIR.parent / "index.json"
+        document: dict[str, Any] = {}
+        raw: bytes | None = None
+        if index_path.is_file():
+            try:
+                raw = index_path.read_bytes()
+                document = json.loads(raw.decode("utf-8"))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                document = {}
+        return {
+            "path": str(index_path),
+            "exists": index_path.is_file(),
+            "sha256": hashlib.sha256(raw).hexdigest() if raw is not None else None,
+            "counts": document.get("counts") if isinstance(document, dict) else None,
+            "recent_terminal_ids": (
+                list(document.get("recent_terminal_ids") or [])
+                if isinstance(document, dict)
+                else []
+            ),
+        }
+
+    def read_archive() -> tuple[list[dict[str, Any]], list[str]]:
+        """What the archive holds *right now*, read back file by file."""
+
+        index = read_archive_index()
+        listed = {str(item) for item in index["recent_terminal_ids"]}
+        rows: list[dict[str, Any]] = []
+        landed: list[str] = []
+        for task_id in archive_ids:
+            snapshot_path = ARCHIVE_TASKS_DIR / f"{task_id}.json"
+            on_disk = snapshot_path.is_file()
+            snapshot = load_archived_snapshot(task_id) if on_disk else None
+            rows.append(
+                {
+                    "task_id": task_id,
+                    "snapshot_on_disk": on_disk,
+                    "snapshot_sha256": (
+                        hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+                        if on_disk
+                        else None
+                    ),
+                    "terminal_status": str((snapshot or {}).get("terminal_status") or "") or None,
+                    "listed_in_archive_index": task_id in listed,
+                }
+            )
+            if on_disk:
+                landed.append(task_id)
+        return rows, landed
+
+    def read_board() -> tuple[list[dict[str, Any]], list[str]]:
+        """What the canonical board file holds right now, read back from disk."""
+
+        on_disk: dict[str, dict[str, Any]] = {}
+        if STATUS_FILE.exists():
+            try:
+                document = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                document = {}
+            if isinstance(document, dict):
+                on_disk = {
+                    str((task or {}).get("id") or "").strip(): task
+                    for task in (document.get("tasks") or [])
+                    if isinstance(task, dict)
+                }
+        rows: list[dict[str, Any]] = []
+        persisted: list[str] = []
+        for task_id in board_ids:
+            row = on_disk.get(task_id)
+            rows.append(
+                {
+                    "task_id": task_id,
+                    "on_disk": row is not None,
+                    "status": str((row or {}).get("status") or "") or None,
+                    "non_dispatchable": bool((row or {}).get("non_dispatchable")) if row else None,
+                    "history_recovery_present": isinstance(
+                        (row or {}).get("history_recovery"), dict
+                    ),
+                }
+            )
+            if row is not None:
+                persisted.append(task_id)
+        return rows, persisted
+
+    def write_checkpoint(status: str, detail: str) -> dict[str, Any]:
+        """Write the receipt from what is on disk, never from bookkeeping.
+
+        Every field here is a read-back. The difference matters at exactly the
+        moment it is hardest to see: `archive_task_snapshot()` writes the
+        snapshot file first and the index second, so a failure between them
+        leaves a snapshot on disk that this function never got to record. A
+        checkpoint built from an in-memory "applied" list would omit it and the
+        operator would go looking for a file the receipt says is not there.
+        """
+
+        archive_rows, landed = read_archive()
+        board_rows, persisted = read_board()
         payload = {
             "type": "task_history_recovery_checkpoint",
             "status": status,
             "actor": actor,
             "batch_path": str(batch_path),
+            "batch_sha256": batch_sha256,
             "batch_generated_at": batch.get("generated_at"),
-            "maintenance_hold": parsed["maintenance_hold"],
+            "maintenance_hold": {
+                "path": str(hold_path),
+                "sha256": hold_sha256,
+                "hold_id": hold.get("hold_id"),
+                "declared_by": hold.get("declared_by"),
+                "expires_at": hold.get("expires_at"),
+                "approved_by": (hold.get("batch_approval") or {}).get("reviewer"),
+                "approval_source": (hold.get("batch_approval") or {}).get("source"),
+            },
             "started_at": started_at,
             "finished_at": iso_now(),
-            "applied_archive_snapshots": list(applied_archive),
-            "staged_board_placeholders": list(staged_board),
-            # The board is written by the enclosing canonical transaction after
-            # this command returns, so this receipt can only report that the
-            # rows were staged -- never that the file on disk already has them.
+            "archive_snapshots_intended": list(archive_ids),
+            "archive_readback": archive_rows,
+            "applied_archive_snapshots": landed,
+            "archive_index": read_archive_index(),
+            "board_placeholders_intended": list(board_ids),
+            "board_readback": board_rows,
+            "board_placeholders_on_disk": persisted,
+            "board_persistence_verified": (
+                board_commit_verified["value"] and sorted(persisted) == sorted(board_ids)
+            ),
             "board_persisted_by": "enclosing canonical status transaction",
-            "board_persistence_verified": False,
             "rollback_performed": False,
             "detail": detail,
         }
@@ -7846,37 +8211,63 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
         checkpoint_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+        return payload
 
-    for entry in archive_entries:
-        task_id = str(entry["task_id"]).strip()
+    def survivors_tampered() -> list[str]:
+        surviving = _archive_snapshot_digests()
+        return sorted(
+            task_id
+            for task_id, digest in baseline_digests.items()
+            if surviving.get(task_id) != digest
+        )
+
+    for task_id, entry in zip(archive_ids, archive_entries, strict=True):
         try:
             archive_task_snapshot(
                 deepcopy(entry["record"]),
                 archived_at=str(entry.get("archived_at") or "").strip() or None,
                 recent_limit=task_archive_recent_limit(),
             )
-            readback = load_archived_snapshot(task_id)
-            if not readback or str(readback.get("terminal_status") or "") != "done":
-                raise ValueError("archive snapshot read-back returned no terminal record")
         except Exception as exc:
-            write_checkpoint("partial", f"archive write failed at {task_id}: {exc}")
+            receipt = write_checkpoint("partial", f"archive write failed at {task_id}: {exc}")
             raise SystemExit(
                 f"Recovery apply stopped at {task_id}: {exc}. "
-                f"{len(applied_archive)} archive snapshot(s) were already written and "
-                "have NOT been rolled back; no board row was committed. "
+                f"{len(receipt['applied_archive_snapshots'])} archive snapshot(s) are on "
+                "disk and have NOT been rolled back; no board row was committed. "
                 f"Checkpoint: {checkpoint_path}"
             ) from exc
-        applied_archive.append(task_id)
 
-    if applied_archive:
-        rebuild_archive_index(recent_limit=task_archive_recent_limit())
+    # Read the archive back as a whole rather than trusting the writer's return
+    # value: a snapshot can exist on disk while the index save that follows it
+    # failed, and only the files can say which of those happened.
+    archive_rows, landed = read_archive()
+    incomplete = [
+        row["task_id"]
+        for row in archive_rows
+        if not row["snapshot_on_disk"] or row["terminal_status"] != "done"
+    ]
+    if incomplete:
+        write_checkpoint(
+            "partial", f"archive read-back found no terminal snapshot for {incomplete}"
+        )
+        raise SystemExit(
+            f"Recovery apply could not read back terminal snapshots for {incomplete}; "
+            f"{len(landed)} snapshot(s) are on disk and nothing was rolled back. "
+            f"No board row was committed. Checkpoint: {checkpoint_path}"
+        )
 
-    surviving = _archive_snapshot_digests()
-    tampered = sorted(
-        task_id
-        for task_id, digest in (baseline.get("archive_snapshot_digests") or {}).items()
-        if surviving.get(task_id) != digest
-    )
+    if landed:
+        try:
+            rebuild_archive_index(recent_limit=task_archive_recent_limit())
+        except Exception as exc:
+            write_checkpoint("partial", f"archive index rebuild failed: {exc}")
+            raise SystemExit(
+                f"Recovery apply wrote {len(landed)} archive snapshot(s) but could not "
+                f"rebuild the archive index: {exc}. Nothing was rolled back and no board "
+                f"row was committed. Checkpoint: {checkpoint_path}"
+            ) from exc
+
+    tampered = survivors_tampered()
     if tampered:
         write_checkpoint("partial", f"pre-existing snapshots changed: {tampered}")
         raise SystemExit(
@@ -7887,9 +8278,49 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
 
     for entry in board_entries:
         state["tasks"].append(deepcopy(entry["record"]))
-        staged_board.append(str(entry["task_id"]).strip())
 
-    write_checkpoint("applied", "batch applied; board rows staged for this transaction")
+    def verify_board_persistence() -> list[str]:
+        """Read the board back after the enclosing transaction wrote it.
+
+        Until this runs, the placeholders exist only in the state dict this
+        command mutated. Calling that "applied" would be the same substitution
+        the archive half avoids: a receipt has to describe the file, and the
+        file does not exist yet when this command returns.
+        """
+
+        still_tampered = survivors_tampered()
+        _, persisted_now = read_board()
+        missing = [task_id for task_id in board_ids if task_id not in persisted_now]
+        if still_tampered:
+            write_checkpoint(
+                "partial", f"pre-existing snapshots changed after commit: {still_tampered}"
+            )
+            return [
+                f"Recovery apply left pre-existing archive snapshots {still_tampered} "
+                f"changed; nothing was rolled back. Checkpoint: {checkpoint_path}"
+            ]
+        if missing:
+            write_checkpoint(
+                "partial",
+                f"board placeholders missing after the canonical transaction: {missing}",
+            )
+            return [
+                f"Recovery apply wrote {len(landed)} archive snapshot(s) but the canonical "
+                f"board is missing {len(missing)} placeholder row(s) {missing}; nothing "
+                f"was rolled back. Checkpoint: {checkpoint_path}"
+            ]
+        board_commit_verified["value"] = True
+        write_checkpoint(
+            "applied",
+            "batch applied; archive snapshots and board rows both read back from disk",
+        )
+        return []
+
+    register_post_commit_verifier(verify_board_persistence)
+    write_checkpoint(
+        "applied_pending_board_persistence",
+        "archive snapshots read back from disk; board rows staged for this transaction",
+    )
     append_log(
         {
             "ts": iso_now(),
@@ -7897,20 +8328,22 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
             "type": "archive_history_recovery_apply",
             "message": (
                 f"Applied recovery batch {batch_path.name}: "
-                f"{len(applied_archive)} reconstructed archive snapshot(s), "
-                f"{len(staged_board)} blocked recovery placeholder(s). "
+                f"{len(landed)} reconstructed archive snapshot(s), "
+                f"{len(board_ids)} blocked recovery placeholder(s). "
                 "Reconstructed records are labelled and are not original archive bytes."
             ),
-            "task_ids": [*applied_archive, *staged_board],
-            "maintenance_hold": parsed["maintenance_hold"],
+            "task_ids": [*landed, *board_ids],
+            "batch_sha256": batch_sha256,
+            "maintenance_hold": {"path": str(hold_path), "sha256": hold_sha256},
             "checkpoint": str(checkpoint_path),
         }
     )
     print(
-        f"Applied {len(applied_archive)} archive snapshot(s) and staged "
-        f"{len(staged_board)} blocked recovery placeholder(s). The board rows are "
-        "committed by this canonical transaction. Reconstructed records are "
-        f"labelled history_recovery.reconstructed=true. Checkpoint: {checkpoint_path}"
+        f"Applied {len(landed)} archive snapshot(s) and staged {len(board_ids)} blocked "
+        "recovery placeholder(s). The board rows are committed by this canonical "
+        "transaction and read back into the checkpoint once it commits. Reconstructed "
+        f"records are labelled history_recovery.reconstructed=true. Checkpoint: "
+        f"{checkpoint_path}"
     )
 
 
@@ -8543,6 +8976,7 @@ def main(argv: list[str]) -> int:
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
+    post_commit_problems: list[str] = []
     with status_write_transaction():
         # Load only after acquiring the lock. Otherwise two well-formed CLI
         # commands could serialize their writes while the second still acted
@@ -8550,20 +8984,28 @@ def main(argv: list[str]) -> int:
         state = load_state()
         state_before = deepcopy(state)
         try:
-            commands[command](state, args)
-        except CrossRepoDeliveryBlocked:
-            # A rejected terminal transition still has to persist the active
-            # child-delivery blocker and the supervisor wake metadata.  Other
-            # command failures retain the historical all-or-nothing behavior.
+            try:
+                commands[command](state, args)
+            except CrossRepoDeliveryBlocked:
+                # A rejected terminal transition still has to persist the active
+                # child-delivery blocker and the supervisor wake metadata.  Other
+                # command failures retain the historical all-or-nothing behavior.
+                sync_all(state)
+                raise
             sync_all(state)
-            raise
-        sync_all(state)
+        finally:
+            # Still inside the lock, and on the failure path too: a command that
+            # wrote outside the board document has to be able to read back what
+            # actually landed before another writer can touch it.
+            post_commit_problems = run_post_commit_verifiers()
         try:
             reconcile_status_check_outbox(state)
             emit_status_checks_for_changed_tasks(state_before, state, command, args)
             sync_all(state)
         except Exception as exc:
             print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
+    if post_commit_problems:
+        raise SystemExit("; ".join(post_commit_problems))
     return 0
 
 

@@ -726,7 +726,7 @@ def build_recovery_placeholder(
         "last_update": generated_at,
         "history_recovery": _history_recovery_block(
             grading,
-            record_kind="recovery_placeholder",
+            record_kind=RECORD_KIND_PLACEHOLDER,
             recovery_owner=recovery_owner,
             recovery_reviewer=recovery_reviewer,
             generated_at=generated_at,
@@ -768,7 +768,7 @@ def build_recovery_done_task(
         "last_update": local_merge.get("merged_at") or generated_at,
         "history_recovery": _history_recovery_block(
             grading,
-            record_kind="reconstructed_done",
+            record_kind=RECORD_KIND_DONE,
             recovery_owner=recovery_owner,
             recovery_reviewer=recovery_reviewer,
             generated_at=generated_at,
@@ -842,6 +842,371 @@ def capture_recovery_baseline(
     }
 
 
+# --- the shared batch validator --------------------------------------------
+#
+# Between planning and applying, the batch is a plain JSON file that a reviewer
+# -- or anyone else -- can edit. So the apply step must not assume the grading
+# above produced what it is reading: it has to re-derive every property that
+# grading was supposed to guarantee. That check lives here, once, and both
+# halves call it. A second copy inside the writer is precisely how an apply
+# path ends up admitting a shape the planner would never emit.
+
+RECOVERY_EVIDENCE_TIERS = (
+    TIER_RECONSTRUCTABLE_DONE,
+    TIER_MERGE_VERIFIED,
+    TIER_MERGE_CLAIMED,
+    TIER_NO_EVIDENCE,
+)
+
+RECORD_KIND_DONE = "reconstructed_done"
+RECORD_KIND_PLACEHOLDER = "recovery_placeholder"
+RECOVERY_RECORD_KINDS = {
+    ACTION_ARCHIVE_DONE: RECORD_KIND_DONE,
+    ACTION_BLOCKED_PLACEHOLDER: RECORD_KIND_PLACEHOLDER,
+}
+
+PLACEHOLDER_STATUS = "blocked"
+
+# Baseline keys the apply step compares against live state before it writes.
+# An absent key is refused rather than skipped: a batch that simply omitted
+# ``board_sha256`` would otherwise buy itself an unchecked baseline.
+REQUIRED_BASELINE_FIELDS = (
+    "repo",
+    "ref",
+    "ref_commit",
+    "board_revision",
+    "board_sha256",
+    "inventory_path",
+    "inventory_sha256",
+    "authorization_path",
+    "authorization_sha256",
+)
+
+# The provenance fields every record copies from the batch baseline. They are
+# re-compared per record so a hand-edited entry cannot carry a different origin
+# from the batch it travels in.
+RECORD_BASELINE_FIELDS = (
+    "ref",
+    "ref_commit",
+    "inventory_sha256",
+    "authorization_sha256",
+)
+
+
+def _record_history_problems(
+    task_id: str,
+    record: dict[str, Any],
+    *,
+    action: str,
+    tier: str,
+    gaps: list[Any],
+    recovery_owner: str,
+    recovery_reviewer: str,
+    baseline: dict[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
+    """Check one record's provenance block; returns (problems, that block)."""
+
+    history = record.get("history_recovery")
+    if not isinstance(history, dict):
+        return [f"{task_id}: record carries no history_recovery provenance"], {}
+
+    problems: list[str] = []
+    if history.get("reconstructed") is not True:
+        problems.append(f"{task_id}: history_recovery.reconstructed must be true")
+    if str(history.get("created_by") or "") != RECOVERY_SOURCE:
+        problems.append(
+            f"{task_id}: history_recovery.created_by must be {RECOVERY_SOURCE!r}"
+        )
+    expected_kind = RECOVERY_RECORD_KINDS[action]
+    if str(history.get("record_kind") or "") != expected_kind:
+        problems.append(
+            f"{task_id}: record_kind {history.get('record_kind')!r} does not match "
+            f"action {action!r} (expected {expected_kind!r})"
+        )
+    if str(history.get("evidence_tier") or "") != tier:
+        problems.append(
+            f"{task_id}: record evidence_tier {history.get('evidence_tier')!r} "
+            f"disagrees with the entry's {tier!r}"
+        )
+    if list(history.get("gaps") or []) != list(gaps):
+        problems.append(
+            f"{task_id}: record gaps {history.get('gaps')!r} disagree with the "
+            f"entry's {list(gaps)!r}"
+        )
+
+    historical = history.get("historical_actors")
+    historical = historical if isinstance(historical, dict) else {}
+    if any(
+        str(historical.get(field) or "") != UNKNOWN_ACTOR
+        for field in ("owner", "reviewer", "human_go")
+    ):
+        problems.append(
+            f"{task_id}: historical_actors must stay {UNKNOWN_ACTOR} for "
+            "owner/reviewer/human_go; the original actors are not recoverable"
+        )
+    if history.get("recovery_actors") != {
+        "owner": recovery_owner,
+        "reviewer": recovery_reviewer,
+    }:
+        problems.append(
+            f"{task_id}: record recovery_actors {history.get('recovery_actors')!r} do "
+            f"not match the batch pair ({recovery_owner!r}, {recovery_reviewer!r})"
+        )
+
+    evidence = history.get("evidence")
+    if not isinstance(evidence, dict):
+        problems.append(f"{task_id}: record carries no evidence block")
+        evidence = {}
+    for candidate in evidence.get("candidates") or []:
+        if isinstance(candidate, dict) and candidate.get("missing_provenance"):
+            problems.append(
+                f"{task_id}: candidate PR {candidate.get('pr_number')!r} is missing "
+                f"provenance {candidate['missing_provenance']}"
+            )
+    attestations = evidence.get("attestations")
+    if isinstance(attestations, dict):
+        fabricated = sorted(
+            field for field in FABRICATION_FIELDS if attestations.get(field)
+        )
+        if fabricated:
+            problems.append(
+                f"{task_id}: attestations may not supply {fabricated}; a historical "
+                "owner, reviewer, approver or Human GO is never reconstructed"
+            )
+
+    record_baseline = history.get("baseline")
+    record_baseline = record_baseline if isinstance(record_baseline, dict) else {}
+    drifted = [
+        field
+        for field in RECORD_BASELINE_FIELDS
+        if record_baseline.get(field) != baseline.get(field)
+    ]
+    if drifted:
+        problems.append(
+            f"{task_id}: record baseline {drifted} does not match the batch baseline"
+        )
+    return problems, history
+
+
+def validate_recovery_entry(
+    entry: Any,
+    *,
+    recovery_owner: str,
+    recovery_reviewer: str,
+    baseline: dict[str, Any],
+) -> list[str]:
+    """Every reason this entry may not be applied. Empty means admissible.
+
+    The two actions are held to deliberately different shapes. A reconstructed
+    ``done`` is a terminal claim, so it must carry the top evidence tier with no
+    open gaps, a complete attestation set and a verified merge, and it may not
+    name anyone alive today. A placeholder is the conservative outcome, so it
+    must be ``blocked`` and ``non_dispatchable``: an entry that flipped either
+    field would land on the board and be dispatched as ordinary work.
+    """
+
+    if not isinstance(entry, dict):
+        return ["an entry is not a JSON object"]
+    task_id = str(entry.get("task_id") or "").strip()
+    if not task_id:
+        return ["an entry carries no task_id"]
+    action = entry.get("action")
+    if action not in RECOVERY_RECORD_KINDS:
+        return [f"{task_id}: unknown action {action!r}"]
+    record = entry.get("record")
+    if not isinstance(record, dict):
+        return [f"{task_id}: entry carries no record"]
+
+    problems: list[str] = []
+    if str(record.get("id") or "").strip() != task_id:
+        problems.append(
+            f"{task_id}: record id {str(record.get('id') or '')!r} does not match the "
+            "entry task_id"
+        )
+    tier = str(entry.get("evidence_tier") or "").strip()
+    if tier not in RECOVERY_EVIDENCE_TIERS:
+        problems.append(f"{task_id}: unknown evidence_tier {tier!r}")
+    gaps = entry.get("gaps")
+    if not isinstance(gaps, list):
+        problems.append(f"{task_id}: gaps must be a list, got {type(gaps).__name__}")
+        gaps = []
+
+    history_problems, history = _record_history_problems(
+        task_id,
+        record,
+        action=action,
+        tier=tier,
+        gaps=gaps,
+        recovery_owner=recovery_owner,
+        recovery_reviewer=recovery_reviewer,
+        baseline=baseline,
+    )
+    problems.extend(history_problems)
+    evidence = history.get("evidence")
+    evidence = evidence if isinstance(evidence, dict) else {}
+    record_actors = (str(record.get("owner") or ""), str(record.get("reviewer") or ""))
+
+    if action == ACTION_ARCHIVE_DONE:
+        if tier != TIER_RECONSTRUCTABLE_DONE:
+            problems.append(
+                f"{task_id}: only {TIER_RECONSTRUCTABLE_DONE} may enter the terminal "
+                f"archive, not {tier!r}"
+            )
+        if gaps:
+            problems.append(
+                f"{task_id}: a reconstructed done record may not carry open gaps "
+                f"{sorted(str(gap) for gap in gaps)}"
+            )
+        if str(record.get("status") or "") != TERMINAL_STATUS_DONE:
+            problems.append(
+                f"{task_id}: reconstructed archive record status must be "
+                f"{TERMINAL_STATUS_DONE!r}, got {record.get('status')!r}"
+            )
+        if str(record.get("terminal_outcome") or "") != TERMINAL_OUTCOME_COMPLETED:
+            problems.append(
+                f"{task_id}: reconstructed archive record terminal_outcome must be "
+                f"{TERMINAL_OUTCOME_COMPLETED!r}, got {record.get('terminal_outcome')!r}"
+            )
+        if record_actors != (UNKNOWN_ACTOR, UNKNOWN_ACTOR):
+            problems.append(
+                f"{task_id}: reconstructed archive record must keep owner/reviewer as "
+                f"{UNKNOWN_ACTOR}, got {record_actors}"
+            )
+        missing_attestations = _attestation_gaps(evidence.get("attestations"))
+        if missing_attestations:
+            problems.append(
+                f"{task_id}: reconstructed done has no complete attestation for "
+                f"{sorted(missing_attestations)}"
+            )
+        local_merge = evidence.get("local_merge")
+        if not isinstance(local_merge, dict) or not str(
+            local_merge.get("merge_commit") or ""
+        ).strip():
+            problems.append(
+                f"{task_id}: reconstructed done carries no verified local merge commit"
+            )
+        if not str(entry.get("archived_at") or "").strip():
+            problems.append(f"{task_id}: reconstructed done carries no archived_at")
+    else:
+        if str(record.get("status") or "") != PLACEHOLDER_STATUS:
+            problems.append(
+                f"{task_id}: recovery placeholder status must be "
+                f"{PLACEHOLDER_STATUS!r}, got {record.get('status')!r}"
+            )
+        if record.get("non_dispatchable") is not True:
+            problems.append(
+                f"{task_id}: recovery placeholder must be non_dispatchable; a "
+                "dispatchable placeholder is ordinary work on the board"
+            )
+        if record.get("terminal_outcome"):
+            problems.append(
+                f"{task_id}: recovery placeholder may not carry a terminal_outcome"
+            )
+        if not str(record.get("waiting_for") or "").strip():
+            problems.append(f"{task_id}: recovery placeholder must name what it waits for")
+        if record_actors != (recovery_owner, recovery_reviewer):
+            problems.append(
+                f"{task_id}: placeholder actors {record_actors} do not match the batch "
+                f"recovery pair ({recovery_owner!r}, {recovery_reviewer!r})"
+            )
+        if entry.get("archived_at"):
+            problems.append(
+                f"{task_id}: a placeholder stays on the active board and is never archived"
+            )
+    return problems
+
+
+def validate_recovery_batch(batch: Any, *, for_apply: bool = True) -> list[str]:
+    """Every reason this batch document may not be applied as a whole.
+
+    ``for_apply`` is the difference between a plan and a write. A plan may
+    legitimately report refusals -- that report is the point of reviewing it --
+    but an apply is all-or-nothing, so a single refusal disqualifies the entire
+    document rather than the one id it names.
+    """
+
+    if not isinstance(batch, dict):
+        return ["recovery batch must be a JSON object"]
+    if str(batch.get("type") or "") != RECOVERY_BATCH_TYPE:
+        return [f"recovery batch type must be {RECOVERY_BATCH_TYPE!r}"]
+    if int(batch.get("schema_version") or 0) != RECOVERY_BATCH_SCHEMA_VERSION:
+        return [
+            f"recovery batch schema_version must be {RECOVERY_BATCH_SCHEMA_VERSION}"
+        ]
+
+    problems: list[str] = []
+    if batch.get("canonical_apply_performed"):
+        problems.append("batch is already marked canonical_apply_performed")
+
+    actors = batch.get("recovery_actors")
+    actors = actors if isinstance(actors, dict) else {}
+    owner = str(actors.get("owner") or "").strip()
+    reviewer = str(actors.get("reviewer") or "").strip()
+    if not owner or not reviewer:
+        problems.append("batch names no recovery owner/reviewer pair")
+    elif owner == reviewer:
+        problems.append("recovery reviewer cannot equal the recovery owner")
+    if UNKNOWN_ACTOR in {owner, reviewer}:
+        problems.append(
+            f"{UNKNOWN_ACTOR} names the unrecoverable historical actor and can never "
+            "be a present-day recovery actor"
+        )
+
+    baseline = batch.get("baseline")
+    baseline = baseline if isinstance(baseline, dict) else {}
+    missing_baseline = [
+        field
+        for field in REQUIRED_BASELINE_FIELDS
+        if not str(baseline.get(field) or "").strip()
+    ]
+    if missing_baseline:
+        problems.append(
+            f"batch baseline is missing required provenance {missing_baseline}"
+        )
+    if not isinstance(baseline.get("archive_snapshot_digests"), dict):
+        problems.append("batch baseline carries no archive_snapshot_digests")
+
+    entries = batch.get("entries")
+    if not isinstance(entries, list):
+        problems.append("batch entries must be a list")
+        return problems
+
+    seen: dict[str, int] = {}
+    for entry in entries:
+        problems.extend(
+            validate_recovery_entry(
+                entry,
+                recovery_owner=owner,
+                recovery_reviewer=reviewer,
+                baseline=baseline,
+            )
+        )
+        if isinstance(entry, dict):
+            task_id = str(entry.get("task_id") or "").strip()
+            if task_id:
+                seen[task_id] = seen.get(task_id, 0) + 1
+    duplicates = sorted(task_id for task_id, count in seen.items() if count > 1)
+    if duplicates:
+        problems.append(f"batch repeats task id(s) {duplicates}")
+
+    if for_apply:
+        refusals = [item for item in (batch.get("refusals") or []) if item]
+        if refusals:
+            named = sorted(
+                str((item or {}).get("task_id") or "<no id>")
+                for item in refusals
+                if isinstance(item, dict)
+            )
+            problems.append(
+                f"batch carries {len(refusals)} planning refusal(s) for {named}; a "
+                "batch is applied all-or-nothing, so re-plan without them rather than "
+                "applying the remaining entries"
+            )
+        if not entries:
+            problems.append("batch has no entries to apply")
+    return problems
+
+
 def build_recovery_batch(
     *,
     repo: Path,
@@ -869,7 +1234,13 @@ def build_recovery_batch(
             f"{UNKNOWN_ACTOR} names the unrecoverable historical actor and can "
             "never be the present-day recovery owner or reviewer"
         )
-    if authorization_path is not None and not authorization_path.exists():
+    if authorization_path is None:
+        raise RecoveryInputError(
+            "a recovery batch must cite the authorization document it was planned "
+            "under; the apply step re-hashes it and refuses a batch whose "
+            "authorization has drifted"
+        )
+    if not authorization_path.exists():
         raise RecoveryInputError(f"authorization document not found: {authorization_path}")
 
     inventory = load_recovery_inventory(inventory_path)
@@ -968,7 +1339,7 @@ def build_recovery_batch(
         ),
         "refused": len(refusals),
     }
-    return {
+    batch = {
         "schema_version": RECOVERY_BATCH_SCHEMA_VERSION,
         "type": RECOVERY_BATCH_TYPE,
         "generated_at": generated_at,
@@ -991,9 +1362,20 @@ def build_recovery_batch(
         },
         "baseline": baseline,
         "counts": counts,
+        "applicable": not refusals,
         "entries": entries,
         "refusals": refusals,
     }
+    # The planner holds itself to the validator the writer will re-run. If these
+    # two ever disagree, the disagreement surfaces here at plan time rather than
+    # as a refusal in the middle of a canonical apply.
+    self_check = validate_recovery_batch(batch, for_apply=False)
+    if self_check:
+        raise RecoveryInputError(
+            "planner produced a batch its own validator refuses: "
+            + "; ".join(self_check)
+        )
+    return batch
 
 
 def run_recovery_plan(args: argparse.Namespace, *, repo: Path, archive_dir: Path) -> int:
@@ -1020,6 +1402,7 @@ def run_recovery_plan(args: argparse.Namespace, *, repo: Path, archive_dir: Path
             ("--board", args.board),
             ("--recovery-owner", args.recovery_owner),
             ("--recovery-reviewer", args.recovery_reviewer),
+            ("--authorization", args.authorization),
         )
         if not value
     ]
