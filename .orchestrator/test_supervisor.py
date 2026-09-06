@@ -14461,6 +14461,14 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 return {"data": {"repository": {"pullRequest": pr_node}}}
             if args[:1] == ["api"] and "actions/runs" in str(args[1]):
                 return {"total_count": 1, "workflow_runs": [run]}
+            if args[:1] == ["api"] and "/commits/" in str(args[1]):
+                return {
+                    "sha": run["head_sha"],
+                    "parents": [
+                        {"sha": "base000000000000000000000000000000000000"},
+                        {"sha": approved_head},
+                    ],
+                }
             return None
 
         with (

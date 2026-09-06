@@ -2,7 +2,7 @@
 
 - Task: `ODP-MERGE-GROUP-STALE-FAILURE-GUARD-001`
 - Status: `ready_for_review`
-- Owner: `Claude`
+- Owner: `Antigravity2`
 - Reviewer: `Codex`
 - Date: `2026-09-06`
 
@@ -161,6 +161,39 @@ parents 少於兩個時（不是 merge commit 形狀）視為結構不明，回 
 
 ---
 
+## 2ter. 第四輪 review 指出的三個缺口與修正
+
+### 2.10 `classify_fresh_target_run` 嚴格校驗 status 與 conclusion
+
+**問題**：舊實作僅根據 `conclusion` 判定，若 `status` 缺失或為 `in_progress` 但 payload 帶 `failure`（矛盾資料），仍被誤判為 `current_failure`；若 `status` 缺失但 `conclusion` 為 `success`，仍永久 ack。
+
+**修正**：
+- 只有合法的 `status == "completed"` 且 `conclusion in FAILURE_CONCLUSIONS` 才判定為 `current_failure`；
+- 只有合法的 `status == "completed"` 且 `conclusion in SUCCESS_CONCLUSIONS` 才判定為 `retry_succeeded`；
+- `status in PENDING_RUN_STATUSES` 且無 conclusion 時判定為 `retrying`；
+- 缺欄位、未識別 status、或矛盾 payload（如 `in_progress` 帶 conclusion、`completed` 無 conclusion 等）一律回 `unknown`，不 demote 亦不 processed，保持下輪 retry。
+
+### 2.11 原 failed target group 自身非 base parent 嚴格綁定 `approved_head`
+
+**問題**：PR 從 A 前進並經審查核准 B 後，若先前針對 A 的 merge group 延遲回傳 failure，此時 fresh PR 為 B 且無更新 candidate，舊邏輯因未驗證 target group 自身的 PR parent，仍會錯誤撤銷 B 的核准。
+
+**修正**：
+- 重用 `merge_group_incorporates_head()` 驗證 target group 的非 base parent 是否精確包含當前 `approved_head`；
+- 確證不屬於當前 `approved_head`（例如延遲抵達的 A group failure）：判定為 `stale`（reason: `target_not_for_approved_head`），記錄審計並加入 `processed_merge_group_run_ids` 去重，零變更；
+- target head SHA 缺失或 API 回傳 parents 未知：判定為 `unknown`（reason: `target_identity_incomplete` / `target_association_unknown`），保留不 processed；
+- current failure 測試 fixture 全面補足 target 真實 parent 數據收據。
+
+### 2.12 facts A 與 facts B 隊列 generation / enrollment 漂移防護
+
+**問題**：facts A 與 B 原先只比對 state 與 head SHA，完全忽略佇列入隊狀態及 `enqueuedAt` 變化。若同一 PR head 在 API 查證期間重新入隊（新的 queue generation），B 已觀察到 generation 不同卻仍可能 demote。
+
+**修正**：
+- 新增 `pr_queue_identity(pr_facts)` 提取 `(is_in_merge_queue, enqueuedAt)` 作為佇列身分代；
+- facts A 與 facts B 之間若觀察到佇列身分漂移（例如從未入隊到入隊、或 re-enqueue 產生新的 `enqueuedAt`），立即判定為 `unresolved: pr_queue_drift`，保留下輪重讀；
+- 佇列中的位置正常前進（`position` 正常移動，例如 3 -> 1，`enqueuedAt` 未變）不視為 generation 漂移，避免誤阻斷正常流程。
+
+---
+
 ## 3. 修正後的單一流程
 
 `reconcile_merge_group_runs()` 在既有 CAS 之前只有一段查證，每個分支三選一：
@@ -177,11 +210,11 @@ parents 少於兩個時（不是 merge commit 形狀）視為結構不明，回 
 | 4 | PR state 為 `CLOSED` | `stale: pr_state_closed`（去重） |
 | 5 | PR head ≠ `approved_head`（完整 SHA，禁止前綴比對） | `unresolved: pr_head_mismatch`（保留） |
 | 6 | 取 fresh merge group runs 快照 | `None` → `unresolved: merge_group_runs_unavailable`（保留） |
-| 7 | **重讀 target run 自身**（快照找不到就精確查該 run） | 見 §2.7 四種處置 |
-| 8 | target 仍為 failure 時，找更新且 parents（非 base）納入 reviewed head 的 group | 找到 → `stale: pending_group` / `successful_group`（去重） |
-| 9 | **facts B**：同一 reader 於 runs／parents 查詢後重讀 PR | merged/closed → `stale`（去重）；漂移或讀不到 → `unresolved`（保留） |
-| 10 | target 非目前 failure（retrying / unresolved / retry succeeded） | 依 §2.7 保留或去重，不撤核准 |
-| 11 | 有候選但關聯未解 | `unresolved: group_association_unknown`（保留） |
+| 7 | **重讀 target run 自身**（合法 completed 狀態檢驗） | 缺欄位/矛盾/讀不到 → `unresolved`（保留）；成功 → `stale`（去重）；retrying → `unresolved`（保留） |
+| 8 | **target run group head 驗證**（非 base parent 包含 reviewed head） | 不含 → `stale: target_not_for_approved_head`（去重）；API 未知/缺失 → `unresolved`（保留） |
+| 9 | 找更新且 parents（非 base）納入 reviewed head 的 superseding group | 找到 → `stale: pending_group` / `successful_group`（去重）；關聯未解 → `unresolved: group_association_unknown`（保留） |
+| 10 | **facts B**：同一 reader 於 runs／parents 查詢後重讀 PR | merged/closed → `stale`（去重）；漂移或讀不到 → `unresolved`（保留） |
+| 11 | **facts A vs B 隊列 generation 漂移比對** | `enqueuedAt` 或入隊狀態變更 → `unresolved: pr_queue_drift`（保留） |
 | 12 | 以上皆非 | 真實失敗：既有 CAS → `review`、reviewer recovery handoff、CAS 成功後重送 `task-review-gate` |
 
 候選 group 的確定性排除條件（不產生 unknown）：不同 PR 編號、既非 pending 也非 success、
@@ -190,9 +223,6 @@ parents 少於兩個時（不是 merge commit 形狀）視為結構不明，回 
 
 其餘不變：CAS 拒絕時不寫 processed IDs、不送外部 review gate；handoff 去重與 replay 去重維持原狀；
 未新增 scheduler、state store、恢復命令、平行 reader 或 CI 管線。
-
-fresh runs 快照與 group commit 查詢在單次 reconcile 內各有快取，
-批次中多筆失敗不會重複詢問 GitHub 同一個問題（`test_reconcile_merge_group_reads_each_api_once_per_batch`）。
 
 ---
 
@@ -207,9 +237,9 @@ fresh runs 快照與 group commit 查詢在單次 reconcile 內各有快取，
 
 ```console
 $ PYTHONPATH=.orchestrator python3 -m unittest test_github_bus.MergeGroupReconciliationTests
-.........................................................
+.................................................................
 ----------------------------------------------------------------------
-Ran 57 tests in 0.127s
+Ran 65 tests in 0.910s
 
 OK
 $ echo $?
@@ -221,7 +251,7 @@ $ echo $?
 ```console
 $ PYTHONPATH=.orchestrator python3 -m unittest test_supervisor.ReviewHeadFreezeTests
 ----------------------------------------------------------------------
-Ran 33 tests in 14.958s
+Ran 33 tests in 16.694s
 
 OK
 $ echo $?
@@ -245,24 +275,32 @@ All checks passed!
 | PR 已 merged | `test_reconcile_merge_group_pr_already_merged_is_stale_and_non_mutating` |
 | PR 已 closed 未 merged | `test_reconcile_merge_group_pr_closed_unmerged_is_stale_and_non_mutating` |
 | **A→B：新 group 納入的是後續 head，不得遮掩真失敗** | `test_reconcile_merge_group_newer_group_for_advanced_head_does_not_mask_failure` |
+| **A→B：延遲到達的舊 head A failure 不得撤銷核准 B** | `test_reconcile_merge_group_delayed_failure_for_previous_head_is_stale_and_non_mutating` |
+| **target parent API 未知不得 demote** | `test_reconcile_merge_group_target_parents_api_unknown_does_not_demote` |
+| **target head SHA 缺失不得 demote** | `test_reconcile_merge_group_target_missing_head_sha_is_unknown_does_not_demote` |
+| **target status/conclusion 所有排列組合校驗** | `test_classify_fresh_target_run_status_and_conclusion_permutations` |
+| **facts B 佇列 generation 漂移（re-enqueue）不得 demote** | `test_reconcile_merge_group_facts_b_queue_generation_drift_does_not_demote` |
+| **facts B 新入隊漂移不得 demote** | `test_reconcile_merge_group_facts_b_newly_enrolled_drift_does_not_demote` |
+| **facts B 佇列 position 正常移動不視為漂移** | `test_reconcile_merge_group_facts_b_position_movement_alone_is_not_drift` |
+| **佇列身分輔助函式單元測試** | `test_pr_queue_identity_helper` |
 | 關聯是父提交而非 ancestry（單元層） | `test_merge_group_incorporates_head_requires_direct_parenthood` |
 | 不同 PR 的新 group | `test_reconcile_merge_group_different_pr_does_not_mask_genuine_failure` |
 | 不同 workflow 的新 group | `test_reconcile_merge_group_different_workflow_does_not_mask_genuine_failure` |
 | PR head 與 approved head 不符 | `test_reconcile_merge_group_different_pr_head_does_not_mask_genuine_failure` |
-| **候選缺 head_sha／workflow 不明／順序不明／parents 壞掉一律 unknown** | `test_reconcile_merge_group_candidate_missing_fields_is_unknown_not_demote` |
-| **reviewed head 只是候選 group 的 base parent，不算納入** | `test_reconcile_merge_group_base_parent_match_does_not_supersede_failure`、`test_merge_group_incorporates_head_requires_direct_parenthood` |
-| **facts B：PR 在查證期間 merge** | `test_reconcile_merge_group_facts_b_merged_is_stale_and_non_mutating` |
-| **facts B：head 漂移／讀不到** | `test_reconcile_merge_group_facts_b_head_drift_does_not_demote`、`test_reconcile_merge_group_facts_b_unavailable_does_not_demote` |
-| **同 run id 新 attempt 仍在跑／已成功／讀不到** | `test_reconcile_merge_group_target_rerun_pending_does_not_demote`、`test_reconcile_merge_group_target_rerun_succeeded_is_stale`、`test_reconcile_merge_group_target_unreadable_does_not_demote` |
+| 候選缺 head_sha／workflow 不明／順序不明／parents 壞掉一律 unknown | `test_reconcile_merge_group_candidate_missing_fields_is_unknown_not_demote` |
+| reviewed head 只是候選 group 的 base parent，不算納入 | `test_reconcile_merge_group_base_parent_match_does_not_supersede_failure`、`test_merge_group_incorporates_head_requires_direct_parenthood` |
+| facts B：PR 在查證期間 merge | `test_reconcile_merge_group_facts_b_merged_is_stale_and_non_mutating` |
+| facts B：head 漂移／讀不到 | `test_reconcile_merge_group_facts_b_head_drift_does_not_demote`、`test_reconcile_merge_group_facts_b_unavailable_does_not_demote` |
+| 同 run id 新 attempt 仍在跑／已成功／讀不到 | `test_reconcile_merge_group_target_rerun_pending_does_not_demote`、`test_reconcile_merge_group_target_rerun_succeeded_is_stale`、`test_reconcile_merge_group_target_unreadable_does_not_demote` |
 | 快照輪替掉 target，改以單筆 run 查詢確認仍為失敗 | `test_reconcile_merge_group_target_resolved_by_single_run_read` |
 | workflow 身分／run 新舊皆為三態 | `test_match_workflow_identity_is_tri_state`、`test_compare_run_recency_is_tri_state` |
 | 壞掉的 parents payload（`[{}]`／`[]`／非 list） | `test_fetch_commit_parent_shas_tri_state` |
 | 同一 group 的 sibling run 不能接替自己 | `test_find_superseding_run_ignores_sibling_run_of_the_failing_group` |
-| **enrolled 單獨不得證明 superseded** | `test_reconcile_merge_group_queue_enrollment_alone_does_not_mask_failure` |
+| enrolled 單獨不得證明 superseded | `test_reconcile_merge_group_queue_enrollment_alone_does_not_mask_failure` |
 | enrolled 且有可證新 group 才判 stale | `test_reconcile_merge_group_enrolled_pr_still_stale_when_new_group_proven` |
-| **PR API 未知（含未知 state 字串、空 node）** | `test_reconcile_merge_group_pr_facts_unavailable_does_not_demote`、`test_reconcile_merge_group_empty_or_invalid_pr_node_does_not_demote` |
-| **runs API 未知不得當成沒有新 group** | `test_reconcile_merge_group_runs_snapshot_unavailable_does_not_demote`、`test_fetch_merge_group_runs_distinguishes_empty_from_unanswered` |
-| **group 關聯未解** | `test_reconcile_merge_group_association_unknown_does_not_demote` |
+| PR API 未知（含未知 state 字串、空 node） | `test_reconcile_merge_group_pr_facts_unavailable_does_not_demote`、`test_reconcile_merge_group_empty_or_invalid_pr_node_does_not_demote` |
+| runs API 未知不得當成沒有新 group | `test_reconcile_merge_group_runs_snapshot_unavailable_does_not_demote`、`test_fetch_merge_group_runs_distinguishes_empty_from_unanswered` |
+| group 關聯未解 | `test_reconcile_merge_group_association_unknown_does_not_demote` |
 | 短 SHA 前綴比對必須拒絕 | `test_reconcile_merge_group_exact_sha_no_prefix_match` |
 | 真正當前失敗仍走 reviewer recovery | `test_reconcile_merge_group_failure_creates_audit_log_and_recovery_handoff` |
 | CAS 拒絕：不 processed、不送 gate | `test_reconcile_merge_group_failure_stale_snapshot_reject_does_not_mark_run_processed` |
@@ -271,7 +309,7 @@ All checks passed!
 
 ### E. 反向驗證（測試不是空的）
 
-對實作注入十二個缺陷（前六個屬第二輪、後六個屬第三輪）並確認對應測試轉紅，全部為 `FAILED (failures=…)` 而非 import error；驗證後檔案已還原並與注入前逐位元組相同：
+對實作注入十五個缺陷並確認對應測試轉紅，全部為 `FAILED (failures=…)` 而非 import error；驗證後檔案已還原並與注入前逐位元組相同：
 
 | 注入的缺陷 | 轉紅的測試 |
 | --- | --- |
@@ -287,6 +325,9 @@ All checks passed!
 | `approved_sha in parents` 含 base parent | `test_reconcile_merge_group_base_parent_match_does_not_supersede_failure`、`test_merge_group_incorporates_head_requires_direct_parenthood` |
 | parents 壞掉的元素被忽略而非視為 unknown | `test_fetch_commit_parent_shas_tri_state` |
 | workflow 身分 unknown 壓成 mismatch | `test_match_workflow_identity_is_tri_state`、`test_reconcile_merge_group_candidate_missing_fields_is_unknown_not_demote` |
+| **`classify_fresh_target_run` 放行缺少 status 的 payload** | `test_classify_fresh_target_run_status_and_conclusion_permutations` |
+| **未驗證 target run 的 parents 與 `approved_head` 關聯** | `test_reconcile_merge_group_delayed_failure_for_previous_head_is_stale_and_non_mutating`、`test_reconcile_merge_group_target_parents_api_unknown_does_not_demote` |
+| **忽略 facts A 與 B 之間的佇列 generation 漂移** | `test_reconcile_merge_group_facts_b_queue_generation_drift_does_not_demote` |
 
 ---
 

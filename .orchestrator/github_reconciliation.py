@@ -298,6 +298,26 @@ def pr_is_merged(pr_facts: Any) -> bool:
     return bool(pr_facts.get("mergedAt") or pr_facts.get("merged_at"))
 
 
+def pr_queue_identity(pr_facts: Any) -> tuple[bool, str]:
+    """Return (is_enrolled, enqueued_at) representing the PR's merge queue generation.
+
+    Position in queue (e.g. 3 -> 2 -> 1) is normal progression, not a new queue
+    generation. But `isInMergeQueue` changing or `enqueuedAt` changing indicates
+    a new queue enrollment or re-enqueue between checks, which must trigger
+    re-evaluation next cycle rather than demoting on an obsolete queue generation.
+    """
+    from github_bus import is_in_merge_queue
+
+    if not isinstance(pr_facts, dict):
+        return False, ""
+    enrolled = is_in_merge_queue(pr_facts)
+    entry = pr_facts.get("mergeQueueEntry")
+    enqueued_at = ""
+    if isinstance(entry, dict):
+        enqueued_at = str(entry.get("enqueuedAt") or "").strip()
+    return enrolled, enqueued_at
+
+
 def is_valid_pr_facts(pr_facts: Any) -> bool:
     """Return true only when GitHub returned a PR node this guard may act on.
 
@@ -615,14 +635,16 @@ def classify_fresh_target_run(
 
     conclusion = str(fresh.get("conclusion") or "").strip().lower()
     status = str(fresh.get("status") or "").strip().lower()
-    if not conclusion:
-        if status in PENDING_RUN_STATUSES:
+    if status == "completed":
+        if conclusion in FAILURE_CONCLUSIONS:
+            return TARGET_CURRENT_FAILURE, fresh
+        if conclusion in SUCCESS_CONCLUSIONS:
+            return TARGET_RETRY_SUCCEEDED, fresh
+        return TARGET_UNKNOWN, fresh
+    if status in PENDING_RUN_STATUSES:
+        if not conclusion:
             return TARGET_RETRYING, fresh
         return TARGET_UNKNOWN, fresh
-    if conclusion in FAILURE_CONCLUSIONS:
-        return TARGET_CURRENT_FAILURE, fresh
-    if conclusion in SUCCESS_CONCLUSIONS:
-        return TARGET_RETRY_SUCCEEDED, fresh
     return TARGET_UNKNOWN, fresh
 
 
@@ -930,14 +952,49 @@ def reconcile_merge_group_runs(
         # The failing run is re-read before anything is concluded from it: a
         # re-run under the same id may already have moved off `failure`, and the
         # candidate scan cannot see that because it skips the target's own id.
-        target_kind, _fresh_target = classify_fresh_target_run(repo, run_id, fresh_runs)
+        target_kind, fresh_target = classify_fresh_target_run(repo, run_id, fresh_runs)
 
         superseding_run: dict[str, Any] | None = None
         supersede_reason: str | None = None
         association_unknown = False
         if target_kind == TARGET_CURRENT_FAILURE:
+            effective_target = fresh_target if isinstance(fresh_target, dict) and fresh_target else run
+            target_group_head = str(
+                effective_target.get("head_sha") or effective_target.get("headSha") or ""
+            ).strip().lower()
+            if not target_group_head:
+                record_unresolved(
+                    "target_identity_incomplete",
+                    "the failing merge group run's head SHA is missing or unusable.",
+                )
+                continue
+
+            target_incorporates = merge_group_incorporates_head(
+                repo, target_group_head, approved_head, parents_cache
+            )
+            if target_incorporates is None:
+                record_unresolved(
+                    "target_association_unknown",
+                    "the failing merge group run could not be proven to enrol or "
+                    "exclude the reviewed head.",
+                )
+                continue
+            if not target_incorporates:
+                # Confirmed not to enrol approved_head (e.g. delayed failure for an
+                # earlier head before approval). Stale, so dedupe without task mutation.
+                record_stale(
+                    "target_not_for_approved_head",
+                    (
+                        f"the failing merge group run (head {target_group_head[:8]}) did not "
+                        f"enrol reviewed head {approved_head}."
+                    ),
+                    {"in_merge_queue": is_in_merge_queue(pr_facts_seen.get("A"))},
+                )
+                non_mutating_seen.append(run_key)
+                continue
+
             superseding_run, supersede_reason, association_unknown = find_superseding_merge_group_run(
-                run,
+                effective_target,
                 merge_run_snapshots(runs, fresh_runs),
                 pr_number,
                 approved_head,
@@ -954,6 +1011,15 @@ def reconcile_merge_group_runs(
             non_mutating_seen.append(run_key)
             continue
         if outcome != "open":
+            continue
+
+        facts_a = pr_facts_seen.get("A")
+        facts_b = pr_facts_seen.get("B")
+        if facts_a and facts_b and pr_queue_identity(facts_a) != pr_queue_identity(facts_b):
+            record_unresolved(
+                "pr_queue_drift",
+                "PR merge queue enrollment or generation changed between check A and check B.",
+            )
             continue
 
         # Queue enrollment is corroboration, never proof. GitHub reports that the
