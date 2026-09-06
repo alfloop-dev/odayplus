@@ -122,8 +122,11 @@ reference+current 清理後合併相異值數（定義見
 | `text_percentile_drifted` | 200 | 200 | `Percentile text content drift` | 0.95 | 1.0 | 1.0 | True |
 | `text_absolute_drifted` | 1001 | 1001 | `Absolute text content drift` | 0.55 | 1.0 | 1.0 | True |
 
-分流表 11 個分支（含 Text 兩個分支、z-test、Jensen–Shannon）全部由真實執行覆蓋，
-與 §5.1 的 source inspection 一致。原本被列為 `UNKNOWN` 的 threshold 解析，
+§5.1 分流表列出 11 個條件，其中 **10 個是可選中的檢定分支**（含 Text 兩個分支、
+z-test、Jensen–Shannon），全部由真實執行覆蓋，與 §5.1 的 source inspection 一致；
+第 11 列是 `raise ValueError(f"Unexpected feature_type ...")` 的 fallback，本 baseline
+未觸發，屬未測。（本 task 的 commit message 寫成「all eleven branches」，精確說法是
+上述 10 個可選分支，特此在證據中更正。）原本被列為 `UNKNOWN` 的 threshold 解析，
 現在有實測值：p-value 類檢定一律 `0.05`，距離類檢定（Wasserstein、Jensen–Shannon）
 一律 `0.1`，text percentile `0.95`、text absolute `0.55`。
 
@@ -181,7 +184,7 @@ reference+current 清理後合併相異值數（定義見
 
 | 維度 | 真實 owner / entry point | 本 baseline 覆蓋 | 限制 |
 |---|---|---|---|
-| 1. Data Drift | `EvidentlyDriftMonitor.run` | **完整**：25 個 data-drift case（含 3 個拒絕 case），涵蓋全部 11 個分流分支 | 只涵蓋單欄與雙欄 frame；未測寬表（數十欄）下的 share 精度與效能 |
+| 1. Data Drift | `EvidentlyDriftMonitor.run` | **完整**：28 個 data-drift case（25 個成功 + 3 個拒絕），涵蓋 10 個可選分流分支 | 只涵蓋單欄與雙欄 frame；未測寬表（數十欄）下的 share 精度與效能 |
 | 2. Feature Drift | `_drifted_column_names` / `_drift_metric_detected` | **完整**：每個成功 case 都比對 `drifted_column_names`，並交叉檢查其長度等於引擎自報的 `DriftedColumnsCount` | 第一方是**重新實作**判定規則而非讀引擎旗標；文字分支的規則不一致風險見 §7.1 |
 | 3. Prediction Drift | `EvidentlyDriftMonitor.run_prediction` / `run_prediction_drift` | **部分**：`run_prediction` 完整；`run_prediction_drift` 的相容別名參數（`cohort`、`prediction_output_columns`、`decision_policy`）**未覆蓋** | 見 §7.2 |
 | 4. Performance Drift | `models/shared_ml/validation.py`、`modules/learninghub/application/monitor.py`、`release.py`、`modules/learninghub/domain/monitoring.py` | **本 baseline 不涵蓋**。這四個 owner 是第一方實作，不呼叫 Evidently；其回歸由既有 `modules/learninghub/tests/test_performance_drift_and_baseline_comparison.py`（10 個測試）承擔，本次 focused verification 一併執行 | 本 task 未新增效能維度的 golden；替代引擎若真的做了，仍必須自行證明此維度零迴歸，不能引用本文件 |
@@ -266,6 +269,36 @@ disposition §3.3 明確要求可達性必須由 pinned runtime 的 probe 決定
 descriptor / guardrail，且都會呼叫 `nltk.download("wordnet"/"vader_lexicon"/"words")`。
 本 task 的 acceptance 禁止下載 NLP 模型，因此**刻意不執行**這些路徑；這是明確保留的
 阻礙，不是把功能砍掉，也不是偽造基準。`DataDriftPreset` 路徑不經過它們。
+
+## 8.1 每次監控呼叫都會付一次完整的隔離匯入成本
+
+建立基準時量到一項與耗時直接相關的既有行為，一併記錄（**本 task 未修改它**）。
+
+`EvidentlyDriftMonitor.run` / `run_prediction` 在呼叫 Evidently 之前會先執行
+`require_oss_capability(OssCapability.MODEL_MONITORING)`，而
+`models/shared_ml/oss_capabilities.py` 的 `inspect_oss_capability` 每次都會呼叫
+`probe_package_in_isolation("evidently")` —— 也就是**每一次 drift 呼叫都另外開一個
+子行程，在全新直譯器中重新 import 一次 evidently**，且沒有任何快取。
+
+同一台機器、200 列單欄 float、各量三次：
+
+| 量測對象 | 耗時 |
+|---|---|
+| `require_oss_capability(MODEL_MONITORING)` 單獨呼叫 | 11.065s / 9.887s / 9.720s |
+| 直接 `Report([DataDriftPreset(...)]).run(...)`（純計算） | 0.245s / 0.190s / 0.167s |
+| 完整 `EvidentlyDriftMonitor().run(...)` | 8.695s / 8.396s / 8.098s |
+
+也就是說，一次第一方 drift 呼叫約 **98% 的時間花在能力探測子行程**，真正的漂移計算
+只有 0.2 秒量級。這解釋了本 baseline 套件與**既有**測試的耗時：既有的
+`tests/models/test_evidently_monitor.py::test_evidently_monitor_persists_real_report_payload`
+本身就要 8.52s，`test_prediction_drift_same_distribution_is_healthy` 要 10.58s。
+新套件的耗時來自這個既有的每次呼叫成本，不是來自 fixture 規模。
+
+與第 8 節合起來看的附帶事實：因為探測子行程也會 import evidently，**每次監控呼叫
+其實會把 nltk 載入兩次**（本行程一次、探測子行程一次）。
+
+**邊界**：這是效能與 runtime footprint 的觀察，不是本 task 的交付範圍。修改
+`oss_capabilities.py` 屬 production 程式變更，本 task 明確不做。若要處理，應另開 task。
 
 ## 9. Normalization 政策
 
