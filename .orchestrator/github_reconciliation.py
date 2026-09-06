@@ -12,7 +12,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import ai_status as runtime_ai_status
-from common import ROOT, parse_utc_timestamp, run_command, utc_now, write_activity_log
+from common import parse_utc_timestamp, utc_now, write_activity_log
 
 
 @dataclass(frozen=True)
@@ -253,21 +253,80 @@ def _record_seen_run_ids(bus_state: dict[str, Any], new_keys: list[str], max_ids
     bus_state["processed_merge_group_run_ids"] = current[-max_ids:]
 
 
+VALID_PR_STATES = frozenset({"OPEN", "CLOSED", "MERGED"})
+
+PENDING_RUN_STATUSES = frozenset({"in_progress", "queued", "waiting", "requested", "pending"})
+
+
+def pr_state(pr_facts: Any) -> str:
+    """Return the PR state normalized to GitHub's own enum, or '' when unknown.
+
+    Only the three states GitHub actually defines are accepted. Anything else --
+    a truncated payload, an unexpected enum, an error shape -- is unknown, and an
+    unknown state must never be read as "closed, therefore this failure is
+    stale".
+    """
+    if not isinstance(pr_facts, dict):
+        return ""
+    state = pr_facts.get("state")
+    if not isinstance(state, str):
+        return ""
+    normalized = state.strip().upper()
+    return normalized if normalized in VALID_PR_STATES else ""
+
+
+def pr_head_sha(pr_facts: Any) -> str:
+    """Return the PR head commit SHA from a GitHub PR node, or '' when absent."""
+    if not isinstance(pr_facts, dict):
+        return ""
+    head = pr_facts.get("head")
+    nested = head.get("sha") if isinstance(head, dict) else None
+    candidate = pr_facts.get("headRefOid") or pr_facts.get("head_sha") or nested
+    if not isinstance(candidate, str):
+        return ""
+    return candidate.strip().lower()
+
+
+def pr_is_merged(pr_facts: Any) -> bool:
+    """Return true when GitHub reports the PR as merged."""
+    if not isinstance(pr_facts, dict):
+        return False
+    if pr_state(pr_facts) == "MERGED":
+        return True
+    if pr_facts.get("merged") is True:
+        return True
+    return bool(pr_facts.get("mergedAt") or pr_facts.get("merged_at"))
+
+
 def is_valid_pr_facts(pr_facts: Any) -> bool:
-    """Return true only if pr_facts is a non-empty dictionary containing valid state and head SHA."""
+    """Return true only when GitHub returned a PR node this guard may act on.
+
+    A node is actionable only if it carries a state GitHub actually defines and a
+    head SHA. Everything else is unknown; the caller keeps the failure for the
+    next cycle rather than deciding on an unanswered question.
+    """
     if not isinstance(pr_facts, dict) or not pr_facts:
         return False
-    state = pr_facts.get("state")
-    if not state or not isinstance(state, str) or not state.strip():
+    if not pr_state(pr_facts):
         return False
-    head_sha = (
-        pr_facts.get("headRefOid")
-        or pr_facts.get("head_sha")
-        or (pr_facts.get("head") or {}).get("sha")
-    )
-    if not head_sha or not isinstance(head_sha, str) or not head_sha.strip():
-        return False
-    return True
+    return bool(pr_head_sha(pr_facts))
+
+
+def fetch_pr_queue_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
+    """Read fresh PR state, head SHA and queue enrollment from the one bus reader.
+
+    `github_bus.fetch_pr_merge_queue_status` is the single GraphQL reader for PR
+    facts here. Returns None whenever GitHub's answer is missing or unusable.
+    """
+    from github_bus import GitHubBusOffline, fetch_pr_merge_queue_status
+
+    try:
+        facts = fetch_pr_merge_queue_status(repo, pr_number)
+    except GitHubBusOffline:
+        raise
+    except Exception:
+        return None
+    return facts if is_valid_pr_facts(facts) else None
 
 
 def match_workflow_identity(target: dict[str, Any], candidate: dict[str, Any]) -> bool:
@@ -293,42 +352,75 @@ def match_workflow_identity(target: dict[str, Any], candidate: dict[str, Any]) -
     return False
 
 
-def verify_group_contains_head(repo: str, cand_head_sha: str, approved_head: str) -> bool:
-    """Verify that a merge group head commit contains the full approved PR head SHA."""
-    cand_sha = str(cand_head_sha or "").strip().lower()
-    app_sha = str(approved_head or "").strip().lower()
-    if not cand_sha or not app_sha:
+def fetch_commit_parent_shas(repo: str, sha: str) -> list[str] | None:
+    """Read the parent SHAs of a commit, or None when GitHub cannot answer.
+
+    Returns a list (possibly empty) when GitHub answered, None when it did not.
+    """
+    from github_bus import GitHubBusOffline, gh_json
+
+    sha = str(sha or "").strip()
+    if not sha:
+        return None
+    try:
+        data = gh_json(["api", f"repos/{repo}/commits/{sha}"])
+    except GitHubBusOffline:
+        raise
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    parents = data.get("parents")
+    if not isinstance(parents, list):
+        return None
+    shas: list[str] = []
+    for parent in parents:
+        if not isinstance(parent, dict):
+            continue
+        parent_sha = parent.get("sha")
+        if isinstance(parent_sha, str) and parent_sha.strip():
+            shas.append(parent_sha.strip().lower())
+    return shas
+
+
+def merge_group_incorporates_head(
+    repo: str,
+    group_head_sha: str,
+    approved_head: str,
+    parents_cache: dict[str, list[str] | None] | None = None,
+) -> bool | None:
+    """Tri-state: did this merge group enrol exactly `approved_head`?
+
+    True / False / None (unknown, GitHub did not answer).
+
+    A merge queue group head is the temporary merge commit GitHub builds for the
+    group; its parents are the base it was built on plus the exact PR head
+    commits it enrolled -- for PR #1212 the group head `17393dd4` has parents
+    `a297b2a0` (base) and `a9e7853f` (the reviewed PR head). That parent list is
+    the association evidence GitHub publishes, and it names the precise head.
+
+    Ancestry does not. If a PR head advances A -> B, A is an ancestor of any
+    group built for B, so an ancestry test would report that a group for B
+    "contains" A and let a failure against A be waved through by an unrelated
+    run. Only direct parenthood distinguishes the two.
+    """
+    group_sha = str(group_head_sha or "").strip().lower()
+    approved_sha = str(approved_head or "").strip().lower()
+    if not group_sha or not approved_sha:
         return False
-    if cand_sha == app_sha:
-        return True
+    if group_sha == approved_sha:
+        # A group head is a merge commit built on top of the queue base; it is
+        # never the PR head itself. Accepting equality as proof would let a
+        # fixture assert an association GitHub cannot produce.
+        return False
 
-    # 1. Try local git merge-base check if available
-    try:
-        proc = run_command(
-            ["git", "merge-base", "--is-ancestor", app_sha, cand_sha],
-            cwd=ROOT,
-        )
-        if proc.returncode == 0:
-            return True
-        if proc.returncode == 1:
-            return False
-        # returncode 128 indicates the ref/commit is unknown in local object db
-    except Exception:
-        pass
-
-    # 2. Try GitHub compare API via gh_json
-    try:
-        from github_bus import gh_json
-        data = gh_json(["api", f"repos/{repo}/compare/{app_sha}...{cand_sha}"])
-        if isinstance(data, dict):
-            status = str(data.get("status") or "").strip().lower()
-            behind_by = data.get("behind_by")
-            if status in {"ahead", "identical"} and (behind_by == 0 or behind_by is None):
-                return True
-    except Exception:
-        pass
-
-    return False
+    cache = parents_cache if parents_cache is not None else {}
+    if group_sha not in cache:
+        cache[group_sha] = fetch_commit_parent_shas(repo, group_sha)
+    parents = cache[group_sha]
+    if parents is None:
+        return None
+    return approved_sha in parents
 
 
 def find_superseding_merge_group_run(
@@ -337,10 +429,23 @@ def find_superseding_merge_group_run(
     pr_number: int,
     approved_head: str,
     repo: str,
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Find a newer pending or successful merge group run superseding target_run for the same PR and approved head."""
+    parents_cache: dict[str, list[str] | None] | None = None,
+) -> tuple[dict[str, Any] | None, str | None, bool]:
+    """Find a newer merge group run that enrolled the same approved PR head.
+
+    Returns `(run, reason, unknown)`. `unknown` is True when a candidate that
+    passed every other filter could be neither proven nor disproven, so the
+    caller must retain the failure instead of demoting on an open question.
+    """
     target_run_id = target_run.get("id") or target_run.get("databaseId")
     target_created_at = target_run.get("created_at") or target_run.get("run_started_at")
+    target_head_sha = str(
+        target_run.get("head_sha")
+        or target_run.get("headSha")
+        or ""
+    ).strip().lower()
+    cache = parents_cache if parents_cache is not None else {}
+    association_unknown = False
 
     for candidate in runs:
         if not isinstance(candidate, dict):
@@ -365,7 +470,11 @@ def find_superseding_merge_group_run(
             or ""
         ).strip().lower()
         if not cand_head_sha:
-            # Candidate lacks head_sha: cannot prove association or ancestry
+            # Candidate lacks head_sha: cannot prove association at all.
+            continue
+        if target_head_sha and cand_head_sha == target_head_sha:
+            # Same group, different run: a sibling workflow or a re-run of the
+            # group that is failing right now. It cannot supersede itself.
             continue
 
         if not match_workflow_identity(target_run, candidate):
@@ -397,7 +506,7 @@ def find_superseding_merge_group_run(
         cand_status = str(candidate.get("status") or "").strip().lower()
 
         is_pending = (
-            cand_status in {"in_progress", "queued", "waiting", "requested", "pending"}
+            cand_status in PENDING_RUN_STATUSES
             and cand_conclusion not in FAILURE_CONCLUSIONS
         )
         is_success = cand_conclusion in SUCCESS_CONCLUSIONS
@@ -405,49 +514,75 @@ def find_superseding_merge_group_run(
         if not (is_pending or is_success):
             continue
 
-        if not verify_group_contains_head(repo, cand_head_sha, approved_head):
+        incorporates = merge_group_incorporates_head(
+            repo, cand_head_sha, approved_head, cache
+        )
+        if incorporates is None:
+            association_unknown = True
+            continue
+        if not incorporates:
             continue
 
         reason = "pending_group" if is_pending else "successful_group"
-        return candidate, reason
+        return candidate, reason, False
 
-    return None, None
-
-
-def fetch_pr_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
-    """Fetch fresh PR state and head commit SHA from GitHub via gh_json."""
-    from github_bus import GitHubBusOffline, gh_json
-
-    try:
-        data = gh_json([
-            "pr", "view", str(pr_number), "--repo", repo,
-            "--json", "number,state,headRefOid,mergedAt,url,mergeStateStatus",
-        ])
-        if isinstance(data, dict):
-            return data
-    except GitHubBusOffline:
-        raise
-    except Exception:
-        pass
-    return None
+    return None, None, association_unknown
 
 
-def fetch_merge_group_runs(repo: str, limit: int = 30) -> list[dict[str, Any]]:
-    """Fetch merge_group workflow runs from GitHub via gh_json."""
+def merge_run_snapshots(*snapshots: Any) -> list[dict[str, Any]]:
+    """Union run snapshots by run id, letting later snapshots win."""
+    merged: dict[str, dict[str, Any]] = {}
+    for snapshot in snapshots:
+        if not isinstance(snapshot, list):
+            continue
+        for item in snapshot:
+            if not isinstance(item, dict):
+                continue
+            key = str(item.get("id") or item.get("databaseId") or "").strip()
+            if not key:
+                continue
+            merged[key] = item
+    return list(merged.values())
+
+
+def fetch_merge_group_runs(repo: str, limit: int = 30) -> list[dict[str, Any]] | None:
+    """Fetch merge_group workflow runs, or None when GitHub could not answer.
+
+    None and `[]` are different answers: `[]` means GitHub reported no runs, None
+    means the question is unanswered. Collapsing the two would let a transport
+    error read as "no newer group exists" and revoke an approval on it.
+    """
     from github_bus import GitHubBusOffline, gh_json
 
     try:
         data = gh_json(["api", f"repos/{repo}/actions/runs?event=merge_group&per_page={limit}"])
-        if isinstance(data, dict):
-            runs = data.get("workflow_runs", [])
-            return runs if isinstance(runs, list) else []
-        if isinstance(data, list):
-            return data
     except GitHubBusOffline:
         raise
     except Exception:
-        pass
-    return []
+        return None
+    if isinstance(data, dict):
+        runs = data.get("workflow_runs")
+        return runs if isinstance(runs, list) else None
+    if isinstance(data, list):
+        return data
+    return None
+
+
+def merge_group_audit_entry(
+    event_type: str,
+    run_facts: dict[str, Any],
+    reason: str,
+    message: str,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the audit entry shape shared by every merge_group outcome."""
+    entry = dict(run_facts)
+    entry["type"] = event_type
+    entry["reason"] = reason
+    entry["message"] = message
+    if extra:
+        entry.update(extra)
+    return entry
 
 
 def reconcile_merge_group_runs(
@@ -466,6 +601,7 @@ def reconcile_merge_group_runs(
     Never automatically requeues, reopens, merges, or mutates product tasks.
     Success, stale, ambiguous, or duplicate events produce no side effects.
     """
+    from github_bus import is_in_merge_queue
     from status_transition import commit_canonical_task_transition
 
     if not isinstance(runs, list) or not runs:
@@ -475,6 +611,20 @@ def reconcile_merge_group_runs(
     non_mutating_seen: list[str] = []
     mutating_failures: list[tuple[str, str, dict[str, Any]]] = []
     changed = False
+
+    # Fetched at most once per invocation and shared by every failure in the
+    # batch: one extra call closes the gap between the poll snapshot and the
+    # demote decision without re-asking GitHub the same question per run.
+    runs_snapshot_cache: dict[str, list[dict[str, Any]] | None] = {}
+    parents_cache: dict[str, list[str] | None] = {}
+    poll_limit = int(
+        (config.get("github_bus", {}) or {}).get("poll_batch_sizes", {}).get("merge_group_runs", 30)
+    )
+
+    def fresh_merge_group_runs() -> list[dict[str, Any]] | None:
+        if "runs" not in runs_snapshot_cache:
+            runs_snapshot_cache["runs"] = fetch_merge_group_runs(repo, limit=poll_limit)
+        return runs_snapshot_cache["runs"]
 
     for run in runs:
         if not isinstance(run, dict):
@@ -493,7 +643,7 @@ def reconcile_merge_group_runs(
         html_url = run.get("html_url") or run.get("url")
 
         # If run is not completed yet, wait for completion before marking processed
-        if status_val in {"in_progress", "queued", "waiting", "requested", "pending"} and not conclusion:
+        if status_val in PENDING_RUN_STATUSES and not conclusion:
             continue
 
         if conclusion in SUCCESS_CONCLUSIONS:
@@ -568,283 +718,140 @@ def reconcile_merge_group_runs(
             non_mutating_seen.append(run_key)
             continue
 
-        # Fetch fresh PR facts from GitHub to ensure PR is open and matches reviewed head
-        pr_facts = fetch_pr_facts(repo, pr_number)
-        if not is_valid_pr_facts(pr_facts):
-            # API or freshness unresolved / empty facts: do NOT demote, do NOT permanently mark processed
-            write_activity_log(config, {
-                "type": "merge_group_failure_unresolved",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} correlated to PR #{pr_number} "
-                    f"(task {task_id}), but valid fresh PR facts could not be resolved from GitHub API. "
-                    f"Retaining for next poll cycle."
-                ),
-            })
-            continue
-
-        pr_state = str(pr_facts.get("state") or "").strip().upper()
-        merged_at = pr_facts.get("mergedAt") or pr_facts.get("merged_at")
-        is_merged = (pr_state == "MERGED") or bool(merged_at) or (pr_facts.get("merged") is True)
-
-        if is_merged:
-            write_activity_log(config, {
-                "type": "merge_group_failure_stale",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "reason": "already_merged",
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                    f"(task {task_id}) is stale: PR is already merged."
-                ),
-            })
-            non_mutating_seen.append(run_key)
-            continue
-
-        if pr_state != "OPEN":
-            write_activity_log(config, {
-                "type": "merge_group_failure_stale",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "reason": f"pr_state_{pr_state.lower()}",
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                    f"(task {task_id}) is stale: PR state is '{pr_state}'."
-                ),
-            })
-            non_mutating_seen.append(run_key)
-            continue
-
-        pr_head_sha = str(
-            pr_facts.get("headRefOid")
-            or pr_facts.get("head_sha")
-            or (pr_facts.get("head") or {}).get("sha")
-            or ""
-        ).strip().lower()
-        approved_head = str(task.get("approved_head") or "").strip().lower()
-
-        if not pr_head_sha or not approved_head:
-            write_activity_log(config, {
-                "type": "merge_group_failure_unresolved",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} correlated to PR #{pr_number} "
-                    f"(task {task_id}), but approved_head or PR head SHA is missing. Retaining for next poll cycle."
-                ),
-            })
-            continue
-
-        if pr_head_sha != approved_head:
-            write_activity_log(config, {
-                "type": "merge_group_failure_unresolved",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                    f"(task {task_id}) has PR head {pr_head_sha} mismatching approved head {approved_head}."
-                ),
-            })
-            continue
-
-        # Check if this failure is superseded by a newer merge group run in current batch
-        superseded_run, superseded_reason = find_superseding_merge_group_run(
-            run, runs, pr_number, approved_head, repo
+        # One fresh, pre-CAS read of the facts that decide whether this failure is
+        # still live. Every branch below either proves the failure stale (audit +
+        # dedupe, no mutation), proves it genuine (falls through to the single
+        # reviewer-recovery path), or leaves the question open. An open question
+        # must never revoke an approval, so it is retained un-processed and asked
+        # again next cycle.
+        run_facts = {
+            "task_id": task_id,
+            "run_id": run_id,
+            "queue_ref": queue_ref,
+            "head_sha": head_sha,
+            "pr_number": pr_number,
+            "conclusion": conclusion,
+            "url": html_url,
+        }
+        run_label = (
+            f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} (task {task_id})"
         )
 
-        if superseded_run is not None:
-            cand_run_id = superseded_run.get("id") or superseded_run.get("databaseId")
-            cand_status_str = str(superseded_run.get("status") or superseded_run.get("conclusion") or "")
-            write_activity_log(config, {
-                "type": "merge_group_failure_stale",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "superseded_by_run_id": cand_run_id,
-                "superseded_by_status": cand_status_str,
-                "reason": superseded_reason,
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                    f"(task {task_id}) is stale: superseded by newer merge group run {cand_run_id} "
-                    f"({cand_status_str}) for reviewed head {approved_head}."
-                ),
-            })
-            non_mutating_seen.append(run_key)
-            continue
+        def record_unresolved(reason: str, detail: str, _facts=run_facts, _label=run_label) -> None:
+            write_activity_log(config, merge_group_audit_entry(
+                "merge_group_failure_unresolved",
+                _facts,
+                reason,
+                f"{_label}: {detail} Retaining un-processed for the next poll cycle.",
+            ))
 
-        # Pre-CAS and pre-demote fresh live validation:
-        # 1. Fresh PR facts B check
-        pr_facts_b = fetch_pr_facts(repo, pr_number)
-        if not is_valid_pr_facts(pr_facts_b):
-            write_activity_log(config, {
-                "type": "merge_group_failure_unresolved",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} correlated to PR #{pr_number} "
-                    f"(task {task_id}), but pre-demote fresh PR facts B could not be validated. "
-                    f"Retaining for next poll cycle."
-                ),
-            })
-            continue
+        def record_stale(
+            reason: str,
+            detail: str,
+            extra: dict[str, Any] | None = None,
+            _facts=run_facts,
+            _label=run_label,
+        ) -> None:
+            write_activity_log(config, merge_group_audit_entry(
+                "merge_group_failure_stale",
+                _facts,
+                reason,
+                f"{_label} is stale: {detail}",
+                extra,
+            ))
 
-        pr_state_b = str(pr_facts_b.get("state") or "").strip().upper()
-        merged_at_b = pr_facts_b.get("mergedAt") or pr_facts_b.get("merged_at")
-        is_merged_b = (pr_state_b == "MERGED") or bool(merged_at_b) or (pr_facts_b.get("merged") is True)
-        if is_merged_b:
-            write_activity_log(config, {
-                "type": "merge_group_failure_stale",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "reason": "already_merged",
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                    f"(task {task_id}) is stale: PR was merged during reconciliation."
-                ),
-            })
-            non_mutating_seen.append(run_key)
-            continue
-
-        if pr_state_b != "OPEN":
-            write_activity_log(config, {
-                "type": "merge_group_failure_stale",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "reason": f"pr_state_{pr_state_b.lower()}",
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                    f"(task {task_id}) is stale: PR state transitioned to '{pr_state_b}'."
-                ),
-            })
-            non_mutating_seen.append(run_key)
-            continue
-
-        pr_head_b = str(
-            pr_facts_b.get("headRefOid")
-            or pr_facts_b.get("head_sha")
-            or (pr_facts_b.get("head") or {}).get("sha")
-            or ""
-        ).strip().lower()
-        if pr_head_b != approved_head:
-            write_activity_log(config, {
-                "type": "merge_group_failure_unresolved",
-                "task_id": task_id,
-                "run_id": run_id,
-                "queue_ref": queue_ref,
-                "head_sha": head_sha,
-                "pr_number": pr_number,
-                "conclusion": conclusion,
-                "url": html_url,
-                "message": (
-                    f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                    f"(task {task_id}) has PR head {pr_head_b} drifting from approved head {approved_head}."
-                ),
-            })
-            continue
-
-        # 2. Fresh merge queue enrollment check
-        try:
-            from github_bus import fetch_pr_merge_queue_status, is_in_merge_queue
-            fresh_mq_status = fetch_pr_merge_queue_status(repo, pr_number)
-            if is_in_merge_queue(fresh_mq_status):
-                write_activity_log(config, {
-                    "type": "merge_group_failure_stale",
-                    "task_id": task_id,
-                    "run_id": run_id,
-                    "queue_ref": queue_ref,
-                    "head_sha": head_sha,
-                    "pr_number": pr_number,
-                    "conclusion": conclusion,
-                    "url": html_url,
-                    "reason": "enrolled_in_merge_queue",
-                    "message": (
-                        f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                        f"(task {task_id}) is stale: PR is currently enrolled in merge queue."
-                    ),
-                })
-                non_mutating_seen.append(run_key)
-                continue
-        except Exception:
-            pass
-
-        # 3. Fresh merge group runs snapshot check
-        try:
-            poll_cfg = (config.get("github_bus", {}) or {}).get("poll_batch_sizes", {})
-            poll_limit = int(poll_cfg.get("merge_group_runs", 30))
-            fresh_runs = fetch_merge_group_runs(repo, limit=poll_limit)
-            fresh_superseded, fresh_reason = find_superseding_merge_group_run(
-                run, fresh_runs, pr_number, approved_head, repo
+        pr_facts = fetch_pr_queue_facts(repo, pr_number)
+        if pr_facts is None:
+            record_unresolved(
+                "pr_facts_unavailable",
+                "GitHub returned no usable PR state and head SHA.",
             )
-            if fresh_superseded is not None:
-                cand_run_id = fresh_superseded.get("id") or fresh_superseded.get("databaseId")
-                cand_status_str = str(fresh_superseded.get("status") or fresh_superseded.get("conclusion") or "")
-                write_activity_log(config, {
-                    "type": "merge_group_failure_stale",
-                    "task_id": task_id,
-                    "run_id": run_id,
-                    "queue_ref": queue_ref,
-                    "head_sha": head_sha,
-                    "pr_number": pr_number,
-                    "conclusion": conclusion,
-                    "url": html_url,
-                    "superseded_by_run_id": cand_run_id,
-                    "superseded_by_status": cand_status_str,
-                    "reason": fresh_reason,
-                    "message": (
-                        f"Merge group run {run_id} ({conclusion}) on {queue_ref} for PR #{pr_number} "
-                        f"(task {task_id}) is stale: superseded by newer merge group run {cand_run_id} "
-                        f"({cand_status_str}) in fresh runs snapshot for reviewed head {approved_head}."
-                    ),
-                })
-                non_mutating_seen.append(run_key)
-                continue
-        except Exception:
-            pass
+            continue
+
+        if pr_is_merged(pr_facts):
+            record_stale("already_merged", "the PR is already merged.")
+            non_mutating_seen.append(run_key)
+            continue
+
+        # `fetch_pr_queue_facts` already rejected every state that is not one of
+        # GitHub's three, so only a genuine CLOSED reaches the closed-stale path;
+        # an unrecognised state string went to `pr_facts_unavailable` above.
+        current_pr_state = pr_state(pr_facts)
+        if current_pr_state != "OPEN":
+            record_stale(
+                f"pr_state_{current_pr_state.lower()}",
+                f"PR state is '{current_pr_state}'.",
+            )
+            non_mutating_seen.append(run_key)
+            continue
+
+        approved_head = str(task.get("approved_head") or "").strip().lower()
+        current_pr_head = pr_head_sha(pr_facts)
+        if not approved_head:
+            record_unresolved(
+                "approved_head_missing",
+                "the task carries no approved head to correlate against.",
+            )
+            continue
+        if current_pr_head != approved_head:
+            record_unresolved(
+                "pr_head_mismatch",
+                f"PR head {current_pr_head} does not equal approved head {approved_head}.",
+            )
+            continue
+
+        # Queue enrollment is corroboration, never proof. GitHub reports that the
+        # PR is in *a* group, not which one, so an enrolled PR may be sitting in
+        # the very group that just failed. It is recorded for the audit trail and
+        # is not on its own allowed to suppress a failure -- only a named newer
+        # group that provably enrolled this exact head can do that.
+        enrolled_in_queue = is_in_merge_queue(pr_facts)
+
+        fresh_runs = fresh_merge_group_runs()
+        if fresh_runs is None:
+            record_unresolved(
+                "merge_group_runs_unavailable",
+                "GitHub returned no usable merge_group run snapshot, so a newer group "
+                "can be neither found nor ruled out.",
+            )
+            continue
+
+        superseding_run, supersede_reason, association_unknown = find_superseding_merge_group_run(
+            run,
+            merge_run_snapshots(runs, fresh_runs),
+            pr_number,
+            approved_head,
+            repo,
+            parents_cache,
+        )
+
+        if superseding_run is not None:
+            superseding_id = superseding_run.get("id") or superseding_run.get("databaseId")
+            superseding_state = str(
+                superseding_run.get("status") or superseding_run.get("conclusion") or ""
+            )
+            record_stale(
+                supersede_reason or "superseded",
+                (
+                    f"superseded by newer merge group run {superseding_id} ({superseding_state}), "
+                    f"whose group commit enrolled reviewed head {approved_head}."
+                ),
+                {
+                    "superseded_by_run_id": superseding_id,
+                    "superseded_by_status": superseding_state,
+                    "in_merge_queue": enrolled_in_queue,
+                },
+            )
+            non_mutating_seen.append(run_key)
+            continue
+
+        if association_unknown:
+            record_unresolved(
+                "group_association_unknown",
+                "a newer merge group run for this PR could not be proven to enrol or "
+                "exclude the reviewed head.",
+            )
+            continue
 
         log_entry = {
             "type": "merge_group_failure_reconciled",

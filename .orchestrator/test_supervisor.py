@@ -14424,34 +14424,52 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             555,
         )
 
+        approved_head = "abc123450000000000000000000000000000dead"
         task = {
             "id": "ODP-SUP-MG-001",
             "status": "review_approved",
             "owner": "Antigravity5",
             "reviewer": "Claude2",
             "pr_number": 555,
-            "approved_head": "abc12345",
+            "approved_head": approved_head,
         }
         status = {"tasks": [task], "handoffs": []}
         bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
+        # A merge group head is the temporary merge commit GitHub builds for the
+        # queue entry, never the PR head itself.
         run = {
             "id": 999111,
             "head_branch": "gh-readonly-queue/dev/pr-555-abc",
-            "head_sha": "abc12345",
+            "head_sha": "77aa11bb0000000000000000000000000000c0de",
             "conclusion": "failure",
             "status": "completed",
+            "name": "CI",
+            "workflow_id": 100,
         }
-        pr_facts = {
+        pr_node = {
             "number": 555,
             "state": "OPEN",
-            "headRefOid": "abc12345",
-            "url": "https://github.com/o/r/pull/555",
+            "merged": False,
+            "mergedAt": None,
+            "headRefOid": approved_head,
+            "isInMergeQueue": False,
+            "mergeQueueEntry": None,
         }
 
+        def fake_gh_json(args, **kwargs):
+            if args[:2] == ["api", "graphql"]:
+                return {"data": {"repository": {"pullRequest": pr_node}}}
+            if args[:1] == ["api"] and "actions/runs" in str(args[1]):
+                return {"total_count": 1, "workflow_runs": [run]}
+            return None
+
         with (
-            unittest.mock.patch("github_reconciliation.fetch_pr_facts", return_value=pr_facts),
+            unittest.mock.patch("github_bus.gh_json", side_effect=fake_gh_json),
             unittest.mock.patch("github_reconciliation.write_activity_log") as log,
             unittest.mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+            unittest.mock.patch(
+                "github_reconciliation.runtime_ai_status.emit_task_review_status_check"
+            ),
         ):
             changed = supervisor.reconcile_merge_group_runs(
                 {"github_bus": {"enabled": True}},
