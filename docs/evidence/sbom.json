@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:sha256-c307293d67d88c7a5c7c070e2a49f737",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-06T03:38:58.461386+00:00",
+    "timestamp": "2026-09-06T04:54:37.787919+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,13 +16,13 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@e18aa6948d4569ba8e37888e0e5291d18931048d",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@e18aa6948d4569ba8e37888e0e5291d18931048d"
+      "purl": "pkg:generic/alfloop-dev/odayplus@ad709b8a05d3cd2905fc5d2edb04335b27a14e89",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@ad709b8a05d3cd2905fc5d2edb04335b27a14e89"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "e18aa6948d4569ba8e37888e0e5291d18931048d"
+        "value": "ad709b8a05d3cd2905fc5d2edb04335b27a14e89"
       },
       {
         "name": "sbom-hash",
@@ -30,7 +30,7 @@
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:c430b2ab55301f6ab7c65cc5910f7dbaddc2ef08b4e0a29d740f7571c68a2d85"
+        "value": "sha256:a4bac701a0e57a3d31e625a81a346bdaa9886db1f806e9b58e0dcd9132ce1eaf"
       },
       {
         "name": "container-base-images",
@@ -18709,7 +18709,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@e18aa6948d4569ba8e37888e0e5291d18931048d",
+      "ref": "pkg:generic/alfloop-dev/odayplus@ad709b8a05d3cd2905fc5d2edb04335b27a14e89",
       "dependsOn": [
         "pkg:pypi/argon2-cffi@25.1.0",
         "pkg:pypi/catboost@1.2.10",

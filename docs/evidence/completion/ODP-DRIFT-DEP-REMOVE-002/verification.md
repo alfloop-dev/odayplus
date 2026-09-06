@@ -43,3 +43,17 @@ CI timeout/inventory wiring (104 passed, 2 failed). After completing the
 integration, the full security suite was rerun successfully. No gate behavior
 was weakened to resolve those incomplete-assembly failures. The actual PRs
 still require their own CI, review and merge records.
+
+
+## Published-delivery preparation after prerequisite merges
+
+PRs #1217, #1218 and #1219 have merged. Integration commit `ad709b8a05d3cd2905fc5d2edb04335b27a14e89`
+composes the cutover with current dev, including the independently reviewed
+comment-test timing repair. A fresh complete scan of its synchronized Python
+3.12 environment passed with 215 dependencies and no vulnerabilities at
+`2026-09-06T04:54:35.833754+00:00`. `integrated-audit.json` retains the exact source,
+gate source, tool, commands and raw output hashes; `integrated-inputs.json`
+binds implementation files and the regenerated active SBOM. SBOM and NOTICE
+checks passed. Historical goldens and completion SBOMs remain unchanged.
+This follow-up adds evidence and SBOM source identity only. The cutover PR
+still requires its own CI and independent approval; it grants no deployment GO.
