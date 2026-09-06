@@ -18,7 +18,6 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001"
-EVIDENCE_TASK_DIR = ROOT / "docs/evidence/completion/ODP-OSS-LICENSE-GATE-002"
 RELEASE_BINDINGS_PATH = ROOT / "docs/security/release_bindings.json"
 NODE_MODULES = ROOT / "node_modules"
 UV_LOCK = ROOT / "uv.lock"
@@ -586,6 +585,13 @@ def generate_sbom() -> dict[str, Any]:
     return sbom
 
 
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT.resolve()))
+    except ValueError:
+        return str(path)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -607,12 +613,15 @@ def main() -> int:
 
     if args.check:
         if not target_path.exists():
-            print(f"SBOM file is missing at {target_path}", file=sys.stderr)
+            print(f"SBOM file is missing at {_display_path(target_path)}", file=sys.stderr)
             return 1
         try:
             committed = json.loads(target_path.read_text(encoding="utf-8"))
         except Exception as e:
-            print(f"Failed to read committed SBOM at {target_path}: {e}", file=sys.stderr)
+            print(
+                f"Failed to read committed SBOM at {_display_path(target_path)}: {e}",
+                file=sys.stderr,
+            )
             return 1
 
         def filter_properties(props):
@@ -647,24 +656,19 @@ def main() -> int:
 
         if not (components_match and deps_match and props_match):
             print(
-                f"Committed SBOM at {target_path.relative_to(ROOT)} is stale; "
+                f"Committed SBOM at {_display_path(target_path)} is stale; "
                 "run delivery_toolchain/security/generate_sbom.py to regenerate.",
                 file=sys.stderr,
             )
             return 1
-        print(f"SBOM at {target_path.relative_to(ROOT)} is valid and up to date.")
+        print(f"SBOM at {_display_path(target_path)} is valid and up to date.")
         return 0
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    EVIDENCE_TASK_DIR.mkdir(parents=True, exist_ok=True)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
 
     content = json.dumps(sbom, indent=2) + "\n"
     target_path.write_text(content, encoding="utf-8")
-    print(f"SBOM successfully generated at {target_path.relative_to(ROOT)}")
-    if target_path != (EVIDENCE_TASK_DIR / "sbom.json"):
-        (EVIDENCE_TASK_DIR / "sbom.json").write_text(content, encoding="utf-8")
-        print(f"Mirrored SBOM to {EVIDENCE_TASK_DIR.relative_to(ROOT)}/sbom.json")
-
+    print(f"SBOM successfully generated at {_display_path(target_path)}")
     print(f"Total components cataloged: {len(sbom['components'])}")
     print(f"SBOM Content Digest: {sbom['metadata']['properties'][2]['value']}")
     return 0
