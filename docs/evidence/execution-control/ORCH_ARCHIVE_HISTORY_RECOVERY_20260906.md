@@ -181,15 +181,38 @@ PYTHONPATH=scripts/orchestrator:scripts uv run --frozen --python 3.12 pytest \
 `ORCH_CONFIG_PATH`、`PANTHEON_CONFIG_PATH`）已指向臨時 fixture 目錄與 repo 的
 `.orchestrator/config.example.json`；未把真實 canonical 目錄當測試輸入。
 
-結果：**342 passed, 106 subtests passed**，exit code 0，8.85s。
+結果：**342 passed, 106 subtests passed**，exit code 0，9.97s。
 （上一輪同三套件為 335 passed；本輪新增 7 則回歸 → 342。）
-本輪只整批執行這一次；未執行產品全套測試。
+未執行產品全套測試。
 
-**反向驗證（確認新回歸確實咬得到缺陷，而不是在已修好的碼上空跑綠）**：
-把 `scripts/ai_status.py` 暫時還原成修正前的 commit 版本（`git show HEAD:...`）、測試檔維持本輪版本，
-單獨執行 `FinalReceiptTests` 與 `ManagedOutputCheckpointTests` 共 7 則：
-**6 failed, 1 passed**（exit code 1）。失敗的正是本輪針對 P2-1/P2-2 的 6 則；
-通過的 1 則是刻意設置的對照組（正常位置的 checkpoint 仍應成功）。
+本輪三次量測，逐項揭露（不宣稱「只跑過一次」）：
+
+| # | 內容 | 樹狀態 | 結果 |
+| --- | --- | --- | --- |
+| 1 | 上表三套件整批 | 修正後、commit 前 | exit 0，342 passed / 106 subtests，8.85s |
+| 2 | 反向驗證：`-k "FinalReceiptTests or ManagedOutputCheckpointTests"` | `scripts/ai_status.py` 暫時還原成修正前版本 | exit 1，**6 failed, 1 passed** |
+| 3 | 上表三套件整批（採信本收據的那一次） | commit `4c0bf873` | exit 0，342 passed / 106 subtests，9.97s |
+
+第 3 次是本收據引用的量測，跑在 `4c0bf873`；此後只再改動本收據這份 `.md` 文字，
+沒有任何程式或批次變動。三次都以原 terminal 的 exit code 判定，未以輸出摘要推斷。
+執行後 `git status --short` 為空，確認測試沒有改動任何被追蹤檔案。
+
+上表第 2 次的用意：綠測試不代表碰到過缺陷路徑。把 `scripts/ai_status.py` 暫時還原成修正前的
+commit 版本（`git show HEAD:...`）、測試檔維持本輪版本，單獨執行本輪新增的 7 則，
+失敗的正是針對 P2-1/P2-2 的那 6 則，通過的 1 則是刻意設置的對照組
+（`test_a_checkpoint_outside_the_managed_outputs_still_works`，正常位置的 checkpoint 仍應成功）。
+逐則結果：
+
+| 回歸 | 修正前 | 修正後 |
+| --- | --- | --- |
+| `FinalReceiptTests::test_receipt_revision_matches_the_board_the_command_leaves` | FAILED | PASSED |
+| `FinalReceiptTests::test_second_sync_failure_is_not_swallowed_as_a_warning` | FAILED | PASSED |
+| `FinalReceiptTests::test_second_sync_failure_on_a_done_batch_is_not_swallowed` | FAILED | PASSED |
+| `ManagedOutputCheckpointTests::test_checkpoint_must_not_target_the_dashboard_bundle` | FAILED | PASSED |
+| `ManagedOutputCheckpointTests::test_checkpoint_must_not_target_the_docs_site_mirror` | FAILED | PASSED |
+| `ManagedOutputCheckpointTests::test_checkpoint_must_not_alias_a_managed_output` | FAILED | PASSED |
+| `ManagedOutputCheckpointTests::test_a_checkpoint_outside_the_managed_outputs_still_works`（對照組） | PASSED | PASSED |
+
 還原後 `scripts/ai_status.py` 已復原為修正版，`git diff` 確認無殘留。
 
 覆蓋：證據不足不得合併為 done、blocked 佔位形狀（`non_dispatchable` / `waiting_for` / 依賴保留）、
