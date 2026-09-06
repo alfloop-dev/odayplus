@@ -124,7 +124,7 @@ source_receipt_sha256: 3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0
 }
 ```
 
-- **Schema 邊界說明**：`account_pools.<pool>` 於 `62dfc845` 的 `.orchestrator/config.schema.json` 僅允許 `enabled` / `max_concurrent` / `state`，且 `additionalProperties: false`；`provider` 與 `task_classes` 屬於 `agents.<slot_id>` 層而非 pool 層。上方 JSON 呈現的是本次**授權變更的差異**而非完整物件（live `claude_main` 另保留既有 `state: "healthy"`），其鍵集合合於 schema，與 §3.1 記錄的 validator 通過結果一致。
+- **Schema 邊界說明**：`account_pools.<pool>` 於 `62dfc845` 的 `.orchestrator/config.schema.json` 僅允許 `enabled` / `max_concurrent` / `state`，且 `additionalProperties: false`；本次變更中 `provider` 屬於 `agents.<slot_id>.provider`，`task_classes` 則位於 `ready_dispatcher.owner_provider_preference.task_classes`，兩者皆不屬於 pool 層。上方 JSON 呈現的是本次**授權變更的差異**而非完整物件（live `claude_main` 另保留既有 `state: "healthy"`），其鍵集合合於 schema，與 §3.1 記錄的 validator 通過結果一致。
 - **保留參數（完全未動）**：
   - Antigravity slots: 5 個實體 slot（`antigravity_slot_1` ~ `antigravity_slot_5`，account pool: `antigravity_main`，`max_concurrent: 5`）
   - Codex 總 slots: 4（真實 pool 明細為 `codex_bjoe.max_concurrent: 2`、`codex_lupin.max_concurrent: 2`；實體 slot 為 `codex_bjoe_slot_1/2`、`codex_lupin_slot_1/2`）
