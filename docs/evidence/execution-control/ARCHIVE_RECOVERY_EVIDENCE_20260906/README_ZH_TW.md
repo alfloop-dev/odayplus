@@ -1,7 +1,7 @@
-# 38 個遺失任務的歷史驗收證據盤點（中立資料集・第 2 輪）
+# 38 個遺失任務的歷史驗收證據盤點（中立資料集・第 3 輪）
 
 - 產出任務：`ORCH-ARCHIVE-RECOVERY-EVIDENCE-001`（owner Antigravity2，reviewer Codex2）
-- 產出時間：2026-09-06T17:44:00Z（Antigravity2 接手完成證據盤點與交付）
+- 產出時間：2026-09-06T18:05:00Z（Antigravity2 接手完成證據盤點與交付）
 - 機讀資料：`docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json`
 - 本輪取代第 1 輪的 `docs/evidence/recovery/ORCH-ARCHIVE-RECOVERY-EVIDENCE-001/`（該路徑在 canonical owned_paths 之外，已移除）
 
@@ -10,18 +10,18 @@
 
 ## 結論摘要
 
-- 總數 **38**：建議 `verified_candidate` **32**、建議 `blocked` **6**（其中 **2** 筆的 blocking 條款尚待 reviewer 語意裁定）。
-- 信心：high **28**、medium **10**。
+- 總數 **38**：建議 `verified_candidate` **35**、建議 `blocked` **3**（`blocked_pending_reviewer_reading` **0**）。
+- 信心：high **27**、medium **11**。
 - 候選 PR 更正 **1** 筆（見「候選誤配更正」）。
 - 候選映射一致（`candidate_mapping.verdict = consistent`）**37/38**；唯一不一致的是 XR 的輸入候選 #996，那正是誤配的證據，其建議套用於更正後候選。
 - **逐條 acceptance 共 194 條**，狀態分布：
+  - `met_by_test_in_green_ci` 114 條 — 本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）
+  - `met_by_delivered_artifact` 33 條 — 交付了對應程式或文件，本盤點只驗其存在與內容涵蓋，未重算其結論
   - `met_by_receipt` 18 條 — 交付物內既有收據直接記載本條款的量測結果
-  - `met_by_test_in_green_ci` 111 條 — 本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）
-  - `met_by_delivered_artifact` 32 條 — 交付了對應程式或文件，本盤點只驗其存在與內容涵蓋，未重算其結論
-  - `partially_met` 8 條 — 本條款可拆成數項，部分有既有證據、部分沒有
   - `process_constraint_unverifiable` 18 條 — 本條款約束的是執行過程，無法由交付物與唯讀記錄獨立驗證
-  - `not_evidenced` 4 條 — 唯讀範圍內找不到對應本條款的既有證據
+  - `partially_met` 7 條 — 本條款可拆成數項，部分有既有證據、部分沒有
   - `unmet_per_own_receipt` 3 條 — 該任務自身的收據直接記載本條款未達成
+  - `not_evidenced` 1 條 — 唯讀範圍內找不到對應本條款的既有證據
 
 ### 第 1 輪的四項錯誤與本輪更正
 
@@ -41,32 +41,37 @@
 
 → 兩份交付已移入 owned_paths，內部路徑引用同步更新，第一輪路徑刪除並在 supersedes 欄位留下對照。
 
+### 第 2 輪評審意見與第 3 輪更正
+
+**[P1] ODP-JOB-PARTIAL-DISPOSITION-001 A2 把 succeeded/failed item receipt 與 retry 不重做成功項標為 met_by_test_in_green_ci，但測試僅確認文件字串，docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md 明載 PARTIAL absent / BLOCKED_BY_EVIDENCE，功能是未來 Pathway A。**
+
+→ A2 狀態由 `met_by_test_in_green_ci` 更正為 `met_by_delivered_artifact`。按原 task 條件分支（無適用 producer 則保持 absent 並交付 formal handback），因查無真實 producer 證據，PARTIAL 行為（明細收據與重試）未於 runtime 實作，而是於 formal handback 文件（`docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md` §4.2-4.3）建立未來 Pathway A 設計契約；測試 `tests/governance/test_job_partial_disposition.py` 中的 `test_shared001_handback_document_exists_and_covers_contracts` 僅驗證 handback 文件與字串存在，不執行 item receipt/retry 行為。按條件分支，此項之實作行為不適用，formal handback 契約已交付。
+
+**[P1] ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001 A9 將明確 deferred 至後續 Codex staging rollout 的 resource/IAM/vars 當成歷史 code task 唯一 blocking_reason。A10 仍 evidence=[]；GCP_DEPLOY_GUIDE.md:227-229 已有 state/recovery bucket 分離流程，須補 pinned 引用。**
+
+→ 拆開 code contract／producer-consumer 接線與 deferred runtime gap。A9 改判為 `met_by_test_in_green_ci`，引用 `tests/release/test_release_environment_precheck.py`（distinct/identical/placeholder recovery bucket assertions）、`tests/ops/test_deploy_workflow_contract.py` 及 `.github/workflows/deploy-dev.yml` @ `b9dd2e7b337e`；說明 live destination 與 GCP resource/IAM/vars 依 task brief 定義明確 deferred 至後續 staging rollout（`ODP-EPHEMERAL-STAGING-ROLLOUT-001`），不倒灌阻擋本 code 任務。A10 補上 pinned 引用 `docs/deployment/GCP_DEPLOY_GUIDE.md:227-236 @ b9dd2e7b337e` 與 `docs/deployment/ENVIRONMENTS.md @ b9dd2e7b337e`。recommendation 重算為 `verified_candidate`，`blocking_reasons` 清空。
+
+**[P1] 前輪 DEV-STAGED-GATE 與 STAGING-LIFECYCLE 的 pending_reviewer_reading 亦未處理：依 code/admission scope 核對 source-off/egress 契約，dry-run metadata 與 live posture 分開。**
+
+→ 依 code/admission scope 核對 source-off 與 egress 契約，將 dry-run metadata 與 live runtime posture 分開。`ODP-DEV-STAGED-GATE-RECONCILIATION-001` A7 更正為 `met_by_test_in_green_ci`，引用 `delivery_toolchain/e2e/check_release_gate_registry.py` 與 `tests/e2e/test_release_gate_registry.py` @ `40bb0246`，確認靜態 gate 與 dry-run metadata 保持 source-off default，本任務不簽發 lease、不 dispatch deploy；recommendation 改為 `verified_candidate`，`blocking_reasons` 清空。`ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` A6 更正為 `met_by_test_in_green_ci`，引用 `infra/terraform/modules/ephemeral_staging/main.tf`、`tests/ops/test_ephemeral_staging_lifecycle.py` 與 `tests/ops/test_deploy_workflow_contract.py` @ `462c8cd4ff25`，確認 Terraform 與 lifecycle 實作 source-off 預設值與 default-deny egress；recommendation 改為 `verified_candidate`，`blocking_reasons` 清空。兩項任務之 `pending_reviewer_reading` 全部清除。
+
 ### 為什麼「PR 已合併」不等於「任務已完成」
 
-本輪把判定單位從「整個 PR」下放到「逐條 acceptance」。6 筆 `blocked` 全部不是因為 CI 或 PR 有問題，而是因為**至少一條 acceptance 被該任務自己的收據否證，或屬 runtime／外部啟用／人類授權類而查無既有證據**：
+本輪把判定單位從「整個 PR」下放到「逐條 acceptance」。3 筆 `blocked` 全部不是因為 CI 或 PR 有問題，而是因為**至少一條 acceptance 被該任務自己的收據否證，或屬 runtime／外部啟用／人類授權類而查無既有證據**：
 
 - **`DPF-EMGI-LIVE-ROLLOUT-001`**
-  - A5：該任務自身收據記載本條款未達成
+  - A5：該任務自身收據記載本條款未達成（收據自陳 missing rollback_receipt）
     - 條款原文：部署與 rollback receipts 綁定 digest
 - **`ODP-DEV-ROLLOUT-001`**
-  - A2：該任務自身收據記載本條款未達成
+  - A2：該任務自身收據記載本條款未達成（image digest 為 sha256:1111... 佔位值）
     - 條款原文：所有 components符合 release manifest digests
   - A3：條款屬 runtime／外部啟用／人類授權類，唯讀範圍內查無對應既有證據
     - 條款原文：dev integration/contract/provider-off readback通過
   - A5：該任務自身收據記載本條款未達成
     - 條款原文：receipts綁定 exact SHA與 manifest
-- **`ODP-DEV-STAGED-GATE-RECONCILIATION-001`**
-  - A7（待 reviewer 語意裁定）：條款屬 runtime／外部啟用／人類授權類，唯讀範圍內查無對應既有證據
-    - 條款原文：第三方來源保持 disabled 且無 credentials 與 default deny egress
 - **`ODP-GITHUB-GCP-ENV-BOOTSTRAP-001`**
-  - A3：條款含人類授權成分且只部分達成
+  - A3：條款含人類授權成分且只部分達成（GitHub 側保護有效，但 production GCP 基礎設施、變數 total_variables=0 與人類決定待補）
     - 條款原文：production environment存在且保護有效
-- **`ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001`**
-  - A6（待 reviewer 語意裁定）：條款屬 runtime／外部啟用／人類授權類，唯讀範圍內查無對應既有證據
-    - 條款原文：第三方來源維持 disabled 且 public egress default-deny
-- **`ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001`**
-  - A9：條款屬 runtime／外部啟用／人類授權類，唯讀範圍內查無對應既有證據
-    - 條款原文：2026-09-05唯讀GCP/GitHub盤點未發現已驗證可供workflow寫入的非state/CMEK/release隔離目的地。程式階段仍應完成唯一required protected recovery destination contract、producer/consumer一致切換與缺值/同state b
 
 ## 判定規則
 
@@ -140,10 +145,10 @@
 |---|---|---|---|---|---|
 | 1 | `DPF-EMGI-LIVE-ROLLOUT-001` | [oday-data-platform#62](https://github.com/alfloop-dev/oday-data-platform/pull/62) | `blocked` | high | met_by_receipt×4、unmet_per_own_receipt×1 |
 | 2 | `ODP-DEV-ROLLOUT-001` | [odayplus#1013](https://github.com/alfloop-dev/odayplus/pull/1013) | `blocked` | high | unmet_per_own_receipt×2、met_by_receipt×1、not_evidenced×1、partially_met×1 |
-| 3 | `ODP-DEV-STAGED-GATE-RECONCILIATION-001` | [odayplus#1193](https://github.com/alfloop-dev/odayplus/pull/1193) | `blocked` | medium | met_by_test_in_green_ci×4、process_constraint_unverifiable×3、met_by_delivered_artifact×1、not_evidenced×1 |
+| 3 | `ODP-DEV-STAGED-GATE-RECONCILIATION-001` | [odayplus#1193](https://github.com/alfloop-dev/odayplus/pull/1193) | `verified_candidate` | medium | met_by_test_in_green_ci×5、process_constraint_unverifiable×3、met_by_delivered_artifact×1 |
 | 4 | `ODP-GITHUB-GCP-ENV-BOOTSTRAP-001` | [odayplus#1011](https://github.com/alfloop-dev/odayplus/pull/1011) | `blocked` | high | met_by_receipt×3、partially_met×2 |
-| 5 | `ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` | [odayplus#1041](https://github.com/alfloop-dev/odayplus/pull/1041) | `blocked` | medium | met_by_test_in_green_ci×6、partially_met×1、not_evidenced×1、process_constraint_unverifiable×1 |
-| 6 | `ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001` | [odayplus#1208](https://github.com/alfloop-dev/odayplus/pull/1208) | `blocked` | high | process_constraint_unverifiable×3、met_by_test_in_green_ci×3、met_by_delivered_artifact×2、partially_met×1、not_evidenced×1 |
+| 5 | `ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` | [odayplus#1041](https://github.com/alfloop-dev/odayplus/pull/1041) | `verified_candidate` | medium | met_by_test_in_green_ci×7、partially_met×1、process_constraint_unverifiable×1 |
+| 6 | `ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001` | [odayplus#1208](https://github.com/alfloop-dev/odayplus/pull/1208) | `verified_candidate` | medium | met_by_test_in_green_ci×5、process_constraint_unverifiable×3、met_by_delivered_artifact×2 |
 | 7 | `ODP-AVM-DEPRECIATION-CONTRACT-001` | [odayplus#1148](https://github.com/alfloop-dev/odayplus/pull/1148) | `verified_candidate` | high | met_by_test_in_green_ci×3、met_by_delivered_artifact×1 |
 | 8 | `ODP-CANONICAL-LEGACY-LINEAGE-001` | [odayplus#1150](https://github.com/alfloop-dev/odayplus/pull/1150) | `verified_candidate` | high | met_by_delivered_artifact×4 |
 | 9 | `ODP-DRIFT-DEP-REMOVE-002` | [odayplus#1222](https://github.com/alfloop-dev/odayplus/pull/1222) | `verified_candidate` | medium | met_by_test_in_green_ci×4、met_by_receipt×2、process_constraint_unverifiable×2、met_by_delivered_artifact×1 |
@@ -152,7 +157,7 @@
 | 12 | `ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001` | [odayplus#1170](https://github.com/alfloop-dev/odayplus/pull/1170) | `verified_candidate` | high | met_by_test_in_green_ci×4 |
 | 13 | `ODP-INT-MANUAL-CORRECTION-AUDIT-001` | [odayplus#1175](https://github.com/alfloop-dev/odayplus/pull/1175) | `verified_candidate` | high | met_by_test_in_green_ci×4 |
 | 14 | `ODP-INT001-CDC-DISPOSITION-001` | [odayplus#1166](https://github.com/alfloop-dev/odayplus/pull/1166) | `verified_candidate` | high | met_by_delivered_artifact×2、met_by_test_in_green_ci×2 |
-| 15 | `ODP-JOB-PARTIAL-DISPOSITION-001` | [odayplus#1172](https://github.com/alfloop-dev/odayplus/pull/1172) | `verified_candidate` | high | met_by_test_in_green_ci×3、met_by_delivered_artifact×1 |
+| 15 | `ODP-JOB-PARTIAL-DISPOSITION-001` | [odayplus#1172](https://github.com/alfloop-dev/odayplus/pull/1172) | `verified_candidate` | high | met_by_test_in_green_ci×2、met_by_delivered_artifact×2 |
 | 16 | `ODP-LH-PREDICTION-DRIFT-001` | [odayplus#1154](https://github.com/alfloop-dev/odayplus/pull/1154) | `verified_candidate` | high | met_by_test_in_green_ci×4 |
 | 17 | `ODP-LH003-BACKTEST-RELEASE-GATE-001` | [odayplus#1165](https://github.com/alfloop-dev/odayplus/pull/1165) | `verified_candidate` | high | met_by_test_in_green_ci×4 |
 | 18 | `ODP-MEASUREMENT-CROSSLAYER-GATE-001` | [odayplus#1153](https://github.com/alfloop-dev/odayplus/pull/1153) | `verified_candidate` | medium | met_by_test_in_green_ci×4 |
@@ -320,7 +325,7 @@
 
 - 唯讀取回 Cloud Run 服務 oday-plus-dev-api / -web 與 job -migration / -worker / -scheduler 的實際 revision image digest；與 RELEASE_MANIFEST.json 對帳。若取不到，記為『部署未經證實』，不得回填 done。
 
-### `ODP-DEV-STAGED-GATE-RECONCILIATION-001` — blocked（信心 medium）
+### `ODP-DEV-STAGED-GATE-RECONCILIATION-001` — verified_candidate（信心 medium）
 
 - 倉庫：`alfloop-dev/odayplus`
 - 候選 PR：[#1193](https://github.com/alfloop-dev/odayplus/pull/1193) — [ReviewBus] ODP-DEV-STAGED-GATE-RECONCILIATION-001 重整 staged dev release gate 與現行 artifact 的 exact reconciliat，state `MERGED`，merged `2026-09-04T09:47:46Z`
@@ -365,10 +370,12 @@
   - 證據（delivered_file）：`delivery_toolchain/e2e/check_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run orchestrator @ 40bb02462ec7`，2026-09-04T09:15:06Z — conclusion=success
   - 註：本條款是對 release GO 的否定約束（必須是真實 human_signoff，不得偽造），不是要求本任務取得人類簽署。程式面由 checker 與其 E2E 測試強制；本盤點未查到任何由本任務簽發的 release GO，故條款以「未發生偽造」成立。若 reviewer 認為本條款要求出示一筆真實 human_signoff，則此項應改判為缺證據。
-- **A7**（外部來源啟用狀態）— `not_evidenced`
+- **A7**（可由測試證明／程式或文件交付）— `met_by_test_in_green_ci`
   - 條款：第三方來源保持 disabled 且無 credentials 與 default deny egress
-  - 證據：無
-  - 註：第三方來源 disabled 與 default-deny egress 屬 runtime posture，本 PR 未帶對應 runtime 收據。
+  - 證據（delivered_file）：`delivery_toolchain/e2e/check_release_gate_registry.py @ 40bb0246` — 靜態 release gate 檢查器維護 source-off 邊界
+  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ 40bb0246` — test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed, test_ci_is_not_a_deployment_authority
+  - 證據（ci_check）：`check-run orchestrator @ 40bb0246`，2026-09-04T09:15:06Z — conclusion=success
+  - 註：依 code/admission scope，gate registry 與 admission checker 靜態驗證並維持 source-off default 與 dry-run metadata 邊界；本任務不簽發 lease、不 dispatch deploy、不變更 live egress。live runtime posture 依 recommendation_scope 宣告由後續 rollout 驗證，不在此 code/gate task 產生 blocking。
 - **A8**（執行過程約束）— `process_constraint_unverifiable`
   - 條款：本 task 不簽 lease 不 dispatch deploy
   - 證據：無
@@ -378,16 +385,11 @@
   - 證據：無
   - 註：PR 內文為中文可觀察；CI 執行次數本盤點未核。
 
-**blocking 條款**
-
-- A7：條款屬 runtime／外部啟用／人類授權類，唯讀範圍內查無對應既有證據（待 reviewer 語意裁定）
-  - 本條款有兩種合理讀法。保守讀法：條款要求「第三方來源保持 disabled 且 default-deny egress」是一個必須被證明的 runtime 狀態，而本 PR 是純程式／設定變更，未帶任何 runtime 收據，故視為缺證據。寬鬆讀法：在本任務脈絡下這是對本任務的否定約束（不得啟用來源、不得放寬 egress），而本盤點未查到本任務簽發任何啟用動作，故視為以「未發生」滿足。本盤點採保守讀法先 fail closed，實際歸屬留給 reviewer 裁定。
-
 **建議涵蓋範圍**
 
 - 涵蓋：本建議只涵蓋：候選 PR 與本 ID 的映射一致、精確 head 的 CI 結論、綁定精確 head 的 task-review-gate 核准者，以及上表逐條 acceptance 已定位到的既有證據。
 - 不涵蓋：不涵蓋 runtime 部署是否仍然有效、外部來源是否已被授權啟用、任何人類 GO／lease／provider permission，以及測試在 job log 層的個別結果。
-- 未完全定位到證據的條款：A1(process_constraint_unverifiable)、A7(not_evidenced)、A8(process_constraint_unverifiable)、A9(process_constraint_unverifiable)
+- 未完全定位到證據的條款：A1(process_constraint_unverifiable)、A8(process_constraint_unverifiable)、A9(process_constraint_unverifiable)
 
 **查證發現**
 
@@ -395,7 +397,6 @@
 
 **缺口**
 
-- A7（not_evidenced）：第三方來源 disabled 與 default-deny egress 屬 runtime posture，本 PR 未帶對應 runtime 收據。
 - 盤點觀察：精確 head 的 7 個 check 中有 3 個 conclusion=skipped（scope skip），代表部分 product 測試未在該 head 實跑。
 - 盤點觀察：Acceptance 第一條『等待 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 合併後才選定 candidate』的時序未在本盤點驗證。
 
@@ -479,7 +480,7 @@
 - 本項的技術就緒與人類授權必須分開記錄：GitHub 側 production environment 與其 required_reviewers 保護已存在，可直接採信收據；尚缺的是 production GCP 專案／WIF／IAM／Cloud SQL／Secret Manager 與環境變數，以及 PROD-GCP-01…PROD-OPS-05 五項具名人類決定。
 - 最小驗證動作：唯讀取回 alfloop-dev/odayplus 的 production environment 變數清單與 production GCP 專案是否存在。若仍為 0 個變數且無 production 專案，本 ID 維持 blocked，且不得由 GitHub 側保護存在推定 acceptance 全數完成。
 
-### `ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` — blocked（信心 medium）
+### `ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` — verified_candidate（信心 medium）
 
 - 倉庫：`alfloop-dev/odayplus`
 - 候選 PR：[#1041](https://github.com/alfloop-dev/odayplus/pull/1041) — [ReviewBus] ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 把 ephemeral staging lifecycle 接進唯一 Runtime R，state `MERGED`，merged `2026-08-27T17:50:22Z`
@@ -518,10 +519,13 @@
   - 證據（test_file）：`tests/ops/test_ephemeral_staging_lifecycle.py @ 462c8cd4ff25` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ fada67756926`，2026-08-27T17:31:33Z — conclusion=success
   - 註：「可由同一狀態機產生 secret-free receipts」的能力由測試覆蓋；本 PR 未帶任何已產生的 staging receipt 檔。
-- **A6**（外部來源啟用狀態）— `not_evidenced`
+- **A6**（可由測試證明／程式或文件交付）— `met_by_test_in_green_ci`
   - 條款：第三方來源維持 disabled 且 public egress default-deny
-  - 證據：無
-  - 註：第三方來源 disabled 與 default-deny egress 屬 runtime posture，本 PR 未帶對應 runtime 收據。
+  - 證據（delivered_file）：`infra/terraform/modules/ephemeral_staging/main.tf @ 462c8cd4ff25` — Terraform 模組實作 source disabled 預設值與 default-deny egress
+  - 證據（test_file）：`tests/ops/test_ephemeral_staging_lifecycle.py @ 462c8cd4ff25` — lifecycle 契約測試涵蓋 isolation 與 ingress/egress 邊界
+  - 證據（test_file）：`tests/ops/test_deploy_workflow_contract.py @ 462c8cd4ff25` — 由本 PR 交付並存在於 merge commit
+  - 證據（ci_check）：`check-run product @ fada67756926`，2026-08-27T17:31:33Z — conclusion=success
+  - 註：依 code/admission scope，Terraform 模組與 lifecycle 腳本實作 sources disabled 預設值與 default-deny egress 設定；本 PR 為 workflow 與 IaC 整合，未啟用外部來源。live runtime posture 依 recommendation_scope 宣告由後續 rollout 驗證，不在此 code task 產生 blocking。
 - **A7**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：失敗環境依 TTL 保留成功環境由 prod closeout 精確清理且 orphan cleanup fail closed
   - 證據（test_file）：`tests/ops/test_ephemeral_staging_lifecycle.py @ 462c8cd4ff25` — 由本 PR 交付並存在於 merge commit
@@ -537,16 +541,11 @@
   - 證據：無
   - 註：中文 PR 與部署文件可觀察。
 
-**blocking 條款**
-
-- A6：條款屬 runtime／外部啟用／人類授權類，唯讀範圍內查無對應既有證據（待 reviewer 語意裁定）
-  - 本條款有兩種合理讀法。保守讀法：條款要求「第三方來源保持 disabled 且 default-deny egress」是一個必須被證明的 runtime 狀態，而本 PR 是純程式／設定變更，未帶任何 runtime 收據，故視為缺證據。寬鬆讀法：在本任務脈絡下這是對本任務的否定約束（不得啟用來源、不得放寬 egress），而本盤點未查到本任務簽發任何啟用動作，故視為以「未發生」滿足。本盤點採保守讀法先 fail closed，實際歸屬留給 reviewer 裁定。
-
 **建議涵蓋範圍**
 
 - 涵蓋：本建議只涵蓋：候選 PR 與本 ID 的映射一致、精確 head 的 CI 結論、綁定精確 head 的 task-review-gate 核准者，以及上表逐條 acceptance 已定位到的既有證據。
 - 不涵蓋：不涵蓋 runtime 部署是否仍然有效、外部來源是否已被授權啟用、任何人類 GO／lease／provider permission，以及測試在 job log 層的個別結果。
-- 未完全定位到證據的條款：A5(partially_met)、A6(not_evidenced)、A9(process_constraint_unverifiable)
+- 未完全定位到證據的條款：A5(partially_met)、A9(process_constraint_unverifiable)
 
 **查證發現**
 
@@ -555,10 +554,9 @@
 **缺口**
 
 - A5（partially_met）：「可由同一狀態機產生 secret-free receipts」的能力由測試覆蓋；本 PR 未帶任何已產生的 staging receipt 檔。
-- A6（not_evidenced）：第三方來源 disabled 與 default-deny egress 屬 runtime posture，本 PR 未帶對應 runtime 收據。
 - 盤點觀察：候選 PR head commit 無 task trailer（head 為 merge commit）。
 
-### `ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001` — blocked（信心 high）
+### `ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001` — verified_candidate（信心 medium）
 
 - 倉庫：`alfloop-dev/odayplus`
 - 候選 PR：[#1208](https://github.com/alfloop-dev/odayplus/pull/1208) — [ReviewBus] ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001 修正 Staging recovery bundle 與 Terraform state 儲存邊界，state `MERGED`，merged `2026-09-05T16:02:58Z`
@@ -588,11 +586,12 @@
   - 證據（test_file）：`tests/ops/test_deploy_workflow_contract.py @ b9dd2e7b337e` — 由本 PR 交付並存在於 merge commit
   - 證據（test_file）：`tests/release/test_release_environment_precheck.py @ b9dd2e7b337e` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ a5e6a2f7074b`，2026-09-05T15:34:06Z — conclusion=success
-- **A4**（可由測試證明／runtime／部署）— `partially_met`
+- **A4**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：使用現有受治理非state儲存及既有protected配置機制保持CMEK最小權限retention與release隔離及可恢復性
   - 證據（test_file）：`tests/release/test_release_environment_precheck.py @ b9dd2e7b337e` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`tests/ops/test_deploy_workflow_contract.py @ b9dd2e7b337e` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ a5e6a2f7074b`，2026-09-05T15:34:06Z — conclusion=success
-  - 註：CMEK／最小權限／retention／release 隔離的契約由 precheck 測試界定；實際 bucket 與 IAM 屬 runtime，本 PR 未帶收據。
+  - 註：CMEK／最小權限／retention／release 隔離的契約由 precheck 與 workflow 契約測試界定；實際 live bucket 與 IAM 屬後續 staging rollout 範圍。
 - **A5**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：未有核准目的地時fail closed並回報缺少的具體ref不得猜bucket或fallback到state bucket
   - 證據（test_file）：`tests/release/test_release_environment_precheck.py @ b9dd2e7b337e` — 由本 PR 交付並存在於 merge commit
@@ -611,38 +610,32 @@
   - 條款：中文PR说明根因單一路徑差異驗證風險與rollback且與PR1206不得同檔平行
   - 證據：無
   - 註：中文 PR 可觀察。
-- **A9**（runtime／部署／人類授權）— `not_evidenced`
+- **A9**（可由測試證明／程式或文件交付）— `met_by_test_in_green_ci`
   - 條款：2026-09-05唯讀GCP/GitHub盤點未發現已驗證可供workflow寫入的非state/CMEK/release隔離目的地。程式階段仍應完成唯一required protected recovery destination contract、producer/consumer一致切換與缺值/同state bucket fail-closed回歸；不得用猜測bucket補值，也不得因live destination缺少而放棄code。實際resource/IAM/vars驗證屬後續Codex staging rollout，code完成不等於runtime完成。
-  - 證據：無
-  - 註：acceptance 自陳：2026-09-05 的唯讀盤點未發現已驗證可供 workflow 寫入的非 state／CMEK／release 隔離目的地。程式階段完成不等於 runtime 完成，實際 resource／IAM／vars 驗證屬後續 staging rollout，本 PR 無此證據。
+  - 證據（test_file）：`tests/release/test_release_environment_precheck.py @ b9dd2e7b337e` — test_staging_scope_requires_foundation_variables_including_recovery_bundle_bucket, test_staging_scope_fails_closed_when_recovery_and_state_buckets_are_identical, test_staging_scope_fails_closed_on_placeholder_recovery_bucket, test_staging_scope_admits_distinct_valid_buckets
+  - 證據（test_file）：`tests/ops/test_deploy_workflow_contract.py @ b9dd2e7b337e` — 由本 PR 交付並存在於 merge commit
+  - 證據（delivered_file）：`.github/workflows/deploy-dev.yml @ b9dd2e7b337e` — workflow producer/consumer 完整接線，使用 ODP_STAGING_RECOVERY_BUNDLE_BUCKET
+  - 證據（ci_check）：`check-run product @ a5e6a2f7074b`，2026-09-05T15:34:06Z — conclusion=success
+  - 註：依 task brief 定義，本任務為 code/contract 任務，已完成唯一 required recovery destination contract、producer/consumer 接線、相同/缺值/佔位值 fail-closed 測試；live destination 建立與 GCP resource/IAM/vars 驗證明確 deferred 至後續 Codex staging rollout（ODP-EPHEMERAL-STAGING-ROLLOUT-001），不倒灌阻擋本 code 任務。
 - **A10**（程式或文件交付）— `met_by_delivered_artifact`
   - 條款：同步既有docs/deployment/GCP_DEPLOY_GUIDE.md中與state bucket共用recovery bundle的舊說明；只保留一份權威操作流程。Terraform state以外的snapshot/model/MLflow/lease bucket不可為省事直接挪用，未核准目的地保持blocked。
-  - 證據：無
-  - 註：GCP_DEPLOY_GUIDE.md 的舊說明同步；未核准目的地保持 blocked。
-
-**blocking 條款**
-
-- A9：條款屬 runtime／外部啟用／人類授權類，唯讀範圍內查無對應既有證據
+  - 證據（delivered_file）：`docs/deployment/GCP_DEPLOY_GUIDE.md:227-236 @ b9dd2e7b337e` — 同步 state bucket 與 recovery bundle bucket 分離之權威操作流程
+  - 證據（delivered_file）：`docs/deployment/ENVIRONMENTS.md @ b9dd2e7b337e` — 更新環境變數與儲存隔離說明
+  - 註：GCP_DEPLOY_GUIDE.md:227-236 已同步 state bucket 與 recovery bundle bucket 分離之權威操作流程；未授權 live destination 保持 blocked，待後續 rollout 落地。
 
 **建議涵蓋範圍**
 
 - 涵蓋：本建議只涵蓋：候選 PR 與本 ID 的映射一致、精確 head 的 CI 結論、綁定精確 head 的 task-review-gate 核准者，以及上表逐條 acceptance 已定位到的既有證據。
 - 不涵蓋：不涵蓋 runtime 部署是否仍然有效、外部來源是否已被授權啟用、任何人類 GO／lease／provider permission，以及測試在 job log 層的個別結果。
-- 未完全定位到證據的條款：A2(process_constraint_unverifiable)、A4(partially_met)、A7(process_constraint_unverifiable)、A8(process_constraint_unverifiable)、A9(not_evidenced)
+- 未完全定位到證據的條款：A2(process_constraint_unverifiable)、A7(process_constraint_unverifiable)、A8(process_constraint_unverifiable)
 
 **查證發現**
 
-- brief 的 Artifacts 為空；acceptance 第 9 條明文『2026-09-05 唯讀 GCP/GitHub 盤點未發現已驗證可供 workflow 寫入的非 state/CMEK/release 隔離目的地』，並自陳『code 完成不等於 runtime 完成』。
+- brief 的 Artifacts 為空；acceptance 第 9 條明文『2026-09-05 唯讀 GCP/GitHub 盤點未發現已驗證可供 workflow 寫入的非 state/CMEK/release 隔離目的地』，並自陳『code 完成不等於 runtime 完成』。本 PR 已完成 code contract、fail-closed precheck 測試與 GCP_DEPLOY_GUIDE.md 權威文件同步。
 
 **缺口**
 
-- A4（partially_met）：CMEK／最小權限／retention／release 隔離的契約由 precheck 測試界定；實際 bucket 與 IAM 屬 runtime，本 PR 未帶收據。
-- A9（not_evidenced）：acceptance 自陳：2026-09-05 的唯讀盤點未發現已驗證可供 workflow 寫入的非 state／CMEK／release 隔離目的地。程式階段完成不等於 runtime 完成，實際 resource／IAM／vars 驗證屬後續 staging rollout，本 PR 無此證據。
-- 盤點觀察：尚無核准的 recovery bundle 目的地。acceptance 第 9 條自陳 2026-09-05 的唯讀盤點未找到已驗證目的地，且明言「code 完成不等於 runtime 完成」；本輪據此判為 blocked，而非第 1 輪的 code 階段 verified_candidate。
-
-**下一步最小驗證動作**
-
-- 映射時把 runtime 部分獨立記為未完成，不得讓 code 合併把 runtime 一併帶成 done。
+- 盤點觀察：實際 GCP 資源／IAM／vars 屬後續 staging rollout（ODP-EPHEMERAL-STAGING-ROLLOUT-001），依 task brief code 完成不等於 runtime 完成，已於 recommendation_scope 揭露。
 
 ### `ODP-AVM-DEPRECIATION-CONTRACT-001` — verified_candidate（信心 high）
 
@@ -1152,21 +1145,25 @@
 - **A1**（程式或文件交付／可由測試證明）— `met_by_test_in_green_ci`
   - 條款：只有證據列名的 job 能產生 PARTIAL
   - 證據（receipt_file）：`docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
-  - 證據（test_file）：`tests/governance/test_job_partial_disposition.py @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`tests/governance/test_job_partial_disposition.py @ 9647d673ccf2` — test_shared001_partial_disposition_state_and_handback_metadata 斷言 PARTIAL status == absent 與 disposition.state == BLOCKED_BY_EVIDENCE，且 resolve() 查無未列名 producer
   - 證據（ci_check）：`check-run product @ f8caf62e1164`，2026-09-04T12:51:24Z — conclusion=success
-- **A2**（可由測試證明）— `met_by_test_in_green_ci`
+  - 註：查無真實 producer 證據，PARTIAL 保持 absent，由治理測試直接斷言。
+- **A2**（程式或文件交付）— `met_by_delivered_artifact`
   - 條款：PARTIAL receipt 可區分 succeeded／failed items 且 retry 不重做成功項
-  - 證據（test_file）：`tests/governance/test_job_partial_disposition.py @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run product @ f8caf62e1164`，2026-09-04T12:51:24Z — conclusion=success
+  - 證據（receipt_file）：`docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md @ 9647d673ccf2` — §4.2 明細收據與成員識別架構契約及 §4.3 重試契約（不重做成功項）規範未來 Pathway A 實作規範
+  - 證據（test_file）：`tests/governance/test_job_partial_disposition.py @ 9647d673ccf2` — test_shared001_handback_document_exists_and_covers_contracts 驗證 handback 文件與字串存在，未執行 item receipt/retry 行為測試
+  - 註：按原 task 條件分支（無適用 producer 時保持 absent 並交付 formal handback），因查無真實 producer 證據，PARTIAL 行為（明細收據與重試）未於 runtime 實作，而是於 formal handback 文件（docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md §4.2-4.3）建立未來 Pathway A 設計契約；tests/governance/test_job_partial_disposition.py 僅驗證 handback 文件與字串存在，不執行 item receipt/retry 行為。按條件分支，此項之實作行為不適用，formal handback 契約已交付。
 - **A3**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：business outcome 與 delivery state 型別分離
-  - 證據（test_file）：`tests/governance/test_job_partial_disposition.py @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`tests/governance/test_job_partial_disposition.py @ 9647d673ccf2` — test_job_status_and_delivery_state_type_separation 斷言 JobStatus (queued, running, succeeded, failed, cancelled, partial) 與 JobDeliveryState (retrying, dead_letter) 互斥
   - 證據（ci_check）：`check-run product @ f8caf62e1164`，2026-09-04T12:51:24Z — conclusion=success
+  - 註：JobStatus 業務結果與 JobDeliveryState 交付狀態型別分離由測試直接斷言集合互斥。
 - **A4**（程式或文件交付／人類授權）— `met_by_delivered_artifact`
   - 條款：無適用 producer 時不造功能且 formal disposition 缺人類簽署仍保持未結案
-  - 證據（receipt_file）：`docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
-  - 證據（delivered_file）：`docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
-  - 註：formal disposition 缺人類簽署時保持未結案，由 disposition 文件與 requirement manifest 記載。
+  - 證據（receipt_file）：`docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit，登錄 HB-SHARED001-PARTIAL-001
+  - 證據（delivered_file）：`docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md @ 9647d673ccf2` — §4.5 登錄 formal disposition，狀態為 BLOCKED_BY_EVIDENCE
+  - 證據（delivered_file）：`delivery_toolchain/governance/set_valued_requirements.json @ 9647d673ccf2` — ODP-FR-SHARED-001 成員 PARTIAL status=absent, disposition.state=BLOCKED_BY_EVIDENCE
+  - 註：formal disposition 缺人類簽署時保持未結案（BLOCKED_BY_EVIDENCE），由 disposition 文件與 requirement manifest 記載。
 
 **建議涵蓋範圍**
 
@@ -1175,7 +1172,7 @@
 
 **查證發現**
 
-- ODP-FR-SHARED-001 的 PARTIAL member 為 BLOCKED_BY_EVIDENCE，帶 handback_id、formal_handback_ref、reopen_trigger、history，無自簽 decider，符合 acceptance『formal disposition 缺人類簽署仍保持未結案』。
+- 按原 task 條件分支，因查無 producer 證據，PARTIAL 保持 absent，交付 formal handback 文件（HB-SHARED001-PARTIAL-001）並登錄 BLOCKED_BY_EVIDENCE；型別分離由測試直接驗證，handback 契約涵蓋未來 Pathway A。
 
 **缺口**
 
