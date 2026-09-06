@@ -2291,12 +2291,20 @@ def _run_recovery(
     status=None,
     busy_task_ids=frozenset(),
     commit_ok=True,
+    timeline=None,
 ):
     """Drive the recovery over one task and report what it did.
 
     `reads` is the sequence of `gh pr view` answers: a dict is a JSON payload,
     a str is raw stdout, and None makes `gh` fail. The last entry repeats, so a
     single-element list means both reads agree.
+
+    `ci` and `ci_error` take the same shape: a bare answer applies to every CI
+    read, and a list walks the reads in order with its last entry repeating, so
+    a two-entry list is "the cached verdict said one thing and the live one says
+    another". `timeline`, if given, collects `("gh", selector)` and
+    `("ci", max_age_seconds)` in call order, which is how the ordering of the
+    two PR reads around the authorising CI read is asserted.
     """
     import github_bus
 
@@ -2319,9 +2327,11 @@ def _run_recovery(
 
     remaining = list(reads if reads is not None else [_pr_facts()])
     gh_calls: list[list[str]] = []
+    events = timeline if timeline is not None else []
 
     def fake_run_gh(args, **_kwargs):
         gh_calls.append(list(args))
+        events.append(("gh", args[2] if len(args) > 2 else ""))
         answer = remaining.pop(0) if len(remaining) > 1 else (remaining[0] if remaining else {})
         if answer is None:
             raise github_bus.GitHubBusOffline("gh could not reach api.github.com")
@@ -2330,10 +2340,15 @@ def _run_recovery(
             args=["gh", *args], returncode=0, stdout=stdout, stderr=""
         )
 
-    def fake_ci(_task_id, *_args, **_kwargs):
-        if ci_error is not None:
-            raise ci_error
-        return ci
+    ci_answers = list(ci) if isinstance(ci, list) else [ci]
+    ci_errors = list(ci_error) if isinstance(ci_error, list) else [ci_error]
+
+    def fake_ci(_task_id, *_args, **kwargs):
+        events.append(("ci", kwargs.get("max_age_seconds")))
+        error = ci_errors.pop(0) if len(ci_errors) > 1 else ci_errors[0]
+        if error is not None:
+            raise error
+        return ci_answers.pop(0) if len(ci_answers) > 1 else ci_answers[0]
 
     logged: list[dict] = []
     record = lambda _cfg, event: logged.append(event)  # noqa: E731
@@ -2462,6 +2477,76 @@ def test_recovery_declines_when_the_facts_change_between_the_two_reads() -> None
         assert task["status"] == "review"
         assert dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD not in task
         assert len(gh_calls) == 2
+
+
+def test_the_authorising_ci_read_is_taken_fresh_and_after_the_first_pr_read() -> None:
+    """The premise of this repair cannot be served from a cache.
+
+    `task_pr_ci_status` answers from a ten-second cache by default, so the
+    verdict that opened this lane may describe a moment before the PR reads
+    that follow it. That first read stays -- it is the cheap way to drop the
+    tasks that are not this shape -- but the transition is authorised by a
+    second read taken with the cache bypassed, after the PR facts and before
+    they are confirmed unchanged.
+    """
+    task = _conflicted_review_task()
+    timeline: list[tuple[str, object]] = []
+
+    changed, gh_calls, _logged, _status = _run_recovery(task, timeline=timeline)
+
+    assert changed is True
+    assert len(gh_calls) == 2
+    assert timeline == [
+        # Cheap disqualifier: whatever the reader already knows.
+        ("ci", None),
+        # PR facts A.
+        ("gh", "1170"),
+        # The read the transition actually rests on, cache bypassed.
+        ("ci", 0),
+        # PR facts B, confirming nothing moved while CI was asked.
+        ("gh", "1170"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        # The conflict was resolved a moment ago and GitHub has started the
+        # checks. Requeueing now pulls a review out from under a live run.
+        ("checks_started", {"ci": [("OPEN", "none"), ("OPEN", "pending")]}),
+        ("checks_finished_green", {"ci": [("OPEN", "none"), ("OPEN", "success")]}),
+        ("checks_finished_red", {"ci": [("OPEN", "none"), ("OPEN", "failure")]}),
+        # `gh` could not answer the second time; an unreadable state is not a
+        # confirmed empty one.
+        ("ci_unknown", {"ci": [("OPEN", "none"), ("OPEN", "unknown")]}),
+        ("pr_unreadable", {"ci": [("OPEN", "none"), (None, "unknown")]}),
+        # The PR stopped being an open review between the two reads.
+        ("pr_closed", {"ci": [("OPEN", "none"), ("CLOSED", "none")]}),
+        ("pr_merged", {"ci": [("OPEN", "none"), ("MERGED", "none")]}),
+        # The live read itself failed.
+        ("fresh_read_raises", {"ci_error": [None, RuntimeError("gh unreachable")]}),
+    ],
+)
+def test_ci_that_starts_after_the_cached_verdict_stops_the_recovery(
+    label: str, kwargs: dict
+) -> None:
+    """The race the single cached read could not see."""
+    task = _conflicted_review_task()
+    timeline: list[tuple[str, object]] = []
+
+    changed, gh_calls, logged, status = _run_recovery(task, timeline=timeline, **kwargs)
+
+    assert changed is False, label
+    assert task["status"] == "review", label
+    # No marker: this head is unresolved, not recovered, and a later tick that
+    # finds it genuinely checkless must still be able to act on it.
+    assert dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD not in task, label
+    assert task["waiting_for"] == "Codex", label
+    assert status["handoffs"][0]["status"] == "pending", label
+    assert logged == [], label
+    # It stopped at the fresh read: PR facts A was taken, PR facts B never was.
+    assert timeline == [("ci", None), ("gh", "1170"), ("ci", 0)], label
+    assert len(gh_calls) == 1, label
 
 
 @pytest.mark.parametrize(

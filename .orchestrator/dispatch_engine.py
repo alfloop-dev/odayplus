@@ -750,6 +750,9 @@ def recover_conflicted_review_prs(
         # there is one spelling of "what is CI saying". Any answer other than
         # "GitHub has run nothing here" - success, failure, pending, or the
         # `unknown` that means `gh` could not answer - ends this lane's business.
+        # This first read may be served from the reader's cache: it exists to
+        # drop the many tasks that are obviously not this shape without paying
+        # for a `gh` call each tick, not to authorise the transition.
         try:
             pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
         except Exception:
@@ -767,10 +770,26 @@ def recover_conflicted_review_prs(
             # Head drift: the branch has moved past what was reviewed, and what
             # GitHub is describing is not the submission this task recorded.
             continue
-        # Read again. Between the CI verdict and here the owner may have pushed,
-        # the PR may have closed, or the conflict may have been resolved and the
-        # checks started. Acting on a fact that has already changed is how a
-        # repair becomes a corruption, so an unstable read keeps waiting.
+        # "No check has ever run here" is the whole premise of this repair, and
+        # a cached verdict cannot carry it. A conflict resolved a moment ago
+        # starts the checks, and requeueing then would pull a review out from
+        # under a run that is already going. Ask the same canonical reader again
+        # with the cache bypassed, so the fact the transition acts on was true
+        # after the PR facts above were taken, not up to a cache lifetime
+        # earlier. Anything other than a still-open PR with nothing run on it -
+        # including a read that fails - waits for the next tick.
+        try:
+            fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
+                task_id, max_age_seconds=0
+            )
+        except Exception:
+            continue
+        if fresh_ci_status != "none" or str(fresh_pr_status or "").strip().upper() != "OPEN":
+            continue
+        # Read the PR again. Between the CI verdict and here the owner may have
+        # pushed, the PR may have closed, or the conflict may have been resolved
+        # and the checks started. Acting on a fact that has already changed is
+        # how a repair becomes a corruption, so an unstable read keeps waiting.
         if _review_pr_facts(slug, pr_number) != before:
             continue
 
