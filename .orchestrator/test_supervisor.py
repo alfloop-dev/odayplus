@@ -14430,6 +14430,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "owner": "Antigravity5",
             "reviewer": "Claude2",
             "pr_number": 555,
+            "approved_head": "abc12345",
         }
         status = {"tasks": [task], "handoffs": []}
         bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
@@ -14440,8 +14441,15 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "conclusion": "failure",
             "status": "completed",
         }
+        pr_facts = {
+            "number": 555,
+            "state": "OPEN",
+            "headRefOid": "abc12345",
+            "url": "https://github.com/o/r/pull/555",
+        }
 
         with (
+            unittest.mock.patch("github_reconciliation.fetch_pr_facts", return_value=pr_facts),
             unittest.mock.patch("github_reconciliation.write_activity_log") as log,
             unittest.mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
         ):
