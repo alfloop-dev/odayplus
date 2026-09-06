@@ -77,8 +77,13 @@ archive 寫入沿用 `task_archive.archive_task_snapshot()`，board 寫入沿用
   回歸覆蓋：checkpoint 指向 dashboard bundle、指向 `docs-site/` 內檔案、以 symlink 別名指向
   dashboard bundle，三者皆整批零寫入拒絕且目標 byte 不變、佔位未落盤；另有對照組確認
   正常位置的 checkpoint 仍可寫出 `task_history_recovery_checkpoint` 收據。
-- **附帶文件修正**：§5 的 baseline 表改為與本輪重產批次同一次執行的實測值（前一版收據
-  記的是更早一次規劃的 board revision/hash，與已提交批次不一致）；PR #1231 的遠端描述已改為中文。
+- **附帶文件修正（一項完成、一項受阻）**：
+  - §5 的 baseline 表已改為與本輪重產批次同一次執行的實測值（前一版收據記的是更早一次
+    規劃的 board revision/hash，與已提交批次不一致）。**已完成。**
+  - PR #1231 遠端描述的英文開頭：**未完成，被權限擋住。** 中文版本已備妥，但
+    `gh pr edit 1231 --body-file ...` 在本 background auto worker 需要人工核可而未取得，
+    因此**遠端 PR 描述目前仍是舊的英文開頭**。這裡不宣稱已修正。
+    詳見 §10。
 
 ## 3. 證據分級規則
 
@@ -271,6 +276,26 @@ transaction 一次寫入。因此失敗時只會留下 checkpoint 記錄**從磁
 | --- | --- | --- |
 | `scripts/orchestrator/test_archive_history_recovery.py` | 驗收要求的焦點測試。放在 `scripts/orchestrator/` 是因為 `config/code-boundaries.yaml` 的 `verification_ownership` 用萬用字元涵蓋 `scripts/orchestrator/test_*.py`；放在 `scripts/` 會被判為 `development_platform` bundle 內的 foreign scope，且需要改動治理 manifest 的顯式白名單。 | 是（新增 `FinalReceiptTests` 3 則與 `ManagedOutputCheckpointTests` 4 則，共 88 則測試） |
 | `scripts/test_ai_status.py` | 被既有測試強制。`ActorCommandMutationGuardTests.test_ai_name_case_table_covers_every_actor_bearing_command` 要求每個新增的 mutating command 都要進 `AI_NAME_CASES` 表，否則既有套件必紅。只加了一列表項。 | 否 |
-| `delivery_toolchain/git/task_finalize.sh` | 依 Codex 審查意見與驗收要求，將 PR 自動產生範本本地化為繁體中文。範本只影響**新建**的 PR；已存在的 #1231 描述本輪另以 `gh pr edit` 直接改為中文。 | 否 |
+| `delivery_toolchain/git/task_finalize.sh` | 依 Codex 審查意見與驗收要求，將 PR 自動產生範本本地化為繁體中文。範本只影響**新建**的 PR；已存在的 #1231 描述無法由本 worker 改動，見 §10。 | 否 |
 | `docs/audits/code-boundary-inventory.csv` | 被 `check_code_boundaries.py` 強制：新增任何 .py 都必須重產，否則 CI `orchestrator` job 與 task_finalize 的必過閘會擋。差異為 1 行。 | 否 |
 | `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json` | 驗收要求交付的離線批次本身；`.md` 收據無法承載 38 筆逐項 provenance。與宣告的 `.md` 同目錄同前綴。 | 是（以本輪 baseline 重產，recovery owner 改為 Claude2） |
+
+## 10. 未完成項目：PR #1231 遠端描述仍是英文開頭
+
+驗收要求「PR 與 receipt 全中文」。收據（本檔）與批次皆為中文，`task_finalize.sh` 的
+PR 範本也已中文化，但**該範本只在建立新 PR 時使用**；#1231 早已存在，`task_finalize.sh`
+對既有 PR 只會重用，不會改寫描述（見該腳本 `re-using open PR` 分支）。
+
+本輪已備妥中文描述並保留 orchestrator 管理的 `<!-- pantheon-bus -->` 區塊原文，
+但送出所需的 `gh pr edit 1231 --body-file ...` 在 background auto worker 需要人工核可，
+本次未取得核可，因此**沒有執行**。遠端 PR 描述目前仍是舊的英文開頭
+（`Task: ...` / `Branch ... -> dev` / `Commits:` / `Opened by ...`）。
+
+這裡刻意不宣稱已修正。要補上時，執行：
+
+```bash
+gh pr edit 1231 --body-file <中文描述檔>
+```
+
+中文描述內容與本輪 head 一致（8 個提交、精確 head `cd7482b2`），並在開頭載明
+本輪未對 canonical board 或 archive 執行任何 recovery apply。
