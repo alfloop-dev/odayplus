@@ -1,3 +1,8 @@
+# Statistical routines adapted from Evidently 0.7.21 (Apache-2.0).
+# Upstream: https://github.com/evidentlyai/evidently
+# Retained license and adaptation details:
+# docs/evidence/completion/ODP-DRIFT-DEP-REMOVE-002/EVIDENTLY-LICENSE.txt
+# docs/evidence/completion/ODP-DRIFT-DEP-REMOVE-002/remediation.md
 """Native drift statistics core for released-model monitoring.
 
 This module is a first-party re-implementation of the drift statistics the

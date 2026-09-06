@@ -51,6 +51,15 @@ the installed dependency trees. The native implementation was derived by
 inspection and execution of Evidently 0.7.21 (Apache-2.0); historical reference
 artifacts and their provenance remain in the prerequisite evidence directories.
 
+The statistical routines are adapted from Evidently 0.7.21, including its
+legacy statistical tests, text domain-classifier calculations and dataset
+column inference. The original wheel's Apache-2.0 license is retained verbatim
+in `EVIDENTLY-LICENSE.txt`. The native module identifies the upstream project
+and these changes: local configuration and report types, direct numerical-stack
+calls, deterministic metric identifiers and explicit native provenance. The
+installed-package NOTICE remains generated from the actual dependency tree;
+removing the distribution does not remove this source attribution.
+
 ## Reproducing the historical reference
 
 Use a separate checkout at baseline commit
