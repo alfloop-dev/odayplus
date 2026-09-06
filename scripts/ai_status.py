@@ -3608,6 +3608,81 @@ def task_metadata_from_env() -> dict[str, Any]:
     return metadata
 
 
+def role_provider_assignment_block_reason(
+    agent_name: str | None,
+    *,
+    role: str,
+    task_class: str | None = None,
+    task: dict[str, Any] | None = None,
+    grants_new_authority: bool = False,
+) -> str | None:
+    """Ask the dispatcher's own role/provider policy about a canonical assignment.
+
+    The board and the dispatcher have to agree on who may hold a role. If the
+    CLI could record an assignment the dispatcher will never act on, the task
+    just sits there looking owned, and the supervisor's reconcile pass spends
+    every tick trying to repair a record the operator keeps re-creating.
+
+    `dispatch_policy` is the leaf module the supervisor reads this from, so it
+    is imported directly rather than through `worker_failure_policy` -- the CLI
+    must not drag the supervisor into its process to answer a config question.
+
+    Human-gate actors and tasks that no automatic lane may take are outside the
+    policy: it governs which provider gets automated work, and those records
+    exist precisely because the work is not automated. Judging them here would
+    reject an operator writing `Human/Ops` onto a gate, because a human has no
+    provider identity at all and therefore fails closed.
+    """
+    from dispatch_policy import role_provider_block_reason
+
+    if canonical_agent_name(agent_name) in NON_WORKER_ACTORS:
+        return None
+    if isinstance(task, dict) and (
+        str(task.get("task_class") or "").strip().lower() == "human_gate"
+        or bool(task.get("human_required_roles"))
+        or str(task.get("gate_status") or "").strip().lower().startswith("pending_human")
+        or bool(task.get("non_dispatchable"))
+    ):
+        return None
+    return role_provider_block_reason(
+        merged_orchestrator_config(),
+        agent_name,
+        role=role,
+        task_class=task_class,
+        task=task,
+        grants_new_authority=grants_new_authority,
+    )
+
+
+def review_independence_block_reason(owner: str | None, reviewer: str | None) -> str | None:
+    """Why these two names are not two independent accounts, or None.
+
+    Logical names are not accounts. `Claude`/`Claude2` and `Antigravity2..7` are
+    aliases over one credential, one quota budget and one worker-slot set, so
+    comparing the strings -- which is all `owner == reviewer` does -- lets the
+    same account be recorded on both sides of its own review. The dispatcher has
+    always resolved this through the account-pool resolver; the CLI reads the
+    same leaf so a hand-written assignment cannot record what dispatch would
+    refuse to produce.
+    """
+    from dispatch_policy import agent_account_pool_id, review_is_independent
+
+    owner_name = canonical_agent_name(owner)
+    reviewer_name = canonical_agent_name(reviewer)
+    if not owner_name or not reviewer_name:
+        return None
+    if owner_name in NON_WORKER_ACTORS or reviewer_name in NON_WORKER_ACTORS:
+        return None
+    config = merged_orchestrator_config()
+    if review_is_independent(config, owner_name, reviewer_name):
+        return None
+    pool = agent_account_pool_id(config, owner_name) or "(unresolved)"
+    return (
+        f"owner {owner_name} 與 reviewer {reviewer_name} 屬於同一個 account pool {pool}"
+        "，不是獨立審查身分"
+    )
+
+
 def validate_assignment_source_docs(
     task_id: str,
     task: dict[str, Any] | None,
@@ -6016,6 +6091,52 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
         metadata["priority"] = priority
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
+    independence_reason = review_independence_block_reason(owner, reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Cannot assign {task_id}: {independence_reason}。未寫入任何 assignment。"
+        )
+
+    # Judge the record this assignment is about to create, not the one it
+    # replaces. The task_class an explicit value in this invocation sets wins
+    # over the stored one, and the actors are the incoming pair -- reading the
+    # old task alone would measure the assignment against a class and a shape it
+    # will not have once written.
+    effective_task_class = str(
+        metadata.get("task_class")
+        if "task_class" in metadata
+        else ((task or {}).get("task_class") or "")
+    ).strip()
+    # `metadata` is folded in because it is where this invocation declares the
+    # things that decide whether the policy applies at all -- `task_class`,
+    # `non_dispatchable`, `human_required_roles`. Creating a human gate would
+    # otherwise be judged against a task that does not exist yet, and re-classing
+    # an existing one against the class it is being moved off.
+    effective_task = {**(task or {}), **metadata, "owner": owner, "reviewer": reviewer}
+    if effective_task_class:
+        effective_task["task_class"] = effective_task_class
+    for actor_name, actor_role, field in (
+        (owner, "owner", "owner"),
+        (reviewer, "reviewer", "reviewer"),
+    ):
+        # Re-recording the actor a task already has preserves history; writing a
+        # different name grants execution or review that does not exist yet. Only
+        # the second is a new grant, and only the second loses the pinned-head
+        # exemption -- otherwise an approved task would be a place where any lane
+        # could be installed precisely because its head was already frozen.
+        recorded = canonical_agent_name((task or {}).get(field))
+        block_reason = role_provider_assignment_block_reason(
+            actor_name,
+            role=actor_role,
+            task_class=effective_task_class,
+            task=effective_task,
+            grants_new_authority=canonical_agent_name(actor_name) != recorded,
+        )
+        if block_reason:
+            raise SystemExit(
+                f"Cannot assign {task_id}: {field} {actor_name} 不符合 role/provider 派工政策"
+                f"（{block_reason}）。未寫入任何 assignment。"
+            )
 
     timestamp = iso_now()
     if task is None:
@@ -6543,6 +6664,12 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"{task_id} has no assigned reviewer")
 
     submission = review_submission_for_task(task, pr_number)
+    # Who authored what is now under review. The owner field can legitimately be
+    # rewritten later -- by an operator, or by a reconcile pass -- and once it is,
+    # nothing else on the record still names the account whose commits the
+    # reviewer is supposed to be independent of. Recorded here, at the one moment
+    # it is certain, so the independence check keeps working afterwards.
+    submission["submitted_by"] = actor
     timestamp = iso_now()
     task["status"] = "review"
     task["last_update"] = timestamp
@@ -7285,8 +7412,31 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     reviewer = canonical_agent_name(task.get("reviewer"))
     if owner and reviewer and owner == reviewer:
         raise SystemExit(f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}")
+    independence_reason = review_independence_block_reason(owner, reviewer)
+    if independence_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: {independence_reason}。未記錄任何 approval。"
+        )
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
+    # Same policy the dispatcher applies when it decides who may be woken for a
+    # review. Without it, a reviewer the policy excludes could still land the
+    # approval by hand, and the approval -- not the dispatch -- is the thing the
+    # merge gate trusts.
+    #
+    # An approval is always a new signature, never the preservation of one, so
+    # the pinned-head exemption does not apply. A task that already carries an
+    # `approved_head` and was reopened is exactly where it would otherwise: the
+    # freeze would let an excluded reviewer sign the *next* approval on the
+    # strength of the previous one.
+    reviewer_block_reason = role_provider_assignment_block_reason(
+        task.get("reviewer"), role="reviewer", task=task, grants_new_authority=True
+    )
+    if reviewer_block_reason:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: reviewer {task.get('reviewer')} 不符合 role/provider "
+            f"審查政策（{reviewer_block_reason}）。未記錄任何 approval。"
+        )
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
 

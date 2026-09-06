@@ -70,6 +70,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/test_release_lease.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_release_lease_integration.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_release_lease_issuer.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+.orchestrator/test_role_provider_policy.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_runtime_provenance.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_runtime_state.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_sidecar_cleanup.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

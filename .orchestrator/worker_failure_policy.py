@@ -13,6 +13,15 @@ from common import (
     spawn_background_process,
     substantive_review_reopen_count,
 )
+from dispatch_policy import (
+    ROLE_HELPER,
+    ROLE_OWNER,
+    ROLE_REVIEWER,
+    dispatch_reason_role,
+    role_provider_block_reason,
+)
+from dispatch_policy import DEFAULT_FROZEN_CLOSEOUT_STATUSES, task_closeout_is_frozen, task_submitted_author
+from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
 
@@ -29,6 +38,13 @@ def _sync_supervisor_scope() -> None:
         "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__",
         "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard", "status_transition",
         "claude_model_selection_args", "configured_provider_binary", "provider_config_entry", "spawn_background_process",
+        # The role/provider policy is a leaf that both this module and the
+        # supervisor import from `dispatch_policy`. Listing the names keeps this
+        # module's own bindings authoritative rather than depending on the two
+        # copies happening to be the same object.
+        "ROLE_HELPER", "ROLE_OWNER", "ROLE_REVIEWER", "dispatch_reason_role",
+        "role_provider_block_reason", "dispatch_policy_agent_provider_identity_ids",
+        "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_submitted_author",
     }
     module_exports = {
         "__all__",
@@ -1620,7 +1636,13 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
     return False
 
 @_entrypoint
-def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: dict[str, Any] | None) -> bool:
+def agent_can_take_task(
+    config: dict[str, Any],
+    agent_name: str | None,
+    task: dict[str, Any] | None,
+    *,
+    role: str | None = None,
+) -> bool:
     name = str(agent_name or "").strip()
     if not name:
         return False
@@ -1638,11 +1660,22 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
     if agent_dispatch_disabled(config, name):
         return False
     if not isinstance(task, dict):
-        return True
+        # No task to read a `task_class` from. Role-wide rules -- the ones that
+        # say a role belongs to a provider regardless of what the work is --
+        # still apply; class-scoped ones cannot be evaluated and are skipped
+        # rather than guessed at.
+        return not role_provider_block_reason(config, name, role=role, task_class=None)
     # This is the shared eligibility predicate for owned dispatch, helper
     # claims, and quota failover. A non-dispatchable or human-gate task must
     # never become executable merely because an automated lane is idle.
     if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    # Role/provider eligibility is asked here, once, for every lane that can
+    # take work: initial assignment, repair, failover, churn rotation and
+    # helper claims all funnel through this predicate. Putting it anywhere else
+    # would mean one of those paths could still hand review to a lane the
+    # policy excludes.
+    if role_provider_block_reason(config, name, role=role, task=task):
         return False
     if task_is_sidecar(task):
         return True
@@ -1691,7 +1724,9 @@ DEFAULT_OWNER_PREFERENCE_TASK_CLASSES = ["implementation", "remediation", "docum
 #: Entering `review_approved` pins an exact reviewed PR head, and closeout from
 #: there is read-only with respect to the branch, so the owner is not a choice
 #: about who should implement -- it is the identity of whoever already did.
-DEFAULT_OWNER_PREFERENCE_FROZEN_STATUSES = ["review_approved"]
+#: Kept as a name here, derived from the leaf definition the freeze predicate
+#: itself reads, so the two cannot drift apart.
+DEFAULT_OWNER_PREFERENCE_FROZEN_STATUSES = list(DEFAULT_FROZEN_CLOSEOUT_STATUSES)
 
 
 @_entrypoint
@@ -1734,22 +1769,13 @@ def agent_provider_identity_ids(config: dict[str, Any], agent_name: str | None) 
     `adapter` are both `antigravity`; guessing from the name would either miss
     that alias or start matching on spelling. Resolving through the configured
     provider entry keeps the preference group a statement about providers.
+
+    The body lives in `dispatch_policy` so the hard role/provider gate and this
+    soft preference read identity from one resolver, and so the canonical CLI
+    can ask the same question without importing the supervisor. This wrapper
+    keeps the name in the supervisor scope its callers already use.
     """
-    agent_id = normalize_agent_id(agent_name or "")
-    if not agent_id:
-        return set()
-    agent = (config.get("agents", {}) or {}).get(agent_id, {}) or {}
-    provider_id = str(agent.get("provider") or agent_id)
-    canonical_key, provider_cfg = provider_config_entry(config, provider_id)
-    identities = {
-        normalize_agent_id(provider_id),
-        normalize_agent_id(str(canonical_key or "")),
-        normalize_agent_id(str(agent.get("adapter") or "")),
-        normalize_agent_id(str(provider_cfg.get("delivery_mode") or "")),
-        normalize_agent_id(str(provider_cfg.get("adapter") or provider_cfg.get("type") or "")),
-    }
-    identities.discard("")
-    return identities
+    return dispatch_policy_agent_provider_identity_ids(config, agent_name)
 
 
 @_entrypoint
@@ -1764,28 +1790,13 @@ def agent_is_preferred_owner_provider(config: dict[str, Any], agent_name: str | 
 def task_closeout_owner_is_frozen(config: dict[str, Any], task: dict[str, Any] | None) -> bool:
     """Whether an approved or merging head has already fixed this task's owner.
 
-    `review_approved` freezes the exact reviewed PR head, and `approved_head` /
-    `merge_route` record that the branch is being composed into its base. The
-    owner of such a task is not an open question about which lane should build
-    something; it names the lane that already did, and that must finalize its
-    own approved commit. Read through the configured `finalize_statuses` so a
-    fleet that spells the state differently is covered, with `review_approved`
-    always included because the freeze is a property of the transition rather
-    than of the spelling.
+    The body lives in `dispatch_policy` as `task_closeout_is_frozen`, because the
+    hard role/provider gate needs the same exemption this preference does: on a
+    frozen closeout neither one is choosing who should do the work. Keeping one
+    definition is what stops the two from disagreeing about when a head is
+    pinned.
     """
-    if not isinstance(task, dict):
-        return False
-    if task.get("approved_head") or task.get("merge_route") is not None:
-        return True
-    task_status = str(task.get("status") or "").strip().lower()
-    if not task_status:
-        return False
-    configured = ready_dispatch_settings(config).get("finalize_statuses")
-    if isinstance(configured, str):
-        configured = [configured]
-    frozen = {str(value).strip().lower() for value in list(configured or []) if str(value).strip()}
-    frozen.update(DEFAULT_OWNER_PREFERENCE_FROZEN_STATUSES)
-    return task_status in frozen
+    return task_closeout_is_frozen(config, task)
 
 
 @_entrypoint
@@ -2084,7 +2095,7 @@ def first_viable_agent(
                 continue
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
-            if task is not None and not agent_can_take_task(config, name, task):
+            if task is not None and not agent_can_take_task(config, name, task, role=role):
                 continue
             viable.append(name)
 
@@ -2122,7 +2133,17 @@ def has_configured_reassignment_candidates(
     *,
     task: dict[str, Any] | None = None,
     exclude_pools: set[str] | None = None,
+    role: str = "owner",
 ) -> bool:
+    """Whether any *role-eligible* alternative is configured for this search.
+
+    Callers use this to tell "the lane is momentarily busy, wait" apart from
+    "there is nobody who could ever take this, block". That distinction is what
+    keeps a role restricted to one provider waiting for that provider instead of
+    escalating to a human the moment it is saturated -- so this has to apply the
+    same role filter `first_viable_agent` applies, or a policy-excluded lane
+    would be counted as an alternative that will never actually be selected.
+    """
     known = known_agent_display_names(config)
     seen: set[str] = set()
     excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
@@ -2136,7 +2157,7 @@ def has_configured_reassignment_candidates(
         if name in known:
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
-            if not agent_can_take_task(config, name, task):
+            if not agent_can_take_task(config, name, task, role=role):
                 continue
             return True
     return False
@@ -2544,6 +2565,7 @@ def reassign_tasks_after_review_churn(
                 exclude=set(epoch_failed_owners) | {owner, reviewer},
                 task=snapshot,
                 exclude_pools=excluded_pools,
+                role=ROLE_OWNER,
             ):
                 continue
             # Fail closed: no viable alternative owner available in this review churn epoch
@@ -2583,6 +2605,12 @@ def reassign_tasks_after_review_churn(
                 changed = True
             continue
 
+        submitted_author = task_submitted_author(config, snapshot)
+        author_pool_exclusions = (
+            {agent_account_pool_id(config, submitted_author)}
+            if submitted_author and not is_human_gate_agent(submitted_author)
+            else set()
+        )
         reviewer_candidates: list[str] = []
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
@@ -2591,14 +2619,14 @@ def reassign_tasks_after_review_churn(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
                     status=status,
                     balance_load=False,
                     role="reviewer",
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
                 if reviewer
                 else None
@@ -2610,23 +2638,24 @@ def reassign_tasks_after_review_churn(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
                     status=status,
                     role="reviewer",
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
         if not new_reviewer:
-            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)}
+            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)} | author_pool_exclusions
             all_reviewer_candidates = ([reviewer] if reviewer else []) + reviewer_candidates
             if has_configured_reassignment_candidates(
                 config,
                 all_reviewer_candidates,
-                exclude={new_owner},
+                exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                 task=snapshot,
                 exclude_pools=reviewer_pool_exclusions,
+                role=ROLE_REVIEWER,
             ):
                 continue
             # Fail closed: no viable reviewer available for new owner
@@ -2745,14 +2774,14 @@ def maybe_reassign_task_after_worker_failure(
     if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
         return None
 
-    task_status = str(task.get("status") or "").lower()
-    if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
-        return None
-
     dispatch_settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
+
+    task_status = str(task.get("status") or "").lower()
+    if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
+        return None
 
     failing_agent = display_name_for(
         config,
@@ -2768,6 +2797,12 @@ def maybe_reassign_task_after_worker_failure(
     reviewer = str(task.get("reviewer") or "")
     failed_pool = agent_account_pool_id(config, failing_agent)
     quota_exclusions = {failed_pool} if is_terminal_quota_failure_kind(str(failure.get("kind") or "")) and failed_pool else set()
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)}
+        if submitted_author and not is_human_gate_agent(submitted_author)
+        else set()
+    )
 
     if task_status in review_statuses and reviewer == failing_agent:
         if is_human_gate_agent(reviewer):
@@ -2776,11 +2811,11 @@ def maybe_reassign_task_after_worker_failure(
         new_reviewer = first_viable_agent(
             config,
             candidates,
-            exclude={owner, reviewer},
+            exclude={owner, reviewer} | ({submitted_author} if submitted_author else set()),
             state=state,
             task=task,
             role="reviewer",
-            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)},
+            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)} | author_pool_exclusions,
         )
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
@@ -2846,11 +2881,11 @@ def maybe_reassign_task_after_worker_failure(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=task,
                     balance_load=False,
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                     role="reviewer",
                 )
                 if reviewer
@@ -2862,11 +2897,11 @@ def maybe_reassign_task_after_worker_failure(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=task,
                     role="reviewer",
-                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)},
+                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
             if not new_reviewer or is_human_gate_agent(new_reviewer):
                 return None
