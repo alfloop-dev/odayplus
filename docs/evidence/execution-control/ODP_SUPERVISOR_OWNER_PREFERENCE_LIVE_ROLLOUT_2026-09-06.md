@@ -1,0 +1,263 @@
+---
+evidence_id: ODP-SUPERVISOR-OWNER-PREFERENCE-LIVE-ROLLOUT-001
+title: "載入 agy／Claude owner 偏好並驗證 Supervisor 實際派工"
+date: 2026-09-06
+status: IMPLEMENTED
+owner: Antigravity
+operator: Codex
+reviewer: Claude2
+repository: alfloop-dev/odayplus
+task: ODP-SUPERVISOR-OWNER-PREFERENCE-LIVE-ROLLOUT-001
+base_ref: 62dfc845
+source_receipt_sha256: 3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0f6ba6a9
+---
+
+# 載入 agy／Claude owner 偏好並驗證 Supervisor 實際派工
+
+## 1. 概述與授權邊界
+
+本文件記錄 `ODP-SUPERVISOR-OWNER-PREFERENCE-LIVE-ROLLOUT-001` 的 Supervisor 執行控制面 live rollout 與驗證收據。
+
+本次操作為**控制面（Supervisor runtime 與 live config）更新**，由 root Codex 執行 rollout 與健康驗證，並將原始脫敏收據固定後交由 Antigravity 整理唯一 owned 中文 evidence 文件，由獨立 reviewer Claude2 審查。
+
+### 1.1 使用者授權範圍
+
+本次 live rollout 僅包含兩項使用者授權變更：
+
+1. **Owner Provider 偏好啟用**：落實使用者指示「實作優先派給 agy／Claude，root 負責整合、驗證、部署」，啟用 `ready_dispatcher.owner_provider_preference`（`enabled=true`、`preferred_providers=["antigravity", "claude"]`、`task_classes=["implementation", "remediation", "documentation"]`）。
+2. **Claude 平行 Slot 擴增**：使用者明確要求 Claude 平行容量由 2 擴增至 5，同步更新 `claude_main.max_concurrent=5` 並擴增實體 slot `claude_slot_3`、`claude_slot_4`、`claude_slot_5` 共用同一 `claude_main` account pool。
+
+### 1.2 非授權／嚴格禁止事項
+
+- **禁止非授權變更**：Agy slots（5）、Codex 總 slots（4）、Watchdog 全域上限（14）、fallback 候選順序、輪詢週期（180s）、逾時設定與其他 quota 完全保留不變。
+- **未動產品程式與 GCP 部署**：本次僅限 Supervisor 本地執行控制面，未部署 GCP 產品 runtime，未啟用第三方來源，未進行 live source readback。
+- **不混同未核准修正**：PR #1215（`ODP-MERGE-GROUP-STALE-FAILURE-GUARD-001`）因 review finding 被退回，正由 Claude 接續修正中；本次部署之 runtime `62dfc845` 嚴格基於當時已合併之 dev，不包含任何未核准修補。
+- **不製造偽造任務**：選擇器探針在 `ready_count=0` 時如實記錄，禁止建立 synthetic tasks 或刻意製造故障以獲取派工測試證據。
+
+---
+
+## 2. Runtime 替換與版本一致性（Runtime Rollout & Provenance）
+
+本次 rollout 沿用既有唯一 `scripts/orchestrator/rollout_supervisor_runtime.py` 部署原語，從乾淨、與 `origin/dev` 完全一致的隔離 worktree 替換 runtime 軟連結，並原子替換 status launcher。
+
+### 2.1 執行紀錄與版本溯源
+
+| 項目 | 數值 / 狀態 | 說明 |
+|---|---|---|
+| 入口腳本 | `scripts/orchestrator/rollout_supervisor_runtime.py` | 既有唯一原子 rollout 入口 |
+| 部署來源 SHA | `62dfc845925ed1b90bf06c0cbb490a0b82ed9b3a` | 乾淨 worktree，無未追蹤或 dirty 檔案 |
+| 對應 PR | [PR #1213](https://github.com/alfloop-dev/odayplus/pull/1213) | `ODP-DISPATCH-PREFERENCE-GUARDS-001` |
+| Exact Merge CI | [Run 34004828184](https://github.com/alfloop-dev/odayplus/actions/runs/34004828184) | 結論：`success`（全綠通過） |
+| 前一版本 SHA | `04e1572f802a54c2646ba678fe2975226dfbd7c4` | 舊版 Supervisor runtime |
+| Supervisor 前 PID | `772131` | 舊 Supervisor 程序 |
+| Supervisor 新 PID | `1473872` | 經由 watchdog 重啟之新 Supervisor 程序 |
+| 啟動時間 | `2026-09-06T02:18:06Z` | 替換完成並啟動 |
+| 執行結果 Exit Code | `0` | 正常退出，未觸發 rollback |
+| 回滾狀態 | `rollback_invoked: false` | 無需回滾 |
+
+---
+
+## 3. 設定變更與不變式保留（Configuration & Validation）
+
+### 3.1 Hash 與 Validator 檢驗
+
+| 設定項目 | SHA256 / 檢驗結果 |
+|---|---|
+| 替換前 Config SHA256 | `01771aa25630879c550b1fd173720567c057f1d6894ebac945a3d35d4ad4f1ea` |
+| 替換後 Config SHA256 | `5e9f4279b14ba6f4595317d4064ccebc952c678693ec2abd2bb243a89be8a12c` |
+| Config Digest 前綴 | `5e9f4279b14ba6f4`（與 live probe 讀取之 `loaded_config_digest` 逐字相符） |
+| Launcher SHA256 | `3660f2423ddf5169c86199d3bf1699ebb34e733ebe9add2182483a9cfb5be9d1` |
+| 私有備份目錄 | `/tmp/odp-supervisor-priority-rollout.SmhhVQ`（私有 live config 未 commit、未印出全文） |
+| 靜態驗證指令 | `python3 -B delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json` |
+| 靜態驗證結果 | `Validated 3 config documents and their merged runtime views.`（通過） |
+| 授權範圍比對 | `only_authorized_changes: true` |
+
+### 3.2 授權變更與保留參數對照
+
+```json
+{
+  "ready_dispatcher": {
+    "owner_provider_preference": {
+      "enabled": true,
+      "preferred_providers": ["antigravity", "claude"],
+      "task_classes": ["implementation", "remediation", "documentation"]
+    }
+  },
+  "account_pools": {
+    "claude_main": {
+      "max_concurrent": 5
+    }
+  },
+  "worker_slots": {
+    "claude_slot_3": { "account_pool": "claude_main", "provider": "claude" },
+    "claude_slot_4": { "account_pool": "claude_main", "provider": "claude" },
+    "claude_slot_5": { "account_pool": "claude_main", "provider": "claude" }
+  }
+}
+```
+
+- **保留參數（完全未動）**：
+  - Antigravity slots: 5 個實體 slot（`antigravity_slot_1` ~ `antigravity_slot_5`）
+  - Codex 總 slots: 4（`codex_bjoe`: 3, `codex_worker`: 1）
+  - 全域活躍 Worker 上限: 14（`watchdog_max_active_workers`）
+  - 輪詢週期: 180 秒（`poll_interval_seconds`）
+  - Quota 生命週期、cooldown 與 worker leases 未被清除或重設
+
+---
+
+## 4. 服務健康與 Worker 存活驗證（Health Loops & Worker Preservation）
+
+Supervisor 替換後，完成連續 3 次健康迴圈，無新增錯誤，既有背景 Worker 保持正常運行。
+
+### 4.1 成功 Loop 紀錄
+
+- Loop 1: `2026-09-06T02:18:35Z`（成功，無 loop error）
+- Loop 2: `2026-09-06T02:19:31Z`（成功，無 loop error）
+- Loop 3: `2026-09-06T02:22:11Z`（成功，無 loop error）
+- 觀察到的 Loop Errors: `0`（`observed_loop_errors: []`）
+- Safe mode 到期時間: `2026-09-06T02:20:04Z`（自然過期並退出 safe mode）
+- Claude durable effective concurrency: 經由既有 canonical dispatcher 入口平順同步至 5
+
+### 4.2 既有 Worker 存活驗證（未殺除／未重啟）
+
+Rollout 過程中嚴格保護既有 worker process 與 lease，未執行任何 worker kill 或 restart：
+
+| 欄位 | Rollout 前狀態 | Rollout 後狀態 |
+|---|---|---|
+| Task ID | `ODP-MERGE-GROUP-STALE-FAILURE-GUARD-001` | `ODP-MERGE-GROUP-STALE-FAILURE-GUARD-001` |
+| Logical Agent / Provider | `antigravity` / `antigravity` | `antigravity` / `antigravity` |
+| Worker PID | `1468859` | `1468859`（持續存活，parent PID: 1） |
+| Run ID | `antigravity-20260906T021311Z-503b5068` | `antigravity-20260906T021311Z-503b5068`（同一個 run 完整保留） |
+| Queue Event ID | `evt-20260906T021309Z-ed2db5a2` | `evt-20260906T021309Z-ed2db5a2` |
+| Lease 獲取時間 | `2026-09-06T02:13:11Z` | 持續有效 |
+| Worker 操作判定 | — | `worker_kill_or_restart_performed: false` |
+
+---
+
+## 5. 唯讀選擇器探針（Readonly Selector Probe）
+
+於 `2026-09-06T02:20:11.062799+00:00` 至 `2026-09-06T02:20:12.240774+00:00` 執行 `readonly_dispatch_controls` 探針，在不製造狀態變更的前提下驗證控制面完整性。
+
+### 5.1 探針執行環境與狀態無損檢驗
+
+- **探針狀態**: `ok`，`usable_as_evidence: true`，`missing_runtime_apis: []`
+- **版本與 Digest 吻合**:
+  - `loaded_code_sha`: `62dfc845925ed1b90bf06c0cbb490a0b82ed9b3a`
+  - `loaded_config_digest`: `5e9f4279b14ba6f4`
+  - PID: `1473872`（PID 與 state 一致，process 身份與 CWD 符合 runtime）
+- **唯讀無損檢驗（Consistent Read Snapshot）**:
+  - 讀取檔案數: 59 個
+  - 探針前 Digest: `69f85b7a5c36737f5c168fb7e9c4145c3cd7fa7ccba31d3b363ff520ad10693e`
+  - 變更檔案數: `0`（`changed_file_count: 0`，`changed_inputs: []`，`denied_operations: []`）
+
+### 5.2 選擇器投影與受保護控制項檢核
+
+- **看板即時狀態**:
+  - Active 保留任務: 2
+  - Pending 保留任務: 2
+  - 可派工任務數（`ready_count`）: `0`（如實記錄當下無 ready 任務，不捏造任務）
+  - 可選擇候選數（`selectable_count`）: `0`
+- **略過分類**:
+  - 受保護控制項: 10
+  - Dispatcher 尚未 ready: 4
+  - 非 owner 執行狀態: 4
+  - 偏好類別外（outside preference classes）: 2
+  - Active 或 Pending 中: 2
+- **受保護控制項（Protected Controls）違規檢驗**:
+
+| 控制項類別 | 觀測樣本數 | 違規次數 | 說明 |
+|---|---|---|---|
+| Reviewer 獨立性 | 22 | 0 | 審查者指派不受 owner 偏好干擾 |
+| Finalize 凍結 | 1 | 0 | `review_approved` / closeout 狀態維持 immutable |
+| Runtime Release | 5 | 0 | runtime release 工作不受偏好改派 |
+| Human / Ops Gate | 4 | 0 | 人工閘門保留人工簽核權限 |
+| Helper / Sidecar | 0 | 0 | 誠實揭露無觀測樣本，不宣稱覆蓋 |
+| Non-dispatchable | 7 | 0 | 控制面專用任務未被 auto-dispatch 搶派 |
+
+---
+
+## 6. 容量回讀與真實派工觀測（Capacity Readback & Real Dispatch Observations）
+
+### 6.1 容量狀態回讀（`2026-09-06T02:22:17Z`）
+
+- **Supervisor**: PID `1473872`, `loaded_code_sha: 62dfc845`, `loaded_config_digest: 5e9f4279b14ba6f4`, `last_loop_error: null`
+- **Configured Pools**:
+  - `claude_main`: state `healthy`, `max_concurrent: 5`
+  - `antigravity_main`: state `healthy`, `max_concurrent: 5`
+- **Durable Pools**:
+  - `claude_main`: state `healthy`, `effective_concurrency: 5`, `generation: 0`
+  - `antigravity_main`: state `healthy`, `effective_concurrency: 5`, `generation: 0`
+- **Physical Slots**: Claude 5, Antigravity 5
+
+### 6.2 真實派工與 Fallback 重排界定
+
+在 live 環境中，觀測到下列真實派工事件：
+
+1. **Claude Slot 2 真實派工（`2026-09-06T02:21:40Z`）**:
+   - Task: `ODP-MERGE-GROUP-STALE-FAILURE-GUARD-001`
+   - Provider: `claude`（Slot: `claude_slot_2`）
+   - PID: `1478358`
+   - Run ID: `claude-20260906T022140Z-ce8da890`
+   - Queue Event ID: `evt-20260906T022136Z-892aef23`
+   - Lease 獲取時間: `2026-09-06T02:21:40Z`
+   - **性質界定**: 此為 PR #1215 經 review finding 退回後，正規的 owner 重新指派與接續執行。這是明確的 assigned owner 派工，**不能稱為 fallback 重排序被實際觀測到的證據**。
+
+2. **Antigravity Slot 1 真實派工（`2026-09-06T02:24:59Z`）**:
+   - Task: `ODP-SUPERVISOR-OWNER-PREFERENCE-LIVE-ROLLOUT-001`
+   - Provider: `antigravity`（Slot: `antigravity_slot_1`）
+   - PID: `1481419`
+   - Run ID: `antigravity-20260906T022459Z-0ce73cbe`
+   - Lease 獲取時間: `2026-09-06T02:24:59Z`
+   - **性質界定**: 此為 root Codex 完成 rollout/驗收後，依 task acceptance 將文件整理階段正規指派給 Antigravity。這是正常 assigned owner 派工，**不代表觀測到 fallback 重排或 7/10 同時高負載派工**。
+
+3. **Claude 既有背景 Worker（`2026-09-06T02:16:55Z`）**:
+   - Task: `ODP-NLTK-MONITORING-BASELINE-001`
+   - Provider: `claude`
+   - PID: `1472598`
+   - Run ID: `claude-20260906T021655Z-4b09378e`
+   - Lease 獲取時間: `2026-09-06T02:16:55Z`
+
+---
+
+## 7. 未執行事項與邊界宣告（Unperformed Operations & Disclosures）
+
+為維持審計嚴謹性，在此明確列出刻意未執行與限制範圍：
+
+1. **未部署 GCP 產品環境**: 未執行 GCP release，未啟用第三方外部 data sources，未進行 GCP live source readback。GCP 正式部署依既有規定需具備 GCP auth 與 Human/Ops 審核閘門。
+2. **未混同 PR #1215**: `ODP-MERGE-GROUP-STALE-FAILURE-GUARD-001` 的 head `67bdf2af` 審查退回後由 Claude 接續修正；目前 live 部署之 runtime `62dfc845` 不包含該未核准修正。
+3. **未捏造測試任務**: 唯讀探針時 `ready_count=0`，未人工建立 synthetic tasks 以補齊派工路徑測試。
+4. **未重跑本地測試**: 本任務進入純文件整理階段（docs-only），不重跑 pytest、ruff 或完整 CI 本地驗證，避免浪費資源與干擾 live 環境。
+5. **未覆寫歷史與 Quota**: 未清除任何 quota cooldown、lease 或 activity 歷史。
+
+---
+
+## 8. 回滾程序（Rollback Procedure）
+
+若 live 環境需進行回滾，提供以下三層級處置路徑：
+
+### 8.1 第一級：設定層快速停用（無需改碼、無需重啟）
+
+將 live config 中的 `ready_dispatcher.owner_provider_preference.enabled` 設為 `false`，或將 `preferred_providers` 設為 `[]`：
+- `owner_preference_ranks` 會對所有候選人回傳 rank 1。
+- 選擇器行為完全回到原有 `(open_task_count, caller_order)`。
+- 不觸發任何額外容量探測。
+
+若需回滾 Claude 並行容量，將 `claude_main.max_concurrent` 改回 `2` 並移除 `claude_slot_3` ~ `claude_slot_5`。
+
+### 8.2 第二級：縮小偏好適用範圍
+
+自 `task_classes` 移除特定分類（例如僅保留 `implementation`），縮減偏好介入之任務型態。
+
+### 8.3 第三級：完整代碼回滾（Git Revert）
+
+使用 `git revert` 還原 PR #1213、PR #1210、PR #1209：
+- **注意**：還原代碼前必須先移除 live config 中的 `owner_provider_preference` 區塊，因舊版 schema 具備 `additionalProperties: false`，否則會導致 config 驗證失敗。
+
+---
+
+## 9. 收據來源與摘要核對（Receipt Source Verification）
+
+- **原始收據路徑**: `/tmp/odp-supervisor-priority-rollout.SmhhVQ/live-rollout-receipt.json`
+- **原始收據 SHA256**: `3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0f6ba6a9`（已精準核對）
+- **文件所有者**: Antigravity
+- **獨立審查者**: Claude2
