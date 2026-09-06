@@ -2,9 +2,9 @@
   "schema_version": 2,
   "type": "task_history_recovery_evidence_inventory",
   "task_id": "ORCH-ARCHIVE-RECOVERY-EVIDENCE-001",
-  "produced_by": "Antigravity2",
+  "produced_by": "Claude",
   "reviewer": "Codex2",
-  "produced_at": "2026-09-06T18:05:00Z",
+  "produced_at": "2026-09-06T19:05:00Z",
   "authoritative": false,
   "archive_mutated": false,
   "task_status_mutated": false,
@@ -64,7 +64,7 @@
   "known_limitations": [
     "本地 ai-activity-log.jsonl 最早一筆記錄為 2026-09-06T11:01:40Z（事故之後）；38 個 ID 沒有任何一筆以其為 task_id 的歷史活動事件，因此無法從本地活動紀錄取得當時的 review／done 事件時間軸。",
     "ai-task-archive/tasks 僅存 6 筆（2 completed / 4 superseded），無一屬於本清單。",
-    "CI 證據只到 check-run 結論層級。本輪對受質疑的條款額外核對了 workflow 定義與測試檔的 skip 條件，以判定該測試是否真的被執行；但仍未取 job log，因此無法出示個別測試的 PASSED 行。",
+    "CI 證據只到 check-run 結論與 job／step 定義層級。第 4 輪對全部 met_by_test_in_green_ci 條款重建了『被引用測試檔 → 實際收集它的 job／step』綁定（依各候選 head 的 ci.yml、pyproject testpaths、Makefile 與 run_product_e2e.sh 固定清單），但仍未取 job log，因此無法出示個別測試的 PASSED 行。綁定成立只代表該檔被某個結論 success 的 job 收集，不代表該檔內某一條具名 assertion 的個別結果已被查核。",
     "PR 合併與 CI 綠燈只證明程式與檢查通過，不能單獨證明 runtime 部署、外部來源啟用或人類核准已發生。",
     "已定位到的收據以其自身記載為準。收據若自我矛盾（例如 DPF 的 live-rollout-receipt.json），本盤點採其中具體的量測欄位而非摘要旗標，並在該條款註記矛盾所在。",
     "acceptance 條款中屬「執行過程約束」者（起點 worktree、CI 執行次數、PR 語言、分工），本盤點一律標為 process_constraint_unverifiable 並不據以 blocked，但全部在 recommendation_scope 揭露。"
@@ -73,12 +73,13 @@
     "unit_of_judgement": "逐條 acceptance。每個 ID 的建議由其 acceptance_evidence_map 逐條狀態機械推導，不由 PR 或 CI 整體印象推導。",
     "criterion_status_vocabulary": {
       "met_by_receipt": "交付物內既有收據直接記載本條款的量測結果",
-      "met_by_test_in_green_ci": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+      "met_by_test_in_green_ci": "本 PR 交付了對應測試檔，且該檔位於精確 head 上某個 conclusion=success 的 CI job 實際收集的路徑內（綁定依 ci_execution_binding 的 job→收集路徑對照核對；僅到 job／step 層，未取 job log）",
       "met_by_delivered_artifact": "交付了對應程式或文件，本盤點只驗其存在與內容涵蓋，未重算其結論",
       "partially_met": "本條款可拆成數項，部分有既有證據、部分沒有",
       "not_evidenced": "唯讀範圍內找不到對應本條款的既有證據",
       "unmet_per_own_receipt": "該任務自身的收據直接記載本條款未達成",
-      "process_constraint_unverifiable": "本條款約束的是執行過程，無法由交付物與唯讀記錄獨立驗證"
+      "process_constraint_unverifiable": "本條款約束的是執行過程，無法由交付物與唯讀記錄獨立驗證",
+      "test_delivered_not_executed_at_exact_head": "本 PR 交付了對應測試檔並可定位到具名 assertion，但精確 head 上唯一會收集該檔的 CI job 為 skipped（或該路徑不在任何 CI job 的收集範圍內），因此沒有任何成功 check 執行過它"
     },
     "blocked": [
       "任一條款狀態為 unmet_per_own_receipt；或",
@@ -91,15 +92,1918 @@
     "verified_candidate": "以上皆不成立。此標籤只表示「可作為復原候選送 reviewer 判定」，不表示 acceptance 全數完成。",
     "process_constraint_does_not_block": "process_constraint_unverifiable 不構成 blocked：這類條款約束的是工作怎麼做（起點 worktree、跑幾次 CI、PR 用什麼語言），不是 acceptance 的結果面。所有這類條款一律在 recommendation_scope 揭露。",
     "confidence": {
-      "high": "無 skipped check、無 partially_met、無 process_constraint_unverifiable；blocked 案件則為證據直接否證。",
-      "medium": "存在 skipped checks、partially_met 或 process_constraint_unverifiable 條款；blocked 案件則為其 blocking 條款尚待 reviewer 語意裁定。"
+      "high": "無 skipped check、無 partially_met、無 process_constraint_unverifiable、無 test_delivered_not_executed_at_exact_head；blocked 案件則為證據直接否證。",
+      "medium": "存在 skipped checks、partially_met、process_constraint_unverifiable 或 test_delivered_not_executed_at_exact_head 條款；blocked 案件則為其 blocking 條款尚待 reviewer 語意裁定。"
+    },
+    "ci_execution_binding": {
+      "why": "第 4 輪 review 指出 met_by_test_in_green_ci 曾把測試檔綁到不會收集它的 check：ODP-DEV-STAGED-GATE-RECONCILIATION-001 A3-A7 引用 tests/e2e/test_release_gate_registry.py 卻綁 orchestrator check，而 orchestrator job 不收集 tests/e2e/，真正會收集它的 product job 在該 head 是 skipped。本輪對全部 114 條 met_by_test_in_green_ci 逐條重新核對此綁定。",
+      "method": "對 37 個 odayplus 候選的每個精確 head 唯讀讀回 .github/workflows/ci.yml 與 pyproject.toml，建立 job→實際收集路徑對照，再逐條比對『被引用測試檔』是否落在『被引用 check』的收集範圍內。37 個 head 的 ci.yml pytest 指令只有兩種形態，差異僅在 performance-gate 的寫法，job→路徑對照一致。",
+      "job_collection_at_candidate_heads": {
+        "orchestrator": {
+          "command": "uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling",
+          "collects": [
+            ".orchestrator/",
+            "delivery_toolchain/",
+            "scripts/",
+            "tests/tooling/"
+          ],
+          "excludes_by_marker": [
+            "requires_live_env"
+          ]
+        },
+        "product": {
+          "steps": [
+            {
+              "name": "Test product code",
+              "command": "uv run pytest -m \"not requires_live_env and not performance\" tests modules apps shared models -n auto",
+              "collects": [
+                "tests/",
+                "modules/",
+                "apps/",
+                "shared/",
+                "models/"
+              ],
+              "excludes_by_marker": [
+                "requires_live_env",
+                "performance"
+              ]
+            },
+            {
+              "name": "Test official real-estate outcomes on PostgreSQL 16",
+              "command": "uv run pytest tests/integration/test_official_real_estate_postgresql.py",
+              "collects": [
+                "tests/integration/test_official_real_estate_postgresql.py"
+              ]
+            },
+            {
+              "name": "Test database contracts, migrations and schema gates",
+              "command": "uv run pytest -m \"requires_live_env and not requires_postgis\" tests/contract tests/ops tests/integration",
+              "collects": [
+                "tests/contract/",
+                "tests/ops/",
+                "tests/integration/"
+              ],
+              "note": "被 requires_live_env 標記而排除於主 step 的測試，由本 step 在這三個路徑內跑回來。"
+            },
+            {
+              "name": "Run Node workspace checks",
+              "command": "make node-check → npm run test --workspaces --if-present",
+              "collects": [
+                "apps/*/tests/**（vitest 等 npm workspace 測試）"
+              ]
+            }
+          ]
+        },
+        "performance-gate": {
+          "command": "uv run pytest -m performance tests/performance",
+          "collects": [
+            "tests/performance/（且需 performance 標記）"
+          ]
+        },
+        "product-e2e-gate": {
+          "command": "make product-e2e-gate → check_product_release_gate.py --dev-merge + delivery_toolchain/e2e/run_product_e2e.sh",
+          "collects": [
+            "run_product_e2e.sh 內寫死的 playwright spec 清單（tests/e2e/*.spec.ts，逐檔具名）",
+            "delivery_toolchain/e2e/run_python_e2e_tests.py 的 PYTEST_NODE_IDS 固定 node-id 清單（由 E2E_SCENARIOS 的 automation_refs 推導）"
+          ],
+          "note": "此 job 不做路徑式收集；未列在那兩份清單裡的 pytest 檔不會被它執行。make 前置目標 release-gate-registry 另跑 check_release_gate_registry.py 這支檢查器本身，那是 ci_step 證據，不等於執行了同名的 pytest 檔。"
+        }
+      },
+      "not_collected_by_any_ci_job": {
+        "paths": [
+          "infra/"
+        ],
+        "basis": "pyproject.toml [tool.pytest.ini_options] testpaths 不含 infra；候選 head 上七個 workflow 皆無任何一支引用 infra/terraform/tests。"
+      },
+      "rule": "met_by_test_in_green_ci 只在『被引用測試檔位於被引用 check 於該 head 實際收集的路徑／清單內，且該 check 結論為 success』時成立。否則必須改綁真正執行它的 check，或改記 test_delivered_not_executed_at_exact_head。綠色 job 不能替代未被它收集的測試。",
+      "blocking_effect": "test_delivered_not_executed_at_exact_head 不自動構成 blocked——它描述的是『這條 acceptance 的證明方式不成立』，而非『acceptance 被否證』。但每一條都會列入該 ID 的 recommendation_scope.criteria_not_fully_evidenced，且該 ID 的 confidence 一律降為 medium，請 reviewer 連同一併判定。",
+      "audit_result": {
+        "criteria_audited": 112,
+        "executed_by_a_successful_check": 107,
+        "not_executed_at_exact_head": 5,
+        "unresolved": 0,
+        "corrected_this_round": [
+          {
+            "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "criteria": [
+              3,
+              4,
+              5,
+              6
+            ],
+            "correction": "tests/e2e/ 綁 orchestrator 為錯誤綁定；真正收集它的 product job 在該 head 為 skipped，改記 test_delivered_not_executed_at_exact_head"
+          },
+          {
+            "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "criteria": [
+              7
+            ],
+            "correction": "候選 PR diff 內無 source-off／credentials／egress 內容，改為 partially_met：既有 deploy-dev.yml 契約可 pinned 引用，live posture 未證明"
+          },
+          {
+            "task_id": "ODP-EPHEMERAL-STAGING-IAC-001",
+            "criteria": [
+              2
+            ],
+            "correction": "infra/ 不在任何 CI job 收集範圍，改記 test_delivered_not_executed_at_exact_head"
+          },
+          {
+            "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+            "criteria": [
+              4
+            ],
+            "correction": "補上 product check（tests/integration/ 的收集者），原本只綁 orchestrator"
+          },
+          {
+            "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+            "criteria": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "correction": "測試檔誤標為 delivered_file，正規化為 test_file 並補 job 收集依據"
+          },
+          {
+            "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "criteria": [
+              3,
+              4
+            ],
+            "correction": "同上 kind 正規化與收集依據"
+          },
+          {
+            "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "criteria": [
+              4
+            ],
+            "correction": "三個測試檔拆綁：spec.ts 由 product-e2e-gate 執行，兩個 pytest 檔由 product 執行"
+          },
+          {
+            "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+            "criteria": [
+              1,
+              2,
+              3
+            ],
+            "correction": "pytest 檔改綁 product；product-e2e-gate 只跑 checker 本身與固定清單"
+          },
+          {
+            "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "criteria": [
+              1,
+              2,
+              4
+            ],
+            "correction": "同上 kind 正規化與收集依據"
+          },
+          {
+            "task_id": "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+            "criteria": [
+              7
+            ],
+            "correction": "原本只有 ci_check、未具名任何測試；補上 .orchestrator/test_role_provider_policy.py 逐項具名 negative tests，並因過程半不可驗證改為 partially_met"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "criteria": [
+              3
+            ],
+            "correction": "infra/terraform/tests 標明未被任何 CI job 執行；本條款的執行證明來自 tests/ops"
+          },
+          {
+            "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "criteria": [
+              1
+            ],
+            "correction": "vitest 檔改綁 product 的 node-check step，非 product-e2e-gate"
+          },
+          {
+            "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "criteria": [
+              2,
+              4
+            ],
+            "correction": "補 requires_live_env 標記的 step 層綁定（資料庫 step／具名 PostgreSQL step）"
+          },
+          {
+            "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+            "criteria": [
+              3,
+              4
+            ],
+            "correction": "同上 step 層綁定"
+          }
+        ],
+        "rows": [
+          {
+            "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/avm/tests/test_avm_depreciation_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/avm/tests/test_avm_depreciation_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/avm/tests/test_avm_depreciation_contract.py",
+              "tests/governance/test_avm001_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "criterion_index": 3,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "test_files": [
+              "tests/e2e/test_release_gate_registry.py"
+            ],
+            "bound_checks": [],
+            "verdict": "not_executed_at_exact_head"
+          },
+          {
+            "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "criterion_index": 4,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "test_files": [
+              "tests/e2e/test_release_gate_registry.py"
+            ],
+            "bound_checks": [],
+            "verdict": "not_executed_at_exact_head"
+          },
+          {
+            "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "criterion_index": 5,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "test_files": [
+              "tests/e2e/test_release_gate_registry.py"
+            ],
+            "bound_checks": [],
+            "verdict": "not_executed_at_exact_head"
+          },
+          {
+            "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+            "criterion_index": 6,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "test_files": [
+              "tests/e2e/test_release_gate_registry.py"
+            ],
+            "bound_checks": [],
+            "verdict": "not_executed_at_exact_head"
+          },
+          {
+            "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/models/test_evidently_monitor.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/models/test_evidently_monitor_baseline.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/models/test_evidently_monitor_baseline.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+            "criterion_index": 8,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/security/test_supply_chain_security_gate.py",
+              "tests/security/test_oss_license_gate.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-EPHEMERAL-STAGING-IAC-001",
+            "criterion_index": 2,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "test_files": [
+              "infra/terraform/tests/test_ephemeral_staging.py"
+            ],
+            "bound_checks": [],
+            "verdict": "not_executed_at_exact_head"
+          },
+          {
+            "task_id": "ODP-EPHEMERAL-STAGING-IAC-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_ephemeral_staging_lifecycle.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-EPHEMERAL-STAGING-IAC-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_ephemeral_staging_lifecycle.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest.py",
+              "tests/ops/test_first_release_recovery.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "criterion_index": 5,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_first_release_recovery.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+            "criterion_index": 7,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_first_release_recovery.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/models/test_heatzone_merge_split.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/contract/test_heatzone_composition_schema.py",
+              "tests/ops/test_heatzone_composition_migration.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/models/test_heatzone_merge_split.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_heatzone_composition_api.py",
+              "tests/integration/test_official_real_estate_postgresql.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/contract/test_manual_correction_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_manual_correction_persistence.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/contract/test_manual_correction_contract.py",
+              "tests/integration/test_manual_correction_persistence.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_manual_correction_persistence.py",
+              "tests/integration/test_postgresql_persistence.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_int001_cdc_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_requirement_members.py",
+              "tests/integration/test_int001_cdc_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              },
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/governance/test_job_partial_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/governance/test_job_partial_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/learninghub/tests/test_prediction_drift.py",
+              "tests/ops/test_prediction_drift_migration.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/learninghub/tests/test_prediction_drift.py",
+              "tests/ops/test_prediction_drift_migration.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_prediction_drift_migration.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/learninghub/tests/test_prediction_drift.py",
+              "tests/ops/test_prediction_drift_migration.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/learninghub/tests/test_backtest_release_gate.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/learninghub/tests/test_backtest_release_gate.py",
+              "tests/ops/test_backtest_migration.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_production_model_lifecycle.py",
+              "modules/learninghub/tests/test_backtest_release_gate.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_learninghub_postgresql_release.py",
+              "tests/integration/test_production_model_lifecycle.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_measurement_defaults.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_measurement_defaults.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_measurement_defaults.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_measurement_defaults.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_requirement_members.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_requirement_members.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_model_ready_materialization.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_learninghub_dataset_snapshot_api.py",
+              "tests/data/test_pit_snapshot.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/data/test_pit_snapshot.py",
+              "tests/integration/test_learninghub_dataset_snapshot_api.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/learninghub/tests/test_learninghub_production_runtime.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_net002_lease_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_net002_lease_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_net002_lease_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/governance/test_netplan_disclosure_policy.py",
+              "apps/web/features/operator/network/__tests__/RebalanceDisclosurePartition.test.tsx"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_netplan_disclosure_ui_e2e.py",
+              "tests/contract/test_operator_network_rebalance_api.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_netplan_disclosure_ui_e2e.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_netplan_disclosure_ui_e2e.py",
+              "modules/netplan/tests/test_netplan_production_execution.py",
+              "tests/e2e/operator-network-rebalance.spec.ts"
+            ],
+            "bound_checks": [
+              {
+                "name": "product-e2e-gate",
+                "conclusion": "success"
+              },
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_operator_comments_api.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_operator_comments_api.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_operator_comments_api.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_operator_comments_api.py",
+              "apps/web/features/operator/__tests__/DecisionCommentsPanel.test.tsx",
+              "apps/web/features/operator/__tests__/GovernanceWorkspace.test.tsx"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_priceops_bandit_gating.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_priceops_bandit_gating.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/contract/test_price_exploration_gate_schema.py",
+              "tests/ops/test_price_exploration_gate_migration.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_priceops_bandit_gating.py",
+              "tests/integration/test_official_real_estate_postgresql.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/e2e/test_release_gate_registry.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/e2e/test_release_gate_registry.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/e2e/test_release_gate_registry.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_runtime_admission.py",
+              "tests/release/test_release_manifest.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "criterion_index": 5,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_runtime_admission.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "criterion_index": 6,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest_cli.py",
+              "tests/release/test_release_manifest.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+            "criterion_index": 7,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_build_release_handoff.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_requirement_members.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_requirement_members.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "delivery_toolchain/governance/test_check_requirement_members.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "orchestrator",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest_cli.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py",
+              "tests/release/test_release_manifest.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "criterion_index": 5,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest.py",
+              "tests/release/test_probe_release_target_absence.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "criterion_index": 8,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "criterion_index": 10,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_manifest_cli.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+            "criterion_index": 11,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_probe_release_target_absence.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py",
+              "tests/release/test_runtime_admission.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+            "criterion_index": 5,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py",
+              "tests/ops/test_ephemeral_staging_lifecycle.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_ephemeral_staging_lifecycle.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "criterion_index": 6,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_ephemeral_staging_lifecycle.py",
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "criterion_index": 7,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_ephemeral_staging_lifecycle.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+            "criterion_index": 8,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py",
+              "tests/ops/test_workflow_expression_contexts.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/governance/test_site001_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/governance/test_site001_disposition.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_sitescore_decision.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_sitescore_decision.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_sitescore_decision.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "modules/sitescore/tests/test_sitescore_production_runtime.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py",
+              "tests/release/test_release_environment_precheck.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_environment_precheck.py",
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+            "criterion_index": 5,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_environment_precheck.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+            "criterion_index": 6,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/ops/test_deploy_workflow_contract.py",
+              "tests/release/test_release_environment_precheck.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+            "criterion_index": 9,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/release/test_release_environment_precheck.py",
+              "tests/ops/test_deploy_workflow_contract.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_listing_platform_observations.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_listing_platform_observations.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "criterion_index": 3,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_listing_platform_observations.py",
+              "tests/integration/test_external_data_cutover_prep.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/integration/test_listing_platform_observations.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "criterion_index": 1,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "apps/web/tests/login-route.test.ts"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "criterion_index": 2,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/e2e/test_password_first_security_e2e.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          },
+          {
+            "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+            "criterion_index": 4,
+            "status": "met_by_test_in_green_ci",
+            "test_files": [
+              "tests/e2e/test_password_first_security_e2e.py"
+            ],
+            "bound_checks": [
+              {
+                "name": "product",
+                "conclusion": "success"
+              }
+            ],
+            "verdict": "executed_by_a_successful_check"
+          }
+        ]
+      }
     }
   },
   "counts": {
     "total": 38,
     "verified_candidate": 35,
     "blocked": 3,
-    "blocked_pending_reviewer_reading": 0,
     "candidate_corrections": 1,
     "confidence_high": 27,
     "confidence_medium": 11,
@@ -108,12 +2012,15 @@
       "met_by_receipt": 18,
       "unmet_per_own_receipt": 3,
       "met_by_delivered_artifact": 33,
-      "met_by_test_in_green_ci": 114,
+      "met_by_test_in_green_ci": 107,
       "not_evidenced": 1,
-      "partially_met": 7,
-      "process_constraint_unverifiable": 18
+      "partially_met": 9,
+      "process_constraint_unverifiable": 18,
+      "test_delivered_not_executed_at_exact_head": 5
     },
-    "candidate_mapping_consistent": 37
+    "candidate_mapping_consistent": 37,
+    "criteria_with_ci_execution_binding_audit": 112,
+    "criteria_test_delivered_not_executed_at_exact_head": 5
   },
   "entries": [
     {
@@ -509,7 +2416,8 @@
           "unmet_per_own_receipt": 1
         },
         "has_unmet_per_own_receipt": true,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [
         {
@@ -879,7 +2787,8 @@
           "met_by_test_in_green_ci": 3
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -1195,7 +3104,8 @@
           "met_by_delivered_artifact": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -1879,7 +3789,8 @@
           "partially_met": 1
         },
         "has_unmet_per_own_receipt": true,
-        "has_not_evidenced": true
+        "has_not_evidenced": true,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [
         {
@@ -1892,8 +3803,7 @@
           "criterion_index": 3,
           "criterion": "dev integration/contract/provider-off readback通過",
           "reason": "條款屬 runtime／外部啟用／人類授權類，唯讀範圍內查無對應既有證據",
-          "pending_reviewer_reading": false,
-          "readings": null
+          "pending_reviewer_reading": false
         },
         {
           "criterion_index": 5,
@@ -2181,13 +4091,16 @@
         "Acceptance 明文『本 task 不簽 lease 不 dispatch deploy』，屬純 gate/registry 程式交付；六個宣告 artifact 在 merge commit 全數存在。"
       ],
       "gaps": [
-        "盤點觀察：精確 head 的 7 個 check 中有 3 個 conclusion=skipped（scope skip），代表部分 product 測試未在該 head 實跑。",
+        "第 4 輪更正：A3-A6 的唯一測試檔 tests/e2e/test_release_gate_registry.py 在精確 head 40bb0246 上未被任何成功 check 執行。該 head 的 product job（tests/ 的唯一收集者）conclusion=skipped，product-e2e-gate 亦 skipped 且其固定清單不含本檔，orchestrator job 結構上不收集 tests/e2e/。前輪把這四條綁到 orchestrator check 屬錯誤綁定。",
+        "第 4 輪更正：A7（第三方來源保持 disabled、無 credentials、default deny egress）在本候選 PR 的完整 diff 內查無任何對應程式或測試——該 PR 只有 2 檔 +129/-6，且無 sources／egress／credential 字樣。既有契約 deploy-dev.yml 可 pinned 引用，但 live posture（實際 disabled 狀態、credentials 投影、egress 是否 default deny）無既有 runtime receipt。此為後續 rollout scope 的缺口，不倒灌成本 code/gate 任務未完成。",
         "盤點觀察：Acceptance 第一條『等待 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 合併後才選定 candidate』的時序未在本盤點驗證。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "medium",
       "recommended_next_minimal_verification": [
-        "列出被 skip 的 check 名稱並確認其為 change-scope 設計行為；比對 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 的 merge 時間是否早於本 PR head。"
+        "若要把 A3-A6 由『未執行』升為『已驗證』，最小動作是在 merge commit efdfea1a0c31 上單獨執行 tests/e2e/test_release_gate_registry.py 並保留退出碼收據；本盤點依範圍限制不執行測試。",
+        "A7 需要一筆與該候選對應、記載來源 disabled／無 credentials／default-deny egress 的既有 runtime receipt；若不存在，應由後續 staging／dev rollout 任務產生，不由本盤點補造。",
+        "比對 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 的 merge 時間是否早於本 PR head。"
       ],
       "recommendation_applies_to": "inventory_candidate",
       "acceptance_evidence_map": [
@@ -2234,22 +4147,21 @@
           "classes_zh": [
             "可由測試證明"
           ],
-          "status": "met_by_test_in_green_ci",
-          "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+          "status": "test_delivered_not_executed_at_exact_head",
+          "status_zh": "本 PR 交付了對應測試檔並可定位到具名 assertion，但精確 head 上唯一會收集該檔的 CI job 為 skipped（或該路徑不在任何 CI job 的收集範圍內），因此沒有任何成功 check 執行過它",
           "evidence": [
             {
               "kind": "test_file",
               "ref": "tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
-              "finding": "由本 PR 交付並存在於 merge commit"
+              "finding": "由本 PR 交付並存在於 merge commit；本 PR 於此檔新增兩個測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go（+92 行，唯讀 diff 核對）。"
             },
             {
-              "kind": "ci_check",
-              "ref": "check-run orchestrator @ 40bb02462ec7",
-              "at": "2026-09-04T09:15:06Z",
-              "finding": "conclusion=success"
+              "kind": "ci_execution_binding",
+              "ref": "tests/e2e/test_release_gate_registry.py → 精確 head 40bb02462ec7 的 CI job 對照",
+              "finding": "該 head 的 ci.yml 只有 product job 會收集 tests/ 路徑，而 product 的 conclusion=skipped（scope skip）；product-e2e-gate 同為 skipped，且其兩份固定清單（playwright spec、PYTEST_NODE_IDS）都不含本檔；orchestrator job 只收集 .orchestrator／delivery_toolchain／scripts／tests/tooling，結構上不會收集本檔。因此本檔在精確 head 上未被任何成功 check 執行。前輪把它綁到 orchestrator check 是錯誤的。"
             }
           ],
-          "note": "精確 head 的 product、product-e2e-gate 與 performance-gate 三個 check 結論為 skipped（scope skip），實跑的是 orchestrator 與 boundary/classify/change-scope。"
+          "note": "本條款（同 SHA 同 manifest digest 的 cleared gate）由本 PR 新增的 test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與既有 registry 測試界定，但該測試檔在精確 head 上未被任何成功 check 執行。條款本身未被否證，缺的是「在此 head 跑過」這件事的證據。"
         },
         {
           "index": 4,
@@ -2260,22 +4172,21 @@
           "classes_zh": [
             "可由測試證明"
           ],
-          "status": "met_by_test_in_green_ci",
-          "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+          "status": "test_delivered_not_executed_at_exact_head",
+          "status_zh": "本 PR 交付了對應測試檔並可定位到具名 assertion，但精確 head 上唯一會收集該檔的 CI job 為 skipped（或該路徑不在任何 CI job 的收集範圍內），因此沒有任何成功 check 執行過它",
           "evidence": [
             {
               "kind": "test_file",
               "ref": "tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
-              "finding": "由本 PR 交付並存在於 merge commit"
+              "finding": "由本 PR 交付並存在於 merge commit；本 PR 於此檔新增兩個測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go（+92 行，唯讀 diff 核對）。"
             },
             {
-              "kind": "ci_check",
-              "ref": "check-run orchestrator @ 40bb02462ec7",
-              "at": "2026-09-04T09:15:06Z",
-              "finding": "conclusion=success"
+              "kind": "ci_execution_binding",
+              "ref": "tests/e2e/test_release_gate_registry.py → 精確 head 40bb02462ec7 的 CI job 對照",
+              "finding": "該 head 的 ci.yml 只有 product job 會收集 tests/ 路徑，而 product 的 conclusion=skipped（scope skip）；product-e2e-gate 同為 skipped，且其兩份固定清單（playwright spec、PYTEST_NODE_IDS）都不含本檔；orchestrator job 只收集 .orchestrator／delivery_toolchain／scripts／tests/tooling，結構上不會收集本檔。因此本檔在精確 head 上未被任何成功 check 執行。前輪把它綁到 orchestrator check 是錯誤的。"
             }
           ],
-          "note": "同上 skip 註記。"
+          "note": "本條款（staging／production gate 不得反向阻擋 dev）對應 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go 與既有 test_blocking_gates_filters_by_target，同樣未在精確 head 被執行。"
         },
         {
           "index": 5,
@@ -2286,22 +4197,21 @@
           "classes_zh": [
             "可由測試證明"
           ],
-          "status": "met_by_test_in_green_ci",
-          "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+          "status": "test_delivered_not_executed_at_exact_head",
+          "status_zh": "本 PR 交付了對應測試檔並可定位到具名 assertion，但精確 head 上唯一會收集該檔的 CI job 為 skipped（或該路徑不在任何 CI job 的收集範圍內），因此沒有任何成功 check 執行過它",
           "evidence": [
             {
               "kind": "test_file",
               "ref": "tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
-              "finding": "由本 PR 交付並存在於 merge commit"
+              "finding": "由本 PR 交付並存在於 merge commit；本 PR 於此檔新增兩個測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go（+92 行，唯讀 diff 核對）。"
             },
             {
-              "kind": "ci_check",
-              "ref": "check-run orchestrator @ 40bb02462ec7",
-              "at": "2026-09-04T09:15:06Z",
-              "finding": "conclusion=success"
+              "kind": "ci_execution_binding",
+              "ref": "tests/e2e/test_release_gate_registry.py → 精確 head 40bb02462ec7 的 CI job 對照",
+              "finding": "該 head 的 ci.yml 只有 product job 會收集 tests/ 路徑，而 product 的 conclusion=skipped（scope skip）；product-e2e-gate 同為 skipped，且其兩份固定清單（playwright spec、PYTEST_NODE_IDS）都不含本檔；orchestrator job 只收集 .orchestrator／delivery_toolchain／scripts／tests/tooling，結構上不會收集本檔。因此本檔在精確 head 上未被任何成功 check 執行。前輪把它綁到 orchestrator check 是錯誤的。"
             }
           ],
-          "note": "同上 skip 註記。"
+          "note": "本條款（無證據的 gate 保持 blocked）對應該檔既有 fail-closed 測試，同樣未在精確 head 被執行。"
         },
         {
           "index": 6,
@@ -2314,60 +4224,53 @@
             "可由測試證明",
             "人類授權"
           ],
-          "status": "met_by_test_in_green_ci",
-          "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+          "status": "test_delivered_not_executed_at_exact_head",
+          "status_zh": "本 PR 交付了對應測試檔並可定位到具名 assertion，但精確 head 上唯一會收集該檔的 CI job 為 skipped（或該路徑不在任何 CI job 的收集範圍內），因此沒有任何成功 check 執行過它",
           "evidence": [
             {
               "kind": "test_file",
               "ref": "tests/e2e/test_release_gate_registry.py @ efdfea1a0c31",
-              "finding": "由本 PR 交付並存在於 merge commit"
+              "finding": "由本 PR 交付並存在於 merge commit；本 PR 於此檔新增兩個測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go（+92 行，唯讀 diff 核對）。"
             },
             {
               "kind": "delivered_file",
               "ref": "delivery_toolchain/e2e/check_release_gate_registry.py @ efdfea1a0c31",
-              "finding": "由本 PR 交付並存在於 merge commit"
+              "finding": "由本 PR 交付並存在於 merge commit；GO 決策的 human_signoff 驗證在此檢查器內。"
             },
             {
-              "kind": "ci_check",
-              "ref": "check-run orchestrator @ 40bb02462ec7",
-              "at": "2026-09-04T09:15:06Z",
-              "finding": "conclusion=success"
+              "kind": "ci_execution_binding",
+              "ref": "tests/e2e/test_release_gate_registry.py → 精確 head 40bb02462ec7 的 CI job 對照",
+              "finding": "該 head 的 ci.yml 只有 product job 會收集 tests/ 路徑，而 product 的 conclusion=skipped（scope skip）；product-e2e-gate 同為 skipped，且其兩份固定清單（playwright spec、PYTEST_NODE_IDS）都不含本檔；orchestrator job 只收集 .orchestrator／delivery_toolchain／scripts／tests/tooling，結構上不會收集本檔。因此本檔在精確 head 上未被任何成功 check 執行。前輪把它綁到 orchestrator check 是錯誤的。"
             }
           ],
-          "note": "本條款是對 release GO 的否定約束（必須是真實 human_signoff，不得偽造），不是要求本任務取得人類簽署。程式面由 checker 與其 E2E 測試強制；本盤點未查到任何由本任務簽發的 release GO，故條款以「未發生偽造」成立。若 reviewer 認為本條款要求出示一筆真實 human_signoff，則此項應改判為缺證據。"
+          "note": "本條款是對 release GO 的否定約束（必須是真實 human_signoff，不得偽造），不是要求本任務取得人類簽署。程式面由 checker 交付；其 E2E 測試檔在精確 head 上未被任何成功 check 執行，故本條款的測試證明不成立，只剩 checker 交付本身。本盤點未查到任何由本任務簽發的 release GO。若 reviewer 認為本條款要求出示一筆真實 human_signoff，則此項應改判為缺證據。"
         },
         {
           "index": 7,
           "criterion": "第三方來源保持 disabled 且無 credentials 與 default deny egress",
           "classes": [
-            "T",
-            "D"
+            "D",
+            "R"
           ],
           "classes_zh": [
-            "可由測試證明",
-            "程式或文件交付"
+            "程式或文件交付",
+            "runtime／部署"
           ],
-          "status": "met_by_test_in_green_ci",
-          "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+          "status": "partially_met",
+          "status_zh": "本條款可拆成數項，部分有既有證據、部分沒有",
           "evidence": [
             {
+              "kind": "candidate_diff_scan",
+              "ref": "PR #1193 完整 diff @ 40bb02462ec7（2 檔、+129/-6）",
+              "finding": "逐行唯讀掃描本候選 PR 的完整 diff：delivery_toolchain/e2e/check_release_gate_registry.py 與 tests/e2e/test_release_gate_registry.py 皆無 sources／egress／credential／disabled／deny 任一字樣；新增的兩個測試只斷言 admission target 綁定與 require-go fail-closed。本候選 PR 自身沒有交付任何涵蓋本條款的程式或測試。前輪引用這兩個測試作為本條款證據是錯誤的。"
+            },
+            {
               "kind": "delivered_file",
-              "ref": "delivery_toolchain/e2e/check_release_gate_registry.py @ 40bb0246",
-              "finding": "靜態 release gate 檢查器維護 source-off 邊界"
-            },
-            {
-              "kind": "test_file",
-              "ref": "tests/e2e/test_release_gate_registry.py @ 40bb0246",
-              "finding": "test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed, test_ci_is_not_a_deployment_authority"
-            },
-            {
-              "kind": "ci_check",
-              "ref": "check-run orchestrator @ 40bb0246",
-              "at": "2026-09-04T09:15:06Z",
-              "finding": "conclusion=success"
+              "ref": ".github/workflows/deploy-dev.yml @ efdfea1a0c31",
+              "finding": "既有契約（非本 PR 交付，但為本 task brief 列出的 source document）：第 140-141 行 workflow_dispatch 輸入 external_sources_enabled 預設空值，其說明明載空值即 standing sources-off posture；第 955 行 ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled 與第 1000 行 ODP_EXTERNAL_PROVIDER_MODE: disabled 為寫死預設；第 948 行 ODP_CLOUD_RUN_VPC_EGRESS 取自 environment 變數 vars.ODP_CLOUD_RUN_VPC_EGRESS。"
             }
           ],
-          "note": "依 code/admission scope，gate registry 與 admission checker 靜態驗證並維持 source-off default 與 dry-run metadata 邊界；本任務不簽發 lease、不 dispatch deploy、不變更 live egress。live runtime posture 依 recommendation_scope 宣告由後續 rollout 驗證，不在此 code/gate task 產生 blocking。"
+          "note": "拆成兩半判定。契約半：deploy-dev.yml 既有契約把第三方來源預設關閉、egress 交由 environment 變數決定，這份契約在候選 merge commit 上可 pinned 引用，但不是本候選 PR 的交付物。live posture 半：來源是否確實 disabled、有無投影 credentials、egress 是否 default deny，屬 runtime 類，唯讀範圍內查無任何對應此候選的 runtime receipt，且 vars.ODP_CLOUD_RUN_VPC_EGRESS 的實際值不在唯讀範圍內。依原 task 明文『本 task 不簽 lease 不 dispatch deploy』，live posture 屬後續 rollout scope，本盤點據此記為 partially_met：不宣稱 live 已證明，也不把後續 rollout 的缺口倒灌成此 code/gate 任務未完成。　本輪同時把本條款的 classes 由 [T,D] 更正為 [D,R]：條款要求的是 live 來源／credentials／egress 的狀態，屬 runtime 類，不是可由本 PR 測試證明的類別。此更正只影響描述準確性，不改變 blocked 判定——decision_rule 中會 blocked 的是「R／X／H 類條款為 not_evidenced」，本條款為 partially_met，在更正前後都不觸發 blocked；更正後反而更明確地把它列入 criteria_not_fully_evidenced。"
         },
         {
           "index": 8,
@@ -2403,10 +4306,12 @@
         "by_status": {
           "process_constraint_unverifiable": 3,
           "met_by_delivered_artifact": 1,
-          "met_by_test_in_green_ci": 5
+          "test_delivered_not_executed_at_exact_head": 4,
+          "partially_met": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": true
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -2419,6 +4324,31 @@
             "criterion": "等待 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 合併後才選定最新 origin/dev candidate"
           },
           {
+            "index": 3,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "criterion": "candidate-built dev boundary 僅接受有同 SHA 同 manifest digest 真實 receipt 的 cleared gate"
+          },
+          {
+            "index": 4,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "criterion": "staging 或 production boundary gate 不得反向阻擋 dev"
+          },
+          {
+            "index": 5,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "criterion": "無證據的 gate 保持 blocked"
+          },
+          {
+            "index": 6,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "criterion": "release decision go 必須保留真實 human_signoff 且不得偽造"
+          },
+          {
+            "index": 7,
+            "status": "partially_met",
+            "criterion": "第三方來源保持 disabled 且無 credentials 與 default deny egress"
+          },
+          {
             "index": 8,
             "status": "process_constraint_unverifiable",
             "criterion": "本 task 不簽 lease 不 dispatch deploy"
@@ -2428,7 +4358,8 @@
             "status": "process_constraint_unverifiable",
             "criterion": "PR 文件中文並只跑 focused regression 與一次 PR CI"
           }
-        ]
+        ],
+        "ci_execution_binding_note": "本 ID 有 4 條 acceptance 的測試檔已交付但在精確 head 上未被任何成功 check 執行（詳見各條 evidence 的 ci_execution_binding）。這不是條款被否證，而是『在此 head 跑過』這件事沒有證據。"
       }
     },
     {
@@ -3286,7 +5217,8 @@
           "process_constraint_unverifiable": 2
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -3542,12 +5474,14 @@
       ],
       "gaps": [
         "A1（partially_met）：Terraform 模組與其契約測試存在且 CI 綠。若條款的「可重跑建立」被解讀為需要真實 terraform apply 的 runtime 收據，本 PR 未帶任何 docs/evidence/ 收據。",
-        "盤點觀察：候選 PR 未帶任何 docs/evidence/ 收據；acceptance『可重跑建立』若被解讀為需要真實 apply，則缺 runtime 證據。"
+        "盤點觀察：候選 PR 未帶任何 docs/evidence/ 收據；acceptance『可重跑建立』若被解讀為需要真實 apply，則缺 runtime 證據。",
+        "第 4 輪更正：A2 的測試檔 infra/terraform/tests/test_ephemeral_staging.py 已交付，但 infra/ 不在該 head 的 pyproject testpaths，也不被該 head 七個 workflow 中任何一支引用，CI 從未執行它。該 head 的 product check 雖為 success，但它不收集這個路徑，前輪的綁定不成立。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "medium",
       "recommended_next_minimal_verification": [
-        "請 reviewer 裁定該 acceptance 為 IaC 能力交付或需 live apply；若為後者則需 staging apply/cleanup 收據，本盤點查無。"
+        "請 reviewer 裁定該 acceptance 為 IaC 能力交付或需 live apply；若為後者則需 staging apply/cleanup 收據，本盤點查無。",
+        "在 merge commit 上單獨執行 infra/terraform/tests/ 並保留退出碼收據，或把該路徑納入某個 CI job 的收集範圍；本盤點依範圍限制不執行測試。"
       ],
       "recommendation_applies_to": "inventory_candidate",
       "acceptance_evidence_map": [
@@ -3593,8 +5527,8 @@
           "classes_zh": [
             "可由測試證明"
           ],
-          "status": "met_by_test_in_green_ci",
-          "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+          "status": "test_delivered_not_executed_at_exact_head",
+          "status_zh": "本 PR 交付了對應測試檔並可定位到具名 assertion，但精確 head 上唯一會收集該檔的 CI job 為 skipped（或該路徑不在任何 CI job 的收集範圍內），因此沒有任何成功 check 執行過它",
           "evidence": [
             {
               "kind": "test_file",
@@ -3602,13 +5536,12 @@
               "finding": "由本 PR 交付並存在於 merge commit"
             },
             {
-              "kind": "ci_check",
-              "ref": "check-run product @ ee6eddb6951a",
-              "at": "2026-08-24T19:37:57Z",
-              "finding": "conclusion=success"
+              "kind": "ci_execution_binding",
+              "ref": "infra/terraform/tests/test_ephemeral_staging.py → 精確 head ee6eddb6951a 的 CI job 對照",
+              "finding": "infra/ 不在該 head 的 pyproject.toml testpaths（.orchestrator、delivery_toolchain、scripts、tests、modules、apps、shared、models）之內，且該 head 七個 workflow（ci、deploy-dev、promote-dev-to-main、merge-queue-review-gate、tooling-scope-review-gate、emgi-consumer-boundary、assisted-intake-design-validation）皆無任何一支引用 infra/terraform/tests。因此此測試檔雖已交付，CI 從未執行過它——即使該 head 的 product check 結論為 success。前輪把它綁到 product check 是錯誤的。"
             }
           ],
-          "note": "owner/created_at/expires_at labels 由 Terraform 契約測試覆蓋。"
+          "note": "Terraform 模組測試已交付且可定位，但不在任何 CI job 的收集範圍內；此條款的最小補證動作是在本地或 CI 明確執行 infra/terraform/tests/，本盤點依範圍限制不執行。"
         },
         {
           "index": 3,
@@ -3692,11 +5625,13 @@
         "criteria_total": 5,
         "by_status": {
           "partially_met": 1,
-          "met_by_test_in_green_ci": 3,
+          "test_delivered_not_executed_at_exact_head": 1,
+          "met_by_test_in_green_ci": 2,
           "met_by_delivered_artifact": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": true
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -3707,8 +5642,14 @@
             "index": 1,
             "status": "partially_met",
             "criterion": "release-scoped namespace/service/job/database或schema/bucket/tenant/IAM 可重跑建立"
+          },
+          {
+            "index": 2,
+            "status": "test_delivered_not_executed_at_exact_head",
+            "criterion": "resources 有 owner/created_at/expires_at labels"
           }
-        ]
+        ],
+        "ci_execution_binding_note": "本 ID 有 1 條 acceptance 的測試檔已交付但在精確 head 上未被任何成功 check 執行（詳見各條 evidence 的 ci_execution_binding）。這不是條款被否證，而是『在此 head 跑過』這件事沒有證據。"
       }
     },
     {
@@ -4171,7 +6112,8 @@
           "met_by_delivered_artifact": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -4623,7 +6565,8 @@
           "partially_met": 2
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [
         {
@@ -4903,7 +6846,8 @@
         "五個宣告 artifact（modules/heatzone、apps/api、apps/web/features/operator、infra/db/migrations、tests）在 merge commit 全存在且由候選 PR 觸及。"
       ],
       "gaps": [
-        "盤點觀察：Acceptance『Operator approval 的 production-entry 測試通過』屬測試語意，本盤點未重跑測試，僅依精確 head 的 7/7 CI success。"
+        "盤點觀察：Acceptance『Operator approval 的 production-entry 測試通過』屬測試語意，本盤點未重跑測試，僅依精確 head 的 7/7 CI success。",
+        "第 4 輪補查（結論不變）：A2／A4 的測試檔帶 requires_live_env 標記，被 product job 主 step 的 marker 運算式排除，但由同 job 的資料庫 step 與具名 PostgreSQL 16 step 跑回來，已補上 step 層綁定。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "high",
@@ -4963,6 +6907,11 @@
               "ref": "check-run product @ 0585dd49976e",
               "at": "2026-09-05T15:27:38Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "tests/contract/test_heatzone_composition_schema.py → check-run product @ 0585dd49976e",
+              "finding": "該檔帶 requires_live_env 標記，被 product job 主 step 的 -m \"not requires_live_env\" 排除，但由同 job 的 Test database contracts, migrations and schema gates step （-m \"requires_live_env and not requires_postgis\" tests/contract tests/ops tests/integration）跑回來；該檔無 requires_postgis 標記。product check 於該 head conclusion=success。"
             }
           ],
           "note": "lineage／model version／policy version 由 schema 契約測試與 migration 測試覆蓋。"
@@ -5025,6 +6974,11 @@
               "kind": "ci_step",
               "ref": "ci.yml product job",
               "finding": "product job 掛 postgis/postgis:16-3.5 service 並設 INTAKE_TEST_DATABASE_URL；另有專步 `uv run pytest tests/integration/test_official_real_estate_postgresql.py`"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "tests/integration/test_official_real_estate_postgresql.py → check-run product @ 0585dd49976e",
+              "finding": "該檔帶 requires_live_env 標記，被 product job 主 step 排除，但 product job 另有具名 step Test official real-estate outcomes on PostgreSQL 16 直接執行此檔（不帶 marker 篩選）。product check 於該 head conclusion=success。"
             }
           ],
           "note": "production-entry 測試在有真實 PostgreSQL service 的 job 內執行；本盤點未取 job log，只到 check 結論層。"
@@ -5036,7 +6990,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -5456,7 +7411,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -5754,7 +7710,8 @@
         "符合 acceptance『無適用 upstream 時不新增 connector 且 AI 不自簽 waiver』：未出現 AI 自簽的 decider。"
       ],
       "gaps": [
-        "盤點觀察：需求本身仍 OPEN 待人類裁決；這是需求狀態而非任務缺陷，但下游不得據此視為 INT-001 已實作。"
+        "盤點觀察：需求本身仍 OPEN 待人類裁決；這是需求狀態而非任務缺陷，但下游不得據此視為 INT-001 已實作。",
+        "第 4 輪更正（結論不變）：A4 兩個測試檔分屬不同 job 的收集範圍，原本只綁 orchestrator check；已補上收集 tests/integration/ 的 product check，兩者於該 head 皆為 success。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "high",
@@ -5864,11 +7821,16 @@
             {
               "kind": "ci_check",
               "ref": "check-run orchestrator @ 39289e4207b2",
-              "at": "2026-09-03T19:50:46Z",
-              "finding": "conclusion=success"
+              "at": "2026-09-05T04:03:03Z",
+              "finding": "conclusion=success；收集 delivery_toolchain/，涵蓋 delivery_toolchain/governance/test_check_requirement_members.py"
+            },
+            {
+              "kind": "ci_check",
+              "ref": "check-run product @ 39289e4207b2",
+              "finding": "conclusion=success；收集 tests/，涵蓋 tests/integration/test_int001_cdc_disposition.py"
             }
           ],
-          "note": null
+          "note": "本條款的兩個測試檔分屬不同 job 的收集範圍：delivery_toolchain/ 由 orchestrator job 收集，tests/integration/ 由 product job 收集；該 head 兩個 check 結論皆為 success。前輪只綁 orchestrator check，對 tests/integration/ 的那一半是錯誤綁定。"
         }
       ],
       "acceptance_evidence_summary": {
@@ -5878,7 +7840,8 @@
           "met_by_test_in_green_ci": 2
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -6186,7 +8149,7 @@
             {
               "kind": "test_file",
               "ref": "tests/governance/test_job_partial_disposition.py @ 9647d673ccf2",
-              "finding": "由本 PR 交付並存在於 merge commit"
+              "finding": "test_shared001_partial_disposition_state_and_handback_metadata 斷言 PARTIAL status == absent 與 disposition.state == BLOCKED_BY_EVIDENCE，且 resolve() 查無未列名 producer"
             },
             {
               "kind": "ci_check",
@@ -6195,7 +8158,7 @@
               "finding": "conclusion=success"
             }
           ],
-          "note": null
+          "note": "查無真實 producer 證據，PARTIAL 保持 absent，由治理測試直接斷言。"
         },
         {
           "index": 2,
@@ -6283,7 +8246,8 @@
           "met_by_delivered_artifact": 2
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -6678,7 +8642,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -7062,7 +9027,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -7304,7 +9270,8 @@
         "checker、測試、豁免清單與 .github/workflows/ci.yml 四個 artifact 在 merge commit 全存在且由候選 PR 觸及。"
       ],
       "gaps": [
-        "盤點觀察：精確 head 有 3 個 check conclusion=skipped，product 層測試未在該 head 實跑。"
+        "盤點觀察：精確 head 有 3 個 check conclusion=skipped，product 層測試未在該 head 實跑。",
+        "第 4 輪更正（結論不變）：A1-A4 的 delivery_toolchain/governance/test_check_measurement_defaults.py 原被標為 delivered_file，已正規化為 test_file，並補上 orchestrator job 收集 delivery_toolchain/ 的依據。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "medium",
@@ -7326,7 +9293,7 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "delivered_file",
+              "kind": "test_file",
               "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9",
               "finding": "由本 PR 交付並存在於 merge commit"
             },
@@ -7336,15 +9303,15 @@
               "finding": "由本 PR 交付並存在於 merge commit"
             },
             {
-              "kind": "delivered_file",
-              "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9",
-              "finding": "由本 PR 交付並存在於 merge commit"
-            },
-            {
               "kind": "ci_check",
               "ref": "check-run orchestrator @ aaa9aaee9380",
               "at": "2026-09-03T12:23:05Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py → check-run orchestrator @ aaa9aaee9380",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
           "note": "負向案例由 delivery_toolchain 自帶測試覆蓋；精確 head 的 product／product-e2e-gate／performance-gate 為 skipped（scope skip），實跑的是 orchestrator。"
@@ -7362,7 +9329,7 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "delivered_file",
+              "kind": "test_file",
               "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9",
               "finding": "由本 PR 交付並存在於 merge commit"
             },
@@ -7371,6 +9338,11 @@
               "ref": "check-run orchestrator @ aaa9aaee9380",
               "at": "2026-09-03T12:23:05Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py → check-run orchestrator @ aaa9aaee9380",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
           "note": "同上 skip 註記。"
@@ -7400,13 +9372,28 @@
               "finding": "由本 PR 交付並存在於 merge commit"
             },
             {
+              "kind": "test_file",
+              "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9",
+              "finding": "由本 PR 交付並存在於 merge commit。條款的兩半各有具名測試：逐欄窄豁免的必要欄位 → test_an_exemption_without_an_owner_is_refused、test_an_exemption_without_a_reason_is_refused、test_an_exemption_without_an_expiry_is_refused、test_an_unreadable_expiry_is_refused_rather_than_ignored；過期會紅 → test_an_exemption_past_its_date_is_reported、test_an_expired_exemption_fails_the_check_itself、test_no_exemption_is_already_past_its_date；邊界 → test_an_exemption_on_its_last_day_is_still_live。"
+            },
+            {
+              "kind": "ci_step",
+              "ref": "ci.yml:105-106 『Refuse bounded scores that default to perfect』 @ 8479567d66d9",
+              "finding": "orchestrator job 另有具名 step 直接執行 uv run python delivery_toolchain/governance/check_measurement_defaults.py，因此『維持 CI 可執行且過期會紅』除了測試層之外，在該 head 還有 gate step 層的執行證據。"
+            },
+            {
               "kind": "ci_check",
               "ref": "check-run orchestrator @ aaa9aaee9380",
               "at": "2026-09-03T12:23:05Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py → check-run orchestrator @ aaa9aaee9380",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
-          "note": "逐欄豁免清單與過期會紅的行為由 checker 與其測試界定。"
+          "note": "第 4 輪更正：本條款原本只有兩個 delivered_file 與一個 ci_check，沒有任何 test_file，屬以綠色 job 泛稱代替條款證據。現補上具名測試與 ci.yml 的 gate step，兩者都由該 head 結論 success 的 orchestrator check 執行。"
         },
         {
           "index": 4,
@@ -7421,15 +9408,20 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "delivered_file",
+              "kind": "test_file",
               "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9",
-              "finding": "由本 PR 交付並存在於 merge commit"
+              "finding": "由本 PR 交付並存在於 merge commit；本條款（修復欄位時同 commit 可移除對應豁免）對應具名測試 test_the_exemption_is_live_while_the_field_is_and_stale_after 與 test_no_exemption_outlives_the_field_it_covers。"
             },
             {
               "kind": "ci_check",
               "ref": "check-run orchestrator @ aaa9aaee9380",
               "at": "2026-09-03T12:23:05Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_measurement_defaults.py → check-run orchestrator @ aaa9aaee9380",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
           "note": "同上 skip 註記。"
@@ -7441,7 +9433,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -7670,7 +9663,8 @@
         "兩個 artifact（set_valued_requirements.json、ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md）在 merge commit 存在。"
       ],
       "gaps": [
-        "盤點觀察：Acceptance『找不到權威決策時 task 轉 blocked waiting Human/Ops』的負向行為未在本盤點重跑驗證。"
+        "盤點觀察：Acceptance『找不到權威決策時 task 轉 blocked waiting Human/Ops』的負向行為未在本盤點重跑驗證。",
+        "第 4 輪更正（結論不變）：A3-A4 的 delivery_toolchain/governance/test_check_requirement_members.py 同上 kind 正規化與收集依據。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "high",
@@ -7742,7 +9736,7 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "delivered_file",
+              "kind": "test_file",
               "ref": "delivery_toolchain/governance/test_check_requirement_members.py @ 830a8ebf919c",
               "finding": "由本 PR 交付並存在於 merge commit"
             },
@@ -7752,15 +9746,15 @@
               "finding": "由本 PR 交付並存在於 merge commit"
             },
             {
-              "kind": "delivered_file",
-              "ref": "delivery_toolchain/governance/test_check_requirement_members.py @ 830a8ebf919c",
-              "finding": "由本 PR 交付並存在於 merge commit"
-            },
-            {
               "kind": "ci_check",
               "ref": "check-run orchestrator @ f2d1bd88ec2d",
               "at": "2026-09-03T17:28:13Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ f2d1bd88ec2d",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
           "note": "manifest note 不得當成 requirement amendment，由 checker 測試覆蓋。"
@@ -7778,7 +9772,7 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "delivered_file",
+              "kind": "test_file",
               "ref": "delivery_toolchain/governance/test_check_requirement_members.py @ 830a8ebf919c",
               "finding": "由本 PR 交付並存在於 merge commit"
             },
@@ -7787,6 +9781,11 @@
               "ref": "check-run orchestrator @ f2d1bd88ec2d",
               "at": "2026-09-03T17:28:13Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ f2d1bd88ec2d",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
           "note": null
@@ -7799,7 +9798,8 @@
           "met_by_test_in_green_ci": 2
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -8185,7 +10185,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -8614,7 +10615,8 @@
           "met_by_delivered_artifact": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -8870,7 +10872,8 @@
         "五個宣告 artifact 在 merge commit 全存在；精確 head 的 product-e2e-gate check 為 success。"
       ],
       "gaps": [
-        "盤點觀察：E2E 的 DOM 層行為只有 CI 結論可依；本盤點依規定未重跑測試。"
+        "盤點觀察：E2E 的 DOM 層行為只有 CI 結論可依；本盤點依規定未重跑測試。",
+        "第 4 輪更正（結論不變）：A4 的三個測試檔原本一律綁 product-e2e-gate。該 job 不做路徑式收集，只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS；已拆綁為 spec.ts→product-e2e-gate、兩個 pytest 檔→product。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "high",
@@ -8995,8 +10998,17 @@
             {
               "kind": "ci_check",
               "ref": "check-run product-e2e-gate @ c71599aa116e",
-              "at": "2026-09-04T04:44:58Z",
-              "finding": "conclusion=success"
+              "finding": "conclusion=success；tests/e2e/operator-network-rebalance.spec.ts 具名列於該 head 的 delivery_toolchain/e2e/run_product_e2e.sh playwright spec 清單內，確由此 job 執行。"
+            },
+            {
+              "kind": "ci_check",
+              "ref": "check-run product @ c71599aa116e",
+              "finding": "conclusion=success；tests/integration/test_netplan_disclosure_ui_e2e.py 與 modules/netplan/tests/test_netplan_production_execution.py 落在 product job 的 tests／modules 收集路徑內。"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "本條款三個測試檔的 job 歸屬",
+              "finding": "product-e2e-gate 不做路徑式收集，只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS 固定清單；兩個 pytest 檔都不在 PYTEST_NODE_IDS 內，因此它們由 product job 而非 product-e2e-gate 執行。前輪把三個檔一律綁 product-e2e-gate 是錯誤的。"
             }
           ],
           "note": "E2E 由 product-e2e-gate 於精確 head 執行並結論 success；本盤點未取 job log。"
@@ -9008,7 +11020,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -9409,7 +11422,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -9660,7 +11674,8 @@
         "六個宣告 artifact 在 merge commit 全存在；task-review-gate 核准者 Antigravity2 與 brief reviewer 一致。"
       ],
       "gaps": [
-        "盤點觀察：commit trailer 的 Reviewer 記 Claude2，與 gate 的 Antigravity2 不同；以 gate 為準。"
+        "盤點觀察：commit trailer 的 Reviewer 記 Claude2，與 gate 的 Antigravity2 不同；以 gate 為準。",
+        "第 4 輪補查（結論不變）：A3／A4 的測試檔同樣帶 requires_live_env 標記，由 product job 的資料庫 step 與具名 PostgreSQL 16 step 執行，已補上 step 層綁定。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "high",
@@ -9746,6 +11761,11 @@
               "ref": "check-run product @ 282a88fb882c",
               "at": "2026-09-04T02:49:48Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "tests/contract/test_price_exploration_gate_schema.py → check-run product @ 282a88fb882c",
+              "finding": "該檔帶 requires_live_env 標記，被 product job 主 step 排除，由同 job 的資料庫 step （-m \"requires_live_env and not requires_postgis\" tests/contract tests/ops tests/integration）執行；該檔無 requires_postgis 標記。product check 於該 head conclusion=success。"
             }
           ],
           "note": null
@@ -9782,6 +11802,11 @@
               "kind": "ci_step",
               "ref": "ci.yml product job",
               "finding": "掛 postgis/postgis:16-3.5 service，另有專步跑 tests/integration/test_official_real_estate_postgresql.py"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "tests/integration/test_official_real_estate_postgresql.py → check-run product @ 282a88fb882c",
+              "finding": "該檔帶 requires_live_env 標記，被 product job 主 step 排除，由 product job 的具名 PostgreSQL 16 step 直接執行。product check 於該 head conclusion=success。"
             }
           ],
           "note": "本盤點未取 job log。"
@@ -9793,7 +11818,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -10141,7 +12167,8 @@
           "met_by_receipt": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -10369,7 +12396,8 @@
         "兩個 artifact 在 merge commit 存在；acceptance 明文『不聲稱測試綠就是已部署或 GO』，屬純測試 fixture 解耦。"
       ],
       "gaps": [
-        "盤點觀察：Acceptance 提及前身 ODP-RELEASE-GATE-FIXTURE-STAGING-001 因 mutates_canonical 設定錯誤而只有唯讀檢查並被 supersede；該前身不在本 38 項清單內，映射時勿混用。"
+        "盤點觀察：Acceptance 提及前身 ODP-RELEASE-GATE-FIXTURE-STAGING-001 因 mutates_canonical 設定錯誤而只有唯讀檢查並被 supersede；該前身不在本 38 項清單內，映射時勿混用。",
+        "第 4 輪更正（結論不變）：A1-A3 的 tests/e2e/test_release_gate_registry.py 原綁 product-e2e-gate。該 job 的 make 前置目標只執行 check_release_gate_registry.py 這支檢查器本身，不執行同名 pytest 檔；已改綁真正收集它的 product check（該 head success）。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "medium",
@@ -10402,9 +12430,13 @@
             },
             {
               "kind": "ci_check",
-              "ref": "check-run product-e2e-gate @ a9e7853f9ed9",
-              "at": "2026-09-06T01:01:49Z",
-              "finding": "conclusion=success"
+              "ref": "check-run product @ a9e7853f9ed9",
+              "finding": "conclusion=success；tests/e2e/test_release_gate_registry.py 落在 product job 的 tests 收集路徑內。"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "tests/e2e/test_release_gate_registry.py → product（非 product-e2e-gate）",
+              "finding": "product-e2e-gate 於該 head 的 make 前置目標 release-gate-registry 只執行 delivery_toolchain/e2e/check_release_gate_registry.py 這支檢查器本身，並不執行同名的 pytest 檔；該檔也不在 PYTEST_NODE_IDS 清單內。實際收集執行它的是 product job（該 head conclusion=success）。前輪綁 product-e2e-gate 是錯誤的。"
             }
           ],
           "note": "只動 E2E fixture 與說明文件，未改 validator／lease／workflow。"
@@ -10428,9 +12460,13 @@
             },
             {
               "kind": "ci_check",
-              "ref": "check-run product-e2e-gate @ a9e7853f9ed9",
-              "at": "2026-09-06T01:01:49Z",
-              "finding": "conclusion=success"
+              "ref": "check-run product @ a9e7853f9ed9",
+              "finding": "conclusion=success；tests/e2e/test_release_gate_registry.py 落在 product job 的 tests 收集路徑內。"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "tests/e2e/test_release_gate_registry.py → product（非 product-e2e-gate）",
+              "finding": "product-e2e-gate 於該 head 的 make 前置目標 release-gate-registry 只執行 delivery_toolchain/e2e/check_release_gate_registry.py 這支檢查器本身，並不執行同名的 pytest 檔；該檔也不在 PYTEST_NODE_IDS 清單內。實際收集執行它的是 product job（該 head conclusion=success）。前輪綁 product-e2e-gate 是錯誤的。"
             }
           ],
           "note": "dev/staging/prod 與 no-matched-target 的 CLI case 以 local fixture 設定，committed registry 的結構綁定與 fail-closed 整合測試保留。"
@@ -10454,9 +12490,13 @@
             },
             {
               "kind": "ci_check",
-              "ref": "check-run product-e2e-gate @ a9e7853f9ed9",
-              "at": "2026-09-06T01:01:49Z",
-              "finding": "conclusion=success"
+              "ref": "check-run product @ a9e7853f9ed9",
+              "finding": "conclusion=success；tests/e2e/test_release_gate_registry.py 落在 product job 的 tests 收集路徑內。"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "tests/e2e/test_release_gate_registry.py → product（非 product-e2e-gate）",
+              "finding": "product-e2e-gate 於該 head 的 make 前置目標 release-gate-registry 只執行 delivery_toolchain/e2e/check_release_gate_registry.py 這支檢查器本身，並不執行同名的 pytest 檔；該檔也不在 PYTEST_NODE_IDS 清單內。實際收集執行它的是 product job（該 head conclusion=success）。前輪綁 product-e2e-gate 是錯誤的。"
             }
           ],
           "note": null
@@ -10531,7 +12571,8 @@
           "met_by_delivered_artifact": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -10896,7 +12937,8 @@
           "met_by_receipt": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -11364,7 +13406,8 @@
           "met_by_test_in_green_ci": 6
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -11629,7 +13672,8 @@
         "四個 artifact（含 checker 與其測試、governance 文件）在 merge commit 全存在。"
       ],
       "gaps": [
-        "盤點觀察：Acceptance『負向測試證明 checker 會拒絕 AI 自簽與過期 waiver』依 CI 結論，未重跑。"
+        "盤點觀察：Acceptance『負向測試證明 checker 會拒絕 AI 自簽與過期 waiver』依 CI 結論，未重跑。",
+        "第 4 輪更正（結論不變）：A1／A2／A4 的 delivery_toolchain/governance/test_check_requirement_members.py 同上 kind 正規化與收集依據。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "high",
@@ -11649,7 +13693,7 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "delivered_file",
+              "kind": "test_file",
               "ref": "delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8",
               "finding": "由本 PR 交付並存在於 merge commit"
             },
@@ -11659,15 +13703,15 @@
               "finding": "由本 PR 交付並存在於 merge commit"
             },
             {
-              "kind": "delivered_file",
-              "ref": "delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8",
-              "finding": "由本 PR 交付並存在於 merge commit"
-            },
-            {
               "kind": "ci_check",
               "ref": "check-run orchestrator @ 7c889b211780",
               "at": "2026-09-03T12:43:57Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ 7c889b211780",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
           "note": "本 PR 未帶 docs/evidence/ 收據，交付為 governance checker 與其測試。"
@@ -11685,7 +13729,7 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "delivered_file",
+              "kind": "test_file",
               "ref": "delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8",
               "finding": "由本 PR 交付並存在於 merge commit"
             },
@@ -11694,6 +13738,11 @@
               "ref": "check-run orchestrator @ 7c889b211780",
               "at": "2026-09-03T12:43:57Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ 7c889b211780",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
           "note": null
@@ -11731,7 +13780,7 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "delivered_file",
+              "kind": "test_file",
               "ref": "delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8",
               "finding": "由本 PR 交付並存在於 merge commit"
             },
@@ -11740,6 +13789,11 @@
               "ref": "check-run orchestrator @ 7c889b211780",
               "at": "2026-09-03T12:43:57Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ 7c889b211780",
+              "finding": "orchestrator job 的指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。"
             }
           ],
           "note": "負向測試證明 checker 會拒絕 AI 自簽與過期 waiver。"
@@ -11752,7 +13806,8 @@
           "met_by_delivered_artifact": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -11978,12 +14033,14 @@
       "gaps": [
         "盤點觀察：精確 head 有 3 個 check conclusion=skipped。",
         "盤點觀察：commit trailer 無 Verified 欄位。",
-        "盤點觀察：Acceptance 要求的 live config 生效屬後續操作；code 合併不等於 live orchestrator config 已改（live config 為顯式覆蓋，程式預設值不會自動生效）。"
+        "盤點觀察：Acceptance 要求的 live config 生效屬後續操作；code 合併不等於 live orchestrator config 已改（live config 為顯式覆蓋，程式預設值不會自動生效）。",
+        "第 4 輪更正：A7 原本只有一個 orchestrator ci_check、未具名任何測試，屬以綠色 job 泛稱代替條款證據。本輪已在 .orchestrator/test_role_provider_policy.py 內逐項定位條款點名的 negative tests；但該條款另含『只跑影響範圍 focused tests 一次、不重跑無關完整 suite、不以 mock 生成的 command 當 live 執行證據』這一段執行過程約束，交付物與唯讀記錄無法獨立驗證，故整條為 partially_met。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "medium",
       "recommended_next_minimal_verification": [
-        "映射時明記本項只涵蓋 code/policy，live rollout 需另有受治理執行證據。"
+        "映射時明記本項只涵蓋 code/policy，live rollout 需另有受治理執行證據。",
+        "A7 的過程半若要驗證，需要當時的執行紀錄（跑了哪些測試、跑幾次）；本盤點唯讀範圍內無此紀錄，不推定。"
       ],
       "recommendation_applies_to": "inventory_candidate",
       "acceptance_evidence_map": [
@@ -12075,22 +14132,34 @@
           "index": 7,
           "criterion": "整批修改完成只跑影響範圍focused tests一次及exact-head PR CI；必要negative tests涵蓋review不會逃回Agy/Claude、unknown/empty codex capacity、pool independence、queued policy change、helper/rotation、owner fallback、Codex exact model+effort。不要重跑無關完整suite、不要以mock生成的command當live執行證據。",
           "classes": [
-            "T"
+            "T",
+            "P"
           ],
           "classes_zh": [
-            "可由測試證明"
+            "可由測試證明",
+            "執行過程約束"
           ],
-          "status": "met_by_test_in_green_ci",
-          "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
+          "status": "partially_met",
+          "status_zh": "本條款可拆成數項，部分有既有證據、部分沒有",
           "evidence": [
+            {
+              "kind": "test_file",
+              "ref": ".orchestrator/test_role_provider_policy.py @ 64f3b2399442",
+              "finding": "由本 PR 交付（+2006 行）並存在於 merge commit。條款逐項點名的 negative tests 皆可具名定位：review 不會逃回 Agy/Claude → test_reviewer_selection_never_falls_back_to_an_implementation_lane；unknown/empty codex capacity → test_unmeasurable_codex_capacity_does_not_release_review_to_another_provider、test_exhausted_codex_pools_make_review_wait_rather_than_reassign；pool independence → test_account_pool_independence_survives_a_single_provider_review_rule；queued policy change → test_queued_event_is_skipped_when_the_policy_stopped_permitting_it；helper/rotation → test_helper_claim_is_filtered_by_the_same_rule_as_owner、test_review_churn_rotation_rotates_owner_without_moving_review_off_codex；owner fallback → test_owner_failure_fallback_does_not_drag_the_reviewer_off_codex；Codex exact model+effort → test_codex_command_carries_the_configured_model_and_ultra_effort、test_invalid_effort_fails_the_delivery_instead_of_running_at_a_default。"
+            },
             {
               "kind": "ci_check",
               "ref": "check-run orchestrator @ c1a382416e44",
               "at": "2026-09-06T05:35:33Z",
-              "finding": "conclusion=success"
+              "finding": "conclusion=success；.orchestrator/ 在該 job 的收集路徑內，該測試檔確由此成功 check 執行。"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": ".orchestrator/test_role_provider_policy.py → check-run orchestrator @ c1a382416e44",
+              "finding": "orchestrator job 指令收集 .orchestrator，該檔無 requires_live_env 標記；該 head 的 product／product-e2e-gate／performance-gate 為 scope skip，但本條款的測試不在那些 job 的範圍內，skip 不影響本條款。"
             }
           ],
-          "note": "negative tests 由 orchestrator check 於精確 head 執行並結論 success；本盤點未取 job log，且 product 系列 check 為 scope skip。"
+          "note": "本條款可拆成兩半。測試半：條款點名的每一類 negative test 都能在交付的測試檔內具名定位，且該檔確由精確 head 上結論 success 的 orchestrator check 收集執行。過程半：『只跑影響範圍 focused tests 一次』『不要重跑無關完整 suite』『不以 mock 生成的 command 當 live 執行證據』約束的是當時怎麼執行，交付物與唯讀記錄無法獨立驗證，故整條記為 partially_met。前輪此條款只有一個 ci_check、未具名任何測試，屬於以綠色 job 泛稱代替條款證據，本輪更正。"
         },
         {
           "index": 8,
@@ -12114,10 +14183,11 @@
         "by_status": {
           "process_constraint_unverifiable": 3,
           "met_by_delivered_artifact": 4,
-          "met_by_test_in_green_ci": 1
+          "partially_met": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -12133,6 +14203,11 @@
             "index": 6,
             "status": "process_constraint_unverifiable",
             "criterion": "本機codex-cli0.147.0 /home/lupin/.codex/models_cache.json fetched2026-09-06T03:44:11Z列gpt-6-astra支持ultra，且codex -c model_reasoning_effort=\"ultra\" features list已成功。不要以公開API只列max或舊docs只列xhigh擅自換成xhigh/max；本task不啟動假API probe、無權讀auth secrets。"
+          },
+          {
+            "index": 7,
+            "status": "partially_met",
+            "criterion": "整批修改完成只跑影響範圍focused tests一次及exact-head PR CI；必要negative tests涵蓋review不會逃回Agy/Claude、unknown/empty codex capacity、pool independence、queued policy change、helper/rotation、owner fallback、Codex exact model+effort。不要重跑無關完整suite、不要以mock生成的command當live執行證據。"
           },
           {
             "index": 8,
@@ -12674,7 +14749,8 @@
           "met_by_delivered_artifact": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -13111,7 +15187,8 @@
           "partially_met": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -13372,7 +15449,8 @@
         "brief 明列三條 Verification 指令（pytest ops 契約測試、terraform fmt -check、bash -n）；五個 artifact 在 merge commit 全存在。"
       ],
       "gaps": [
-        "A5（partially_met）：「可由同一狀態機產生 secret-free receipts」的能力由測試覆蓋；本 PR 未帶任何已產生的 staging receipt 檔。"
+        "A5（partially_met）：「可由同一狀態機產生 secret-free receipts」的能力由測試覆蓋；本 PR 未帶任何已產生的 staging receipt 檔。",
+        "第 4 輪更正（結論不變）：A3 同時引用 infra/terraform/tests/test_ephemeral_staging.py 與 tests/ops/test_ephemeral_staging_lifecycle.py。前者不被任何 CI job 收集，已在證據列標明；本條款的 CI 執行證明只來自後者。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "medium",
@@ -13449,9 +15527,9 @@
           "status_zh": "本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）",
           "evidence": [
             {
-              "kind": "test_file",
+              "kind": "delivered_file",
               "ref": "infra/terraform/tests/test_ephemeral_staging.py @ 462c8cd4ff25",
-              "finding": "由本 PR 交付並存在於 merge commit"
+              "finding": "已交付並存在於 merge commit，但 infra/ 不在 pyproject testpaths、也不被任何 workflow 引用，CI 從未執行它；本條款的 CI 執行證明來自下面的 tests/ops 測試檔，不是這一份。"
             },
             {
               "kind": "test_file",
@@ -13463,6 +15541,11 @@
               "ref": "check-run product @ fada67756926",
               "at": "2026-08-27T17:31:33Z",
               "finding": "conclusion=success"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "tests/ops/test_ephemeral_staging_lifecycle.py → check-run product @ fada67756926",
+              "finding": "tests/ops/ 落在 product job 的 tests 收集路徑內，該 head product conclusion=success；同條款引用的 infra/terraform/tests/test_ephemeral_staging.py 則不被任何 CI job 收集，已在其證據列註明。"
             }
           ],
           "note": null
@@ -13639,7 +15722,8 @@
           "process_constraint_unverifiable": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -14061,7 +16145,8 @@
           "met_by_delivered_artifact": 2
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -14425,7 +16510,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -14754,7 +16840,8 @@
           "met_by_delivered_artifact": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -14978,7 +17065,7 @@
         "human_authority": true
       },
       "verified_findings": [
-        "brief 的 Artifacts 為空；acceptance 第 9 條明文『2026-09-05 唯讀 GCP/GitHub 盤點未發現已驗證可供 workflow 寫入的非 state/CMEK/release 隔離目的地』，並自陳『code 完成不等於 runtime 完成』。"
+        "brief 的 Artifacts 為空；acceptance 第 9 條明文『2026-09-05 唯讀 GCP/GitHub 盤點未發現已驗證可供 workflow 寫入的非 state/CMEK/release 隔離目的地』，並自陳『code 完成不等於 runtime 完成』。本 PR 已完成 code contract、fail-closed precheck 測試與 GCP_DEPLOY_GUIDE.md 權威文件同步。"
       ],
       "gaps": [
         "盤點觀察：實際 GCP 資源／IAM／vars 屬後續 staging rollout（ODP-EPHEMERAL-STAGING-ROLLOUT-001），依 task brief code 完成不等於 runtime 完成，已於 recommendation_scope 揭露。"
@@ -15243,7 +17330,8 @@
           "met_by_test_in_green_ci": 5
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -15635,7 +17723,8 @@
           "met_by_test_in_green_ci": 4
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -15902,7 +17991,8 @@
         "兩個路徑型 artifact（apps/web/tests/login-route.test.ts、tests/security/test_login_throttle_wiring.py）在 merge commit 存在。"
       ],
       "gaps": [
-        "A3（partially_met）：更正先前盤點：不是「查無對應收據」。收據涵蓋此條款的測試矩陣，但同一份收據明確聲明未接觸真實 OIDC provider，因此此條款在測試層達成、在 live provider 層是收據自陳的界線。"
+        "A3（partially_met）：更正先前盤點：不是「查無對應收據」。收據涵蓋此條款的測試矩陣，但同一份收據明確聲明未接觸真實 OIDC provider，因此此條款在測試層達成、在 live provider 層是收據自陳的界線。",
+        "第 4 輪更正（結論不變）：A1 的 apps/web/tests/login-route.test.ts 是 vitest，原綁 product-e2e-gate；實際由 product job 的 Run Node workspace checks step（make node-check → npm run test --workspaces）執行，已改綁。"
       ],
       "recommendation": "verified_candidate",
       "confidence": "medium",
@@ -15934,15 +18024,19 @@
               "finding": "由本 PR 交付並存在於 merge commit"
             },
             {
-              "kind": "ci_check",
-              "ref": "check-run product-e2e-gate @ 69422d71e8d5",
-              "at": "2026-09-01T08:38:11Z",
-              "finding": "conclusion=success"
-            },
-            {
               "kind": "receipt_section",
               "ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §2 證據矩陣 @ 2377168c",
               "finding": "「帳密登入成功／失敗」對應 Web route suite，預期 200 建立 opaque session、無效憑證固定 401 且無 cookie；「account / IP threshold」對應 Web route suite 與 tests/security/test_login_throttle_wiring.py，預期 429 AUTH_RATE_LIMITED、gate 在 credential verification 之前、狀態持久於 identity.login_attempts"
+            },
+            {
+              "kind": "ci_check",
+              "ref": "check-run product @ 69422d71e8d5",
+              "finding": "conclusion=success；apps/web/tests/login-route.test.ts 是 npm workspace（vitest）測試，由 product job 的 Run Node workspace checks step 執行（make node-check → npm run test --workspaces --if-present）。"
+            },
+            {
+              "kind": "ci_execution_binding",
+              "ref": "apps/web/tests/login-route.test.ts → product（非 product-e2e-gate）",
+              "finding": "product-e2e-gate 只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS，兩者都不含本檔；npm workspace 測試由 product job 的 node-check step 執行。前輪綁 product-e2e-gate 是錯誤的。"
             }
           ],
           "note": "更正先前盤點：宣告 artifact「security E2E receipt」可定位為 docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md（由本 PR 交付）。"
@@ -16112,7 +18206,8 @@
           "process_constraint_unverifiable": 1
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -16639,7 +18734,8 @@
           "met_by_receipt": 5
         },
         "has_unmet_per_own_receipt": false,
-        "has_not_evidenced": false
+        "has_not_evidenced": false,
+        "has_test_delivered_not_executed_at_exact_head": false
       },
       "blocking_reasons": [],
       "recommendation_scope": {
@@ -16649,7 +18745,7 @@
       }
     }
   ],
-  "round": 3,
+  "round": 4,
   "supersedes": {
     "round": 1,
     "paths": [
@@ -16745,6 +18841,32 @@
         "entries[task_id=ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001].blocking_reasons",
         "entries[task_id=ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001].gaps",
         "entries[task_id=ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001].recommendation_scope"
+      ]
+    }
+  ],
+  "review_round_4_findings_and_responses": [
+    {
+      "severity": "P1",
+      "finding": "DEV-STAGED-GATE 的 CI 與條款證據被錯誤升格：A3-A7 標 met_by_test_in_green_ci 並引用 tests/e2e/test_release_gate_registry.py 與 orchestrator @ 40bb0246，但 ci.yml:139 的 orchestrator 指令為 uv run pytest -m \"not requires_live_env\" .orchestrator delivery_toolchain scripts tests/tooling，不收集該檔；會收集它的 product job 在該 head 是 skipped，product-e2e-gate 亦 skipped。A7 新增的兩個具名測試也沒有斷言 sources disabled／provider credentials 缺席／default-deny egress。請更正 A3-A7 的證據種類與執行狀態，並檢查其餘同類 test_file→ci_check 配對。",
+      "response": "接受，且按要求把修正推廣到全部同類配對。新增 decision_rule.ci_execution_binding：對 37 個 odayplus 候選的每個精確 head 唯讀讀回 ci.yml、pyproject testpaths、Makefile 與 run_product_e2e.sh，建立 job→實際收集路徑／固定清單對照，再逐條重算 114 條 met_by_test_in_green_ci 的綁定，結果全部列在 ci_execution_binding.audit_result.rows。共 23 條配對不成立，分三類更正：（一）真的沒被執行——DEV-STAGED-GATE A3-A6 與 EPHEMERAL-STAGING-IAC A2，改記新狀態 test_delivered_not_executed_at_exact_head；前者是 product job 於該 head 為 skipped，後者是 infra/ 根本不在 pyproject testpaths、也不被該 head 七個 workflow 中任何一支引用。（二）綁錯 job 但確有成功 check 執行——RELEASE-GATE-FIXTURE-STAGING-002 A1-A3、WEB-PASSWORD A1、NETPLAN A4、INT001-CDC A4、RUNTIME-RELEASE-STAGING-LIFECYCLE A3，改綁真正收集它的 job 並寫明依據（例如 product-e2e-gate 不做路徑式收集，只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS；vitest 由 product job 的 node-check step 執行）。（三）以綠色 job 泛稱代替條款證據——MEASUREMENT-CROSSLAYER A1-A4、MERGE-QUEUE-DISPOSITION A3-A4、REQ-DISPOSITION A1／A2／A4 的測試檔被誤標為 delivered_file，已正規化為 test_file 並補上收集依據；ROLE-PROVIDER A7 原本完全沒具名任何測試，已補上 .orchestrator/test_role_provider_policy.py 內逐項對應條款的 negative test 名稱，並因該條款的過程半（只跑 focused tests 一次）不可驗證而改為 partially_met。A7（DEV-STAGED-GATE）依要求改為 partially_met：逐行掃描該候選 PR 的完整 diff 確認它沒有交付任何涵蓋 source-off／credentials／egress 的程式或測試，改引用既有契約 .github/workflows/deploy-dev.yml @ efdfea1a0c31 的 pinned 行（140-141 external_sources_enabled 預設空值即 standing sources-off、955 ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled、1000 ODP_EXTERNAL_PROVIDER_MODE: disabled、948 ODP_CLOUD_RUN_VPC_EGRESS 取自 environment 變數），live posture 保留為未證明的缺口。另補查 marker 維度：4 個帶 requires_live_env 的測試檔被主 step 排除但由 product job 的資料庫 step 或具名 PostgreSQL step 跑回來，已補上 step 層綁定。新狀態不自動構成 blocked，但一律列入 recommendation_scope.criteria_not_fully_evidenced 並把該 ID 的 confidence 降為 medium。",
+      "changed_fields": [
+        "decision_rule.criterion_status_vocabulary",
+        "decision_rule.ci_execution_binding",
+        "decision_rule.confidence",
+        "entries[].acceptance_evidence_map[].status",
+        "entries[].acceptance_evidence_map[].evidence",
+        "entries[].acceptance_evidence_summary",
+        "entries[].recommendation_scope",
+        "entries[].confidence",
+        "counts"
+      ]
+    },
+    {
+      "severity": "P2",
+      "finding": "中文 reviewer 映射指引未同步：README_ZH_TW.md 仍列四筆直接否證與兩筆 pending_reviewer_reading，並指示讀取 blocking_reasons[].readings，但該 head 的 JSON 已清除後三筆 blocking_reasons，摘要為 35 verified_candidate / 3 blocked / 0 pending。",
+      "response": "已重寫「給 reviewer 的映射注意事項」：blocked 現在只有 DPF-EMGI-LIVE-ROLLOUT-001、ODP-DEV-ROLLOUT-001 與 ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 三筆，全部屬證據直接否證；pending_reviewer_reading 分類已不存在，指向 blocking_reasons[].readings 的指引一併移除。同時新增一條指引，說明本輪引入的 test_delivered_not_executed_at_exact_head 該怎麼讀，以及 README 標題、產出者、摘要統計與逐項明細全部依第 4 輪重算結果同步。",
+      "changed_fields": [
+        "README_ZH_TW.md"
       ]
     }
   ]

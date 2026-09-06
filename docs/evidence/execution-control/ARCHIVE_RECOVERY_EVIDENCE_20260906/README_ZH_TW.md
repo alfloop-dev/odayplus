@@ -1,7 +1,7 @@
-# 38 個遺失任務的歷史驗收證據盤點（中立資料集・第 3 輪）
+# 38 個遺失任務的歷史驗收證據盤點（中立資料集・第 4 輪）
 
-- 產出任務：`ORCH-ARCHIVE-RECOVERY-EVIDENCE-001`（owner Antigravity2，reviewer Codex2）
-- 產出時間：2026-09-06T18:05:00Z（Antigravity2 接手完成證據盤點與交付）
+- 產出任務：`ORCH-ARCHIVE-RECOVERY-EVIDENCE-001`（owner Claude，reviewer Codex2）
+- 產出時間：2026-09-06T19:05:00Z（第 4 輪由 Claude 接手，重建 CI 執行綁定並修正證據語意）
 - 機讀資料：`docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json`
 - 本輪取代第 1 輪的 `docs/evidence/recovery/ORCH-ARCHIVE-RECOVERY-EVIDENCE-001/`（該路徑在 canonical owned_paths 之外，已移除）
 
@@ -10,20 +10,22 @@
 
 ## 結論摘要
 
-- 總數 **38**：建議 `verified_candidate` **35**、建議 `blocked` **3**（`blocked_pending_reviewer_reading` **0**）。
+- 總數 **38**：建議 `verified_candidate` **35**、建議 `blocked` **3**。
 - 信心：high **27**、medium **11**。
 - 候選 PR 更正 **1** 筆（見「候選誤配更正」）。
 - 候選映射一致（`candidate_mapping.verdict = consistent`）**37/38**；唯一不一致的是 XR 的輸入候選 #996，那正是誤配的證據，其建議套用於更正後候選。
+- **CI 執行綁定稽核**：112 條原標 `met_by_test_in_green_ci` 的條款全部重新核對「被引用測試檔 → 實際收集它的 CI job」，其中 5 條的測試檔在精確 head 上未被任何成功 check 執行，已改記 `test_delivered_not_executed_at_exact_head`；其餘綁錯 job 但確有成功 check 執行者已改綁正確的 job／step。
 - **逐條 acceptance 共 194 條**，狀態分布：
-  - `met_by_test_in_green_ci` 114 條 — 本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）
+  - `met_by_test_in_green_ci` 107 條 — 本 PR 交付了對應測試檔，且該檔位於精確 head 上某個 conclusion=success 的 CI job 實際收集的路徑內（綁定依 ci_execution_binding 的 job→收集路徑對照核對；僅到 job／step 層，未取 job log）
   - `met_by_delivered_artifact` 33 條 — 交付了對應程式或文件，本盤點只驗其存在與內容涵蓋，未重算其結論
   - `met_by_receipt` 18 條 — 交付物內既有收據直接記載本條款的量測結果
   - `process_constraint_unverifiable` 18 條 — 本條款約束的是執行過程，無法由交付物與唯讀記錄獨立驗證
-  - `partially_met` 7 條 — 本條款可拆成數項，部分有既有證據、部分沒有
+  - `partially_met` 9 條 — 本條款可拆成數項，部分有既有證據、部分沒有
+  - `test_delivered_not_executed_at_exact_head` 5 條 — 本 PR 交付了對應測試檔並可定位到具名 assertion，但精確 head 上唯一會收集該檔的 CI job 為 skipped（或該路徑不在任何 CI job 的收集範圍內），因此沒有任何成功 check 執行過它
   - `unmet_per_own_receipt` 3 條 — 該任務自身的收據直接記載本條款未達成
   - `not_evidenced` 1 條 — 唯讀範圍內找不到對應本條款的既有證據
 
-### 第 1 輪的四項錯誤與本輪更正
+### 第 1 輪的四項錯誤與第 2 輪更正
 
 **[P1] JSON decision_rule 要求映射一致，但 31 筆 recommendation 套用於 inventory_candidate 的 verified_candidate 其 candidate_mapping.verdict 為 mismatch（含更正後的 XR 共 32 筆）。PR #1148 body 同時有 Task 與 ReviewBus 任務 ID，JSON 卻記 null/false。**
 
@@ -55,6 +57,17 @@
 
 → 依 code/admission scope 核對 source-off 與 egress 契約，將 dry-run metadata 與 live runtime posture 分開。`ODP-DEV-STAGED-GATE-RECONCILIATION-001` A7 更正為 `met_by_test_in_green_ci`，引用 `delivery_toolchain/e2e/check_release_gate_registry.py` 與 `tests/e2e/test_release_gate_registry.py` @ `40bb0246`，確認靜態 gate 與 dry-run metadata 保持 source-off default，本任務不簽發 lease、不 dispatch deploy；recommendation 改為 `verified_candidate`，`blocking_reasons` 清空。`ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` A6 更正為 `met_by_test_in_green_ci`，引用 `infra/terraform/modules/ephemeral_staging/main.tf`、`tests/ops/test_ephemeral_staging_lifecycle.py` 與 `tests/ops/test_deploy_workflow_contract.py` @ `462c8cd4ff25`，確認 Terraform 與 lifecycle 實作 source-off 預設值與 default-deny egress；recommendation 改為 `verified_candidate`，`blocking_reasons` 清空。兩項任務之 `pending_reviewer_reading` 全部清除。
 
+> **本段已被第 4 輪部分推翻（保留為歷史紀錄）**：第 3 輪把 `ODP-DEV-STAGED-GATE-RECONCILIATION-001` A7 改判為 `met_by_test_in_green_ci` 並引用該 PR 的兩個測試，第 4 輪逐行掃描該 PR 的完整 diff 後確認那兩個測試並未斷言 source-off／credentials／egress，該條款已改為 `partially_met`；A3–A6 也因該 head 的 `product` job 為 scope skip 而改為 `test_delivered_not_executed_at_exact_head`。`ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` 的裁定維持，僅補正 A3 的 CI 執行綁定。詳見下一節。
+
+### 第 4 輪評審意見與本輪更正
+
+**[P1] DEV-STAGED-GATE 的 CI 與條款證據被錯誤升格：A3-A7 標 met_by_test_in_green_ci 並引用 tests/e2e/test_release_gate_registry.py 與 orchestrator @ 40bb0246，但 ci.yml:139 的 orchestrator 指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，不收集該檔；會收集它的 product job 在該 head 是 skipped，product-e2e-gate 亦 skipped。A7 新增的兩個具名測試也沒有斷言 sources disabled／provider credentials 缺席／default-deny egress。請更正 A3-A7 的證據種類與執行狀態，並檢查其餘同類 test_file→ci_check 配對。**
+
+→ 接受，且按要求把修正推廣到全部同類配對。新增 decision_rule.ci_execution_binding：對 37 個 odayplus 候選的每個精確 head 唯讀讀回 ci.yml、pyproject testpaths、Makefile 與 run_product_e2e.sh，建立 job→實際收集路徑／固定清單對照，再逐條重算 114 條 met_by_test_in_green_ci 的綁定，結果全部列在 ci_execution_binding.audit_result.rows。共 23 條配對不成立，分三類更正：（一）真的沒被執行——DEV-STAGED-GATE A3-A6 與 EPHEMERAL-STAGING-IAC A2，改記新狀態 test_delivered_not_executed_at_exact_head；前者是 product job 於該 head 為 skipped，後者是 infra/ 根本不在 pyproject testpaths、也不被該 head 七個 workflow 中任何一支引用。（二）綁錯 job 但確有成功 check 執行——RELEASE-GATE-FIXTURE-STAGING-002 A1-A3、WEB-PASSWORD A1、NETPLAN A4、INT001-CDC A4、RUNTIME-RELEASE-STAGING-LIFECYCLE A3，改綁真正收集它的 job 並寫明依據（例如 product-e2e-gate 不做路徑式收集，只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS；vitest 由 product job 的 node-check step 執行）。（三）以綠色 job 泛稱代替條款證據——MEASUREMENT-CROSSLAYER A1-A4、MERGE-QUEUE-DISPOSITION A3-A4、REQ-DISPOSITION A1／A2／A4 的測試檔被誤標為 delivered_file，已正規化為 test_file 並補上收集依據；ROLE-PROVIDER A7 原本完全沒具名任何測試，已補上 .orchestrator/test_role_provider_policy.py 內逐項對應條款的 negative test 名稱，並因該條款的過程半（只跑 focused tests 一次）不可驗證而改為 partially_met。A7（DEV-STAGED-GATE）依要求改為 partially_met：逐行掃描該候選 PR 的完整 diff 確認它沒有交付任何涵蓋 source-off／credentials／egress 的程式或測試，改引用既有契約 .github/workflows/deploy-dev.yml @ efdfea1a0c31 的 pinned 行（140-141 external_sources_enabled 預設空值即 standing sources-off、955 ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled、1000 ODP_EXTERNAL_PROVIDER_MODE: disabled、948 ODP_CLOUD_RUN_VPC_EGRESS 取自 environment 變數），live posture 保留為未證明的缺口。另補查 marker 維度：4 個帶 requires_live_env 的測試檔被主 step 排除但由 product job 的資料庫 step 或具名 PostgreSQL step 跑回來，已補上 step 層綁定。新狀態不自動構成 blocked，但一律列入 recommendation_scope.criteria_not_fully_evidenced 並把該 ID 的 confidence 降為 medium。
+
+**[P2] 中文 reviewer 映射指引未同步：README_ZH_TW.md 仍列四筆直接否證與兩筆 pending_reviewer_reading，並指示讀取 blocking_reasons[].readings，但該 head 的 JSON 已清除後三筆 blocking_reasons，摘要為 35 verified_candidate / 3 blocked / 0 pending。**
+
+→ 已重寫「給 reviewer 的映射注意事項」：blocked 現在只有 DPF-EMGI-LIVE-ROLLOUT-001、ODP-DEV-ROLLOUT-001 與 ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 三筆，全部屬證據直接否證；pending_reviewer_reading 分類已不存在，指向 blocking_reasons[].readings 的指引一併移除。同時新增一條指引，說明本輪引入的 test_delivered_not_executed_at_exact_head 該怎麼讀，以及 README 標題、產出者、摘要統計與逐項明細全部依第 4 輪重算結果同步。
 ### 為什麼「PR 已合併」不等於「任務已完成」
 
 本輪把判定單位從「整個 PR」下放到「逐條 acceptance」。3 筆 `blocked` 全部不是因為 CI 或 PR 有問題，而是因為**至少一條 acceptance 被該任務自己的收據否證，或屬 runtime／外部啟用／人類授權類而查無既有證據**：
@@ -80,7 +93,8 @@
 - **逐條狀態語彙**：
 
   - `met_by_receipt` — 交付物內既有收據直接記載本條款的量測結果
-  - `met_by_test_in_green_ci` — 本 PR 交付了對應測試檔，且精確 head 上執行該測試的 check 結論為 success（僅到 job 層，未取 job log）
+  - `met_by_test_in_green_ci` — 本 PR 交付了對應測試檔，且該檔位於精確 head 上某個 conclusion=success 的 CI job 實際收集的路徑內（綁定依 ci_execution_binding 的 job→收集路徑對照核對；僅到 job／step 層，未取 job log）
+  - `test_delivered_not_executed_at_exact_head` — 本 PR 交付了對應測試檔並可定位到具名 assertion，但精確 head 上唯一會收集該檔的 CI job 為 skipped（或該路徑不在任何 CI job 的收集範圍內），因此沒有任何成功 check 執行過它
   - `met_by_delivered_artifact` — 交付了對應程式或文件，本盤點只驗其存在與內容涵蓋，未重算其結論
   - `partially_met` — 本條款可拆成數項，部分有既有證據、部分沒有
   - `process_constraint_unverifiable` — 本條款約束的是執行過程，無法由交付物與唯讀記錄獨立驗證
@@ -100,7 +114,23 @@
 
 - **執行過程約束不構成 blocked**：process_constraint_unverifiable 不構成 blocked：這類條款約束的是工作怎麼做（起點 worktree、跑幾次 CI、PR 用什麼語言），不是 acceptance 的結果面。所有這類條款一律在 recommendation_scope 揭露。
 
-- **信心**：high = 無 skipped check、無 partially_met、無 process_constraint_unverifiable；blocked 案件則為證據直接否證。；medium = 存在 skipped checks、partially_met 或 process_constraint_unverifiable 條款；blocked 案件則為其 blocking 條款尚待 reviewer 語意裁定。
+- **CI 執行綁定（第 4 輪新增）**：`met_by_test_in_green_ci` 只在「被引用測試檔位於被引用 check 於該 head 實際收集的路徑／清單內，且該 check 結論為 success」時成立。綠色 job 不能替代未被它收集的測試。
+
+  各候選 head 的 job → 實際收集範圍（唯讀讀回該 head 的 `ci.yml`、`pyproject.toml` testpaths、`Makefile` 與 `run_product_e2e.sh` 後建立；37 個 odayplus head 一致）：
+
+  | CI job | 實際收集什麼 |
+  |---|---|
+  | `orchestrator` | `uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling` — 只收 `.orchestrator/`、`delivery_toolchain/`、`scripts/`、`tests/tooling/`，**不收 `tests/` 底下其他目錄** |
+  | `product` | 主 step 收 `tests/`、`modules/`、`apps/`、`shared/`、`models/`（排除 `requires_live_env`／`performance`）；另有具名 PostgreSQL 16 step、資料庫 step（`requires_live_env` 的 `tests/contract`／`tests/ops`／`tests/integration` 由此跑回來）與 `make node-check`（npm workspace 的 vitest 測試）|
+  | `performance-gate` | `-m performance tests/performance` |
+  | `product-e2e-gate` | **不做路徑式收集**：只跑 `run_product_e2e.sh` 內寫死的 playwright spec 清單與 `PYTEST_NODE_IDS` 固定 node-id 清單；make 前置目標 `release-gate-registry` 另跑 checker 本身（那是 gate step 證據，不等於執行了同名的 pytest 檔）|
+  | 任何 job 都不收 | `infra/`——不在 `pyproject.toml` testpaths，也不被候選 head 上任何一支 workflow 引用 |
+
+  稽核結果：112 條受稽核，107 條確由某個結論 success 的 job／step 收集執行，5 條在精確 head 上未被任何成功 check 執行，未解者 0 條。逐條結果見 JSON 的 `decision_rule.ci_execution_binding.audit_result.rows`。
+
+- **未執行不等於被否證**：test_delivered_not_executed_at_exact_head 不自動構成 blocked——它描述的是『這條 acceptance 的證明方式不成立』，而非『acceptance 被否證』。但每一條都會列入該 ID 的 recommendation_scope.criteria_not_fully_evidenced，且該 ID 的 confidence 一律降為 medium，請 reviewer 連同一併判定。
+
+- **信心**：high = 無 skipped check、無 partially_met、無 process_constraint_unverifiable、無 test_delivered_not_executed_at_exact_head；blocked 案件則為證據直接否證；medium = 存在 skipped checks、partially_met、process_constraint_unverifiable 或 test_delivered_not_executed_at_exact_head 條款；blocked 案件則為其 blocking 條款尚待 reviewer 語意裁定。
 
 ## 證據來源與其證明範圍
 
@@ -111,6 +141,7 @@
 | PR body 的 ReviewBus 區塊 | 遠端唯讀 | 送審當時看板記載的 task id／狀態／負責人／評審人 | 不證明 acceptance 達成 |
 | 精確 head 的 check-runs | 遠端唯讀 | 該 commit 上每個 check 的結論與起訖時間 | 只到 job 結論層；未取 job log |
 | merge commit 上的 `.github/workflows/ci.yml` | 本地唯讀 | 某支測試在該 head 是真的被執行，還是被 marker／環境變數跳過 | 不證明該測試斷言了什麼 |
+| 精確 head 上的 `ci.yml` + `pyproject.toml` testpaths + `Makefile` + `run_product_e2e.sh` | 本地唯讀 | 哪個 CI job／step 會收集哪些路徑，因此某支測試是否落在某個成功 check 的收集範圍內 | 不證明該測試在 job log 內的個別結果 |
 | merge commit 上的收據檔案 | 本地／遠端唯讀 | 收據自身記載的量測值、digest、時間與 failures | 收據自我矛盾時只證明矛盾存在 |
 | `task-review-gate` commit status | 遠端唯讀 | 綁定精確 head 的核准事實與核准者姓名 | 不證明 acceptance 全數達成 |
 | 本地 git 歷史 | 本地唯讀 | head/merge 是否在 dev 歷史、commit trailers、merge commit 的檔案樹與內容 | 不證明 runtime 行為 |
@@ -119,7 +150,7 @@
 
 - 本地 ai-activity-log.jsonl 最早一筆記錄為 2026-09-06T11:01:40Z（事故之後）；38 個 ID 沒有任何一筆以其為 task_id 的歷史活動事件，因此無法從本地活動紀錄取得當時的 review／done 事件時間軸。
 - ai-task-archive/tasks 僅存 6 筆（2 completed / 4 superseded），無一屬於本清單。
-- CI 證據只到 check-run 結論層級。本輪對受質疑的條款額外核對了 workflow 定義與測試檔的 skip 條件，以判定該測試是否真的被執行；但仍未取 job log，因此無法出示個別測試的 PASSED 行。
+- CI 證據只到 check-run 結論與 job／step 定義層級。第 4 輪對全部 met_by_test_in_green_ci 條款重建了『被引用測試檔 → 實際收集它的 job／step』綁定（依各候選 head 的 ci.yml、pyproject testpaths、Makefile 與 run_product_e2e.sh 固定清單），但仍未取 job log，因此無法出示個別測試的 PASSED 行。綁定成立只代表該檔被某個結論 success 的 job 收集，不代表該檔內某一條具名 assertion 的個別結果已被查核。
 - PR 合併與 CI 綠燈只證明程式與檢查通過，不能單獨證明 runtime 部署、外部來源啟用或人類核准已發生。
 - 已定位到的收據以其自身記載為準。收據若自我矛盾（例如 DPF 的 live-rollout-receipt.json），本盤點採其中具體的量測欄位而非摘要旗標，並在該條款註記矛盾所在。
 - acceptance 條款中屬「執行過程約束」者（起點 worktree、CI 執行次數、PR 語言、分工），本盤點一律標為 process_constraint_unverifiable 並不據以 blocked，但全部在 recommendation_scope 揭露。
@@ -145,14 +176,14 @@
 |---|---|---|---|---|---|
 | 1 | `DPF-EMGI-LIVE-ROLLOUT-001` | [oday-data-platform#62](https://github.com/alfloop-dev/oday-data-platform/pull/62) | `blocked` | high | met_by_receipt×4、unmet_per_own_receipt×1 |
 | 2 | `ODP-DEV-ROLLOUT-001` | [odayplus#1013](https://github.com/alfloop-dev/odayplus/pull/1013) | `blocked` | high | unmet_per_own_receipt×2、met_by_receipt×1、not_evidenced×1、partially_met×1 |
-| 3 | `ODP-DEV-STAGED-GATE-RECONCILIATION-001` | [odayplus#1193](https://github.com/alfloop-dev/odayplus/pull/1193) | `verified_candidate` | medium | met_by_test_in_green_ci×5、process_constraint_unverifiable×3、met_by_delivered_artifact×1 |
+| 3 | `ODP-DEV-STAGED-GATE-RECONCILIATION-001` | [odayplus#1193](https://github.com/alfloop-dev/odayplus/pull/1193) | `verified_candidate` | medium | test_delivered_not_executed_at_exact_head×4、process_constraint_unverifiable×3、met_by_delivered_artifact×1、partially_met×1 |
 | 4 | `ODP-GITHUB-GCP-ENV-BOOTSTRAP-001` | [odayplus#1011](https://github.com/alfloop-dev/odayplus/pull/1011) | `blocked` | high | met_by_receipt×3、partially_met×2 |
 | 5 | `ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` | [odayplus#1041](https://github.com/alfloop-dev/odayplus/pull/1041) | `verified_candidate` | medium | met_by_test_in_green_ci×7、partially_met×1、process_constraint_unverifiable×1 |
 | 6 | `ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001` | [odayplus#1208](https://github.com/alfloop-dev/odayplus/pull/1208) | `verified_candidate` | medium | met_by_test_in_green_ci×5、process_constraint_unverifiable×3、met_by_delivered_artifact×2 |
 | 7 | `ODP-AVM-DEPRECIATION-CONTRACT-001` | [odayplus#1148](https://github.com/alfloop-dev/odayplus/pull/1148) | `verified_candidate` | high | met_by_test_in_green_ci×3、met_by_delivered_artifact×1 |
 | 8 | `ODP-CANONICAL-LEGACY-LINEAGE-001` | [odayplus#1150](https://github.com/alfloop-dev/odayplus/pull/1150) | `verified_candidate` | high | met_by_delivered_artifact×4 |
 | 9 | `ODP-DRIFT-DEP-REMOVE-002` | [odayplus#1222](https://github.com/alfloop-dev/odayplus/pull/1222) | `verified_candidate` | medium | met_by_test_in_green_ci×4、met_by_receipt×2、process_constraint_unverifiable×2、met_by_delivered_artifact×1 |
-| 10 | `ODP-EPHEMERAL-STAGING-IAC-001` | [odayplus#1002](https://github.com/alfloop-dev/odayplus/pull/1002) | `verified_candidate` | medium | met_by_test_in_green_ci×3、partially_met×1、met_by_delivered_artifact×1 |
+| 10 | `ODP-EPHEMERAL-STAGING-IAC-001` | [odayplus#1002](https://github.com/alfloop-dev/odayplus/pull/1002) | `verified_candidate` | medium | met_by_test_in_green_ci×2、partially_met×1、test_delivered_not_executed_at_exact_head×1、met_by_delivered_artifact×1 |
 | 11 | `ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001` | [odayplus#1135](https://github.com/alfloop-dev/odayplus/pull/1135) | `verified_candidate` | high | met_by_test_in_green_ci×5、met_by_receipt×1、met_by_delivered_artifact×1 |
 | 12 | `ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001` | [odayplus#1170](https://github.com/alfloop-dev/odayplus/pull/1170) | `verified_candidate` | high | met_by_test_in_green_ci×4 |
 | 13 | `ODP-INT-MANUAL-CORRECTION-AUDIT-001` | [odayplus#1175](https://github.com/alfloop-dev/odayplus/pull/1175) | `verified_candidate` | high | met_by_test_in_green_ci×4 |
@@ -172,7 +203,7 @@
 | 27 | `ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001` | [odayplus#1030](https://github.com/alfloop-dev/odayplus/pull/1030) | `verified_candidate` | high | met_by_receipt×1 |
 | 28 | `ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001` | [odayplus#1050](https://github.com/alfloop-dev/odayplus/pull/1050) | `verified_candidate` | high | met_by_test_in_green_ci×6、met_by_delivered_artifact×1 |
 | 29 | `ODP-REQ-DISPOSITION-GOVERNANCE-001` | [odayplus#1146](https://github.com/alfloop-dev/odayplus/pull/1146) | `verified_candidate` | high | met_by_test_in_green_ci×3、met_by_delivered_artifact×1 |
-| 30 | `ODP-ROLE-PROVIDER-CODEX-REVIEW-001` | [odayplus#1221](https://github.com/alfloop-dev/odayplus/pull/1221) | `verified_candidate` | medium | met_by_delivered_artifact×4、process_constraint_unverifiable×3、met_by_test_in_green_ci×1 |
+| 30 | `ODP-ROLE-PROVIDER-CODEX-REVIEW-001` | [odayplus#1221](https://github.com/alfloop-dev/odayplus/pull/1221) | `verified_candidate` | medium | met_by_delivered_artifact×4、process_constraint_unverifiable×3、partially_met×1 |
 | 31 | `ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001` | [odayplus#1206](https://github.com/alfloop-dev/odayplus/pull/1206) | `verified_candidate` | medium | met_by_test_in_green_ci×7、process_constraint_unverifiable×3、met_by_delivered_artifact×1 |
 | 32 | `ODP-RUNTIME-RELEASE-SINGLE-PATH-001` | [odayplus#1010](https://github.com/alfloop-dev/odayplus/pull/1010) | `verified_candidate` | medium | met_by_test_in_green_ci×4、partially_met×1 |
 | 33 | `ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001` | [odayplus#1160](https://github.com/alfloop-dev/odayplus/pull/1160) | `verified_candidate` | high | met_by_test_in_green_ci×2、met_by_delivered_artifact×2 |
@@ -181,6 +212,7 @@
 | 36 | `ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001` | [odayplus#1164](https://github.com/alfloop-dev/odayplus/pull/1164) | `verified_candidate` | high | met_by_test_in_green_ci×4 |
 | 37 | `ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002` | [odayplus#1096](https://github.com/alfloop-dev/odayplus/pull/1096) | `verified_candidate` | medium | met_by_test_in_green_ci×3、partially_met×1、met_by_delivered_artifact×1、process_constraint_unverifiable×1 |
 | 38 | `XR-EXT-OSS-FINAL-AUDIT-001` | [oday-data-platform#61](https://github.com/alfloop-dev/oday-data-platform/pull/61)（更正後） | `verified_candidate` | high | met_by_receipt×5 |
+
 
 ## 逐項明細
 
@@ -349,33 +381,32 @@
   - 條款：只使用既有 STAGE_CONTRACT 與 Runtime Release 單一路徑
   - 證據（delivered_file）：`delivery_toolchain/e2e/check_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit
   - 註：沿用既有 checker，未新增第二條路徑。
-- **A3**（可由測試證明）— `met_by_test_in_green_ci`
+- **A3**（可由測試證明）— `test_delivered_not_executed_at_exact_head`
   - 條款：candidate-built dev boundary 僅接受有同 SHA 同 manifest digest 真實 receipt 的 cleared gate
-  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run orchestrator @ 40bb02462ec7`，2026-09-04T09:15:06Z — conclusion=success
-  - 註：精確 head 的 product、product-e2e-gate 與 performance-gate 三個 check 結論為 skipped（scope skip），實跑的是 orchestrator 與 boundary/classify/change-scope。
-- **A4**（可由測試證明）— `met_by_test_in_green_ci`
+  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit；本 PR 於此檔新增兩個測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go（+92 行，唯讀 diff 核對）。
+  - 證據（ci_execution_binding）：`tests/e2e/test_release_gate_registry.py → 精確 head 40bb02462ec7 的 CI job 對照` — 該 head 的 ci.yml 只有 product job 會收集 tests/ 路徑，而 product 的 conclusion=skipped（scope skip）；product-e2e-gate 同為 skipped，且其兩份固定清單（playwright spec、PYTEST_NODE_IDS）都不含本檔；orchestrator job 只收集 .orchestrator／delivery_toolchain／scripts／tests/tooling，結構上不會收集本檔。因此本檔在精確 head 上未被任何成功 check 執行。前輪把它綁到 orchestrator check 是錯誤的。
+  - 註：本條款（同 SHA 同 manifest digest 的 cleared gate）由本 PR 新增的 test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與既有 registry 測試界定，但該測試檔在精確 head 上未被任何成功 check 執行。條款本身未被否證，缺的是「在此 head 跑過」這件事的證據。
+- **A4**（可由測試證明）— `test_delivered_not_executed_at_exact_head`
   - 條款：staging 或 production boundary gate 不得反向阻擋 dev
-  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run orchestrator @ 40bb02462ec7`，2026-09-04T09:15:06Z — conclusion=success
-  - 註：同上 skip 註記。
-- **A5**（可由測試證明）— `met_by_test_in_green_ci`
+  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit；本 PR 於此檔新增兩個測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go（+92 行，唯讀 diff 核對）。
+  - 證據（ci_execution_binding）：`tests/e2e/test_release_gate_registry.py → 精確 head 40bb02462ec7 的 CI job 對照` — 該 head 的 ci.yml 只有 product job 會收集 tests/ 路徑，而 product 的 conclusion=skipped（scope skip）；product-e2e-gate 同為 skipped，且其兩份固定清單（playwright spec、PYTEST_NODE_IDS）都不含本檔；orchestrator job 只收集 .orchestrator／delivery_toolchain／scripts／tests/tooling，結構上不會收集本檔。因此本檔在精確 head 上未被任何成功 check 執行。前輪把它綁到 orchestrator check 是錯誤的。
+  - 註：本條款（staging／production gate 不得反向阻擋 dev）對應 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go 與既有 test_blocking_gates_filters_by_target，同樣未在精確 head 被執行。
+- **A5**（可由測試證明）— `test_delivered_not_executed_at_exact_head`
   - 條款：無證據的 gate 保持 blocked
-  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run orchestrator @ 40bb02462ec7`，2026-09-04T09:15:06Z — conclusion=success
-  - 註：同上 skip 註記。
-- **A6**（可由測試證明／人類授權）— `met_by_test_in_green_ci`
+  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit；本 PR 於此檔新增兩個測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go（+92 行，唯讀 diff 核對）。
+  - 證據（ci_execution_binding）：`tests/e2e/test_release_gate_registry.py → 精確 head 40bb02462ec7 的 CI job 對照` — 該 head 的 ci.yml 只有 product job 會收集 tests/ 路徑，而 product 的 conclusion=skipped（scope skip）；product-e2e-gate 同為 skipped，且其兩份固定清單（playwright spec、PYTEST_NODE_IDS）都不含本檔；orchestrator job 只收集 .orchestrator／delivery_toolchain／scripts／tests/tooling，結構上不會收集本檔。因此本檔在精確 head 上未被任何成功 check 執行。前輪把它綁到 orchestrator check 是錯誤的。
+  - 註：本條款（無證據的 gate 保持 blocked）對應該檔既有 fail-closed 測試，同樣未在精確 head 被執行。
+- **A6**（可由測試證明／人類授權）— `test_delivered_not_executed_at_exact_head`
   - 條款：release decision go 必須保留真實 human_signoff 且不得偽造
-  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit
-  - 證據（delivered_file）：`delivery_toolchain/e2e/check_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run orchestrator @ 40bb02462ec7`，2026-09-04T09:15:06Z — conclusion=success
-  - 註：本條款是對 release GO 的否定約束（必須是真實 human_signoff，不得偽造），不是要求本任務取得人類簽署。程式面由 checker 與其 E2E 測試強制；本盤點未查到任何由本任務簽發的 release GO，故條款以「未發生偽造」成立。若 reviewer 認為本條款要求出示一筆真實 human_signoff，則此項應改判為缺證據。
-- **A7**（可由測試證明／程式或文件交付）— `met_by_test_in_green_ci`
+  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit；本 PR 於此檔新增兩個測試：test_go_decision_with_no_gates_bound_to_admission_target_is_rejected 與 test_blocked_gates_with_unmatched_target_fails_closed_under_require_go（+92 行，唯讀 diff 核對）。
+  - 證據（delivered_file）：`delivery_toolchain/e2e/check_release_gate_registry.py @ efdfea1a0c31` — 由本 PR 交付並存在於 merge commit；GO 決策的 human_signoff 驗證在此檢查器內。
+  - 證據（ci_execution_binding）：`tests/e2e/test_release_gate_registry.py → 精確 head 40bb02462ec7 的 CI job 對照` — 該 head 的 ci.yml 只有 product job 會收集 tests/ 路徑，而 product 的 conclusion=skipped（scope skip）；product-e2e-gate 同為 skipped，且其兩份固定清單（playwright spec、PYTEST_NODE_IDS）都不含本檔；orchestrator job 只收集 .orchestrator／delivery_toolchain／scripts／tests/tooling，結構上不會收集本檔。因此本檔在精確 head 上未被任何成功 check 執行。前輪把它綁到 orchestrator check 是錯誤的。
+  - 註：本條款是對 release GO 的否定約束（必須是真實 human_signoff，不得偽造），不是要求本任務取得人類簽署。程式面由 checker 交付；其 E2E 測試檔在精確 head 上未被任何成功 check 執行，故本條款的測試證明不成立，只剩 checker 交付本身。本盤點未查到任何由本任務簽發的 release GO。若 reviewer 認為本條款要求出示一筆真實 human_signoff，則此項應改判為缺證據。
+- **A7**（程式或文件交付／runtime／部署）— `partially_met`
   - 條款：第三方來源保持 disabled 且無 credentials 與 default deny egress
-  - 證據（delivered_file）：`delivery_toolchain/e2e/check_release_gate_registry.py @ 40bb0246` — 靜態 release gate 檢查器維護 source-off 邊界
-  - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ 40bb0246` — test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed, test_ci_is_not_a_deployment_authority
-  - 證據（ci_check）：`check-run orchestrator @ 40bb0246`，2026-09-04T09:15:06Z — conclusion=success
-  - 註：依 code/admission scope，gate registry 與 admission checker 靜態驗證並維持 source-off default 與 dry-run metadata 邊界；本任務不簽發 lease、不 dispatch deploy、不變更 live egress。live runtime posture 依 recommendation_scope 宣告由後續 rollout 驗證，不在此 code/gate task 產生 blocking。
+  - 證據（candidate_diff_scan）：`PR #1193 完整 diff @ 40bb02462ec7（2 檔、+129/-6）` — 逐行唯讀掃描本候選 PR 的完整 diff：delivery_toolchain/e2e/check_release_gate_registry.py 與 tests/e2e/test_release_gate_registry.py 皆無 sources／egress／credential／disabled／deny 任一字樣；新增的兩個測試只斷言 admission target 綁定與 require-go fail-closed。本候選 PR 自身沒有交付任何涵蓋本條款的程式或測試。前輪引用這兩個測試作為本條款證據是錯誤的。
+  - 證據（delivered_file）：`.github/workflows/deploy-dev.yml @ efdfea1a0c31` — 既有契約（非本 PR 交付，但為本 task brief 列出的 source document）：第 140-141 行 workflow_dispatch 輸入 external_sources_enabled 預設空值，其說明明載空值即 standing sources-off posture；第 955 行 ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled 與第 1000 行 ODP_EXTERNAL_PROVIDER_MODE: disabled 為寫死預設；第 948 行 ODP_CLOUD_RUN_VPC_EGRESS 取自 environment 變數 vars.ODP_CLOUD_RUN_VPC_EGRESS。
+  - 註：拆成兩半判定。契約半：deploy-dev.yml 既有契約把第三方來源預設關閉、egress 交由 environment 變數決定，這份契約在候選 merge commit 上可 pinned 引用，但不是本候選 PR 的交付物。live posture 半：來源是否確實 disabled、有無投影 credentials、egress 是否 default deny，屬 runtime 類，唯讀範圍內查無任何對應此候選的 runtime receipt，且 vars.ODP_CLOUD_RUN_VPC_EGRESS 的實際值不在唯讀範圍內。依原 task 明文『本 task 不簽 lease 不 dispatch deploy』，live posture 屬後續 rollout scope，本盤點據此記為 partially_met：不宣稱 live 已證明，也不把後續 rollout 的缺口倒灌成此 code/gate 任務未完成。　本輪同時把本條款的 classes 由 [T,D] 更正為 [D,R]：條款要求的是 live 來源／credentials／egress 的狀態，屬 runtime 類，不是可由本 PR 測試證明的類別。此更正只影響描述準確性，不改變 blocked 判定——decision_rule 中會 blocked 的是「R／X／H 類條款為 not_evidenced」，本條款為 partially_met，在更正前後都不觸發 blocked；更正後反而更明確地把它列入 criteria_not_fully_evidenced。
 - **A8**（執行過程約束）— `process_constraint_unverifiable`
   - 條款：本 task 不簽 lease 不 dispatch deploy
   - 證據：無
@@ -389,7 +420,8 @@
 
 - 涵蓋：本建議只涵蓋：候選 PR 與本 ID 的映射一致、精確 head 的 CI 結論、綁定精確 head 的 task-review-gate 核准者，以及上表逐條 acceptance 已定位到的既有證據。
 - 不涵蓋：不涵蓋 runtime 部署是否仍然有效、外部來源是否已被授權啟用、任何人類 GO／lease／provider permission，以及測試在 job log 層的個別結果。
-- 未完全定位到證據的條款：A1(process_constraint_unverifiable)、A8(process_constraint_unverifiable)、A9(process_constraint_unverifiable)
+- 未完全定位到證據的條款：A1(process_constraint_unverifiable)、A3(test_delivered_not_executed_at_exact_head)、A4(test_delivered_not_executed_at_exact_head)、A5(test_delivered_not_executed_at_exact_head)、A6(test_delivered_not_executed_at_exact_head)、A7(partially_met)、A8(process_constraint_unverifiable)、A9(process_constraint_unverifiable)
+- CI 執行綁定：本 ID 有 4 條 acceptance 的測試檔已交付但在精確 head 上未被任何成功 check 執行（詳見各條 evidence 的 ci_execution_binding）。這不是條款被否證，而是『在此 head 跑過』這件事沒有證據。
 
 **查證發現**
 
@@ -397,12 +429,15 @@
 
 **缺口**
 
-- 盤點觀察：精確 head 的 7 個 check 中有 3 個 conclusion=skipped（scope skip），代表部分 product 測試未在該 head 實跑。
+- 第 4 輪更正：A3-A6 的唯一測試檔 tests/e2e/test_release_gate_registry.py 在精確 head 40bb0246 上未被任何成功 check 執行。該 head 的 product job（tests/ 的唯一收集者）conclusion=skipped，product-e2e-gate 亦 skipped 且其固定清單不含本檔，orchestrator job 結構上不收集 tests/e2e/。前輪把這四條綁到 orchestrator check 屬錯誤綁定。
+- 第 4 輪更正：A7（第三方來源保持 disabled、無 credentials、default deny egress）在本候選 PR 的完整 diff 內查無任何對應程式或測試——該 PR 只有 2 檔 +129/-6，且無 sources／egress／credential 字樣。既有契約 deploy-dev.yml 可 pinned 引用，但 live posture（實際 disabled 狀態、credentials 投影、egress 是否 default deny）無既有 runtime receipt。此為後續 rollout scope 的缺口，不倒灌成本 code/gate 任務未完成。
 - 盤點觀察：Acceptance 第一條『等待 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 合併後才選定 candidate』的時序未在本盤點驗證。
 
 **下一步最小驗證動作**
 
-- 列出被 skip 的 check 名稱並確認其為 change-scope 設計行為；比對 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 的 merge 時間是否早於本 PR head。
+- 若要把 A3-A6 由『未執行』升為『已驗證』，最小動作是在 merge commit efdfea1a0c31 上單獨執行 tests/e2e/test_release_gate_registry.py 並保留退出碼收據；本盤點依範圍限制不執行測試。
+- A7 需要一筆與該候選對應、記載來源 disabled／無 credentials／default-deny egress 的既有 runtime receipt；若不存在，應由後續 staging／dev rollout 任務產生，不由本盤點補造。
+- 比對 ODP-SUPPLY-CHAIN-LOCKFILE-CONSISTENCY-001 的 merge 時間是否早於本 PR head。
 
 ### `ODP-GITHUB-GCP-ENV-BOOTSTRAP-001` — blocked（信心 high）
 
@@ -507,9 +542,10 @@
   - 證據（ci_check）：`check-run product @ fada67756926`，2026-08-27T17:31:33Z — conclusion=success
 - **A3**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：release-scoped lifecycle outputs 成為 staging endpoint database bucket tenant 與 IAM 唯一 authority 靜態 environment vars 只提供長期 foundation inputs
-  - 證據（test_file）：`infra/terraform/tests/test_ephemeral_staging.py @ 462c8cd4ff25` — 由本 PR 交付並存在於 merge commit
+  - 證據（delivered_file）：`infra/terraform/tests/test_ephemeral_staging.py @ 462c8cd4ff25` — 已交付並存在於 merge commit，但 infra/ 不在 pyproject testpaths、也不被任何 workflow 引用，CI 從未執行它；本條款的 CI 執行證明來自下面的 tests/ops 測試檔，不是這一份。
   - 證據（test_file）：`tests/ops/test_ephemeral_staging_lifecycle.py @ 462c8cd4ff25` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ fada67756926`，2026-08-27T17:31:33Z — conclusion=success
+  - 證據（ci_execution_binding）：`tests/ops/test_ephemeral_staging_lifecycle.py → check-run product @ fada67756926` — tests/ops/ 落在 product job 的 tests 收集路徑內，該 head product conclusion=success；同條款引用的 infra/terraform/tests/test_ephemeral_staging.py 則不被任何 CI job 收集，已在其證據列註明。
 - **A4**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：staging smoke proof 不得 impersonate dev smoke operator 必須使用 release-scoped least-privilege identity
   - 證據（test_file）：`tests/ops/test_deploy_workflow_contract.py @ 462c8cd4ff25` — 由本 PR 交付並存在於 merge commit
@@ -554,7 +590,7 @@
 **缺口**
 
 - A5（partially_met）：「可由同一狀態機產生 secret-free receipts」的能力由測試覆蓋；本 PR 未帶任何已產生的 staging receipt 檔。
-- 盤點觀察：候選 PR head commit 無 task trailer（head 為 merge commit）。
+- 第 4 輪更正（結論不變）：A3 同時引用 infra/terraform/tests/test_ephemeral_staging.py 與 tests/ops/test_ephemeral_staging_lifecycle.py。前者不被任何 CI job 收集，已在證據列標明；本條款的 CI 執行證明只來自後者。
 
 ### `ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001` — verified_candidate（信心 medium）
 
@@ -636,6 +672,10 @@
 **缺口**
 
 - 盤點觀察：實際 GCP 資源／IAM／vars 屬後續 staging rollout（ODP-EPHEMERAL-STAGING-ROLLOUT-001），依 task brief code 完成不等於 runtime 完成，已於 recommendation_scope 揭露。
+
+**下一步最小驗證動作**
+
+- 映射時把 runtime 部分獨立記為未完成，不得讓 code 合併把 runtime 一併帶成 done。
 
 ### `ODP-AVM-DEPRECIATION-CONTRACT-001` — verified_candidate（信心 high）
 
@@ -853,11 +893,11 @@
   - 證據（test_file）：`infra/terraform/tests/test_ephemeral_staging.py @ 82ed6a05cf67` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ ee6eddb6951a`，2026-08-24T19:37:57Z — conclusion=success
   - 註：Terraform 模組與其契約測試存在且 CI 綠。若條款的「可重跑建立」被解讀為需要真實 terraform apply 的 runtime 收據，本 PR 未帶任何 docs/evidence/ 收據。
-- **A2**（可由測試證明）— `met_by_test_in_green_ci`
+- **A2**（可由測試證明）— `test_delivered_not_executed_at_exact_head`
   - 條款：resources 有 owner/created_at/expires_at labels
   - 證據（test_file）：`infra/terraform/tests/test_ephemeral_staging.py @ 82ed6a05cf67` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run product @ ee6eddb6951a`，2026-08-24T19:37:57Z — conclusion=success
-  - 註：owner/created_at/expires_at labels 由 Terraform 契約測試覆蓋。
+  - 證據（ci_execution_binding）：`infra/terraform/tests/test_ephemeral_staging.py → 精確 head ee6eddb6951a 的 CI job 對照` — infra/ 不在該 head 的 pyproject.toml testpaths（.orchestrator、delivery_toolchain、scripts、tests、modules、apps、shared、models）之內，且該 head 七個 workflow（ci、deploy-dev、promote-dev-to-main、merge-queue-review-gate、tooling-scope-review-gate、emgi-consumer-boundary、assisted-intake-design-validation）皆無任何一支引用 infra/terraform/tests。因此此測試檔雖已交付，CI 從未執行過它——即使該 head 的 product check 結論為 success。前輪把它綁到 product check 是錯誤的。
+  - 註：Terraform 模組測試已交付且可定位，但不在任何 CI job 的收集範圍內；此條款的最小補證動作是在本地或 CI 明確執行 infra/terraform/tests/，本盤點依範圍限制不執行。
 - **A3**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：cleanup 只依精確 labels 且有 orphan scanner
   - 證據（test_file）：`tests/ops/test_ephemeral_staging_lifecycle.py @ 82ed6a05cf67` — 由本 PR 交付並存在於 merge commit
@@ -876,7 +916,8 @@
 
 - 涵蓋：本建議只涵蓋：候選 PR 與本 ID 的映射一致、精確 head 的 CI 結論、綁定精確 head 的 task-review-gate 核准者，以及上表逐條 acceptance 已定位到的既有證據。
 - 不涵蓋：不涵蓋 runtime 部署是否仍然有效、外部來源是否已被授權啟用、任何人類 GO／lease／provider permission，以及測試在 job log 層的個別結果。
-- 未完全定位到證據的條款：A1(partially_met)
+- 未完全定位到證據的條款：A1(partially_met)、A2(test_delivered_not_executed_at_exact_head)
+- CI 執行綁定：本 ID 有 1 條 acceptance 的測試檔已交付但在精確 head 上未被任何成功 check 執行（詳見各條 evidence 的 ci_execution_binding）。這不是條款被否證，而是『在此 head 跑過』這件事沒有證據。
 
 **查證發現**
 
@@ -886,10 +927,12 @@
 
 - A1（partially_met）：Terraform 模組與其契約測試存在且 CI 綠。若條款的「可重跑建立」被解讀為需要真實 terraform apply 的 runtime 收據，本 PR 未帶任何 docs/evidence/ 收據。
 - 盤點觀察：候選 PR 未帶任何 docs/evidence/ 收據；acceptance『可重跑建立』若被解讀為需要真實 apply，則缺 runtime 證據。
+- 第 4 輪更正：A2 的測試檔 infra/terraform/tests/test_ephemeral_staging.py 已交付，但 infra/ 不在該 head 的 pyproject testpaths，也不被該 head 七個 workflow 中任何一支引用，CI 從未執行它。該 head 的 product check 雖為 success，但它不收集這個路徑，前輪的綁定不成立。
 
 **下一步最小驗證動作**
 
 - 請 reviewer 裁定該 acceptance 為 IaC 能力交付或需 live apply；若為後者則需 staging apply/cleanup 收據，本盤點查無。
+- 在 merge commit 上單獨執行 infra/terraform/tests/ 並保留退出碼收據，或把該路徑納入某個 CI job 的收集範圍；本盤點依範圍限制不執行測試。
 
 ### `ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001` — verified_candidate（信心 high）
 
@@ -986,6 +1029,7 @@
   - 證據（test_file）：`tests/contract/test_heatzone_composition_schema.py @ eed8d51bb8a1` — 由本 PR 交付並存在於 merge commit
   - 證據（test_file）：`tests/ops/test_heatzone_composition_migration.py @ eed8d51bb8a1` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ 0585dd49976e`，2026-09-05T15:27:38Z — conclusion=success
+  - 證據（ci_execution_binding）：`tests/contract/test_heatzone_composition_schema.py → check-run product @ 0585dd49976e` — 該檔帶 requires_live_env 標記，被 product job 主 step 的 -m "not requires_live_env" 排除，但由同 job 的 Test database contracts, migrations and schema gates step （-m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration）跑回來；該檔無 requires_postgis 標記。product check 於該 head conclusion=success。
   - 註：lineage／model version／policy version 由 schema 契約測試與 migration 測試覆蓋。
 - **A3**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：未達信心或資料門檻時 abstain 而非猜測
@@ -997,6 +1041,7 @@
   - 證據（test_file）：`tests/integration/test_official_real_estate_postgresql.py @ eed8d51bb8a1` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ 0585dd49976e`，2026-09-05T15:27:38Z — conclusion=success
   - 證據（ci_step）：`ci.yml product job` — product job 掛 postgis/postgis:16-3.5 service 並設 INTAKE_TEST_DATABASE_URL；另有專步 `uv run pytest tests/integration/test_official_real_estate_postgresql.py`
+  - 證據（ci_execution_binding）：`tests/integration/test_official_real_estate_postgresql.py → check-run product @ 0585dd49976e` — 該檔帶 requires_live_env 標記，被 product job 主 step 排除，但 product job 另有具名 step Test official real-estate outcomes on PostgreSQL 16 直接執行此檔（不帶 marker 篩選）。product check 於該 head conclusion=success。
   - 註：production-entry 測試在有真實 PostgreSQL service 的 job 內執行；本盤點未取 job log，只到 check 結論層。
 
 **建議涵蓋範圍**
@@ -1011,6 +1056,7 @@
 **缺口**
 
 - 盤點觀察：Acceptance『Operator approval 的 production-entry 測試通過』屬測試語意，本盤點未重跑測試，僅依精確 head 的 7/7 CI success。
+- 第 4 輪補查（結論不變）：A2／A4 的測試檔帶 requires_live_env 標記，被 product job 主 step 的 marker 運算式排除，但由同 job 的資料庫 step 與具名 PostgreSQL 16 step 跑回來，已補上 step 層綁定。
 
 ### `ODP-INT-MANUAL-CORRECTION-AUDIT-001` — verified_candidate（信心 high）
 
@@ -1110,7 +1156,9 @@
   - 條款：requirement member 與 formal disposition ref 維持一致
   - 證據（test_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 0f35515ed15a` — 由本 PR 交付並存在於 merge commit
   - 證據（test_file）：`tests/integration/test_int001_cdc_disposition.py @ 0f35515ed15a` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run orchestrator @ 39289e4207b2`，2026-09-03T19:50:46Z — conclusion=success
+  - 證據（ci_check）：`check-run orchestrator @ 39289e4207b2`，2026-09-05T04:03:03Z — conclusion=success；收集 delivery_toolchain/，涵蓋 delivery_toolchain/governance/test_check_requirement_members.py
+  - 證據（ci_check）：`check-run product @ 39289e4207b2` — conclusion=success；收集 tests/，涵蓋 tests/integration/test_int001_cdc_disposition.py
+  - 註：本條款的兩個測試檔分屬不同 job 的收集範圍：delivery_toolchain/ 由 orchestrator job 收集，tests/integration/ 由 product job 收集；該 head 兩個 check 結論皆為 success。前輪只綁 orchestrator check，對 tests/integration/ 的那一半是錯誤綁定。
 
 **建議涵蓋範圍**
 
@@ -1125,6 +1173,7 @@
 **缺口**
 
 - 盤點觀察：需求本身仍 OPEN 待人類裁決；這是需求狀態而非任務缺陷，但下游不得據此視為 INT-001 已實作。
+- 第 4 輪更正（結論不變）：A4 兩個測試檔分屬不同 job 的收集範圍，原本只綁 orchestrator check；已補上收集 tests/integration/ 的 product check，兩者於該 head 皆為 success。
 
 ### `ODP-JOB-PARTIAL-DISPOSITION-001` — verified_candidate（信心 high）
 
@@ -1155,15 +1204,13 @@
   - 註：按原 task 條件分支（無適用 producer 時保持 absent 並交付 formal handback），因查無真實 producer 證據，PARTIAL 行為（明細收據與重試）未於 runtime 實作，而是於 formal handback 文件（docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md §4.2-4.3）建立未來 Pathway A 設計契約；tests/governance/test_job_partial_disposition.py 僅驗證 handback 文件與字串存在，不執行 item receipt/retry 行為。按條件分支，此項之實作行為不適用，formal handback 契約已交付。
 - **A3**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：business outcome 與 delivery state 型別分離
-  - 證據（test_file）：`tests/governance/test_job_partial_disposition.py @ 9647d673ccf2` — test_job_status_and_delivery_state_type_separation 斷言 JobStatus (queued, running, succeeded, failed, cancelled, partial) 與 JobDeliveryState (retrying, dead_letter) 互斥
+  - 證據（test_file）：`tests/governance/test_job_partial_disposition.py @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ f8caf62e1164`，2026-09-04T12:51:24Z — conclusion=success
-  - 註：JobStatus 業務結果與 JobDeliveryState 交付狀態型別分離由測試直接斷言集合互斥。
 - **A4**（程式或文件交付／人類授權）— `met_by_delivered_artifact`
   - 條款：無適用 producer 時不造功能且 formal disposition 缺人類簽署仍保持未結案
-  - 證據（receipt_file）：`docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit，登錄 HB-SHARED001-PARTIAL-001
-  - 證據（delivered_file）：`docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md @ 9647d673ccf2` — §4.5 登錄 formal disposition，狀態為 BLOCKED_BY_EVIDENCE
-  - 證據（delivered_file）：`delivery_toolchain/governance/set_valued_requirements.json @ 9647d673ccf2` — ODP-FR-SHARED-001 成員 PARTIAL status=absent, disposition.state=BLOCKED_BY_EVIDENCE
-  - 註：formal disposition 缺人類簽署時保持未結案（BLOCKED_BY_EVIDENCE），由 disposition 文件與 requirement manifest 記載。
+  - 證據（receipt_file）：`docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
+  - 證據（delivered_file）：`docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md @ 9647d673ccf2` — 由本 PR 交付並存在於 merge commit
+  - 註：formal disposition 缺人類簽署時保持未結案，由 disposition 文件與 requirement manifest 記載。
 
 **建議涵蓋範圍**
 
@@ -1305,26 +1352,31 @@
 
 - **A1**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：至少各有 Pydantic／mapper／SQL-dbt／OpenAPI-TS 的會紅負向案例
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
   - 證據（delivered_file）：`delivery_toolchain/governance/check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run orchestrator @ aaa9aaee9380`，2026-09-03T12:23:05Z — conclusion=success
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_measurement_defaults.py → check-run orchestrator @ aaa9aaee9380` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
   - 註：負向案例由 delivery_toolchain 自帶測試覆蓋；精確 head 的 product／product-e2e-gate／performance-gate 為 skipped（scope skip），實跑的是 orchestrator。
 - **A2**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：不把合法常數如 SRID／limit／horizon 誤判為量測
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run orchestrator @ aaa9aaee9380`，2026-09-03T12:23:05Z — conclusion=success
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_measurement_defaults.py → check-run orchestrator @ aaa9aaee9380` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
   - 註：同上 skip 註記。
 - **A3**（程式或文件交付／可由測試證明）— `met_by_test_in_green_ci`
   - 條款：目前債務以逐欄窄豁免維持 CI 可執行且過期會紅
   - 證據（delivered_file）：`delivery_toolchain/governance/measurement_default_exemptions.json @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
   - 證據（delivered_file）：`.github/workflows/ci.yml @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit。條款的兩半各有具名測試：逐欄窄豁免的必要欄位 → test_an_exemption_without_an_owner_is_refused、test_an_exemption_without_a_reason_is_refused、test_an_exemption_without_an_expiry_is_refused、test_an_unreadable_expiry_is_refused_rather_than_ignored；過期會紅 → test_an_exemption_past_its_date_is_reported、test_an_expired_exemption_fails_the_check_itself、test_no_exemption_is_already_past_its_date；邊界 → test_an_exemption_on_its_last_day_is_still_live。
+  - 證據（ci_step）：`ci.yml:105-106 『Refuse bounded scores that default to perfect』 @ 8479567d66d9` — orchestrator job 另有具名 step 直接執行 uv run python delivery_toolchain/governance/check_measurement_defaults.py，因此『維持 CI 可執行且過期會紅』除了測試層之外，在該 head 還有 gate step 層的執行證據。
   - 證據（ci_check）：`check-run orchestrator @ aaa9aaee9380`，2026-09-03T12:23:05Z — conclusion=success
-  - 註：逐欄豁免清單與過期會紅的行為由 checker 與其測試界定。
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_measurement_defaults.py → check-run orchestrator @ aaa9aaee9380` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
+  - 註：第 4 輪更正：本條款原本只有兩個 delivered_file 與一個 ci_check，沒有任何 test_file，屬以綠色 job 泛稱代替條款證據。現補上具名測試與 ci.yml 的 gate step，兩者都由該 head 結論 success 的 orchestrator check 執行。
 - **A4**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：修復欄位時同 commit 可移除對應豁免
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_measurement_defaults.py @ 8479567d66d9` — 由本 PR 交付並存在於 merge commit；本條款（修復欄位時同 commit 可移除對應豁免）對應具名測試 test_the_exemption_is_live_while_the_field_is_and_stale_after 與 test_no_exemption_outlives_the_field_it_covers。
   - 證據（ci_check）：`check-run orchestrator @ aaa9aaee9380`，2026-09-03T12:23:05Z — conclusion=success
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_measurement_defaults.py → check-run orchestrator @ aaa9aaee9380` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
   - 註：同上 skip 註記。
 
 **建議涵蓋範圍**
@@ -1339,6 +1391,7 @@
 **缺口**
 
 - 盤點觀察：精確 head 有 3 個 check conclusion=skipped，product 層測試未在該 head 實跑。
+- 第 4 輪更正（結論不變）：A1-A4 的 delivery_toolchain/governance/test_check_measurement_defaults.py 原被標為 delivered_file，已正規化為 test_file，並補上 orchestrator job 收集 delivery_toolchain/ 的依據。
 
 **下一步最小驗證動作**
 
@@ -1371,15 +1424,16 @@
   - 註：找不到權威決策時轉 blocked 待 Human/Ops，由 open decisions 文件記載，未製造簽署。
 - **A3**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：manifest note 不被當成 requirement amendment
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 830a8ebf919c` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 830a8ebf919c` — 由本 PR 交付並存在於 merge commit
   - 證據（delivered_file）：`delivery_toolchain/governance/check_requirement_members.py @ 830a8ebf919c` — 由本 PR 交付並存在於 merge commit
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 830a8ebf919c` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run orchestrator @ f2d1bd88ec2d`，2026-09-03T17:28:13Z — conclusion=success
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ f2d1bd88ec2d` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
   - 註：manifest note 不得當成 requirement amendment，由 checker 測試覆蓋。
 - **A4**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：checker 能拒絕缺欄位或過期的 nonimplementation disposition
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 830a8ebf919c` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 830a8ebf919c` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run orchestrator @ f2d1bd88ec2d`，2026-09-03T17:28:13Z — conclusion=success
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ f2d1bd88ec2d` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
 
 **建議涵蓋範圍**
 
@@ -1393,6 +1447,7 @@
 **缺口**
 
 - 盤點觀察：Acceptance『找不到權威決策時 task 轉 blocked waiting Human/Ops』的負向行為未在本盤點重跑驗證。
+- 第 4 輪更正（結論不變）：A3-A4 的 delivery_toolchain/governance/test_check_requirement_members.py 同上 kind 正規化與收集依據。
 
 ### `ODP-MODELREADY-QUALITY-NULLABLE-001` — verified_candidate（信心 high）
 
@@ -1534,7 +1589,9 @@
   - 證據（test_file）：`tests/integration/test_netplan_disclosure_ui_e2e.py @ 1edb2f834cbf` — 由本 PR 交付並存在於 merge commit
   - 證據（test_file）：`modules/netplan/tests/test_netplan_production_execution.py @ 1edb2f834cbf` — 由本 PR 交付並存在於 merge commit
   - 證據（test_file）：`tests/e2e/operator-network-rebalance.spec.ts @ 1edb2f834cbf` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run product-e2e-gate @ c71599aa116e`，2026-09-04T04:44:58Z — conclusion=success
+  - 證據（ci_check）：`check-run product-e2e-gate @ c71599aa116e` — conclusion=success；tests/e2e/operator-network-rebalance.spec.ts 具名列於該 head 的 delivery_toolchain/e2e/run_product_e2e.sh playwright spec 清單內，確由此 job 執行。
+  - 證據（ci_check）：`check-run product @ c71599aa116e` — conclusion=success；tests/integration/test_netplan_disclosure_ui_e2e.py 與 modules/netplan/tests/test_netplan_production_execution.py 落在 product job 的 tests／modules 收集路徑內。
+  - 證據（ci_execution_binding）：`本條款三個測試檔的 job 歸屬` — product-e2e-gate 不做路徑式收集，只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS 固定清單；兩個 pytest 檔都不在 PYTEST_NODE_IDS 內，因此它們由 product job 而非 product-e2e-gate 執行。前輪把三個檔一律綁 product-e2e-gate 是錯誤的。
   - 註：E2E 由 product-e2e-gate 於精確 head 執行並結論 success；本盤點未取 job log。
 
 **建議涵蓋範圍**
@@ -1549,6 +1606,7 @@
 **缺口**
 
 - 盤點觀察：E2E 的 DOM 層行為只有 CI 結論可依；本盤點依規定未重跑測試。
+- 第 4 輪更正（結論不變）：A4 的三個測試檔原本一律綁 product-e2e-gate。該 job 不做路徑式收集，只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS；已拆綁為 spec.ts→product-e2e-gate、兩個 pytest 檔→product。
 
 ### `ODP-OPS002-DECISION-COMMENTS-001` — verified_candidate（信心 high）
 
@@ -1636,12 +1694,14 @@
   - 證據（test_file）：`tests/contract/test_price_exploration_gate_schema.py @ 470f495d957e` — 由本 PR 交付並存在於 merge commit
   - 證據（test_file）：`tests/ops/test_price_exploration_gate_migration.py @ 470f495d957e` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ 282a88fb882c`，2026-09-04T02:49:48Z — conclusion=success
+  - 證據（ci_execution_binding）：`tests/contract/test_price_exploration_gate_schema.py → check-run product @ 282a88fb882c` — 該檔帶 requires_live_env 標記，被 product job 主 step 排除，由同 job 的資料庫 step （-m "requires_live_env and not requires_postgis" tests/contract tests/ops tests/integration）執行；該檔無 requires_postgis 標記。product check 於該 head conclusion=success。
 - **A4**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：正反向 production-entry 測試證明 gate 真會阻擋且 bandit 與 gate 不可分拆發布
   - 證據（test_file）：`tests/integration/test_priceops_bandit_gating.py @ 470f495d957e` — 由本 PR 交付並存在於 merge commit
   - 證據（test_file）：`tests/integration/test_official_real_estate_postgresql.py @ 470f495d957e` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run product @ 282a88fb882c`，2026-09-04T02:49:48Z — conclusion=success
   - 證據（ci_step）：`ci.yml product job` — 掛 postgis/postgis:16-3.5 service，另有專步跑 tests/integration/test_official_real_estate_postgresql.py
+  - 證據（ci_execution_binding）：`tests/integration/test_official_real_estate_postgresql.py → check-run product @ 282a88fb882c` — 該檔帶 requires_live_env 標記，被 product job 主 step 排除，由 product job 的具名 PostgreSQL 16 step 直接執行。product check 於該 head conclusion=success。
   - 註：本盤點未取 job log。
 
 **建議涵蓋範圍**
@@ -1656,6 +1716,7 @@
 **缺口**
 
 - 盤點觀察：commit trailer 的 Reviewer 記 Claude2，與 gate 的 Antigravity2 不同；以 gate 為準。
+- 第 4 輪補查（結論不變）：A3／A4 的測試檔同樣帶 requires_live_env 標記，由 product job 的資料庫 step 與具名 PostgreSQL 16 step 執行，已補上 step 層綁定。
 
 ### `ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001` — verified_candidate（信心 high）
 
@@ -1718,17 +1779,20 @@
   - 條款：只修正 release gate E2E 的 fixture 耦合，沿現有checker，不修改validator/lease/workflow/真正gate證據。PR1205 目前在 tests/e2e/test_release_gate_registry.py 的分階段測試改動若留到 evidence-only E，會違反 C→E ancestry；這份必要測試修補必須先合入新candidate C。不能把任何產品/測試改動包成evidence。
   - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ 17393dd447e9` — 由本 PR 交付並存在於 merge commit
   - 證據（receipt_file）：`docs/evidence/ODP_RELEASE_GATE_FIXTURE_2026-09-06.md @ 17393dd447e9` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run product-e2e-gate @ a9e7853f9ed9`，2026-09-06T01:01:49Z — conclusion=success
+  - 證據（ci_check）：`check-run product @ a9e7853f9ed9` — conclusion=success；tests/e2e/test_release_gate_registry.py 落在 product job 的 tests 收集路徑內。
+  - 證據（ci_execution_binding）：`tests/e2e/test_release_gate_registry.py → product（非 product-e2e-gate）` — product-e2e-gate 於該 head 的 make 前置目標 release-gate-registry 只執行 delivery_toolchain/e2e/check_release_gate_registry.py 這支檢查器本身，並不執行同名的 pytest 檔；該檔也不在 PYTEST_NODE_IDS 清單內。實際收集執行它的是 product job（該 head conclusion=success）。前輪綁 product-e2e-gate 是錯誤的。
   - 註：只動 E2E fixture 與說明文件，未改 validator／lease／workflow。
 - **A2**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：從最新origin/dev乾淨taskworktree開始。針對blocking_gates/dev/staging/prod/no-matched-target CLI case，以明確local/deepcopied fixture 設定 rollout §6.1 dev gates0/1/4、staging2、prod3/5/6，不再硬假設 committed registry 永久全部 target=dev。保持 committed registry 的結構/來源綁定與fail-closed整合測試，不刪測試/放寬斷言。
   - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ 17393dd447e9` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run product-e2e-gate @ a9e7853f9ed9`，2026-09-06T01:01:49Z — conclusion=success
+  - 證據（ci_check）：`check-run product @ a9e7853f9ed9` — conclusion=success；tests/e2e/test_release_gate_registry.py 落在 product job 的 tests 收集路徑內。
+  - 證據（ci_execution_binding）：`tests/e2e/test_release_gate_registry.py → product（非 product-e2e-gate）` — product-e2e-gate 於該 head 的 make 前置目標 release-gate-registry 只執行 delivery_toolchain/e2e/check_release_gate_registry.py 這支檢查器本身，並不執行同名的 pytest 檔；該檔也不在 PYTEST_NODE_IDS 清單內。實際收集執行它的是 product job（該 head conclusion=success）。前輪綁 product-e2e-gate 是錯誤的。
   - 註：dev/staging/prod 與 no-matched-target 的 CLI case 以 local fixture 設定，committed registry 的結構綁定與 fail-closed 整合測試保留。
 - **A3**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：逐一檢查PR1205目前tests/e2e/test_release_gate_registry.py delta，必要語意在本task先涵蓋，不搬C04manifest或真實gate mutation。不造成與未更新canonical registry的矛盾；測試可用fixture但實際registry檢查必須保留。
   - 證據（test_file）：`tests/e2e/test_release_gate_registry.py @ 17393dd447e9` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run product-e2e-gate @ a9e7853f9ed9`，2026-09-06T01:01:49Z — conclusion=success
+  - 證據（ci_check）：`check-run product @ a9e7853f9ed9` — conclusion=success；tests/e2e/test_release_gate_registry.py 落在 product job 的 tests 收集路徑內。
+  - 證據（ci_execution_binding）：`tests/e2e/test_release_gate_registry.py → product（非 product-e2e-gate）` — product-e2e-gate 於該 head 的 make 前置目標 release-gate-registry 只執行 delivery_toolchain/e2e/check_release_gate_registry.py 這支檢查器本身，並不執行同名的 pytest 檔；該檔也不在 PYTEST_NODE_IDS 清單內。實際收集執行它的是 product job（該 head conclusion=success）。前輪綁 product-e2e-gate 是錯誤的。
 - **A4**（執行過程約束）— `process_constraint_unverifiable`
   - 條款：一次修改完成後只跑該E2E fixture檔和必要checker focused test一次，完整CI交PR；中文PR與evidence說明先code入C再build再evidence E，不聲稱測試綠就是已部署或GO。
   - 證據（receipt_file）：`docs/evidence/ODP_RELEASE_GATE_FIXTURE_2026-09-06.md @ 17393dd447e9` — 由本 PR 交付並存在於 merge commit
@@ -1756,6 +1820,7 @@
 **缺口**
 
 - 盤點觀察：Acceptance 提及前身 ODP-RELEASE-GATE-FIXTURE-STAGING-001 因 mutates_canonical 設定錯誤而只有唯讀檢查並被 supersede；該前身不在本 38 項清單內，映射時勿混用。
+- 第 4 輪更正（結論不變）：A1-A3 的 tests/e2e/test_release_gate_registry.py 原綁 product-e2e-gate。該 job 的 make 前置目標只執行 check_release_gate_registry.py 這支檢查器本身，不執行同名 pytest 檔；已改綁真正收集它的 product check（該 head success）。
 
 ### `ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001` — verified_candidate（信心 high）
 
@@ -1891,22 +1956,24 @@
 
 - **A1**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：五個 disposition 狀態與合法轉移有 schema 驗證
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
   - 證據（delivered_file）：`delivery_toolchain/governance/check_requirement_members.py @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run orchestrator @ 7c889b211780`，2026-09-03T12:43:57Z — conclusion=success
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ 7c889b211780` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
   - 註：本 PR 未帶 docs/evidence/ 收據，交付為 governance checker 與其測試。
 - **A2**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：未實作 MUST 缺 formal decision ref／decider／scope／risk owner／expiry／reopen trigger 時 CI 必須失敗
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run orchestrator @ 7c889b211780`，2026-09-03T12:43:57Z — conclusion=success
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ 7c889b211780` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
 - **A3**（程式或文件交付）— `met_by_delivered_artifact`
   - 條款：既有 absent 仍只是索引且不得冒充裁決
   - 證據（delivered_file）：`docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
 - **A4**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：負向測試證明 checker 會拒絕 AI 自簽與過期 waiver
-  - 證據（delivered_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
+  - 證據（test_file）：`delivery_toolchain/governance/test_check_requirement_members.py @ 61ef9183d7c8` — 由本 PR 交付並存在於 merge commit
   - 證據（ci_check）：`check-run orchestrator @ 7c889b211780`，2026-09-03T12:43:57Z — conclusion=success
+  - 證據（ci_execution_binding）：`delivery_toolchain/governance/test_check_requirement_members.py → check-run orchestrator @ 7c889b211780` — orchestrator job 的指令為 uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling，delivery_toolchain/ 在其收集路徑內；該檔無 requires_live_env 標記，故確由該成功 check 收集執行。
   - 註：負向測試證明 checker 會拒絕 AI 自簽與過期 waiver。
 
 **建議涵蓋範圍**
@@ -1921,6 +1988,7 @@
 **缺口**
 
 - 盤點觀察：Acceptance『負向測試證明 checker 會拒絕 AI 自簽與過期 waiver』依 CI 結論，未重跑。
+- 第 4 輪更正（結論不變）：A1／A2／A4 的 delivery_toolchain/governance/test_check_requirement_members.py 同上 kind 正規化與收集依據。
 
 ### `ODP-ROLE-PROVIDER-CODEX-REVIEW-001` — verified_candidate（信心 medium）
 
@@ -1963,10 +2031,12 @@
   - 條款：本機codex-cli0.147.0 /home/lupin/.codex/models_cache.json fetched2026-09-06T03:44:11Z列gpt-6-astra支持ultra，且codex -c model_reasoning_effort="ultra" features list已成功。不要以公開API只列max或舊docs只列xhigh擅自換成xhigh/max；本task不啟動假API probe、無權讀auth secrets。
   - 證據：無
   - 註：本機 codex-cli 能力查核為執行當下的一次性觀察，交付物內無法重現。
-- **A7**（可由測試證明）— `met_by_test_in_green_ci`
+- **A7**（可由測試證明／執行過程約束）— `partially_met`
   - 條款：整批修改完成只跑影響範圍focused tests一次及exact-head PR CI；必要negative tests涵蓋review不會逃回Agy/Claude、unknown/empty codex capacity、pool independence、queued policy change、helper/rotation、owner fallback、Codex exact model+effort。不要重跑無關完整suite、不要以mock生成的command當live執行證據。
-  - 證據（ci_check）：`check-run orchestrator @ c1a382416e44`，2026-09-06T05:35:33Z — conclusion=success
-  - 註：negative tests 由 orchestrator check 於精確 head 執行並結論 success；本盤點未取 job log，且 product 系列 check 為 scope skip。
+  - 證據（test_file）：`.orchestrator/test_role_provider_policy.py @ 64f3b2399442` — 由本 PR 交付（+2006 行）並存在於 merge commit。條款逐項點名的 negative tests 皆可具名定位：review 不會逃回 Agy/Claude → test_reviewer_selection_never_falls_back_to_an_implementation_lane；unknown/empty codex capacity → test_unmeasurable_codex_capacity_does_not_release_review_to_another_provider、test_exhausted_codex_pools_make_review_wait_rather_than_reassign；pool independence → test_account_pool_independence_survives_a_single_provider_review_rule；queued policy change → test_queued_event_is_skipped_when_the_policy_stopped_permitting_it；helper/rotation → test_helper_claim_is_filtered_by_the_same_rule_as_owner、test_review_churn_rotation_rotates_owner_without_moving_review_off_codex；owner fallback → test_owner_failure_fallback_does_not_drag_the_reviewer_off_codex；Codex exact model+effort → test_codex_command_carries_the_configured_model_and_ultra_effort、test_invalid_effort_fails_the_delivery_instead_of_running_at_a_default。
+  - 證據（ci_check）：`check-run orchestrator @ c1a382416e44`，2026-09-06T05:35:33Z — conclusion=success；.orchestrator/ 在該 job 的收集路徑內，該測試檔確由此成功 check 執行。
+  - 證據（ci_execution_binding）：`.orchestrator/test_role_provider_policy.py → check-run orchestrator @ c1a382416e44` — orchestrator job 指令收集 .orchestrator，該檔無 requires_live_env 標記；該 head 的 product／product-e2e-gate／performance-gate 為 scope skip，但本條款的測試不在那些 job 的範圍內，skip 不影響本條款。
+  - 註：本條款可拆成兩半。測試半：條款點名的每一類 negative test 都能在交付的測試檔內具名定位，且該檔確由精確 head 上結論 success 的 orchestrator check 收集執行。過程半：『只跑影響範圍 focused tests 一次』『不要重跑無關完整 suite』『不以 mock 生成的 command 當 live 執行證據』約束的是當時怎麼執行，交付物與唯讀記錄無法獨立驗證，故整條記為 partially_met。前輪此條款只有一個 ci_check、未具名任何測試，屬於以綠色 job 泛稱代替條款證據，本輪更正。
 - **A8**（執行過程約束／人類授權）— `process_constraint_unverifiable`
   - 條款：中文PR/收據區分code/test/merge與live。Claude/Agy完成實作，Codex獨立review與CI綁exacthead；合併後live config/既有rollout_supervisor_runtime.py操作交Claude/Agy受治理執行，Codex只做審查與讀取真實loaded digest/command/model/effort/連續健康loops驗證。當前code任務不可提前改canonical runtime；後續操作需明確同一任務phase/授權scope，不能自行啟用來源、簽Human GO或部署GCP。
   - 證據：無
@@ -1976,7 +2046,7 @@
 
 - 涵蓋：本建議只涵蓋：候選 PR 與本 ID 的映射一致、精確 head 的 CI 結論、綁定精確 head 的 task-review-gate 核准者，以及上表逐條 acceptance 已定位到的既有證據。
 - 不涵蓋：不涵蓋 runtime 部署是否仍然有效、外部來源是否已被授權啟用、任何人類 GO／lease／provider permission，以及測試在 job log 層的個別結果。
-- 未完全定位到證據的條款：A1(process_constraint_unverifiable)、A6(process_constraint_unverifiable)、A8(process_constraint_unverifiable)
+- 未完全定位到證據的條款：A1(process_constraint_unverifiable)、A6(process_constraint_unverifiable)、A7(partially_met)、A8(process_constraint_unverifiable)
 
 **查證發現**
 
@@ -1987,10 +2057,12 @@
 - 盤點觀察：精確 head 有 3 個 check conclusion=skipped。
 - 盤點觀察：commit trailer 無 Verified 欄位。
 - 盤點觀察：Acceptance 要求的 live config 生效屬後續操作；code 合併不等於 live orchestrator config 已改（live config 為顯式覆蓋，程式預設值不會自動生效）。
+- 第 4 輪更正：A7 原本只有一個 orchestrator ci_check、未具名任何測試，屬以綠色 job 泛稱代替條款證據。本輪已在 .orchestrator/test_role_provider_policy.py 內逐項定位條款點名的 negative tests；但該條款另含『只跑影響範圍 focused tests 一次、不重跑無關完整 suite、不以 mock 生成的 command 當 live 執行證據』這一段執行過程約束，交付物與唯讀記錄無法獨立驗證，故整條為 partially_met。
 
 **下一步最小驗證動作**
 
 - 映射時明記本項只涵蓋 code/policy，live rollout 需另有受治理執行證據。
+- A7 的過程半若要驗證，需要當時的執行紀錄（跑了哪些測試、跑幾次）；本盤點唯讀範圍內無此紀錄，不推定。
 
 ### `ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001` — verified_candidate（信心 medium）
 
@@ -2345,8 +2417,9 @@
   - 條款：帳密登入成功失敗與 account threshold 的正式 TypeScript route 證據正確
   - 證據（receipt_file）：`docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md @ 2377168c2cc0` — 由本 PR 交付並存在於 merge commit
   - 證據（test_file）：`apps/web/tests/login-route.test.ts @ 2377168c2cc0` — 由本 PR 交付並存在於 merge commit
-  - 證據（ci_check）：`check-run product-e2e-gate @ 69422d71e8d5`，2026-09-01T08:38:11Z — conclusion=success
   - 證據（receipt_section）：`docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md §2 證據矩陣 @ 2377168c` — 「帳密登入成功／失敗」對應 Web route suite，預期 200 建立 opaque session、無效憑證固定 401 且無 cookie；「account / IP threshold」對應 Web route suite 與 tests/security/test_login_throttle_wiring.py，預期 429 AUTH_RATE_LIMITED、gate 在 credential verification 之前、狀態持久於 identity.login_attempts
+  - 證據（ci_check）：`check-run product @ 69422d71e8d5` — conclusion=success；apps/web/tests/login-route.test.ts 是 npm workspace（vitest）測試，由 product job 的 Run Node workspace checks step 執行（make node-check → npm run test --workspaces --if-present）。
+  - 證據（ci_execution_binding）：`apps/web/tests/login-route.test.ts → product（非 product-e2e-gate）` — product-e2e-gate 只跑寫死的 playwright spec 清單與 PYTEST_NODE_IDS，兩者都不含本檔；npm workspace 測試由 product job 的 node-check step 執行。前輪綁 product-e2e-gate 是錯誤的。
   - 註：更正先前盤點：宣告 artifact「security E2E receipt」可定位為 docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md（由本 PR 交付）。
 - **A2**（可由測試證明）— `met_by_test_in_green_ci`
   - 條款：未設定 OIDC 時 deploy validation 可通過且 OIDC 路由 fail closed
@@ -2394,6 +2467,7 @@
 **缺口**
 
 - A3（partially_met）：更正先前盤點：不是「查無對應收據」。收據涵蓋此條款的測試矩陣，但同一份收據明確聲明未接觸真實 OIDC provider，因此此條款在測試層達成、在 live provider 層是收據自陳的界線。
+- 第 4 輪更正（結論不變）：A1 的 apps/web/tests/login-route.test.ts 是 vitest，原綁 product-e2e-gate；實際由 product job 的 Run Node workspace checks step（make node-check → npm run test --workspaces）執行，已改綁。
 
 **下一步最小驗證動作**
 
@@ -2468,11 +2542,13 @@
 - 以 oday-data-platform PR #61 取代 #996 作為本 ID 的候選，並把 repository 由 odayplus 更正為 oday-data-platform。
 - HUMAN-OSS-LEGAL-APPROVAL-001 的四項法律待決仍需具名 Legal／Security／Risk 人員逐來源與逐套件決定，不得由本盤點或技術稽核推定。
 
+
 ## 給 reviewer 的映射注意事項
 
 1. `verified_candidate` 只表示「可作為復原候選送 reviewer 判定」，**不表示 acceptance 全數完成**。每個 ID 的 `recommendation_scope.criteria_not_fully_evidenced` 列出未完全定位到證據的條款，請連同一併判定。
-2. `blocked` 分兩種：證據直接否證（DPF、ODP-DEV-ROLLOUT、ODP-GITHUB-GCP-ENV-BOOTSTRAP、ODP-STAGING-RECOVERY-BUNDLE-STORAGE），與條款讀法待裁定（ODP-DEV-STAGED-GATE-RECONCILIATION、ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION）。後者的兩種讀法都寫在該條款的 `blocking_reasons[].readings`，本盤點採保守讀法先 fail closed。
-3. 技術就緒與人類授權必須分開記錄。`ODP-GITHUB-GCP-ENV-BOOTSTRAP-001` 的 GitHub 側 production environment 與其required reviewers 保護**確實存在**；缺的是 production 的 GCP 資源、環境變數與五項具名人類決定。`XR-EXT-OSS-FINAL-AUDIT-001` 的技術稽核 verdict 為 TECHNICAL_READINESS_VERIFIED，四項法律決定仍待具名人員。
-4. 兩份收據都寫「16 sources disabled」不代表驗的是同一份清單：`ODP-DEV-ROLLOUT-001` 稽核的是 ODayPlus canonical snapshot 家族，DPF／XR 稽核的是 data platform 的 16 個第三方 provider。請勿互相當作佐證。
-5. 本資料集不含任何 canonical 寫入建議。哪些 ID 該回填、以何種 status 回填、由誰簽署，都由 reviewer 與唯一 existing writer 決定；本盤點不代為決定，也未預先產生任何 archive 記錄。
-
+2. `blocked` 目前只有三筆，且全部屬**證據直接否證**：`DPF-EMGI-LIVE-ROLLOUT-001`（A5 收據自陳 missing rollback_receipt）、`ODP-DEV-ROLLOUT-001`（A2 image digest 為佔位值 `sha256:1111…`、A5 receipts 未綁 exact SHA、A3 runtime readback 查無證據）、`ODP-GITHUB-GCP-ENV-BOOTSTRAP-001`（A3 含人類授權成分且只部分達成）。第 2 輪曾存在的「條款讀法待裁定」分類（`blocking_reasons[].readings`／`blocked_pending_reviewer_reading`）在第 3 輪已全部裁定並清除，**本輪資料集中不再有這個分類**；請勿再依該分類映射 writer。
+3. 第 4 輪新增的 `test_delivered_not_executed_at_exact_head` 要當成「證明方式不成立」，不是「acceptance 被否證」。目前 5 條，集中在 `ODP-DEV-STAGED-GATE-RECONCILIATION-001`（A3–A6，該 head 的 `product` job 為 scope skip）與 `ODP-EPHEMERAL-STAGING-IAC-001`（A2，`infra/` 不在任何 CI job 的收集範圍）。若 reviewer 要把這兩個 ID 回填為完成態，最小補證動作已寫在各自的「下一步最小驗證動作」；本盤點依範圍限制不執行測試。
+4. 技術就緒與人類授權必須分開記錄。`ODP-GITHUB-GCP-ENV-BOOTSTRAP-001` 的 GitHub 側 production environment 與其 required reviewers 保護**確實存在**；缺的是 production 的 GCP 資源、環境變數與五項具名人類決定。`XR-EXT-OSS-FINAL-AUDIT-001` 的技術稽核 verdict 為 TECHNICAL_READINESS_VERIFIED，四項法律決定仍待具名人員。
+5. code scope 與 deferred runtime scope 分開。`ODP-DEV-STAGED-GATE-RECONCILIATION-001` A7、`ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001` A9 與 `ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001` 的 live posture，本盤點一律記為未證明的缺口並指向後續 rollout，**不**倒灌成這些 code 任務未完成，也**不**因此宣稱 runtime 已完成。
+6. 兩份收據都寫「16 sources disabled」不代表驗的是同一份清單：`ODP-DEV-ROLLOUT-001` 稽核的是 ODayPlus canonical snapshot 家族，DPF／XR 稽核的是 data platform 的 16 個第三方 provider。請勿互相當作佐證。
+7. 本資料集不含任何 canonical 寫入建議。哪些 ID 該回填、以何種 status 回填、由誰簽署，都由 reviewer 與唯一 existing writer 決定；本盤點不代為決定，也未預先產生任何 archive 記錄。
