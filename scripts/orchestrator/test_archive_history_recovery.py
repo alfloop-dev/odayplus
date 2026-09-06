@@ -1906,6 +1906,172 @@ class ReviewRegressions(RecoveryFixture):
         self.assertEqual(result["board_revision_expected"], result["board_revision_on_disk"])
 
 
+class FinalReceiptTests(RecoveryFixture):
+    """The receipt has to describe the file the command actually leaves.
+
+    `main()` syncs twice inside one lock: once for the command's own writes and
+    once for whatever the status-check outbox pass changed. A receipt sealed
+    between them names a revision that the second sync has already replaced by
+    the time the process exits, which is the same substitution the archive half
+    refuses -- a description of an intermediate state presented as the result.
+    """
+
+    def blocked_batch(self, task_id: str) -> Path:
+        self.write_board()
+        return self.write_batch(
+            self.plan_batch([inventory_entry(task_id)], subjects=["unrelated"])
+        )
+
+    def board_revision_on_disk(self) -> str | None:
+        document = json.loads(self.board_path.read_text(encoding="utf-8"))
+        return str(document.get("_status_write_revision") or "").strip() or None
+
+    def test_receipt_revision_matches_the_board_the_command_leaves(self) -> None:
+        """No fault injection: a plain apply is enough to expose the ordering."""
+
+        batch = self.blocked_batch("TASK-FINAL-REV-001")
+        receipt = self.root / "receipt.json"
+
+        self.assertEqual(
+            0, self.run_apply(batch, "--checkpoint", str(receipt), "--confirm")
+        )
+
+        result = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual("applied", result["status"])
+        self.assertTrue(result["board_persistence_verified"], result)
+        self.assertEqual(
+            self.board_revision_on_disk(),
+            result["board_revision_on_disk"],
+            "receipt was sealed before the last canonical write of the command",
+        )
+
+    def flaky_second_sync(self):
+        """Let the command's own sync land; fail the one after the outbox pass."""
+
+        real_sync_all = ai_status.sync_all
+        calls = {"count": 0}
+
+        def sync_all(state: dict[str, Any]) -> None:
+            calls["count"] += 1
+            if calls["count"] >= 2:
+                raise OSError("fixture second sync failed")
+            real_sync_all(state)
+
+        return mock.patch.object(ai_status, "sync_all", side_effect=sync_all), calls
+
+    def test_second_sync_failure_is_not_swallowed_as_a_warning(self) -> None:
+        batch = self.blocked_batch("TASK-FINAL-SYNC2-001")
+        receipt = self.root / "receipt.json"
+        patcher, calls = self.flaky_second_sync()
+
+        with patcher:
+            with self.assertRaises(OSError):
+                self.run_apply(batch, "--checkpoint", str(receipt), "--confirm")
+
+        self.assertEqual(2, calls["count"], "the second sync never ran")
+        result = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual("partial", result["status"], result)
+        self.assertIs(False, result["board_persistence_verified"])
+        # A failed final persistence still has to say what did reach disk.
+        self.assertEqual(["TASK-FINAL-SYNC2-001"], result["board_placeholders_on_disk"])
+
+    def test_second_sync_failure_on_a_done_batch_is_not_swallowed(self) -> None:
+        self.write_board()
+        self.ensure_repo(["Merge pull request #100 from org/task/TASK-FINAL-SYNC2-002"])
+        batch = self.write_batch(
+            self.plan_batch(
+                [
+                    inventory_entry(
+                        "TASK-FINAL-SYNC2-002",
+                        merge_commit=self.local_merge_oid("TASK-FINAL-SYNC2-002"),
+                    )
+                ],
+                attestations={"TASK-FINAL-SYNC2-002": attestation_set()},
+            )
+        )
+        receipt = self.root / "receipt.json"
+        patcher, _ = self.flaky_second_sync()
+
+        with patcher:
+            with self.assertRaises(OSError):
+                self.run_apply(batch, "--checkpoint", str(receipt), "--confirm")
+
+        result = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual("partial", result["status"], result)
+        self.assertIs(False, result["board_persistence_verified"])
+        self.assertEqual(["TASK-FINAL-SYNC2-002"], result["applied_archive_snapshots"])
+
+
+class ManagedOutputCheckpointTests(RecoveryFixture):
+    """`sync_all` owns more files than the board, and it runs in this lock.
+
+    A checkpoint pointed at one of them is not a receipt: whichever of the two
+    writes lands last destroys the other. Both directions are damage, so the
+    destination is refused during admission, before anything is written.
+    """
+
+    def blocked_batch(self, task_id: str) -> Path:
+        self.write_board()
+        return self.write_batch(
+            self.plan_batch([inventory_entry(task_id)], subjects=["unrelated"])
+        )
+
+    def assert_refused_without_writing(self, batch: Path, checkpoint: Path, task_id: str) -> None:
+        sentinel = b'{"sentinel": "managed output"}\n'
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.write_bytes(sentinel)
+        board_before = self.board_path.read_bytes()
+
+        with self.assertRaises(SystemExit):
+            self.run_apply(batch, "--checkpoint", str(checkpoint), "--confirm")
+
+        self.assertEqual(sentinel, checkpoint.read_bytes(), "managed output was overwritten")
+        self.assertEqual(board_before, self.board_path.read_bytes())
+        board = json.loads(self.board_path.read_text(encoding="utf-8"))
+        self.assertNotIn(task_id, [task["id"] for task in board["tasks"]])
+
+    def test_checkpoint_must_not_target_the_dashboard_bundle(self) -> None:
+        batch = self.blocked_batch("TASK-CHK-BUNDLE-001")
+        self.assert_refused_without_writing(
+            batch, ai_status.DASHBOARD_BUNDLE_FILE, "TASK-CHK-BUNDLE-001"
+        )
+
+    def test_checkpoint_must_not_target_the_docs_site_mirror(self) -> None:
+        batch = self.blocked_batch("TASK-CHK-DOCSITE-001")
+        self.assert_refused_without_writing(
+            batch, ai_status.DOCS_SITE_DIR / "ai-status.json", "TASK-CHK-DOCSITE-001"
+        )
+
+    def test_checkpoint_must_not_alias_a_managed_output(self) -> None:
+        """Resolving through a symlink is the same destination, spelled twice."""
+
+        batch = self.blocked_batch("TASK-CHK-ALIAS-001")
+        ai_status.DASHBOARD_BUNDLE_FILE.write_bytes(b'{"sentinel": "bundle"}\n')
+        alias = self.root / "bundle-alias.json"
+        alias.symlink_to(ai_status.DASHBOARD_BUNDLE_FILE)
+
+        with self.assertRaises(SystemExit):
+            self.run_apply(batch, "--checkpoint", str(alias), "--confirm")
+
+        self.assertEqual(
+            b'{"sentinel": "bundle"}\n', ai_status.DASHBOARD_BUNDLE_FILE.read_bytes()
+        )
+
+    def test_a_checkpoint_outside_the_managed_outputs_still_works(self) -> None:
+        """The exclusion is a destination rule, not a new reason to refuse."""
+
+        batch = self.blocked_batch("TASK-CHK-OK-001")
+        receipt = self.root / "receipts" / "checkpoint.json"
+
+        self.assertEqual(
+            0, self.run_apply(batch, "--checkpoint", str(receipt), "--confirm")
+        )
+
+        result = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertEqual("task_history_recovery_checkpoint", result["type"])
+        self.assertEqual("applied", result["status"])
+
+
 class NestedLockTests(unittest.TestCase):
     def test_apply_never_re_enters_the_canonical_status_lock(self) -> None:
         """`main()` already holds it; taking it again would deadlock on flock.

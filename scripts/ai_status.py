@@ -8044,17 +8044,28 @@ def _validate_checkpoint_destination(
     baseline: dict[str, Any] | None = None,
 ) -> list[str]:
     problems: list[str] = []
+    archive_root = ARCHIVE_TASKS_DIR.parent
+    # Every directory `sync_all` owns.  A checkpoint landing anywhere in here
+    # is either destroyed by the next sync or destroys a managed output; both
+    # lose the receipt, so neither is allowed to reach the write stage.
+    protected_dirs: list[tuple[str, Path]] = [
+        ("archive directory", ARCHIVE_TASKS_DIR),
+        ("docs-site mirror directory", DOCS_SITE_DIR),
+    ]
     try:
         chk_res = checkpoint_path.resolve()
-        archive_res = ARCHIVE_TASKS_DIR.resolve()
-        archive_root_res = ARCHIVE_TASKS_DIR.parent.resolve()
-        if chk_res == archive_res or chk_res.is_relative_to(archive_res):
+        archive_root_res = archive_root.resolve()
+        matched_dir = False
+        for label, protected_dir in protected_dirs:
+            dir_res = protected_dir.resolve()
+            if chk_res == dir_res or chk_res.is_relative_to(dir_res):
+                problems.append(
+                    f"checkpoint path {checkpoint_path} is inside {label} {protected_dir}"
+                )
+                matched_dir = True
+        if not matched_dir and chk_res == (archive_root_res / "index.json").resolve():
             problems.append(
-                f"checkpoint path {checkpoint_path} is inside archive directory {ARCHIVE_TASKS_DIR}"
-            )
-        elif chk_res == (archive_root_res / "index.json").resolve():
-            problems.append(
-                f"checkpoint path {checkpoint_path} targets archive index ({archive_root_res / 'index.json'})"
+                f"checkpoint path {checkpoint_path} targets archive index ({archive_root / 'index.json'})"
             )
     except (OSError, ValueError) as exc:
         problems.append(f"cannot resolve checkpoint path {checkpoint_path}: {exc}")
@@ -8065,7 +8076,14 @@ def _validate_checkpoint_destination(
         ("canonical lock", STATUS_FILE.with_name(f"{STATUS_FILE.name}.lock")),
         ("canonical log", LOG_FILE),
         ("canonical current-work", CURRENT_WORK_FILE),
-        ("archive index", ARCHIVE_TASKS_DIR.parent / "index.json"),
+        # `sync_all` rewrites these on every canonical transaction, including
+        # this one.  Accepting either as a checkpoint means the command
+        # returns having replaced a managed output and lost its own receipt.
+        ("dashboard bundle", DASHBOARD_BUNDLE_FILE),
+        ("orchestrator state", ORCHESTRATOR_STATE_FILE),
+        ("approval queue", APPROVAL_QUEUE_FILE),
+        ("planning state", PLANNING_STATE_FILE),
+        ("archive index", archive_root / "index.json"),
     ]
     if batch_path is not None:
         protected_named.append(("recovery batch", batch_path))
@@ -9266,6 +9284,17 @@ def main(argv: list[str]) -> int:
                 sync_all(state)
                 raise
             sync_all(state)
+            # Reaching GitHub is best-effort — an unreachable API has never
+            # failed a canonical transition — but persisting what the outbox
+            # pass changed is not optional: this second sync is the last write
+            # the command makes, so it is the state the receipt below has to
+            # describe.  Only the emission is allowed to degrade to a warning.
+            try:
+                reconcile_status_check_outbox(state)
+                emit_status_checks_for_changed_tasks(state_before, state, command, args)
+            except Exception as exc:
+                print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
+            sync_all(state)
             tx_succeeded = True
         except BaseException as exc:
             tx_error = exc
@@ -9273,17 +9302,14 @@ def main(argv: list[str]) -> int:
         finally:
             # Still inside the lock, and on the failure path too: a command that
             # wrote outside the board document has to be able to read back what
-            # actually landed before another writer can touch it.
+            # actually landed before another writer can touch it.  Running after
+            # every required persistence step is what makes this a receipt for
+            # the whole command instead of for an intermediate revision that a
+            # later sync in the same lock then replaced.
             post_commit_problems = run_post_commit_verifiers(
                 transaction_succeeded=tx_succeeded,
                 transaction_error=tx_error,
             )
-        try:
-            reconcile_status_check_outbox(state)
-            emit_status_checks_for_changed_tasks(state_before, state, command, args)
-            sync_all(state)
-        except Exception as exc:
-            print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
     if post_commit_problems:
         raise SystemExit("; ".join(post_commit_problems))
     return 0
