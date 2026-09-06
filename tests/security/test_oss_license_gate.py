@@ -29,7 +29,7 @@ POLICY_PATH = ROOT / "docs/security/license_policy.json"
 EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
 RELEASE_BINDINGS_PATH = ROOT / "docs/security/release_bindings.json"
 NOTICE_PATH = ROOT / "NOTICE-THIRD-PARTY.md"
-SBOM_PATH = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json"
+SBOM_PATH = ROOT / "docs/evidence/sbom.json"
 
 
 # -----------------------------------------------------------------------------
