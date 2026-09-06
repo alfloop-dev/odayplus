@@ -3,9 +3,9 @@ evidence_id: ODP-SUPERVISOR-OWNER-PREFERENCE-LIVE-ROLLOUT-001
 title: "載入 agy／Claude owner 偏好並驗證 Supervisor 實際派工"
 date: 2026-09-06
 status: IMPLEMENTED
-owner: Antigravity
+owner: Claude
 operator: Codex
-reviewer: Claude2
+reviewer: Antigravity3
 repository: alfloop-dev/odayplus
 task: ODP-SUPERVISOR-OWNER-PREFERENCE-LIVE-ROLLOUT-001
 base_ref: 62dfc845
@@ -92,14 +92,7 @@ source_receipt_sha256: 3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0
   },
   "account_pools": {
     "claude_main": {
-      "provider": "claude",
-      "max_concurrent": 5,
-      "task_classes": [
-        "implementation",
-        "remediation",
-        "documentation",
-        "review"
-      ]
+      "max_concurrent": 5
     }
   },
   "agents": {
@@ -131,6 +124,7 @@ source_receipt_sha256: 3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0
 }
 ```
 
+- **Schema 邊界說明**：`account_pools.<pool>` 於 `62dfc845` 的 `.orchestrator/config.schema.json` 僅允許 `enabled` / `max_concurrent` / `state`，且 `additionalProperties: false`；`provider` 與 `task_classes` 屬於 `agents.<slot_id>` 層而非 pool 層。上方 JSON 呈現的是本次**授權變更的差異**而非完整物件（live `claude_main` 另保留既有 `state: "healthy"`），其鍵集合合於 schema，與 §3.1 記錄的 validator 通過結果一致。
 - **保留參數（完全未動）**：
   - Antigravity slots: 5 個實體 slot（`antigravity_slot_1` ~ `antigravity_slot_5`，account pool: `antigravity_main`，`max_concurrent: 5`）
   - Codex 總 slots: 4（真實 pool 明細為 `codex_bjoe.max_concurrent: 2`、`codex_lupin.max_concurrent: 2`；實體 slot 為 `codex_bjoe_slot_1/2`、`codex_lupin_slot_1/2`）
@@ -172,7 +166,7 @@ Rollout 過程中嚴格保護既有 worker process 與 lease，未執行任何 w
 
 ## 5. 唯讀選擇器探針（Readonly Selector Probe）
 
-於 `2026-09-06T02:20:11.062799+00:00` 至 `2026-09-06T02:20:12.240774+00:00` 執行 `readonly_dispatch_controls` 探針，在不製造狀態變更的前提下驗證控制面完整性。
+於 `2026-09-06T02:20:11.062799+00:00` 至 `2026-09-06T02:20:12.240774+00:00` 執行 `readonly_dispatch_controls` 探針，在不製造狀態變更的前提下驗證控制面完整性。此探針為 root 一次性唯讀工具，**不存在於 repo 內**，其收據自帶 `missing_runtime_apis` 欄位以揭露缺漏 API；因此它不是可長期沿用的驗收管道（見 §8.3 步驟 3）。
 
 ### 5.1 探針執行環境與狀態無損檢驗
 
@@ -275,8 +269,10 @@ Rollout 過程中嚴格保護既有 worker process 與 lease，未執行任何 w
 
 Supervisor 程序（`supervisor.py`）在 `main()` 啟動時載入一次 config 於記憶體中，主迴圈並無 hot-reload 機制，因此**任何 live config 修改均必須重啟 Supervisor 程序才能生效**。
 
+**唯一支援的重啟路徑**：本文件所有「重啟 Supervisor」一律指 §2 已使用的同一支 `scripts/orchestrator/rollout_supervisor_runtime.py`。不存在其他支援路徑——`scripts/restart-supervisor.sh` 已退役並直接 `exit 2`（其訊息明示 rollout 唯一入口即為該腳本）；手動改檔後等 watchdog 自行接手亦不成立，因為 `.orchestrator/supervisor_watchdog.py:401-403` 在 `health.healthy` 為真時會先判定 `decision=observe_only` / `reason=supervisor_healthy`，早於任何 restart 判斷。
+
 1. **停用偏好排序**：
-   將 live config 中的 `ready_dispatcher.owner_provider_preference.enabled` 設為 `false`，或將 `preferred_providers` 設為 `[]`，並重啟 Supervisor：
+   將 live config 中的 `ready_dispatcher.owner_provider_preference.enabled` 設為 `false`，或將 `preferred_providers` 設為 `[]`，並依上述唯一入口重啟 Supervisor：
    - 依 schema 與程式定義，`preferred_providers=[]` 時 `owner_preference_ranks` 會對所有候選人回傳 rank 1。
    - 選擇器行為完全回到原有 `(open_task_count, caller_order)` 排序。
    - 不觸發任何額外容量探測。
@@ -284,24 +280,27 @@ Supervisor 程序（`supervisor.py`）在 `main()` 啟動時載入一次 config 
 2. **回滾 Claude 並行容量（縮容至 2）**：
    - **前置安全檢查（必須確認無 active lease）**：在移除 slot 之前，必須先檢查 canonical state 與 active leases，確認 `claude_slot_3`、`claude_slot_4`、`claude_slot_5` 當前均無 active lease 承載中任務（若有任務在執行，需等待其完成並釋放 lease），避免直接刪除 slot 導致正在運行的 worker 孤立或 state 衝突。
    - 確認 slot 空閒後，將 `claude_main.max_concurrent` 改回 `2`，並自 `agents` 移除 `claude_slot_3`、`claude_slot_4`、`claude_slot_5` 定義。
-   - 重啟 Supervisor 使縮容設定生效。
+   - 依上述唯一入口重啟 Supervisor 使縮容設定生效。
 
 ### 8.2 第二級：縮小偏好適用範圍
 
-自 `task_classes` 移除特定分類（例如僅保留 `implementation`），縮減偏好介入之任務型態。修改後同樣需重啟 Supervisor 使設定生效。
+自 `task_classes` 移除特定分類（例如僅保留 `implementation`），縮減偏好介入之任務型態。修改後同樣需依 §8.1 所述唯一入口重啟 Supervisor 使設定生效。
 
 ### 8.3 第三級：完整 Runtime 與 Config 回滾程序（Symlink & Backup Restore）
 
-本次 Supervisor runtime 採用軟連結原子部署（`/home/lupin/oday-plus-supervisor-runtime-current -> /home/lupin/oday-plus-supervisor-runtime-62dfc845925e`），rollout 原語提供 symlink 與 launcher 替換機制，不依賴也不使用 `git revert`。若需完整回滾至前一版本（`04e1572f802a54c2646ba678fe2975226dfbd7c4`），依序執行以下步驟：
+本次 Supervisor runtime 採用軟連結原子部署（`/home/lupin/oday-plus-supervisor-runtime-current -> /home/lupin/oday-plus-supervisor-runtime-62dfc845925e`），rollout 原語提供 symlink 與 launcher 替換機制，不依賴也不使用 `git revert`。本節僅界定**備份來源、唯一入口與安全邊界**，不提供手動平行步驟；config 還原始終是 operator 責任。若需完整回滾至前一版本（`04e1572f802a54c2646ba678fe2975226dfbd7c4`），依序執行以下步驟：
 
 1. **先還原備份 Config 與 Launcher**：
+   - **前置安全檢查（沿用 §8.1）**：還原 `config.before.json` 會同時移除 `claude_slot_3`、`claude_slot_4`、`claude_slot_5`，因此還原前必須先確認這三個 slot 均無 active lease 承載中任務，避免孤立正在執行的 worker。
    - 自私有備份目錄 `/tmp/odp-supervisor-priority-rollout.SmhhVQ/` 將 `config.before.json` 與 `launcher.before.sh` 還原至 `/home/lupin/odayplus/.orchestrator/config.json` 及 launcher 路徑。
    - **順序必要性**：舊版 runtime `04e1572f` 的 `config.schema.json` 頂層具備 `additionalProperties: false` 且不認識 `owner_provider_preference` 鍵。若未先還原 config 即切換舊 runtime，Supervisor 啟動時會直接觸發 `ConfigError` 驗證失敗。因此必須先還原相容 config。
-2. **切換 Runtime Symlink**：
-   - 將 `/home/lupin/oday-plus-supervisor-runtime-current` 原子指向舊版目錄 `/home/lupin/oday-plus-supervisor-runtime-04e1572f802a`。
-3. **重啟 Supervisor 並執行健康檢驗**：
-   - 由 watchdog 或 launcher 啟動舊版 Supervisor 程序。
-   - 透過 live probe 核對 PID、`loaded_code_sha`（`04e1572f802a54c2646ba678fe2975226dfbd7c4`）、`loaded_config_digest`（`01771aa25630879c`），並確認連續通過至少 2 輪無錯誤健康 loop。
+2. **以唯一 rollout 入口切回舊 runtime**：
+   - 沿用 §2 已使用的同一支 `scripts/orchestrator/rollout_supervisor_runtime.py`，以乾淨的 `04e1572f` source worktree 作為 `--source-root`，`--tracking-ref` 釘住 `04e1572f802a54c2646ba678fe2975226dfbd7c4`，並以 `--watchdog-pid-file` 指向 canonical `supervisor.pid`（cron／watchdog 安裝形態）。runtime symlink 與 launcher 的替換由該腳本原子完成。
+   - **不得改為「手動切 symlink 後等 watchdog 或 launcher 啟動舊版」**：如 §8.1 所述，`.orchestrator/supervisor_watchdog.py:401-403` 在 Supervisor 健康時直接判定 `observe_only` / `supervisor_healthy`，替換不會發生，記憶體中仍是 `62dfc845` 的碼；`scripts/restart-supervisor.sh` 亦已退役（`exit 2`）。此類手動路徑會靜默失效並被誤判為回滾完成。
+   - 有效原語是該腳本的 `restart_with_watchdog()`（`scripts/orchestrator/rollout_supervisor_runtime.py:127-133`）：先對前一個 PID 送出 `SIGTERM` 並等待其退出，watchdog 才會判定不健康而真正重啟程序。
+3. **回滾後唯讀驗收（明確排除 §5 探針）**：
+   - 僅執行既有唯讀核對：程序 PID、程序實際 cwd 是否指向舊 runtime 目錄、`loaded_code_sha`（`04e1572f802a54c2646ba678fe2975226dfbd7c4`）、`loaded_config_digest`（`01771aa25630879c`），並確認連續通過至少 2 輪無錯誤健康 loop。
+   - **不得沿用 §5 的 `readonly_dispatch_controls` 探針**：該探針不存在於 repo 內（見 §5），且 `04e1572f` 並無 `owner_provider_preference` 相關 runtime API；回到舊 runtime 執行該探針會因缺少 API 而非零退出，將正常回滾誤讀為回滾失敗。
 
 ---
 
@@ -309,5 +308,7 @@ Supervisor 程序（`supervisor.py`）在 `main()` 啟動時載入一次 config 
 
 - **原始收據路徑**: `/tmp/odp-supervisor-priority-rollout.SmhhVQ/live-rollout-receipt.json`
 - **原始收據 SHA256**: `3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0f6ba6a9`（已精準核對）
-- **文件所有者**: Antigravity
-- **獨立審查者**: Claude2
+- **文件所有者**: Claude（本輪）
+- **獨立審查者**: Antigravity3（本輪）
+- **文件整理沿革**: 首輪文件整理由 Antigravity 進行，經獨立 reviewer Claude2 兩次實測退修（reopen #1 七項、reopen #2 三項）；依 review churn 政策 owner 於 `2026-09-06T03:01:33Z` 改派 Claude 續修，reviewer 改為 Antigravity3。Claude2 兩輪退修的每一項均已由本輪 owner 重新獨立量測後才採納，未僅憑轉述修改。
+- **rollout 與健康驗證執行者**: root Codex（歷史事實，本輪未重做 rollout、未更動 runtime／live config／CI／gates、未重啟服務、未重跑測試）
