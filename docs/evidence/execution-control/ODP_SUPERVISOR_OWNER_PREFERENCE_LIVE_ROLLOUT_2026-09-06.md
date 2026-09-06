@@ -29,7 +29,7 @@ source_receipt_sha256: 3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0
 
 ### 1.2 非授權／嚴格禁止事項
 
-- **禁止非授權變更**：Agy slots（5）、Codex 總 slots（4）、Watchdog 全域上限（14）、fallback 候選順序、輪詢週期（180s）、逾時設定與其他 quota 完全保留不變。
+- **禁止非授權變更**：Agy slots（5）、Codex 總 slots（4，包含 `codex_bjoe`: 2 與 `codex_lupin`: 2）、Watchdog 全域上限（14）、同偏好組內保留原 fallback 候選順序（跨組由偏好 rank 主導）、輪詢週期（180s）、逾時設定與其他 quota 完全保留不變。
 - **未動產品程式與 GCP 部署**：本次僅限 Supervisor 本地執行控制面，未部署 GCP 產品 runtime，未啟用第三方來源，未進行 live source readback。
 - **不混同未核准修正**：PR #1215（`ODP-MERGE-GROUP-STALE-FAILURE-GUARD-001`）因 review finding 被退回，正由 Claude 接續修正中；本次部署之 runtime `62dfc845` 嚴格基於當時已合併之 dev，不包含任何未核准修補。
 - **不製造偽造任務**：選擇器探針在 `ready_count=0` 時如實記錄，禁止建立 synthetic tasks 或刻意製造故障以獲取派工測試證據。
@@ -68,7 +68,7 @@ source_receipt_sha256: 3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0
 | Config Digest 前綴 | `5e9f4279b14ba6f4`（與 live probe 讀取之 `loaded_config_digest` 逐字相符） |
 | Launcher SHA256 | `3660f2423ddf5169c86199d3bf1699ebb34e733ebe9add2182483a9cfb5be9d1` |
 | 私有備份目錄 | `/tmp/odp-supervisor-priority-rollout.SmhhVQ`（私有 live config 未 commit、未印出全文） |
-| 靜態驗證指令 | `python3 -B delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json` |
+| 靜態驗證指令 | `(cd /home/lupin/oday-plus-supervisor-runtime-62dfc845925e && python3 -B delivery_toolchain/governance/check_orchestrator_config.py --config /home/lupin/odayplus/.orchestrator/config.json)`（釘住具備最新 schema 之 runtime checkout 目錄執行） |
 | 靜態驗證結果 | `Validated 3 config documents and their merged runtime views.`（通過） |
 | 授權範圍比對 | `only_authorized_changes: true` |
 
@@ -79,27 +79,63 @@ source_receipt_sha256: 3d5e7d6461833b33bb021a8330581e0f6feccbf0ca66c153861c006d0
   "ready_dispatcher": {
     "owner_provider_preference": {
       "enabled": true,
-      "preferred_providers": ["antigravity", "claude"],
-      "task_classes": ["implementation", "remediation", "documentation"]
+      "preferred_providers": [
+        "antigravity",
+        "claude"
+      ],
+      "task_classes": [
+        "implementation",
+        "remediation",
+        "documentation"
+      ]
     }
   },
   "account_pools": {
     "claude_main": {
-      "max_concurrent": 5
+      "provider": "claude",
+      "max_concurrent": 5,
+      "task_classes": [
+        "implementation",
+        "remediation",
+        "documentation",
+        "review"
+      ]
     }
   },
-  "worker_slots": {
-    "claude_slot_3": { "account_pool": "claude_main", "provider": "claude" },
-    "claude_slot_4": { "account_pool": "claude_main", "provider": "claude" },
-    "claude_slot_5": { "account_pool": "claude_main", "provider": "claude" }
+  "agents": {
+    "claude_slot_3": {
+      "display_name": "claude_slot_3",
+      "provider": "claude",
+      "adapter": "claude_cli",
+      "account_pool": "claude_main",
+      "dispatch_slot_for_pool": "claude_main",
+      "slot_id": "claude_slot_3"
+    },
+    "claude_slot_4": {
+      "display_name": "claude_slot_4",
+      "provider": "claude",
+      "adapter": "claude_cli",
+      "account_pool": "claude_main",
+      "dispatch_slot_for_pool": "claude_main",
+      "slot_id": "claude_slot_4"
+    },
+    "claude_slot_5": {
+      "display_name": "claude_slot_5",
+      "provider": "claude",
+      "adapter": "claude_cli",
+      "account_pool": "claude_main",
+      "dispatch_slot_for_pool": "claude_main",
+      "slot_id": "claude_slot_5"
+    }
   }
 }
 ```
 
 - **保留參數（完全未動）**：
-  - Antigravity slots: 5 個實體 slot（`antigravity_slot_1` ~ `antigravity_slot_5`）
-  - Codex 總 slots: 4（`codex_bjoe`: 3, `codex_worker`: 1）
+  - Antigravity slots: 5 個實體 slot（`antigravity_slot_1` ~ `antigravity_slot_5`，account pool: `antigravity_main`，`max_concurrent: 5`）
+  - Codex 總 slots: 4（真實 pool 明細為 `codex_bjoe.max_concurrent: 2`、`codex_lupin.max_concurrent: 2`；實體 slot 為 `codex_bjoe_slot_1/2`、`codex_lupin_slot_1/2`）
   - 全域活躍 Worker 上限: 14（`watchdog_max_active_workers`）
+  - 同偏好組內保留原 fallback 候選順序（跨組由偏好 rank 主導）
   - 輪詢週期: 180 秒（`poll_interval_seconds`）
   - Quota 生命週期、cooldown 與 worker leases 未被清除或重設
 
@@ -235,23 +271,37 @@ Rollout 過程中嚴格保護既有 worker process 與 lease，未執行任何 w
 
 若 live 環境需進行回滾，提供以下三層級處置路徑：
 
-### 8.1 第一級：設定層快速停用（無需改碼、無需重啟）
+### 8.1 第一級：設定層停用偏好或縮容（需重啟 Supervisor 程序生效）
 
-將 live config 中的 `ready_dispatcher.owner_provider_preference.enabled` 設為 `false`，或將 `preferred_providers` 設為 `[]`：
-- `owner_preference_ranks` 會對所有候選人回傳 rank 1。
-- 選擇器行為完全回到原有 `(open_task_count, caller_order)`。
-- 不觸發任何額外容量探測。
+Supervisor 程序（`supervisor.py`）在 `main()` 啟動時載入一次 config 於記憶體中，主迴圈並無 hot-reload 機制，因此**任何 live config 修改均必須重啟 Supervisor 程序才能生效**。
 
-若需回滾 Claude 並行容量，將 `claude_main.max_concurrent` 改回 `2` 並移除 `claude_slot_3` ~ `claude_slot_5`。
+1. **停用偏好排序**：
+   將 live config 中的 `ready_dispatcher.owner_provider_preference.enabled` 設為 `false`，或將 `preferred_providers` 設為 `[]`，並重啟 Supervisor：
+   - 依 schema 與程式定義，`preferred_providers=[]` 時 `owner_preference_ranks` 會對所有候選人回傳 rank 1。
+   - 選擇器行為完全回到原有 `(open_task_count, caller_order)` 排序。
+   - 不觸發任何額外容量探測。
+
+2. **回滾 Claude 並行容量（縮容至 2）**：
+   - **前置安全檢查（必須確認無 active lease）**：在移除 slot 之前，必須先檢查 canonical state 與 active leases，確認 `claude_slot_3`、`claude_slot_4`、`claude_slot_5` 當前均無 active lease 承載中任務（若有任務在執行，需等待其完成並釋放 lease），避免直接刪除 slot 導致正在運行的 worker 孤立或 state 衝突。
+   - 確認 slot 空閒後，將 `claude_main.max_concurrent` 改回 `2`，並自 `agents` 移除 `claude_slot_3`、`claude_slot_4`、`claude_slot_5` 定義。
+   - 重啟 Supervisor 使縮容設定生效。
 
 ### 8.2 第二級：縮小偏好適用範圍
 
-自 `task_classes` 移除特定分類（例如僅保留 `implementation`），縮減偏好介入之任務型態。
+自 `task_classes` 移除特定分類（例如僅保留 `implementation`），縮減偏好介入之任務型態。修改後同樣需重啟 Supervisor 使設定生效。
 
-### 8.3 第三級：完整代碼回滾（Git Revert）
+### 8.3 第三級：完整 Runtime 與 Config 回滾程序（Symlink & Backup Restore）
 
-使用 `git revert` 還原 PR #1213、PR #1210、PR #1209：
-- **注意**：還原代碼前必須先移除 live config 中的 `owner_provider_preference` 區塊，因舊版 schema 具備 `additionalProperties: false`，否則會導致 config 驗證失敗。
+本次 Supervisor runtime 採用軟連結原子部署（`/home/lupin/oday-plus-supervisor-runtime-current -> /home/lupin/oday-plus-supervisor-runtime-62dfc845925e`），rollout 原語提供 symlink 與 launcher 替換機制，不依賴也不使用 `git revert`。若需完整回滾至前一版本（`04e1572f802a54c2646ba678fe2975226dfbd7c4`），依序執行以下步驟：
+
+1. **先還原備份 Config 與 Launcher**：
+   - 自私有備份目錄 `/tmp/odp-supervisor-priority-rollout.SmhhVQ/` 將 `config.before.json` 與 `launcher.before.sh` 還原至 `/home/lupin/odayplus/.orchestrator/config.json` 及 launcher 路徑。
+   - **順序必要性**：舊版 runtime `04e1572f` 的 `config.schema.json` 頂層具備 `additionalProperties: false` 且不認識 `owner_provider_preference` 鍵。若未先還原 config 即切換舊 runtime，Supervisor 啟動時會直接觸發 `ConfigError` 驗證失敗。因此必須先還原相容 config。
+2. **切換 Runtime Symlink**：
+   - 將 `/home/lupin/oday-plus-supervisor-runtime-current` 原子指向舊版目錄 `/home/lupin/oday-plus-supervisor-runtime-04e1572f802a`。
+3. **重啟 Supervisor 並執行健康檢驗**：
+   - 由 watchdog 或 launcher 啟動舊版 Supervisor 程序。
+   - 透過 live probe 核對 PID、`loaded_code_sha`（`04e1572f802a54c2646ba678fe2975226dfbd7c4`）、`loaded_config_digest`（`01771aa25630879c`），並確認連續通過至少 2 輪無錯誤健康 loop。
 
 ---
 
