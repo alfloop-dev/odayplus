@@ -1,52 +1,29 @@
-#!/usr/bin/env python3
-# ruff: noqa: E402,I001
-import os
-import shutil
-import tempfile
+from __future__ import annotations
+
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
-_ORIGINAL_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
-_ORIGINAL_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
-_TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-capacity-tests-")
-_TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
-os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
-os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
-
-import task_archive
-task_archive.STATUS_ROOT = _TEST_STATUS_ROOT
-task_archive.ARCHIVE_DIR = _TEST_STATUS_ROOT / "ai-task-archive"
-task_archive.ARCHIVE_TASKS_DIR = task_archive.ARCHIVE_DIR / "tasks"
-task_archive.ARCHIVE_INDEX_FILE = task_archive.ARCHIVE_DIR / "index.json"
-task_archive.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
-
 import capacity_controller
+import pytest
 import supervisor
+import task_archive
 
 NOW = datetime(2026, 8, 20, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture(autouse=True)
-def clean_archive() -> None:
-    if task_archive.ARCHIVE_TASKS_DIR.exists():
-        shutil.rmtree(task_archive.ARCHIVE_TASKS_DIR)
-    task_archive.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
-    if task_archive.ARCHIVE_INDEX_FILE.exists():
-        task_archive.ARCHIVE_INDEX_FILE.unlink(missing_ok=True)
+def scoped_task_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    test_status_root = tmp_path / "status_root"
+    archive_dir = test_status_root / "ai-task-archive"
+    tasks_dir = archive_dir / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    index_file = archive_dir / "index.json"
 
-
-def tearDownModule() -> None:
-    if _ORIGINAL_STATUS_ROOT is None:
-        os.environ.pop("PANTHEON_STATUS_ROOT", None)
-    else:
-        os.environ["PANTHEON_STATUS_ROOT"] = _ORIGINAL_STATUS_ROOT
-    if _ORIGINAL_ORCH_STATUS_ROOT is None:
-        os.environ.pop("ORCH_STATUS_ROOT", None)
-    else:
-        os.environ["ORCH_STATUS_ROOT"] = _ORIGINAL_ORCH_STATUS_ROOT
-    _TEST_STATUS_ROOT_HANDLE.cleanup()
+    monkeypatch.setattr(task_archive, "STATUS_ROOT", test_status_root)
+    monkeypatch.setattr(task_archive, "ARCHIVE_DIR", archive_dir)
+    monkeypatch.setattr(task_archive, "ARCHIVE_TASKS_DIR", tasks_dir)
+    monkeypatch.setattr(task_archive, "ARCHIVE_INDEX_FILE", index_file)
+    return test_status_root
 
 
 

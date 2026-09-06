@@ -13,7 +13,7 @@
 1. `capacity_controller.sidecar_candidates` 僅檢查 active 任務清單中的 sidecar 簽名（`existing_signatures = {f"{task.get('helper_parent')}:{task.get('helper_kind')}" for task in existing}`）。
 2. `supervisor.reconcile_capacity_controller` 僅在 CAS 寫入前比對 active 任務 ID（`known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}`）。
 3. 當診斷 sidecar 完成並封存至 `ai-task-archive/tasks/<task_id>.json` 後，會從 `ai-status.json` 的 active 任務清單中移除。若其 parent 任務仍處於 `blocked` 狀態，下一個 Capacity Chair 評估週期會再度生成相同的 deterministic sidecar ID，並佔用 wave budget。
-4. `reconcile_capacity_controller` 隨後將重複的 sidecar 寫入 `ai-status.json`，導致已合併（PR #1066、#1111、#1067）的任務被重新指派或覆寫舊驗證收據。
+4. `reconcile_capacity_controller` 隨後將重複的 sidecar 寫入 `ai-status.json`。在實際運行觀察中，此行為會造成已封存任務在 active 清單中重生並持續佔用 wave budget；而在後續 dispatch 階段，雖被既有 archive ambiguity gate 阻擋拒絕 dispatch，未觀察到實際 worker 執行或覆寫歷史收據，但持續重生會污染 active 清單，且存在重新指派已合併任務（PR #1066、#1111、#1067）或覆寫舊收據之潛在風險。
 
 ---
 
@@ -41,7 +41,7 @@
 
 ## 4. 驗證與回歸測試 (Verification & Regression Coverage)
 執行測試指令：
-`uv run --python 3.12 pytest .orchestrator/test_capacity_controller.py .orchestrator/test_supervisor.py -k capacity`
+`uv run --python 3.12 pytest .orchestrator/test_capacity_controller.py .orchestrator/test_supervisor.py .orchestrator/test_role_provider_policy.py -k "capacity or role_provider"`
 
 通過的測試案例包含：
 1. `test_sidecar_candidates_excludes_archived_three_exact_ids_across_multiple_rounds`:
@@ -55,9 +55,13 @@
 3. `test_mixed_archived_and_fresh_candidates_preserves_full_wave_budget_for_fresh`:
    - 驗證 2 個封存 parent + 2 個 fresh parent 在 wave budget 為 2 時，2 個 fresh 任務取得全部 budget。
 4. `test_reconcile_capacity_controller_excludes_archived_sidecars_and_writes_no_logs`:
-   - 驗證 `reconcile_capacity_controller` 排除封存任務，不更新 status 且不寫入 `capacity_sidecar_created` log。
-5. `test_reconcile_capacity_controller_filters_sidecar_archived_before_cas_commit`:
-   - 驗證候選生成後、寫板前出現封存時的防禦與 log 靜默。
+   - 在有效 chair 與正 wave budget（8 slots × 0.25 = 2）條件下，驗證 `reconcile_capacity_controller` 排除封存任務，不更新 status 且不寫入 `capacity_sidecar_created` log。
+5. `test_reconcile_capacity_controller_generates_and_commits_sidecar_when_not_archived`:
+   - 對照測試：在相同有效 chair 與正 wave budget 條件下，當任務未封存時，確認 sidecar 正常生成、CAS 提交並記錄 activity log。
+6. `test_reconcile_capacity_controller_filters_sidecar_archived_before_cas_commit`:
+   - 驗證候選生成後、寫板前出現封存時的防禦與 log 靜默（race condition 防禦）。
+7. 跨 Module 隔離回歸：
+   - 驗證 `test_capacity_controller.py` 使用 scoped fixture，不污染環境，同 process 連跑 `test_role_provider_policy.py` 全部 146 個測試通過。
 
 ---
 

@@ -19917,10 +19917,36 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
 
 
 class CapacityControllerReconciliationTests(unittest.TestCase):
-    def _config(self) -> dict[str, Any]:
+    def setUp(self) -> None:
+        if task_archive.ARCHIVE_TASKS_DIR.exists():
+            shutil.rmtree(task_archive.ARCHIVE_TASKS_DIR)
+        task_archive.ARCHIVE_TASKS_DIR.mkdir(parents=True, exist_ok=True)
+        if task_archive.ARCHIVE_INDEX_FILE.exists():
+            task_archive.ARCHIVE_INDEX_FILE.unlink(missing_ok=True)
+
+    def tearDown(self) -> None:
+        if task_archive.ARCHIVE_TASKS_DIR.exists():
+            shutil.rmtree(task_archive.ARCHIVE_TASKS_DIR)
+        if task_archive.ARCHIVE_INDEX_FILE.exists():
+            task_archive.ARCHIVE_INDEX_FILE.unlink(missing_ok=True)
+
+    def _config(self, slot_count: int = 2) -> dict[str, Any]:
         return {
             "schema": {"tasks_path": "tasks"},
             "agents": {
+                "claude": {"provider": "claude", "slot_id": "slot-0"},
+                "codex": {"provider": "codex", "slot_id": "slot-1"},
+                "claude2": {"provider": "claude", "slot_id": "slot-2"},
+                "antigravity": {"provider": "antigravity", "slot_id": "slot-3"},
+                "antigravity2": {"provider": "antigravity", "slot_id": "slot-4"},
+                "antigravity3": {"provider": "antigravity", "slot_id": "slot-5"},
+                "antigravity4": {"provider": "antigravity", "slot_id": "slot-6"},
+                "gemini": {"provider": "gemini", "slot_id": "slot-7"},
+                **{
+                    f"slot-{index}": {"slot_id": f"slot-{index}"}
+                    for index in range(8, slot_count)
+                },
+            } if slot_count >= 8 else {
                 "claude": {"slot_id": "slot-0"},
                 "codex": {"slot_id": "slot-1"},
             },
@@ -20109,7 +20135,7 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             self.assertEqual(snapshot.get("available_slots"), 1)
 
     def test_reconcile_capacity_controller_excludes_archived_sidecars_and_writes_no_logs(self) -> None:
-        """Archived sidecars are excluded in reconcile_capacity_controller without mutating status or writing activity log."""
+        """Archived sidecars are excluded in reconcile_capacity_controller under valid chair & positive budget."""
         parent_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
         sidecar_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549"
         tasks = [
@@ -20127,15 +20153,19 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
                 "helper_kind": "blocked_task_diagnostics",
             }
         )
-        config = self._config()
+        # 8 slots * 0.25 ratio = 2 sidecar budget (positive budget)
+        config = self._config(slot_count=8)
+        now = datetime.now(UTC)
+        valid_until_str = (now + timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
         state: dict[str, Any] = {
             "workers": {},
             "capacity_controller": {
+                "underutilization_since": "2020-01-01T00:00:00Z",
                 "chair_decision": {
-                    "issued_at": "2026-08-20T11:50:00Z",
-                    "valid_until": "2026-08-20T12:30:00Z",
+                    "issued_at": now.isoformat().replace("+00:00", "Z"),
+                    "valid_until": valid_until_str,
                     "sidecar_wave": {"approved": True},
-                }
+                },
             },
         }
 
@@ -20148,13 +20178,60 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
 
         self.assertEqual(len(tasks), 1)
         self.assertNotIn(sidecar_id, [t.get("id") for t in tasks])
-        # commit_mock is not called for additions
         commit_mock.assert_not_called()
         sidecar_created_logs = [
             call for call in log_mock.call_args_list
             if isinstance(call.args, tuple) and len(call.args) > 1 and isinstance(call.args[1], dict) and call.args[1].get("type") == "capacity_sidecar_created"
         ]
         self.assertEqual(len(sidecar_created_logs), 0)
+
+    def test_reconcile_capacity_controller_generates_and_commits_sidecar_when_not_archived(self) -> None:
+        """Control test: under the exact same valid chair & positive budget conditions,
+
+        if the sidecar is NOT archived, reconcile_capacity_controller MUST generate,
+        commit to status, and record capacity_sidecar_created activity log.
+        """
+        parent_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
+        sidecar_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549"
+        tasks = [
+            {"id": parent_id, "status": "blocked", "blocked_reason": "staging validation", "owner": "claude"},
+        ]
+        # sidecar is NOT archived
+        config = self._config(slot_count=8)
+        now = datetime.now(UTC)
+        valid_until_str = (now + timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
+        state: dict[str, Any] = {
+            "workers": {},
+            "capacity_controller": {
+                "underutilization_since": "2020-01-01T00:00:00Z",
+                "chair_decision": {
+                    "issued_at": now.isoformat().replace("+00:00", "Z"),
+                    "valid_until": valid_until_str,
+                    "sidecar_wave": {"approved": True},
+                },
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit_mock,
+            mock.patch.object(supervisor, "write_activity_log") as log_mock,
+        ):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(len(tasks), 2)
+        created_task = tasks[1]
+        self.assertEqual(created_task.get("id"), sidecar_id)
+        self.assertEqual(created_task.get("task_class"), "sidecar")
+        self.assertEqual(created_task.get("helper_parent"), parent_id)
+        commit_mock.assert_called_once()
+        sidecar_created_logs = [
+            call for call in log_mock.call_args_list
+            if isinstance(call.args, tuple) and len(call.args) > 1 and isinstance(call.args[1], dict) and call.args[1].get("type") == "capacity_sidecar_created"
+        ]
+        self.assertEqual(len(sidecar_created_logs), 1)
+        self.assertEqual(sidecar_created_logs[0].args[1].get("task_id"), sidecar_id)
 
     def test_reconcile_capacity_controller_filters_sidecar_archived_before_cas_commit(self) -> None:
         """Race condition: candidate generated by sidecar_candidates is archived before CAS commit.
