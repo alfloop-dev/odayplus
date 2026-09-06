@@ -20,7 +20,7 @@ from dispatch_policy import (
     dispatch_reason_role,
     role_provider_block_reason,
 )
-from dispatch_policy import DEFAULT_FROZEN_CLOSEOUT_STATUSES, task_closeout_is_frozen
+from dispatch_policy import DEFAULT_FROZEN_CLOSEOUT_STATUSES, task_closeout_is_frozen, task_submitted_author
 from dispatch_policy import agent_provider_identity_ids as dispatch_policy_agent_provider_identity_ids
 from provider_runtime import configured_provider_binary, provider_config_entry
 import status_transition
@@ -44,7 +44,7 @@ def _sync_supervisor_scope() -> None:
         # copies happening to be the same object.
         "ROLE_HELPER", "ROLE_OWNER", "ROLE_REVIEWER", "dispatch_reason_role",
         "role_provider_block_reason", "dispatch_policy_agent_provider_identity_ids",
-        "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES",
+        "task_closeout_is_frozen", "DEFAULT_FROZEN_CLOSEOUT_STATUSES", "task_submitted_author",
     }
     module_exports = {
         "__all__",
@@ -2605,6 +2605,12 @@ def reassign_tasks_after_review_churn(
                 changed = True
             continue
 
+        submitted_author = task_submitted_author(config, snapshot)
+        author_pool_exclusions = (
+            {agent_account_pool_id(config, submitted_author)}
+            if submitted_author and not is_human_gate_agent(submitted_author)
+            else set()
+        )
         reviewer_candidates: list[str] = []
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
@@ -2613,14 +2619,14 @@ def reassign_tasks_after_review_churn(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
                     status=status,
                     balance_load=False,
                     role="reviewer",
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
                 if reviewer
                 else None
@@ -2632,21 +2638,21 @@ def reassign_tasks_after_review_churn(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=snapshot,
                     provider_report=provider_report,
                     status=status,
                     role="reviewer",
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
         if not new_reviewer:
-            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)}
+            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)} | author_pool_exclusions
             all_reviewer_candidates = ([reviewer] if reviewer else []) + reviewer_candidates
             if has_configured_reassignment_candidates(
                 config,
                 all_reviewer_candidates,
-                exclude={new_owner},
+                exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                 task=snapshot,
                 exclude_pools=reviewer_pool_exclusions,
                 role=ROLE_REVIEWER,
@@ -2768,14 +2774,14 @@ def maybe_reassign_task_after_worker_failure(
     if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
         return None
 
-    task_status = str(task.get("status") or "").lower()
-    if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
-        return None
-
     dispatch_settings = ready_dispatch_settings(config)
     review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
+
+    task_status = str(task.get("status") or "").lower()
+    if task_status not in {str(value).lower() for value in settings.get("eligible_statuses", [])}:
+        return None
 
     failing_agent = display_name_for(
         config,
@@ -2791,6 +2797,12 @@ def maybe_reassign_task_after_worker_failure(
     reviewer = str(task.get("reviewer") or "")
     failed_pool = agent_account_pool_id(config, failing_agent)
     quota_exclusions = {failed_pool} if is_terminal_quota_failure_kind(str(failure.get("kind") or "")) and failed_pool else set()
+    submitted_author = task_submitted_author(config, task)
+    author_pool_exclusions = (
+        {agent_account_pool_id(config, submitted_author)}
+        if submitted_author and not is_human_gate_agent(submitted_author)
+        else set()
+    )
 
     if task_status in review_statuses and reviewer == failing_agent:
         if is_human_gate_agent(reviewer):
@@ -2799,11 +2811,11 @@ def maybe_reassign_task_after_worker_failure(
         new_reviewer = first_viable_agent(
             config,
             candidates,
-            exclude={owner, reviewer},
+            exclude={owner, reviewer} | ({submitted_author} if submitted_author else set()),
             state=state,
             task=task,
             role="reviewer",
-            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)},
+            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)} | author_pool_exclusions,
         )
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
@@ -2869,11 +2881,11 @@ def maybe_reassign_task_after_worker_failure(
                 first_viable_agent(
                     config,
                     [reviewer],
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=task,
                     balance_load=False,
-                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                     role="reviewer",
                 )
                 if reviewer
@@ -2885,11 +2897,11 @@ def maybe_reassign_task_after_worker_failure(
                 new_reviewer = first_viable_agent(
                     config,
                     reviewer_candidates,
-                    exclude={new_owner},
+                    exclude={new_owner} | ({submitted_author} if submitted_author else set()),
                     state=state,
                     task=task,
                     role="reviewer",
-                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)},
+                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
                 )
             if not new_reviewer or is_human_gate_agent(new_reviewer):
                 return None

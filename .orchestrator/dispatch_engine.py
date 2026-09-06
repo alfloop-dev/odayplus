@@ -14,6 +14,7 @@ from dispatch_policy import (
     dispatch_reason_role,
     role_provider_block_reason,
     task_priority_rank,
+    task_submitted_author,
     worker_logical_dispatch_agent_id,
 )
 from worker_failure_policy import owner_preference_ranks
@@ -1261,6 +1262,13 @@ def reassign_unavailable_reviewers(
         else:
             continue
 
+        submitted_author = task_submitted_author(config, task)
+        author_pool_exclusions = (
+            {agent_account_pool_id(config, submitted_author)}
+            if submitted_author and not is_human_gate_agent(submitted_author)
+            else set()
+        )
+
         claimed_agent = str(task.get(claimed_field) or "").strip()
         if not claimed_agent or is_human_gate_agent(claimed_agent):
             continue
@@ -1288,6 +1296,10 @@ def reassign_unavailable_reviewers(
                 counterpart
                 and not is_human_gate_agent(counterpart)
                 and not review_is_independent(config, counterpart, claimed_agent)
+            ) or bool(
+                submitted_author
+                and not is_human_gate_agent(submitted_author)
+                and not review_is_independent(config, submitted_author, claimed_agent)
             )
         if not claimed_block_reason and not reviewer_same_pool:
             continue
@@ -1315,6 +1327,7 @@ def reassign_unavailable_reviewers(
             if (
                 not candidate
                 or candidate in {claimed_agent, counterpart}
+                or (claimed_role == "reviewer" and submitted_author and candidate == submitted_author)
                 or candidate_id in reserved_agents
                 or not isinstance(candidate_config, dict)
                 or agent_is_dispatch_slot(candidate_config)
@@ -1323,6 +1336,15 @@ def reassign_unavailable_reviewers(
                 or (
                     bool(counterpart and not is_human_gate_agent(counterpart))
                     and not review_is_independent(config, owner_for_independence, reviewer_for_independence)
+                )
+                or (
+                    claimed_role == "reviewer"
+                    and bool(submitted_author and not is_human_gate_agent(submitted_author))
+                    and not review_is_independent(config, submitted_author, candidate)
+                )
+                or (
+                    claimed_role == "reviewer"
+                    and agent_account_pool_id(config, candidate) in author_pool_exclusions
                 )
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
             ):
@@ -1334,9 +1356,14 @@ def reassign_unavailable_reviewers(
             continue
 
         if reviewer_same_pool:
+            violator = (
+                f"owner {counterpart}"
+                if counterpart and not review_is_independent(config, counterpart, claimed_agent)
+                else f"submitted author {submitted_author}"
+            )
             message = (
                 f"Reassigned review to {replacement}: {claimed_agent} shares account pool "
-                f"with owner {counterpart}, so independent review requires a different pool."
+                f"with {violator}, so independent review requires a different pool."
             )
         else:
             message = (

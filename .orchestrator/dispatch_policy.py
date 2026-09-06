@@ -189,8 +189,11 @@ def agent_provider_identity_ids(config: dict[str, Any], agent_name: str | None) 
     if not agent_id:
         return set()
     agent = (config.get("agents", {}) or {}).get(agent_id, {}) or {}
-    provider_id = str(agent.get("provider") or agent_id)
+    declared_provider = str(agent.get("provider") or "").strip()
+    provider_id = declared_provider or agent_id
     canonical_key, provider_cfg = provider_config_entry(config, provider_id)
+    if not isinstance(provider_cfg, dict) or not provider_cfg:
+        return set()
     identities = {
         normalize_agent_id(provider_id),
         normalize_agent_id(str(canonical_key or "")),
@@ -311,9 +314,9 @@ def known_provider_identity_ids(config: dict[str, Any]) -> set[str]:
     """
     known: set[str] = set()
     for provider_id, provider_cfg in (config.get("providers", {}) or {}).items():
-        known.add(normalize_agent_id(str(provider_id)))
         if not isinstance(provider_cfg, dict):
             continue
+        known.add(normalize_agent_id(str(provider_id)))
         known.add(normalize_agent_id(str(provider_cfg.get("delivery_mode") or "")))
         known.add(normalize_agent_id(str(provider_cfg.get("adapter") or provider_cfg.get("type") or "")))
     for agent_id, agent in (config.get("agents", {}) or {}).items():
@@ -346,11 +349,11 @@ def role_provider_policy_settings(config: dict[str, Any]) -> dict[str, Any] | No
     previous eligibility behaviour, and nothing on this path runs for it.
     """
     settings = ready_dispatch_settings(config).get(ROLE_PROVIDER_POLICY_KEY)
-    if not isinstance(settings, dict) or not settings:
+    if settings is None:
         return None
-    if settings.get("enabled") is False:
+    if isinstance(settings, dict) and settings.get("enabled") is False:
         return None
-    return settings
+    return settings if isinstance(settings, dict) else {"__raw__": settings}
 
 
 def role_provider_policy_error(config: dict[str, Any]) -> str | None:
@@ -361,9 +364,15 @@ def role_provider_policy_error(config: dict[str, Any]) -> str | None:
     rule looks identical to no rule at all. So a malformed policy denies rather
     than degrades, and says which key it could not read.
     """
-    settings = role_provider_policy_settings(config)
+    settings = ready_dispatch_settings(config).get(ROLE_PROVIDER_POLICY_KEY)
     if settings is None:
         return None
+    if isinstance(settings, dict) and settings.get("enabled") is False:
+        return None
+    if not isinstance(settings, dict):
+        return "role_provider_policy must be an object"
+    if not settings:
+        return "role_provider_policy cannot be empty when present"
     known_providers = known_provider_identity_ids(config)
 
     def provider_list_error(values: Any, where: str) -> str | None:
@@ -380,6 +389,8 @@ def role_provider_policy_error(config: dict[str, Any]) -> str | None:
     rules = settings.get("rules")
     if not isinstance(rules, list):
         return "rules must be a list"
+    if not rules:
+        return "rules must contain at least one rule"
     for index, rule in enumerate(rules):
         where = f"rules[{index}]"
         if not isinstance(rule, dict):
@@ -509,14 +520,17 @@ def role_provider_block_reason(
     error = role_provider_policy_error(config)
     if error:
         return f"role_provider_policy is enabled but malformed ({error}); dispatch fails closed"
-    # A frozen closeout is outside the policy entirely, for both actors. Here the
-    # policy would not be choosing who should do the work -- the work is done and
+    # A frozen closeout is outside the policy for the existing actor recorded on it.
+    # Here the policy would not be choosing who should do the work -- the work is done and
     # its head is pinned. Applying it would evict the owner from finalizing its
     # own approved commit, or rewrite which reviewer approved it, which is the
     # one thing a change of policy must never do retroactively. It stops being an
-    # exemption the moment the call is about to hand out something new.
+    # exemption the moment the call is about to hand out something new, or when
+    # evaluating a different actor that is not already recorded on the frozen task.
     if not grants_new_authority and task_closeout_is_frozen(config, task):
-        return None
+        recorded_actor = str((task or {}).get(role or "") or "").strip()
+        if recorded_actor and normalize_agent_id(recorded_actor) == normalize_agent_id(agent_name or ""):
+            return None
     if task_class is None and isinstance(task, dict):
         task_class = str(task.get("task_class") or "")
     allowed = allowed_role_provider_ids(config, role=role, task_class=task_class)

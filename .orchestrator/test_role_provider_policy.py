@@ -119,6 +119,12 @@ def build_config(policy: Any = POLICY, **overrides: Any) -> dict[str, Any]:
                 "adapter": "claude_cli",
                 "account_pool": "claude_main",
             },
+            "claude2": {
+                "display_name": "Claude2",
+                "provider": "claude",
+                "adapter": "claude_cli",
+                "account_pool": "claude_main",
+            },
             "codex": {
                 "display_name": "Codex",
                 "provider": "codex",
@@ -145,6 +151,10 @@ def build_config(policy: Any = POLICY, **overrides: Any) -> dict[str, Any]:
                 "account_pool": "codex_lupin",
                 "dispatch_slot_for_pool": "codex_lupin",
             },
+        },
+        "paths": {
+            "event_queue": "/tmp/pantheon-test-empty-event-queue.jsonl",
+            "status_file": "/tmp/pantheon-test-ai-status.json",
         },
         "account_pools": {
             "agy_main": {"enabled": True, "max_concurrent": 2},
@@ -1710,3 +1720,287 @@ def test_invalid_effort_fails_the_delivery_instead_of_running_at_a_default() -> 
     assert result.ok is False
     assert "model_reasoning_effort" in str(result.error)
     assert "maximum" in str(result.error)
+
+
+# --------------------------------------------------------------------------- #
+# Reopen Finding Counterexamples (F2, F2/F5, F6)
+# --------------------------------------------------------------------------- #
+
+
+def test_reassign_unavailable_reviewers_excludes_submitted_author_and_pool() -> None:
+    """A rewritten owner must not allow the submitted Codex author to be picked as reviewer.
+
+    Counterexample for F2: Task submitted by Codex whose owner is changed to Claude.
+    When reviewer Codex2 becomes unavailable, reassign_unavailable_reviewers must NOT
+    pick Codex (or another agent in the author's pool) as the replacement reviewer.
+    """
+    config = build_config()
+    config["account_pools"]["codex_lupin"]["state"] = "paused"
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    status: dict[str, Any] = {
+        "tasks": [
+            {
+                "id": "T-AUTH-POOL",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex2",
+                "task_class": "implementation",
+                "review_submission": {
+                    "submitted_by": "Codex",
+                    "pr_number": 100,
+                    "branch": "task/T-AUTH-POOL",
+                },
+            }
+        ]
+    }
+    with mock.patch("supervisor.persist_task_reassignment", return_value=True) as mock_persist:
+        changed = dispatch_engine.reassign_unavailable_reviewers(config, state, status)
+    # Only Codex and Codex2 exist in the default test config. Codex shares the author pool
+    # with submitted_by (Codex), so no independent reviewer is available and review must wait.
+    assert changed is False
+    mock_persist.assert_not_called()
+
+
+def test_reassign_unavailable_reviewers_picks_independent_pool_over_author_pool() -> None:
+    """When an independent third Codex pool exists, failover picks it over the author pool."""
+    config = build_config()
+    config["account_pools"]["codex_lupin"]["state"] = "paused"
+    config["account_pools"]["codex_charlie"] = {"enabled": True, "max_concurrent": 2}
+    config["agents"]["codex3"] = {
+        "display_name": "Codex3",
+        "account_pool": "codex_charlie",
+        "provider": "codex",
+        "adapter": "codex",
+    }
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    status: dict[str, Any] = {
+        "tasks": [
+            {
+                "id": "T-AUTH-POOL-2",
+                "status": "review",
+                "owner": "Claude",
+                "reviewer": "Codex2",
+                "task_class": "implementation",
+                "review_submission": {
+                    "submitted_by": "Codex",
+                    "pr_number": 100,
+                    "branch": "task/T-AUTH-POOL-2",
+                },
+            }
+        ]
+    }
+    with (
+        mock.patch("supervisor.persist_task_reassignment", return_value=True),
+        mock.patch("supervisor.write_activity_log"),
+    ):
+        changed = dispatch_engine.reassign_unavailable_reviewers(config, state, status)
+    assert changed is True
+    # Must be reassigned to Codex3 (independent pool), NEVER Codex (author pool).
+    assert status["tasks"][0]["reviewer"] == "Codex3"
+
+
+def test_worker_failure_reviewer_fallback_excludes_submitted_author_and_pool() -> None:
+    """Worker failure reviewer fallback must exclude submitted author and author's pool.
+
+    Counterexample for F2: When owner Claude fails and reviewer fallback is evaluated,
+    it must not select the submitted Codex author as reviewer.
+    """
+    config = build_config()
+    state: dict[str, Any] = {}
+    worker: dict[str, Any] = {
+        "task_id": "T-FAIL-AUTH",
+        "agent_id": "claude",
+        "retry_count": 2,
+    }
+    status: dict[str, Any] = {
+        "tasks": [
+            {
+                "id": "T-FAIL-AUTH",
+                "status": "todo",
+                "owner": "Claude",
+                "reviewer": "Codex",  # invalid: same pool as author
+                "task_class": "implementation",
+                "review_submission": {
+                    "submitted_by": "Codex",
+                    "pr_number": 101,
+                },
+            }
+        ]
+    }
+    with (
+        mock.patch("supervisor.load_status", return_value=status),
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as mock_persist,
+        mock.patch("supervisor.write_activity_log"),
+    ):
+        reassigned = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+            config, state, worker, "terminal error", terminal=True
+        )
+    assert reassigned == "Claude2"
+    # Reviewer must have been set to Codex2 (independent pool), not Codex (author pool).
+    assert mock_persist.call_args.kwargs["new_reviewer"] == "Codex2"
+
+
+def test_reassign_unavailable_reviewers_on_frozen_task_enforces_candidate_policy() -> None:
+    """When an owner on a frozen task is paused, failover must enforce role policy for candidates.
+
+    Counterexample for F2/F5: The recorded actor is exempt, but candidate selection must
+    filter out ineligible actors (Codex) and select eligible actors (Antigravity).
+    """
+    config = build_config()
+    config["account_pools"]["claude_main"]["state"] = "paused"
+    state: dict[str, Any] = {"active_workers": {}, "outstanding_deliveries": {}}
+    status: dict[str, Any] = {
+        "tasks": [
+            {
+                "id": "T-FROZEN-REASSIGN",
+                "status": "review_approved",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "task_class": "implementation",
+                "approved_head": "abc1234",
+            }
+        ]
+    }
+    with (
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as mock_persist,
+        mock.patch("supervisor.write_activity_log"),
+    ):
+        changed = dispatch_engine.reassign_unavailable_reviewers(config, state, status)
+    assert changed is True
+    # Ineligible Codex must not be chosen; eligible Antigravity must be selected.
+    assert mock_persist.call_args.kwargs["new_owner"] == "Antigravity"
+
+
+def test_worker_failure_on_frozen_task_enforces_candidate_policy() -> None:
+    """When an owner worker fails on a frozen task, failover must enforce role policy for candidates.
+
+    Counterexample for F2/F5: Recovery selects an eligible owner (Claude2), not an ineligible one.
+    """
+    config = build_config()
+    state: dict[str, Any] = {}
+    worker: dict[str, Any] = {
+        "task_id": "T-FROZEN-FAIL",
+        "agent_id": "claude",
+        "retry_count": 3,
+    }
+    status: dict[str, Any] = {
+        "tasks": [
+            {
+                "id": "T-FROZEN-FAIL",
+                "status": "review_approved",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "task_class": "implementation",
+                "approved_head": "abc1234",
+            }
+        ]
+    }
+    with (
+        mock.patch("supervisor.load_status", return_value=status),
+        mock.patch("supervisor.persist_task_reassignment", return_value=True) as mock_persist,
+        mock.patch("supervisor.write_activity_log"),
+    ):
+        reassigned = worker_failure_policy.maybe_reassign_task_after_worker_failure(
+            config, state, worker, "terminal error", terminal=True
+        )
+    assert reassigned == "Claude2"
+    assert mock_persist.call_args.kwargs["new_owner"] == "Claude2"
+
+
+def test_frozen_closeout_does_not_exempt_new_actor_evaluation() -> None:
+    """Evaluating a new actor on a frozen task must not inherit the frozen exemption.
+
+    Counterexample for F2/F5: The recorded actor is exempt from policy eviction, but
+    a new actor (e.g. Codex as owner) must fail the policy.
+    """
+    config = build_config()
+    task = {
+        "id": "T-FROZEN-EXEMPT",
+        "status": "review_approved",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "task_class": "implementation",
+        "approved_head": "abc1234",
+    }
+    # Recorded owner Claude is exempt.
+    assert role_provider_block_reason(config, "Claude", role="owner", task=task) is None
+    # Recorded reviewer Codex is exempt.
+    assert role_provider_block_reason(config, "Codex", role="reviewer", task=task) is None
+    # A NEW actor being evaluated as owner (e.g. Codex) is NOT exempt and fails policy.
+    new_actor_reason = role_provider_block_reason(config, "Codex", role="owner", task=task)
+    assert new_actor_reason is not None
+    assert "not permitted for role owner" in new_actor_reason
+
+
+@pytest.mark.parametrize(
+    "malformed_policy,expected_fragment",
+    [
+        ("not_a_dict", "must be an object"),
+        (12345, "must be an object"),
+        ([], "must be an object"),
+        ({}, "cannot be empty"),
+        ({"enabled": True}, "rules must be a list"),
+        ({"enabled": True, "rules": []}, "rules must contain at least one rule"),
+    ],
+)
+def test_malformed_non_dict_and_empty_policy_fails_closed(
+    malformed_policy: Any, expected_fragment: str
+) -> None:
+    """Malformed non-dict and empty policy blocks must fail closed.
+
+    Counterexample for F6: Malformed policy blocks must not return 'no policy' (fail-open).
+    """
+    config = build_config(policy=malformed_policy)
+    error = role_provider_policy_error(config)
+    assert error is not None
+    assert expected_fragment in error
+    # Must fail closed for any dispatch evaluation.
+    block = role_provider_block_reason(config, "Claude", role="owner")
+    assert block is not None
+    assert "role_provider_policy is enabled but malformed" in block
+
+
+def test_ghost_provider_without_config_entry_fails_closed_and_not_known() -> None:
+    """An agent declaring an unconfigured provider has no resolvable identity and is not known.
+
+    Counterexample for F6: An agent with provider: ghost_provider (not in config.providers)
+    must not have its ghost provider accepted as known, and must fail closed.
+    """
+    config = build_config()
+    config["agents"]["ghost_agent"] = {
+        "display_name": "GhostAgent",
+        "provider": "ghost_provider",
+        "adapter": "ghost_adapter",
+    }
+    # ghost_provider must NOT be in known_provider_identity_ids
+    from dispatch_policy import agent_provider_identity_ids, known_provider_identity_ids
+
+    known = known_provider_identity_ids(config)
+    assert "ghost_provider" not in known
+    assert "ghost_agent" not in known
+    assert "ghost_adapter" not in known
+
+    # agent_provider_identity_ids must return empty set
+    identities = agent_provider_identity_ids(config, "ghost_agent")
+    assert identities == set()
+
+    # Evaluating ghost_agent must fail closed
+    reason = role_provider_block_reason(config, "ghost_agent", role="owner")
+    assert reason is not None
+    assert "has no resolvable provider identity" in reason
+
+    # A policy rule naming ghost_provider must fail as unknown provider
+    bad_policy = {
+        "enabled": True,
+        "rules": [
+            {"roles": ["reviewer"], "providers": ["codex"]},
+            {"roles": ["owner", "helper"], "providers": ["ghost_provider"]},
+        ],
+        "unclassified_owned_work": ["antigravity", "claude"],
+    }
+    bad_config = build_config(policy=bad_policy)
+    error = role_provider_policy_error(bad_config)
+    assert error is not None
+    assert "ghost_provider" in error
+    assert "names provider(s) not configured in this fleet" in error
+

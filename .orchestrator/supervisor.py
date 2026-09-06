@@ -4421,7 +4421,7 @@ def normalize_mainline_task_assignment(
             exclude={new_owner} | ({submitted_author} if submitted_author else set()),
             task=task,
             role="reviewer",
-            exclude_pools=author_pool_exclusions or None,
+            exclude_pools={agent_account_pool_id(config, new_owner)} | author_pool_exclusions,
         )
         if not replacement_reviewer or is_human_gate_agent(replacement_reviewer):
             return False
