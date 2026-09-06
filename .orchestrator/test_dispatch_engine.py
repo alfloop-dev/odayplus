@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import sys
 import tempfile
 import unittest
@@ -136,9 +137,17 @@ class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
 
     @staticmethod
     def _owned_task(**overrides: Any) -> dict[str, Any]:
+        """Owned implementation work whose owner is still a live choice.
+
+        This used to be `review_approved`, which is the one owner state the
+        preference must never touch: that status pins an exact reviewed head
+        and closeout from it is read-only, so "which lane should implement
+        this" is already answered. The preference is about work that is still
+        to be written, so the fixture states work that is still to be written.
+        """
         task = {
             "id": "T-1",
-            "status": "review_approved",
+            "status": "in_progress",
             "owner": "Codex",
             "reviewer": "Claude",
             "task_class": "implementation",
@@ -182,11 +191,63 @@ class PausedOwnerFailoverPreferenceTests(unittest.TestCase):
             "status": "running",
             "agent_id": "agy_b_slot_1",
             "logical_agent_id": "agy_b",
+            "quota_group": "agy_b_pool",
             "task_id": "T-OTHER",
             "request_snapshot": {"reason": "owned_ready_dispatch"},
         }
         reassignment = self._run(self._config(), state, self._owned_task())
         self.assertEqual((reassignment or {}).get("new_owner"), "Codex2")
+
+    def test_pending_delivery_on_the_shared_pool_also_saturates_the_lane(self) -> None:
+        """A queued-but-undelivered event holds the pool's only slot too.
+
+        Nothing is running, so the preference's old per-agent load reads zero
+        and the active-only quota guard lets the lane through -- yet the one
+        slot this account owns is already spoken for.
+        """
+        queue_path = self.root / "event_queue.jsonl"
+        queue_path.write_text(
+            json.dumps(
+                {
+                    "event_id": "evt-1",
+                    "target_agent": "AgyB",
+                    "target_display_name": "AgyB",
+                    "provider": "agy_pool_b",
+                    "reason": "owned_ready_dispatch",
+                    "message": "queued but not delivered",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        reassignment = self._run(self._config(), self._paused_codex_state(), self._owned_task())
+        self.assertEqual((reassignment or {}).get("new_owner"), "Codex2")
+
+    def test_frozen_closeout_states_keep_the_existing_candidate_order(self) -> None:
+        """The preferred lane is free and the class is eligible; it still loses.
+
+        A `review_approved` head, a recorded `approved_head`, or a task already
+        on a merge route is owned by whoever wrote the reviewed commit. Failing
+        an unavailable owner over is a control-plane repair either way, but it
+        must land wherever the pre-preference order put it, not on the lane the
+        implementation policy would rather use.
+        """
+        for label, overrides in (
+            ("review_approved", {"status": "review_approved"}),
+            ("approved_head", {"approved_head": "a" * 40}),
+            ("merge_route", {"merge_route": {"route": "queued", "head": "a" * 40}}),
+        ):
+            with self.subTest(label=label):
+                status = self._owned_task(id=f"T-{label}", **overrides)
+                with_preference = self._run(self._config(), self._paused_codex_state(), status)
+                without_preference = self._run(
+                    self._config(preference=None), self._paused_codex_state(), status
+                )
+                self.assertEqual(
+                    (with_preference or {}).get("new_owner"),
+                    (without_preference or {}).get("new_owner"),
+                )
+                self.assertEqual((with_preference or {}).get("new_owner"), "Codex2")
 
     def test_deployment_task_classes_keep_the_existing_order(self) -> None:
         reassignment = self._run(

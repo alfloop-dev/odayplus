@@ -1687,6 +1687,11 @@ OWNER_PROVIDER_PREFERENCE_KEY = "owner_provider_preference"
 #: classes such as `runtime_release`, review work, `human_gate` approvals and
 #: `sidecar` helpers keep whatever owner the existing rules choose.
 DEFAULT_OWNER_PREFERENCE_TASK_CLASSES = ["implementation", "remediation", "documentation"]
+#: Statuses whose owner is frozen no matter how the fleet is configured.
+#: Entering `review_approved` pins an exact reviewed PR head, and closeout from
+#: there is read-only with respect to the branch, so the owner is not a choice
+#: about who should implement -- it is the identity of whoever already did.
+DEFAULT_OWNER_PREFERENCE_FROZEN_STATUSES = ["review_approved"]
 
 
 @_entrypoint
@@ -1756,6 +1761,34 @@ def agent_is_preferred_owner_provider(config: dict[str, Any], agent_name: str | 
 
 
 @_entrypoint
+def task_closeout_owner_is_frozen(config: dict[str, Any], task: dict[str, Any] | None) -> bool:
+    """Whether an approved or merging head has already fixed this task's owner.
+
+    `review_approved` freezes the exact reviewed PR head, and `approved_head` /
+    `merge_route` record that the branch is being composed into its base. The
+    owner of such a task is not an open question about which lane should build
+    something; it names the lane that already did, and that must finalize its
+    own approved commit. Read through the configured `finalize_statuses` so a
+    fleet that spells the state differently is covered, with `review_approved`
+    always included because the freeze is a property of the transition rather
+    than of the spelling.
+    """
+    if not isinstance(task, dict):
+        return False
+    if task.get("approved_head") or task.get("merge_route") is not None:
+        return True
+    task_status = str(task.get("status") or "").strip().lower()
+    if not task_status:
+        return False
+    configured = ready_dispatch_settings(config).get("finalize_statuses")
+    if isinstance(configured, str):
+        configured = [configured]
+    frozen = {str(value).strip().lower() for value in list(configured or []) if str(value).strip()}
+    frozen.update(DEFAULT_OWNER_PREFERENCE_FROZEN_STATUSES)
+    return task_status in frozen
+
+
+@_entrypoint
 def owner_preference_applies_to_task(
     config: dict[str, Any],
     task: dict[str, Any] | None,
@@ -1767,6 +1800,11 @@ def owner_preference_applies_to_task(
     the policy by construction, and a caller that cannot show the task cannot
     show its `task_class` either -- so the preference stays off rather than
     guessing that an unknown task is implementation work.
+
+    A frozen closeout is outside it for a stronger reason: there the preference
+    would not be choosing an implementer at all, it would be handing somebody
+    else's reviewed commit to a lane that never wrote it. Ordinary owned work
+    that has not been approved keeps its normal fallback.
     """
     if str(role or "").lower() != "owner":
         return False
@@ -1775,6 +1813,8 @@ def owner_preference_applies_to_task(
     if not isinstance(task, dict):
         return False
     if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    if task_closeout_owner_is_frozen(config, task):
         return False
     task_class = str(task.get("task_class") or "").strip().lower()
     if not task_class:
@@ -1805,18 +1845,105 @@ def dispatch_slot_loads(config: dict[str, Any], state: dict[str, Any] | None) ->
 
 
 @_entrypoint
+def dispatch_pool_usage(config: dict[str, Any], state: dict[str, Any] | None) -> dict[str, int] | None:
+    """Active-plus-pending dispatch count per real account pool, or None.
+
+    `dispatch_slot_loads` answers "how busy is this logical agent". That is a
+    different question from "can this real account start another process" the
+    moment aliases share one pool: Antigravity, Antigravity2 and Antigravity3
+    are three logical agents on one account, so five queue events targeting
+    Antigravity2 leave Antigravity's own load at zero while the shared pool has
+    nothing left to run.
+
+    Both halves are the ready dispatcher's own quota accounting rather than a
+    second one, and `queued_quota_group_counts` already drops queue events whose
+    worker is counted as active -- so a single dispatch is never charged twice.
+    None means "not measurable from here", which callers must treat as no known
+    capacity rather than as an idle pool.
+    """
+    if not isinstance(state, dict):
+        return None
+    try:
+        # `queued_quota_group_counts` answers "zero pending" when the queue path
+        # is missing, which is indistinguishable from an idle pool. Resolve the
+        # path here so an unconfigured queue fails closed the way an unreadable
+        # one already does, and this function keeps its "None means unmeasured"
+        # contract instead of reporting a shared account as empty.
+        config_path(config, "event_queue")
+        active = active_quota_group_counts(config, state, active_worker_statuses(config))
+        pending = queued_quota_group_counts(config, state)
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+    usage: dict[str, int] = {}
+    for counts in (active, pending):
+        for group_id, count in (counts or {}).items():
+            try:
+                usage[group_id] = usage.get(group_id, 0) + int(count)
+            except (TypeError, ValueError):
+                return None
+    return usage
+
+
+@_entrypoint
+def account_pool_has_free_dispatch_slot(
+    config: dict[str, Any],
+    state: dict[str, Any] | None,
+    agent_name: str | None,
+    pool_usage: dict[str, int] | None,
+) -> bool:
+    """Whether the real account behind this agent can start another worker.
+
+    `agent_auto_dispatch_block_reason` does not already answer this. It compares
+    the pool's *active* workers against the limit, so a pool whose last slots
+    are spoken for by undelivered queue events still passes it, and it skips the
+    comparison entirely whenever the effective limit is falsy.
+    """
+    if pool_usage is None:
+        return False
+    agent_id = normalize_agent_id(agent_name or "")
+    if not agent_id:
+        return False
+    quota_group = agent_quota_group_id(config, agent_id)
+    if not quota_group:
+        # No resolvable account is no evidence about a shared budget.
+        return False
+    effective_limit = account_pool_effective_concurrency(config, state, agent_id)
+    if effective_limit is None:
+        # Neither configuration nor runtime states a ceiling for this pool, so
+        # the per-agent slot count stays the only bound -- exactly what an
+        # unpooled configuration did before.
+        return True
+    # 0 is a stated answer, not a missing one: a disabled, paused, exhausted or
+    # cooled-down pool reports it, and reading it as "no limit" would prefer the
+    # one lane that certainly cannot run.
+    if effective_limit <= 0:
+        return False
+    return pool_usage.get(quota_group, 0) < effective_limit
+
+
+@_entrypoint
 def agent_has_free_dispatch_slot(
     config: dict[str, Any],
     agent_name: str | None,
     loads: dict[str, list[int]] | None,
+    *,
+    state: dict[str, Any] | None,
+    pool_usage: dict[str, int] | None,
 ) -> bool:
     """Whether a worker for this agent could actually start right now.
 
     Open task count is board bookkeeping, not capacity. An agent holding nine
     open tasks with two idle slots can start immediately; an agent holding one
-    open task with its only slot busy cannot. Quota groups, dispatch pauses and
-    account-pool blocks are not re-derived here -- every candidate reaching this
-    point has already passed `agent_auto_dispatch_block_reason`.
+    open task with its only slot busy cannot.
+
+    Its own slots are not the whole of capacity either. The logical agent and
+    the account pool behind it are two independent ceilings and the lower one
+    decides, so both are asked here. Dispatch pauses and account-pool lifecycle
+    blocks stay where they are -- every candidate reaching this point has
+    already passed `agent_auto_dispatch_block_reason` -- but that check counts
+    only active workers, which is why the shared-pool arithmetic cannot be
+    inherited from it. The final dispatcher still repeats both checks before it
+    queues anything.
     """
     if loads is None:
         return False
@@ -1824,7 +1951,9 @@ def agent_has_free_dispatch_slot(
     if not agent_id:
         return False
     used = len(loads.get(display_name_for(config, agent_id), []) or [])
-    return used < agent_dispatch_capacity(config, agent_id)
+    if used >= agent_dispatch_capacity(config, agent_id):
+        return False
+    return account_pool_has_free_dispatch_slot(config, state, agent_id, pool_usage)
 
 
 @_entrypoint
@@ -1849,15 +1978,20 @@ def owner_preference_ranks(
     if not owner_preference_applies_to_task(config, task, role):
         return dict.fromkeys(names, 1)
     loads = dispatch_slot_loads(config, state)
-    if loads is None:
+    pool_usage = dispatch_pool_usage(config, state)
+    if loads is None or pool_usage is None:
         # Preferring a lane whose capacity cannot be measured would move work
-        # onto an agent that may have nothing free to run it.
+        # onto an agent that may have nothing free to run it. Both pictures are
+        # taken once per selection so every candidate is ranked against the same
+        # instant, and so the shared pool is counted once rather than per name.
         return dict.fromkeys(names, 1)
     return {
         name: (
             0
             if agent_is_preferred_owner_provider(config, name)
-            and agent_has_free_dispatch_slot(config, name, loads)
+            and agent_has_free_dispatch_slot(
+                config, name, loads, state=state, pool_usage=pool_usage
+            )
             else 1
         )
         for name in names
