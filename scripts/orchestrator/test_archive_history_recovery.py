@@ -1785,6 +1785,127 @@ class MaintenanceHoldTests(RecoveryFixture):
         )
 
 
+class ReviewRegressions(RecoveryFixture):
+    def done_batch(self, task_id: str, verifier: str = "Claude") -> Path:
+        self.write_board()
+        self.ensure_repo([f"Merge pull request #100 from org/task/{task_id}"])
+        return self.write_batch(
+            self.plan_batch(
+                [inventory_entry(task_id, merge_commit=self.local_merge_oid(task_id))],
+                attestations={task_id: attestation_set(verifier)},
+            )
+        )
+
+    def test_checkpoint_must_not_overwrite_surviving_snapshot(self) -> None:
+        self.write_board()
+        survivor = self.seed_survivor()
+        protected = self.archive_dir / f"{survivor}.json"
+        before = protected.read_bytes()
+        batch = self.write_batch(
+            self.plan_batch(
+                [inventory_entry("TASK-CHECKPOINT-001")], subjects=["unrelated"]
+            )
+        )
+        try:
+            self.run_apply(batch, "--checkpoint", str(protected), "--confirm")
+        except SystemExit:
+            pass
+        self.assertEqual(before, protected.read_bytes(), "checkpoint overwrote protected survivor")
+
+    def test_checkpoint_must_not_target_board_file(self) -> None:
+        self.write_board()
+        before = self.board_path.read_bytes()
+        batch = self.write_batch(
+            self.plan_batch(
+                [inventory_entry("TASK-CHK-BOARD-001")], subjects=["unrelated"]
+            )
+        )
+        try:
+            self.run_apply(batch, "--checkpoint", str(self.board_path), "--confirm")
+        except SystemExit:
+            pass
+        self.assertEqual(before, self.board_path.read_bytes())
+
+    def test_checkpoint_must_not_target_archive_directory_or_index(self) -> None:
+        self.write_board()
+        batch = self.write_batch(
+            self.plan_batch(
+                [inventory_entry("TASK-CHK-INDEX-001")], subjects=["unrelated"]
+            )
+        )
+        index_file = self.archive_dir.parent / "index.json"
+        index_file.write_text('{"counts": {}}\n', encoding="utf-8")
+        before = index_file.read_bytes()
+        try:
+            self.run_apply(batch, "--checkpoint", str(index_file), "--confirm")
+        except SystemExit:
+            pass
+        self.assertEqual(before, index_file.read_bytes())
+
+    def test_unknown_attestation_verifier_must_not_archive_done(self) -> None:
+        task_id = "TASK-UNKNOWN-VERIFIER-001"
+        batch = self.done_batch(task_id, verifier="UNREGISTERED-REVIEWER")
+        try:
+            self.run_apply(batch, "--checkpoint", str(self.root / "receipt.json"), "--confirm")
+        except SystemExit:
+            pass
+        self.assertFalse(
+            (self.archive_dir / f"{task_id}.json").exists(),
+            "unregistered attestation verifier admitted terminal history",
+        )
+
+    def test_unknown_historical_actor_as_attestation_verifier_refuses_batch(self) -> None:
+        task_id = "TASK-HIST-VERIFIER-001"
+        batch = self.done_batch(task_id, verifier=planner.UNKNOWN_ACTOR)
+        try:
+            self.run_apply(batch, "--checkpoint", str(self.root / "receipt.json"), "--confirm")
+        except SystemExit:
+            pass
+        self.assertFalse(
+            (self.archive_dir / f"{task_id}.json").exists(),
+            "UNKNOWN-HISTORICAL as attestation verifier admitted terminal history",
+        )
+
+    def test_done_only_missing_board_write_must_not_claim_verified(self) -> None:
+        batch = self.done_batch("TASK-MISSING-COMMIT-001")
+        receipt = self.root / "receipt.json"
+        before = self.board_path.read_bytes()
+        with mock.patch.object(ai_status, "save_state"):
+            try:
+                self.run_apply(batch, "--checkpoint", str(receipt), "--confirm")
+            except SystemExit:
+                pass
+        self.assertEqual(before, self.board_path.read_bytes())
+        result = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertFalse(result["board_persistence_verified"], result)
+        self.assertEqual("partial", result["status"])
+
+    def test_done_and_board_persistence_verified_on_successful_apply(self) -> None:
+        self.write_board()
+        self.ensure_repo(["Merge pull request #100 from org/task/TASK-SUCCESS-DONE-001"])
+        batch = self.write_batch(
+            self.plan_batch(
+                [
+                    inventory_entry(
+                        "TASK-SUCCESS-DONE-001",
+                        merge_commit=self.local_merge_oid("TASK-SUCCESS-DONE-001"),
+                    ),
+                    inventory_entry("TASK-SUCCESS-BOARD-001"),
+                ],
+                attestations={"TASK-SUCCESS-DONE-001": attestation_set("Claude")},
+                subjects=["unrelated"],
+            )
+        )
+        receipt = self.root / "receipt.json"
+        exit_code = self.run_apply(batch, "--checkpoint", str(receipt), "--confirm")
+        self.assertEqual(0, exit_code)
+        result = json.loads(receipt.read_text(encoding="utf-8"))
+        self.assertTrue(result["board_persistence_verified"])
+        self.assertEqual("applied", result["status"])
+        self.assertIsNotNone(result["board_revision_expected"])
+        self.assertEqual(result["board_revision_expected"], result["board_revision_on_disk"])
+
+
 class NestedLockTests(unittest.TestCase):
     def test_apply_never_re_enters_the_canonical_status_lock(self) -> None:
         """`main()` already holds it; taking it again would deadlock on flock.

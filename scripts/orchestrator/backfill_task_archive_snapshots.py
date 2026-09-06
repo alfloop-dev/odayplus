@@ -522,6 +522,28 @@ def normalize_candidate(candidate: Any) -> tuple[dict[str, Any], list[str]]:
     return normalized, missing
 
 
+def _registered_actors() -> set[str]:
+    try:
+        scripts_dir = Path(__file__).resolve().parent.parent
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        import ai_status
+
+        return ai_status.registered_agent_names()
+    except Exception:
+        return set()
+
+
+def is_registered_actor(name: str) -> bool:
+    name = str(name or "").strip()
+    if not name or name == UNKNOWN_ACTOR:
+        return False
+    actors = _registered_actors()
+    if actors:
+        return name in actors
+    return False
+
+
 def _attestation_gaps(attestation: dict[str, Any] | None) -> list[str]:
     """Return the required attestations this input does not actually carry."""
 
@@ -1042,8 +1064,9 @@ def validate_recovery_entry(
     recovery_owner: str,
     recovery_reviewer: str,
     baseline: dict[str, Any],
+    for_apply: bool = True,
 ) -> list[str]:
-    """Every reason this entry may not be applied. Empty means admissible.
+    """Validate one reconstructed record for structural and evidence consistency.
 
     The two actions are held to deliberately different shapes. A reconstructed
     ``done`` is a terminal claim, so it must carry the top evidence tier with no
@@ -1092,6 +1115,19 @@ def validate_recovery_entry(
     problems.extend(history_problems)
     evidence = history.get("evidence")
     evidence = evidence if isinstance(evidence, dict) else {}
+    attestations = evidence.get("attestations")
+    if for_apply and isinstance(attestations, dict):
+        for att_name, att_item in attestations.items():
+            if isinstance(att_item, dict) and "verifier" in att_item:
+                verifier = str(att_item.get("verifier") or "").strip()
+                if verifier == UNKNOWN_ACTOR:
+                    problems.append(
+                        f"{task_id}: attestation {att_name} verifier cannot be {UNKNOWN_ACTOR}"
+                    )
+                elif verifier and not is_registered_actor(verifier):
+                    problems.append(
+                        f"{task_id}: attestation {att_name} verifier {verifier!r} is not a registered agent"
+                    )
     record_actors = (str(record.get("owner") or ""), str(record.get("reviewer") or ""))
 
     if action == ACTION_ARCHIVE_DONE:
@@ -1204,6 +1240,11 @@ def validate_recovery_batch(batch: Any, *, for_apply: bool = True) -> list[str]:
             f"{UNKNOWN_ACTOR} names the unrecoverable historical actor and can never "
             "be a present-day recovery actor"
         )
+    if for_apply:
+        if owner and not is_registered_actor(owner):
+            problems.append(f"recovery owner {owner!r} is not a registered agent")
+        if reviewer and not is_registered_actor(reviewer):
+            problems.append(f"recovery reviewer {reviewer!r} is not a registered agent")
 
     baseline = batch.get("baseline")
     baseline = baseline if isinstance(baseline, dict) else {}
@@ -1232,6 +1273,7 @@ def validate_recovery_batch(batch: Any, *, for_apply: bool = True) -> list[str]:
                 recovery_owner=owner,
                 recovery_reviewer=reviewer,
                 baseline=baseline,
+                for_apply=for_apply,
             )
         )
         if isinstance(entry, dict):
@@ -1287,6 +1329,10 @@ def build_recovery_batch(
             f"{UNKNOWN_ACTOR} names the unrecoverable historical actor and can "
             "never be the present-day recovery owner or reviewer"
         )
+    if not is_registered_actor(owner):
+        raise RecoveryInputError(f"recovery owner {owner!r} is not a registered agent")
+    if not is_registered_actor(reviewer):
+        raise RecoveryInputError(f"recovery reviewer {reviewer!r} is not a registered agent")
     if authorization_path is None:
         raise RecoveryInputError(
             "a recovery batch must cite the authorization document it was planned "

@@ -8024,6 +8024,85 @@ def _archive_recovery_evidence_drift(
     return problems
 
 
+def _is_same_or_alias(path1: Path, path2: Path) -> bool:
+    try:
+        if path1.exists() and path2.exists():
+            if os.path.samefile(path1, path2):
+                return True
+        if path1.resolve() == path2.resolve():
+            return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
+def _validate_checkpoint_destination(
+    checkpoint_path: Path,
+    *,
+    batch_path: Path | None = None,
+    hold_path: Path | None = None,
+    baseline: dict[str, Any] | None = None,
+) -> list[str]:
+    problems: list[str] = []
+    try:
+        chk_res = checkpoint_path.resolve()
+        archive_res = ARCHIVE_TASKS_DIR.resolve()
+        archive_root_res = ARCHIVE_TASKS_DIR.parent.resolve()
+        if chk_res == archive_res or chk_res.is_relative_to(archive_res):
+            problems.append(
+                f"checkpoint path {checkpoint_path} is inside archive directory {ARCHIVE_TASKS_DIR}"
+            )
+        elif chk_res == (archive_root_res / "index.json").resolve():
+            problems.append(
+                f"checkpoint path {checkpoint_path} targets archive index ({archive_root_res / 'index.json'})"
+            )
+    except (OSError, ValueError) as exc:
+        problems.append(f"cannot resolve checkpoint path {checkpoint_path}: {exc}")
+        return problems
+
+    protected_named: list[tuple[str, Path]] = [
+        ("canonical board", STATUS_FILE),
+        ("canonical lock", STATUS_FILE.with_name(f"{STATUS_FILE.name}.lock")),
+        ("canonical log", LOG_FILE),
+        ("canonical current-work", CURRENT_WORK_FILE),
+        ("archive index", ARCHIVE_TASKS_DIR.parent / "index.json"),
+    ]
+    if batch_path is not None:
+        protected_named.append(("recovery batch", batch_path))
+    if hold_path is not None:
+        protected_named.append(("maintenance hold", hold_path))
+
+    if baseline:
+        provenance = baseline.get("provenance_sources") or {}
+        if isinstance(provenance, dict):
+            for label, item in provenance.items():
+                if isinstance(item, dict) and item.get("path"):
+                    protected_named.append(
+                        (f"provenance source ({label})", Path(str(item["path"])))
+                    )
+        for key in ("inventory_path", "authorization_path"):
+            if baseline.get(key):
+                protected_named.append((f"baseline {key}", Path(str(baseline[key]))))
+
+    for label, protected_path in protected_named:
+        if _is_same_or_alias(checkpoint_path, protected_path):
+            problems.append(
+                f"checkpoint path {checkpoint_path} aliases protected {label} ({protected_path})"
+            )
+
+    if ARCHIVE_TASKS_DIR.is_dir():
+        try:
+            for snap in ARCHIVE_TASKS_DIR.glob("*.json"):
+                if _is_same_or_alias(checkpoint_path, snap):
+                    problems.append(
+                        f"checkpoint path {checkpoint_path} aliases existing archive snapshot {snap}"
+                    )
+        except OSError:
+            pass
+
+    return problems
+
+
 def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> None:
     """Apply a reviewed task-history recovery batch inside the canonical lock.
 
@@ -8067,6 +8146,22 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
         raise SystemExit(f"Recovery batch unreadable: {exc}") from exc
     batch_sha256 = hashlib.sha256(batch_bytes).hexdigest()
 
+    baseline = batch.get("baseline") if isinstance(batch.get("baseline"), dict) else {}
+
+    checkpoint_raw = str(parsed["checkpoint"]).strip()
+    if checkpoint_raw:
+        chk_dest_problems = _validate_checkpoint_destination(
+            Path(checkpoint_raw).expanduser(),
+            batch_path=batch_path,
+            hold_path=Path(parsed["maintenance_hold"]).expanduser(),
+            baseline=baseline,
+        )
+        if chk_dest_problems:
+            raise SystemExit(
+                "Recovery checkpoint refused; protected path cannot be overwritten: "
+                + "; ".join(chk_dest_problems)
+            )
+
     # The planner's validator is the admission gate, re-run here on the whole
     # document. Anything it refuses refuses the batch: there is no partial
     # admission, and no entry is examined on its own merits.
@@ -8091,6 +8186,31 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
             f"({declared_owner!r}, {declared_reviewer!r} resolve to "
             f"{recovery_owner!r}, {recovery_reviewer!r}); nothing was written."
         )
+
+    entries = [item for item in (batch.get("entries") or []) if isinstance(item, dict)]
+    for entry in entries:
+        t_id = str(entry.get("task_id") or "").strip()
+        rec_ev = (
+            ((entry.get("record") or {}).get("history_recovery") or {}).get("evidence")
+            or {}
+        )
+        rec_atts = rec_ev.get("attestations")
+        if isinstance(rec_atts, dict):
+            for att_k, att_v in rec_atts.items():
+                if isinstance(att_v, dict) and "verifier" in att_v:
+                    v_raw = str(att_v.get("verifier") or "").strip()
+                    if v_raw == planner.UNKNOWN_ACTOR:
+                        raise SystemExit(
+                            f"{t_id}: attestation {att_k} verifier cannot be {planner.UNKNOWN_ACTOR}; nothing was written."
+                        )
+                    if v_raw:
+                        v_res = resolve_actor_reference(
+                            v_raw, field=f"{t_id} {att_k} attestation verifier"
+                        )
+                        if v_res != v_raw:
+                            raise SystemExit(
+                                f"{t_id}: attestation {att_k} verifier {v_raw!r} resolves to {v_res!r}; nothing was written."
+                            )
 
     hold_path, hold_sha256, hold = _archive_recovery_hold(
         parsed["maintenance_hold"],
@@ -8211,9 +8331,10 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
                 landed.append(task_id)
         return rows, landed
 
-    def read_board() -> tuple[list[dict[str, Any]], list[str]]:
+    def read_board() -> tuple[list[dict[str, Any]], list[str], dict[str, Any]]:
         """What the canonical board file holds right now, read back from disk."""
 
+        document: dict[str, Any] = {}
         on_disk: dict[str, dict[str, Any]] = {}
         if STATUS_FILE.exists():
             try:
@@ -8243,7 +8364,7 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
             )
             if row is not None:
                 persisted.append(task_id)
-        return rows, persisted
+        return rows, persisted, document
 
     def write_checkpoint(status: str, detail: str) -> dict[str, Any]:
         """Write the receipt from what is on disk, never from bookkeeping.
@@ -8257,7 +8378,13 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
         """
 
         archive_rows, landed = read_archive()
-        board_rows, persisted = read_board()
+        board_rows, persisted, board_doc = read_board()
+        on_disk_revision = (
+            str(board_doc.get("_status_write_revision") or "").strip()
+            if isinstance(board_doc, dict)
+            else None
+        )
+        expected_revision = str(state.get("_status_write_revision") or "").strip() or None
         payload = {
             "type": "task_history_recovery_checkpoint",
             "status": status,
@@ -8283,8 +8410,12 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
             "board_placeholders_intended": list(board_ids),
             "board_readback": board_rows,
             "board_placeholders_on_disk": persisted,
+            "board_revision_expected": expected_revision,
+            "board_revision_on_disk": on_disk_revision,
             "board_persistence_verified": (
                 board_commit_verified["value"]
+                and bool(expected_revision)
+                and on_disk_revision == expected_revision
                 and (
                     sorted(persisted) == sorted(board_ids)
                     if board_ids
@@ -8381,8 +8512,14 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
         """
 
         still_tampered = survivors_tampered()
-        _, persisted_now = read_board()
+        _, persisted_now, board_doc = read_board()
         missing = [task_id for task_id in board_ids if task_id not in persisted_now]
+        on_disk_revision = (
+            str(board_doc.get("_status_write_revision") or "").strip()
+            if isinstance(board_doc, dict)
+            else None
+        )
+        expected_revision = str(state.get("_status_write_revision") or "").strip() or None
 
         if not transaction_succeeded:
             board_commit_verified["value"] = False
@@ -8428,12 +8565,25 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
                 f"Checkpoint: {checkpoint_path}"
             ]
 
+        if not expected_revision or on_disk_revision != expected_revision:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                f"canonical board on-disk revision {on_disk_revision!r} does not match "
+                f"expected revision {expected_revision!r}",
+            )
+            return [
+                f"Recovery apply could not verify ai-status.json persistence on disk "
+                f"(revision mismatch: expected {expected_revision!r}, got {on_disk_revision!r}). "
+                f"Checkpoint: {checkpoint_path}"
+            ]
+
         board_commit_verified["value"] = True
         write_checkpoint(
             "applied",
             "batch applied; archive snapshots and board rows both read back from disk"
             if board_ids
-            else "batch applied; archive snapshots read back from disk",
+            else "batch applied; archive snapshots read back from disk and board persistence verified",
         )
         return []
 
