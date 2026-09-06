@@ -18,6 +18,11 @@
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
 你在 background auto worker 裡執行，請不要使用 `git add -p`、`git add -i`、`git commit --interactive`、`git rebase -i` 或其他需要人工輸入的互動式命令。
 嚴禁執行 `find /`、`rg /` 等全系統（root-wide）搜尋尋找測試工具或檔案；若工具或依賴缺失，只使用任務 verification 已宣告命令或專案既有 `uv run`（例如 `uv run pytest ...`），不自行掃描主機檔案系統。
+測試執行與完成判定規範（僅在任務允許驗證時啟動測試）：
+- 完成判定依據：測試完成判定必須以原工具 terminal status 與 exit code，或原背景 job handle 完成收據為準；同一個 shell child 可使用啟動時捕捉的 PID 執行 `wait` 並保存 exit code。
+- 嚴禁不安全等待迴圈：禁止用等待 passed 摘要的 grep 迴圈（例如 `until ... grep passed`，在 `pytest -qq` 等無 summary 輸出時會無限等待），亦嚴禁用 `pgrep -f` 命令行片段搭配 `kill -0` 推斷程序存活（極易匹配自身 wait shell 造成無限等待）。合理且單次的 diagnostic grep 或 process 狀態查詢不受此限。
+- 區分程序結束與 exit 成功：缺少摘要或測試 count 不代表程序仍在執行；測試結束後讀取既有 log 或 JUnit，不得只為統計 count 重跑測試。
+- 退出收據不足處理：退出收據不足或丟失時應回報狀態未知，不得冒充成功，亦不得無限等待。
 {{lifecycle_guardrails}}
 {{sidecar_guardrails}}
 
