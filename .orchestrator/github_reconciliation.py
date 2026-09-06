@@ -329,12 +329,13 @@ def fetch_pr_queue_facts(repo: str, pr_number: int) -> dict[str, Any] | None:
     return facts if is_valid_pr_facts(facts) else None
 
 
-def match_workflow_identity(target: dict[str, Any], candidate: dict[str, Any]) -> bool:
-    """Match workflow identity strictly.
+def match_workflow_identity(target: dict[str, Any], candidate: dict[str, Any]) -> bool | None:
+    """Tri-state: do these two runs come from the same workflow?
 
-    Requires both runs to have either matching non-None workflow_ids or
-    matching non-empty workflow names. If workflow identity is missing on
-    either run, they do not match.
+    True / False / None (neither run carries an identity that can be compared,
+    so the question is unanswered). None is not "different": a candidate whose
+    workflow cannot be identified is an open question, and an open question
+    must not clear the way to revoking an approval.
     """
     target_wf_id = target.get("workflow_id")
     cand_wf_id = candidate.get("workflow_id")
@@ -349,7 +350,34 @@ def match_workflow_identity(target: dict[str, Any], candidate: dict[str, Any]) -
     if target_name and cand_name:
         return target_name == cand_name
 
-    return False
+    return None
+
+
+def compare_run_recency(target: dict[str, Any], candidate: dict[str, Any]) -> bool | None:
+    """Tri-state: is `candidate` newer than `target`?
+
+    True / False / None (neither run ids nor timestamps can be compared).
+    """
+    target_id = target.get("id") or target.get("databaseId")
+    cand_id = candidate.get("id") or candidate.get("databaseId")
+    if target_id is not None and cand_id is not None:
+        try:
+            return int(cand_id) > int(target_id)
+        except (TypeError, ValueError):
+            pass
+
+    cand_created_at = candidate.get("created_at") or candidate.get("run_started_at")
+    target_created_at = target.get("created_at") or target.get("run_started_at")
+    if cand_created_at and target_created_at:
+        try:
+            cand_dt = parse_utc_timestamp(cand_created_at)
+            target_dt = parse_utc_timestamp(target_created_at)
+            if cand_dt and target_dt:
+                return cand_dt > target_dt
+        except Exception:
+            pass
+
+    return None
 
 
 def fetch_commit_parent_shas(repo: str, sha: str) -> list[str] | None:
@@ -371,15 +399,17 @@ def fetch_commit_parent_shas(repo: str, sha: str) -> list[str] | None:
     if not isinstance(data, dict):
         return None
     parents = data.get("parents")
-    if not isinstance(parents, list):
+    if not isinstance(parents, list) or not parents:
         return None
     shas: list[str] = []
     for parent in parents:
-        if not isinstance(parent, dict):
-            continue
-        parent_sha = parent.get("sha")
-        if isinstance(parent_sha, str) and parent_sha.strip():
-            shas.append(parent_sha.strip().lower())
+        parent_sha = parent.get("sha") if isinstance(parent, dict) else None
+        if not isinstance(parent_sha, str) or not parent_sha.strip():
+            # A parent element GitHub could not populate. `[{}]` is a broken
+            # payload, not a commit with no parents; reading it as an answer
+            # would turn a damaged response into "this group excludes the head".
+            return None
+        shas.append(parent_sha.strip().lower())
     return shas
 
 
@@ -394,15 +424,18 @@ def merge_group_incorporates_head(
     True / False / None (unknown, GitHub did not answer).
 
     A merge queue group head is the temporary merge commit GitHub builds for the
-    group; its parents are the base it was built on plus the exact PR head
-    commits it enrolled -- for PR #1212 the group head `17393dd4` has parents
-    `a297b2a0` (base) and `a9e7853f` (the reviewed PR head). That parent list is
-    the association evidence GitHub publishes, and it names the precise head.
+    group. Its FIRST parent is the base the group was built on; the remaining
+    parents are the exact PR heads it enrolled. For PR #1212 the group head
+    `17393dd4` has parents `a297b2a0` (base) and `a9e7853f` (the reviewed PR
+    head); the next group head `62dfc845` in turn carries `17393dd4` as its own
+    base parent. Only a non-base parent is evidence that this group enrolled
+    the head -- matching the base parent would credit a group merely built on
+    top of an already-merged head to the PR that produced it.
 
-    Ancestry does not. If a PR head advances A -> B, A is an ancestor of any
-    group built for B, so an ancestry test would report that a group for B
-    "contains" A and let a failure against A be waved through by an unrelated
-    run. Only direct parenthood distinguishes the two.
+    Ancestry is weaker still. If a PR head advances A -> B, A is an ancestor of
+    any group built for B, so an ancestry test would report that a group for B
+    covers A and let a failure against A be waved through by an unrelated run.
+    Only direct, non-base parenthood distinguishes the two.
     """
     group_sha = str(group_head_sha or "").strip().lower()
     approved_sha = str(approved_head or "").strip().lower()
@@ -420,7 +453,11 @@ def merge_group_incorporates_head(
     parents = cache[group_sha]
     if parents is None:
         return None
-    return approved_sha in parents
+    if len(parents) < 2:
+        # Not the merge-commit shape a merge group head has. Whatever this
+        # commit is, its structure cannot answer the question.
+        return None
+    return approved_sha in parents[1:]
 
 
 def find_superseding_merge_group_run(
@@ -434,16 +471,19 @@ def find_superseding_merge_group_run(
     """Find a newer merge group run that enrolled the same approved PR head.
 
     Returns `(run, reason, unknown)`. `unknown` is True when a candidate that
-    passed every other filter could be neither proven nor disproven, so the
-    caller must retain the failure instead of demoting on an open question.
+    could otherwise have superseded this failure -- same PR, newer, pending or
+    successful -- could be neither proven nor disproven, because it is missing
+    its head SHA, its workflow cannot be identified, its ordering cannot be
+    established, or GitHub returned a parent payload that does not answer.
+    Those are open questions, not "no candidate", and the caller must retain
+    the failure rather than demote on them.
     """
-    target_run_id = target_run.get("id") or target_run.get("databaseId")
-    target_created_at = target_run.get("created_at") or target_run.get("run_started_at")
     target_head_sha = str(
         target_run.get("head_sha")
         or target_run.get("headSha")
         or ""
     ).strip().lower()
+    target_run_id = target_run.get("id") or target_run.get("databaseId")
     cache = parents_cache if parents_cache is not None else {}
     association_unknown = False
 
@@ -452,6 +492,9 @@ def find_superseding_merge_group_run(
             continue
         cand_id = candidate.get("id") or candidate.get("databaseId")
         if cand_id is None or cand_id == target_run_id:
+            # The failing run itself. Its own freshness is decided separately,
+            # by re-reading the run rather than by treating it as its own
+            # replacement.
             continue
 
         cand_ref = str(
@@ -460,8 +503,28 @@ def find_superseding_merge_group_run(
             or candidate.get("head_ref")
             or ""
         ).strip()
-        cand_pr = parse_merge_group_pr_number(cand_ref)
-        if cand_pr != pr_number:
+        if parse_merge_group_pr_number(cand_ref) != pr_number:
+            # A different PR's group, or a ref that names no PR at all.
+            continue
+
+        cand_conclusion = str(candidate.get("conclusion") or "").strip().lower()
+        cand_status = str(candidate.get("status") or "").strip().lower()
+        is_pending = (
+            cand_status in PENDING_RUN_STATUSES
+            and cand_conclusion not in FAILURE_CONCLUSIONS
+        )
+        is_success = cand_conclusion in SUCCESS_CONCLUSIONS
+        if not (is_pending or is_success):
+            # A candidate that failed too is not evidence either way.
+            continue
+
+        # From here the candidate is a same-PR run that could supersede, so an
+        # unanswerable field is an open question rather than a quiet "no".
+        is_newer = compare_run_recency(target_run, candidate)
+        if is_newer is None:
+            association_unknown = True
+            continue
+        if not is_newer:
             continue
 
         cand_head_sha = str(
@@ -470,48 +533,18 @@ def find_superseding_merge_group_run(
             or ""
         ).strip().lower()
         if not cand_head_sha:
-            # Candidate lacks head_sha: cannot prove association at all.
+            association_unknown = True
             continue
         if target_head_sha and cand_head_sha == target_head_sha:
-            # Same group, different run: a sibling workflow or a re-run of the
-            # group that is failing right now. It cannot supersede itself.
+            # Same group commit, different run: a sibling workflow or a re-run
+            # of the group that is failing. It cannot supersede itself.
             continue
 
-        if not match_workflow_identity(target_run, candidate):
+        same_workflow = match_workflow_identity(target_run, candidate)
+        if same_workflow is None:
+            association_unknown = True
             continue
-
-        cand_is_newer = False
-        if target_run_id is not None and cand_id is not None:
-            try:
-                if int(cand_id) > int(target_run_id):
-                    cand_is_newer = True
-            except (TypeError, ValueError):
-                pass
-
-        if not cand_is_newer:
-            cand_created_at = candidate.get("created_at") or candidate.get("run_started_at")
-            if cand_created_at and target_created_at:
-                try:
-                    cand_dt = parse_utc_timestamp(cand_created_at)
-                    target_dt = parse_utc_timestamp(target_created_at)
-                    if cand_dt and target_dt and cand_dt > target_dt:
-                        cand_is_newer = True
-                except Exception:
-                    pass
-
-        if not cand_is_newer:
-            continue
-
-        cand_conclusion = str(candidate.get("conclusion") or "").strip().lower()
-        cand_status = str(candidate.get("status") or "").strip().lower()
-
-        is_pending = (
-            cand_status in PENDING_RUN_STATUSES
-            and cand_conclusion not in FAILURE_CONCLUSIONS
-        )
-        is_success = cand_conclusion in SUCCESS_CONCLUSIONS
-
-        if not (is_pending or is_success):
+        if not same_workflow:
             continue
 
         incorporates = merge_group_incorporates_head(
@@ -527,6 +560,70 @@ def find_superseding_merge_group_run(
         return candidate, reason, False
 
     return None, None, association_unknown
+
+
+def find_run_by_id(runs: Any, run_id: Any) -> dict[str, Any] | None:
+    """Locate a run in a snapshot by id."""
+    if not isinstance(runs, list):
+        return None
+    wanted = str(run_id)
+    for item in runs:
+        if not isinstance(item, dict):
+            continue
+        item_id = item.get("id") or item.get("databaseId")
+        if item_id is not None and str(item_id) == wanted:
+            return item
+    return None
+
+
+def fetch_workflow_run(repo: str, run_id: Any) -> dict[str, Any] | None:
+    """Read one workflow run, or None when GitHub could not answer."""
+    from github_bus import GitHubBusOffline, gh_json
+
+    try:
+        data = gh_json(["api", f"repos/{repo}/actions/runs/{run_id}"])
+    except GitHubBusOffline:
+        raise
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+TARGET_CURRENT_FAILURE = "current_failure"
+TARGET_RETRY_SUCCEEDED = "retry_succeeded"
+TARGET_RETRYING = "retrying"
+TARGET_UNKNOWN = "unknown"
+
+
+def classify_fresh_target_run(
+    repo: str, run_id: Any, fresh_runs: Any
+) -> tuple[str, dict[str, Any] | None]:
+    """Re-read the failing run itself: is it still a completed failure now?
+
+    The batch that produced this run is a snapshot. GitHub re-runs a merge group
+    workflow under the same run id, so a record that read `failure` when polled
+    may already be `in_progress` or `success`. The candidate scan cannot catch
+    that -- it skips the target's own id -- so the target is re-read here.
+    Revoking an approval over a failure that no longer exists is exactly the
+    fault this guard is for.
+    """
+    fresh = find_run_by_id(fresh_runs, run_id)
+    if fresh is None:
+        fresh = fetch_workflow_run(repo, run_id)
+    if not isinstance(fresh, dict) or not fresh:
+        return TARGET_UNKNOWN, None
+
+    conclusion = str(fresh.get("conclusion") or "").strip().lower()
+    status = str(fresh.get("status") or "").strip().lower()
+    if not conclusion:
+        if status in PENDING_RUN_STATUSES:
+            return TARGET_RETRYING, fresh
+        return TARGET_UNKNOWN, fresh
+    if conclusion in FAILURE_CONCLUSIONS:
+        return TARGET_CURRENT_FAILURE, fresh
+    if conclusion in SUCCESS_CONCLUSIONS:
+        return TARGET_RETRY_SUCCEEDED, fresh
+    return TARGET_UNKNOWN, fresh
 
 
 def merge_run_snapshots(*snapshots: Any) -> list[dict[str, Any]]:
@@ -760,52 +857,66 @@ def reconcile_merge_group_runs(
                 extra,
             ))
 
-        pr_facts = fetch_pr_queue_facts(repo, pr_number)
-        if pr_facts is None:
-            record_unresolved(
-                "pr_facts_unavailable",
-                "GitHub returned no usable PR state and head SHA.",
-            )
-            continue
-
-        if pr_is_merged(pr_facts):
-            record_stale("already_merged", "the PR is already merged.")
-            non_mutating_seen.append(run_key)
-            continue
-
-        # `fetch_pr_queue_facts` already rejected every state that is not one of
-        # GitHub's three, so only a genuine CLOSED reaches the closed-stale path;
-        # an unrecognised state string went to `pr_facts_unavailable` above.
-        current_pr_state = pr_state(pr_facts)
-        if current_pr_state != "OPEN":
-            record_stale(
-                f"pr_state_{current_pr_state.lower()}",
-                f"PR state is '{current_pr_state}'.",
-            )
-            non_mutating_seen.append(run_key)
-            continue
-
         approved_head = str(task.get("approved_head") or "").strip().lower()
-        current_pr_head = pr_head_sha(pr_facts)
         if not approved_head:
             record_unresolved(
                 "approved_head_missing",
                 "the task carries no approved head to correlate against.",
             )
             continue
-        if current_pr_head != approved_head:
-            record_unresolved(
-                "pr_head_mismatch",
-                f"PR head {current_pr_head} does not equal approved head {approved_head}.",
-            )
-            continue
 
-        # Queue enrollment is corroboration, never proof. GitHub reports that the
-        # PR is in *a* group, not which one, so an enrolled PR may be sitting in
-        # the very group that just failed. It is recorded for the audit trail and
-        # is not on its own allowed to suppress a failure -- only a named newer
-        # group that provably enrolled this exact head can do that.
-        enrolled_in_queue = is_in_merge_queue(pr_facts)
+        def check_pr_facts(
+            label: str,
+            drift_reason: str,
+            _pr_number=pr_number,
+            _approved_head=approved_head,
+            _seen=None,
+        ) -> str:
+            """Read PR facts through the one reader and classify the outcome.
+
+            Returns "open", "stale", "unresolved". `stale` and `unresolved`
+            have already written their audit entry.
+            """
+            facts = fetch_pr_queue_facts(repo, _pr_number)
+            if facts is None:
+                record_unresolved(
+                    f"pr_facts_{label}_unavailable",
+                    f"GitHub returned no usable PR state and head SHA ({label}).",
+                )
+                return "unresolved"
+            if pr_is_merged(facts):
+                record_stale("already_merged", f"the PR is already merged ({label}).")
+                return "stale"
+            # `fetch_pr_queue_facts` already rejected every state that is not one
+            # of GitHub's three, so only a genuine CLOSED reaches the closed-stale
+            # path; an unrecognised state string went to `unavailable` above.
+            state = pr_state(facts)
+            if state != "OPEN":
+                record_stale(
+                    f"pr_state_{state.lower()}",
+                    f"PR state is '{state}' ({label}).",
+                )
+                return "stale"
+            head = pr_head_sha(facts)
+            if head != _approved_head:
+                record_unresolved(
+                    drift_reason,
+                    f"PR head {head} does not equal approved head {_approved_head} ({label}).",
+                )
+                return "unresolved"
+            if _seen is not None:
+                _seen[label] = facts
+            return "open"
+
+        # Facts A: the PR must be open on the reviewed head before spending any
+        # further calls on this failure.
+        pr_facts_seen: dict[str, dict[str, Any]] = {}
+        outcome = check_pr_facts("A", "pr_head_mismatch", _seen=pr_facts_seen)
+        if outcome == "stale":
+            non_mutating_seen.append(run_key)
+            continue
+        if outcome != "open":
+            continue
 
         fresh_runs = fresh_merge_group_runs()
         if fresh_runs is None:
@@ -816,14 +927,64 @@ def reconcile_merge_group_runs(
             )
             continue
 
-        superseding_run, supersede_reason, association_unknown = find_superseding_merge_group_run(
-            run,
-            merge_run_snapshots(runs, fresh_runs),
-            pr_number,
-            approved_head,
-            repo,
-            parents_cache,
-        )
+        # The failing run is re-read before anything is concluded from it: a
+        # re-run under the same id may already have moved off `failure`, and the
+        # candidate scan cannot see that because it skips the target's own id.
+        target_kind, _fresh_target = classify_fresh_target_run(repo, run_id, fresh_runs)
+
+        superseding_run: dict[str, Any] | None = None
+        supersede_reason: str | None = None
+        association_unknown = False
+        if target_kind == TARGET_CURRENT_FAILURE:
+            superseding_run, supersede_reason, association_unknown = find_superseding_merge_group_run(
+                run,
+                merge_run_snapshots(runs, fresh_runs),
+                pr_number,
+                approved_head,
+                repo,
+                parents_cache,
+            )
+
+        # Facts B: re-read after the runs and commit-parent calls, before any
+        # mutation and before any run is permanently marked processed. Those
+        # calls take real time, and the PR can merge, close or advance its head
+        # underneath them.
+        outcome = check_pr_facts("B", "pr_head_drift", _seen=pr_facts_seen)
+        if outcome == "stale":
+            non_mutating_seen.append(run_key)
+            continue
+        if outcome != "open":
+            continue
+
+        # Queue enrollment is corroboration, never proof. GitHub reports that the
+        # PR is in *a* group, not which one, so an enrolled PR may be sitting in
+        # the very group that just failed. It is recorded for the audit trail and
+        # is not on its own allowed to suppress a failure -- only a named newer
+        # group that provably enrolled this exact head can do that.
+        enrolled_in_queue = is_in_merge_queue(pr_facts_seen.get("B"))
+
+        if target_kind == TARGET_UNKNOWN:
+            record_unresolved(
+                "target_run_unresolved",
+                "the failing run's current state could not be re-read from GitHub.",
+            )
+            continue
+
+        if target_kind == TARGET_RETRYING:
+            record_unresolved(
+                "target_run_retrying",
+                "the failing run is running again and has no current conclusion.",
+            )
+            continue
+
+        if target_kind == TARGET_RETRY_SUCCEEDED:
+            record_stale(
+                "target_run_succeeded_on_retry",
+                "the run has since completed successfully under the same run id.",
+                {"in_merge_queue": enrolled_in_queue},
+            )
+            non_mutating_seen.append(run_key)
+            continue
 
         if superseding_run is not None:
             superseding_id = superseding_run.get("id") or superseding_run.get("databaseId")
