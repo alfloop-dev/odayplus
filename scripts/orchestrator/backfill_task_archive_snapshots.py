@@ -893,6 +893,52 @@ RECORD_BASELINE_FIELDS = (
 )
 
 
+NORMALIZED_CANDIDATE_REQUIRED_FIELDS = (
+    "pr_number",
+    "url",
+    "head_ref",
+    "merged_at",
+    "merge_commit",
+)
+
+
+def validate_candidate_provenance(task_id: str, candidate: Any) -> list[str]:
+    """Validate one candidate PR record within a recovery entry.
+
+    Re-derives provenance completeness from the raw fields instead of trusting
+    any `missing_provenance` flag.
+    """
+    if not isinstance(candidate, dict):
+        return [f"{task_id}: candidate is not a JSON object (got {type(candidate).__name__})"]
+
+    problems: list[str] = []
+    missing_fields: list[str] = []
+
+    pr_number = candidate.get("pr_number")
+    if pr_number is None or not isinstance(pr_number, int) or pr_number <= 0:
+        missing_fields.append("pr_number")
+
+    for field in ("url", "head_ref", "merged_at", "merge_commit"):
+        val = candidate.get(field)
+        if not isinstance(val, str) or not val.strip():
+            missing_fields.append(field)
+
+    if missing_fields:
+        pr_label = repr(pr_number) if pr_number is not None else "<no pr_number>"
+        problems.append(
+            f"{task_id}: candidate PR {pr_label} is missing provenance {missing_fields}"
+        )
+
+    if candidate.get("missing_provenance"):
+        flagged = candidate.get("missing_provenance")
+        pr_label = repr(pr_number) if pr_number is not None else "<no pr_number>"
+        msg = f"{task_id}: candidate PR {pr_label} is missing provenance {flagged}"
+        if msg not in problems:
+            problems.append(msg)
+
+    return problems
+
+
 def _record_history_problems(
     task_id: str,
     record: dict[str, Any],
@@ -957,12 +1003,14 @@ def _record_history_problems(
     if not isinstance(evidence, dict):
         problems.append(f"{task_id}: record carries no evidence block")
         evidence = {}
-    for candidate in evidence.get("candidates") or []:
-        if isinstance(candidate, dict) and candidate.get("missing_provenance"):
-            problems.append(
-                f"{task_id}: candidate PR {candidate.get('pr_number')!r} is missing "
-                f"provenance {candidate['missing_provenance']}"
-            )
+    raw_candidates = evidence.get("candidates")
+    if raw_candidates is None:
+        problems.append(f"{task_id}: record evidence carries no candidates list")
+    elif not isinstance(raw_candidates, list):
+        problems.append(f"{task_id}: record evidence candidates must be a list")
+    else:
+        for candidate in raw_candidates:
+            problems.extend(validate_candidate_provenance(task_id, candidate))
     attestations = evidence.get("attestations")
     if isinstance(attestations, dict):
         fabricated = sorted(
@@ -1084,6 +1132,11 @@ def validate_recovery_entry(
         ).strip():
             problems.append(
                 f"{task_id}: reconstructed done carries no verified local merge commit"
+            )
+        candidates = evidence.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            problems.append(
+                f"{task_id}: reconstructed done carries no candidate PR records"
             )
         if not str(entry.get("archived_at") or "").strip():
             problems.append(f"{task_id}: reconstructed done carries no archived_at")

@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "type": "task_history_recovery_batch",
-  "generated_at": "2026-09-06T16:47:38Z",
+  "generated_at": "2026-09-06T17:16:05Z",
   "generated_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
   "requires_maintenance_hold": true,
   "canonical_apply_performed": false,
   "recovery_actors": {
-    "owner": "Claude",
+    "owner": "Antigravity3",
     "reviewer": "Codex"
   },
   "authorization": {
@@ -28,8 +28,8 @@
     "ref": "origin/dev",
     "ref_commit": "bd4fb5aa11404519ff1d8ae97fa796eb6d40e12a",
     "board_path": "/home/lupin/odayplus/ai-status.json",
-    "board_sha256": "3e82311b1e82242ee9a754eeb622788369e9668d531fe8a633d8b24578a4b698",
-    "board_revision": "3e0d561d8a904e32936fac7f833864bc",
+    "board_sha256": "746e826c5f8bbe8422e27516f0d07c10fa96a67b39d49258e7aba48acb5e060f",
+    "board_revision": "dfae2bd337244419ae9a5df80890c1be",
     "board_active_task_ids": [
       "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
       "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
@@ -99,7 +99,7 @@
         "title": "歷史復原佔位：DPF-EMGI-LIVE-ROLLOUT-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -111,12 +111,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_claimed",
           "gaps": [
             "merge_not_verifiable_on_ref",
@@ -131,7 +131,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -149,8 +149,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -188,7 +188,7 @@
         "title": "歷史復原佔位：ODP-AVM-DEPRECIATION-CONTRACT-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -200,12 +200,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -219,7 +219,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -243,8 +243,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -278,7 +278,7 @@
         "title": "歷史復原佔位：ODP-CANONICAL-LEGACY-LINEAGE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -290,12 +290,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -309,7 +309,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -333,8 +333,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -368,7 +368,7 @@
         "title": "歷史復原佔位：ODP-DEV-ROLLOUT-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -380,12 +380,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -399,7 +399,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -423,8 +423,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -458,7 +458,7 @@
         "title": "歷史復原佔位：ODP-DEV-STAGED-GATE-RECONCILIATION-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -470,12 +470,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -489,7 +489,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -513,8 +513,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -548,7 +548,7 @@
         "title": "歷史復原佔位：ODP-DRIFT-DEP-REMOVE-002",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -560,12 +560,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -579,7 +579,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -603,8 +603,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -638,7 +638,7 @@
         "title": "歷史復原佔位：ODP-EPHEMERAL-STAGING-IAC-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -650,12 +650,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -669,7 +669,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -693,8 +693,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -728,7 +728,7 @@
         "title": "歷史復原佔位：ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -740,12 +740,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -759,7 +759,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -783,8 +783,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -818,7 +818,7 @@
         "title": "歷史復原佔位：ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -830,12 +830,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -849,7 +849,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -873,8 +873,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -912,7 +912,7 @@
         "title": "歷史復原佔位：ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -924,12 +924,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -943,7 +943,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -967,8 +967,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1006,7 +1006,7 @@
         "title": "歷史復原佔位：ODP-INT-MANUAL-CORRECTION-AUDIT-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1018,12 +1018,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1037,7 +1037,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1061,8 +1061,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1096,7 +1096,7 @@
         "title": "歷史復原佔位：ODP-INT001-CDC-DISPOSITION-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1108,12 +1108,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1127,7 +1127,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1151,8 +1151,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1186,7 +1186,7 @@
         "title": "歷史復原佔位：ODP-JOB-PARTIAL-DISPOSITION-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1198,12 +1198,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1217,7 +1217,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1241,8 +1241,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1276,7 +1276,7 @@
         "title": "歷史復原佔位：ODP-LH-PREDICTION-DRIFT-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1288,12 +1288,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1307,7 +1307,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1331,8 +1331,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1366,7 +1366,7 @@
         "title": "歷史復原佔位：ODP-LH003-BACKTEST-RELEASE-GATE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1378,12 +1378,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1397,7 +1397,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1421,8 +1421,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1456,7 +1456,7 @@
         "title": "歷史復原佔位：ODP-MEASUREMENT-CROSSLAYER-GATE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1468,12 +1468,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1487,7 +1487,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1511,8 +1511,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1546,7 +1546,7 @@
         "title": "歷史復原佔位：ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1558,12 +1558,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1577,7 +1577,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1601,8 +1601,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1636,7 +1636,7 @@
         "title": "歷史復原佔位：ODP-MODELREADY-QUALITY-NULLABLE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1648,12 +1648,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1667,7 +1667,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1691,8 +1691,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1726,7 +1726,7 @@
         "title": "歷史復原佔位：ODP-NET002-LEASE-DISPOSITION-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1738,12 +1738,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1757,7 +1757,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1781,8 +1781,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1816,7 +1816,7 @@
         "title": "歷史復原佔位：ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1828,12 +1828,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1847,7 +1847,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1871,8 +1871,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1906,7 +1906,7 @@
         "title": "歷史復原佔位：ODP-OPS002-DECISION-COMMENTS-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -1918,12 +1918,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -1937,7 +1937,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -1961,8 +1961,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -1996,7 +1996,7 @@
         "title": "歷史復原佔位：ODP-PRICE006-BANDIT-GATED-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2008,12 +2008,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2027,7 +2027,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2051,8 +2051,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2086,7 +2086,7 @@
         "title": "歷史復原佔位：ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2098,12 +2098,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2117,7 +2117,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2141,8 +2141,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2176,7 +2176,7 @@
         "title": "歷史復原佔位：ODP-RELEASE-GATE-FIXTURE-STAGING-002",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2188,12 +2188,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2207,7 +2207,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2231,8 +2231,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2266,7 +2266,7 @@
         "title": "歷史復原佔位：ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2278,12 +2278,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2297,7 +2297,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2321,8 +2321,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2356,7 +2356,7 @@
         "title": "歷史復原佔位：ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2368,12 +2368,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2387,7 +2387,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2411,8 +2411,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2446,7 +2446,7 @@
         "title": "歷史復原佔位：ODP-REQ-DISPOSITION-GOVERNANCE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2458,12 +2458,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2477,7 +2477,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2501,8 +2501,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2536,7 +2536,7 @@
         "title": "歷史復原佔位：ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2548,12 +2548,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2567,7 +2567,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2591,8 +2591,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2626,7 +2626,7 @@
         "title": "歷史復原佔位：ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2638,12 +2638,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2657,7 +2657,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2681,8 +2681,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2720,7 +2720,7 @@
         "title": "歷史復原佔位：ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2732,12 +2732,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2751,7 +2751,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2775,8 +2775,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2810,7 +2810,7 @@
         "title": "歷史復原佔位：ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2822,12 +2822,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2841,7 +2841,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2865,8 +2865,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2900,7 +2900,7 @@
         "title": "歷史復原佔位：ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -2912,12 +2912,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -2931,7 +2931,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -2955,8 +2955,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -2990,7 +2990,7 @@
         "title": "歷史復原佔位：ODP-SITESCORE-QUALITY-NULLABLE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -3002,12 +3002,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3021,7 +3021,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -3045,8 +3045,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -3080,7 +3080,7 @@
         "title": "歷史復原佔位：ODP-SPEC-SOURCE-PROVENANCE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -3092,12 +3092,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3111,7 +3111,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -3135,8 +3135,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -3174,7 +3174,7 @@
         "title": "歷史復原佔位：ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -3186,12 +3186,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3205,7 +3205,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -3229,8 +3229,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -3268,7 +3268,7 @@
         "title": "歷史復原佔位：ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -3280,12 +3280,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3299,7 +3299,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -3323,8 +3323,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -3358,7 +3358,7 @@
         "title": "歷史復原佔位：ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -3370,12 +3370,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_verified",
           "gaps": [
             "acceptance",
@@ -3389,7 +3389,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -3413,8 +3413,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {
@@ -3449,7 +3449,7 @@
         "title": "歷史復原佔位：XR-EXT-OSS-FINAL-AUDIT-001",
         "summary_zh": "2026-09-06 archive 事故遺失的任務歷史。證據不足以重建 done，維持 blocked 並保留已知依賴與候選來源，等待人工裁決。",
         "phase": "History Recovery",
-        "owner": "Claude",
+        "owner": "Antigravity3",
         "reviewer": "Codex",
         "status": "blocked",
         "non_dispatchable": true,
@@ -3461,12 +3461,12 @@
           "補齊 acceptance/CI/runtime/approval 可驗證證據後才可改為 done；否則由人類裁決以 blocked 收尾。"
         ],
         "next": "等待人工裁決：補齊 acceptance/ci/runtime/approval 證據，或確認此 ID 以 blocked 結案。",
-        "last_update": "2026-09-06T16:47:38Z",
+        "last_update": "2026-09-06T17:16:05Z",
         "history_recovery": {
           "reconstructed": true,
           "record_kind": "recovery_placeholder",
           "created_by": "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
-          "generated_at": "2026-09-06T16:47:38Z",
+          "generated_at": "2026-09-06T17:16:05Z",
           "evidence_tier": "merge_claimed",
           "gaps": [
             "merge_not_verifiable_on_ref",
@@ -3481,7 +3481,7 @@
             "human_go": "UNKNOWN-HISTORICAL"
           },
           "recovery_actors": {
-            "owner": "Claude",
+            "owner": "Antigravity3",
             "reviewer": "Codex"
           },
           "evidence": {
@@ -3499,8 +3499,8 @@
               }
             ],
             "attestations": null,
-            "verified_at": "2026-09-06T16:47:38Z",
-            "verifier": "Claude"
+            "verified_at": "2026-09-06T17:16:05Z",
+            "verifier": "Antigravity3"
           },
           "known_dependents": [
             {

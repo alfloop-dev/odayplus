@@ -1189,6 +1189,30 @@ class RecoveryAdmissionTests(RecoveryFixture):
 
         self.assertIn("does not match the batch baseline", self.refuse(batch))
 
+    def test_candidate_missing_single_provenance_field_is_refused(self) -> None:
+        """Each required candidate provenance field is checked directly."""
+        for field in ("url", "pr_number", "head_ref", "merged_at", "merge_commit"):
+            with self.subTest(missing_field=field):
+                batch = self.forged(f"TASK-CANDMIS-{field.upper()}")
+                cand = batch["entries"][0]["record"]["history_recovery"]["evidence"][
+                    "candidates"
+                ][0]
+                cand.pop(field, None)
+                msg = self.refuse(batch)
+                self.assertIn("missing provenance", msg)
+
+    def test_candidate_invalid_type_or_empty_is_refused(self) -> None:
+        """Non-dict candidate or empty candidate object is refused."""
+        batch = self.forged("TASK-CANDTYP-001")
+        batch["entries"][0]["record"]["history_recovery"]["evidence"]["candidates"] = [
+            "not-a-dict"
+        ]
+        self.assertIn("is not a JSON object", self.refuse(batch))
+
+        batch2 = self.forged("TASK-CANDTYP-002")
+        batch2["entries"][0]["record"]["history_recovery"]["evidence"]["candidates"] = [{}]
+        self.assertIn("missing provenance", self.refuse(batch2))
+
 
 # --- apply: a batch is one reviewed unit ----------------------------------
 
@@ -1377,6 +1401,44 @@ class RecoveryCheckpointReadbackTests(RecoveryFixture):
         self.assertIs(True, receipt["board_persistence_verified"])
         self.assertEqual(receipt["batch_sha256"], self.digest(batch_path))
 
+    def test_done_only_failed_sync_all_must_not_claim_persistence(self) -> None:
+        """A batch with only archive snapshots must not claim persistence if sync_all fails."""
+        batch_path = self.done_batch("TASK-SYNCONLY-001")
+        checkpoint = self.root / "checkpoint.json"
+        with mock.patch.object(
+            ai_status, "sync_all", side_effect=OSError("fixture board persistence failed")
+        ):
+            with self.assertRaises(OSError):
+                self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual("partial", receipt["status"])
+        self.assertIs(False, receipt["board_persistence_verified"])
+
+    def test_mixed_batch_failed_sync_all_must_not_claim_persistence(self) -> None:
+        """A mixed batch must not claim persistence if sync_all fails."""
+        self.write_board(revision="rev-mixedsync")
+        self.ensure_repo(["Merge pull request #100 from org/task/TASK-MIXSYNC-001"])
+        batch = self.plan_batch(
+            [
+                inventory_entry(
+                    "TASK-MIXSYNC-001",
+                    merge_commit=self.local_merge_oid("TASK-MIXSYNC-001"),
+                ),
+                inventory_entry("TASK-MIXSYNC-002"),
+            ],
+            attestations={"TASK-MIXSYNC-001": attestation_set()},
+        )
+        batch_path = self.write_batch(batch)
+        checkpoint = self.root / "checkpoint.json"
+        with mock.patch.object(
+            ai_status, "sync_all", side_effect=OSError("fixture board persistence failed")
+        ):
+            with self.assertRaises(OSError):
+                self.run_apply(batch_path, "--checkpoint", str(checkpoint), "--confirm")
+        receipt = json.loads(checkpoint.read_text(encoding="utf-8"))
+        self.assertEqual("partial", receipt["status"])
+        self.assertIs(False, receipt["board_persistence_verified"])
+
 
 # --- apply: every pinned input is re-checked in the lock -------------------
 
@@ -1511,6 +1573,77 @@ class RecoveryBaselineProvenanceTests(RecoveryFixture):
             self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
 
         self.assertIn("is not contained in the pinned ref", str(caught.exception))
+        self.assertEqual([], sorted(self.archive_dir.glob("*.json")))
+
+    def test_other_tasks_ancestor_is_not_delivery_for_this_task(self) -> None:
+        """Another task's merge commit in the same ref must not deliver this task."""
+        self.write_board(revision="rev-otherdeliv")
+        self.ensure_repo(
+            [
+                "Merge pull request #99 from org/task/TASK-OTHER-001",
+                "Merge pull request #100 from org/task/TASK-RECOVER-001",
+            ]
+        )
+        batch = self.plan_batch(
+            [
+                inventory_entry(
+                    "TASK-RECOVER-001",
+                    merge_commit=self.local_merge_oid("TASK-RECOVER-001"),
+                )
+            ],
+            attestations={"TASK-RECOVER-001": attestation_set()},
+        )
+        batch["entries"][0]["record"]["history_recovery"]["evidence"]["local_merge"][
+            "merge_commit"
+        ] = self.local_merge_oid("TASK-OTHER-001")
+        batch_path = self.write_batch(batch)
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+        self.assertIn("does not deliver this task", str(caught.exception))
+        self.assertEqual([], sorted(self.archive_dir.glob("*.json")))
+
+    def test_tampered_local_merge_metadata_is_refused(self) -> None:
+        """Tampering with delivery_form, subject or merged_at in local_merge is refused."""
+        self.write_board(revision="rev-tampermerge")
+        self.ensure_repo(["Merge pull request #100 from org/task/TASK-TAMPERMERGE-001"])
+        batch = self.plan_batch(
+            [
+                inventory_entry(
+                    "TASK-TAMPERMERGE-001",
+                    merge_commit=self.local_merge_oid("TASK-TAMPERMERGE-001"),
+                )
+            ],
+            attestations={"TASK-TAMPERMERGE-001": attestation_set()},
+        )
+        batch["entries"][0]["record"]["history_recovery"]["evidence"]["local_merge"][
+            "delivery_form"
+        ] = "squash-subject"
+        batch_path = self.write_batch(batch)
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+        self.assertIn("delivery_form", str(caught.exception))
+        self.assertEqual([], sorted(self.archive_dir.glob("*.json")))
+
+    def test_candidate_merge_commit_mismatch_during_apply_is_refused(self) -> None:
+        """Candidate declared merge commit mismatch is checked during apply."""
+        self.write_board(revision="rev-candmismatch")
+        self.ensure_repo(["Merge pull request #100 from org/task/TASK-CANDMISMATCH-001"])
+        batch = self.plan_batch(
+            [
+                inventory_entry(
+                    "TASK-CANDMISMATCH-001",
+                    merge_commit=self.local_merge_oid("TASK-CANDMISMATCH-001"),
+                )
+            ],
+            attestations={"TASK-CANDMISMATCH-001": attestation_set()},
+        )
+        batch["entries"][0]["record"]["history_recovery"]["evidence"]["candidates"][0][
+            "merge_commit"
+        ] = "e" * 40
+        batch_path = self.write_batch(batch)
+        with self.assertRaises(SystemExit) as caught:
+            self.run_apply(batch_path, "--checkpoint", str(self.root / "c.json"), "--confirm")
+        self.assertIn("candidate merge commit mismatch", str(caught.exception))
         self.assertEqual([], sorted(self.archive_dir.glob("*.json")))
 
 

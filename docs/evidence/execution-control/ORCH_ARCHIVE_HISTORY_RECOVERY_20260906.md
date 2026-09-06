@@ -16,79 +16,29 @@
 archive 寫入沿用 `task_archive.archive_task_snapshot()`，board 寫入沿用 `main()` 已持有的
 `status_write_transaction()`（因此 apply 指令本身**不得**再取一次鎖，已由靜態測試釘住）。
 
-## 2. 本輪修正（回應 Codex 2026-09-06 審查，PR #1231）
+## 2. 本輪修正（回應 Codex 兩輪審查，PR #1231）
 
-上一版的四項 P1 都成立，皆為靜態可達、測試未涵蓋的缺陷。逐項修正與新回歸如下。
+### 第一輪審查修正（commit ec9ffacc）
 
-### P1-1 admission 只驗了外殼 → 鎖內對整批跑共用嚴格 validator
+- **P1-1 鎖內整批共用嚴格 validator**：新增 `validate_recovery_batch()` / `validate_recovery_entry()`，由 apply 在鎖內對整份文件執行。
+- **P1-2 refusals 整批拒絕**：任何 refusal 存在即整批零寫入，預覽與套用皆拒。
+- **P1-3 checkpoint 讀回磁碟**：逐檔檢查 snapshot 落盤、SHA-256 與 index 列出狀態；失敗點全數覆蓋。
+- **P1-4 baseline 漂移核對**：在鎖內核對 board revision、board bytes、archive index、pinned ref commit、盤點與授權文件 SHA-256。
+- **maintenance hold 規範**：收可稽核文件，驗 `dispatch_paused`、未過期、綁定批次 hash，且核准者為 reviewer 且非執行 actor。
 
-新增 `planner.validate_recovery_batch()` / `validate_recovery_entry()`，由 apply 在鎖內對**整份文件**
-執行；planner 也用同一支（`for_apply=False`）自檢自己的輸出，兩邊不會各自漂移。
-批次在規劃與套用之間是一個任何人都能編輯的 JSON 檔，因此每一項原本由 grading 保證的性質都重新推導一次：
+### 第二輪審查修正（本輪 Antigravity3 接手實作）
 
-- `record.id` 必須等於 `entry.task_id`；批內重複 ID 整批拒絕。
-- `evidence_tier` 必須是已知等級，且與 `record.history_recovery.evidence_tier`、`gaps` 三者一致。
-- `archive_reconstructed_done` 必須：tier 為 `reconstructable_done`、`gaps` 為空、
-  `status=done`、`terminal_outcome=completed`、owner/reviewer 皆為 `UNKNOWN-HISTORICAL`、
-  四項證言齊備（各有 source/verified_at/verifier）、有已驗證的 `local_merge.merge_commit`、有 `archived_at`。
-- `active_blocked_placeholder` 必須：`status=blocked`、`non_dispatchable=true`、無 `terminal_outcome`、
-  有 `waiting_for`、actor 等於批次 recovery pair、且**不得**帶 `archived_at`。
-- provenance：`history_recovery` 必須存在且 `reconstructed=true`、`created_by` 正確、
-  `record_kind` 對應 action、`historical_actors` 三欄皆為 `UNKNOWN-HISTORICAL`、
-  候選不得帶 `missing_provenance`、證言不得夾帶補造身分、
-  每筆 record 的 baseline（ref/ref_commit/inventory/authorization hash）必須等於批次 baseline。
+- **P1-1 共用 validator 逐一驗候選必要 provenance**：
+  原 `_record_history_problems` 只信任候選自帶的 `missing_provenance` 標記。現新增 `validate_candidate_provenance()`，逐一驗證候選物件型別（必須為 dict）、`pr_number`（正整數）、`url`、`head_ref`、`merged_at`、`merge_commit`（皆為非空字串）；從欄位直接重新推導缺口，不以標記代替驗證。若為 `reconstructed_done`，候選清單不得為空。
+  回歸覆蓋：缺 `url`、缺 `pr_number`、缺 `head_ref`、缺 `merged_at`、缺 `merge_commit`、非 dict 物件、空物件，全部整批拒絕、零寫入。
 
-回歸：把 placeholder 改標成 `archive_reconstructed_done`、只拉高 `evidence_tier`、
-把 placeholder 改成 `todo`/`non_dispatchable=false`、換掉 `record.id`、批內重複 ID、
-刪掉 `history_recovery`、寫入歷史 actor、夾帶 `human_go`、改寫 record baseline——九種竄改各一則，
-全部要求整批拒絕且 board/archive/checkpoint 三者皆無變化。
+- **P1-2 鎖內由 git 重驗 commit subject、交付 identity 與一致性**：
+  原 `_archive_recovery_evidence_drift()` 僅驗 `merge-base --is-ancestor`。現於鎖內由 git 取得 commit subject 與 commit date，調用 `planner.subject_delivers()` 嚴格確認該 commit 交付的是**本任務**而非同一 ref 上的其他任務；核對 `local_merge` 的 `delivery_form`、`subject`、`merged_at` 與 git 一致；核對候選宣告的 `merge_commit` 一致；並調用 `planner.find_merge_evidence()` 確保無衝突。
+  回歸覆蓋：同 ref 另一任務的 merge commit 作為祖先、篡改 `delivery_form`/`subject`/`merged_at`、候選宣告 mismatch，全部整批拒絕、零寫入。
 
-### P1-2 refusals 非空仍套用其餘 entries → 整批拒絕、零寫入
-
-`validate_recovery_batch(..., for_apply=True)` 在 `refusals` 非空時直接拒絕整份文件（preview 也拒）。
-planner 另外輸出 `applicable` 欄位讓審查者一眼看出該批不可套用。
-回歸：一筆既有 snapshot 衝突 + 一筆可用候選的混合批次，可用的那筆也不得落地。
-
-### P1-3 checkpoint 以 staged/applied 代替落盤收據 → 全部改為讀回磁碟
-
-`write_checkpoint()` 的每個欄位都是 read-back：逐檔檢查 snapshot 是否在磁碟上、其 SHA-256、
-`terminal_status`、是否被 index 列出；board 則直接讀回 `ai-status.json`。失敗點全數覆蓋：
-
-| 失敗點 | 收據 |
-| --- | --- |
-| `archive_task_snapshot()` 拋錯 | `partial`，已落盤的 snapshot 由磁碟列出（含「寫了 snapshot 但 index save 失敗」這一段） |
-| 寫入後讀不回 terminal snapshot | `partial`，停止並不寫任何 board row |
-| `rebuild_archive_index()` 拋錯（原本在 try/except 外） | `partial` |
-| 既有 6 筆被更動 | `partial` |
-| 外層 `sync_all()` / board 未落盤 | post-commit read-back 寫 `partial` 並讓指令非零退出 |
-
-`board_persistence_verified` 只有在**外層交易提交後**的 read-back 成功時才為 `true`；
-在指令回傳前一律 `false`，即使該批次根本沒有 board row（「沒有要寫」與「已寫入」是兩種收據）。
-這由新的 `register_post_commit_verifier()` 在鎖內、`sync_all()` 之後執行。
-所有 checkpoint 一律 `rollback_performed: false`——多檔案操作沒有 rollback，宣稱有才是說謊。
-
-### P1-4 只比對 revision 與 archive 摘要 → 鎖內核對全部釘住的來源
-
-`_archive_recovery_baseline_drift()` 現在還會核對：board bytes 的 SHA-256（revision 未變但內容漂移也擋）、
-`git rev-parse` 實測 pinned ref 的 commit、盤點 JSON 與授權文件的 SHA-256（檔案消失同樣拒絕）；
-baseline 缺任一必要欄位（`REQUIRED_BASELINE_FIELDS`）即拒絕，不得靠省略欄位換到一個沒人檢查的 baseline。
-另新增 `_archive_recovery_evidence_drift()`：每一筆 reconstructed done 的 merge commit 都要在鎖內
-用 `git merge-base --is-ancestor` 重新證明它確實包含在釘住的 ref 裡。
-
-### maintenance hold：從自由字串改為可稽核文件
-
-`--maintenance-hold` 現在收的是文件路徑，不是 reference 字串（自由字串只是執行者自己打的字，
-不能證明任何事）。文件必須是 `task_history_recovery_maintenance_hold`，且：
-
-- `dispatch_paused` 必須為 `true`，並帶 `hold_id` / `declared_by` / `declared_at` / `scope`；
-- `expires_at` 必須可解析且尚未過期（過期即「不再持有」），`declared_at` 不得在未來；
-- `batch_sha256` 必須等於本次批次檔的 SHA-256；
-- `batch_approval` 必須由批次的 recovery reviewer 簽出、`approved_batch_sha256` 為同一個 hash、
-  並帶 `approved_at` 與 `source`；**核准者不得是執行 apply 的 actor**。
-
-hold 的路徑、SHA-256、`hold_id`、核准者與核准來源全部寫入 checkpoint。
-回歸涵蓋：自由字串、綁到別的批次、已過期、未宣告暫停、缺 `batch_approval`、
-核准別的 hash、核准者不是批次 reviewer、自己核准自己，以及成功時 hold 進入 checkpoint。
+- **P1-3 post-commit verifier 傳遞交易成敗，精確記錄落盤收據**：
+  `main()` 的 `finally` 區塊將 `transaction_succeeded` 與 `transaction_error` 傳遞給 `run_post_commit_verifiers()`。`verify_board_persistence()` 在交易失敗時必標記 `status: partial` 且 `board_persistence_verified: false`，不以空集合 `board_ids=[]` 冒充成功；同時驗證 `STATUS_FILE` 實體檔案存在。
+  回歸覆蓋：純 archive 批次在 `sync_all` 失敗時記錄 `partial` 與 `board_persistence_verified: false`；混合批次在 `sync_all` 失敗時亦同。
 
 ## 3. 證據分級規則
 
@@ -127,7 +77,7 @@ hold 的路徑、SHA-256、`hold_id`、核准者與核准來源全部寫入 chec
 
 指令（唯讀，未帶 `--apply`；recovery 模式本身也拒絕 `--apply`；`--authorization` 現為必填）：
 
-```
+```bash
 uv run --frozen --python 3.12 python scripts/orchestrator/backfill_task_archive_snapshots.py \
   --archive-dir /home/lupin/odayplus/ai-task-archive/tasks \
   --repo . --ref origin/dev \
@@ -135,7 +85,7 @@ uv run --frozen --python 3.12 python scripts/orchestrator/backfill_task_archive_
   --recovery-inventory /tmp/odayplus-archive-incident.CYD1gq/RECOVERY_DEPENDENCY_CANDIDATES_20260906_1523.json \
   --authorization /tmp/odayplus-archive-incident.CYD1gq/RECOVERY_AUTHORIZATION_ZH_TW.md \
   --batch-out docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json \
-  --recovery-owner Claude --recovery-reviewer Codex
+  --recovery-owner Antigravity3 --recovery-reviewer Codex
 ```
 
 結果：**38 筆規劃、0 筆重建 done、38 筆 blocked 佔位、0 筆拒絕**，exit 0（與上一輪的保守分類相同）。
@@ -152,48 +102,41 @@ uv run --frozen --python 3.12 python scripts/orchestrator/backfill_task_archive_
 | 項目 | 值 |
 | --- | --- |
 | `ref` / `ref_commit` | `origin/dev` / `bd4fb5aa11404519ff1d8ae97fa796eb6d40e12a` |
-| board `_status_write_revision` | `3e0d561d8a904e32936fac7f833864bc` |
-| board SHA-256 | `3e82311b1e82242ee9a754eeb622788369e9668d531fe8a633d8b24578a4b698` |
+| board `_status_write_revision` | `dfae2bd337244419ae9a5df80890c1be` |
+| board SHA-256 | `746e826c5f8bbe8422e27516f0d07c10fa96a67b39d49258e7aba48acb5e060f` |
 | archive `index.json` SHA-256 | `5e5b59dbf423056aee1dfc57a739a2f740ff2fad6bc7ac87df084413bc02c44a` |
 | 盤點 JSON SHA-256 | `116f583e238e309b9f818403fe60cc135870ba1e72f396a8df66e78d7e2b0685` |
 | 授權文件 SHA-256 | `134adcb8098397b9a4b74542b9b4903a32cb07a82e0675ef54d9194dbdd2aba5` |
-| 批次檔本身 SHA-256 | `392eda29a1977509569ca7b7caeff907bf334b50e1646647b69f495f0dcd76c8` |
+| 批次檔本身 SHA-256 | `6f62e328d3ca8b3d0f7627c322b1be9b92f5fc09b8894f0167ae40a2aa7ede54` |
 | 既有 snapshot | 6 筆，各自 SHA-256 已逐筆釘入 `baseline.archive_snapshot_digests` |
-
-（board revision 自上一輪的 `e5fdf617…` 前進，是因為期間有其他任務正常寫入 canonical board；
-archive 摘要與既有 6 筆未變。）
 
 執行後複驗：`ai-task-archive/index.json` 摘要不變、`tasks/` 仍為 6 筆、board 未被本任務寫入。
 
 ## 6. 焦點測試
 
-```
+```bash
 uv run --frozen --python 3.12 pytest \
   scripts/orchestrator/test_archive_history_recovery.py \
   scripts/test_ai_status.py \
   scripts/orchestrator/test_backfill_task_archive_snapshots.py
 ```
 
-結果：**321 passed, 101 subtests passed**，exit code 0，7.54s（新測試模組單獨跑為 67 passed）。
+結果：**330 passed, 106 subtests passed**，exit code 0，8.35s。
 本輪只整批執行這一次；未執行產品全套測試。
 
 覆蓋：證據不足不得合併為 done、blocked 佔位形狀（`non_dispatchable` / `waiting_for` / 依賴保留）、
-未知 actor 與 Human GO 補造拒絕、缺 provenance 拒絕、baseline 六類漂移各自拒絕
-（board revision、同 revision 不同 board bytes、archive 摘要、pinned ref、盤點、授權文件）、
-批次被竄改的九種形狀、混合有效／拒絕批次整批拒絕、
-idempotency（第二次 apply 必拒）、partial failure 的四個失敗點各留 checkpoint 且不宣稱 rollback、
+未知 actor 與 Human GO 補造拒絕、缺 candidate provenance 欄位（`url`/`pr_number`/`head_ref`/`merged_at`/`merge_commit`/型別/空物件）逐一拒絕、
+同 ref 另一任務 merge commit 祖先拒絕、local_merge 篡改拒絕、candidate merge commit mismatch 拒絕、
+baseline 六類漂移各自拒絕（board revision、同 revision 不同 board bytes、archive 摘要、pinned ref、盤點、授權文件）、
+批次被竄改的形狀整批拒絕、混合有效／拒絕批次整批拒絕、
+idempotency（第二次 apply 必拒）、partial failure 的各失敗點留 checkpoint 且不宣稱 rollback、
+純 archive 與混合批次在 `sync_all` 失敗時正確記錄 `partial` 且 `board_persistence_verified: false`、
 外層 board 未落盤時的 post-commit 讀回、既有 6 筆 byte 不變、`--confirm` 缺 checkpoint 拒絕、
 maintenance hold 的八種拒絕與成功入帳、不得重入 canonical lock（靜態）、未註冊 actor 拒絕、
 重建 archive 記錄不得寫入現任 actor、佔位 actor 必須與批次 recovery pair 一致，
 以及獨立直譯器的 import-order sentinel。
 
-import-order sentinel 用另一個 python 進程重跑真實 import 順序：
-`ai_status` 與 `task_archive` 的 archive 路徑必須來自環境變數指向的臨時 root、
-不得落在 checkout 內，且該 root 內既有 snapshot 必須 byte 相同。
-這條性質是 import 順序造成的，同一模組內的斷言看不見它。
-
-另外執行：`ruff check`（3 個改動檔，exit 0）、
-`check_code_boundaries.py`（1137 files passed，exit 0；本輪未新增檔案，inventory CSV 無變動）。
+另外執行：`ruff check`（exit 0）、`python3 delivery_toolchain/governance/check_code_boundaries.py`（1137 files passed，exit 0）。
 
 ## 7. 明確未完成／未宣稱
 
@@ -230,7 +173,7 @@ transaction 一次寫入。因此失敗時只會留下 checkpoint 記錄**從磁
 
 | 路徑 | 理由 | 本輪是否再變動 |
 | --- | --- | --- |
-| `scripts/orchestrator/test_archive_history_recovery.py` | 驗收要求的焦點測試。放在 `scripts/orchestrator/` 是因為 `config/code-boundaries.yaml` 的 `verification_ownership` 用萬用字元涵蓋 `scripts/orchestrator/test_*.py`；放在 `scripts/` 會被判為 `development_platform` bundle 內的 foreign scope，且需要改動治理 manifest 的顯式白名單。 | 是（+32 則回歸） |
+| `scripts/orchestrator/test_archive_history_recovery.py` | 驗收要求的焦點測試。放在 `scripts/orchestrator/` 是因為 `config/code-boundaries.yaml` 的 `verification_ownership` 用萬用字元涵蓋 `scripts/orchestrator/test_*.py`；放在 `scripts/` 會被判為 `development_platform` bundle 內的 foreign scope，且需要改動治理 manifest 的顯式白名單。 | 是（+9 則回歸，共 74 則測試） |
 | `scripts/test_ai_status.py` | 被既有測試強制。`ActorCommandMutationGuardTests.test_ai_name_case_table_covers_every_actor_bearing_command` 要求每個新增的 mutating command 都要進 `AI_NAME_CASES` 表，否則既有套件必紅。只加了一列表項。 | 否 |
 | `docs/audits/code-boundary-inventory.csv` | 被 `check_code_boundaries.py` 強制：新增任何 .py 都必須重產，否則 CI `orchestrator` job 與 task_finalize 的必過閘會擋。差異為 1 行。 | 否 |
-| `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json` | 驗收要求交付的離線批次本身；`.md` 收據無法承載 38 筆逐項 provenance。與宣告的 `.md` 同目錄同前綴。 | 是（依新 schema 重產） |
+| `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_RECOVERY_20260906-batch.json` | 驗收要求交付的離線批次本身；`.md` 收據無法承載 38 筆逐項 provenance。與宣告的 `.md` 同目錄同前綴。 | 是（依新 validator 與新 recovery pair 重產） |

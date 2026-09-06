@@ -1322,7 +1322,11 @@ def register_post_commit_verifier(verifier) -> None:
     _POST_COMMIT_VERIFIERS.append(verifier)
 
 
-def run_post_commit_verifiers() -> list[str]:
+def run_post_commit_verifiers(
+    *,
+    transaction_succeeded: bool = True,
+    transaction_error: BaseException | None = None,
+) -> list[str]:
     """Run and drain every registered verifier, collecting what they refuse.
 
     A verifier failing is itself a finding, not a reason to lose the others, so
@@ -1330,11 +1334,23 @@ def run_post_commit_verifiers() -> list[str]:
     caller reports every problem after the transaction closes.
     """
 
+    import inspect
+
     problems: list[str] = []
     while _POST_COMMIT_VERIFIERS:
         verifier = _POST_COMMIT_VERIFIERS.pop(0)
         try:
-            problems.extend(verifier() or [])
+            sig = inspect.signature(verifier)
+            if "transaction_succeeded" in sig.parameters:
+                problems.extend(
+                    verifier(
+                        transaction_succeeded=transaction_succeeded,
+                        transaction_error=transaction_error,
+                    )
+                    or []
+                )
+            else:
+                problems.extend(verifier() or [])
         except Exception as exc:  # noqa: BLE001 - reported, never swallowed
             problems.append(f"post-commit verification failed: {exc}")
     return problems
@@ -7907,7 +7923,8 @@ def _archive_recovery_evidence_drift(
     now the batch file travelled through a review, so the writer re-derives the
     one claim that turns a placeholder into terminal history: that local git,
     on the commit the baseline pins, really contains the merge this record is
-    reconstructed from.
+    reconstructed from, that the merge commit actually delivered this task, and
+    that candidate/local_merge metadata has not been tampered with.
     """
 
     if not archive_entries:
@@ -7918,6 +7935,7 @@ def _archive_recovery_evidence_drift(
         return ["batch carries no pinned repo/ref_commit to re-verify merges against"]
 
     repo = Path(repo_raw)
+    planner = _recovery_planner_module()
     problems: list[str] = []
     for entry in archive_entries:
         task_id = str(entry.get("task_id") or "").strip()
@@ -7926,10 +7944,14 @@ def _archive_recovery_evidence_drift(
             or {}
         )
         local_merge = evidence.get("local_merge")
-        merge_commit = str((local_merge or {}).get("merge_commit") or "").strip()
+        if not isinstance(local_merge, dict):
+            problems.append(f"{task_id}: record carries no local_merge evidence dict")
+            continue
+        merge_commit = str(local_merge.get("merge_commit") or "").strip()
         if not merge_commit:
             problems.append(f"{task_id}: no local merge commit to re-verify")
             continue
+
         code, _ = _archive_recovery_git(
             repo, "merge-base", "--is-ancestor", merge_commit, ref_commit
         )
@@ -7938,6 +7960,67 @@ def _archive_recovery_evidence_drift(
                 f"{task_id}: merge commit {merge_commit[:12]} is not contained in the "
                 f"pinned ref {ref_commit[:12]}"
             )
+            continue
+
+        code, subject = _archive_recovery_git(
+            repo, "log", "-1", "--format=%s", merge_commit
+        )
+        code_date, commit_date = _archive_recovery_git(
+            repo, "log", "-1", "--format=%cI", merge_commit
+        )
+        if code != 0 or not subject:
+            problems.append(
+                f"{task_id}: cannot read commit subject for {merge_commit[:12]}"
+            )
+            continue
+
+        form = planner.subject_delivers(subject, task_id)
+        if form is None:
+            problems.append(
+                f"{task_id}: merge commit {merge_commit[:12]} subject {subject!r} does not "
+                f"deliver this task"
+            )
+            continue
+
+        if local_merge.get("subject") != subject:
+            problems.append(
+                f"{task_id}: local_merge subject {local_merge.get('subject')!r} does not "
+                f"match git commit subject {subject!r}"
+            )
+        if local_merge.get("delivery_form") != form:
+            problems.append(
+                f"{task_id}: local_merge delivery_form {local_merge.get('delivery_form')!r} "
+                f"does not match git {form!r}"
+            )
+        if commit_date and local_merge.get("merged_at") != commit_date:
+            problems.append(
+                f"{task_id}: local_merge merged_at {local_merge.get('merged_at')!r} "
+                f"does not match git {commit_date!r}"
+            )
+
+        candidates = evidence.get("candidates") or []
+        declared = {
+            c["merge_commit"]
+            for c in candidates
+            if isinstance(c, dict) and c.get("merge_commit")
+        }
+        if declared and merge_commit not in declared:
+            problems.append(
+                f"{task_id}: candidate merge commit mismatch ({merge_commit[:12]} not in "
+                f"declared candidates)"
+            )
+
+        actual_merge = planner.find_merge_evidence(repo, task_id, ref_commit)
+        if actual_merge is None:
+            problems.append(
+                f"{task_id}: no merge evidence found in git on {ref_commit[:12]}"
+            )
+        elif actual_merge.get("merge_commit") != merge_commit:
+            problems.append(
+                f"{task_id}: record merge commit {merge_commit[:12]} disagrees with git "
+                f"merge evidence {str(actual_merge.get('merge_commit'))[:12]}"
+            )
+
     return problems
 
 
@@ -8201,7 +8284,12 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
             "board_readback": board_rows,
             "board_placeholders_on_disk": persisted,
             "board_persistence_verified": (
-                board_commit_verified["value"] and sorted(persisted) == sorted(board_ids)
+                board_commit_verified["value"]
+                and (
+                    sorted(persisted) == sorted(board_ids)
+                    if board_ids
+                    else STATUS_FILE.is_file()
+                )
             ),
             "board_persisted_by": "enclosing canonical status transaction",
             "rollback_performed": False,
@@ -8279,7 +8367,11 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
     for entry in board_entries:
         state["tasks"].append(deepcopy(entry["record"]))
 
-    def verify_board_persistence() -> list[str]:
+    def verify_board_persistence(
+        *,
+        transaction_succeeded: bool = True,
+        transaction_error: BaseException | None = None,
+    ) -> list[str]:
         """Read the board back after the enclosing transaction wrote it.
 
         Until this runs, the placeholders exist only in the state dict this
@@ -8291,7 +8383,20 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
         still_tampered = survivors_tampered()
         _, persisted_now = read_board()
         missing = [task_id for task_id in board_ids if task_id not in persisted_now]
+
+        if not transaction_succeeded:
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                f"canonical status transaction failed: {transaction_error}",
+            )
+            return [
+                f"Recovery apply failed during canonical transaction: {transaction_error}; "
+                f"checkpoint: {checkpoint_path}"
+            ]
+
         if still_tampered:
+            board_commit_verified["value"] = False
             write_checkpoint(
                 "partial", f"pre-existing snapshots changed after commit: {still_tampered}"
             )
@@ -8299,7 +8404,9 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
                 f"Recovery apply left pre-existing archive snapshots {still_tampered} "
                 f"changed; nothing was rolled back. Checkpoint: {checkpoint_path}"
             ]
+
         if missing:
+            board_commit_verified["value"] = False
             write_checkpoint(
                 "partial",
                 f"board placeholders missing after the canonical transaction: {missing}",
@@ -8309,10 +8416,24 @@ def command_archive_recovery_apply(state: dict[str, Any], args: list[str]) -> No
                 f"board is missing {len(missing)} placeholder row(s) {missing}; nothing "
                 f"was rolled back. Checkpoint: {checkpoint_path}"
             ]
+
+        if not STATUS_FILE.is_file():
+            board_commit_verified["value"] = False
+            write_checkpoint(
+                "partial",
+                "canonical board file ai-status.json not found on disk after transaction",
+            )
+            return [
+                f"Recovery apply could not verify ai-status.json persistence on disk. "
+                f"Checkpoint: {checkpoint_path}"
+            ]
+
         board_commit_verified["value"] = True
         write_checkpoint(
             "applied",
-            "batch applied; archive snapshots and board rows both read back from disk",
+            "batch applied; archive snapshots and board rows both read back from disk"
+            if board_ids
+            else "batch applied; archive snapshots read back from disk",
         )
         return []
 
@@ -8983,6 +9104,8 @@ def main(argv: list[str]) -> int:
         # on a pre-lock snapshot.
         state = load_state()
         state_before = deepcopy(state)
+        tx_succeeded = False
+        tx_error: BaseException | None = None
         try:
             try:
                 commands[command](state, args)
@@ -8993,11 +9116,18 @@ def main(argv: list[str]) -> int:
                 sync_all(state)
                 raise
             sync_all(state)
+            tx_succeeded = True
+        except BaseException as exc:
+            tx_error = exc
+            raise
         finally:
             # Still inside the lock, and on the failure path too: a command that
             # wrote outside the board document has to be able to read back what
             # actually landed before another writer can touch it.
-            post_commit_problems = run_post_commit_verifiers()
+            post_commit_problems = run_post_commit_verifiers(
+                transaction_succeeded=tx_succeeded,
+                transaction_error=tx_error,
+            )
         try:
             reconcile_status_check_outbox(state)
             emit_status_checks_for_changed_tasks(state_before, state, command, args)
