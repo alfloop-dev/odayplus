@@ -1,0 +1,1012 @@
+{
+  "type": "read_only_recovery_inventory",
+  "schema_note": "planner input for backfill_task_archive_snapshots.py --recovery-inventory",
+  "observed_at": "2026-09-07T15:14:37Z",
+  "authoritative": false,
+  "rebuilt": true,
+  "rebuilt_by": "ORCH-ARCHIVE-HISTORY-RESTORE-002 (Claude)",
+  "rebuild_reason": "事故當下的原始盤點 /tmp/odayplus-archive-incident.CYD1gq/RECOVERY_DEPENDENCY_CANDIDATES_20260906_1523.json（SHA-256 116f583e…b0685）已不存在於本機；本檔是從已合併證據重建的新來源清單，不是原檔，也不宣稱與原檔逐 byte 相同。",
+  "rebuilt_from": [
+    {
+      "path": "docs/evidence/execution-control/ARCHIVE_RECOVERY_EVIDENCE_20260906/task_evidence_inventory.json",
+      "sha256": "f4239acfb12d5214709be2ed56beca4d17b278d86942ef11c1f0ea98f007d715",
+      "role": "候選 PR、repository、更正候選"
+    },
+    {
+      "path": "docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_APPLY_PREFLIGHT_20260907/candidate_reconciliation.json",
+      "sha256": "d1a0cd6231e6890e6811a2c233666e6db36ad003528c3ded2f67e1c8d6455500",
+      "role": "38 個 ID 的清單與 known_dependents"
+    }
+  ],
+  "corrections_applied": [
+    {
+      "id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "finding": "APPLY_PREFLIGHT B4（P1）",
+      "from": "alfloop-dev/odayplus#996",
+      "to": "alfloop-dev/oday-data-platform#61",
+      "basis": "已合併證據同筆的 corrected_candidate / repository_correction / recommendation_applies_to 三欄"
+    }
+  ],
+  "limitations": [
+    "Candidate PR mapping is not proof of task completion, original archive content, required CI, deployment or approval.",
+    "Missing IDs are direct dependencies of the current active board, not a complete inventory of all lost historical archive records.",
+    "No original archive entries, done status, Human GO or approvals are reconstructed by this report.",
+    "本檔為重建來源清單（rebuilt=true）；原始事故盤點檔已不存在，無法逐 byte 復原，也未偽造。"
+  ],
+  "entries": [
+    {
+      "missing_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+      "repository": "alfloop-dev/oday-data-platform",
+      "candidates": [
+        {
+          "number": 62,
+          "url": "https://github.com/alfloop-dev/oday-data-platform/pull/62",
+          "title": "DPF-EMGI-LIVE-ROLLOUT-001: exact-digest publish 與 EMGI sources-off runtime",
+          "headRefName": "task/DPF-EMGI-LIVE-ROLLOUT-001",
+          "headRefOid": "71ecbe0d982f3f93c976fa0104a82903d2a071cf",
+          "mergedAt": "2026-08-25T14:24:47Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "e3ecd2f199fe051aba8d3d33005c217036a9c88e"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        },
+        {
+          "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1148,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1148",
+          "title": "[ReviewBus] ODP-AVM-DEPRECIATION-CONTRACT-001 定義 AVM 資產折舊契約、版本化與舊估值卡處置",
+          "headRefName": "task/ODP-AVM-DEPRECIATION-CONTRACT-001",
+          "headRefOid": "aacc6ca19c12e6e9e17a350dbafe76c25e4b3bca",
+          "mergedAt": "2026-09-04T12:08:34Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "739cbab19a171ef8d40e0f68f2b428f6b726bac0"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-AVM-DEPRECIATION-INTEGRATION-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-CANONICAL-LEGACY-LINEAGE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1150,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1150",
+          "title": "[ReviewBus] ODP-CANONICAL-LEGACY-LINEAGE-001 量測 canonical 六模型的 producer lineage 與 legacy 1.0 遷移風險",
+          "headRefName": "task/ODP-CANONICAL-LEGACY-LINEAGE-001",
+          "headRefOid": "4ffa3122e47029d5143762413ae165d5b8d3c500",
+          "mergedAt": "2026-09-03T15:37:27Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "865ff82e817cc56ffff0187f33cd6d3e8718958b"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-DEV-ROLLOUT-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1013,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1013",
+          "title": "[ReviewBus] ODP-DEV-ROLLOUT-001 以同一 release digests 部署資料平台與 ODay Plus dev",
+          "headRefName": "task/ODP-DEV-ROLLOUT-001",
+          "headRefOid": "83944bb50c56a5071c992edb28e96eae3155f4c0",
+          "mergedAt": "2026-08-25T17:31:52Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "b8262d911c95887767877e7cee23bded0ef7dd61"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1193,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1193",
+          "title": "[ReviewBus] ODP-DEV-STAGED-GATE-RECONCILIATION-001 重整 staged dev release gate 與現行 artifact 的 exact reconciliation",
+          "headRefName": "task/ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+          "headRefOid": "40bb02462ec742cfb615214c1873f15a40b2c602",
+          "mergedAt": "2026-09-04T09:47:46Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "efdfea1a0c31c3c9ebcb2acfe1eb61dc4fa2bff6"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-DRIFT-DEP-REMOVE-002",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1222,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1222",
+          "title": "[ReviewBus] ODP-DRIFT-DEP-REMOVE-002 原子切換原生監控並移除 Evidently／NLTK 生產依賴",
+          "headRefName": "task/ODP-DRIFT-DEP-REMOVE-002",
+          "headRefOid": "6d438486c8645e476fcf86b5f675a5ca20592b9d",
+          "mergedAt": "2026-09-06T05:56:17Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "66244b30c2615dcad8373e03fff096e298d21e98"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DRIFT-SECURITY-VERIFY-003",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-EPHEMERAL-STAGING-IAC-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1002,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1002",
+          "title": "[ReviewBus] ODP-EPHEMERAL-STAGING-IAC-001 實作 ephemeral staging 建立、隔離、TTL 與安全清理",
+          "headRefName": "task/ODP-EPHEMERAL-STAGING-IAC-001",
+          "headRefOid": "ee6eddb6951aea752b857183a484ebc22ddf7772",
+          "mergedAt": "2026-08-24T19:59:40Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "82ed6a05cf67c6c0e43f6f5b4219882251a87c42"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1135,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1135",
+          "title": "[ReviewBus] ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001 定義並實作首次 dev release 的 fail-closed recovery admission",
+          "headRefName": "task/ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+          "headRefOid": "f24003a7e18a48c441252ea67beb16d7285c4614",
+          "mergedAt": "2026-09-02T14:15:41Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "dd7013df830cdabe33d1b09e093dd728318d50f5"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1011,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1011",
+          "title": "[ReviewBus] ODP-GITHUB-GCP-ENV-BOOTSTRAP-001 建立 staging/production GitHub 與 GCP 環境保護",
+          "headRefName": "task/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+          "headRefOid": "5edcf009640ae31dde160b1ce4c9123ac2c31a2f",
+          "mergedAt": "2026-08-25T16:26:32Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "8ad3f10dab707711bc1394ff3f6a81042b0b5648"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
+          "status": "unknown-at-rebuild-time"
+        },
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1170,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1170",
+          "title": "[ReviewBus] ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001 依 HZ-004 實績契約實作 heat-zone merge／split",
+          "headRefName": "task/ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+          "headRefOid": "0585dd49976ebf269248067d4adfd56e278157ae",
+          "mergedAt": "2026-09-05T16:07:23Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "eed8d51bb8a18c677baa25ab30a536cc576ae5fe"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-AVM-QUALITY-NULLABLE-001",
+          "status": "unknown-at-rebuild-time"
+        },
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1175,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1175",
+          "title": "[ReviewBus] ODP-INT-MANUAL-CORRECTION-AUDIT-001 建立 INT-006 人工校正寫入、授權、稽核與 rollback",
+          "headRefName": "task/ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+          "headRefOid": "0b3e1987d426200928cc5ec62dfd8de4f8d81358",
+          "mergedAt": "2026-09-05T03:53:16Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "f02960fa81c2beeef88dd213e86ec96c8380b2d8"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-INT001-CDC-DISPOSITION-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1166,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1166",
+          "title": "[ReviewBus] ODP-INT001-CDC-DISPOSITION-001 依 upstream 證據實作 CDC connector 或正式處置 INT-001",
+          "headRefName": "task/ODP-INT001-CDC-DISPOSITION-001",
+          "headRefOid": "39289e4207b29d2c7adea071f42901f9f0b5ae20",
+          "mergedAt": "2026-09-03T20:50:26Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "0f35515ed15aad36c496f30973b2e2ce9fa2b026"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1172,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1172",
+          "title": "[ReviewBus] ODP-JOB-PARTIAL-DISPOSITION-001 依 producer 證據補 PARTIAL 狀態轉移或正式處置 SHARED-001",
+          "headRefName": "task/ODP-JOB-PARTIAL-DISPOSITION-001",
+          "headRefOid": "f8caf62e11643f9cbe59ea6b958faeab746fcac2",
+          "mergedAt": "2026-09-04T13:14:12Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "9647d673ccf2c0f11ef565e78511099821d85c19"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-LH-PREDICTION-DRIFT-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1154,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1154",
+          "title": "[ReviewBus] ODP-LH-PREDICTION-DRIFT-001 實作 LearningHub prediction drift 的 cohort、持久化、DecisionPolicy 與告警",
+          "headRefName": "task/ODP-LH-PREDICTION-DRIFT-001",
+          "headRefOid": "a7f7b7d9d174b45f937d1fb0d12e2c962c97adad",
+          "mergedAt": "2026-09-03T13:07:52Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "0cbc5330f6a076344d2dff32370dedae5b82da4a"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1165,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1165",
+          "title": "[ReviewBus] ODP-LH003-BACKTEST-RELEASE-GATE-001 把 LearningHub Backtest 接成版本化 model release gate",
+          "headRefName": "task/ODP-LH003-BACKTEST-RELEASE-GATE-001",
+          "headRefOid": "ce7a3fadd758ca19b5ebbc632e3d8aa523003f65",
+          "mergedAt": "2026-09-03T21:53:56Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "d3e344353ad4280962ce25078c067f14c9a6df10"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1153,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1153",
+          "title": "[ReviewBus] ODP-MEASUREMENT-CROSSLAYER-GATE-001 把量測缺席檢查擴到 Pydantic、mapper、SQL/dbt、OpenAPI 與 TS",
+          "headRefName": "task/ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+          "headRefOid": "aaa9aaee9380d50ae49544e03ea0a9bdaf8e86a2",
+          "mergedAt": "2026-09-03T12:33:14Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "8479567d66d9d08d0aa4a27d9f0a901ab092f2ae"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1169,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1169",
+          "title": "[ReviewBus] ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 補齊 merge queue 不實作決定的正式可稽核欄位",
+          "headRefName": "task/ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+          "headRefOid": "f2d1bd88ec2dc89148dd3d7346a01de0e921432b",
+          "mergedAt": "2026-09-03T18:10:43Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "830a8ebf919cd3f9dc3d53fc13c4f76e65eeff6e"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1168,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1168",
+          "title": "[ReviewBus] ODP-MODELREADY-QUALITY-NULLABLE-001 ModelReadyRecord nullable mapper 與 dataset snapshot admission fail-closed",
+          "headRefName": "task/ODP-MODELREADY-QUALITY-NULLABLE-001",
+          "headRefOid": "a2a8d9c235e88820572b30700d5f5cc9b31bb0af",
+          "mergedAt": "2026-09-03T20:32:14Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "10d47d17a7b3ca8d3c655afaaf02b931c3fb7e0f"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-NET002-LEASE-DISPOSITION-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1187,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1187",
+          "title": "[ReviewBus] ODP-NET002-LEASE-DISPOSITION-001 依租約資料證據實作 per-option feasibility 或正式處置 NET-002 LEASE",
+          "headRefName": "task/ODP-NET002-LEASE-DISPOSITION-001",
+          "headRefOid": "3bd82e8a401d463ef8301671620d45fc93b6127b",
+          "mergedAt": "2026-09-04T12:35:05Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "c65bb54dd1171c8c878d37282470ada6a18f9ed6"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1174,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1174",
+          "title": "[ReviewBus] ODP-NETPLAN-DISCLOSURE-UI-E2E-001 在 Operator UI 顯示 NetPlan 未建模限制並完成 approval E2E",
+          "headRefName": "task/ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+          "headRefOid": "c71599aa116e1bd5a73bf0be005b34163bd0405e",
+          "mergedAt": "2026-09-04T05:49:33Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "1edb2f834cbf38ccd489cd999802098076e891b7"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-OPS002-DECISION-COMMENTS-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1158,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1158",
+          "title": "[ReviewBus] ODP-OPS002-DECISION-COMMENTS-001 補齊 OPS-002 與任務／決策綁定的 durable comments",
+          "headRefName": "task/ODP-OPS002-DECISION-COMMENTS-001",
+          "headRefOid": "54e8c8f37d9de6f3e60f423dd22a8ffb7f3a76f0",
+          "mergedAt": "2026-09-03T14:36:11Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "c1371572af637ab1598370a495a126a4cddfba65"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-PRICE006-BANDIT-GATED-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1179,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1179",
+          "title": "[ReviewBus] ODP-PRICE006-BANDIT-GATED-001 同一交付完成 PRICE-006 Bandit 與 production activation Gate",
+          "headRefName": "task/ODP-PRICE006-BANDIT-GATED-001",
+          "headRefOid": "282a88fb882cce53c88ef8ac3369ea0676c3d20d",
+          "mergedAt": "2026-09-04T03:35:17Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "470f495d957edc38d330a624cf4d56618cbfb4e2"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1109,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1109",
+          "title": "[ReviewBus] ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001 修正 Runtime Release build handoff 的 masked snapshot 與 rollback wiring",
+          "headRefName": "task/ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+          "headRefOid": "bdd277568d930757243583336a577a2492b67ca6",
+          "mergedAt": "2026-09-01T14:49:31Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "640e35415aa33d5d53af21a8a527431b8f751cea"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1212,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1212",
+          "title": "[ReviewBus] ODP-RELEASE-GATE-FIXTURE-STAGING-002 實作 gate E2E fixture 解耦，接續只有唯讀檢查的001",
+          "headRefName": "task/ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+          "headRefOid": "a9e7853f9ed910303eb6b7fa1d81c1e1b46c5787",
+          "mergedAt": "2026-09-06T01:54:20Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "17393dd447e9b25978a83641cabf7cd77951f24a"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1030,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1030",
+          "title": "[ReviewBus] ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001 整理真實 build artifact 與 gate registry 的 exact binding，維持 fail-closed no-go",
+          "headRefName": "task/ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+          "headRefOid": "74078faecfdd6238909e5157271604074f7eaf96",
+          "mergedAt": "2026-08-26T20:34:11Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "fe698e88d91678b18cfd5356a9c10be08dfa5186"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1050,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1050",
+          "title": "[ReviewBus] ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001 Release rollback 與 masked snapshot handoff",
+          "headRefName": "task/ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+          "headRefOid": "55de004a8559442ed4ba9cedf800e692bb0b1116",
+          "mergedAt": "2026-08-27T15:34:25Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "d41b9328137cef1eceeb5990e8e0bb5963414682"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "DPF-EMGI-MASKED-RELEASE-SNAPSHOT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1146,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1146",
+          "title": "[ReviewBus] ODP-REQ-DISPOSITION-GOVERNANCE-001 建立 MUST requirement amendment／waiver 的可機讀 disposition gate",
+          "headRefName": "task/ODP-REQ-DISPOSITION-GOVERNANCE-001",
+          "headRefOid": "7c889b2117803b8fe419f32e7ace84d1ce38b5e4",
+          "mergedAt": "2026-09-03T13:29:29Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "61ef9183d7c8ea2af4b5d7d625b1513dc683212f"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1221,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1221",
+          "title": "[ReviewBus] ODP-ROLE-PROVIDER-CODEX-REVIEW-001 落實 Agy／Claude 實作、Codex Astra ultra 審查的單一派工政策",
+          "headRefName": "task/ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+          "headRefOid": "c1a382416e4423e22f3bf5dfe86a37d93597e583",
+          "mergedAt": "2026-09-06T05:56:17Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "64f3b2399442e8cd7531284d1e7a3e33bcc3ca9a"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1206,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1206",
+          "title": "[ReviewBus] ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001 修正唯一 Runtime Release 的 dispatch ref 與 manifest CLI 整合",
+          "headRefName": "task/ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+          "headRefOid": "8a7fe4b01270d5f5d95cd6996424612250bef372",
+          "mergedAt": "2026-09-05T05:56:42Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "74530caf5bbf8ee3802df658e21a3ffdfca56f25"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        },
+        {
+          "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1010,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1010",
+          "title": "[ReviewBus] ODP-RUNTIME-RELEASE-SINGLE-PATH-001 整合唯一 build-once Runtime Release 狀態機",
+          "headRefName": "task/ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+          "headRefOid": "5f80756b84852f935625e502eca9fc038a6bbc9a",
+          "mergedAt": "2026-08-25T15:34:07Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "5ae1e5cee8ef6b5047fa72f2426d2a1f42d9f9ce"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1041,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1041",
+          "title": "[ReviewBus] ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001 把 ephemeral staging lifecycle 接進唯一 Runtime Release",
+          "headRefName": "task/ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+          "headRefOid": "fada677569265ed258649b841e5a67fe7bb5dd80",
+          "mergedAt": "2026-08-27T17:50:22Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "462c8cd4ff2569cec0f2c383d9e601c5bdbec715"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1160,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1160",
+          "title": "[ReviewBus] ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001 依 SITE-001 資料證據實作或正式處置 Brand Transfer／Format Conversion",
+          "headRefName": "task/ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+          "headRefOid": "ffe02988a1b4def412090c6b422e6efb26081d9f",
+          "mergedAt": "2026-09-03T16:51:21Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "9f53418df41e558c8f953c801dd8fd1f25f77b5b"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1171,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1171",
+          "title": "[ReviewBus] ODP-SITESCORE-QUALITY-NULLABLE-001 SiteScore average_confidence／data_quality_score 缺席走 feasibility fail-closed",
+          "headRefName": "task/ODP-SITESCORE-QUALITY-NULLABLE-001",
+          "headRefOid": "7b3536c88359e59355d3e8253acd732ad11efa84",
+          "mergedAt": "2026-09-03T18:33:11Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "901b4348ade4fb8cbf5c40ef429c7b49980257cc"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-SPEC-SOURCE-PROVENANCE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1147,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1147",
+          "title": "[ReviewBus] ODP-SPEC-SOURCE-PROVENANCE-001 補齊 ODP-SA-06 與 ODP-FR-AVM-001 canonical source provenance",
+          "headRefName": "task/ODP-SPEC-SOURCE-PROVENANCE-001",
+          "headRefOid": "fd4947321d4bcbefb54ccf53799d0f12e04e8b96",
+          "mergedAt": "2026-09-03T15:08:34Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "b7f9d465ddd71ecdd3dc01a8869e6e6cb485b54d"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
+          "status": "unknown-at-rebuild-time"
+        },
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1208,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1208",
+          "title": "[ReviewBus] ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001 修正 Staging recovery bundle 與 Terraform state 儲存邊界",
+          "headRefName": "task/ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+          "headRefOid": "a5e6a2f7074b6c5e679cbf7f0c6d03f9e6141a5a",
+          "mergedAt": "2026-09-05T16:02:58Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "b9dd2e7b337e4bab8236cd15b5df07092685100b"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+          "status": "unknown-at-rebuild-time"
+        },
+        {
+          "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1164,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1164",
+          "title": "[ReviewBus] ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001 統一 PLATFORM_ADMIN 跨租戶政策為共用 fail-closed guard",
+          "headRefName": "task/ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+          "headRefOid": "b678c18f2055b02adb70f1788951be4269589012",
+          "mergedAt": "2026-09-04T13:32:29Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "541eb1fe2d6b426155dc401089bf0588ef82b345"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "repository": "alfloop-dev/odayplus",
+      "candidates": [
+        {
+          "number": 1096,
+          "url": "https://github.com/alfloop-dev/odayplus/pull/1096",
+          "title": "[ReviewBus] ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 在登入節流修正合併後驗收帳密預設與可選 OIDC 的安全端對端行為",
+          "headRefName": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+          "headRefOid": "69422d71e8d5ac572ade58562c0aeca28d123648",
+          "mergedAt": "2026-09-01T09:10:24Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08"
+          }
+        }
+      ],
+      "candidate_source": "pull_request (inventory candidate, no correction)",
+      "dependents": [
+        {
+          "id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    },
+    {
+      "missing_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "repository": "alfloop-dev/oday-data-platform",
+      "candidates": [
+        {
+          "number": 61,
+          "url": "https://github.com/alfloop-dev/oday-data-platform/pull/61",
+          "title": "XR-EXT-OSS-FINAL-AUDIT-001: complete external data and OSS final audit",
+          "headRefName": "task/XR-EXT-OSS-FINAL-AUDIT-001",
+          "headRefOid": "b1824c979aca008da10aed01fbc0c0a269c581dc",
+          "mergedAt": "2026-08-24T05:54:54Z",
+          "state": "MERGED",
+          "mergeCommit": {
+            "oid": "7b0670d7b37e59e06bc9fea5b6003d1964be2c3c"
+          }
+        }
+      ],
+      "candidate_source": "corrected_candidate (repository_correction applied)",
+      "dependents": [
+        {
+          "id": "HUMAN-OSS-LEGAL-APPROVAL-001",
+          "status": "unknown-at-rebuild-time"
+        }
+      ]
+    }
+  ]
+}
