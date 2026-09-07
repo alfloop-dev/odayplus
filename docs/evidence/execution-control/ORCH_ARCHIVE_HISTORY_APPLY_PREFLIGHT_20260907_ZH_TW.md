@@ -1,9 +1,10 @@
 # ORCH-ARCHIVE-HISTORY-APPLY-001 第一段收據：唯讀執行預檢與維護窗口交接
 
-- 產出者：Claude（owner・第 1–2 輪）／Antigravity3（owner・第 3 輪）／審查者：Codex（reviewer）
+- 產出者：Claude（owner・第 1–2 輪）／Antigravity3（owner・第 3 輪）／Claude2（owner・第 4 輪）／審查者：Codex（reviewer）
 - 量測時間：2026-09-07T04:06Z – 04:17Z（第 1 輪）
 - 第 2 輪複量：2026-09-07T04:29Z – 04:30Z，只重量 PR #1227 的 exact-head 狀態（B7、§3、§8-5），其餘量測值與 plan-only 預覽未重跑、未變更
 - 第 3 輪更新：2026-09-07T04:39Z，PR #1227 已合併（merge commit `9094b4ac`）。更新 B7、§3、§6、§8-5 為已合併但尚未 runtime rollout；移除已過期的 OPEN／未合併／finalize 路由 blocker。Base advance merge `origin/dev`。
+- 第 4 輪更正：2026-09-07，修正第 3 輪引入的步驟編號衝突。本文件有兩套並存的編號——§3 是**整體整合順序**（含窗口外的項目），§4 是**窗口內**的 exact 命令序列。第 3 輪把 B7 的 rollout 從「第 2 步」改成「第 3 步」，反而讓「維護窗口內第 3 步」同時指向 rollout 與「修正 planner 輸入」兩件事。本輪改為所有跨節引用一律標明出處（`§3 第 N 項`／`§4 第 N 步`），沿用 §3 既有的 `見 §4 第 1 步` 寫法。**未重跑 plan-only、未改 JSON、未改 runtime、未新增量測。**
 - 交付分支：`task/ORCH-ARCHIVE-HISTORY-APPLY-001`（base advance 後包含 `origin/dev` tip `9094b4ac`）
 
 > 本輪**只做唯讀預檢與交接**。**沒有**對 canonical board（`ai-status.json`）或 archive（`ai-task-archive/`）
@@ -190,7 +191,7 @@ exit 0。結果：**38 筆規劃、0 筆重建 done、38 筆 blocked 佔位、0 
 **這份預覽不是可套用的批次**：它的 board revision 在產出後 2 分 14 秒就已經被別人改掉了。
 它的用途只有兩個——證明 planner 在新 baseline 上仍然給出保守結果，以及讓 Codex 先看到 38 筆的形狀。
 另外要講明：這份預覽餵的是**未更正**的輸入盤點，所以它的 XR 佔位候選同樣還是誤配的 odayplus#996（見 B4）；
-更正屬於維護窗口內的第 3 步，本輪刻意沒有先斬後奏地改輸入資料。
+更正屬於窗口內的 §4 第 3 步，本輪刻意沒有先斬後奏地改輸入資料。
 
 執行後複驗：archive `index.json` 摘要不變、`tasks/` 仍為 8 筆、board 未被 planner 寫入。
 
@@ -336,7 +337,7 @@ archive 內已有 4 筆 `*-SIDECAR-*` snapshot，證明這條路徑在正式環�
 **仍然成立的真實阻塞——live runtime 尚未 rollout**：雖然 `origin/dev` 已包含 PR #1227 的修正
 （`.orchestrator/status_transition.py` 的 runtime 程式來源路徑修正），但 live runtime 仍停在
 `64f3b2399442`（落後 dev tip），因此這些修正在 runtime rollout 之前不會生效。
-rollout 仍是維護窗口內第 3 步的必要動作（見 §3）。
+rollout 仍是窗口內的必要動作：在 §4 的窗口內命令序列中是**第 2 步**，在 §3 的整體整合順序中列為**第 3 項**（§3 第 1、2 項分別是合併 PR #1227 與開窗口本身，不在窗口內）。
 
 ---
 
@@ -515,7 +516,7 @@ canonical transaction 一次寫入，兩者不是同一個交易。因此：
 - 未修 canonical checkout 的 dirty 檔案，未復原任何舊 code。
 - PR #1227 已於 2026-09-07T04:30:51Z 合併進 `dev`（merge commit `9094b4ac`），但 **live runtime 尚未 rollout**；
   本輪未執行 rollout、未停止或重啟 Supervisor、未切換 live runtime。
-- **B4（XR 候選誤配）本輪只做對帳與揭露，未修改任何已合併的證據檔案**；輸入盤點的更正屬於維護窗口內的第 3 步。
+- **B4（XR 候選誤配）本輪只做對帳與揭露，未修改任何已合併的證據檔案**；輸入盤點的更正屬於窗口內的 §4 第 3 步。
 
 ---
 
@@ -538,7 +539,7 @@ dispatcher 或 maintenance workspace manager。
 3. B5：跨 repo 佔位是否需要 `repository` 欄位（會動到 planner 的 record schema）。
 4. B6：38 筆 blocked 佔位觸發 capacity sidecar 的處置（窗口內關 sidecars／接受並由 chair 逐一否決）。
 5. ~~B7 與 §3：PR #1227 前置條件~~ **已解決：PR #1227 已合併進 `dev`（2026-09-07T04:30:51Z）。**
-   剩餘待裁決：live runtime rollout 的時機與執行者（rollout 是維護窗口內第 3 步的必要動作）。
+   剩餘待裁決：live runtime rollout 的時機與執行者（rollout ＝ §4 第 2 步／§3 第 3 項）。
 6. 維護窗口的實際時間，以及窗口內由誰擔任 apply 的執行者（必須 ≠ Codex，因為 Codex 是核准者）。
 
 在上述裁決與真實維護窗口成立之前，本任務停在這個 checkpoint，不重試、不循環、不擅自進入正式步驟。
