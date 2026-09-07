@@ -166,21 +166,37 @@ image push and signing. Billing was working at that time. Between 2026-09-05 and
 2026-09-07, billing on this GCP project was disabled or the billing account was
 unlinked.
 
-### What Passed Before Failure
+### What Executed Successfully Before Failure
 
-All security, quality, and deployment validation gates passed:
-- Secret scan ✅
-- Python SAST ✅
-- npm audit gate ✅
-- SBOM generation ✅
-- E2E deployment health/backup/restore/rollback ✅
-- WIF authentication ✅
-- Cloud SDK setup ✅
-- Initial release target absence readback ✅
-- Cosign installation ✅
-- Docker build ✅ (image built locally)
+The following pre-image-push gates executed and completed successfully:
+- Secret scan ✅ (step 8)
+- Python SAST ✅ (step 9)
+- npm audit gate ✅ (step 10)
+- SBOM generation ✅ (step 12 — local CycloneDX file only; never attested onto any image)
+- E2E deployment health/backup/restore/rollback ✅ (step 14)
+- WIF authentication ✅ (step 15)
+- Cloud SDK setup ✅ (step 16)
+- Initial release target absence readback ✅ (step 17)
+- Cosign installation ✅ (step 18)
+- Docker build of API image ✅ (step 19 — local build succeeded)
+- Docker push of API image ❌ (step 19 — `denied: billing not enabled` on project #767864276141)
 
-Only the `docker push` failed — the issue is purely GCP infrastructure, not code.
+### What Was NEVER Executed (Skipped Due to Prior Failure)
+
+The following operations within step 19 and all subsequent steps were **never executed**:
+- Cosign signing of API image ❌ (not executed — push failed before signing)
+- Cosign signature verification of API image ❌ (not executed)
+- SBOM attestation of API image ❌ (not executed)
+- Build/push/sign/attest of Worker image ❌ (not executed — `build_publish_sign_attest` loop exited at API)
+- Build/push/sign/attest of Scheduler image ❌ (not executed)
+- Build/push/sign/attest of Web image ❌ (not executed)
+- Supply chain ref resolution (signature + SBOM digest refs) ❌ (not executed)
+- Write build-once artifact handoff (step 20) ❌ (skipped by GitHub Actions)
+- Publish immutable image handoff (step 21) ❌ (skipped)
+- Publish candidate release manifest (step 22) ❌ (skipped)
+- Publish initial-release target absence readback (step 23) ❌ (skipped)
+
+**Assessment**: The billing failure at `docker push` is a GCP infrastructure issue, not a code defect. However, all operations downstream of `docker push` — including Cosign signing, signature verification, SBOM attestation, three additional image builds, manifest generation, and artifact publication — were never executed and remain **unverified**.
 
 ## 6. Minimal Fix Required
 
@@ -206,35 +222,58 @@ Only the `docker push` failed — the issue is purely GCP infrastructure, not co
 ### What Cannot Be Fixed by Auto Worker
 
 - GCP billing configuration requires Human/Ops authority
-- No code, workflow, or toolchain change can resolve this
-- The candidate SHA 596b9c9a is correct; the dispatch inputs are correct
-- Only the GCP infrastructure block must be cleared
+- No code, workflow, or toolchain change can resolve the billing block
+- The candidate SHA `596b9c9a` and dispatch inputs are correct for a re-run, but the build must complete *all* steps (push, signing, attestation, manifest, supply chain refs) to produce verifiable artifacts
+- Only the GCP infrastructure block must be cleared before a re-run is attempted
 
-## 7. Build Artifacts
+## 7. Build Artifacts — NONE PRODUCED
 
-### Published Artifacts (partial — only pre-failure receipts)
+> **No immutable release artifacts were produced by this build run.** The build
+> failed at `docker push` (step 19) due to GCP billing denial. All six required
+> egress contract artifact categories remain undelivered.
 
-| Artifact | Status |
-|---|---|
-| `release-phase-receipt-dev-build` | ✅ Published (phase validation passed) |
-| `release-environment-receipt-dev-build` | ✅ Published (environment binding passed) |
-| `release-npm-audit-receipt-dev` | ✅ Published (npm audit passed) |
-| `runtime-release-images-596b9c9a...` | ❌ Not published (build failed at push) |
-| `runtime-release-manifest-596b9c9a...` | ❌ Not published (handoff step skipped) |
-| `initial-release-absence-readback-596b9c9a...` | ❌ Not published (upload step skipped) |
+### Pre-Failure CI Receipts (informational only; not release artifacts)
 
-### Egress Contract Digests
+| Artifact ID | Artifact Name | Status |
+|---|---|---|
+| 10025584937 | `release-phase-receipt-dev-build` | Uploaded (phase validation receipt) |
+| 10025591210 | `release-environment-receipt-dev-build` | Uploaded (environment binding receipt) |
+| 10025603772 | `release-npm-audit-receipt-dev` | Uploaded (npm audit receipt) |
 
-Not available — manifest was not generated due to image push failure.
+### Required Immutable Release Artifacts — ALL MISSING
+
+| # | Required Artifact | Status | Notes |
+|---|---|---|---|
+| 1 | Immutable container images (4: api, web, worker, scheduler) | ❌ **Not produced** | Only API image was built locally; push failed, no image exists in Artifact Registry for this SHA. Worker, scheduler, web images were never built. |
+| 2 | Candidate release manifest (`RELEASE_MANIFEST.json`) | ❌ **Not produced** | Step 20 (write handoff) was skipped by GitHub Actions |
+| 3 | SBOM attestations (per-image CycloneDX) | ❌ **Not produced** | SBOM was generated locally (step 12) but never attested onto any image via Cosign |
+| 4 | Cosign signatures (per-image) | ❌ **Not produced** | `cosign sign` was never executed for any image |
+| 5 | Supply chain provenance refs (signature + SBOM digest refs) | ❌ **Not produced** | `resolve_supply_chain_ref` was never reached |
+| 6 | Six-file egress contract digest set | ❌ **Not produced** | Requires manifest which was not generated |
+
+### Egress Contract Digests — NOT AVAILABLE
+
+No egress contract digests can be reported because the manifest was never generated.
+The six required files (4 image identity digests + manifest digest + SBOM digest) do not exist.
 
 ## 8. Handoff to ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002
 
-**Cannot complete handoff.** The build did not produce the immutable artifact handoff
-(manifest, image digests, SBOM refs, signature refs) required for the downstream
-task. A successful build is required before handoff.
+**Handoff status: BLOCKED — cannot complete.**
 
-The following information is pre-staged for immediate use once billing is restored
-and a successful build completes:
+The build did not produce any of the required immutable artifacts:
+- ❌ No immutable container image digests (4 images required)
+- ❌ No candidate release manifest (`RELEASE_MANIFEST.json`)
+- ❌ No SBOM attestation refs
+- ❌ No Cosign signature refs
+- ❌ No supply chain provenance digest refs
+- ❌ No egress contract digest set (6 files)
+
+**Acceptance criterion**: "未交接真實可驗證產物不可 done" — this task cannot be marked done
+without delivering real, verifiable artifacts. A failure RCA checkpoint alone
+does not satisfy the task acceptance.
+
+The following pre-staged information is ready for immediate use once a successful
+build completes:
 
 - **Candidate C**: `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`
 - **Target task**: ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002
@@ -250,3 +289,43 @@ and a successful build completes:
 - ❌ Did not output secret values (only variable names recorded)
 - ❌ Did not forge Human/Ops or reviewer approval
 - ❌ Did not re-run the same failing run (billing issue requires Human/Ops fix first)
+- ❌ Did not declare done without verifiable artifacts
+
+## 10. Canonical Blocker
+
+**Blocker**: GCP billing disabled on project `odayplus-runtime-20260825` (project number `767864276141`)
+
+| Field | Value |
+|---|---|
+| Blocker type | Infrastructure — requires Human/Ops authority |
+| Blocking action | `docker push` to Artifact Registry denied |
+| GCP project | `odayplus-runtime-20260825` (project #767864276141) |
+| Error | `denied: This API method requires billing to be enabled.` |
+| Restoration URL | https://console.developers.google.com/billing/enable?project=767864276141 |
+| Last known working | 2026-09-05T03:41:13Z (run 33942097235, SHA `04e1572f`, different candidate) |
+| Failed at | 2026-09-07T15:53:11.768Z (run 34140207274, SHA `596b9c9a`) |
+| Evidence | https://github.com/alfloop-dev/odayplus/actions/runs/34140207274/job/101800303595 |
+
+**What must happen before this task can proceed**:
+1. Human/Ops restores billing on GCP project #767864276141
+2. Billing restoration is evidenced (e.g., successful Artifact Registry push test)
+3. Owner (Antigravity3) checks whether the existing failed run can be reused, or dispatches a new build-only run
+4. Successful build produces all 6 artifact categories
+5. Owner downloads and verifies exact artifacts, raw hashes, 4 image identities, supply chain refs, and egress digest
+6. Owner completes handoff to PR#1205 (Antigravity5/Codex2)
+
+**What must NOT happen**:
+- ❌ Do not re-run the build without evidence of billing restoration
+- ❌ Do not declare done without delivering real verifiable artifacts
+- ❌ Do not deploy, sign a lease, or enable external sources
+- ❌ Do not force push or overwrite task history
+
+## 11. Review History
+
+| Date | Actor | Action | Summary |
+|---|---|---|---|
+| 2026-09-07T15:48:54Z | Antigravity3 | Dispatch | Build dispatched for C=`596b9c9a`, run 34140207274 |
+| 2026-09-07T15:53:12Z | GitHub Actions | Failure | Step 19 failed: billing denied on docker push |
+| 2026-09-07T~16:20Z | Antigravity3 | PR submission | PR#1237 submitted with evidence (head `92203b2f`) |
+| 2026-09-07T16:27:07Z | Codex2 | Review rejection | P1: no artifacts delivered; P2: evidence overstates verification scope |
+| 2026-09-07T16:32Z | Antigravity3 | Evidence correction | Corrected P1/P2 findings; set canonical blocker for billing restoration |
