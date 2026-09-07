@@ -133,6 +133,14 @@ base da4b77d1（乾淨 worktree）      : 20 failed, 1806 passed, 6 skipped, 440
 （參考）第一輪含 fixture 修補時      : 20 failed, 1812 passed, 6 skipped, 440 subtests passed  EXIT=1
 ```
 
+上表量測於 base advance 之前（base `da4b77d1`）。base advance merge 至 `origin/dev` = `9094b4ac`（含 PR #1227）後重測受影響子集，結果不變：
+
+```
+$ uv run --frozen --python 3.12 pytest .orchestrator/test_supervisor.py \
+    -k "higher_priority or preempt or preemption"
+3 failed, 19 passed, 592 deselected   EXIT=1   # 仍是 §5.2 的同三項
+```
+
 FAILED 名單逐項比對（`comm`）：
 
 - 相對 base **消失的**：無。
@@ -160,6 +168,8 @@ All checks passed!
 > 即使與 PR1227 hunk 不重疊，仍違反本 task 的 single-owner scope；請移除該檔變更，將必要測試調整另開 follow-up（或待 PR1227 併入後以同一 owner 處理），本 PR 只保留 dispatch_engine/dispatch_policy/test_dispatch_policy/contract/中文證據。
 
 已照辦：本輪 `.orchestrator/test_supervisor.py` 已還原至 `origin/dev`，本 PR 對該檔的 diff 為空。
+
+**裁決當下的前提其後已消失**：PR #1227 已於本輪 base advance 前併入 `dev`（`origin/dev` = `9094b4ac`，merge commit `Merge pull request #1227`）。本分支已 base advance merge 該 head，因此「與 PR1227 平行改同一控制檔」的風險已不存在——裁決中的替代路徑「待 PR1227 併入後以同一 owner 處理」現在可行。本 PR 仍**維持**裁決指定的檔案清單不變，等待 reviewer 就 §5.3 的兩個選項擇一。
 
 ### 5.2 因此本 PR 會讓三個既有測試轉紅（已量測）
 
@@ -195,10 +205,12 @@ $ uv run --frozen --python 3.12 pytest .orchestrator/test_supervisor.py \
 22 passed  EXIT=0
 ```
 
-建議順序：
+兩個可行選項（請 reviewer 擇一）：
 
-1. follow-up task（或 PR #1227 併入後由同一 owner）補上這三處 fixture 並合併——在舊 engine 上即綠，不需要本 PR。
-2. 本 PR base advance merge 後 CI 轉綠，再行合併。
+- **選項 A**：另開 follow-up task 補上這三處 fixture 並先行合併——在舊 engine 上即綠，不需要本 PR；本 PR 隨後 base advance 即轉綠。
+- **選項 B**：PR #1227 已併入 `dev`，平行改檔的風險已消失；由本 task 的同一 owner 直接在本 PR 補上該三處 fixture。patch 已備妥並驗證過與舊 engine 相容，只需一次 commit。
+
+Owner 未自行選擇選項 B，因為裁決明確列出了本 PR 應保留的檔案清單；選項變更屬 reviewer 的 scope 決定。
 
 本 PR **完全未觸碰** `.orchestrator/status_transition.py`，且對 `.orchestrator/test_supervisor.py` 的 diff 為空。
 
