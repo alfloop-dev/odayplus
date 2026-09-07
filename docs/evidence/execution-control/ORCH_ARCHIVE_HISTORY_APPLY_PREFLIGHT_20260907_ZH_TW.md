@@ -336,7 +336,7 @@ archive 內已有 4 筆 `*-SIDECAR-*` snapshot，證明這條路徑在正式環�
 **仍然成立的真實阻塞——live runtime 尚未 rollout**：雖然 `origin/dev` 已包含 PR #1227 的修正
 （`.orchestrator/status_transition.py` 的 runtime 程式來源路徑修正），但 live runtime 仍停在
 `64f3b2399442`（落後 dev tip），因此這些修正在 runtime rollout 之前不會生效。
-rollout 仍是維護窗口內第 2 步的必要動作（見 §3）。
+rollout 仍是維護窗口內第 3 步的必要動作（見 §3）。
 
 ---
 
