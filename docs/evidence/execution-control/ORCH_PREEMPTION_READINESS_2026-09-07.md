@@ -128,11 +128,17 @@ FAILED test_role_policy_that_excludes_the_reviewer_lane_is_not_a_preemption_reas
 ```
 $ uv run --frozen --python 3.12 pytest .orchestrator -p no:cacheprovider -m 'not requires_live_env'
 
-base da4b77d1（乾淨 worktree）  : 20 failed, 1806 passed, 6 skipped, 440 subtests passed  EXIT=1
-本 branch                       : 20 failed, 1812 passed, 6 skipped, 440 subtests passed  EXIT=1
+base da4b77d1（乾淨 worktree）      : 20 failed, 1806 passed, 6 skipped, 440 subtests passed  EXIT=1
+本 PR（test_supervisor 已還原）     : 23 failed, 1809 passed, 6 skipped, 440 subtests passed  EXIT=1
+（參考）第一輪含 fixture 修補時      : 20 failed, 1812 passed, 6 skipped, 440 subtests passed  EXIT=1
 ```
 
-兩側 FAILED 名單逐項比對後**完全相同**（`comm -13` / `comm -23` 皆為空），差異只有本次新增的 6 個測試。這 20 項是本機環境既有的紅（`ReviewHeadFreezeTests` 4 項、`test_worker_hard_inactivity` 5 項、`test_worker_settlement_paths` 11 項），非本次改動造成；CI 上的實際結果以 PR 的 exact head run 為準。
+FAILED 名單逐項比對（`comm`）：
+
+- 相對 base **消失的**：無。
+- 相對 base **新增的**：恰好是 §5 那三個 `WorkerPreemptionSafeBoundaryTests`，無其他。
+
+base 的那 20 項是本機環境既有的紅（`ReviewHeadFreezeTests` 4 項、`test_worker_hard_inactivity` 5 項、`test_worker_settlement_paths` 11 項），非本次改動造成；CI 上的實際結果以 PR 的 exact head run 為準。第一輪含 fixture 修補時新增紅為 0，證明那三項紅的唯一來源就是 §5 所述的 fixture 缺口。
 
 Lint：
 
@@ -141,46 +147,60 @@ $ uv run --python 3.12 ruff check .orchestrator delivery_toolchain scripts
 All checks passed!
 ```
 
-執行測試後 worktree 僅剩本任務的 5 個改動檔與 1 個新增 evidence 檔，`ai-status.json` 未被測試覆寫。
+執行測試後 worktree 僅剩本任務的 4 個改動檔與 1 個新增 evidence 檔，`ai-status.json` 未被測試覆寫。
 
 ---
 
-## 5. 對 `test_supervisor.py` 的三處 fixture 修補（本輪例外，請 reviewer 裁決）
+## 5. `test_supervisor.py` 的三個既有測試：本 PR 不修，紅燈已知且已定序
 
-Task brief 要求「不接觸 PR1227 正在修的 `status_transition` / `test_supervisor`」。本輪**無法**完全遵守，理由與證據如下，先在此揭露：
+### 5.1 第一輪提交與 reviewer 裁決
 
-`.orchestrator/test_supervisor.py::WorkerPreemptionSafeBoundaryTests` 有三個既有測試，其 review 候選是「只有 status/owner/reviewer、沒有 `review_submission`、沒有 CI mock」的空殼：
+第一輪（head `40bba61c`）曾一併補上 `.orchestrator/test_supervisor.py::WorkerPreemptionSafeBoundaryTests` 三個 fixture。Codex 於 `2026-09-07T04:29:43Z` reopen，裁決為：
 
-- `test_dirty_worktree_fails_closed_and_preserves_receipt_on_forced_preemption`
-- `test_clean_finalize_worker_can_be_preempted_and_preserves_review_approved`
-- `test_same_task_priority_candidates_follow_existing_lifecycle_preemption_rules`（case 1）
+> 即使與 PR1227 hunk 不重疊，仍違反本 task 的 single-owner scope；請移除該檔變更，將必要測試調整另開 follow-up（或待 PR1227 併入後以同一 owner 處理），本 PR 只保留 dispatch_engine/dispatch_policy/test_dispatch_policy/contract/中文證據。
 
-這三個 fixture 之所以能通過，正是因為舊的 review 快路不去看它們缺了什麼——它們把本次要修掉的缺陷語意寫成了斷言。基線量測：
+已照辦：本輪 `.orchestrator/test_supervisor.py` 已還原至 `origin/dev`，本 PR 對該檔的 diff 為空。
 
-```
-base da4b77d1（乾淨 worktree）：22 passed
-只改 dispatch_engine/dispatch_policy：3 failed, 19 passed
-```
-
-**無法在 scope 內規避**：任何讓這三個 fixture 維持綠燈的寫法，都等於為「沒有 review submission 的 review」開一個特例，也就是再寫一份比 `is_task_review_dispatch_eligible` 更弱的第二套 eligibility——這與 brief 的「沿用唯一 ready eligibility 判斷」「無證據 fail-closed」兩條直接衝突。
-
-**採取的最小修補**：只為這三個候選補上其情境本就隱含的事實——一筆 `review_submission`（含 `remote_sha`）與兩個 `ai_status` mock（`resolve_task_sha` 回同一 head、`task_pr_ci_status` 回 `("OPEN", "success")`），與同一批測試對 finalize 候選既有的做法一致。未改任何斷言、未改任何 production 接線。
-
-**與 PR1227 的重疊量測**：
+### 5.2 因此本 PR 會讓三個既有測試轉紅（已量測）
 
 ```
-$ gh pr view 1227 --json files
-.orchestrator/status_transition.py, .orchestrator/test_supervisor.py, docs/evidence/...
+$ uv run --frozen --python 3.12 pytest .orchestrator/test_supervisor.py \
+    -k "higher_priority or preempt or preemption"
 
-$ gh pr diff 1227  # test_supervisor.py 的 hunk 位置
-@@ -4611,12 +4611,41 @@
-@@ -4652,24 +4681,55 @@
-@@ -4679,11 +4739,114 @@
+base da4b77d1（乾淨 worktree）: 22 passed                    EXIT=0
+本 PR（test_supervisor 已還原）: 3 failed, 19 passed          EXIT=1
 ```
 
-PR1227 在 `test_supervisor.py` 的三個 hunk 落在第 4611–4790 行；本次修補落在第 11103–11530 行，相距逾 6000 行，無文字重疊、無同一 gate 的接線重疊。本次**完全未觸碰** `.orchestrator/status_transition.py`。
+紅的三項：
 
-若 reviewer 判定仍不應在本 PR 觸碰 `test_supervisor.py`，可退回並改以獨立 task 承接該三處 fixture；但在那之前 engine 修正無法取得綠燈。
+- `WorkerPreemptionSafeBoundaryTests::test_dirty_worktree_fails_closed_and_preserves_receipt_on_forced_preemption`
+- `WorkerPreemptionSafeBoundaryTests::test_clean_finalize_worker_can_be_preempted_and_preserves_review_approved`
+- `WorkerPreemptionSafeBoundaryTests::test_same_task_priority_candidates_follow_existing_lifecycle_preemption_rules`（case 1）
+
+原因是這三個測試的 review 候選是「只有 status/owner/reviewer、沒有 `review_submission`、沒有 CI mock」的空殼。它們之所以在 base 上綠，正是因為舊的 review 快路不去看它們缺了什麼——它們把本次要修掉的缺陷語意寫成了斷言。任何讓它們在新 engine 下維持綠燈的寫法，都等於為「沒有 review submission 的 review」開特例，也就是再寫一份比 `is_task_review_dispatch_eligible` 更弱的第二套 eligibility，與 §3.1 的「沿用唯一 ready eligibility 判斷」直接衝突。
+
+**這會讓本 PR 的 CI `orchestrator` job 紅，因此本 PR 在下述 follow-up 落地前無法合併。**
+
+### 5.3 建議的落地順序（follow-up 可先行且與 base 相容）
+
+所需的 fixture 修補只是補上其情境本就隱含的事實——一筆 `review_submission`（含 `remote_sha`）與兩個 `ai_status` mock（`resolve_task_sha` 回同一 head、`task_pr_ci_status` 回 `("OPEN", "success")`），與同一批測試對 finalize 候選既有的做法一致；不改任何斷言。
+
+**關鍵性質：該修補與未修正的 engine 相容**，因此可以先行獨立合併，不必等本 PR：
+
+```
+$ # 把 fixture patch 套到 base da4b77d1 的乾淨 worktree（保留舊 dispatch_engine.py）
+$ git apply test_supervisor_fixture.patch
+$ uv run --frozen --python 3.12 pytest .orchestrator/test_supervisor.py \
+    -k "higher_priority or preempt or preemption"
+22 passed  EXIT=0
+```
+
+建議順序：
+
+1. follow-up task（或 PR #1227 併入後由同一 owner）補上這三處 fixture 並合併——在舊 engine 上即綠，不需要本 PR。
+2. 本 PR base advance merge 後 CI 轉綠，再行合併。
+
+本 PR **完全未觸碰** `.orchestrator/status_transition.py`，且對 `.orchestrator/test_supervisor.py` 的 diff 為空。
 
 ---
 

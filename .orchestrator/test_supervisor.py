@@ -11136,14 +11136,6 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "owner": "Codex",
                 "reviewer": "Antigravity",
                 "depends_on": [],
-                # A preemption candidate has to be work the dispatcher could
-                # actually start, so the review carries the submitted head the
-                # reviewer lane checks. Without it this task is only
-                # review-shaped and can never take the slot it frees.
-                "review_submission": {
-                    "pr_number": 4001,
-                    "remote_sha": "2222222233333333444444445555555566666666",
-                },
             },
         }
         status = {"tasks": list(task_map.values())}
@@ -11153,8 +11145,6 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
             mock.patch.object(supervisor, "retry_due_workers", return_value=False),
-            mock.patch("ai_status.resolve_task_sha", return_value="2222222233333333444444445555555566666666"),
-            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
             mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve_worktree,
@@ -11208,14 +11198,6 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "owner": "Codex",
                 "reviewer": "Antigravity",
                 "depends_on": [],
-                # A preemption candidate has to be work the dispatcher could
-                # actually start, so the review carries the submitted head the
-                # reviewer lane checks. Without it this task is only
-                # review-shaped and can never take the slot it frees.
-                "review_submission": {
-                    "pr_number": 4001,
-                    "remote_sha": "2222222233333333444444445555555566666666",
-                },
             },
         }
         status = {"tasks": list(task_map.values())}
@@ -11230,8 +11212,6 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
             mock.patch.object(supervisor, "retry_due_workers", return_value=False),
-            mock.patch("ai_status.resolve_task_sha", return_value="2222222233333333444444445555555566666666"),
-            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
             mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
@@ -11533,19 +11513,9 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "reviewer": "Antigravity",
                 "priority": "P1",
                 "depends_on": [],
-                # Same reason as above: review outranks finalize only when the
-                # review is one the reviewer lane could be dispatched onto.
-                "review_submission": {
-                    "pr_number": 4002,
-                    "remote_sha": "2222222233333333444444445555555566666666",
-                },
             },
         }
-        with (
-            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
-            mock.patch("ai_status.resolve_task_sha", return_value="2222222233333333444444445555555566666666"),
-            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
-        ):
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
             self.assertTrue(
                 supervisor.higher_priority_ready_task_exists(config, finalize_worker, task_map_p1_rev, state)
             )
