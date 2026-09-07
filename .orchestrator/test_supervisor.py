@@ -11192,6 +11192,14 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertIsNone(kwargs["new_status"])
 
 
+#: Exact remote head for review candidates that are meant to be genuinely
+#: dispatchable. Preemption asks the same eligibility question the review
+#: dispatcher asks, so a review candidate is only a lawful reason to end a
+#: running worker when it carries a submission whose head resolves and whose CI
+#: has concluded green -- the two mocks paired with this constant.
+DISPATCHABLE_REVIEW_HEAD = "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee"
+
+
 class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
@@ -11400,6 +11408,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "status": "review",
                 "owner": "Codex",
                 "reviewer": "Antigravity",
+                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
                 "depends_on": [],
             },
         }
@@ -11411,6 +11420,8 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
             mock.patch.object(supervisor, "retry_due_workers", return_value=False),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value=DISPATCHABLE_REVIEW_HEAD),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
             mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve_worktree,
             mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True),
@@ -11462,6 +11473,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "status": "review",
                 "owner": "Codex",
                 "reviewer": "Antigravity",
+                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
                 "depends_on": [],
             },
         }
@@ -11478,6 +11490,8 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
             mock.patch.object(supervisor, "retry_due_workers", return_value=False),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value=DISPATCHABLE_REVIEW_HEAD),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
             mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
             mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True) as sync_preempted,
@@ -11777,10 +11791,15 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "owner": "Codex",
                 "reviewer": "Antigravity",
                 "priority": "P1",
+                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
                 "depends_on": [],
             },
         }
-        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value=DISPATCHABLE_REVIEW_HEAD),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
+        ):
             self.assertTrue(
                 supervisor.higher_priority_ready_task_exists(config, finalize_worker, task_map_p1_rev, state)
             )
