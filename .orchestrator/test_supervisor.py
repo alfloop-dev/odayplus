@@ -4624,9 +4624,29 @@ class DispatchStatusSyncTests(unittest.TestCase):
 printf 'cwd=%s\\n' "$PWD" >> {record}
 printf 'AI_NAME=%s\\n' "${{AI_NAME-}}" >> {record}
 printf 'PANTHEON_STATUS_ROOT=%s\\n' "${{PANTHEON_STATUS_ROOT-}}" >> {record}
+printf 'ORCH_STATUS_ROOT=%s\\n' "${{ORCH_STATUS_ROOT-}}" >> {record}
 for arg in "$@"; do printf 'arg=%s\\n' "$arg" >> {record}; done
 {tail}
 """
+
+    # Runs inside the fixture launcher, exactly where the real `ai-status.sh`
+    # execs the runtime writer. It asks the shipped resolver where the write
+    # belongs and lands a marker there, so a root the supervisor failed to pin
+    # shows up as a file under the wrong board rather than as a passing
+    # assertion about an environment string nobody consulted.
+    LAUNCHER_RUNTIME_WRITE_TAIL = """python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, {scripts_dir!r})
+import ai_status
+
+root = ai_status.resolve_status_root(os.environ)
+(root / {marker_name!r}).write_text("runtime writer landed here", encoding="utf-8")
+PY
+"""
+
+    RUNTIME_WRITE_MARKER = "runtime-writer-landed.txt"
 
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
@@ -4706,6 +4726,56 @@ for arg in "$@"; do printf 'arg=%s\\n' "$arg" >> {record}; done
                 record[key] = value
         return record
 
+    def arm_runtime_write_launcher(self) -> None:
+        self.write_launcher(
+            self.LAUNCHER_RUNTIME_WRITE_TAIL.format(
+                scripts_dir=str(SCRIPTS_DIR),
+                marker_name=self.RUNTIME_WRITE_MARKER,
+            )
+        )
+
+    def inherit_conflicting_status_root(self) -> Path:
+        """Give the supervisor process a root every config in this test rejects.
+
+        Reproduces a supervisor that inherited another board's coordination
+        root: both root names arrive pointing away from the configured status
+        file, so a caller that pins only one of them leaves the runtime writer
+        resolving the other.
+        """
+
+        decoy = Path(tempfile.mkdtemp(prefix="pantheon-decoy-status-root-"))
+        self.addCleanup(shutil.rmtree, decoy, ignore_errors=True)
+        patcher = mock.patch.dict(
+            os.environ,
+            {"ORCH_STATUS_ROOT": str(decoy), "PANTHEON_STATUS_ROOT": str(decoy)},
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return decoy
+
+    def assert_runtime_write_landed_on(self, selected: Path, decoy: Path) -> None:
+        invocation = self.launcher_invocation()
+        for name in ("PANTHEON_STATUS_ROOT", "ORCH_STATUS_ROOT"):
+            self.assertEqual(
+                invocation[name],
+                str(selected),
+                f"{name} was not pinned to the configured status root",
+            )
+        self.assertEqual(
+            ai_status.resolve_status_root({name: invocation[name] for name in ("ORCH_STATUS_ROOT", "PANTHEON_STATUS_ROOT")}),
+            selected.resolve(),
+            "the shipped runtime resolver disagrees with the root the launcher was pinned to",
+        )
+        self.assertTrue(
+            (selected / self.RUNTIME_WRITE_MARKER).exists(),
+            "the runtime writer did not commit to the configured status root",
+        )
+        self.assertEqual(
+            sorted(entry.name for entry in decoy.iterdir()),
+            [],
+            "the runtime writer committed to the inherited root instead of the configured one",
+        )
+
     def assert_legacy_writer_untouched(self) -> None:
         self.assertFalse(
             self.legacy_marker.exists(),
@@ -4728,6 +4798,24 @@ for arg in "$@"; do printf 'arg=%s\\n' "$arg" >> {record}; done
         self.assertIn("Supervisor auto-started", invocation["args"][2])
         self.assertEqual(invocation["AI_NAME"], "Copilot")
         self.assertEqual(invocation["PANTHEON_STATUS_ROOT"], str(self.root))
+        self.assertEqual(invocation["ORCH_STATUS_ROOT"], str(self.root))
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(len(self.events("task_dispatch_synced")), 1)
+
+    def test_sync_dispatched_task_status_pins_runtime_root_over_inherited_root(self) -> None:
+        decoy = self.inherit_conflicting_status_root()
+        self.arm_runtime_write_launcher()
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertTrue(changed)
+        self.assert_legacy_writer_untouched()
+        self.assert_runtime_write_landed_on(self.root, decoy)
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"][0], "start")
+        self.assertEqual(invocation["args"][1], "APP-002-W1-FRONT-HANDOFF")
+        self.assertIn("Supervisor auto-started", invocation["args"][2])
+        self.assertEqual(invocation["AI_NAME"], "Copilot")
         self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
         self.assertEqual(len(self.events("task_dispatch_synced")), 1)
 
@@ -4804,6 +4892,20 @@ for arg in "$@"; do printf 'arg=%s\\n' "$arg" >> {record}; done
         invocation = self.launcher_invocation()
         self.assertEqual(invocation["args"], ["sync"])
         self.assertEqual(invocation["PANTHEON_STATUS_ROOT"], str(self.root))
+        self.assertEqual(invocation["ORCH_STATUS_ROOT"], str(self.root))
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(self.events("task_reassignment_sync_failed"), [])
+
+    def test_sync_status_pipeline_pins_runtime_root_over_inherited_root(self) -> None:
+        decoy = self.inherit_conflicting_status_root()
+        self.arm_runtime_write_launcher()
+
+        self.assertTrue(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        self.assert_runtime_write_landed_on(self.root, decoy)
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"], ["sync"])
         self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
         self.assertEqual(self.events("task_reassignment_sync_failed"), [])
 

@@ -61,17 +61,26 @@ def _resolve_status_launcher(config: dict[str, Any]) -> tuple[Path, str | None]:
     return launcher, None
 
 
+STATUS_ROOT_ENV_VARS = ("ORCH_STATUS_ROOT", "PANTHEON_STATUS_ROOT")
+
+
 def _status_launcher_env(config: dict[str, Any]) -> dict[str, str]:
     """Pin the launcher to the status root this config selected.
 
     The launcher honours an inherited ``PANTHEON_STATUS_ROOT`` before falling
-    back to its own location, so supervisor writes stay addressed to the
-    configured board even when the process inherited a different root.
+    back to its own location, but the runtime writer it execs resolves
+    ``ORCH_STATUS_ROOT`` first. Pinning only one of them lets a supervisor that
+    inherited a different root address the launcher at the configured board
+    while the writer behind it commits to the inherited one, splitting CAS and
+    writer authority across two boards. Both names therefore carry the same
+    configured root so every layer of the call resolves to it.
     """
 
     sv = _supervisor_module()
     env = os.environ.copy()
-    env["PANTHEON_STATUS_ROOT"] = str(sv.config_path(config, "status_file").parent)
+    status_root = str(sv.config_path(config, "status_file").parent)
+    for name in STATUS_ROOT_ENV_VARS:
+        env[name] = status_root
     return env
 
 
