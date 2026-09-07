@@ -398,22 +398,60 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
         return None
 
 
+def _is_repository_slug(value: str | None) -> bool:
+    """Whether a value is the `owner/name` GitHub slug `gh --repo` accepts."""
+    owner, sep, name = str(value or "").strip().partition("/")
+    return bool(sep and owner and name and "/" not in name)
+
+
 def _task_repository_slug(config: dict[str, Any], task: dict[str, Any]) -> str:
-    """The task's repository slug, or "" when it cannot be resolved.
+    """The task's repository as an `owner/name` slug, or "" when unresolvable.
 
     Routing used to rely on the supervisor's cwd, which silently answered for
-    ODay Plus whatever repository the task belonged to.
+    ODay Plus whatever repository the task belonged to. Declaring the repository
+    on the task fixed that, but the declared value was then handed to
+    `gh --repo` verbatim -- and `task.repository` is a *registry name*, not a
+    slug. `pantheon` is the registry id of this very checkout (see
+    `multi_repo_registry.LEGACY_SELF_REPO_ID`), written into task records going
+    back months, so an approved PR carrying it was routed with `--repo pantheon`;
+    `gh` rejects that, and the PR was reported `merge_route_blocked` every tick
+    and never enqueued.
+
+    The registry already owns name -> slug for ids, aliases and display names,
+    so this asks it rather than growing a second spelling here. A repository the
+    registry does not carry can still be addressed directly, as long as it was
+    written as `owner/name` in the first place.
     """
     declared = str((task or {}).get("repository") or "").strip()
-    if declared:
-        return declared
     try:
-        from multi_repo_registry import resolve_task_repository
+        from multi_repo_registry import (
+            matching_repo_id,
+            repository_slug,
+            resolve_task_repository,
+        )
+    except ImportError:
+        return declared if _is_repository_slug(declared) else ""
 
+    if declared:
+        try:
+            resolved = repository_slug(config, matching_repo_id(config, declared))
+        except Exception:
+            resolved = None
+        if _is_repository_slug(resolved):
+            return str(resolved).strip()
+        # Unknown to the registry, or registered without a slug. Only a value
+        # that already is a slug can be routed; anything else names a repository
+        # `gh` has no way to reach, and the caller must say so rather than guess.
+        return declared if _is_repository_slug(declared) else ""
+
+    # Nothing declared: the registry's artifact-prefix fallback is the one place
+    # allowed to infer this, and it answers with the configured slug.
+    try:
         binding = resolve_task_repository(config, task)
-        return str(binding.slug or "")
     except Exception:
         return ""
+    slug = str(binding.slug or "").strip()
+    return slug if _is_repository_slug(slug) else ""
 
 
 _MERGE_QUEUE_BY_REPO: dict[str, bool] = {}
@@ -528,6 +566,16 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     # with no strategy has nothing to do there. Ask once per repository and pick
     # the only route that repository actually has.
     slug = _task_repository_slug(config, task)
+    declared_repository = str(task.get("repository") or "").strip()
+    if declared_repository and not slug:
+        # Falling through without `--repo` routes against the supervisor's own
+        # checkout, which is the wrong-repository merge this path exists to
+        # prevent. A declaration the registry cannot place is reported, not
+        # guessed at.
+        return "blocked", (
+            f"declared repository {declared_repository!r} does not resolve to an "
+            "owner/name slug in the repository registry"
+        )
     base = str(task.get("base_branch") or "dev").strip() or "dev"
     queued_repo = repository_has_merge_queue(slug, base)
     if queued_repo is False:
