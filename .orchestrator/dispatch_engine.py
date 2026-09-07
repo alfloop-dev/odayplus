@@ -11,6 +11,7 @@ from dispatch_policy import (
     DEFAULT_HELPER_CLAIMABLE_STATUSES,
     REASON_HELPER_CLAIM,
     ROLE_OWNER,
+    dispatch_priority_reason,
     dispatch_reason_role,
     role_provider_block_reason,
     task_priority_rank,
@@ -921,6 +922,7 @@ def is_task_review_dispatch_eligible(
     *,
     review_statuses: set[str] | None = None,
     finalize_statuses: set[str] | None = None,
+    readiness_force_refresh: bool = True,
 ) -> bool:
     """Return whether a task is eligible for reviewer dispatch (review_ready_dispatch).
 
@@ -929,6 +931,15 @@ def is_task_review_dispatch_eligible(
     (no merge_route), has independent owner/reviewer, the target agent matches the reviewer,
     the review submission is valid with matching exact remote head, and all required CI
     checks on that exact head have concluded with terminal success.
+
+    `readiness_force_refresh` controls only how the submitted head is read.
+    Dispatch -- the caller that is about to start a worker on this answer --
+    keeps the forced `git ls-remote`. A caller that only asks whether this work
+    exists, repeatedly and for every running worker of the agent, passes `False`
+    and is served from the resolver's own short-lived cache instead of paying
+    for a network read per question. Both readers already fail closed on an
+    answer they cannot get, so a cache miss or a failed read still refuses
+    rather than assuming readiness.
     """
     if not isinstance(task, dict) or not task:
         return False
@@ -985,7 +996,9 @@ def is_task_review_dispatch_eligible(
 
     task_id = str(task.get(schema.get("task_id_field", "id")) or task.get("id") or "")
     try:
-        current_head = runtime_ai_status.resolve_task_sha(task_id, force_refresh=True)
+        current_head = runtime_ai_status.resolve_task_sha(
+            task_id, force_refresh=readiness_force_refresh
+        )
     except Exception:
         return False
     if not current_head or current_head != submitted_sha:
@@ -1012,6 +1025,7 @@ def dispatch_priority_for_task(
     *,
     task_map: dict[str, dict[str, Any]] | None = None,
     dependencies_done_statuses: set[str] | None = None,
+    readiness_force_refresh: bool = True,
 ) -> int | None:
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
@@ -1034,6 +1048,7 @@ def dispatch_priority_for_task(
         agent_name,
         review_statuses=review_statuses,
         finalize_statuses=finalize_statuses,
+        readiness_force_refresh=readiness_force_refresh,
     ):
         return 0
     if task_status in finalize_statuses and task_owner == norm_target:
@@ -1045,7 +1060,7 @@ def dispatch_priority_for_task(
             return None
         try:
             curr_head = runtime_ai_status.resolve_task_checkout_sha(
-                task, force_refresh=True
+                task, force_refresh=readiness_force_refresh
             )
             if not curr_head or not runtime_ai_status.is_approved_head_satisfied(task, curr_head, approved_head):
                 return None
@@ -1474,39 +1489,79 @@ def higher_priority_ready_task_exists(
             continue
         if task_is_sidecar(task) and not task_is_sidecar(current_task or {}):
             continue
+        # Business rank decides first, and decides without reading anything.
+        # `candidate_priority` below is bounded at 0, so a candidate ranked
+        # worse than the running worker's task can never win the (rank, lane)
+        # comparison, and at equal rank nothing outranks a review. Cutting those
+        # here is what keeps the readiness reads further down to the few
+        # candidates whose answer can actually end a worker, rather than one
+        # read per task per poll.
+        candidate_task_rank = task_priority_rank(task)
+        if candidate_task_rank > current_task_rank:
+            continue
+        if candidate_task_rank == current_task_rank and current_priority <= 0:
+            continue
+        # A human gate or a task flagged `non_dispatchable` is never handed to a
+        # worker by any lane, so it can never be the work a freed slot is freed
+        # for. Refusing it here also means GitHub is not asked about a task with
+        # no reachable outcome.
+        if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+            continue
         task_status = str(task.get("status") or "").lower()
-        candidate_priority = None
-        if task_status in review_statuses and normalize_agent_id(str(task.get(reviewer_field) or "")) == normalize_agent_id(agent_name):
-            if is_sidecar_review_of_current_parent(
+        if (
+            task_status in review_statuses
+            and normalize_agent_id(str(task.get(reviewer_field) or ""))
+            == normalize_agent_id(agent_name)
+            and is_sidecar_review_of_current_parent(
                 task,
                 current_task,
                 agent_name=agent_name,
                 review_statuses=review_statuses,
                 owner_field=owner_field,
                 reviewer_field=reviewer_field,
+            )
+        ):
+            continue
+
+        # One eligibility judgement, the same one the dispatcher itself makes.
+        # Reviews used to skip it: any task in a review status naming this agent
+        # as reviewer scored 0 on status and role alone. Between 2026-09-06
+        # 11:01Z and 2026-09-07 04:03Z that killed the same Codex2 review worker
+        # 286 consecutive times, because the three P0 reviews that outranked it
+        # -- one `non_dispatchable`, two with failing CI -- could never take the
+        # slot they kept emptying. A candidate that cannot be dispatched is not
+        # a reason to stop work that can.
+        candidate_priority = dispatch_priority_for_task(
+            config,
+            task,
+            agent_name,
+            task_map=task_map,
+            dependencies_done_statuses=dependency_done_statuses,
+            readiness_force_refresh=False,
+        )
+        if candidate_priority is None:
+            continue
+        # The other half of the dispatcher's own gate: role/provider policy,
+        # disabled and sidecar-only agents. `dispatch_priority_for_task` answers
+        # "is this work ready", not "may this agent be given it", and preemption
+        # needs both to be true before it ends a running worker.
+        if not agent_can_take_task(
+            config,
+            agent_name,
+            task,
+            role=dispatch_reason_role(dispatch_priority_reason(candidate_priority)),
+        ):
+            continue
+
+        if (candidate_task_rank, candidate_priority) < current_key:
+            if (
+                slot_count
+                and urgent_priority_cutoff is not None
+                and candidate_priority > urgent_priority_cutoff
+                and candidate_task_rank >= current_task_rank
             ):
                 continue
-            candidate_priority = 0
-        else:
-            candidate_priority = dispatch_priority_for_task(
-                config,
-                task,
-                agent_name,
-                task_map=task_map,
-                dependencies_done_statuses=dependency_done_statuses,
-            )
-
-        if candidate_priority is not None:
-            candidate_task_rank = task_priority_rank(task)
-            if (candidate_task_rank, candidate_priority) < current_key:
-                if (
-                    slot_count
-                    and urgent_priority_cutoff is not None
-                    and candidate_priority > urgent_priority_cutoff
-                    and candidate_task_rank >= current_task_rank
-                ):
-                    continue
-                higher_priority_task_ids.add(str(task_id))
+            higher_priority_task_ids.add(str(task_id))
 
     if not higher_priority_task_ids:
         return False
