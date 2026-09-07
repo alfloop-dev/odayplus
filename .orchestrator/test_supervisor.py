@@ -4611,12 +4611,61 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
 
 class DispatchStatusSyncTests(unittest.TestCase):
+    """Both supervisor sync callers must reach the runtime code authority.
+
+    `scripts/ai_status.py` is only whatever revision a checkout happens to hold,
+    so these tests install a deliberately failing legacy script next to a
+    recording `scripts/ai-status.sh` launcher and assert the launcher is what
+    actually runs.
+    """
+
+    LAUNCHER_TEMPLATE = """#!/bin/bash
+: > {record}
+printf 'cwd=%s\\n' "$PWD" >> {record}
+printf 'AI_NAME=%s\\n' "${{AI_NAME-}}" >> {record}
+printf 'PANTHEON_STATUS_ROOT=%s\\n' "${{PANTHEON_STATUS_ROOT-}}" >> {record}
+printf 'ORCH_STATUS_ROOT=%s\\n' "${{ORCH_STATUS_ROOT-}}" >> {record}
+for arg in "$@"; do printf 'arg=%s\\n' "$arg" >> {record}; done
+{tail}
+"""
+
+    # Runs inside the fixture launcher, exactly where the real `ai-status.sh`
+    # execs the runtime writer. It asks the shipped resolver where the write
+    # belongs and lands a marker there, so a root the supervisor failed to pin
+    # shows up as a file under the wrong board rather than as a passing
+    # assertion about an environment string nobody consulted.
+    LAUNCHER_RUNTIME_WRITE_TAIL = """python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, {scripts_dir!r})
+import ai_status
+
+root = ai_status.resolve_status_root(os.environ)
+(root / {marker_name!r}).write_text("runtime writer landed here", encoding="utf-8")
+PY
+"""
+
+    RUNTIME_WRITE_MARKER = "runtime-writer-landed.txt"
+
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmpdir.cleanup)
         self.root = Path(self.tmpdir.name)
         (self.root / "scripts").mkdir(parents=True, exist_ok=True)
-        (self.root / "scripts" / "ai_status.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        self.launcher_path = self.root / "scripts" / "ai-status.sh"
+        self.launcher_record = self.root / "launcher-record.txt"
+        self.legacy_marker = self.root / "legacy-ai-status-executed.txt"
+        self.write_launcher("exit 0")
+        # The legacy in-checkout writer must never be reached again; if it is,
+        # it fails loudly instead of silently writing through a stale schema.
+        (self.root / "scripts" / "ai_status.py").write_text(
+            "#!/usr/bin/env python3\n"
+            "import pathlib, sys\n"
+            f"pathlib.Path({str(self.legacy_marker)!r}).write_text('executed', encoding='utf-8')\n"
+            "sys.exit(17)\n",
+            encoding="utf-8",
+        )
         (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
         self.status_path = self.root / "ai-status.json"
         self.status_path.write_text(
@@ -4652,24 +4701,123 @@ class DispatchStatusSyncTests(unittest.TestCase):
                 "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
             },
         }
-
-    def test_sync_dispatched_task_status_starts_owned_todo_task(self) -> None:
-        event = {
+        self.dispatch_event = {
             "task_id": "APP-002-W1-FRONT-HANDOFF",
             "target_agent": "copilot",
             "target_display_name": "Copilot",
             "reason": "owned_ready_dispatch",
         }
 
-        with mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock:
-            changed = supervisor.sync_dispatched_task_status(self.config, event)
+    def write_launcher(self, tail: str) -> None:
+        self.launcher_path.write_text(
+            self.LAUNCHER_TEMPLATE.format(record=json.dumps(str(self.launcher_record)), tail=tail),
+            encoding="utf-8",
+        )
+        self.launcher_path.chmod(0o755)
+
+    def launcher_invocation(self) -> dict[str, Any]:
+        self.assertTrue(self.launcher_record.exists(), "canonical launcher was never executed")
+        record: dict[str, Any] = {"args": []}
+        for line in self.launcher_record.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            if key == "arg":
+                record["args"].append(value)
+            else:
+                record[key] = value
+        return record
+
+    def arm_runtime_write_launcher(self) -> None:
+        self.write_launcher(
+            self.LAUNCHER_RUNTIME_WRITE_TAIL.format(
+                scripts_dir=str(SCRIPTS_DIR),
+                marker_name=self.RUNTIME_WRITE_MARKER,
+            )
+        )
+
+    def inherit_conflicting_status_root(self) -> Path:
+        """Give the supervisor process a root every config in this test rejects.
+
+        Reproduces a supervisor that inherited another board's coordination
+        root: both root names arrive pointing away from the configured status
+        file, so a caller that pins only one of them leaves the runtime writer
+        resolving the other.
+        """
+
+        decoy = Path(tempfile.mkdtemp(prefix="pantheon-decoy-status-root-"))
+        self.addCleanup(shutil.rmtree, decoy, ignore_errors=True)
+        patcher = mock.patch.dict(
+            os.environ,
+            {"ORCH_STATUS_ROOT": str(decoy), "PANTHEON_STATUS_ROOT": str(decoy)},
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return decoy
+
+    def assert_runtime_write_landed_on(self, selected: Path, decoy: Path) -> None:
+        invocation = self.launcher_invocation()
+        for name in ("PANTHEON_STATUS_ROOT", "ORCH_STATUS_ROOT"):
+            self.assertEqual(
+                invocation[name],
+                str(selected),
+                f"{name} was not pinned to the configured status root",
+            )
+        self.assertEqual(
+            ai_status.resolve_status_root({name: invocation[name] for name in ("ORCH_STATUS_ROOT", "PANTHEON_STATUS_ROOT")}),
+            selected.resolve(),
+            "the shipped runtime resolver disagrees with the root the launcher was pinned to",
+        )
+        self.assertTrue(
+            (selected / self.RUNTIME_WRITE_MARKER).exists(),
+            "the runtime writer did not commit to the configured status root",
+        )
+        self.assertEqual(
+            sorted(entry.name for entry in decoy.iterdir()),
+            [],
+            "the runtime writer committed to the inherited root instead of the configured one",
+        )
+
+    def assert_legacy_writer_untouched(self) -> None:
+        self.assertFalse(
+            self.legacy_marker.exists(),
+            "supervisor executed the in-checkout scripts/ai_status.py instead of the launcher",
+        )
+
+    def events(self, event_type: str) -> list[dict[str, Any]]:
+        lines = (self.root / "activity-log.jsonl").read_text(encoding="utf-8").splitlines()
+        entries = [json.loads(line) for line in lines if line.strip()]
+        return [entry for entry in entries if entry.get("type") == event_type]
+
+    def test_sync_dispatched_task_status_starts_owned_todo_task_via_launcher(self) -> None:
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
 
         self.assertTrue(changed)
-        command = run_mock.call_args.args[0]
-        self.assertEqual(command[2], "start")
-        self.assertEqual(command[3], "APP-002-W1-FRONT-HANDOFF")
-        self.assertIn("Supervisor auto-started", command[4])
-        self.assertEqual(run_mock.call_args.kwargs["env"]["AI_NAME"], "Copilot")
+        self.assert_legacy_writer_untouched()
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"][0], "start")
+        self.assertEqual(invocation["args"][1], "APP-002-W1-FRONT-HANDOFF")
+        self.assertIn("Supervisor auto-started", invocation["args"][2])
+        self.assertEqual(invocation["AI_NAME"], "Copilot")
+        self.assertEqual(invocation["PANTHEON_STATUS_ROOT"], str(self.root))
+        self.assertEqual(invocation["ORCH_STATUS_ROOT"], str(self.root))
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(len(self.events("task_dispatch_synced")), 1)
+
+    def test_sync_dispatched_task_status_pins_runtime_root_over_inherited_root(self) -> None:
+        decoy = self.inherit_conflicting_status_root()
+        self.arm_runtime_write_launcher()
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertTrue(changed)
+        self.assert_legacy_writer_untouched()
+        self.assert_runtime_write_landed_on(self.root, decoy)
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"][0], "start")
+        self.assertEqual(invocation["args"][1], "APP-002-W1-FRONT-HANDOFF")
+        self.assertIn("Supervisor auto-started", invocation["args"][2])
+        self.assertEqual(invocation["AI_NAME"], "Copilot")
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(len(self.events("task_dispatch_synced")), 1)
 
     def test_sync_dispatched_task_status_skips_review_dispatch(self) -> None:
         event = {
@@ -4679,11 +4827,128 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "reason": "review_ready_dispatch",
         }
 
-        with mock.patch.object(supervisor.subprocess, "run") as run_mock:
-            changed = supervisor.sync_dispatched_task_status(self.config, event)
+        changed = supervisor.sync_dispatched_task_status(self.config, event)
 
         self.assertFalse(changed)
-        run_mock.assert_not_called()
+        self.assertFalse(self.launcher_record.exists())
+        self.assert_legacy_writer_untouched()
+
+    def test_sync_dispatched_task_status_fails_closed_when_launcher_missing(self) -> None:
+        self.launcher_path.unlink()
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertFalse(changed)
+        self.assert_legacy_writer_untouched()
+        failures = self.events("task_dispatch_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("launcher not found", failures[0]["message"])
+        self.assertEqual(failures[0]["task_id"], "APP-002-W1-FRONT-HANDOFF")
+        self.assertEqual(self.events("task_dispatch_synced"), [])
+
+    def test_sync_dispatched_task_status_fails_closed_when_launcher_not_executable(self) -> None:
+        self.launcher_path.chmod(0o644)
+        if os.access(self.launcher_path, os.X_OK):
+            self.skipTest("filesystem or euid ignores the executable bit")
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertFalse(changed)
+        self.assert_legacy_writer_untouched()
+        failures = self.events("task_dispatch_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("is not executable", failures[0]["message"])
+        self.assertEqual(self.events("task_dispatch_synced"), [])
+
+    def test_sync_dispatched_task_status_fails_closed_when_launcher_exits_non_zero(self) -> None:
+        self.write_launcher('echo "runtime writer refused" >&2\nexit 3')
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertFalse(changed)
+        failures = self.events("task_dispatch_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["message"], "runtime writer refused")
+        self.assertEqual(failures[0]["target_agent"], "Copilot")
+        self.assertEqual(failures[0]["dispatch_reason"], "owned_ready_dispatch")
+        self.assertEqual(self.events("task_dispatch_synced"), [])
+
+    def test_sync_dispatched_task_status_fails_closed_on_launcher_timeout(self) -> None:
+        self.write_launcher("sleep 30")
+        config = dict(self.config, supervisor={"external_command_timeout_seconds": 0.5})
+
+        changed = supervisor.sync_dispatched_task_status(config, self.dispatch_event)
+
+        self.assertFalse(changed)
+        failures = self.events("task_dispatch_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("timed out", failures[0]["message"])
+        self.assertEqual(self.events("task_dispatch_synced"), [])
+
+    def test_sync_status_pipeline_runs_launcher_sync(self) -> None:
+        self.assertTrue(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"], ["sync"])
+        self.assertEqual(invocation["PANTHEON_STATUS_ROOT"], str(self.root))
+        self.assertEqual(invocation["ORCH_STATUS_ROOT"], str(self.root))
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(self.events("task_reassignment_sync_failed"), [])
+
+    def test_sync_status_pipeline_pins_runtime_root_over_inherited_root(self) -> None:
+        decoy = self.inherit_conflicting_status_root()
+        self.arm_runtime_write_launcher()
+
+        self.assertTrue(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        self.assert_runtime_write_landed_on(self.root, decoy)
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"], ["sync"])
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(self.events("task_reassignment_sync_failed"), [])
+
+    def test_sync_status_pipeline_fails_closed_when_launcher_missing(self) -> None:
+        self.launcher_path.unlink()
+
+        self.assertFalse(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        failures = self.events("task_reassignment_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("launcher not found", failures[0]["message"])
+
+    def test_sync_status_pipeline_fails_closed_when_launcher_not_executable(self) -> None:
+        self.launcher_path.chmod(0o644)
+        if os.access(self.launcher_path, os.X_OK):
+            self.skipTest("filesystem or euid ignores the executable bit")
+
+        self.assertFalse(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        failures = self.events("task_reassignment_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("is not executable", failures[0]["message"])
+
+    def test_sync_status_pipeline_fails_closed_when_launcher_exits_non_zero(self) -> None:
+        self.write_launcher('echo "sync refused" >&2\nexit 4')
+
+        self.assertFalse(supervisor.sync_status_pipeline(self.config))
+
+        failures = self.events("task_reassignment_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("sync refused", failures[0]["message"])
+
+    def test_sync_status_pipeline_fails_closed_on_launcher_timeout(self) -> None:
+        self.write_launcher("sleep 30")
+        config = dict(self.config, supervisor={"external_command_timeout_seconds": 0.5})
+
+        self.assertFalse(supervisor.sync_status_pipeline(config))
+
+        failures = self.events("task_reassignment_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("timed out", failures[0]["message"])
 
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
