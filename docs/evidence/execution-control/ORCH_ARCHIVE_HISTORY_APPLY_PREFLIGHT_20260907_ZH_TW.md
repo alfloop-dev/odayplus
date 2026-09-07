@@ -1,9 +1,10 @@
 # ORCH-ARCHIVE-HISTORY-APPLY-001 第一段收據：唯讀執行預檢與維護窗口交接
 
-- 產出者：Claude（owner）／審查者：Codex（reviewer）
+- 產出者：Claude（owner・第 1–2 輪）／Antigravity3（owner・第 3 輪）／審查者：Codex（reviewer）
 - 量測時間：2026-09-07T04:06Z – 04:17Z（第 1 輪）
 - 第 2 輪複量：2026-09-07T04:29Z – 04:30Z，只重量 PR #1227 的 exact-head 狀態（B7、§3、§8-5），其餘量測值與 plan-only 預覽未重跑、未變更
-- 交付分支：`task/ORCH-ARCHIVE-HISTORY-APPLY-001`（自 `dev` tip `da4b77d1` 開出）
+- 第 3 輪更新：2026-09-07T04:39Z，PR #1227 已合併（merge commit `9094b4ac`）。更新 B7、§3、§6、§8-5 為已合併但尚未 runtime rollout；移除已過期的 OPEN／未合併／finalize 路由 blocker。Base advance merge `origin/dev`。
+- 交付分支：`task/ORCH-ARCHIVE-HISTORY-APPLY-001`（base advance 後包含 `origin/dev` tip `9094b4ac`）
 
 > 本輪**只做唯讀預檢與交接**。**沒有**對 canonical board（`ai-status.json`）或 archive（`ai-task-archive/`）
 > 執行任何 recovery 寫入，**沒有**切換 live runtime，**沒有**停止或重啟 Supervisor，**沒有**改 watchdog／cron／config，
@@ -310,50 +311,43 @@ archive 內已有 4 筆 `*-SIDECAR-*` snapshot，證明這條路徑在正式環�
 **不會**擋住為這 38 筆新生 sidecar。這一項需要 Codex 在開窗口前決定處置
 （例如窗口內暫時關掉 sidecars、或接受並由 chair 逐一否決），本輪不擅自改 config。
 
-### B7（依賴，非本任務可修）PR #1227 已核准且 CI 全綠，但**仍未合併、未部署**
+### B7（已解決）PR #1227 已合併進 `dev`，但 live runtime 尚未 rollout
 
-> **第 1 輪（04:17Z 前）記錄的狀態已過期。** 以下為 2026-09-07T04:30Z 的複量值，
-> 全部綁定 exact head `efc18ad294cf0890baf87ffbb743b2a1b2eca4f0`（即看板
-> `review_submission.remote_sha` 記錄的同一顆），不是 PR 層的彙總。
+> **第 3 輪更新（2026-09-07T04:39Z）**：PR #1227 已於 2026-09-07T04:30:51Z 合併，
+> merge commit `9094b4acfff45f116b90332467c91a63cdd6cd7a`，`origin/dev` 已包含該 commit。
+> 本 task branch 已透過 base advance merge 納入此變更。
 
 `ORCH-STATUS-SYNC-RUNTIME-AUTHORITY-001` / PR #1227：
 
-| 項目 | 第 1 輪（過期） | 第 2 輪複量（04:30Z） | 量測來源 |
+| 項目 | 第 2 輪複量（04:30Z） | 第 3 輪確認（04:39Z） | 量測來源 |
 | --- | --- | --- | --- |
-| `state` | `OPEN` | `OPEN` | `gh pr view 1227 --json state` |
-| `mergeStateStatus` | `BLOCKED` | `CLEAN` | `gh pr view 1227 --json mergeStateStatus` |
-| head SHA | 未記錄 | `efc18ad294cf0890baf87ffbb743b2a1b2eca4f0` | `gh pr view 1227 --json headRefOid` |
-| `task-review-gate` | `FAILURE` | `success`／`Approved by assigned reviewer Codex`（`updated_at` 2026-09-07T04:25:46Z） | `gh api repos/.../commits/efc18ad.../status` |
-| `orchestrator` CI | SUCCESS | `success`（`completed_at` 2026-09-07T04:25:24Z，3m27s） | `gh api repos/.../commits/efc18ad.../check-runs` |
-| change-scope／boundary／classify | SUCCESS | `success`（同一顆 head） | 同上 |
-| product／product-e2e-gate／performance-gate | SKIPPED | `skipped`（同一顆 head） | 同上 |
-| 看板 task status | `in_progress`、owner `Claude2` | `review_approved`、owner `Claude2`、reviewer `Codex`（`last_update` 2026-09-07T04:25:37Z） | `ai-status.sh show ORCH-STATUS-SYNC-RUNTIME-AUTHORITY-001` |
+| `state` | `OPEN` | `MERGED` | `origin/dev` 包含 `9094b4ac` |
+| merge commit | — | `9094b4acfff45f116b90332467c91a63cdd6cd7a` | `git log origin/dev` |
+| head SHA | `efc18ad294cf0890baf87ffbb743b2a1b2eca4f0` | 同（merge 的 second parent） | `git log --format=%P 9094b4ac` |
+| `task-review-gate` | `success`／`Approved by assigned reviewer Codex`（`updated_at` 2026-09-07T04:25:46Z） | 同 | `gh api repos/.../commits/efc18ad.../status` |
+| `orchestrator` CI | `success`（`completed_at` 2026-09-07T04:25:24Z，3m27s） | 同 | `gh api repos/.../commits/efc18ad.../check-runs` |
+| change-scope／boundary／classify | `success`（同一顆 head） | 同 | 同上 |
+| product／product-e2e-gate／performance-gate | `skipped`（同一顆 head） | 同 | 同上 |
 
-變更範圍不變：`.orchestrator/status_transition.py`、`.orchestrator/test_supervisor.py` 與一份 evidence。
+變更範圍：`.orchestrator/status_transition.py`、`.orchestrator/test_supervisor.py` 與一份 evidence。
 
-**仍然成立的真實阻塞——它還沒進 `dev`**：`git branch -r --contains efc18ad294cf0890baf87ffbb743b2a1b2eca4f0`
-只回 `origin/task/ORCH-STATUS-SYNC-RUNTIME-AUTHORITY-001` 一條 ref，**`dev` 不含這顆 commit ⇒ 未合併、未部署**。
-它自己的 `next` 欄位記下了卡住的原因：
+**已消除的阻塞**：PR #1227 已合併進 `dev`，不再是整合順序的外部前置條件。
 
-> PR for task ORCH-STATUS-SYNC-RUNTIME-AUTHORITY-001 is CI-green but could not be routed to a merge path
-> (expected the "[HOST/]OWNER/REPO" format, got "pantheon"); finalize dispatch is deferred until that resolves.
-
-亦即它卡的既不是審查也不是 CI，而是 task→repo 解析把 `pantheon` 當成 repo slug，使 finalize dispatch 無法路由。
-該缺陷在本任務 owned paths 之外，本輪**不**修、**不** cherry-pick、**不**部署未合併 head。只記錄依賴與順序（見 §3）。
+**仍然成立的真實阻塞——live runtime 尚未 rollout**：雖然 `origin/dev` 已包含 PR #1227 的修正
+（`.orchestrator/status_transition.py` 的 runtime 程式來源路徑修正），但 live runtime 仍停在
+`64f3b2399442`（落後 dev tip），因此這些修正在 runtime rollout 之前不會生效。
+rollout 仍是維護窗口內第 2 步的必要動作（見 §3）。
 
 ---
 
 ## 3. 最小整合順序（建議，待 Codex 裁定）
 
-1. **先合併 PR #1227**（或由 Codex 明確裁定「本次 apply 不需要它」）。它修的是 Supervisor 同步呼叫的 runtime 程式來源，
-   與「apply 之後看板同步是否可信」直接相關。它與 rollout 沒有檔案衝突（動的是 `.orchestrator/status_transition.py`）。
-   複量後（B7）它已 `review_approved`、exact head `efc18ad` 的 CI 全綠、`task-review-gate: success`、
-   `mergeStateStatus: CLEAN`，**審查與 CI 都不再是這一步的阻塞**；剩下的只有合併本身，
-   而合併被 finalize dispatch 的 repo 路由缺陷擋住。本 auto worker 無權合併也無權修那條路由，
-   故這一步仍是**外部前置**，需要有權限者處理。
+1. ~~**先合併 PR #1227**~~  **已完成（2026-09-07T04:30:51Z，merge commit `9094b4ac`）。**
+   PR #1227 修的 `.orchestrator/status_transition.py` 已進 `dev`。本 task branch 已透過 base advance merge 納入。
+   原先卡住合併的 finalize dispatch repo 路由缺陷已不再是阻塞。
 2. **開維護窗口**（見 §4 第 1 步）。窗口成立的判準以 PR #1230／#1231 前置審查文件所列四條為準，
    本輪已把其中「其他控制者」那條量到底（§1.7）。
-3. **在窗口內執行 rollout**，把 live runtime 前推到當時的 dev tip。這一步解掉 B1。
+3. **在窗口內執行 rollout**，把 live runtime 前推到當時的 dev tip（現在包含 PR #1227 修正）。這一步解掉 B1。
 4. **在窗口內重新規劃批次**（輸入先修 B4），由 Codex 核准新 SHA-256 並簽出 hold。
 5. **PLAN ONLY 預演 → `--confirm`。**
 
@@ -516,11 +510,11 @@ canonical transaction 一次寫入，兩者不是同一個交易。因此：
   未改 watchdog、cron、systemd、live config、模型／認證／配額／角色／slot。
 - **未建立、未簽署、未宣稱任何 maintenance hold。** 本輪的唯讀量測與兩次 `--dry-run` 都不構成 hold。
 - 未補造 acceptance／ci／runtime／approval 四類 attestation，未補造歷史 owner／reviewer／approver／Human GO。
-- 未 cherry-pick 或部署 PR #1227 的未合併 head。複量後它雖已 `review_approved` 且 exact head `efc18ad` CI 全綠，
-  但 `dev` 仍不含該 commit；本輪未合併它、未代為修它的 finalize 路由缺陷。
 - 未 dispatch 產品 release、未啟用任何 provider、未更動 GCP IAM、未跑產品測試。
   本輪唯一跑過的可執行檔是 planner 的 plan-only 模式與 rollout 的 `--dry-run`，兩者的 exit code 都直接取自原 terminal。
 - 未修 canonical checkout 的 dirty 檔案，未復原任何舊 code。
+- PR #1227 已於 2026-09-07T04:30:51Z 合併進 `dev`（merge commit `9094b4ac`），但 **live runtime 尚未 rollout**；
+  本輪未執行 rollout、未停止或重啟 Supervisor、未切換 live runtime。
 - **B4（XR 候選誤配）本輪只做對帳與揭露，未修改任何已合併的證據檔案**；輸入盤點的更正屬於維護窗口內的第 3 步。
 
 ---
@@ -543,8 +537,8 @@ dispatcher 或 maintenance workspace manager。
 2. B4：XR 輸入候選的更正方式與由誰在窗口內執行。
 3. B5：跨 repo 佔位是否需要 `repository` 欄位（會動到 planner 的 record schema）。
 4. B6：38 筆 blocked 佔位觸發 capacity sidecar 的處置（窗口內關 sidecars／接受並由 chair 逐一否決）。
-5. B7 與 §3：PR #1227 是否為本次 apply 的前置條件；若是，由誰在開窗口前解掉它的 finalize repo 路由缺陷並完成合併
-   （它已 `review_approved`、exact head `efc18ad` CI 全綠與 `task-review-gate: success`，缺的只有合併本身）。
+5. ~~B7 與 §3：PR #1227 前置條件~~ **已解決：PR #1227 已合併進 `dev`（2026-09-07T04:30:51Z）。**
+   剩餘待裁決：live runtime rollout 的時機與執行者（rollout 是維護窗口內第 3 步的必要動作）。
 6. 維護窗口的實際時間，以及窗口內由誰擔任 apply 的執行者（必須 ≠ Codex，因為 Codex 是核准者）。
 
 在上述裁決與真實維護窗口成立之前，本任務停在這個 checkpoint，不重試、不循環、不擅自進入正式步驟。
