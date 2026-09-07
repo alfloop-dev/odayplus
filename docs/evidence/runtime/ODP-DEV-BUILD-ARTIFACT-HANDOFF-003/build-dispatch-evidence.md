@@ -441,6 +441,17 @@ without prior restoration evidence. The billing status is therefore reported as
 **last-observed-failed at 2026-09-07T15:53:11Z**, not as "still failing today".
 Whoever acts on this blocker must establish the current state independently.
 
+This is corroborated by an independent task rather than asserted. PR#1239
+(ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002), merged into `dev` at
+`c4bf87d81d55` and composed into this branch by the base advance below, ran its
+own read-only GCP probes from the same host. Its captured stderr at
+`docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002/raw/projects-describe-runtime.err`
+shows `gcloud projects describe` failing with `Reauthentication failed. cannot
+prompt during non-interactive execution`, and no file in that evidence set
+records any billing state. Two separate tasks therefore reached the same limit:
+GCP billing cannot be read from an auto worker, and the only remaining probe is
+a build dispatch, which is prohibited here until restoration is evidenced.
+
 **What must happen before this task can proceed**:
 1. Human/Ops restores billing on GCP project #767864276141
 2. Billing restoration is evidenced independently of this task
