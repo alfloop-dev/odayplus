@@ -7,7 +7,8 @@
 - **交付日期**：2026-09-08
 - **作者 / 任務負責人**：Antigravity2
 - **審查人**：Codex2
-- **檢驗基準代碼（Inspected HEAD SHA）**：`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`
+- **檢驗基準代碼（Inspected HEAD SHA）**：`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`（本文件原始查證基準）
+- **修訂基準**：`23b94f2845def9a723a5071a95363942db92007b`（2026-09-08T18:05:00Z，依 Codex2 審查意見 R3 補充 `delivery_state` 清除語意說明）。base advance 未改動 `apps/`、`shared/`、`modules/` 任何檔案，兩基準下所引用行號一致。
 - **檢驗時間（UTC）**：`2026-09-08T16:48:00Z`
 - **歷史證據參照**：`ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`（基準：`04e1572f802a54c2646ba678fe2975226dfbd7c4`，日期：2026-09-03）
 - **關聯產物索引**：
@@ -44,7 +45,7 @@
 3. **排除收據持久化專用 Envelope**：
    - `TenantScopedJobReceiptStore`（`shared/infrastructure/persistence/job_receipts.py:74-105`，`{service}.receipt`）與 `TenantScopedCommandReceiptStore`（`shared/infrastructure/persistence/command_receipts.py:70-105`，`{service}.command-receipt`）以 `shared/jobs/queue.py:10-18` 排除於 worker 派工之外，僅供讀回。
 4. **交付狀態與業務結果之現況與契約分離**：
-   - 現行代碼中：`apps/worker/oday_worker/main.py:200-218` 於重試耗盡或非可重試異常時寫入 `JobStatus.FAILED` 並附帶 `JobDeliveryState.DEAD_LETTER`；`shared/infrastructure/persistence/job_queue.py:402-406` 於 `status == JobStatus.SUCCEEDED` 時自動清除 `delivery_state = NULL`，但保留失敗時明確傳入之 `DEAD_LETTER`。
+   - 現行代碼中：`apps/worker/oday_worker/main.py:210-222` 於重試耗盡或非可重試異常時寫入 `JobStatus.FAILED` 並附帶 `JobDeliveryState.DEAD_LETTER`；`shared/infrastructure/persistence/job_queue.py:402-406` 於 `status == JobStatus.SUCCEEDED` 時自動清除 `delivery_state = NULL`，但保留失敗時明確傳入之 `DEAD_LETTER`。惟該清除僅適用於 `SUCCEEDED`：以 `delivery_state=None` 寫入 `PARTIAL` 時不會清除既有 `RETRYING`，須於 WP-33B 先行修改寫入器語意（見 [implementation-handoff.md](./implementation-handoff.md) §3.0）。
    - 契約定義：當 WP-33B 批次長任務完成多項目處理並收斂為 `JobStatus.PARTIAL` 時，基礎設施傳遞已結束，因此外層寫入點必須明確將 `delivery_state` 設為 `None`（`NULL`），徹底區隔業務成果（`PARTIAL`）與傳遞死信（`DEAD_LETTER`）。
 
 ---

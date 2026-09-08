@@ -3,12 +3,13 @@
   "metadata": {
     "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
     "work_package": "WP-33A",
-    "inspected_commit_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
-    "inspection_utc": "2026-09-08T16:48:00Z",
+    "inspected_commit_sha": "23b94f2845def9a723a5071a95363942db92007b",
+    "inspection_utc": "2026-09-08T18:05:00Z",
     "inventory_type": "static_source_code_inventory",
     "live_runtime_receipt_status": "static_only_no_production_runtime_access",
     "historical_evidence_reference": "ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md (date: 2026-09-03, baseline: 04e1572f802a54c2646ba678fe2975226dfbd7c4)",
-    "core_finding": "Zero reachable writes to JobStatus.PARTIAL exist across the codebase. All existing durable worker handlers process single entities/windows and transition directly to SUCCEEDED (delivery_state=NULL) or FAILED/DEAD_LETTER/RETRYING."
+    "core_finding": "Zero reachable writes to JobStatus.PARTIAL exist across the codebase. All existing durable worker handlers process single entities/windows and transition directly to SUCCEEDED (delivery_state=NULL) or FAILED/DEAD_LETTER/RETRYING.",
+    "inspected_commit_note": "Re-inspected at task branch HEAD 23b94f2845def9a723a5071a95363942db92007b after base advance onto origin/dev 95646a5c2bd598b7e219ee51efa7e410cb9fe0f4. The base advance merged only sibling human-decision evidence directories; git diff --name-only b6b729d9..23b94f28 contains no file under apps/, shared/ or modules/, so every source line number cited here is identical at the previous inspection baseline b6b729d95e575dc3b27ea9e02ce22fb128c3970b and at this HEAD."
   },
   "canonical_vocabulary": {
     "job_status": [
@@ -30,55 +31,58 @@
       "job_type": "forecast",
       "handler_symbol": "handle_forecast",
       "handler_source": "apps/worker/oday_worker/handlers.py:255",
-      "enqueue_source": "apps/api/oday_api/main.py:997-1044",
-      "queue_dispatch": "shared/jobs/queue.py:145-208, shared/infrastructure/persistence/job_queue.py:120-173",
-      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED/RETRYING or FAILED/DEAD_LETTER) -> shared/infrastructure/persistence/job_queue.py:395-436",
-      "traceability": "apps/api/oday_api/main.py:997-1044 -> shared/infrastructure/persistence/job_queue.py:120-173 -> apps/worker/oday_worker/handlers.py:255 (handle_forecast) -> apps/worker/oday_worker/main.py:141-146,210-222 -> shared/infrastructure/persistence/job_queue.py:395-436",
+      "enqueue_source": "apps/api/oday_api/main.py:997-1044 (JobRequest at apps/api/oday_api/main.py:1038) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158)",
+      "queue_dispatch": "Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267",
+      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "traceability": "apps/api/oday_api/main.py:997-1044 (JobRequest at apps/api/oday_api/main.py:1038) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158) -> Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267 -> apps/worker/oday_worker/handlers.py:255 (handle_forecast) -> terminal write apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
       "item_granularity": "single_store_timeseries",
       "current_terminal_statuses": [
         "SUCCEEDED",
         "FAILED"
       ],
       "has_partial_transition": false,
-      "delivery_state_handling": "Transport retry (QUEUED + RETRYING) up to 3 attempts, then terminal failure writes JobStatus.FAILED paired with JobDeliveryState.DEAD_LETTER (apps/worker/oday_worker/main.py:200-218).",
+      "delivery_state_handling": "Transport retry (QUEUED + RETRYING) up to 3 attempts, then terminal failure writes JobStatus.FAILED paired with JobDeliveryState.DEAD_LETTER (apps/worker/oday_worker/main.py:210-222).",
       "classification": "durable_worker_job_single_item",
-      "partial_assessment": "Inapplicable for canonical PARTIAL in current single-store design because each job evaluates a single store's forecast without independent sub-item aggregates."
+      "partial_assessment": "Inapplicable for canonical PARTIAL in current single-store design because each job evaluates a single store's forecast without independent sub-item aggregates.",
+      "legacy_lease_path_not_in_runtime_chain": "NOT IN THE RUNTIME CHAIN. DurableJobQueue.lease is shared/infrastructure/persistence/job_queue.py:116-175 and its in-memory twin InMemoryJobQueue.lease is shared/jobs/queue.py:164-214. Static probe `grep -rn \"\\.lease(\" --include=*.py apps shared modules` returns zero call sites (original exit code 1) at inspected HEAD 23b94f2845def9a723a5071a95363942db92007b, so no runtime producer reaches a durable terminal state through lease(). Earlier revisions of this inventory routed dispatch through job_queue.py:120-173 (inside lease()); that attribution was incorrect and is corrected below."
     },
     {
       "job_type": "external-fetch",
       "handler_symbol": "handle_external_fetch",
       "handler_source": "apps/worker/oday_worker/handlers.py:256",
-      "enqueue_source": "apps/scheduler/oday_scheduler/main.py:180-195 (scheduler tick) and apps/api/oday_api/main.py:1013-1044 (API route)",
-      "queue_dispatch": "shared/jobs/queue.py:145-208, shared/infrastructure/persistence/job_queue.py:120-173",
-      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED/RETRYING or FAILED/DEAD_LETTER) -> shared/infrastructure/persistence/job_queue.py:395-436",
-      "traceability": "apps/scheduler/oday_scheduler/main.py:180-195 / apps/api/oday_api/main.py:1013-1044 -> shared/infrastructure/persistence/job_queue.py:120-173 -> apps/worker/oday_worker/handlers.py:256 (handle_external_fetch) -> apps/worker/oday_worker/main.py:141-146,210-222 -> shared/infrastructure/persistence/job_queue.py:395-436",
+      "enqueue_source": "apps/scheduler/oday_scheduler/main.py:180-195 (JobRequest at apps/scheduler/oday_scheduler/main.py:181) and apps/api/oday_api/main.py:1013-1044 (JobRequest at apps/api/oday_api/main.py:1038) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158)",
+      "queue_dispatch": "Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267",
+      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "traceability": "apps/scheduler/oday_scheduler/main.py:180-195 (JobRequest at apps/scheduler/oday_scheduler/main.py:181) and apps/api/oday_api/main.py:1013-1044 (JobRequest at apps/api/oday_api/main.py:1038) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158) -> Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267 -> apps/worker/oday_worker/handlers.py:256 (handle_external_fetch) -> terminal write apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
       "item_granularity": "single_provider_window",
       "current_terminal_statuses": [
         "SUCCEEDED",
         "FAILED"
       ],
       "has_partial_transition": false,
-      "delivery_state_handling": "Scheduler backoff and circuit breaker; transport retry uses QUEUED + RETRYING, exhausted failure writes FAILED + DEAD_LETTER (apps/worker/oday_worker/main.py:200-218).",
+      "delivery_state_handling": "Scheduler backoff and circuit breaker; transport retry uses QUEUED + RETRYING, exhausted failure writes FAILED + DEAD_LETTER (apps/worker/oday_worker/main.py:210-222).",
       "classification": "durable_worker_job_single_item",
-      "partial_assessment": "Data-level partial candidate (accepted vs quarantined records), but currently executed as a single provider/window job returning SUCCEEDED or FAILED at the queue layer without JobStatus.PARTIAL or item-level retry."
+      "partial_assessment": "Data-level partial candidate (accepted vs quarantined records), but currently executed as a single provider/window job returning SUCCEEDED or FAILED at the queue layer without JobStatus.PARTIAL or item-level retry.",
+      "legacy_lease_path_not_in_runtime_chain": "NOT IN THE RUNTIME CHAIN. DurableJobQueue.lease is shared/infrastructure/persistence/job_queue.py:116-175 and its in-memory twin InMemoryJobQueue.lease is shared/jobs/queue.py:164-214. Static probe `grep -rn \"\\.lease(\" --include=*.py apps shared modules` returns zero call sites (original exit code 1) at inspected HEAD 23b94f2845def9a723a5071a95363942db92007b, so no runtime producer reaches a durable terminal state through lease(). Earlier revisions of this inventory routed dispatch through job_queue.py:120-173 (inside lease()); that attribution was incorrect and is corrected below."
     },
     {
       "job_type": "assisted-listing-intake",
       "handler_symbol": "handle_assisted_listing_intake",
       "handler_source": "apps/worker/oday_worker/handlers.py:257 (implementation: apps/worker/assisted_listing_intake/worker.py:80-221)",
-      "enqueue_source": "modules/opsboard/application/network_listings.py:1243-1249 (approved retrieval async path; line 1210 initializes correlationId in intake dictionary)",
-      "queue_dispatch": "shared/jobs/queue.py:145-208, shared/infrastructure/persistence/job_queue.py:120-173",
-      "durable_state_writer": "apps/worker/assisted_listing_intake/worker.py:210 (stage progress RUNNING), apps/worker/oday_worker/main.py:141-146 (SUCCEEDED), and apps/worker/oday_worker/main.py:210-222 (FAILED + DEAD_LETTER on NonRetryableJobError) -> shared/infrastructure/persistence/job_queue.py:395-436",
-      "traceability": "modules/opsboard/application/network_listings.py:1243-1249 -> shared/infrastructure/persistence/job_queue.py:120-173 -> apps/worker/oday_worker/handlers.py:257 / apps/worker/assisted_listing_intake/worker.py:80-221 -> apps/worker/oday_worker/main.py:141-146,210-222 -> shared/infrastructure/persistence/job_queue.py:395-436",
+      "enqueue_source": "modules/opsboard/application/network_listings.py:1243-1249 (JobRequest at modules/opsboard/application/network_listings.py:1244) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158)",
+      "queue_dispatch": "Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267",
+      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
+      "traceability": "modules/opsboard/application/network_listings.py:1243-1249 (JobRequest at modules/opsboard/application/network_listings.py:1244) -> DurableJobQueue.enqueue at shared/infrastructure/persistence/job_queue.py:65-110 (INSERT ... ON CONFLICT DO NOTHING with idempotency_key replay readback; in-memory twin InMemoryJobQueue.enqueue at shared/jobs/queue.py:139-158) -> Worker.run_once claims at apps/worker/oday_worker/main.py:96 -> DurableJobQueue.claim_next at shared/infrastructure/persistence/job_queue.py:235-329 (in-memory twin InMemoryJobQueue.claim_next at shared/jobs/queue.py:308-336); handler dispatch via Worker.execute_job -> JobRegistry.handle at apps/worker/oday_worker/main.py:263-267 -> apps/worker/oday_worker/handlers.py:257 (handle_assisted_listing_intake) -> apps/worker/assisted_listing_intake/worker.py:80-221 -> terminal write apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED+RETRYING on retryable failure, FAILED+DEAD_LETTER on exhaustion or NonRetryableJobError) -> DurableJobQueue.update_status at shared/infrastructure/persistence/job_queue.py:384-452 (in-memory twin InMemoryJobQueue.update_status at shared/jobs/queue.py:338-382)",
       "item_granularity": "single_listing_url",
       "current_terminal_statuses": [
         "SUCCEEDED",
         "FAILED"
       ],
       "has_partial_transition": false,
-      "delivery_state_handling": "Stage-level error handling; NonRetryableJobError raised on unrecoverable failure, writing terminal JobStatus.FAILED paired with JobDeliveryState.DEAD_LETTER (apps/worker/oday_worker/main.py:200-218).",
+      "delivery_state_handling": "Stage-level error handling; NonRetryableJobError raised on unrecoverable failure, writing terminal JobStatus.FAILED paired with JobDeliveryState.DEAD_LETTER (apps/worker/oday_worker/main.py:210-222).",
       "classification": "durable_worker_job_single_item",
-      "partial_assessment": "Inapplicable for canonical PARTIAL as-is because it processes a single listing intake through sequential stages. If any unrecoverable error occurs, the single intake fails."
+      "partial_assessment": "Inapplicable for canonical PARTIAL as-is because it processes a single listing intake through sequential stages. If any unrecoverable error occurs, the single intake fails.",
+      "legacy_lease_path_not_in_runtime_chain": "NOT IN THE RUNTIME CHAIN. DurableJobQueue.lease is shared/infrastructure/persistence/job_queue.py:116-175 and its in-memory twin InMemoryJobQueue.lease is shared/jobs/queue.py:164-214. Static probe `grep -rn \"\\.lease(\" --include=*.py apps shared modules` returns zero call sites (original exit code 1) at inspected HEAD 23b94f2845def9a723a5071a95363942db92007b, so no runtime producer reaches a durable terminal state through lease(). Earlier revisions of this inventory routed dispatch through job_queue.py:120-173 (inside lease()); that attribution was incorrect and is corrected below."
     }
   ],
   "receipt_envelope_exclusions": [
@@ -325,6 +329,58 @@
       "executed_utc": "2026-09-08T16:49:39Z",
       "sanitized_stdout": "apps/worker/oday_worker/main.py:141:                    self.job_queue.update_status(\napps/worker/oday_worker/main.py:210:                        self.job_queue.update_status(\napps/worker/assisted_listing_intake/worker.py:210:            job_queue.update_status(\n",
       "notes": "Verified production durable state update call sites in worker loops."
+    },
+    {
+      "command": "grep -rn \"\\.lease(\" --include=*.py apps shared modules",
+      "argv": [
+        "grep",
+        "-rn",
+        "\\.lease(",
+        "--include=*.py",
+        "apps",
+        "shared",
+        "modules"
+      ],
+      "raw_exit_code": 1,
+      "inspected_sha": "23b94f2845def9a723a5071a95363942db92007b",
+      "executed_utc": "2026-09-08T18:05:00Z",
+      "sanitized_stdout": "",
+      "notes": "Zero call sites for lease() across apps/, shared/ and modules/. Exit code 1 is grep's no-match result, not a tool error. Establishes that DurableJobQueue.lease (shared/infrastructure/persistence/job_queue.py:116-175) and InMemoryJobQueue.lease (shared/jobs/queue.py:164-214) are outside the runtime producer-to-terminal-writer chain, correcting the earlier attribution of dispatch to job_queue.py:120-173."
+    },
+    {
+      "command": "grep -rn \"claim_next\" --include=*.py apps shared modules",
+      "argv": [
+        "grep",
+        "-rn",
+        "claim_next",
+        "--include=*.py",
+        "apps",
+        "shared",
+        "modules"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "23b94f2845def9a723a5071a95363942db92007b",
+      "executed_utc": "2026-09-08T18:05:00Z",
+      "sanitized_stdout": "apps/worker/oday_worker/main.py:96:            job = self.job_queue.claim_next(worker_id=self.worker_id)\nshared/infrastructure/persistence/job_queue.py:235:    def claim_next(self, worker_id: str = \"worker-1\") -> JobRecord | None:\nshared/jobs/queue.py:308:    def claim_next(self, worker_id: str = \"worker-1\") -> JobRecord | None:",
+      "notes": "Confirms the single runtime claim site is Worker.run_once at apps/worker/oday_worker/main.py:96, resolving to DurableJobQueue.claim_next (job_queue.py:235-329) with in-memory twin InMemoryJobQueue.claim_next (shared/jobs/queue.py:308-336)."
+    },
+    {
+      "command": "grep -rn \"\\.enqueue(\" --include=*.py apps shared modules",
+      "argv": [
+        "grep",
+        "-rn",
+        "\\.enqueue(",
+        "--include=*.py",
+        "apps",
+        "shared",
+        "modules"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "23b94f2845def9a723a5071a95363942db92007b",
+      "executed_utc": "2026-09-08T18:05:00Z",
+      "sanitized_stdout": "apps/scheduler/oday_scheduler/main.py:180:                self.job_queue.enqueue(\napps/api/oday_api/main.py:1037:            job, created = job_queue.enqueue(\nshared/infrastructure/persistence/command_receipts.py:73:            record, created = self.queue.enqueue(\nshared/infrastructure/persistence/job_receipts.py:74:        record, created = self.queue.enqueue(\nmodules/opsboard/application/network_listings.py:1243:                job, created = job_queue.enqueue(",
+      "notes": "Confirms durable enqueue call sites. The two receipt-store call sites (command_receipts.py:73, job_receipts.py:74) are the receipt envelopes excluded from worker leasing per receipt_envelope_exclusions; the remaining three are the registry job producers."
     }
-  ]
+  ],
+  "evidence_collection_receipts_note": "Receipts 1-4 were collected at b6b729d95e575dc3b27ea9e02ce22fb128c3970b on 2026-09-08T16:49Z. Receipts 5-7 were added during the R1/R2/R3 revision at 23b94f2845def9a723a5071a95363942db92007b on 2026-09-08T18:05Z. All seven are read-only static searches; no test suite, runtime, provider or production resource was touched, and no scan, runtime, provider or security gate is claimed to pass."
 }

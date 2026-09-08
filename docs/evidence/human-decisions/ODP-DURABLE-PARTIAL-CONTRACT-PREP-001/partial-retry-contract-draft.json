@@ -7,7 +7,7 @@
     "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
     "work_package": "WP-33A",
     "target_implementation_stage": "WP-33B",
-    "inspected_commit_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+    "inspected_commit_sha": "23b94f2845def9a723a5071a95363942db92007b",
     "created_at": "2026-09-08T16:48:00Z"
   },
   "core_principles": {
@@ -31,6 +31,17 @@
       "default_scope": "FAILED_ONLY",
       "execution_behavior": "Engine reads previous ItemReceipt items; items with item_status == 'SUCCEEDED' are skipped with zero downstream invocations; items with item_status == 'FAILED' and error.retryable == false are permanent bad input and skipped with zero downstream invocations (attempt count unchanged); only items with item_status == 'FAILED' and error.retryable == true are re-executed (attempt incremented by 1).",
       "convergence_rule": "Retried items that succeed update item_status to SUCCEEDED and increment attempt. When all originally failed items reach SUCCEEDED, the aggregate JobStatus converges from PARTIAL to SUCCEEDED. If non-retryable failed items remain, the aggregate JobStatus remains PARTIAL with updated summary counts."
+    },
+    "replay_identity_and_ordering": {
+      "purpose": "Defines replay identity and stale-result handling so that duplicate message delivery and out-of-order attempt completion cannot corrupt a PARTIAL aggregate. Retry alone is not sufficient: the FAILED_ONLY scoped retry in scoped_retry_policy is a single sequential operation and by construction cannot detect a duplicated delivery of the same attempt, nor an older attempt's result arriving after a newer attempt already succeeded.",
+      "job_replay_identity": "A durable job is identified for replay by job_id. Client-facing enqueue deduplication uses idempotency_key, already implemented at DurableJobQueue.enqueue (shared/infrastructure/persistence/job_queue.py:65-110) via INSERT ... ON CONFLICT DO NOTHING followed by an idempotency_key readback that returns (existing_record, created=False). Re-enqueuing the same idempotency_key must therefore never create a second job and never reset an existing aggregate.",
+      "item_replay_identity": "An item execution is identified by the triple (job_id, item_id, attempt). item_id is unique within the job; attempt is the monotonically increasing execution counter already present on ItemReceipt. A per-item idempotency_key (ItemReceipt.idempotency_key) identifies the downstream business write so that the downstream side can also reject a replay. The triple is the fencing token for applying any item result.",
+      "apply_once_rule": "A result for (job_id, item_id, attempt) is applied at most once. On receiving a result whose triple has already been applied, the engine performs no downstream write, does not increment attempt, does not modify counts in JobSummary, and does not rewrite last_attempt_at. The duplicate is acknowledged and discarded.",
+      "stale_result_rule": "A result is stale, and must be discarded without any state change, when either: (a) its attempt is lower than the attempt currently recorded on the ItemReceipt; or (b) the ItemReceipt is already in item_status == 'SUCCEEDED'. In particular a late-arriving failure from an older attempt must never overwrite a SUCCEEDED item_status, must never null out an existing result_ref, and must never re-populate error on a succeeded item.",
+      "monotonicity_rule": "attempt is non-decreasing per item. item_status transitions out of SUCCEEDED are forbidden for the same job run; SUCCEEDED is terminal at item level. result_ref, once set on a SUCCEEDED item, is immutable.",
+      "aggregate_derivation_rule": "JobSummary counts and the aggregate JobStatus are derived deterministically from the persisted ItemReceipt set by applying state_transition_rules.batch_multi_item_precedence_rules. They are never incremented ad hoc by message handling. Consequently the final aggregate is a pure function of the item receipts and is identical after a restart, and identical regardless of the arrival order or multiplicity of duplicate messages.",
+      "cancellation_interaction": "The stale_result_rule applies to cancellation as well: a result arriving for an item already recorded CANCELLED with attempt == 0 (cancelled before execution) must not resurrect that item to SUCCEEDED or FAILED; it is discarded and reported as a stale-delivery observation.",
+      "scope_note": "This is an A-stage contract and test specification only. No implementation and no test execution is performed or claimed by ODP-DURABLE-PARTIAL-CONTRACT-PREP-001; the corresponding acceptance cases are specified in implementation-handoff.md section 4 test 5 and are WP-33B work."
     }
   },
   "definitions": {
