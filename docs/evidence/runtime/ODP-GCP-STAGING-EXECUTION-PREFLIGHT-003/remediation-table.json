@@ -1,0 +1,119 @@
+{
+  "task_id": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+  "generated_at": "2026-09-08T08:46:05Z",
+  "total_failures": 16,
+  "remediations": [
+    {
+      "check_id": "GCP-CR-SVC-ODAY_API",
+      "check_name": "CR service oday-api",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GCP-CR-SVC-ODAY_WEB",
+      "check_name": "CR service oday-web",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GCP-CR-JOB-ODAY_MIGRATION",
+      "check_name": "CR job oday-migration",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GCP-CR-JOB-ODAY_WORKER",
+      "check_name": "CR job oday-worker",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GCP-CR-JOB-ODAY_SCHEDULER",
+      "check_name": "CR job oday-scheduler",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GCP-SM-ODAY_PLUS_DEV_IDENTITY_TOKEN_SIGNING_KEY",
+      "check_name": "Secret oday-plus-dev-identity-token-signing-key",
+      "detail": "Secret oday-plus-dev-identity-token-signing-key not found in Secret Manager. Required for local auth mode identity token signing.",
+      "remediation": "Create secret oday-plus-dev-identity-token-signing-key in Secret Manager and bind to ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GH-VAR-DEV-ODP_WEB_BASE_URL",
+      "check_name": "dev/ODP_WEB_BASE_URL",
+      "detail": "MISSING",
+      "remediation": "Set ODP_WEB_BASE_URL in GitHub env dev",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GH-VAR-STAGING-ODP_WEB_BASE_URL",
+      "check_name": "staging/ODP_WEB_BASE_URL",
+      "detail": "MISSING",
+      "remediation": "Set ODP_WEB_BASE_URL in GitHub env staging",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GH-VAR-STAGING-ODP_STAGING_TERRAFORM_STATE_BUCKET",
+      "check_name": "staging/ODP_STAGING_TERRAFORM_STATE_BUCKET",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_TERRAFORM_STATE_BUCKET in GitHub env staging",
+      "priority": "high"
+    },
+    {
+      "check_id": "GH-VAR-STAGING-ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+      "check_name": "staging/ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_RECOVERY_BUNDLE_BUCKET in GitHub env staging",
+      "priority": "high"
+    },
+    {
+      "check_id": "GH-VAR-STAGING-ODP_STAGING_VPC_NETWORK",
+      "check_name": "staging/ODP_STAGING_VPC_NETWORK",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_VPC_NETWORK in GitHub env staging",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GH-VAR-STAGING-ODP_STAGING_VPC_SUBNETWORK",
+      "check_name": "staging/ODP_STAGING_VPC_SUBNETWORK",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_VPC_SUBNETWORK in GitHub env staging",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GH-VAR-STAGING-ODP_STAGING_KMS_KEY_ID",
+      "check_name": "staging/ODP_STAGING_KMS_KEY_ID",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_KMS_KEY_ID in GitHub env staging",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GH-VAR-STAGING-ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+      "check_name": "staging/ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT in GitHub env staging",
+      "priority": "medium"
+    },
+    {
+      "check_id": "GH-STAGING-BUCKET-SEP",
+      "check_name": "Bucket separation",
+      "detail": "Missing: state=UNSET recovery=UNSET",
+      "remediation": "Configure both buckets",
+      "priority": "high"
+    },
+    {
+      "check_id": "GH-VAR-PRODUCTION-ODP_WEB_BASE_URL",
+      "check_name": "production/ODP_WEB_BASE_URL",
+      "detail": "MISSING",
+      "remediation": "Set ODP_WEB_BASE_URL in GitHub env production",
+      "priority": "medium"
+    }
+  ]
+}

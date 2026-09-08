@@ -1,0 +1,569 @@
+{
+  "task_id": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
+  "execution_timestamp": "2026-09-08T08:46:05Z",
+  "executor_identity": "deborah.lu@dev.cctech-support.com",
+  "target_project": "odayplus-runtime-20260825",
+  "target_region": "asia-east1",
+  "summary": {
+    "total": 69,
+    "pass": 51,
+    "fail": 16,
+    "skip": 2,
+    "error": 0
+  },
+  "checks": [
+    {
+      "id": "GCP-IDENTITY-001",
+      "name": "GCP active identity",
+      "status": "pass",
+      "detail": "Account: deborah.lu@dev.cctech-support.com",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-PROJECT-001",
+      "name": "Target project",
+      "status": "pass",
+      "detail": "odayplus-runtime-20260825 is ACTIVE",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-AR-001",
+      "name": "Artifact Registry",
+      "status": "pass",
+      "detail": "oday-plus-dev accessible",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-SQL-001",
+      "name": "Cloud SQL",
+      "status": "pass",
+      "detail": "oday-dev-sql RUNNABLE",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-WIF-POOL-001",
+      "name": "WIF pool",
+      "status": "pass",
+      "detail": "github-actions accessible",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-WIF-PROV-001",
+      "name": "WIF provider",
+      "status": "pass",
+      "detail": "odayplus accessible",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-SA-001",
+      "name": "Deployer SA",
+      "status": "pass",
+      "detail": "Active (disabled=False)",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-CR-SVC-ODAY_API",
+      "name": "CR service oday-api",
+      "status": "fail",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-CR-SVC-ODAY_WEB",
+      "name": "CR service oday-web",
+      "status": "fail",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-CR-JOB-ODAY_MIGRATION",
+      "name": "CR job oday-migration",
+      "status": "fail",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-CR-JOB-ODAY_WORKER",
+      "name": "CR job oday-worker",
+      "status": "fail",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-CR-JOB-ODAY_SCHEDULER",
+      "name": "CR job oday-scheduler",
+      "status": "fail",
+      "detail": "Cannot read",
+      "remediation": "Deploy to dev",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-SM-ODAY_PLUS_DEV_API_DATABASE_URL_PG16",
+      "name": "Secret oday-plus-dev-api-database-url-pg16",
+      "status": "pass",
+      "detail": "Exists",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-SM-ODAY_PLUS_DEV_AUTH_PRINCIPAL_MAP",
+      "name": "Secret oday-plus-dev-auth-principal-map",
+      "status": "pass",
+      "detail": "Exists",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-SM-ODAY_PLUS_DEV_WEB_SESSION_SECRET",
+      "name": "Secret oday-plus-dev-web-session-secret",
+      "status": "pass",
+      "detail": "Exists",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-SM-ODAY_PLUS_DEV_IDENTITY_TOKEN_SIGNING_KEY",
+      "name": "Secret oday-plus-dev-identity-token-signing-key",
+      "status": "fail",
+      "detail": "Secret oday-plus-dev-identity-token-signing-key not found in Secret Manager. Required for local auth mode identity token signing.",
+      "remediation": "Create secret oday-plus-dev-identity-token-signing-key in Secret Manager and bind to ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-SM-ODAY_PLUS_DEV_WEB_OIDC_CLIENT_SECRET",
+      "name": "Secret oday-plus-dev-web-oidc-client-secret",
+      "status": "pass",
+      "detail": "Secret exists as oday-dev-web-oidc-client-secret (referenced by ODP_WEB_OIDC_CLIENT_SECRET_SECRET var as oday-dev-web-oidc-client-secret)",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GH-PROTECT-STAGING",
+      "name": "staging protection",
+      "status": "pass",
+      "detail": "Reviewers: Alien-alfaloop,ajoe734",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GH-PROTECT-PRODUCTION",
+      "name": "production protection",
+      "status": "pass",
+      "detail": "Reviewers: Alien-alfaloop,ajoe734",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-LEGACY-ALFALOOP_DATA_PROJECT",
+      "name": "Legacy alfaloop-data-project",
+      "status": "pass",
+      "detail": "Not accessible, no fallback risk",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GCP-LEGACY-ALFALOOP_DATA_PROJECT_2",
+      "name": "Legacy alfaloop-data-project-2",
+      "status": "pass",
+      "detail": "Exists (ACTIVE); must use odayplus-runtime-20260825 only",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:42:11Z"
+    },
+    {
+      "id": "GH-ENV-DEV",
+      "name": "GitHub env dev",
+      "status": "pass",
+      "detail": "41 variables configured",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-GCP_PROJECT_ID",
+      "name": "dev/GCP_PROJECT_ID",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-GCP_REGION",
+      "name": "dev/GCP_REGION",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-GCP_AR_REPO",
+      "name": "dev/GCP_AR_REPO",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-GCP_CLOUD_SQL_INSTANCE",
+      "name": "dev/GCP_CLOUD_SQL_INSTANCE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-GCP_WORKLOAD_IDENTITY_PROVIDER",
+      "name": "dev/GCP_WORKLOAD_IDENTITY_PROVIDER",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-GCP_SERVICE_ACCOUNT",
+      "name": "dev/GCP_SERVICE_ACCOUNT",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-ODP_CLOUD_RUN_API_SERVICE",
+      "name": "dev/ODP_CLOUD_RUN_API_SERVICE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-ODP_CLOUD_RUN_WEB_SERVICE",
+      "name": "dev/ODP_CLOUD_RUN_WEB_SERVICE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-ODP_CLOUD_RUN_MIGRATION_JOB",
+      "name": "dev/ODP_CLOUD_RUN_MIGRATION_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-ODP_CLOUD_RUN_WORKER_JOB",
+      "name": "dev/ODP_CLOUD_RUN_WORKER_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-ODP_CLOUD_RUN_SCHEDULER_JOB",
+      "name": "dev/ODP_CLOUD_RUN_SCHEDULER_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-DEV-ODP_WEB_BASE_URL",
+      "name": "dev/ODP_WEB_BASE_URL",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_WEB_BASE_URL in GitHub env dev",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-ENV-STAGING",
+      "name": "GitHub env staging",
+      "status": "pass",
+      "detail": "44 variables configured",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-GCP_PROJECT_ID",
+      "name": "staging/GCP_PROJECT_ID",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-GCP_REGION",
+      "name": "staging/GCP_REGION",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-GCP_AR_REPO",
+      "name": "staging/GCP_AR_REPO",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-GCP_CLOUD_SQL_INSTANCE",
+      "name": "staging/GCP_CLOUD_SQL_INSTANCE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-GCP_WORKLOAD_IDENTITY_PROVIDER",
+      "name": "staging/GCP_WORKLOAD_IDENTITY_PROVIDER",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-GCP_SERVICE_ACCOUNT",
+      "name": "staging/GCP_SERVICE_ACCOUNT",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_CLOUD_RUN_API_SERVICE",
+      "name": "staging/ODP_CLOUD_RUN_API_SERVICE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_CLOUD_RUN_WEB_SERVICE",
+      "name": "staging/ODP_CLOUD_RUN_WEB_SERVICE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_CLOUD_RUN_MIGRATION_JOB",
+      "name": "staging/ODP_CLOUD_RUN_MIGRATION_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_CLOUD_RUN_WORKER_JOB",
+      "name": "staging/ODP_CLOUD_RUN_WORKER_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_CLOUD_RUN_SCHEDULER_JOB",
+      "name": "staging/ODP_CLOUD_RUN_SCHEDULER_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_WEB_BASE_URL",
+      "name": "staging/ODP_WEB_BASE_URL",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_WEB_BASE_URL in GitHub env staging",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_STAGING_TERRAFORM_STATE_BUCKET",
+      "name": "staging/ODP_STAGING_TERRAFORM_STATE_BUCKET",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_TERRAFORM_STATE_BUCKET in GitHub env staging",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+      "name": "staging/ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_RECOVERY_BUNDLE_BUCKET in GitHub env staging",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_STAGING_VPC_NETWORK",
+      "name": "staging/ODP_STAGING_VPC_NETWORK",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_VPC_NETWORK in GitHub env staging",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_STAGING_VPC_SUBNETWORK",
+      "name": "staging/ODP_STAGING_VPC_SUBNETWORK",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_VPC_SUBNETWORK in GitHub env staging",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_STAGING_KMS_KEY_ID",
+      "name": "staging/ODP_STAGING_KMS_KEY_ID",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_KMS_KEY_ID in GitHub env staging",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-STAGING-ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+      "name": "staging/ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT in GitHub env staging",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-STAGING-BUCKET-SEP",
+      "name": "Bucket separation",
+      "status": "fail",
+      "detail": "Missing: state=UNSET recovery=UNSET",
+      "remediation": "Configure both buckets",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-ENV-PRODUCTION",
+      "name": "GitHub env production",
+      "status": "pass",
+      "detail": "42 variables configured",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-GCP_PROJECT_ID",
+      "name": "production/GCP_PROJECT_ID",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-GCP_REGION",
+      "name": "production/GCP_REGION",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-GCP_AR_REPO",
+      "name": "production/GCP_AR_REPO",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-GCP_CLOUD_SQL_INSTANCE",
+      "name": "production/GCP_CLOUD_SQL_INSTANCE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-GCP_WORKLOAD_IDENTITY_PROVIDER",
+      "name": "production/GCP_WORKLOAD_IDENTITY_PROVIDER",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-GCP_SERVICE_ACCOUNT",
+      "name": "production/GCP_SERVICE_ACCOUNT",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-ODP_CLOUD_RUN_API_SERVICE",
+      "name": "production/ODP_CLOUD_RUN_API_SERVICE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-ODP_CLOUD_RUN_WEB_SERVICE",
+      "name": "production/ODP_CLOUD_RUN_WEB_SERVICE",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-ODP_CLOUD_RUN_MIGRATION_JOB",
+      "name": "production/ODP_CLOUD_RUN_MIGRATION_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-ODP_CLOUD_RUN_WORKER_JOB",
+      "name": "production/ODP_CLOUD_RUN_WORKER_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-ODP_CLOUD_RUN_SCHEDULER_JOB",
+      "name": "production/ODP_CLOUD_RUN_SCHEDULER_JOB",
+      "status": "pass",
+      "detail": "Set",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GH-VAR-PRODUCTION-ODP_WEB_BASE_URL",
+      "name": "production/ODP_WEB_BASE_URL",
+      "status": "fail",
+      "detail": "MISSING",
+      "remediation": "Set ODP_WEB_BASE_URL in GitHub env production",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GCP-BUCKET-STATE",
+      "name": "TF state bucket",
+      "status": "skip",
+      "detail": "Not configured",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    },
+    {
+      "id": "GCP-BUCKET-RECOVERY",
+      "name": "Recovery bundle bucket",
+      "status": "skip",
+      "detail": "Not configured",
+      "remediation": "",
+      "timestamp": "2026-09-08T08:45:20Z"
+    }
+  ],
+  "read_only_attestation": "Read-only: gcloud describe/list + gh api GET only. No create/modify/delete. No tokens/secrets output."
+}
