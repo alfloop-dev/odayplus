@@ -18,7 +18,10 @@ from dispatch_policy import (
     task_submitted_author,
     worker_logical_dispatch_agent_id,
 )
-from worker_failure_policy import owner_preference_ranks
+from worker_failure_policy import (
+    auto_dispatch_block_is_temporary_capacity,
+    owner_preference_ranks,
+)
 
 
 def _supervisor_module():
@@ -1337,14 +1340,14 @@ def reassign_unavailable_reviewers(
             continue
         if claimed_role == "owner":
             claimed_id = normalize_agent_id(claimed_agent)
-            if agent_dispatch_paused(config, state, claimed_id):
-                claimed_block_reason = (
-                    f"dispatch is paused or disabled for {display_name_for(config, claimed_id) or claimed_agent}"
-                )
-            elif account_pool_dispatch_block_reason(config, claimed_id, runtime_state=state):
-                claimed_block_reason = account_pool_dispatch_block_reason(
-                    config, claimed_id, runtime_state=state
-                )
+            auto_block_reason = agent_auto_dispatch_block_reason(
+                config,
+                state,
+                claimed_id,
+                provider_report,
+            )
+            if auto_block_reason and not auto_dispatch_block_is_temporary_capacity(auto_block_reason):
+                claimed_block_reason = auto_block_reason
             else:
                 claimed_block_reason = None
             reviewer_same_pool = False
