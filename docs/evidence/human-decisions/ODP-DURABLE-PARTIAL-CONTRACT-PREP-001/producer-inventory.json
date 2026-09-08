@@ -1,0 +1,229 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "metadata": {
+    "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+    "work_package": "WP-33A",
+    "inspected_commit_sha": "9048161e058becff5a53593a773d3c42238213fb",
+    "inspection_utc": "2026-09-08T16:12:00Z",
+    "inventory_type": "static_source_code_inventory",
+    "live_runtime_receipt_status": "static_only_no_production_runtime_access",
+    "core_finding": "Zero reachable writes to JobStatus.PARTIAL exist across the codebase. All existing durable worker handlers process single entities/windows and transition directly to SUCCEEDED or FAILED/DEAD_LETTER/RETRYING."
+  },
+  "canonical_vocabulary": {
+    "job_status": [
+      "QUEUED",
+      "RUNNING",
+      "SUCCEEDED",
+      "FAILED",
+      "CANCELLED",
+      "PARTIAL"
+    ],
+    "job_delivery_state": [
+      "RETRYING",
+      "DEAD_LETTER"
+    ],
+    "orthogonal_boundary": "JobStatus represents business outcome; JobDeliveryState represents transport delivery mechanics. Terminal JobStatus must have null delivery_state."
+  },
+  "default_worker_registry_jobs": [
+    {
+      "job_type": "forecast",
+      "handler_symbol": "handle_forecast",
+      "handler_source": "apps/worker/oday_worker/handlers.py:255",
+      "enqueue_source": "apps/api/oday_api/main.py:977-992",
+      "item_granularity": "single_store_timeseries",
+      "current_terminal_statuses": [
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "has_partial_transition": false,
+      "delivery_state_handling": "Transport retry (RETRYING) up to 3 attempts, then DEAD_LETTER on terminal failure.",
+      "classification": "durable_worker_job_single_item",
+      "partial_assessment": "Inapplicable for canonical PARTIAL in current single-store design because each job evaluates a single store's forecast without independent sub-item aggregates."
+    },
+    {
+      "job_type": "external-fetch",
+      "handler_symbol": "handle_external_fetch",
+      "handler_source": "apps/worker/oday_worker/handlers.py:256",
+      "enqueue_source": "apps/scheduler/oday_scheduler/main.py:181",
+      "item_granularity": "single_provider_window",
+      "current_terminal_statuses": [
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "has_partial_transition": false,
+      "delivery_state_handling": "Scheduler backoff and circuit breaker, queue RETRYING/DEAD_LETTER.",
+      "classification": "durable_worker_job_single_item",
+      "partial_assessment": "Data-level partial candidate (accepted vs quarantined records), but currently executed as a single provider/window job returning SUCCEEDED or FAILED at the queue layer without JobStatus.PARTIAL or item-level retry."
+    },
+    {
+      "job_type": "assisted-listing-intake",
+      "handler_symbol": "handle_assisted_listing_intake",
+      "handler_source": "apps/worker/oday_worker/handlers.py:257",
+      "enqueue_source": "modules/opsboard/application/network_listings.py:1210",
+      "item_granularity": "single_listing_url",
+      "current_terminal_statuses": [
+        "SUCCEEDED",
+        "FAILED"
+      ],
+      "has_partial_transition": false,
+      "delivery_state_handling": "Stage-level error handling, NonRetryableJobError fails job to DEAD_LETTER.",
+      "classification": "durable_worker_job_single_item",
+      "partial_assessment": "Inapplicable for canonical PARTIAL as-is because it processes a single listing intake through sequential stages. If any unrecoverable error occurs, the single intake fails."
+    }
+  ],
+  "synchronous_partial_operations_not_durable_jobs": [
+    {
+      "operation_name": "Batch Listing Intake (POST /api/v1/intake-batches)",
+      "route_source": "apps/api/app/routes/listings.py:350-363",
+      "handler_source": "apps/api/app/routes/listings.py:1730-1799",
+      "operation_type": "synchronous_api_command_multi_item",
+      "receipt_structure": "BatchIntakeReceipt (accepted_count, rejected_count, items array with ACCEPTED/REJECTED status)",
+      "http_status": "207 Multi-Status when mixed valid/invalid rows",
+      "is_durable_job": false,
+      "has_job_status_field": false,
+      "notes": "True business partial outcome, but currently synchronous API command execution without durable queue dispatch or JobStatus."
+    },
+    {
+      "operation_name": "XLSX Import Commit",
+      "handler_source": "modules/external_data/application/xlsx_import.py:816-933",
+      "operation_type": "synchronous_api_command_multi_item",
+      "receipt_structure": "XlsxCommitReceipt (accepted_count, rejected_count, committed intake IDs)",
+      "is_durable_job": false,
+      "has_job_status_field": false,
+      "notes": "Partial commit of valid rows during XLSX upload; synchronous command with idempotency replay, not a durable queue job."
+    },
+    {
+      "operation_name": "External Ingestion Store & Quarantine",
+      "store_source": "modules/external_data/application/ingestion_store.py:90-123",
+      "service_source": "modules/external_data/application/ingestion_service.py:307-335",
+      "operation_type": "domain_data_persistence",
+      "receipt_structure": "IngestionRunRecord (accepted_count, quarantined_count, total_count, quarantine issues)",
+      "is_durable_job": false,
+      "has_job_status_field": false,
+      "notes": "Data quality partitioning at domain persistence level; scheduler job level remains SUCCEEDED or FAILED."
+    }
+  ],
+  "module_worker_entrypoints_inventory": [
+    {
+      "module": "avm",
+      "entry_point": "modules/avm/workers/valuation_worker.py:47-73",
+      "current_aggregate_behavior": "Evaluates items sequentially; returns status='succeeded' on completion, raises on error.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "sitescore",
+      "entry_point": "modules/sitescore/workers/scoring_worker.py:50-77",
+      "current_aggregate_behavior": "Generates reports per candidate; warnings are domain notices, not failure items; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "forecastops",
+      "entry_point": "modules/forecastops/workers/forecast_worker.py:62-98",
+      "current_aggregate_behavior": "Domain service returning single forecast result; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "heatzone",
+      "entry_point": "modules/heatzone/workers/scoring_worker.py:62-114",
+      "current_aggregate_behavior": "Calculates scores + warnings; domain state PARTIALLY_ABSORBED is spatial density state, not job status; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "adlift",
+      "entry_point": "modules/adlift/workers/incrementality_worker.py:42-59",
+      "current_aggregate_behavior": "Evaluates campaign incrementality; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "netplan",
+      "entry_point": "modules/netplan/workers/solver_worker.py:35-71",
+      "current_aggregate_behavior": "Runs scenario solver; returns 'succeeded' or 'completed_with_infeasible' (domain outcome).",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "priceops",
+      "entry_point": "modules/priceops/workers/optimizer_worker.py:67-109",
+      "current_aggregate_behavior": "Hard constraint checking; fail-fast aggregate failure, no partial transition.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "integration (geocode)",
+      "entry_point": "modules/integration/workers/geocode_worker.py:30-63",
+      "current_aggregate_behavior": "Returns geocoded coordinates + warnings; returns status='succeeded'.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "intervention",
+      "entry_point": "modules/intervention/workers/observation_worker.py:20-81",
+      "current_aggregate_behavior": "Sweeps matured_ids/pending_ids/evaluated_ids partition lists; returns SUCCEEDED.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "market_survey",
+      "entry_point": "modules/market_survey/workers/expiry_worker.py:19-67",
+      "current_aggregate_behavior": "Sweeps expired surveys and marks status; returns expired_count.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    },
+    {
+      "module": "learninghub",
+      "entry_point": "modules/learninghub/workers/release_worker.py:16-153",
+      "current_aggregate_behavior": "Saga evaluation / monitoring drift assessment; returns MonitoringEvaluation with drifted_columns.",
+      "has_partial_outcome": false,
+      "registered_in_job_registry": false
+    }
+  ],
+  "candidate_jobs_for_durable_partial_promotion": [
+    {
+      "candidate_id": "CANDIDATE-01",
+      "name": "batch-listing-intake",
+      "source_operation": "POST /api/v1/intake-batches",
+      "proposed_job_type": "batch-listing-intake",
+      "item_type": "individual_listing_row",
+      "business_benefit": "Allows large multi-listing uploads (100+ listings) to run asynchronously with itemized progress, durable partial completion, and retry for transient failures without re-uploading valid listings.",
+      "typical_failure_scenarios": [
+        "Missing mandatory address on row 4 (non-retryable input error)",
+        "Downstream geocoding timeout on row 12 (retryable transient error)",
+        "Duplicate external listing ID on row 25 (non-retryable business rejection)"
+      ],
+      "architectural_fit": "High. Business already has 207 Multi-Status per-row receipts in sync API; promotes existing pattern to durable background queue."
+    },
+    {
+      "candidate_id": "CANDIDATE-02",
+      "name": "multi-partition-external-fetch",
+      "source_operation": "apps/scheduler/oday_scheduler/main.py:181",
+      "proposed_job_type": "multi-partition-external-fetch",
+      "item_type": "provider_partition_window",
+      "business_benefit": "Enables scheduled external fetches across multiple geographic regions or provider partitions in one job, recording PARTIAL when one provider endpoint fails while others succeed.",
+      "typical_failure_scenarios": [
+        "Provider API 503 for Region A while Region B and C succeed",
+        "Schema parse error on specific feed payload partition",
+        "Rate limit quota exceeded on secondary provider"
+      ],
+      "architectural_fit": "Medium. Requires redesign of ExternalFetchScheduler from single-provider tick to multi-partition job payload."
+    },
+    {
+      "candidate_id": "CANDIDATE-03",
+      "name": "batch-sitescore-evaluation",
+      "source_operation": "modules/sitescore/workers/scoring_worker.py:50-77",
+      "proposed_job_type": "batch-sitescore-evaluation",
+      "item_type": "candidate_store_location",
+      "business_benefit": "Evaluates 20+ store candidates in one durable job; partial score completion allows operator to inspect succeeded candidate scores while investigating failed candidates.",
+      "typical_failure_scenarios": [
+        "Candidate coordinates outside valid territorial boundary",
+        "Underlying demographic cell data missing for candidate 7",
+        "Solver timeout on dense urban trade area optimization"
+      ],
+      "architectural_fit": "Medium. Operator UI already has SiteScoreJobStatus component displaying PARTIAL state."
+    }
+  ]
+}
