@@ -10147,7 +10147,7 @@
       "readback_masked": false,
       "readback": "<not executed>",
       "receipt_ref": null,
-      "finding": "SKIP: ODP_STAGING_TERRAFORM_STATE_BUCKET is unset, so there is no bucket name to read back, and creating one is a mutation this read-only preflight is not authorised to perform. Provisioning belongs to ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001."
+      "finding": "SKIP: ODP_STAGING_TERRAFORM_STATE_BUCKET is unset, so there is no bucket name to read back, and no bucket describe or list call was issued for it. Bucket existence is therefore unknown from this evidence, and an unset variable is not evidence that no suitable bucket exists. Resolving the approved existing resource, and provisioning one only where none exists, both belong to ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001."
     },
     {
       "check_id": "CHK-GCP-BUCKET-PROVISION-RECOVERY",
@@ -10167,9 +10167,9 @@
       "readback_masked": false,
       "readback": "<not executed>",
       "receipt_ref": null,
-      "finding": "SKIP: ODP_STAGING_RECOVERY_BUNDLE_BUCKET is unset, so there is no bucket name to read back, and creating one is a mutation this read-only preflight is not authorised to perform. Provisioning belongs to ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001."
+      "finding": "SKIP: ODP_STAGING_RECOVERY_BUNDLE_BUCKET is unset, so there is no bucket name to read back, and no bucket describe or list call was issued for it. Bucket existence is therefore unknown from this evidence, and an unset variable is not evidence that no suitable bucket exists. Resolving the approved existing resource, and provisioning one only where none exists, both belong to ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001."
     }
   ],
-  "read_only_attestation": "Every command in receipts/ is a read: `gh api` GET and `gcloud --quiet describe/list`. No create, update, delete, set-iam-policy, enable-service or storage-write command was issued in the original collection run or in this reclassification. Secret Manager probes read resource metadata only (`secrets describe`); no `versions access` was run and no secret payload, token or credential appears in any receipt or in this document. The only masked readback is ODP_RELEASE_LEASE_PUBLIC_KEY, withheld by length for conservatism.",
+  "read_only_attestation": "Every command in receipts/ is a read: `gh api` GET and `gcloud --quiet describe/list`. No create, update, delete, set-iam-policy, enable-service or storage-write command was issued in the original collection run, in this reclassification, or in the remediation-table follow_up_readback_validation run, which re-executed only the table's own read-only `gh api` GETs and retained only their exit codes. Secret Manager probes read resource metadata only (`secrets describe`); no `versions access` was run and no secret payload, token or credential appears in any receipt or in this document. The only masked readback is ODP_RELEASE_LEASE_PUBLIC_KEY, withheld by length for conservatism.",
   "governance_and_authority_boundary": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003 is authorised for read-only preflight and evidence production only. It does not enable any GCP API, grant any IAM role, create any bucket, set any GitHub variable, or deploy anything. Production remains fail-closed behind its GitHub required_reviewers gate; the Supervisor release lease and manifest-digest gates and the production watch-window gate are untouched. Remediation is routed to the existing canonical tasks named in remediation-table.json and is not performed here."
 }

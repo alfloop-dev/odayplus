@@ -2,6 +2,8 @@
   "task_id": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
   "schema_version": 4,
   "generated_at_utc": "2026-09-08T11:46:07Z",
+  "last_corrected_at_utc": "2026-09-08T13:15:36Z",
+  "generated_at_note": "generated_at_utc anchors the underlying preflight collection run; last_corrected_at_utc anchors the most recent review correction. See review_correction_log.",
   "executor_worker": "Claude",
   "source_preflight": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003/preflight-results.json",
   "derivation_note": "Every row is derived from a check in the source preflight and carries that check's receipt. Resource identities come from the recorded argv and from the observed GitHub variable bindings; no row widens a receipt's scope beyond the environments that actually bind the probed coordinates.",
@@ -46,6 +48,136 @@
     "Production watch-window gate and its closeout receipt verification"
   ],
   "preflight_authority_boundary": "This task performed read-only observation and evidence production only. It did not enable any GCP API, grant any IAM role, create any bucket, set any GitHub variable, dispatch any task, or deploy anything. Every remediation_action below describes work for the named responsible task, not work performed here.",
+  "review_correction_log": [
+    {
+      "correction_id": "CORR-JQ-VARIABLES-SHAPE",
+      "raised_by": "Codex",
+      "raised_at_utc": "2026-09-08T13:09:04Z",
+      "review_head": "e310230c8e7767946b3b649ff08724020341b7ae",
+      "severity_as_raised": "P2",
+      "finding": "18 remediation rows built their follow_up_readback around '.[]' (15 rows, 16 occurrences of '[.[]|select(.name==...)]') or '[.[].name]' (3 rows), treating the List environment variables response as a bare array.",
+      "adjudication": "Upheld. GET /repos/{owner}/{repo}/environments/{name}/variables returns {total_count, variables:[...]}, so '.[]' iterates the wrapper object's values and jq fails on the total_count number.",
+      "correction": "All 18 rows now iterate '.variables[]'; the three coverage rows use '[.variables[].name]'. --paginate is retained on every one.",
+      "verification": "See follow_up_readback_validation: 19/19 commands exit 0 after the correction, against 18/19 non-zero before it.",
+      "partially_rejected": {
+        "sub_claim": "The commands also retained backslash-escaped quotes after JSON decoding, so the outer shell single quotes would produce a jq syntax error.",
+        "adjudication": "Not reproduced. The backslashes are JSON string escaping only. Decoding each value with jq -r yields '[.variables[] | select(.name==\"ODP_WEB_BASE_URL\")]' with plain double quotes inside single quotes, which bash accepts. Under the previous head the decoded commands executed and failed inside jq with 'expected an object but got: number (41)', not with a shell or jq parse error, which is what a real escaping defect would have produced. No escaping change was needed or made; the row text is byte-identical apart from the filter path.",
+        "disposition": "Reported here rather than silently accepted, so the escaping claim is not carried forward as an unverified defect."
+      }
+    },
+    {
+      "correction_id": "CORR-BUCKET-CREATION-PRESUPPOSED",
+      "raised_by": "Codex",
+      "raised_at_utc": "2026-09-08T13:09:04Z",
+      "review_head": "e310230c8e7767946b3b649ff08724020341b7ae",
+      "severity_as_raised": "P2",
+      "finding": "REM-STAGING-BUCKET-SEPARATION had regressed to an unconditional 'Provision two distinct GCS buckets', and its authority_note called the action 'Bucket creation', although the only observation is that two staging variables are unset and no receipt contains a bucket describe or list.",
+      "adjudication": "Upheld. CHK-GCP-BUCKET-PROVISION-STATE and -RECOVERY are both recorded as skips with argv [] and exit_code null, so bucket existence was never observed and cannot be inferred from an unset variable.",
+      "correction": "The conditional from commit c8b7ba6a is restored and strengthened: ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 must first resolve the approved existing foundation resources, IAM bindings and retention policies, preserving Terraform identity/import/migration, then bind two distinct bucket references; creation is permitted only where that task confirms none exists and holds the authority. The authority_note now states that bucket existence is unknown from this evidence.",
+      "scope_extension": "The same unset-variable-implies-absent inference appeared in the six staging foundation variable rows (ODP_STAGING_VPC_NETWORK, ODP_STAGING_VPC_SUBNETWORK, ODP_STAGING_KMS_KEY_ID, ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT, ODP_STAGING_TERRAFORM_STATE_BUCKET, ODP_STAGING_RECOVERY_BUNDLE_BUCKET), each of which read 'Provision the staging foundation and bind X'. All six now require resolving the approved existing resource first, per the reviewer's request to check related foundation remediation wording. The two bucket skip findings in preflight-results.json were aligned to the same boundary.",
+      "retained_unchanged": "The FAIL observation for CHK-STAGING-BUCKET-SEPARATION, its critical severity, its fail-closed reading of the deploy-dev.yml:1207-1212 and :1477-1481 guards, and the two unset-variable findings are all retained. This preflight performs no remediation."
+    }
+  ],
+  "follow_up_readback_validation": {
+    "validated_at_utc": "2026-09-08T13:15:36Z",
+    "validator_worker": "Claude",
+    "purpose": "Verify that every string-valued follow_up_readback in this table is executable as written and targets the correct endpoint shape, after the correction recorded as review_correction_log entry CORR-JQ-VARIABLES-SHAPE.",
+    "method": "Each follow_up_readback that begins with 'gh api' was JSON-decoded and executed verbatim through bash. All are read-only GET requests against GitHub repository/environment metadata. Only the process exit code was retained.",
+    "commands_validated": 19,
+    "all_exit_zero": true,
+    "exit_codes": [
+      {
+        "finding_id": "REM-DEV-VAR-ODP_WEB_BASE_URL",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-DEV-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-PROD-VAR-ODP_WEB_BASE_URL",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-PROD-VAR-ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-PROD-VAR-ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-PROD-VAR-ODP_CLOUD_RUN_VPC_EGRESS",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-STAGING-VAR-ODP_STAGING_VPC_NETWORK",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-STAGING-VAR-ODP_STAGING_VPC_SUBNETWORK",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-STAGING-VAR-ODP_STAGING_KMS_KEY_ID",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-STAGING-VAR-ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-STAGING-VAR-ODP_STAGING_TERRAFORM_STATE_BUCKET",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-STAGING-VAR-ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-STAGING-VAR-ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-STAGING-BUCKET-SEPARATION",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-PROD-AUTHORITY-GATE",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-EVIDENCE-IDENTITY-KEY-PROBE-UNBOUND",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-COVERAGE-DEV-BUILD-ENV",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-COVERAGE-STAGING-BUILD-ENV",
+        "exit_code": 0
+      },
+      {
+        "finding_id": "REM-COVERAGE-PROD-BUILD-ENV",
+        "exit_code": 0
+      }
+    ],
+    "endpoint_shape_basis": "GET /repos/{owner}/{repo}/environments/{environment_name}/variables returns the object {total_count, variables:[...]}, not a bare array; confirmed by reading the live response keys (['total_count','variables']) and consistent with the recorded probe receipts, which store total_variables_count alongside a variables array. Official contract: https://docs.github.com/en/rest/actions/variables#list-environment-variables",
+    "regression_baseline": {
+      "commit": "e310230c8e7767946b3b649ff08724020341b7ae",
+      "commands_validated": 19,
+      "nonzero_exit": 18,
+      "zero_exit": 1,
+      "note": "Under the previous head the 18 commands that used '.[]' or '[.[].name]' against the variables list endpoint exited non-zero with jq error 'expected an object but got: number', because '.[]' iterates the values of the wrapper object. Only REM-PROD-AUTHORITY-GATE, which reads '.protection_rules' from the environment object, was already correct."
+    },
+    "scope_limits": [
+      "This is a validation of the remediation table's own readback commands. It is not a preflight probe and is deliberately not listed in preflight-results.json receipt_index.",
+      "No variable value or response body was recorded, only exit codes; no secret or token was read.",
+      "No preflight check status, count or finding was changed on the basis of this validation, and no new observation was derived from it.",
+      "No GCP call, no resource mutation and no GitHub write was performed."
+    ]
+  },
   "remediations": [
     {
       "finding_id": "REM-DEV-VAR-ODP_WEB_BASE_URL",
@@ -67,7 +199,7 @@
       "observation": "FAIL: ODP_WEB_BASE_URL is required by runtime_live_preflight/required_public_config (product_ops/deployment/validate_cloud_run_live_deployment.py:70-113,1391-1445) but is NOT set in GitHub environment ['dev'].",
       "remediation_action": "Set ODP_WEB_BASE_URL on the GitHub 'dev' environment. It is unconditionally required by the live runtime preflight, which dev runs; without it the deploy job fails before reaching Cloud Run.",
       "responsible_task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables --jq '[.[]|select(.name==\"ODP_WEB_BASE_URL\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables --jq '[.variables[] | select(.name==\"ODP_WEB_BASE_URL\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-dev.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -91,7 +223,7 @@
       "observation": "FAIL: ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET is required by runtime_live_preflight/required_secret_reference (product_ops/deployment/validate_cloud_run_live_deployment.py:70-113,1391-1445) but is NOT set in GitHub environment ['dev'].",
       "remediation_action": "Set ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET on the GitHub 'dev' environment. It is unconditionally required by the live runtime preflight, which dev runs; without it the deploy job fails before reaching Cloud Run.",
       "responsible_task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables --jq '[.[]|select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables --jq '[.variables[] | select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-dev.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -115,7 +247,7 @@
       "observation": "FAIL: ODP_WEB_BASE_URL is required by runtime_live_preflight/required_public_config (product_ops/deployment/validate_cloud_run_live_deployment.py:70-113,1391-1445) but is NOT set in GitHub environment ['production'].",
       "remediation_action": "Set ODP_WEB_BASE_URL on the GitHub 'production' environment before any production rollout. Production runs the full deploy + live-preflight path, so this input is required there even though the staging path does not consume it.",
       "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.[]|select(.name==\"ODP_WEB_BASE_URL\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.variables[] | select(.name==\"ODP_WEB_BASE_URL\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-production.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -139,7 +271,7 @@
       "observation": "FAIL: ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET is required by runtime_live_preflight/required_secret_reference (product_ops/deployment/validate_cloud_run_live_deployment.py:70-113,1391-1445) but is NOT set in GitHub environment ['production'].",
       "remediation_action": "Set ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET on the GitHub 'production' environment before any production rollout. Production runs the full deploy + live-preflight path, so this input is required there even though the staging path does not consume it.",
       "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.[]|select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.variables[] | select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-production.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -170,7 +302,7 @@
       "observation": "FAIL: ODP_CLOUD_RUN_VPC_CONNECTOR is required by deploy/deploy (delivery_toolchain/release/check_release_environment.py:50-115) but is NOT set in GitHub environment ['production'].",
       "remediation_action": "Set ODP_CLOUD_RUN_VPC_CONNECTOR on the GitHub 'production' environment before any production rollout. Production runs the full deploy + live-preflight path, so this input is required there even though the staging path does not consume it.",
       "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.[]|select(.name==\"ODP_CLOUD_RUN_VPC_CONNECTOR\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.variables[] | select(.name==\"ODP_CLOUD_RUN_VPC_CONNECTOR\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-production.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -201,7 +333,7 @@
       "observation": "FAIL: ODP_CLOUD_RUN_VPC_EGRESS is required by deploy/deploy (delivery_toolchain/release/check_release_environment.py:50-115) but is NOT set in GitHub environment ['production'].",
       "remediation_action": "Set ODP_CLOUD_RUN_VPC_EGRESS on the GitHub 'production' environment before any production rollout. Production runs the full deploy + live-preflight path, so this input is required there even though the staging path does not consume it.",
       "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.[]|select(.name==\"ODP_CLOUD_RUN_VPC_EGRESS\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables --jq '[.variables[] | select(.name==\"ODP_CLOUD_RUN_VPC_EGRESS\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-production.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -230,9 +362,9 @@
         }
       ],
       "observation": "FAIL: ODP_STAGING_VPC_NETWORK is required by staging_lifecycle/staging (delivery_toolchain/release/check_release_environment.py:50-115); staging_closeout/staging (delivery_toolchain/release/check_release_environment.py:50-115) but is NOT set in GitHub environment ['staging'].",
-      "remediation_action": "Provision the staging foundation and bind ODP_STAGING_VPC_NETWORK on the GitHub 'staging' environment. check_release_environment.py --scope staging refuses the whole staging job while it is unset.",
+      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve which approved staging foundation resource ODP_STAGING_VPC_NETWORK must name -- including its IAM bindings, retention policy and any existing Terraform identity to import or migrate -- then bind that resolved reference on the GitHub 'staging' environment. This preflight observed only that the variable is unset; it did not observe whether a suitable resource already exists, so an unset variable is not evidence that one must be created. Provision a new resource only where the owning foundation task confirms none exists and holds the authority to create it. check_release_environment.py --scope staging refuses the whole staging job while the variable is unset.",
       "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_STAGING_VPC_NETWORK\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_NETWORK\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -261,9 +393,9 @@
         }
       ],
       "observation": "FAIL: ODP_STAGING_VPC_SUBNETWORK is required by staging_lifecycle/staging (delivery_toolchain/release/check_release_environment.py:50-115); staging_closeout/staging (delivery_toolchain/release/check_release_environment.py:50-115) but is NOT set in GitHub environment ['staging'].",
-      "remediation_action": "Provision the staging foundation and bind ODP_STAGING_VPC_SUBNETWORK on the GitHub 'staging' environment. check_release_environment.py --scope staging refuses the whole staging job while it is unset.",
+      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve which approved staging foundation resource ODP_STAGING_VPC_SUBNETWORK must name -- including its IAM bindings, retention policy and any existing Terraform identity to import or migrate -- then bind that resolved reference on the GitHub 'staging' environment. This preflight observed only that the variable is unset; it did not observe whether a suitable resource already exists, so an unset variable is not evidence that one must be created. Provision a new resource only where the owning foundation task confirms none exists and holds the authority to create it. check_release_environment.py --scope staging refuses the whole staging job while the variable is unset.",
       "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_STAGING_VPC_SUBNETWORK\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_VPC_SUBNETWORK\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -292,9 +424,9 @@
         }
       ],
       "observation": "FAIL: ODP_STAGING_KMS_KEY_ID is required by staging_lifecycle/staging (delivery_toolchain/release/check_release_environment.py:50-115); staging_closeout/staging (delivery_toolchain/release/check_release_environment.py:50-115) but is NOT set in GitHub environment ['staging'].",
-      "remediation_action": "Provision the staging foundation and bind ODP_STAGING_KMS_KEY_ID on the GitHub 'staging' environment. check_release_environment.py --scope staging refuses the whole staging job while it is unset.",
+      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve which approved staging foundation resource ODP_STAGING_KMS_KEY_ID must name -- including its IAM bindings, retention policy and any existing Terraform identity to import or migrate -- then bind that resolved reference on the GitHub 'staging' environment. This preflight observed only that the variable is unset; it did not observe whether a suitable resource already exists, so an unset variable is not evidence that one must be created. Provision a new resource only where the owning foundation task confirms none exists and holds the authority to create it. check_release_environment.py --scope staging refuses the whole staging job while the variable is unset.",
       "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_STAGING_KMS_KEY_ID\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_KMS_KEY_ID\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -323,9 +455,9 @@
         }
       ],
       "observation": "FAIL: ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT is required by staging_lifecycle/staging (delivery_toolchain/release/check_release_environment.py:50-115); staging_closeout/staging (delivery_toolchain/release/check_release_environment.py:50-115) but is NOT set in GitHub environment ['staging'].",
-      "remediation_action": "Provision the staging foundation and bind ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT on the GitHub 'staging' environment. check_release_environment.py --scope staging refuses the whole staging job while it is unset.",
+      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve which approved staging foundation resource ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT must name -- including its IAM bindings, retention policy and any existing Terraform identity to import or migrate -- then bind that resolved reference on the GitHub 'staging' environment. This preflight observed only that the variable is unset; it did not observe whether a suitable resource already exists, so an unset variable is not evidence that one must be created. Provision a new resource only where the owning foundation task confirms none exists and holds the authority to create it. check_release_environment.py --scope staging refuses the whole staging job while the variable is unset.",
       "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -354,9 +486,9 @@
         }
       ],
       "observation": "FAIL: ODP_STAGING_TERRAFORM_STATE_BUCKET is required by staging_lifecycle/staging (delivery_toolchain/release/check_release_environment.py:50-115); staging_closeout/staging (delivery_toolchain/release/check_release_environment.py:50-115) but is NOT set in GitHub environment ['staging'].",
-      "remediation_action": "Provision the staging foundation and bind ODP_STAGING_TERRAFORM_STATE_BUCKET on the GitHub 'staging' environment. check_release_environment.py --scope staging refuses the whole staging job while it is unset.",
+      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve which approved staging foundation resource ODP_STAGING_TERRAFORM_STATE_BUCKET must name -- including its IAM bindings, retention policy and any existing Terraform identity to import or migrate -- then bind that resolved reference on the GitHub 'staging' environment. This preflight observed only that the variable is unset; it did not observe whether a suitable resource already exists, so an unset variable is not evidence that one must be created. Provision a new resource only where the owning foundation task confirms none exists and holds the authority to create it. check_release_environment.py --scope staging refuses the whole staging job while the variable is unset.",
       "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -385,9 +517,9 @@
         }
       ],
       "observation": "FAIL: ODP_STAGING_RECOVERY_BUNDLE_BUCKET is required by staging_lifecycle/staging (delivery_toolchain/release/check_release_environment.py:50-115); staging_closeout/staging (delivery_toolchain/release/check_release_environment.py:50-115) but is NOT set in GitHub environment ['staging'].",
-      "remediation_action": "Provision the staging foundation and bind ODP_STAGING_RECOVERY_BUNDLE_BUCKET on the GitHub 'staging' environment. check_release_environment.py --scope staging refuses the whole staging job while it is unset.",
+      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve which approved staging foundation resource ODP_STAGING_RECOVERY_BUNDLE_BUCKET must name -- including its IAM bindings, retention policy and any existing Terraform identity to import or migrate -- then bind that resolved reference on the GitHub 'staging' environment. This preflight observed only that the variable is unset; it did not observe whether a suitable resource already exists, so an unset variable is not evidence that one must be created. Provision a new resource only where the owning foundation task confirms none exists and holds the authority to create it. check_release_environment.py --scope staging refuses the whole staging job while the variable is unset.",
       "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_STAGING_RECOVERY_BUNDLE_BUCKET\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_RECOVERY_BUNDLE_BUCKET\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does."
     },
@@ -411,7 +543,7 @@
       "observation": "FAIL: ODP_PRODUCTION_WATCH_CLOSEOUT_URI is required by staging_closeout/staging_closeout_shell_guard (.github/workflows/deploy-dev.yml:1411,1482,1512) but is NOT set in GitHub environment ['staging'].",
       "remediation_action": "Bind ODP_PRODUCTION_WATCH_CLOSEOUT_URI on the GitHub 'staging' environment to the GCS URI of the production watch-window receipt. The staging closeout job hard-requires it with a `: \"${VAR:?}\"` guard before it copies and verifies that receipt, so a release that otherwise succeeds cannot clean up its ephemeral staging estate.",
       "responsible_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_PRODUCTION_WATCH_CLOSEOUT_URI\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_PRODUCTION_WATCH_CLOSEOUT_URI\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
       "authority_note": "This preflight does not set GitHub variables; the owning task does.",
       "depends_on_producer": {
@@ -428,11 +560,11 @@
       "github_environment": "staging",
       "affected_input": "ODP_STAGING_TERRAFORM_STATE_BUCKET + ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
       "observation": "FAIL: both bucket variables are unset in the staging environment. The separation guard at .github/workflows/deploy-dev.yml:1207-1212 (and again at :1477-1481 for closeout) refuses when they are equal, and the `: \"${VAR:?}\"` guards immediately above refuse when either is empty, so the staging path cannot start. Separation cannot be satisfied by two empty values.",
-      "remediation_action": "Provision two distinct GCS buckets -- one for the ephemeral staging Terraform backend and one for recovery bundles -- and bind both. They must not be the same bucket: the recovery bundle is what remains readable when the Terraform state is lost.",
+      "remediation_action": "Under ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001, first resolve the approved existing staging foundation resources, their IAM bindings and retention policies, preserving Terraform identity, import and migration for anything already under state; then bind ODP_STAGING_TERRAFORM_STATE_BUCKET and ODP_STAGING_RECOVERY_BUNDLE_BUCKET to two distinct bucket references. Do NOT create new buckets without that foundation task\u0027s authority: this preflight observed only that both variables are unset, and made no bucket describe or list call, so it is not evidence that no suitable bucket exists. Create a bucket only where the owning task confirms none exists and holds the authority to create it. Whichever references are bound must be distinct -- the recovery bundle is what remains readable when the Terraform state is lost.",
       "responsible_task_id": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001",
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]' && gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.[]|select(.name==\"ODP_STAGING_RECOVERY_BUNDLE_BUCKET\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_TERRAFORM_STATE_BUCKET\")]' && gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables --jq '[.variables[] | select(.name==\"ODP_STAGING_RECOVERY_BUNDLE_BUCKET\")]'",
       "receipt_ref": "receipts/github-receipts/receipt-gh-env-vars-staging.json",
-      "authority_note": "Bucket creation is a mutation; this read-only preflight deliberately skipped it (CHK-GCP-BUCKET-PROVISION-STATE / -RECOVERY)."
+      "authority_note": "This preflight issued no bucket describe or list call (CHK-GCP-BUCKET-PROVISION-STATE / -RECOVERY are recorded as deliberate skips because no bucket name was bound to read back), so bucket existence is unknown from this evidence. Resolving, binding or creating buckets are all actions reserved to the owning foundation task."
     },
     {
       "finding_id": "REM-PROD-AUTHORITY-GATE",
@@ -672,7 +804,7 @@
       "additional_responsible_task_ids": [
         "ODP-PROD-BLUEGREEN-ROLLOUT-001"
       ],
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables --jq '[.[]|select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables --jq '[.variables[] | select(.name==\"ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET\")]'",
       "receipt_ref": "receipts/gcp-receipts/receipt-gcp-sm-identity-signing-key.json",
       "authority_note": "Recorded as an evidence-scoping correction; the deployment blocker is the variable row, not this probe."
     },
@@ -694,7 +826,7 @@
       "remediation_action": "Enumerate 'dev-build' read-only and reconcile it against check_release_environment.py --scope build before relying on any build for dev.",
       "responsible_task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
       "additional_responsible_task_ids": [],
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev-build/variables --jq '[.[].name]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/dev-build/variables --jq '[.variables[].name]'",
       "receipt_ref": null,
       "authority_note": "Read-only enumeration; no variable is set by this task."
     },
@@ -716,7 +848,7 @@
       "remediation_action": "Enumerate 'staging-build' read-only and reconcile it against check_release_environment.py --scope build before relying on any build for staging.",
       "responsible_task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
       "additional_responsible_task_ids": [],
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging-build/variables --jq '[.[].name]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/staging-build/variables --jq '[.variables[].name]'",
       "receipt_ref": null,
       "authority_note": "Read-only enumeration; no variable is set by this task."
     },
@@ -738,7 +870,7 @@
       "remediation_action": "Enumerate 'production-build' read-only and reconcile it against check_release_environment.py --scope build before relying on any build for production.",
       "responsible_task_id": "ODP-PROD-BLUEGREEN-ROLLOUT-001",
       "additional_responsible_task_ids": [],
-      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production-build/variables --jq '[.[].name]'",
+      "follow_up_readback": "gh api --paginate repos/alfloop-dev/odayplus/environments/production-build/variables --jq '[.variables[].name]'",
       "receipt_ref": null,
       "authority_note": "Read-only enumeration; no variable is set by this task."
     }
