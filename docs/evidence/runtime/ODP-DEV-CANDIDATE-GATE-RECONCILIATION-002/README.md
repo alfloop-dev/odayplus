@@ -20,6 +20,8 @@ merge 歷史。PR #1243／#1205 與其 ancestry failure 仍保留為歷史證據
 `docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/` 路徑；
 使用既有 ancestry validator 逐一記錄成功或 fail-closed 結果。此整合仍維持七道
 gate blocked、NO-GO，沒有簽 lease 或部署。
+本次 clean E=`c09185fdbcde10d22c54f9c134c008e17ccad3ad` 的 validator
+readback 為 EXIT=0，完整命令與結果見 `root-clean-ancestry-receipt.json`。
 
 ## 這次做了什麼
 
