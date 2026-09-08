@@ -6,11 +6,12 @@ status: PENDING_INDEPENDENT_REVIEW
 owner: Claude2
 previous_owner: Antigravity4
 reviewer: Codex
-review_round: 3
+review_round: 4
 repository: alfloop-dev/odayplus
 task: ODP-DRIFT-SECURITY-VERIFY-003
 verified_ref: c4bf87d81d55180d6d6769daf5358992b3bc6620
-base_ref: c4bf87d81d55180d6d6769daf5358992b3bc6620
+base_ref: 8c570a56353abdcc8ba70fe0a3fdd9b963902391
+measurement_ref: d6514b049996747aba378a9380851f98594c12af
 upstream_pr_chain:
   - PR_1218: ODP-NLTK-MONITORING-BASELINE-001
   - PR_1217: ODP-SBOM-CANDIDATE-OUTPUT-ISOLATION-001
@@ -26,7 +27,10 @@ upstream_pr_chain:
 This document records the security verification evidence for the complete
 removal of `evidently`, `nltk`, `defusedxml`, and `regex` from the production
 dependency chain, and the operation of four-dimension native monitoring, on
-exact integration SHA `c4bf87d81d55180d6d6769daf5358992b3bc6620`.
+exact integration SHA `c4bf87d81d55180d6d6769daf5358992b3bc6620`. Every
+measurement added in round 4 was taken at
+`d6514b049996747aba378a9380851f98594c12af`, which carries that integration
+content unchanged (see §1.1).
 
 **Status**: PENDING_INDEPENDENT_REVIEW — This evidence document awaits
 independent reviewer approval and PR merge into `dev` before the remediation
@@ -39,18 +43,56 @@ actual stdout/stderr redirection at execution time.
 
 ### 1.1 SHA Relationship
 
-- **Base SHA** (`origin/dev` tip at branch creation): `c4bf87d81d55180d6d6769daf5358992b3bc6620`
+- **Integration SHA** (`origin/dev` tip at branch creation): `c4bf87d81d55180d6d6769daf5358992b3bc6620`
+- **Current base** (`origin/dev` tip at round-4 submission): `8c570a56353abdcc8ba70fe0a3fdd9b963902391`
+- **Measurement SHA** (every round-4 run below): `d6514b049996747aba378a9380851f98594c12af`
 - **Task branch HEAD**: see PR head at submission time
-- The base SHA already contains all upstream PR merges (#1217, #1218, #1219, #1222, #1188).
-  This task adds only verification tests, evidence documents, and raw receipts;
-  it does not change production code, dependencies, or lock files.
+- The integration SHA already contains all upstream PR merges (#1217, #1218, #1219, #1222, #1188).
+  This task adds only verification tests, evidence documents, raw receipts and the
+  task-owned capture tools in `tools/`; it does not change production code,
+  dependencies, or lock files.
 
-### 1.2 What this round adds
+**The base advance did not move the thing under test.** `origin/dev` advanced
+from `c4bf87d8` to `8c570a56` while this task was in review, and the branch was
+composed onto that base through a normal merge. The entire incoming delta is one
+file — `docs/evidence/execution-control/ODP_CODEX_ULTRA_DRIFT_REPAIR_20260906.md`
+— with no change to `uv.lock`, `pyproject.toml`, any production module, any
+test, any fixture or any gate. The dependency and monitoring surface measured at
+`d6514b04` is therefore the same surface the integration SHA carries, which a
+reviewer can confirm with `git diff c4bf87d8..8c570a56 --name-only`.
 
-Ownership moved to Claude2 after the second reviewer reopen. That reopen
-(2026-09-08T01:35:38Z) named two gaps and one process failure:
+**Measurement SHA versus submitted head.** `d6514b04` is an ancestor of the
+submitted head. Everything committed after it is evidence — this document, the
+receipts, and the regenerated receipt index — so no measurement below describes
+a tree that differs from the reviewed one in any way that could affect it. This
+is checkable directly: `git diff --name-only d6514b04..<head>` returns only
+paths under `docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/`.
+
+### 1.2 What round 4 adds
+
+The third reviewer reopen (2026-09-08T02:23:17Z) confirmed the round-3 GitHub,
+merge-chain, installed-scope and production-entry evidence, and named three
+remaining acceptance gaps. Each is answered by measurement, not by argument:
 
 | Reviewer finding | Answered in |
+|---|---|
+| The authoritative 215-package scan had only a PASS summary; the one raw JSON receipt was the wrong-scope `--local` payload with `dependencies: []` | §4.4 — the merged gate re-run through a pass-through recorder, preserving its child's full CLI, per-package JSON, stderr, exit code and timings; run twice, byte-identical |
+| The audited set was never reconciled against installed / lock / SBOM | §4.5 — every audited name and version matched in both directions, 0 mismatches, and all 6 lock-surplus entries individually accounted for |
+| The 171-case baseline and native-core receipts recorded no run SHA or input binding | §12 "Round-4 run" and §13.1 — both suites re-executed with the commit, the input hashes and the receipt hashes bound together |
+| §12 disclosed only three contract deltas; `engine_version`, the metric-`id` derivation and the `ZeroDivisionError` → `NativeDriftError` change were omitted | §12.3 — all nine deltas listed item by item, each with its guard and its upstream review basis |
+
+**What round 4 deliberately does not do.** No golden, manifest, threshold or
+assertion was changed; no waiver, suppression or ignore rule was added; the
+`pip_audit_gate.py` source is untouched and its SHA-256 is recorded; the
+three no-suppression regressions were *not* executed this round and no claim is
+made that they were (§4.3); and the failing root-SBOM receipt is preserved
+unedited. The document status stays `PENDING_INDEPENDENT_REVIEW`. Nothing is
+deployed and no GO is granted.
+
+**Earlier rounds, retained.** Round 3's answers to the second reopen stand
+unchanged:
+
+| Reviewer finding (round 2) | Answered in |
 |---|---|
 | production-entry evidence missing | §11 — every production monitoring entry executed and recorded, four dimensions covered |
 | baseline-equivalence evidence missing | §12 — all 44 recorded Evidently goldens replayed against the native path at exact equality, twice |
@@ -169,9 +211,14 @@ PASS: no Python package vulnerabilities found (215 dependencies audited).
 
 **stderr content**: `No known vulnerabilities found`
 
-**Scope note**: The `--local` mode audits the ephemeral `uv run --with`
-overlay. The gate's `--path` mode (§4.1) is the authoritative scope
-covering all 215 installed packages. Both returned zero findings.
+**Scope note, corrected in round 4**: this invocation is *not* evidence about
+the candidate. `--local` audits the ephemeral `uv run --with` overlay, not the
+project environment, which is why it reports `dependencies: []` — zero packages
+were scanned, so "no vulnerabilities found" here is vacuous. The round-3
+document offered this as the raw payload backing the authoritative scan; the
+reviewer was correct that it cannot serve that purpose. The receipt is retained
+unedited as the record of what was run, and the authoritative scan's real
+per-package payload is now captured in §4.4.
 
 ### 4.3 No-Suppression Confirmation
 
@@ -179,6 +226,158 @@ The `pip_audit_gate.py` source contains no `--ignore-vuln`, `--suppress`,
 `--skip`, or waiver mechanism. The gate is fail-closed: every reported
 vulnerability causes exit 1, transport failures cause exit 2. No suppression
 rules exist for this task or any predecessor.
+
+Round 4 adds the stronger form of the same check. Reading the source shows what
+the gate *could* pass to `pip-audit`; the captured child argv in §4.4 shows what
+it *did* pass. The recorded command line is, in full:
+
+```
+uv run --with pip-audit pip-audit --path .venv/lib/python3.12/site-packages --format json --timeout 15
+```
+
+It carries no `--ignore-vuln`, no allowlist file, no `--skip`, and no
+`--vulnerability-service` override away from the PyPI default. This closes the
+gap that source reading alone leaves open — an ignore flag injected from the
+environment would not appear in the source but would appear here.
+
+The three dedicated no-suppression regressions live in
+`tests/tooling/test_dependency_audit_boundary.py`:
+`test_pip_audit_gate_exposes_no_suppression_surface` (:410),
+`test_pip_audit_cli_rejects_ignore_vuln_flag` (:431) and
+`test_pip_audit_advisory_finding_fails_closed_despite_env_bypass_attempt`
+(:446). The reviewer statically confirmed in the round-3 review that all three
+are still present and identical to base. **This round did not execute them**,
+and nothing here should be read as a claim that it did.
+
+### 4.4 Authoritative Scan — Raw Per-Package Advisory Payload
+
+Reviewer finding (reopen #3, item 1): §4.1 evidenced the authoritative
+215-package scan only with the gate's one-line PASS summary, and the sole raw
+JSON receipt was the wrong-scope `--local` payload in §4.2. The original round-3
+gate child's stdout was never written to a file and is not recoverable, so it
+is re-obtained here rather than reconstructed. Nothing already recorded is
+altered: §4.1 and §4.2 keep their original receipts and hashes.
+
+**Method.** `tools/pip_audit_gate_passthrough.py` imports the merged gate from
+PR #1188 and calls the gate's own `main()`. Argument parsing, environment
+resolution, scope selection, retry policy, the structural
+`classify_dependency_entries` check, `evaluate()` and the exit code are all the
+gate's own code. The only injection is the `runner` seam that `run_pip_audit`
+already exposes for its subprocess call; the injected runner calls
+`subprocess.run` with the arguments it was handed and returns the result object
+untouched. The gate therefore sees exactly the bytes it would otherwise see and
+renders its own verdict. **No verdict is computed by the capture tool, and
+`delivery_toolchain/security/pip_audit_gate.py` is not modified** — its
+SHA-256 is recorded below and is the same file the merged PR #1188 delivered.
+
+| Item | Value |
+|---|---|
+| Run SHA | `d6514b049996747aba378a9380851f98594c12af` |
+| Code tree matches that commit | yes (no deviation outside `receipts/`, before and after) |
+| Gate module | `delivery_toolchain/security/pip_audit_gate.py` |
+| Gate module SHA256 | `7116063f67c6c8310e2d165787f934a9eea4642fcd3d968a657afb51182a7c64` |
+| Gate exit code | 0 (return value of `pip_audit_gate.main()`) |
+| Gate verdict | `PASS: no Python package vulnerabilities found (215 dependencies audited).` |
+| Arguments forwarded to the gate | none (gate resolved its own defaults) |
+| Audit tool | pip-audit 2.10.1 (recorded from `pip-audit --version`, exit 0) |
+| Vulnerability data source | PyPI advisory service (gate default; no `--vulnerability-service` override) |
+| Child invocations | 1 of a 3-attempt budget — no retry was needed |
+
+**Child process, as recorded:**
+
+| Item | Value |
+|---|---|
+| Command line | `uv run --with pip-audit pip-audit --path .venv/lib/python3.12/site-packages --format json --timeout 15` |
+| Working directory | `/tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003` |
+| Audited scope | `.venv/lib/python3.12/site-packages` |
+| Process timeout / socket timeout | 300.0s / 15s |
+| Exit code | 0 |
+| Started → finished (UTC) | 2026-09-08T02:43:13.098Z → 2026-09-08T02:43:15.968Z (2.87s) |
+| stdout | 12,357 bytes — `receipts/pip_audit_gate_child_attempt1_stdout.json` |
+| stdout SHA256 | `f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9` |
+| stderr | `No known vulnerabilities found` — `receipts/pip_audit_gate_child_attempt1_stderr.txt` |
+| stderr SHA256 | `15950a68a7ed99c59779717acefdceb3f69cfd31bde67d2c954f2a3cea4d7955` |
+| Full capture (argv, cwd, timings, hashes, gate verdict) | `receipts/pip_audit_gate_child_capture.json` |
+
+**What the payload contains.** This is the per-package advisory data the gate
+judged — not a summary of it:
+
+| Property | Value |
+|---|---|
+| `dependencies` entries | 215 |
+| Entries carrying a `vulns` list (i.e. actually scanned) | 215 |
+| Entries carrying a `skip_reason` (seen but not scanned) | 0 |
+| Entries missing the `vulns` key | 0 |
+| Total vulnerability findings across all entries | 0 |
+| `fixes` | `[]` |
+| `evidently` / `nltk` / `defusedxml` / `regex` present | no |
+
+The zero-skip count matters on its own: the gate's `classify_dependency_entries`
+treats *any* skipped or malformed entry as an incomplete report and fails
+closed, so 215 entries all carrying advisory data is what makes the PASS a
+statement about the whole scope rather than about the part that happened to
+resolve.
+
+**Determinism.** The same gate was run a second time at the same SHA, through
+the same recorder, into a separate receipt set
+(`receipts/pip_audit_gate_run2_child_*`, started 2026-09-08T02:47:50.570Z). Its
+child stdout is **byte-identical** to the first — same SHA-256
+`f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9`. Both runs
+are retained, so this is a comparison of two receipts rather than an assertion.
+
+### 4.5 Audited Scope Reconciled Against Installed, uv.lock and SBOM
+
+Acceptance requires that a clean audit and the dependency-removal evidence be
+the same claim about the same package set — "不能靠 ignore/fake advisory/version"
+and "不得把包移至未掃描 scope". `tools/audit_scope_crosscheck.py` reads the raw
+payload from §4.4 and compares every audited name and version against the live
+installed distributions, the committed installed inventory, `uv.lock` and the
+task SBOM, in both directions. It renders no security verdict; the gate's exit
+code is the verdict.
+
+| Item | Value |
+|---|---|
+| Run SHA | `d6514b049996747aba378a9380851f98594c12af` |
+| Exit code | 0 |
+| Report | `receipts/audit_scope_crosscheck_report.json` |
+| Reconciled | **true** |
+
+| View | Count |
+|---|---|
+| Audited with advisory data | 215 |
+| Installed distributions in the audited site-packages | 215 |
+| Committed installed inventory (`receipts/installed_inventory.json`) | 215 |
+| `uv.lock` package entries | 221 |
+| SBOM PyPI components | 221 |
+
+| Check | Result |
+|---|---|
+| Name/version mismatches across audited / installed / inventory / lock / SBOM | 0 |
+| Installed but never audited (an unscanned package inside the scope) | 0 |
+| Audited but not installed | 0 |
+| Entries pip-audit skipped | 0 |
+| Vulnerability findings | 0 |
+| `evidently` present in audited / installed / inventory / lock / SBOM | no / no / no / no / no |
+| `nltk` present in audited / installed / inventory / lock / SBOM | no / no / no / no / no |
+
+**The six-entry difference between the lock and the audit is accounted for, not
+waved through.** `uv.lock` resolves every platform and extra, so it is a
+superset of what any one machine installs. A bare surplus count would leave open
+exactly the failure acceptance forbids, so the tool collects the environment
+markers each surplus entry is required under and refuses to reconcile if any
+entry cannot explain itself:
+
+| Lock entry | Version | Why the Linux audit did not see it |
+|---|---|---|
+| `odayplus` | 0.1.0 | this project itself (`source = {virtual = "."}`), not a third-party dependency |
+| `colorama` | 0.4.6 | every requirement of it is gated `sys_platform == 'win32'` |
+| `pyreadline3` | 3.5.6 | every requirement of it is gated `sys_platform == 'win32'` |
+| `pywin32` | 312 | every requirement of it is gated `sys_platform == 'win32'` |
+| `waitress` | 3.0.2 | every requirement of it is gated `sys_platform == 'win32'` |
+| `win-precise-time` | 1.4.2 | gated `python_full_version < '3.13' and os_name == 'nt'` |
+
+Unexplained surplus entries: **0**. 215 audited + 5 Windows-gated + the project
+itself = the 221 lock entries, with nothing left over.
 
 ## 5. SBOM Verification (CycloneDX 1.5)
 
@@ -565,9 +764,16 @@ had executed it. It is executed here.
 against the production native path and compares statistics, p-values, distances,
 method names, thresholds, verdicts, columns and governed metadata with
 `FLOAT_REL_TOL = FLOAT_ABS_TOL = 0.0` — exact equality, no relaxed tolerance.
-Only the engine name, the metric type prefix and an auto-generated
-`snapshot_id` are expected to differ, and each of those is an explicit, asserted
-substitution rather than a skipped field.
+
+**Correction (round 4).** The round-3 text continued: "Only the engine name, the
+metric type prefix and an auto-generated `snapshot_id` are expected to differ."
+The reviewer was right that this understates the contract deltas — it omits
+`engine_version`, the per-metric `id` derivation, and the one refusal case whose
+exception type changed. It also implied all of them are covered by the recorded
+normalization policy, and they are not: that policy governs one field. The
+complete, item-by-item disclosure is now §12.3. Nothing in the test, the goldens
+or the manifest was changed to produce that correction; only this document's
+description of them was wrong.
 
 | Item | Run 1 | Run 2 (machine-readable) |
 |---|---|---|
@@ -578,6 +784,54 @@ substitution rather than a skipped field.
 | Wall clock | 153.09s | 189.15s |
 | Receipt | `receipts/test_baseline_equivalence_receipt.txt` | `receipts/baseline_equivalence_junit.xml`, `receipts/baseline_equivalence_junit_stdout.txt` |
 | Exit-code receipt | `receipts/test_baseline_equivalence_exit_code.txt` | `receipts/baseline_equivalence_junit_exit_code.txt` |
+
+#### Round-4 run, bound to an exact commit SHA
+
+Reviewer finding (reopen #3, item 2): the two runs above are plain pytest
+transcripts. They record that 171 tests passed; they do not record *which tree*
+they ran against, so they cannot be audited against the head under review. The
+historical runs recorded no SHA and none can honestly be written into them
+after the fact, so the suite was executed again through
+`tools/bound_run.py`, which binds a run to a commit, to its inputs and to its
+own receipts. The two round-3 receipts above are retained unedited.
+
+| Item | Value |
+|---|---|
+| Run SHA | `d6514b049996747aba378a9380851f98594c12af` |
+| HEAD subject at run time | `ODP-DRIFT-SECURITY-VERIFY-003: sharpen provenance tool checks` |
+| HEAD stable across the run | yes (same SHA before and after) |
+| Code tree matches that commit | yes — no tracked modification and no untracked file outside `receipts/`, measured before *and* after |
+| Command | `uv run --frozen --python 3.12 pytest tests/models/test_evidently_monitor_baseline.py -rA --tb=short --no-header --junitxml=…` |
+| Tests | 171 passed, 0 failed, 0 errors, 0 skipped (JUnit attributes) |
+| Exit code | 0 (child process return code) |
+| Wall clock | 158.23s |
+| Started (UTC) | 2026-09-08T02:43:04.161Z |
+| Binding receipt | `receipts/baseline_equivalence_bound_run_binding.json` |
+| Transcript / JUnit / exit code | `receipts/baseline_equivalence_bound_stdout.txt`, `…_junit.xml`, `…_exit_code.txt` |
+
+**Inputs hashed at run time**, so the run is bound to the bytes it consumed and
+not only to a commit:
+
+| Input | SHA256 | Bytes |
+|---|---|---|
+| `tests/models/test_evidently_monitor_baseline.py` | `e7b7dfaac39d48d8…` | 26,960 |
+| `tests/models/fixtures/evidently_0_7_21/manifest.json` | `1b818a6760d2a21f…` | 69,078 |
+| `tests/models/fixtures/evidently_0_7_21/baseline_cases.py` | `bb25b08742c4a740…` | 42,099 |
+| `modules/learninghub/infrastructure/evidently_monitor.py` | `7f4a6d5f4a4f64cf…` | 20,344 |
+| `modules/learninghub/infrastructure/native_drift.py` | `88e4c37d6c636831…` | 40,829 |
+| `uv.lock` | `ba5c393e49538e4d…` | 888,830 |
+| `tests/models/fixtures/evidently_0_7_21/cases/` (whole tree) | `d231472e3149ddcb…` (77 files, folded digest) | — |
+
+Full-length hashes are in the binding receipt. The golden tree digest is the
+ordered fold of all 77 per-file digests, so a single edited golden changes it.
+
+**Relationship between the run SHA and the submitted head.** The run SHA
+`d6514b04` is an ancestor of the head submitted for review. Everything added
+after it is evidence: this document, the receipts under `receipts/`, and the
+receipt index in §14. No production module, test, fixture, golden, gate,
+`uv.lock` or `pyproject.toml` changes between the run SHA and the submitted
+head, which a reviewer can confirm directly with
+`git diff --name-only d6514b04..<head>`.
 
 ### 12.1 What the 171 tests are
 
@@ -628,6 +882,133 @@ This is now also a negative regression rather than only a claim:
 ever installed into the audited candidate scope — the one way a green audit and
 a green equivalence run could stop being compatible claims.
 
+### 12.3 Every Contract Delta, Disclosed Item by Item
+
+Reviewer finding (reopen #3, item 3): the round-3 summary claimed only three
+fields differ. That was wrong. This section lists every point at which the
+replayed contract is not a byte-for-byte comparison against the Evidently
+recording, what each one is, whether it is guarded, and where it was reviewed
+upstream. **No golden, manifest or assertion was changed to produce this
+section** — the fixture hashes in §14 and
+`test_fixture_files_match_the_hashes_recorded_in_the_manifest` are unchanged,
+and the goldens still record the Evidently values.
+
+**Where the deltas come from.** All of them were introduced by commit
+`e18aa6948d4569ba8e37888e0e5291d18931048d`
+("ODP-DRIFT-DEP-REMOVE-002: remove vulnerable monitoring dependencies"), which
+is an ancestor of the approved head `6d438486c8645e476fcf86b5f675a5ca20592b9d`
+of **PR #1222** (§7.4), merged as `66244b30c261…`. The golden set and the
+normalization policy they translate come from commit `1a5112ea6603cb6e…` in
+**PR #1218** (§7.1), approved head `3ef557769d670c73…`. Both PRs carry an
+independent `task-review-gate` approval and 7 SUCCESS required checks, recorded
+in §7. So each delta below was reviewed as part of the cutover, not introduced
+by this evidence task.
+
+#### A. Expected-side substitutions — `_native_golden_contract` (:126–141)
+
+This helper deep-copies the golden and rewrites the provenance fields before
+comparison. The observed side is never touched, so each entry pins the native
+engine to an exact value rather than skipping the field.
+
+| # | Field | Evidently golden | Replaced with | Guarded? |
+|---|---|---|---|---|
+| 1 | `result.engine` (:129) | `"evidently"` | `"native_drift"` | unconditional overwrite |
+| 2 | `to_dict.engine` (:130) | `"evidently"` | `"native_drift"` | unconditional overwrite |
+| 3 | `to_dict.report.engine` (:132) | **key absent** — the Evidently-era report carried only `metrics` and `tests` | `"native_drift"` | key added to the expected side |
+| 4 | `to_dict.report.engine_version` (:133) | **key absent** | `"1"` | key added to the expected side |
+| 5 | `metrics[].config.type` (:135–138) | `evidently:metric_v2:<Name>` | `native_drift:metric_v2:<Name>` | **yes** — :135 asserts the golden value starts with `evidently:metric_v2:`, and only the first occurrence is replaced |
+| 6 | `metrics[].id` (:139) | Evidently's opaque id, e.g. `15e89f895b482f9b84ba7274ed18a106` | `sha256(metric_name)[:32]`, e.g. `f6b2323d1e616cc6661864a7fb672b03` | derived from a field that is itself compared verbatim |
+| 7 | `metrics_index` (:140) | recomputed | recomputed from the translated report | inherits 5 and 6 only |
+
+Two things must be said plainly about these.
+
+*They are not skips.* Because only the expected side is rewritten, a native
+engine that emitted `engine: "evidently"`, a wrong `engine_version`, an
+unexpected metric-type prefix or a differently-derived id would still fail the
+comparison. Items 1–5 therefore assert an exact native value.
+
+*Items 3 and 4 are additions, not overwrites.* The Evidently-era `report`
+payload has no `engine` or `engine_version` key at all — the keys are absent,
+not null. Putting them on the expected side means the native report must now
+**carry** them with exactly those values, so these two entries strictly add a
+requirement rather than dropping an Evidently value from comparison. No
+Evidently-recorded content is displaced by them.
+
+*Item 6 is the one real loss of comparison.* Evidently's own metric id bytes are
+not compared against anything; what is pinned instead is the native derivation
+rule, `sha256(metric_name)[:32]`. That rule is a pure function of
+`metric_name`, which **is** compared verbatim, and `metrics_index` (:205–232 of
+`baseline_cases.py`) carries `id` per metric, so the substitution cannot conceal
+a changed, reordered or missing metric — it can only conceal a change of id
+*encoding*. Note that the manifest's `never_normalized` list includes "metric
+ids, metric ordering and report structure". That list constrains
+`normalize_result`, the observed-side normalizer, where metric ids are indeed
+untouched; it does not describe `_native_golden_contract`. The two mechanisms
+are separate, and the round-3 document conflated them.
+
+#### B. Observed-side normalization — the recorded policy (1 entry)
+
+| # | Field | Treatment |
+|---|---|---|
+| 8 | `EvidentlyDriftResult.snapshot_id`, and only when the caller passed `snapshot_id=None` | validated against an `evidently-<uuid4>` regex, then replaced with `'<auto-generated-uuid4>'` |
+
+This is the *only* entry in `MANIFEST["normalization"]["normalized"]`, and
+`test_normalization_policy_is_recorded_and_narrow` (:185) asserts the policy has
+exactly one entry and that it is the snapshot id — so the policy cannot be
+widened later to smooth a divergence away. A caller-supplied snapshot id is in
+`never_normalized` and is compared verbatim.
+
+**Scope limit worth stating explicitly:** that narrowness test guards the
+manifest policy (item 8). It does **not** guard items 1–7, which live in the
+test module rather than the policy. Widening `_native_golden_contract` would not
+fail `test_normalization_policy_is_recorded_and_narrow`. It would, however, be a
+visible diff in a reviewed file.
+
+#### C. Refusal-contract delta — one case of eleven (:225–235)
+
+| # | Case | Evidently golden | Native behaviour | Treatment |
+|---|---|---|---|---|
+| 9 | `failure_run_all_values_missing` | `ZeroDivisionError` / `"division by zero"` / `builtins` | `NativeDriftError` with message `"no drift-eligible columns remain after column typing; the drifted-column share has no denominator"` | branch at :225 asserts the exact native type **and** the exact message, **and** re-asserts at :235 that the golden still records `ZeroDivisionError` |
+
+The old engine reached a division by zero when no drift-eligible column
+survived typing. The replacement refuses the same input, with an explicit
+error instead of an arithmetic accident. This is a behaviour change and is
+recorded as one. It is not a relaxation: the branch asserts a specific
+exception type and a specific message, and it asserts that the golden was not
+edited to match. The other **10 of 11** refusal cases go through
+`cases.normalize_failure(...) == expected["failure"]` and compare exception
+type, module and message verbatim.
+
+#### D. What "exact equality" does and does not cover
+
+`FLOAT_REL_TOL = FLOAT_ABS_TOL = 0.0` (:32–33) is applied by `is_close` at :93
+to every numeric leaf. PR #1222 **tightened** this: the PR #1218 baseline used
+`1e-9 / 1e-12` for same-engine reproducibility, and the module docstring at the
+time warned that tolerance must not be reused for a different engine. It was
+not reused — it was removed.
+
+Exact equality covers: every statistic, p-value and distance; stat-test method
+names and thresholds; `drift_detected`, `drifted_columns`, `drift_share` and
+`drifted_column_names`; category labels and column names; `metric_name`; metric
+ordering and report structure; caller-supplied snapshot ids, model metadata,
+cohort and policy version; and the exception type, module and message of 10 of
+the 11 refusal cases.
+
+It does not cover items 1–9 above. That is the complete list.
+
+#### E. One upstream provenance limitation, restated not resolved
+
+`manifest.json` records `source_worktree_clean: false` for the reference
+recording itself (`source_sha: 62dfc845925ed1b90bf06c0cbb490a0b82ed9b3a`,
+branch `task/ODP-NLTK-MONITORING-BASELINE-001`, generated 2026-09-06T02:41:59Z).
+The Evidently goldens were therefore produced from a tree that was not exactly
+that commit. This is a pre-existing property of PR #1218's fixture set, not
+something this task introduced or can repair without regenerating the reference
+— which would require installing `evidently 0.7.21` and its unpatched `nltk`
+into the audited scope, and is refused for that reason (§12.2). It is recorded
+here so a reader does not over-read the goldens' provenance. The fixture bytes
+themselves are pinned by hash and re-verified on every run.
+
 ## 13. Native Core Evidence
 
 | Item | Value |
@@ -643,31 +1024,105 @@ a green equivalence run could stop being compatible claims.
 This is the first-party statistical core introduced by PR #1219 (§7.3), the code
 that replaced the Evidently computation the goldens in §12 were recorded from.
 
+### 13.1 Round-4 run, bound to an exact commit SHA
+
+Reviewer finding (reopen #3, item 2): the receipt above carries no run SHA or
+auditable input binding either. As with §12, the historical run recorded none
+and none can be written back honestly, so the suite was re-executed through
+`tools/bound_run.py`. The round-3 receipts are retained unedited.
+
+| Item | Value |
+|---|---|
+| Run SHA | `d6514b049996747aba378a9380851f98594c12af` |
+| HEAD stable across the run | yes |
+| Code tree matches that commit | yes — no deviation outside `receipts/`, before and after |
+| Command | `uv run --frozen --python 3.12 pytest tests/models/test_native_drift.py -rA --tb=short --no-header --junitxml=…` |
+| Tests | 129 passed, 0 failed, 0 errors, 0 skipped (JUnit attributes) |
+| Exit code | 0 (child process return code) |
+| Wall clock | 47.63s |
+| Started (UTC) | 2026-09-08T02:46:04.807Z |
+| Binding receipt | `receipts/native_core_bound_run_binding.json` |
+| Transcript / JUnit / exit code | `receipts/native_core_bound_stdout.txt`, `…_junit.xml`, `…_exit_code.txt` |
+
+| Input hashed at run time | SHA256 | Bytes |
+|---|---|---|
+| `tests/models/test_native_drift.py` | `01c0add1f3519140…` | 27,596 |
+| `modules/learninghub/infrastructure/native_drift.py` | `88e4c37d6c636831…` | 40,829 |
+| `modules/learninghub/infrastructure/evidently_monitor.py` | `7f4a6d5f4a4f64cf…` | 20,344 |
+| `uv.lock` | `ba5c393e49538e4d…` | 888,830 |
+
+`native_drift.py` and `evidently_monitor.py` hash identically here and in §12's
+binding, so both suites demonstrably exercised the same production bytes.
+
 ## 14. Receipt File Index
 
 All files reside in `docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/`.
-Hashes below were computed from the files as committed (40 receipts).
-The 15 round-2 receipts are unchanged; round-3 additions are listed alongside them.
+Hashes below were computed from the files as committed (74 receipts).
+
+The index is now complete: it covers every file in `receipts/`, including the
+five `github/*.stderr` files that earlier rounds held but did not list.
+
+**All 40 receipts carried over from rounds 2 and 3 are byte-identical.** That
+was verified by re-hashing each against the SHA-256 this table recorded before
+this round, not asserted — the regeneration refuses to run if any previously
+indexed receipt changed or went missing. In particular the round-2 receipts, the
+`--local` payload the reviewer identified as wrong-scope (§4.2) and the failing
+root-SBOM receipt (§5.2, §6.8) are all preserved unedited. The 34
+additions from this round are listed alongside them.
 
 | Receipt File | SHA256 | Content |
 |---|---|---|
+| `audit_scope_crosscheck_exit_code.txt` | `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa` | §4.5 exit code: 0 |
+| `audit_scope_crosscheck_report.json` | `b039a01924942c2d3f352021a105bdf925d8ab3cf08e3e6f395e08f1eac2bfff` | §4.5 reconciliation report — 215 audited vs installed/inventory/lock/SBOM, 0 mismatches, 0 unexplained lock entries |
+| `audit_scope_crosscheck_run_binding.json` | `1b83111eba4b6b7029b7f57b76a68c5e5fab97de6842fc28c6e9f5831bfc48fa` | §4.5 run binding — run SHA, input hashes, output hashes |
+| `audit_scope_crosscheck_stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §4.5 stderr (empty) |
+| `audit_scope_crosscheck_stdout.txt` | `933dda5efccc21820ba5de29e8703885d0692241902138df06509fcbd64ad658` | §4.5 stdout — reconciliation summary line |
+| `baseline_equivalence_bound_exit_code.txt` | `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa` | §12 round-4 exit code: 0 |
+| `baseline_equivalence_bound_junit.xml` | `3ff8a29c684031a2a4b25ebb95dc1402c354148ba85ffe190b099c491b09dfac` | §12 round-4 bound run — JUnit: 171 tests, 0 failures, 0 errors, 0 skipped |
+| `baseline_equivalence_bound_run_binding.json` | `af4ded0fa4b25d7e19ba6dfd4aaf41b12f696e9324cc796b090205ba2fe58db5` | §12 round-4 run binding — run SHA d6514b04, 6 input file hashes + 77-file golden tree digest, receipt hashes |
+| `baseline_equivalence_bound_stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §12 round-4 stderr (empty) |
+| `baseline_equivalence_bound_stdout.txt` | `ae3d965e514c602f84fe1373b12c892972b889ec68f6e85fefdc91cec3f2181a` | §12 round-4 stdout (-rA per-test PASSED lines) |
 | `baseline_equivalence_junit.xml` | `7a52f4c1eccda489e5d9136ca358f3c9b066ba74ea4723c72e8935461659ed16` | §12 run 2 — JUnit: 171 tests, 0 failures, 0 errors, 0 skipped |
 | `baseline_equivalence_junit_exit_code.txt` | `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa` | §12 run 2 exit code: 0 |
 | `baseline_equivalence_junit_stdout.txt` | `26a289c4114172c5de2199984f9b15f3080abba445e59f795fcfc93d5f6efbda` | §12 run 2 stdout (-rA per-test PASSED lines) |
 | `github/pr_1188.json` | `ef7215a2b4b98da163107cb943790fed62247990bc0afe2035073f60af886fa7` | §7.5 raw `gh pr view --json` |
+| `github/pr_1188.stderr` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §7.5 `gh pr view` stderr (empty) |
 | `github/pr_1217.json` | `a08c2cfd37a700e5e6b636332a306cfc93826c77fd829f2cfeed523bd0a94da8` | §7.2 raw `gh pr view --json` |
+| `github/pr_1217.stderr` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §7.2 `gh pr view` stderr (empty) |
 | `github/pr_1218.json` | `31d06d37a866cd0678d43cb947fe809cdf37dfc99584a853b436ecec89a1f762` | §7.1 raw `gh pr view --json` |
+| `github/pr_1218.stderr` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §7.1 `gh pr view` stderr (empty) |
 | `github/pr_1219.json` | `0da4c38cd4cb3e814b341a833f46f2ded5f3693bc2063f700b162348097a8d4b` | §7.3 raw `gh pr view --json` |
+| `github/pr_1219.stderr` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §7.3 `gh pr view` stderr (empty) |
 | `github/pr_1222.json` | `fc5fce3e9fd310b861233610bf67b728c72d50c47f0716d874616ccf649de238` | §7.4 raw `gh pr view --json` |
+| `github/pr_1222.stderr` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §7.4 `gh pr view` stderr (empty) |
 | `github/statuses_1188_a429e83e470fb0f89000d55e48ab37da79cf48ff.json` | `26bf42fcdff3914def861917a9ef541250e11d4a5a06cb30453f2b54dfccf838` | §7 raw commit statuses at PR #1188's approved head |
 | `github/statuses_1217_05164662abb41f75fdb6cf40ae25ea9df40371a1.json` | `e6f6c2fb665acb85a101f53cab121c0f5305203a257f4eaa8527c136e84130b8` | §7 raw commit statuses at PR #1217's approved head |
 | `github/statuses_1218_3ef557769d670c73ccc0c36b7ba5cc90b6635200.json` | `3fd89ec97ddda15bf6c8042a6d7ca32d2c1cb395baf6d071e919826924dd5ca9` | §7 raw commit statuses at PR #1218's approved head |
 | `github/statuses_1219_dc047bb22db0a98b54e731a99f398dce613e0257.json` | `52adf4bfc329d925db2f02c3eaf14ee78b8ddff0df691c2bc7e5cc87dd525cfa` | §7 raw commit statuses at PR #1219's approved head |
 | `github/statuses_1222_6d438486c8645e476fcf86b5f675a5ca20592b9d.json` | `358961b6d90230a4d97f813593cc0c87f9b687d6883517b9aac32b1b46a6636d` | §7 raw commit statuses at PR #1222's approved head |
 | `installed_inventory.json` | `efcd05d48227bd8d8a701c9dcc3e45aeef8c6b88ac323b46a3e63dc48de89de6` | 215 installed packages with name+version |
+| `native_core_bound_exit_code.txt` | `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa` | §13.1 exit code: 0 |
+| `native_core_bound_junit.xml` | `76cf42b4b0ffda614a356dd6f04c5077ca5f5f63fe1032f9014da0e56c10154e` | §13.1 bound run — JUnit: 129 tests, 0 failures, 0 errors, 0 skipped |
+| `native_core_bound_run_binding.json` | `9a244ec69d539126484170efa5ef2ce8b011beeae3662e24b8abe24076e4153c` | §13.1 run binding — run SHA d6514b04, 4 input file hashes, receipt hashes |
+| `native_core_bound_stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §13.1 stderr (empty) |
+| `native_core_bound_stdout.txt` | `9dbf3054cccc07c2bdd459afd324c2f2044b84243d9ef75867ae596e2092ac1a` | §13.1 stdout (-rA per-test PASSED lines) |
 | `native_core_junit.xml` | `b9e0ee3b5debfb98d4f2c97cef02103c7cd02ac169f2d771ffa30caa28efc89a` | §13 JUnit: 129 tests, 0 failures, 0 errors, 0 skipped |
 | `nltk_removal_round3_junit.xml` | `d8897b666062ab523302ec5990a81b2bf3457b429cace0266f91ffb922285972` | §9 JUnit: 12 tests, 0 failures |
+| `pip_audit_gate_child_attempt1_stderr.txt` | `15950a68a7ed99c59779717acefdceb3f69cfd31bde67d2c954f2a3cea4d7955` | §4.4 child stderr: `No known vulnerabilities found` |
+| `pip_audit_gate_child_attempt1_stdout.json` | `f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9` | **§4.4 raw per-package advisory payload** from the gate's own child process — 215 dependency entries, all carrying a `vulns` list, 0 skipped, 0 findings |
+| `pip_audit_gate_child_capture.json` | `1e7dbcea2a84bee3097122af77aa6b2307952aaa75b64a8878e6a0055fbe7196` | §4.4 pass-through capture — child argv, cwd, timeouts, timings, stdout/stderr hashes, gate module SHA256, gate verdict and exit code |
 | `pip_audit_gate_exit_code.txt` | `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa` | Exit code: 0 |
+| `pip_audit_gate_passthrough_exit_code.txt` | `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa` | §4.4 gate exit code: 0 |
+| `pip_audit_gate_passthrough_run2_exit_code.txt` | `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa` | §4.4 determinism — second run's gate exit code: 0 |
+| `pip_audit_gate_passthrough_run2_run_binding.json` | `7b3f5eaaa56e75764046e7f2a1686ff6ad0debb6d0ce1e1b22c634d286edfda8` | §4.4 determinism — second run's binding |
+| `pip_audit_gate_passthrough_run2_stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §4.4 determinism — second run's gate stderr (empty) |
+| `pip_audit_gate_passthrough_run2_stdout.txt` | `9f364760f972e0b2bf612fabe8b5d9c39905adce14a24a91f470799f8b214927` | §4.4 determinism — second run's gate verdict stdout |
+| `pip_audit_gate_passthrough_run_binding.json` | `88eb0d7d559e14713e487c2b701f3262d4b03235d66338a95aaa739485432f1d` | §4.4 run binding — run SHA d6514b04, gate source + lock + pyproject hashes |
+| `pip_audit_gate_passthrough_stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | §4.4 gate stderr (empty) |
+| `pip_audit_gate_passthrough_stdout.txt` | `9f364760f972e0b2bf612fabe8b5d9c39905adce14a24a91f470799f8b214927` | §4.4 gate verdict stdout: `PASS: no Python package vulnerabilities found (215 dependencies audited).` |
+| `pip_audit_gate_run2_child_attempt1_stderr.txt` | `15950a68a7ed99c59779717acefdceb3f69cfd31bde67d2c954f2a3cea4d7955` | §4.4 determinism — second run's child stderr |
+| `pip_audit_gate_run2_child_attempt1_stdout.json` | `f32d534e0612b51171bc2b83c5d051acf9ee1e6a5ea44b50a044434962c21cd9` | §4.4 determinism — second run's raw payload, byte-identical to the first |
+| `pip_audit_gate_run2_child_capture.json` | `f2cca2c333143a1de954d77da8f07408cca584710954f6547c4023c5dac7e743` | §4.4 determinism — second run's pass-through capture |
 | `pip_audit_gate_stderr.txt` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` | Gate stderr (empty) |
 | `pip_audit_gate_stdout.txt` | `9f364760f972e0b2bf612fabe8b5d9c39905adce14a24a91f470799f8b214927` | Gate stdout (PASS, 215 deps) |
 | `pip_audit_json_exit_code.txt` | `9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa` | Exit code: 0 |
@@ -691,3 +1146,40 @@ The 15 round-2 receipts are unchanged; round-3 additions are listed alongside th
 | `test_prediction_drift_receipt.txt` | `4da15baada891183573fe8067fac2f3195b5d8dfc1f3f2d17c1d2ec09014575d` | 6 passed, exit 0 |
 | `test_supply_chain_gate_receipt.txt` | `3c44e560518760f6cc5a458ca91a97131c04847a7501c9f18d696b9de5b06381` | 36 passed, 1 failed (pre-existing stale root SBOM), exit 1 |
 | `tool_versions.json` | `663a9d77e698f95bd5b2951696200279fc4d0da5c07ff24d52d1db26b40e1963` | Python 3.12.14, pip-audit 2.10.1 |
+
+## 15. Task-Owned Capture Tools
+
+The three tools below were written for this task and live under
+`docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/tools/`. They are
+evidence instrumentation, not product code and not gates: none of them is
+imported by any production module, any test or any CI job. They are listed here
+with their hashes so a reviewer can read exactly what produced the round-4
+receipts.
+
+| Tool | SHA256 | Role |
+|---|---|---|
+| `pip_audit_gate_passthrough.py` | `6203e83ad32fa964b9442907680c61558d40a0ea64ab24689318173a86ccc764` | §4.4 — imports the merged gate, runs the gate's own `main()`, injects only the `runner` seam, records the child's argv/stdout/stderr/exit/timings |
+| `bound_run.py` | `c9d5f77ee4f0caaf6190f1961c79ceba7b11839fa91bcd7907d4e8c070154a58` | §12, §13.1 — binds a run to a commit, to its input hashes and to its own receipt hashes |
+| `audit_scope_crosscheck.py` | `c3b69e9051473f1fac48d30519fe8b84c34a8fa5f054cde99895edfcf80acb46` | §4.5 — reconciles the audited set against installed dists, `uv.lock` and the SBOM |
+| `production_entry_probe.py` | `a6755543bc905a3e12f55ae2bd3add50b261d14bf39585674348456dacf3449b` | §11 — round-3 tool, unchanged this round |
+
+**The properties that make them evidence rather than assertion:**
+
+- `pip_audit_gate_passthrough.py` computes **no verdict**. Scope selection,
+  retry policy, the structural completeness check, `evaluate()` and the exit
+  code are all `pip_audit_gate.py`'s own code; the process exits with the gate's
+  exit code. The injected runner calls `subprocess.run` with the arguments it
+  was handed and returns the result object untouched. The gate file on disk is
+  not modified — its SHA-256 is recorded in §4.4 and in the capture receipt.
+- `bound_run.py` records the child process's **own** return code and never
+  substitutes one. It snapshots `HEAD` and `git status --porcelain` before *and*
+  after each run, so a mid-run branch move or a stray edit is visible rather
+  than averaged away.
+- `bound_run.py`'s "code tree matches this commit" flag excludes `receipts/`
+  only, not the sibling `tools/` directory. A modified tool therefore makes the
+  flag false — as it correctly did on a discarded intermediate cross-check run
+  before the tools were committed.
+- `audit_scope_crosscheck.py` renders no security verdict. It fails
+  reconciliation on any name/version mismatch, any package installed but not
+  audited, any entry pip-audit skipped, and any `uv.lock` surplus entry that
+  cannot explain itself through a platform marker.
