@@ -16,14 +16,14 @@
       "component": "migration",
       "exists": false,
       "resource_kind": "cloud-run-job",
-      "resource_name": "oday-migration-r-596b9c9a1788",
+      "resource_name": "oday-migration-r-04e1572f802a",
       "serving_traffic": false
     },
     {
       "component": "scheduler",
       "exists": false,
       "resource_kind": "cloud-run-job",
-      "resource_name": "oday-scheduler-r-596b9c9a1788",
+      "resource_name": "oday-scheduler-r-04e1572f802a",
       "serving_traffic": false
     },
     {
@@ -37,7 +37,7 @@
       "component": "worker",
       "exists": false,
       "resource_kind": "cloud-run-job",
-      "resource_name": "oday-worker-r-596b9c9a1788",
+      "resource_name": "oday-worker-r-04e1572f802a",
       "serving_traffic": false
     }
   ]

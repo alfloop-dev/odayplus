@@ -5,10 +5,10 @@
   "scope": "build",
   "environment": "dev",
   "github_environment": "dev-build",
-  "release_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-  "task_id": "ODP-DEV-BUILD-ARTIFACT-HANDOFF-003",
+  "release_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
   "admitted": true,
-  "checked_at": "2026-09-08T02:22:09+00:00",
+  "checked_at": "2026-09-05T03:31:58+00:00",
   "variables_resolved": {
     "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
     "GCP_SERVICE_ACCOUNT": true,

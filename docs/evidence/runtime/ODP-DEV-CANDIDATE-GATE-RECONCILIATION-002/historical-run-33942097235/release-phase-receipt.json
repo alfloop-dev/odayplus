@@ -4,10 +4,10 @@
   "verifier": "delivery_toolchain/release/check_release_phase.py",
   "phase": "build",
   "environment": "dev",
-  "release_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
-  "task_id": "ODP-DEV-BUILD-ARTIFACT-HANDOFF-003",
+  "release_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
+  "task_id": "ODP-DEV-LIVE-ROLLOUT-REMEDIATION-001",
   "admitted": true,
-  "checked_at": "2026-09-08T02:21:58+00:00",
+  "checked_at": "2026-09-05T03:31:46+00:00",
   "lease_supplied": false,
   "image_handoff": {
     "api": null,
@@ -20,6 +20,6 @@
     "manifest_digest": null
   },
   "blockers_zh_tw": [],
-  "summary_zh_tw": "build 階段前置條件全部通過；release_sha=596b9c9a1788d952811a2bf8d4bba8a4e4d76b12、environment=dev。",
+  "summary_zh_tw": "build 階段前置條件全部通過；release_sha=04e1572f802a54c2646ba678fe2975226dfbd7c4、environment=dev。",
   "secret_values_redacted": true
 }

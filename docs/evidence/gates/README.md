@@ -27,7 +27,7 @@ record and the checklist is the explanation.
 
 **NO-GO.** All seven gates are `blocked`, none carries a receipt, and
 `release.decision` is `no-go` against candidate SHA
-`04e1572f802a54c2646ba678fe2975226dfbd7c4`. Deterministic product-E2E readiness
+`596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`. Deterministic product-E2E readiness
 (`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness. The
 current state is `candidate-built` in `dev`, with admission target `dev`.
 
@@ -35,11 +35,12 @@ The candidate was rebound from `ebc4fca5c2dd5871275aee39a18406dd67464f04` by
 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002. This candidate is backed by real
 artifacts: `RELEASE_MANIFEST.json` is now the byte-exact `runtime-release-manifest`
 artifact of Runtime Release run
-[33942097235](https://github.com/alfloop-dev/odayplus/actions/runs/33942097235),
+[34179791241](https://github.com/alfloop-dev/odayplus/actions/runs/34179791241),
+delivered and verified by `ODP-DEV-BUILD-ARTIFACT-HANDOFF-003`,
 so it records `release_status: ready`, four `@sha256:`-pinned component images,
 four Cosign signature references, four CycloneDX SBOM attestation references,
-initial release recovery, and sources-off attestation. `registry.candidate_rebind`
-records what that does *not* mean: no gate was re-attested, no receipt was written,
+initial release recovery, and sources-off attestation matching the six-file egress contract digest (`sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09`).
+`registry.candidate_rebind` records what that does *not* mean: no gate was re-attested, no receipt was written,
 and no status moved toward cleared. The build run ran its build phase only -- its
 lease-verification and deploy jobs are `skipped` -- so nothing was deployed.
 
@@ -49,11 +50,11 @@ and the Runtime Release deploy phase to present a signed Supervisor lease bound
 to `manifest_digest`. Both are absent, so the release stays fail-closed:
 `check_release_gate_registry.py --require-go` exits non-zero.
 
-獨立查核分成不同範圍：worker 的 Docker registry probe 因憑證不足失敗；
-整合者後來已透過 GCP API 確認四個 image digest 存在，見
-[PR #1205 讀回紀錄](https://github.com/alfloop-dev/odayplus/pull/1205#issuecomment-5549270578)。
-image 存在性不等於獨立 SBOM／Cosign 驗章，後者仍待 Gate 4 的簽核者補證。
-不能把先前 Docker 失敗改記成功，也不能忽略後來已完成的存在性查核。
+獨立查核分成不同範圍：worker 無法在離線工作環境中進行互動式 GCP/Docker 登入；
+映像檔存在性與簽章由 build run 34179791241 之 live in-run `cosign verify` 與 Rekor 透明日誌背書，
+見 [ODP-DEV-BUILD-ARTIFACT-HANDOFF-003 證據紀錄](file:///docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md)。
+原始 artifact 位元組與 candidate C 原始碼樹各項摘要均經由 `verify_live_artifact_binding.sh` 雙向核對一致。
+所有 Gate 維持 blocked，fail-closed NO-GO。
 
 ## Gate 0-6
 

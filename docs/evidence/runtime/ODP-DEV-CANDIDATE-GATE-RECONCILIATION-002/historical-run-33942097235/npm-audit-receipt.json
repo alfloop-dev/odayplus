@@ -1,5 +1,5 @@
 {
-  "candidate_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "candidate_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
   "counts": {
     "critical": 0,
     "high": 0,
@@ -13,7 +13,7 @@
   "omit_dev": true,
   "outcome_kind": "report",
   "receipt_kind": "npm_audit",
-  "recorded_at": "2026-09-08T02:22:30Z",
+  "recorded_at": "2026-09-05T03:32:20Z",
   "result": "pass",
   "schema_version": 1,
   "secret_values_redacted": true,

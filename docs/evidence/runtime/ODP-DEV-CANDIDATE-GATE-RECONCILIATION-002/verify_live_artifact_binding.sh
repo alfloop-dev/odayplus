@@ -27,6 +27,7 @@ from delivery_toolchain.release.release_manifest import (  # noqa: E402
     compute_migration_digest,
     compute_data_contract_digest,
     compute_source_policy_digest,
+    compute_sources_off_egress_contract_digest,
     initial_release_recovery_errors,
     sources_off_attestation_errors,
     validate_manifest,
@@ -38,21 +39,26 @@ MANIFEST_PATH = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
 REGISTRY_PATH = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 IMAGES_PATH = EVIDENCE_DIR / "runtime-release-images.json"
 ABSENCE_PATH = EVIDENCE_DIR / "initial-release-absence-readback.json"
+ENV_RECEIPT_PATH = EVIDENCE_DIR / "release-environment-receipt.json"
+NPM_RECEIPT_PATH = EVIDENCE_DIR / "npm-audit-receipt.json"
+PHASE_RECEIPT_PATH = EVIDENCE_DIR / "release-phase-receipt.json"
 
-CANDIDATE_SHA = "04e1572f802a54c2646ba678fe2975226dfbd7c4"
-BUILD_RUN_ID = 33942097235
+CANDIDATE_SHA = "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+BUILD_RUN_ID = 34179791241
 COMPONENT_NAMES = ("api", "web", "worker", "scheduler")
 
 EXPECTED_RAW_SHA256 = {
-    "RELEASE_MANIFEST.json": "efe7bed05df8f176b053f448acc0c303d8b81786212a98fc5e56f27031e1f124",
-    "runtime-release-images.json": "e177983c92b64b8bd1e9da524010d47712192237adf58c19fa56cbf5550ad23e",
-    "initial-release-absence-readback.json": "5e6aba3b690ecbbac394ea2706036bc3319a650a0dfdbad25a61785dca01897f",
+    "RELEASE_MANIFEST.json": "8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d",
+    "runtime-release-images.json": "612507f59edb8e09807dfa5a9f15fafaa622fb03473e2eff4015dda64494fa12",
+    "initial-release-absence-readback.json": "ec316739eecd6c0438582a29c3803acad38fe283aa4167ca30db9dc481ffa283",
+    "release-environment-receipt.json": "a5fc3cc7847bbbec3bb0dbd651428b9a6fcebb18db770ff2abd09cd2b850f9bb",
+    "release-npm-audit-receipt.json": "49c5c659e9b08dab23ec0e9aee390d814f8d8e2c0f78c3a4d922cedb4de96224",
+    "release-phase-receipt.json": "af1f1d5d1be169187a054a83d09b47e5978d4018d1c366144a99fe8f88deb8c7",
 }
 
 DOWNLOAD_DIR = Path(sys.argv[2]).resolve()
 CANDIDATE_ROOT = Path(sys.argv[3]).resolve()
 
-# 既有共用算法讀取真正的 C 原始碼，不以目前工作樹或漂移後的 dev 代替。
 def candidate_git(*args: str) -> str:
     return subprocess.check_output(
         ["git", "-C", str(CANDIDATE_ROOT), *args], text=True
@@ -63,7 +69,7 @@ if not CANDIDATE_ROOT.is_dir():
 if Path(candidate_git("rev-parse", "--show-toplevel")).resolve() != CANDIDATE_ROOT:
     raise SystemExit("FAIL: candidate 參數不是 git worktree 根目錄")
 if candidate_git("rev-parse", "HEAD") != CANDIDATE_SHA:
-    raise SystemExit("FAIL: candidate worktree HEAD 不符")
+    raise SystemExit(f"FAIL: candidate worktree HEAD 不符 (expected {CANDIDATE_SHA}, got {candidate_git('rev-parse', 'HEAD')})")
 if candidate_git(
     "status", "--porcelain", "--untracked-files=all", "--",
     "infra/db/migrations", "docs/data", "docs/security/license_policy.json",
@@ -98,25 +104,43 @@ def main() -> int:
 
     # 1. Raw byte-exact artifact checks
     check(
-        "manifest raw SHA-256 matches build artifact (ID 9962288831)",
+        "manifest raw SHA-256 matches build artifact (ID 10038569478)",
         raw_sha256(MANIFEST_PATH) == EXPECTED_RAW_SHA256["RELEASE_MANIFEST.json"],
         raw_sha256(MANIFEST_PATH),
     )
     check(
-        "runtime-release-images raw SHA-256 matches build artifact (ID 9962288660)",
+        "runtime-release-images raw SHA-256 matches build artifact (ID 10038569219)",
         raw_sha256(IMAGES_PATH) == EXPECTED_RAW_SHA256["runtime-release-images.json"],
         raw_sha256(IMAGES_PATH),
     )
     check(
-        "initial-release-absence-readback raw SHA-256 matches build artifact (ID 9962288978)",
+        "initial-release-absence-readback raw SHA-256 matches build artifact (ID 10038569730)",
         raw_sha256(ABSENCE_PATH) == EXPECTED_RAW_SHA256["initial-release-absence-readback.json"],
         raw_sha256(ABSENCE_PATH),
+    )
+    check(
+        "release-environment-receipt raw SHA-256 matches build artifact (ID 10038486296)",
+        raw_sha256(ENV_RECEIPT_PATH) == EXPECTED_RAW_SHA256["release-environment-receipt.json"],
+        raw_sha256(ENV_RECEIPT_PATH),
+    )
+    check(
+        "release-npm-audit-receipt raw SHA-256 matches build artifact (ID 10038492941)",
+        raw_sha256(NPM_RECEIPT_PATH) == EXPECTED_RAW_SHA256["release-npm-audit-receipt.json"],
+        raw_sha256(NPM_RECEIPT_PATH),
+    )
+    check(
+        "release-phase-receipt raw SHA-256 matches build artifact (ID 10038482325)",
+        raw_sha256(PHASE_RECEIPT_PATH) == EXPECTED_RAW_SHA256["release-phase-receipt.json"],
+        raw_sha256(PHASE_RECEIPT_PATH),
     )
 
     downloaded_paths = {
         "RELEASE_MANIFEST.json": DOWNLOAD_DIR / f"runtime-release-manifest-{CANDIDATE_SHA}/RELEASE_MANIFEST.json",
         "runtime-release-images.json": DOWNLOAD_DIR / f"runtime-release-images-{CANDIDATE_SHA}/runtime-release-images.json",
         "initial-release-absence-readback.json": DOWNLOAD_DIR / f"initial-release-absence-readback-{CANDIDATE_SHA}/initial-release-absence-readback.json",
+        "release-environment-receipt.json": DOWNLOAD_DIR / "release-environment-receipt-dev-build/release-environment-receipt.json",
+        "release-npm-audit-receipt.json": DOWNLOAD_DIR / "release-npm-audit-receipt-dev/npm-audit-receipt.json",
+        "release-phase-receipt.json": DOWNLOAD_DIR / "release-phase-receipt-dev-build/release-phase-receipt.json",
     }
     if not DOWNLOAD_DIR.is_dir():
         check("downloaded artifact directory is present for raw-byte comparison", False, str(DOWNLOAD_DIR))
@@ -128,6 +152,9 @@ def main() -> int:
                 "RELEASE_MANIFEST.json": MANIFEST_PATH,
                 "runtime-release-images.json": IMAGES_PATH,
                 "initial-release-absence-readback.json": ABSENCE_PATH,
+                "release-environment-receipt.json": ENV_RECEIPT_PATH,
+                "release-npm-audit-receipt.json": NPM_RECEIPT_PATH,
+                "release-phase-receipt.json": PHASE_RECEIPT_PATH,
             }
             for name, downloaded_path in downloaded_paths.items():
                 check(
@@ -157,9 +184,14 @@ def main() -> int:
         ("migration_digest", compute_migration_digest),
         ("data_contract_digest", compute_data_contract_digest),
         ("source_policy_digest", compute_source_policy_digest),
+        ("contract_digest", lambda root: compute_sources_off_egress_contract_digest(root=Path(root))),
     ):
         actual = recompute(root=CANDIDATE_ROOT)
-        check(f"{label} recomputes from candidate tree {CANDIDATE_SHA[:12]}", manifest[label] == actual, actual)
+        if label == "contract_digest":
+            expected = manifest.get("sources_off_attestation", {}).get("egress_evidence", {}).get("contract_digest")
+            check(f"six-file egress {label} recomputes from candidate tree {CANDIDATE_SHA[:12]}", expected == actual, f"recorded={expected}, actual={actual}")
+        else:
+            check(f"{label} recomputes from candidate tree {CANDIDATE_SHA[:12]}", manifest[label] == actual, actual)
 
     binding = component_binding_errors(manifest, images)
     check("the four build-handoff images are exactly the manifest components", not binding, str(binding))
@@ -262,3 +294,4 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 PYEOF
+
