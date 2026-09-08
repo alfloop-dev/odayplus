@@ -3758,10 +3758,20 @@ def review_submission_is_complete(config: dict[str, Any], task: dict[str, Any]) 
         pr_number = 0
     task_ref = task_id.lower().replace("_", "-")
     branch_ref = expected_branch.strip("/").lower().replace("_", "-")
+    # A task may need a distinct, auditable replacement branch (for example
+    # ``task/<task-id>-clean``) while an older PR ref remains published. Accept
+    # only the task-id itself or a suffix separated by ``-``/``/``; never treat
+    # an unrelated branch that merely contains the task id as its provenance.
+    branch_task_match = (
+        branch_ref == task_ref
+        or branch_ref.endswith(f"/{task_ref}")
+        or branch_ref.startswith(f"{task_ref}-")
+        or branch_ref.startswith(f"task/{task_ref}-")
+    )
     return bool(
         task_id
         and pr_number > 0
-        and (branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}"))
+        and branch_task_match
         and str(submission.get("branch") or "") == expected_branch
         and str(submission.get("base_branch") or "") == expected_base
         and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(submission.get("remote_sha") or ""))

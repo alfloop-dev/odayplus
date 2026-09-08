@@ -490,6 +490,32 @@ class AccountPoolSchedulingTests(unittest.TestCase):
         }
         self.assertTrue(supervisor.review_submission_is_complete({"branch_workflow": {"dev_branch": "dev"}}, task))
 
+    def test_review_submission_accepts_task_scoped_replacement_suffix(self) -> None:
+        task = {
+            "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+            "branch": "task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CLEAN",
+            "review_submission": {
+                "pr_number": 1243,
+                "branch": "task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CLEAN",
+                "base_branch": "dev",
+                "remote_sha": "b" * 40,
+            },
+        }
+        self.assertTrue(supervisor.review_submission_is_complete({"branch_workflow": {"dev_branch": "dev"}}, task))
+
+    def test_review_submission_rejects_unrelated_branch_containing_task_id(self) -> None:
+        task = {
+            "id": "TASK-ONE",
+            "branch": "task/unrelated-TASK-ONE-fork",
+            "review_submission": {
+                "pr_number": 1244,
+                "branch": "task/unrelated-TASK-ONE-fork",
+                "base_branch": "dev",
+                "remote_sha": "c" * 40,
+            },
+        }
+        self.assertFalse(supervisor.review_submission_is_complete({"branch_workflow": {"dev_branch": "dev"}}, task))
+
     def test_assignment_integrity_audits_non_dispatchable_actor_identity_without_dispatch_eligibility(self) -> None:
         config = self._config()
         task = {
