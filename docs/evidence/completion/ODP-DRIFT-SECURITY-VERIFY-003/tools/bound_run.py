@@ -66,24 +66,25 @@ def _git(*args: str) -> str:
     return res.stdout
 
 
-#: Receipts this task writes land here, so an untracked file under it is this
-#: evidence session's own output rather than a modification of the tree under test.
-TASK_EVIDENCE_DIR = "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/"
+#: Receipts this task writes land here. This directory is deliberately narrow:
+#: it covers outputs only, not the sibling ``tools/`` directory, because a
+#: modified tool changes what a run does and must never be waved through as
+#: "just this session's own files".
+TASK_RECEIPTS_DIR = "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/receipts/"
 
 
 def _repo_state() -> dict[str, object]:
     """Snapshot HEAD and classify what, if anything, the tree carries beyond it.
 
     A bare "is the worktree clean" boolean is too blunt to be useful here:
-    every run in this session necessarily leaves receipts under the task's own
-    evidence directory, so the next run would report "dirty" and the flag would
-    stop meaning anything.
+    every run in this session necessarily leaves receipts behind, so the next
+    run would report "dirty" and the flag would stop meaning anything.
 
-    What actually has to hold is narrower and stronger -- *the code and
+    What actually has to hold is narrower and stronger -- *the code, tools and
     fixtures under test are exactly this commit*. That is false if any tracked
     file is modified, or if an untracked file sits anywhere the run could
-    import or read as input. It stays true when the only extra files are this
-    task's own receipts, which nothing under test reads.
+    import or read as input. It stays true only when every deviation is a
+    receipt file, which nothing under test reads.
     """
     porcelain = _git("status", "--porcelain")
     tracked_modifications: list[str] = []
@@ -93,7 +94,11 @@ def _repo_state() -> dict[str, object]:
             continue
         status, path = line[:2], line[3:].strip()
         (untracked if status == "??" else tracked_modifications).append(path)
-    foreign_untracked = [p for p in untracked if not p.startswith(TASK_EVIDENCE_DIR)]
+    deviations = [
+        path
+        for path in tracked_modifications + untracked
+        if not path.startswith(TASK_RECEIPTS_DIR)
+    ]
     return {
         "head_sha": _git("rev-parse", "HEAD").strip(),
         "head_subject": _git("log", "-1", "--format=%s").strip(),
@@ -101,8 +106,8 @@ def _repo_state() -> dict[str, object]:
         "worktree_clean": porcelain.strip() == "",
         "tracked_files_modified": tracked_modifications,
         "untracked_files": untracked,
-        "untracked_outside_task_evidence": foreign_untracked,
-        "code_tree_matches_commit": not tracked_modifications and not foreign_untracked,
+        "deviations_outside_receipts": deviations,
+        "code_tree_matches_commit": not deviations,
     }
 
 

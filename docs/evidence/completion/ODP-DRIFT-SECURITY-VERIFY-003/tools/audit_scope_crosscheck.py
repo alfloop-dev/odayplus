@@ -81,15 +81,42 @@ def load_installed() -> dict[str, dict]:
     return out
 
 
-def load_lock(lock_path: Path) -> dict[str, dict]:
+def load_lock(lock_path: Path) -> tuple[dict[str, dict], dict[str, list[str]]]:
+    """Read uv.lock, and also collect the environment markers each entry is gated by.
+
+    ``uv.lock`` resolves every platform and extra, so it is a superset of what
+    any one machine installs. A bare "the lock has 6 more entries" leaves open
+    the one thing acceptance forbids -- a package moved somewhere the audit
+    does not look -- so the markers are collected here and each surplus entry
+    has to explain itself.
+    """
     data = tomllib.loads(lock_path.read_text(encoding="utf-8"))
     out: dict[str, dict] = {}
+    markers: dict[str, list[str]] = {}
     for package in data.get("package", []):
         name = package.get("name")
         if not name:
             continue
-        out[canonical(name)] = {"name": name, "version": package.get("version", "")}
-    return out
+        key = canonical(name)
+        out[key] = {
+            "name": name,
+            "version": package.get("version", ""),
+            "source": package.get("source", {}),
+        }
+        markers.setdefault(key, [])
+    for package in data.get("package", []):
+        requirements = list(package.get("dependencies", []))
+        for group in package.get("optional-dependencies", {}).values():
+            requirements.extend(group)
+        for group in package.get("dev-dependencies", {}).values():
+            requirements.extend(group)
+        for dep in requirements:
+            key = canonical(str(dep.get("name", "")))
+            if key in markers:
+                markers[key].append(
+                    f"{package.get('name')} requires it when: {dep.get('marker') or 'unconditional'}"
+                )
+    return out, markers
 
 
 def load_sbom_pypi(sbom_path: Path) -> dict[str, dict]:
@@ -131,7 +158,7 @@ def main() -> int:
 
     audited, skipped, findings = load_audited(payload_path)
     installed = load_installed()
-    lock = load_lock(lock_path)
+    lock, lock_markers = load_lock(lock_path)
     sbom = load_sbom_pypi(sbom_path)
 
     recorded_inventory = {
@@ -181,6 +208,35 @@ def main() -> int:
     installed_not_audited = sorted(set(installed) - set(audited))
     audited_not_installed = sorted(set(audited) - set(installed))
     lock_only = sorted(set(lock) - set(audited))
+    lock_only_detail = []
+    unexplained_lock_only = []
+    for key in lock_only:
+        entry = lock[key]
+        reasons = sorted(set(lock_markers.get(key, [])))
+        is_project = "virtual" in (entry.get("source") or {})
+        # A surplus entry is accounted for when it is this project itself, or
+        # when every requirement of it is gated by a non-Linux marker. Anything
+        # else is a package the lock carries that the audit never saw, which is
+        # exactly the "moved to an unscanned scope" failure acceptance forbids.
+        platform_gated = bool(reasons) and all(
+            ("win32" in reason or "os_name == 'nt'" in reason) for reason in reasons
+        )
+        detail = {
+            "name": entry["name"],
+            "version": entry["version"],
+            "is_this_project": is_project,
+            "required_by": reasons,
+            "excluded_because": (
+                "this project itself, not a third-party dependency"
+                if is_project
+                else "every requirement of it is gated by a Windows-only environment marker"
+                if platform_gated
+                else "UNEXPLAINED"
+            ),
+        }
+        lock_only_detail.append(detail)
+        if not is_project and not platform_gated:
+            unexplained_lock_only.append(detail)
 
     banned_presence = {
         pkg: {
@@ -204,6 +260,7 @@ def main() -> int:
         and not audited_not_installed
         and not findings
         and not any(banned_anywhere.values())
+        and not unexplained_lock_only
     )
 
     report = {
@@ -238,6 +295,8 @@ def main() -> int:
         "mismatches": mismatches,
         "skipped_entries": skipped,
         "vulnerability_findings": findings,
+        "lock_only_entries": lock_only_detail,
+        "unexplained_lock_only_entries": unexplained_lock_only,
         "installed_but_not_audited": installed_not_audited,
         "audited_but_not_installed": audited_not_installed,
         "banned_package_presence": banned_presence,
@@ -255,7 +314,8 @@ def main() -> int:
     print(
         f"crosscheck: audited={len(audited)} installed={len(installed)} "
         f"lock={len(lock)} sbom_pypi={len(sbom)} findings={len(findings)} "
-        f"skipped={len(skipped)} mismatches={len(mismatches)} reconciled={reconciled}"
+        f"skipped={len(skipped)} mismatches={len(mismatches)} "
+        f"unexplained_lock_only={len(unexplained_lock_only)} reconciled={reconciled}"
     )
     if not reconciled:
         print("crosscheck: the evidence views do not reconcile; see the report", file=sys.stderr)
