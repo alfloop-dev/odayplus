@@ -1,0 +1,265 @@
+=== candidate ancestry probe: C -> E is NOT evidence-only ===
+Recorded at: 2026-09-08
+Run from   : task worktree on branch task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002
+Command    :
+  python3 -c '
+  import sys, subprocess
+  from pathlib import Path
+  sys.path.insert(0, ".")
+  from delivery_toolchain.e2e.check_release_gate_registry import check_candidate_ancestry
+  C="596b9c9a1788d952811a2bf8d4bba8a4e4d76b12"
+  E=subprocess.run(["git","rev-parse","HEAD"],capture_output=True,text=True).stdout.strip()
+  errs=check_candidate_ancestry(C,E,Path.cwd())
+  print("candidate_sha:",C); print("expected_sha :",E); print("errors       :",len(errs))
+  for e in errs: print(e)
+  sys.exit(1 if errs else 0)
+  '
+Exit code  : 1  (the check FAILS; this is the acceptance item that is not met)
+
+Note: this is the same function the deploy gate calls.
+  .github/workflows/deploy-dev.yml, step "Validate candidate ancestry against the
+  dispatch event SHA", imports check_candidate_ancestry from
+  delivery_toolchain/e2e/check_release_gate_registry.py.
+  The registry checker only runs it when --expected-sha is passed, and CI does not
+  pass it, so a green CI run does NOT mean this check passed.
+
+Non-evidence path count: 203
+
+--- verbatim output ---
+candidate_sha: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12
+expected_sha : ddf10054e18125ba4e2fba5f9bb9a3721065a308
+errors       : 1
+release.candidate_sha '596b9c9a1788d952811a2bf8d4bba8a4e4d76b12' is an ancestor of expected SHA 'ddf10054e18125ba4e2fba5f9bb9a3721065a308', but intervening commits touch non-evidence paths:
+    .github/workflows/ci.yml
+    .github/workflows/deploy-dev.yml
+    .orchestrator/adapters/codex.py
+    .orchestrator/capacity_controller.py
+    .orchestrator/config.example.json
+    .orchestrator/config.schema.json
+    .orchestrator/dispatch_engine.py
+    .orchestrator/dispatch_policy.py
+    .orchestrator/dispatch_policy_contract.md
+    .orchestrator/github_bus.py
+    .orchestrator/github_reconciliation.py
+    .orchestrator/release_lease_integration.py
+    .orchestrator/status_transition.py
+    .orchestrator/supervisor.py
+    .orchestrator/templates/wakeup.txt
+    .orchestrator/test_capacity_controller.py
+    .orchestrator/test_dispatch_engine.py
+    .orchestrator/test_dispatch_policy.py
+    .orchestrator/test_github_bus.py
+    .orchestrator/test_release_lease_integration.py
+    .orchestrator/test_role_provider_policy.py
+    .orchestrator/test_source_document_router.py
+    .orchestrator/test_supervisor.py
+    .orchestrator/test_watch_events.py
+    .orchestrator/test_worker_failure_policy.py
+    .orchestrator/worker_failure_policy.py
+    Makefile
+    NOTICE-THIRD-PARTY.md
+    apps/api/app/routes/listings.py
+    apps/api/oday_api/main.py
+    apps/api/oday_api/routes/heatzone.py
+    apps/web/features/operator/NetworkFindAreasWorkspace.tsx
+    apps/web/features/operator/OperatorConsole.tsx
+    apps/web/features/operator/__tests__/DecisionCommentsPanel.test.tsx
+    apps/web/features/operator/__tests__/HeatZoneMergeSplitPanel.test.tsx
+    apps/web/features/operator/network/HeatZoneMergeSplitPanel.tsx
+    apps/web/features/operator/network/heatZoneCompositionClient.ts
+    apps/web/features/operator/network/heatZoneMapAdapters.ts
+    apps/web/features/operator/network/listingPermissions.ts
+    apps/web/features/operator/network/mapTypes.ts
+    apps/web/features/operator/network/networkUrlState.ts
+    delivery_toolchain/git/task_finalize.sh
+    delivery_toolchain/release/check_release_environment.py
+    delivery_toolchain/release/release_manifest.py
+    delivery_toolchain/security/attestation.py
+    delivery_toolchain/security/generate_sbom.py
+    delivery_toolchain/security/npm_audit_gate.py
+    delivery_toolchain/security/pip_audit_gate.py
+    docs/adr/ADR-0002-deferred-oss-decisions.md
+    docs/audits/code-boundary-inventory.csv
+    docs/deployment/ENVIRONMENTS.md
+    docs/deployment/GCP_DEPLOY_GUIDE.md
+    infra/db/migrations/000008_postgresql_runtime_persistence.sql
+    infra/db/migrations/000021_manual_corrections_audit_schema.sql
+    infra/db/migrations/000022_durable_manual_corrections.sql
+    infra/db/migrations/000023_heatzone_composition.sql
+    infra/db/migrations/versions/0016_manual_corrections_audit_schema.py
+    infra/db/migrations/versions/0017_heatzone_composition.py
+    models/shared_ml/oss_capabilities.py
+    modules/heatzone/application/absorption_inputs.py
+    modules/heatzone/application/absorption_outcome_recorder.py
+    modules/heatzone/application/merge_split_engine.py
+    modules/heatzone/application/merge_split_evidence.py
+    modules/heatzone/domain/__init__.py
+    modules/heatzone/domain/composition.py
+    modules/heatzone/infrastructure/__init__.py
+    modules/heatzone/infrastructure/absorption_evidence_repository.py
+    modules/heatzone/infrastructure/composition_repository.py
+    modules/learninghub/infrastructure/evidently_monitor.py
+    modules/learninghub/infrastructure/native_drift.py
+    packages/openapi-client/openapi.json
+    packages/openapi-client/src/generated/types.ts
+    packages/schemas/canonical/index.ts
+    pyproject.toml
+    scripts/ai_status.py
+    scripts/orchestrator/backfill_task_archive_snapshots.py
+    scripts/orchestrator/test_archive_history_recovery.py
+    scripts/test_ai_status.py
+    shared/api/route_table_safety.py
+    shared/auth/rbac.py
+    shared/domain/__init__.py
+    shared/domain/models.py
+    shared/governance/__init__.py
+    shared/governance/decision_policy.py
+    shared/governance/heatzone_absorption.py
+    shared/governance/heatzone_merge.py
+    shared/infrastructure/persistence/__init__.py
+    shared/infrastructure/persistence/decision_policy.py
+    shared/infrastructure/persistence/engine.py
+    shared/infrastructure/persistence/factory.py
+    shared/infrastructure/persistence/postgresql.py
+    shared/infrastructure/persistence/repositories.py
+    tests/contract/test_deferred_oss_adr.py
+    tests/contract/test_heatzone_composition_schema.py
+    tests/contract/test_manual_correction_contract.py
+    tests/e2e/test_release_gate_registry.py
+    tests/integration/_heatzone_absorption_rows.py
+    tests/integration/_heatzone_evidence.py
+    tests/integration/test_heatzone_composition_api.py
+    tests/integration/test_manual_correction_persistence.py
+    tests/integration/test_official_real_estate_postgresql.py
+    tests/integration/test_oss_ai_execution_flow.py
+    tests/integration/test_postgresql_persistence.py
+    tests/models/fixtures/evidently_0_7_21/README.md
+    tests/models/fixtures/evidently_0_7_21/baseline_cases.py
+    tests/models/fixtures/evidently_0_7_21/cases/categorical_merged_unique_2_ztest.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/categorical_merged_unique_2_ztest.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/categorical_merged_unique_3_chisquare.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/categorical_merged_unique_3_chisquare.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/categorical_new_label_chisquare.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/categorical_new_label_chisquare.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/categorical_reference_n_1001_jensenshannon.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/categorical_reference_n_1001_jensenshannon.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_duplicate_columns.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_identical_snapshot_ids.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_missing_output_value.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_no_policy_and_no_threshold.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_non_finite_output.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_output_types_do_not_cover_columns.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_reference_cohort_mismatch.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_prediction_requested_threshold_weakens_policy.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_run_all_values_missing.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_run_column_set_mismatch.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/failure_run_empty_reference_rows.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/mixed_share_below_threshold.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/mixed_share_below_threshold.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/mixed_share_meets_threshold.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/mixed_share_meets_threshold.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_constant_shifted_ztest.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_constant_shifted_ztest.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_constant_stable_ztest.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_constant_stable_ztest.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_gaussian_drifted_ks.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_gaussian_drifted_ks.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_gaussian_stable_ks.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_gaussian_stable_ks.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_infinity_cleaned_to_1001_wasserstein.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_infinity_cleaned_to_1001_wasserstein.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_ks_drifted.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_ks_drifted.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_ks_stable.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_ks_stable.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_2_ztest.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_2_ztest.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_3_chisquare.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_3_chisquare.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_5_chisquare.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_5_chisquare.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_6_ks.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_merged_unique_6_ks.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_nan_cleaned_to_1000_ks.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_nan_cleaned_to_1000_ks.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_nan_cleaned_to_1001_wasserstein.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_nan_cleaned_to_1001_wasserstein.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1000_ks.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1000_ks.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1001_jensenshannon.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1001_jensenshannon.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1001_wasserstein.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/numeric_reference_n_1001_wasserstein.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_categorical_new_class_drifted.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_categorical_new_class_drifted.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_categorical_stable.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_categorical_stable.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_inferred_output_types.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_inferred_output_types.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_mixed_output_types.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_mixed_output_types.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_numeric_drifted.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_numeric_drifted.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_numeric_stable.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_numeric_stable.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_policy_threshold_only.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_policy_threshold_only.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_requested_threshold_tightens_policy.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/prediction_requested_threshold_tightens_policy.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/text_absolute_drifted.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/text_absolute_drifted.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/text_percentile_drifted.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/text_percentile_drifted.raw.json
+    tests/models/fixtures/evidently_0_7_21/cases/text_percentile_stable.golden.json
+    tests/models/fixtures/evidently_0_7_21/cases/text_percentile_stable.raw.json
+    tests/models/fixtures/evidently_0_7_21/generate_baseline.py
+    tests/models/fixtures/evidently_0_7_21/manifest.json
+    tests/models/test_evidently_monitor.py
+    tests/models/test_evidently_monitor_baseline.py
+    tests/models/test_heatzone_merge_split.py
+    tests/models/test_native_drift.py
+    tests/ops/test_deploy_workflow_contract.py
+    tests/ops/test_heatzone_composition_migration.py
+    tests/ops/test_migration_backfill.py
+    tests/release/test_probe_release_target_absence.py
+    tests/release/test_release_environment_precheck.py
+    tests/release/test_release_manifest.py
+    tests/release/test_release_manifest_cli.py
+    tests/reliability/test_cold_start_route_table.py
+    tests/security/test_nltk_dependency_removal.py
+    tests/security/test_oss_license_gate.py
+    tests/security/test_supply_chain_security_gate.py
+    tests/tooling/test_dependency_audit_boundary.py
+    tests/tooling/test_generate_sbom_output_isolation.py
+    tests/unit/persistence/test_sql_decision_policy_repository.py
+    uv.lock
+
+--- why the tree diff alone understates it ---
+git diff --name-only C E        -> final tree difference only
+git log --first-parent -m --name-only C..E -> every path each first-parent commit touched
+check_candidate_ancestry() takes the UNION of the two sets.
+
+Example: .github/workflows/deploy-dev.yml is identical in C and E (final tree diff is
+empty for it), but it still appears above because a base-advance merge on the
+first-parent chain touched it. Adding another commit cannot remove these entries.
+
+--- first-parent chain from C to E ---
+ddf10054 2026-09-08 05:06:59 +0000 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: rebind to candidate C
+f831125a 2026-09-08 05:00:59 +0000 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: base advance merge origin/dev
+972cad87 2026-09-05 19:24:36 +0000 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: revert code & refine note
+82c22f4d 2026-09-05 18:46:06 +0000 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: reconcile gate validation
+cc261bbc 2026-09-05 16:08:47 +0000 Merge remote-tracking branch 'origin/dev' into task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002
+80739b26 2026-09-05 04:55:45 +0000 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: 收斂證據驗證
+dfb59558 2026-09-05 04:39:48 +0000 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: correct artifact evidence
+a80622b5 2026-09-05 04:37:30 +0000 Merge remote-tracking branch 'origin/dev' into task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002
+c70216db 2026-09-05 04:29:01 +0000 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: rebind gate and revert code
+a56bd668 2026-09-05 04:22:53 +0000 Merge remote-tracking branch 'origin/dev' into task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002
+3b5de7e7 2026-09-05 03:55:04 +0000 ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002: rebind dev candidate gate
+
+--- the six-file sources-off egress contract is nevertheless identical in C and E ---
+  .github/workflows/deploy-dev.yml                        identical
+  product_ops/deployment/deploy_cloud_run_waji.sh         identical
+  infra/terraform/cloud_run.tf                            identical
+  infra/terraform/network.tf                              identical
+  product_ops/deployment/staging_lifecycle.py             identical
+  product_ops/deployment/cloud_run_job_entrypoint.py      identical

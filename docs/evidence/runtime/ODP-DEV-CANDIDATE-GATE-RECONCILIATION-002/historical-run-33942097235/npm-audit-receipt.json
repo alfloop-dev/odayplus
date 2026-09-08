@@ -1,0 +1,23 @@
+{
+  "candidate_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
+  "counts": {
+    "critical": 0,
+    "high": 0,
+    "info": 0,
+    "low": 0,
+    "moderate": 0
+  },
+  "detail": "npm returned an audit report",
+  "exit_code": 0,
+  "gate": "npm_audit_gate",
+  "omit_dev": true,
+  "outcome_kind": "report",
+  "receipt_kind": "npm_audit",
+  "recorded_at": "2026-09-05T03:32:20Z",
+  "result": "pass",
+  "schema_version": 1,
+  "secret_values_redacted": true,
+  "status": "passed",
+  "threshold": "high",
+  "verdict": "PASS: no production vulnerabilities at or above 'high' (0 finding(s) below the threshold)."
+}
