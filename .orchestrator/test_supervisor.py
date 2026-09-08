@@ -18918,14 +18918,45 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
 
     def test_transient_slot_saturation_owner_is_not_reassigned(self) -> None:
         config = self._config()
-        config["agents"]["claude"]["slot_id"] = "slot-claude-1"
+        config["agents"]["claude"]["worker_slots"] = ["claude_slot_1"]
+        config["agents"]["claude_slot_1"] = {
+            "id": "claude_slot_1",
+            "display_name": "Claude Slot 1",
+            "provider": "claude",
+            "dispatch_slot_for": "claude",
+        }
+        provider_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": True,
+                    "config_valid": True,
+                    "local_cli_worker_supported": True,
+                    "supports_auto_approve": True,
+                },
+                "antigravity": {
+                    "auth_ready": True,
+                    "config_valid": True,
+                    "local_cli_worker_supported": True,
+                    "supports_auto_approve": True,
+                },
+            },
+            "agent_adapters": {
+                "claude": {
+                    "supported": True,
+                    "can_auto_deliver": True,
+                },
+                "antigravity": {
+                    "supported": True,
+                    "can_auto_deliver": True,
+                },
+            },
+        }
         state = {
             "queue": {"events": {}},
             "workers": {
                 "w-claude": {
                     "status": "running",
-                    "agent": "claude",
-                    "slot_id": "slot-claude-1",
+                    "agent_id": "claude_slot_1",
                     "task_id": "T-RUNNING",
                     "pid": 99999,
                 }
@@ -18937,11 +18968,21 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
                 {"id": "T-17", "status": "todo", "owner": "Claude", "reviewer": "Codex"}
             ]
         }
-        with (
-            mock.patch.object(supervisor, "active_worker_refs_for_agent_id", return_value=["99999"]),
-        ):
-            persist = self._run(status, config=config, state=state)
+
+        self.assertEqual(supervisor.logical_worker_slot_ids(config, "claude"), ["claude_slot_1"])
+
+        block_reason = supervisor.agent_auto_dispatch_block_reason(
+            config, state, "claude", provider_report
+        )
+        self.assertIsNotNone(block_reason)
+        self.assertIn("all dispatch slots already have live worker process(es)", block_reason)
+        self.assertTrue(supervisor.auto_dispatch_block_is_temporary_capacity(block_reason))
+
+        persist = self._run(
+            status, config=config, state=state, provider_report=provider_report
+        )
         persist.assert_not_called()
+        self.assertEqual(status["tasks"][0]["owner"], "Claude")
 
 
 
