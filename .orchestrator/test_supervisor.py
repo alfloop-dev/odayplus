@@ -18584,18 +18584,26 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
             },
         }
 
-    def _run(self, status: dict, config: dict | None = None) -> mock.Mock:
+    def _run(
+        self,
+        status: dict,
+        config: dict | None = None,
+        state: dict | None = None,
+        provider_report: dict | None = None,
+    ) -> mock.Mock:
         cfg = config or self._config()
+        st = state if state is not None else self._state_with_codex_quota_paused()
         with (
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(
                 supervisor, "outstanding_delivery_indexes", return_value=(set(), set(), set())
             ),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(supervisor, "console_log"),
         ):
             supervisor.reassign_unavailable_reviewers(
-                cfg, self._state_with_codex_quota_paused(), status
+                cfg, st, status, provider_report=provider_report
             )
         return persist
 
@@ -18794,6 +18802,146 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertEqual(kwargs["handoff_from"], "Codex")
         self.assertIn("account pool codex is exhausted", kwargs["message"])
+
+    def test_unverified_claude_owner_in_todo_is_reassigned_to_antigravity(self) -> None:
+        provider_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": False,
+                }
+            }
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        status = {
+            "tasks": [
+                {"id": "T-13", "status": "todo", "owner": "Claude", "reviewer": "Codex"}
+            ]
+        }
+        persist = self._run(status, state=state, provider_report=provider_report)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-13")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Codex")
+        self.assertEqual(kwargs["handoff_from"], "Claude")
+        self.assertEqual(kwargs["handoff_to"], "Antigravity")
+        self.assertIn("claude authentication is not ready", kwargs["message"])
+
+    def test_unverified_claude_owner_in_progress_is_reassigned_to_antigravity(self) -> None:
+        provider_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": False,
+                }
+            }
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        status = {
+            "tasks": [
+                {"id": "T-14", "status": "in_progress", "owner": "Claude", "reviewer": "Codex"}
+            ]
+        }
+        persist = self._run(status, state=state, provider_report=provider_report)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-14")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Codex")
+        self.assertEqual(kwargs["handoff_from"], "Claude")
+
+    def test_unverified_claude_owner_at_finalize_is_reassigned_to_antigravity(self) -> None:
+        provider_report = {
+            "providers": {
+                "claude": {
+                    "auth_ready": False,
+                }
+            }
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        status = {
+            "tasks": [
+                {"id": "T-15", "status": "review_approved", "owner": "Claude", "reviewer": "Codex"}
+            ]
+        }
+        persist = self._run(status, state=state, provider_report=provider_report)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-15")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Codex")
+        self.assertEqual(kwargs["handoff_from"], "Claude")
+
+    def test_adapter_cannot_auto_deliver_claude_owner_is_reassigned_to_antigravity(self) -> None:
+        provider_report = {
+            "agent_adapters": {
+                "claude": {
+                    "supported": True,
+                    "can_auto_deliver": False,
+                    "notes": "Claude CLI is installed but not authenticated.",
+                }
+            }
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        status = {
+            "tasks": [
+                {"id": "T-16", "status": "todo", "owner": "Claude", "reviewer": "Codex"}
+            ]
+        }
+        persist = self._run(status, state=state, provider_report=provider_report)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-16")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Codex")
+        self.assertEqual(kwargs["handoff_from"], "Claude")
+        self.assertIn("Claude CLI is installed but not authenticated.", kwargs["message"])
+
+    def test_transient_slot_saturation_owner_is_not_reassigned(self) -> None:
+        config = self._config()
+        config["agents"]["claude"]["slot_id"] = "slot-claude-1"
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "w-claude": {
+                    "status": "running",
+                    "agent": "claude",
+                    "slot_id": "slot-claude-1",
+                    "task_id": "T-RUNNING",
+                    "pid": 99999,
+                }
+            },
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        status = {
+            "tasks": [
+                {"id": "T-17", "status": "todo", "owner": "Claude", "reviewer": "Codex"}
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "active_worker_refs_for_agent_id", return_value=["99999"]),
+        ):
+            persist = self._run(status, config=config, state=state)
+        persist.assert_not_called()
 
 
 

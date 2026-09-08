@@ -857,6 +857,7 @@ def test_orphaned_in_progress_task_redispatched_to_owner_when_owner_idle_even_if
 
 def test_orphaned_in_progress_task_claimed_when_owner_paused_and_sla_exceeded() -> None:
     cfg = _base_test_config()
+    cfg["ready_dispatcher"]["reviewer_failover"] = {"enabled": False}
     task = {
         "id": "TASK-ORPHANED-004",
         "priority": "P2",
