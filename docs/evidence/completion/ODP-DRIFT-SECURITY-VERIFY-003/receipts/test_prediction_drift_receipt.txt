@@ -1,0 +1,6 @@
+============================= test session starts ==============================
+collected 6 items
+
+modules/learninghub/tests/test_prediction_drift.py ......                [100%]
+
+============================== 6 passed in 26.36s ==============================
