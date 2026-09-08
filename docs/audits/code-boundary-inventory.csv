@@ -757,6 +757,7 @@ shared/api/__init__.py,product_system,product_required,true,,engineering;operati
 shared/api/errors.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/api/idempotency.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/api/pagination.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+shared/api/route_table_safety.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/api/versioning.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 shared/application/messages.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -1087,6 +1088,7 @@ tests/release/test_runtime_admission.py,verification,verification_only,false,dev
 tests/release/test_sign_images.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/assisted_listing_intake/test_recovery.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_assisted_listing_intake_jobs.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/reliability/test_cold_start_route_table.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_concurrency_recovery.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_cross_flow_gate.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/reliability/test_health_endpoints.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
