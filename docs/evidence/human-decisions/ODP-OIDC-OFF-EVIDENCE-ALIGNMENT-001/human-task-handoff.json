@@ -1,0 +1,85 @@
+{
+  "handoff_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+  "title": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001 Standby Handoff Update",
+  "created_at": "2026-09-08T15:28:00Z",
+  "created_by": "Antigravity2",
+  "decision_ref": "D15",
+  "target_human_task": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
+  "current_status_of_target": "todo",
+  "current_owner_of_target": "Human/Ops",
+  "recommendation": "standby",
+  "context": {
+    "decision_d15": "Google OIDC disabled; password-first is default. OIDC becomes optional provider, only needed when explicitly enabled.",
+    "prior_next_field": "2026-08-30 產品決策已改為「帳密為預設、OIDC 可選」。此 human OAuth task 暫不再是 dev/staging/prod 部署前置；待 ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 合併並由 ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001 驗證後，改為僅在啟用 Google OIDC 時才需執行。不得在新機制完成前將其標記完成或略過 provider 驗證。",
+    "oidc_optional_deployment_done": true,
+    "oidc_optional_deployment_pr": "#1074",
+    "oidc_optional_deployment_merge_sha": "840081001084ad9586421de908530a41f3a17333",
+    "password_first_security_e2e_done": true,
+    "password_first_security_e2e_pr": "#1096",
+    "password_first_security_e2e_merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+    "e2e_receipt_verdict": "pass",
+    "e2e_receipt_date": "2026-09-01"
+  },
+  "updated_next_recommendation": "Both prerequisite tasks (ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 PR#1074 and ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 PR#1096) have been merged into dev. The password-first mechanism is verified operational. This Human OAuth task transitions from 'deployment blocker' to 'standby for explicit OIDC enablement'. Execute only when the business decides to enable Google OIDC login, not as a deployment gate.",
+  "condition_dependencies": [
+    {
+      "condition": "Business decides to enable Google OIDC login",
+      "status": "not_requested",
+      "note": "D15 confirms OIDC is disabled by default. This task activates only on explicit enablement decision."
+    },
+    {
+      "condition": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 merged",
+      "status": "satisfied",
+      "evidence": "PR #1074, merge commit 840081001084ad9586421de908530a41f3a17333, ancestor of current HEAD"
+    },
+    {
+      "condition": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E verified",
+      "status": "satisfied",
+      "evidence": "PR #1096, merge commit 2377168c2cc07cd2470dd8f43de0486fe8d8fc08, receipt verdict=pass"
+    }
+  ],
+  "what_this_handoff_does_not_do": [
+    "Does not mark HUMAN-GCP-WEB-OAUTH-CLIENTS-001 as done or waived",
+    "Does not claim OAuth provider has been verified or is ready",
+    "Does not modify the human task's acceptance criteria",
+    "Does not create, read, or store any OAuth client secrets",
+    "Does not change any deployment configuration or infrastructure",
+    "Does not remove HUMAN-GCP-WEB-OAUTH-CLIENTS-001 as a dependency for OIDC-enabled deployments"
+  ],
+  "identified_regression_evidence": [
+    {
+      "suite": "tests/ops/test_conditional_oidc_deployment.py",
+      "description": "Validates conditional OIDC deployment across environment matrix",
+      "last_known_result": "Part of E2E receipt (151 passed, 22 skipped)",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "tests/e2e/test_password_first_security_e2e.py",
+      "description": "Password-first security boundary E2E tests",
+      "last_known_result": "Part of E2E receipt (151 passed, 22 skipped)",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "tests/security/test_login_throttle_wiring.py",
+      "description": "Login throttle wiring verification",
+      "last_known_result": "Part of E2E receipt (151 passed, 22 skipped)",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    }
+  ],
+  "true_gaps": [
+    {
+      "gap": "canonical_task_archive_missing",
+      "description": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 and ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 are not in the current ai-task-archive. Their completion is evidenced only by merged PR commits on dev.",
+      "severity": "documentation",
+      "mitigation": "PR merge commits are cryptographically verifiable ancestors of current HEAD."
+    },
+    {
+      "gap": "e2e_receipt_not_exact_head",
+      "description": "The E2E receipt base (d0c81635df8e) predates current HEAD (9048161e). No auth-surface code changes detected between receipt and HEAD, but exact-head re-verification has not been re-run.",
+      "severity": "low",
+      "mitigation": "Auth module files have not been modified since receipt base. Re-verification is not in this task's scope."
+    }
+  ],
+  "code_defects_found": [],
+  "minimum_repair_handoff": []
+}
