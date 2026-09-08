@@ -1,0 +1,313 @@
+{
+  "$schema_comment": "ODP-OSS-DECISION-PACK-001 case matrix: D01-D14 cross-referenced with real lockfile versions and first-party ownership. This is an evidence document, not a decision or approval.",
+  "pack_id": "ODP-OSS-DECISION-PACK-001",
+  "inspected_head": "9048161e058becff5a53593a773d3c42238213fb",
+  "inspected_at": "2026-09-08T15:24:33Z",
+  "lockfile_evidence": {
+    "npm": {
+      "file": "package-lock.json",
+      "sha256": "dbda408248444c617bf0b124e9d2ce73ce18be0ee6bf6d463f148ba3cd8b1c8a"
+    },
+    "python": {
+      "file": "uv.lock",
+      "sha256": "ba5c393e49538e4da9e59de001cffc28c4cadfab8aebacf6dbf1503eb3a49a5d"
+    }
+  },
+  "source_refs": [
+    "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+    "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md"
+  ],
+  "cases": [
+    {
+      "id": "D01",
+      "case_id": "LGPL-SHARP-LIBVIPS",
+      "title": "LGPL libvips via sharp (image optimisation)",
+      "license": "LGPL-3.0-or-later",
+      "scope": "prod",
+      "user_choice": "A: Allow use",
+      "user_choice_ref": "Execution Plan §2.1 D01",
+      "landing": "Retain existing functionality; verify actual binary, linking method, and applicable upstream obligations. Allow does not mean exempt from obligations.",
+      "packages": [
+        {
+          "purl": "pkg:npm/%40img/sharp-libvips-linux-x64@1.3.2",
+          "package": "@img/sharp-libvips-linux-x64",
+          "version": "1.3.2",
+          "ecosystem": "npm",
+          "first_party": false
+        },
+        {
+          "purl": "pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.2",
+          "package": "@img/sharp-libvips-linuxmusl-x64",
+          "version": "1.3.2",
+          "ecosystem": "npm",
+          "first_party": false
+        },
+        {
+          "purl": "pkg:npm/sharp@0.35.3",
+          "package": "sharp",
+          "version": "0.35.3",
+          "ecosystem": "npm",
+          "first_party": false
+        }
+      ],
+      "dependency_path": "@oday-plus/web -> next@15.5.21 -> sharp@0.35.3 -> @img/sharp-libvips-*",
+      "linking_method": "Dynamic shared library (prebuilt, unmodified upstream)",
+      "obligations_to_verify": [
+        "Dynamic linking compliance under LGPL-3.0",
+        "NOTICE / attribution retention",
+        "Source code offer for libvips (upstream source already publicly available)",
+        "User relinking capability (shared library, not statically linked)"
+      ],
+      "prior_inventory_version": "1.3.2 (2026-08-08 inventory)",
+      "version_changed_since_inventory": false,
+      "receipt_status": "unsigned — awaiting H01 authority"
+    },
+    {
+      "id": "D02",
+      "case_id": "LGPL-PSYCOPG2",
+      "title": "LGPL psycopg2 with linking exception",
+      "license": "LGPL with exceptions",
+      "scope": "prod",
+      "user_choice": "A: Accept upstream linking exception",
+      "user_choice_ref": "Execution Plan §2.1 D02",
+      "landing": "Receipt binds to actual version and exception text; confirm current dependency still includes this version.",
+      "packages": [
+        {
+          "purl": "pkg:pypi/psycopg2-binary@2.9.12",
+          "package": "psycopg2-binary",
+          "version": "2.9.12",
+          "ecosystem": "python",
+          "first_party": false
+        }
+      ],
+      "dependency_path": "odayplus -> dlt[postgres]>=1.20,<2 (pyproject.toml) -> psycopg2-binary@2.9.12",
+      "linking_method": "C extension loaded via Python import; upstream LGPL + explicit linking exception",
+      "exception_text_reference": "psycopg2 LICENSE file: LGPL with linking exception permitting use as a library without copyleft propagation",
+      "obligations_to_verify": [
+        "Confirm exception text present in installed version 2.9.12",
+        "NOTICE retention",
+        "No modification of psycopg2 source"
+      ],
+      "prior_inventory_version": "2.9.12 (2026-08-08 inventory)",
+      "version_changed_since_inventory": false,
+      "receipt_status": "unsigned — awaiting H01 authority"
+    },
+    {
+      "id": "D03",
+      "case_id": "LGPL-PSYCOPG3",
+      "title": "LGPL psycopg 3.x (no linking exception)",
+      "license": "LGPL-3.0-only",
+      "scope": "prod",
+      "user_choice": "A: Allow with conditions",
+      "user_choice_ref": "Execution Plan §2.1 D03",
+      "landing": "Handle per selected conditions: dynamic linking, NOTICE, source offer, relinking. Do not inherit psycopg2's exception.",
+      "packages": [
+        {
+          "purl": "pkg:pypi/psycopg@3.3.4",
+          "package": "psycopg",
+          "version": "3.3.4",
+          "ecosystem": "python",
+          "first_party": false
+        },
+        {
+          "purl": "pkg:pypi/psycopg-binary@3.3.4",
+          "package": "psycopg-binary",
+          "version": "3.3.4",
+          "ecosystem": "python",
+          "first_party": false
+        },
+        {
+          "purl": "pkg:pypi/psycopg-pool@3.3.1",
+          "package": "psycopg-pool",
+          "version": "3.3.1",
+          "ecosystem": "python",
+          "first_party": false
+        }
+      ],
+      "dependency_path": "odayplus -> psycopg[binary,pool]>=3.2,<4 (pyproject.toml)",
+      "linking_method": "C extension (psycopg-binary) dynamically loaded; pool is pure Python",
+      "obligations_to_verify": [
+        "Dynamic linking / unmodified upstream binary distribution",
+        "NOTICE disclosure in distribution",
+        "Source code offer for psycopg C extension",
+        "User relinking capability under LGPL-3.0",
+        "No inheritance from psycopg2 linking exception — different license terms"
+      ],
+      "prior_inventory_version": "3.3.4 / 3.3.1 (2026-08-08 inventory)",
+      "version_changed_since_inventory": false,
+      "receipt_status": "unsigned — awaiting H01 authority"
+    },
+    {
+      "id": "D04",
+      "case_id": "LGPL-MOOCORE",
+      "title": "LGPL moocore (multi-objective optimisation core)",
+      "license": "LGPL-2.1-or-later",
+      "scope": "prod",
+      "user_choice": "A: Allow with conditions",
+      "user_choice_ref": "Execution Plan §2.1 D04",
+      "landing": "Dynamic loading, use unmodified upstream binary, retain NOTICE; verify actual distribution form for other obligations.",
+      "packages": [
+        {
+          "purl": "pkg:pypi/moocore@0.3.2",
+          "package": "moocore",
+          "version": "0.3.2",
+          "ecosystem": "python",
+          "first_party": false
+        },
+        {
+          "purl": "pkg:pypi/pymoo@0.6.2",
+          "package": "pymoo",
+          "version": "0.6.2",
+          "ecosystem": "python",
+          "first_party": false,
+          "note": "Parent dependency; not itself LGPL"
+        }
+      ],
+      "dependency_path": "odayplus -> pymoo>=0.6.1,<0.7 (pyproject.toml) -> moocore@0.3.2",
+      "linking_method": "Compiled C/C++ extension module dynamically imported by pymoo",
+      "obligations_to_verify": [
+        "Dynamic loading / shared library semantics under LGPL-2.1",
+        "Unmodified upstream distribution verification",
+        "NOTICE retention",
+        "Source availability (upstream on PyPI with sdist)"
+      ],
+      "prior_inventory_version": "0.3.2 (2026-08-08 inventory)",
+      "version_changed_since_inventory": false,
+      "receipt_status": "unsigned — awaiting H01 authority"
+    },
+    {
+      "id": "D05",
+      "case_id": "FIRST-PARTY-UNLICENSED",
+      "title": "First-party workspace packages — mark UNLICENSED",
+      "license": "UNKNOWN (currently unset)",
+      "scope": "internal",
+      "user_choice": "B: Mark first-party packages UNLICENSED",
+      "user_choice_ref": "Execution Plan §2.1 D05",
+      "landing": "Only apply to packages with provable first-party identity; do not batch-approve third-party UNKNOWN packages.",
+      "packages": [
+        { "package": "@oday-plus/ui", "version": "0.1.0", "ecosystem": "npm", "first_party": true, "workspace": "packages/ui" },
+        { "package": "@oday-plus/design-tokens", "version": "0.1.0", "ecosystem": "npm", "first_party": true, "workspace": "packages/design-tokens" },
+        { "package": "@oday-plus/testkit", "version": "0.1.0", "ecosystem": "npm", "first_party": true, "workspace": "packages/testkit" },
+        { "package": "@oday-plus/ui-domain", "version": "0.1.0", "ecosystem": "npm", "first_party": true, "workspace": "packages/ui-domain" },
+        { "package": "@oday-plus/domain-types", "version": "0.1.0", "ecosystem": "npm", "first_party": true, "workspace": "packages/domain-types" },
+        { "package": "@oday-plus/schemas", "version": "0.1.0", "ecosystem": "npm", "first_party": true, "workspace": "packages/schemas" },
+        { "package": "@oday-plus/web", "version": "0.1.0", "ecosystem": "npm", "first_party": true, "workspace": "apps/web" },
+        { "package": "@oday-plus/openapi-client", "version": "0.1.0", "ecosystem": "npm", "first_party": true, "workspace": "packages/openapi-client" }
+      ],
+      "first_party_evidence": "All 8 packages are defined in root package.json workspaces array (apps/web, packages/*), scoped under @oday-plus/*, and have no license field set. They are not published to any public registry.",
+      "dependency_path": "Root workspace members",
+      "obligations_to_verify": [
+        "Confirm all 8 packages still exist in workspace at delivery time",
+        "Confirm no package.json has been removed or renamed",
+        "Ensure UNLICENSED marker does not affect product delivery or customer service"
+      ],
+      "prior_inventory_version": "Same 8 packages (2026-08-08 inventory)",
+      "version_changed_since_inventory": false,
+      "receipt_status": "unsigned — awaiting H01 authority"
+    },
+    {
+      "id": "D06",
+      "case_id": "DEV-TOOLCHAIN-TEMPORARY-ACCEPT",
+      "title": "Dev toolchain vulnerability — TEMPORARY_ACCEPT direction",
+      "license": "N/A (vulnerability finding, not license)",
+      "scope": "dev",
+      "user_choice": "TEMPORARY_ACCEPT, limited to internal dev scope",
+      "user_choice_ref": "Execution Plan §2.2 D06",
+      "landing": "Policy direction only. Fresh un-suppressed audit shows 0 vulnerabilities (pip-audit: 0 vulns across 215 deps; npm audit: 0 vulns across 567 deps). Per Execution Plan §2.2, since there are no active findings, no waiver/exception is needed or created.",
+      "audit_result": {
+        "npm_audit_all_scopes": {
+          "info": 0,
+          "low": 0,
+          "moderate": 0,
+          "high": 0,
+          "critical": 0,
+          "total": 0,
+          "dependencies_audited": 567
+        },
+        "python_pip_audit": {
+          "vulnerabilities": 0,
+          "dependencies_audited": 215
+        },
+        "prior_count_2026_08_08": "13 high in dev toolchain (stale; fully remediated)"
+      },
+      "receipt_status": "no exception needed — zero active findings in un-suppressed audit"
+    },
+    {
+      "id": "D07",
+      "case_id": "UNKNOWN-PROPRIETARY-POLICY",
+      "title": "UNKNOWN / PROPRIETARY handling",
+      "user_choice": "First-party per D05; third-party case-by-case review",
+      "user_choice_ref": "Execution Plan §2.2 D07",
+      "landing": "Third-party UNKNOWN/PROPRIETARY packages cannot enter releasable artifacts until individually reviewed.",
+      "receipt_status": "unsigned — part of overall policy receipt (H01)"
+    },
+    {
+      "id": "D08",
+      "case_id": "PERMISSIVE-ALLOW",
+      "title": "Permissive licenses (MIT, ISC, BSD, Apache, etc.)",
+      "user_choice": "Allow use, retaining respective obligations",
+      "user_choice_ref": "Execution Plan §2.2 D08",
+      "landing": "Explicit SPDX list with per-license obligations. Must not apply all obligations uniformly to every license.",
+      "observed_counts": {
+        "npm": { "MIT": 368, "ISC": 32, "Apache-2.0": 23, "BSD-2-Clause": 11, "BSD-3-Clause": 7, "0BSD": 1, "BlueOak-1.0.0": 1, "CC0-1.0": 1, "Python-2.0": 1 },
+        "python": { "MIT": 99, "Apache-2.0": 68, "BSD-3-Clause": 43, "PSF-2.0": 5, "BSD-2-Clause": 4 }
+      },
+      "receipt_status": "unsigned — part of overall policy receipt (H01)"
+    },
+    {
+      "id": "D09",
+      "case_id": "NOTICE-AUTO-GENERATE",
+      "title": "NOTICE / third-party attribution auto-generation",
+      "user_choice": "Auto-generate and include with every release",
+      "user_choice_ref": "Execution Plan §2.2 D09",
+      "landing": "Bind to actual SBOM/release artifact; detect missing or inconsistent attribution.",
+      "tooling": "delivery_toolchain/security/generate_oss_notice.py (existing)",
+      "receipt_status": "unsigned — part of overall policy receipt (H01)"
+    },
+    {
+      "id": "D10",
+      "case_id": "EXCEPTION-APPROVAL-AUTHORITY",
+      "title": "Exception approval authority",
+      "user_choice": "Named Legal/Security/Risk with actual authority",
+      "user_choice_ref": "Execution Plan §2.2 D10",
+      "landing": "AI can transcribe user instructions and prepare documents; cannot adjudicate, sign, or forge readback.",
+      "receipt_status": "unsigned — requires H01 named authority"
+    },
+    {
+      "id": "D11",
+      "case_id": "EXCEPTION-SCOPE-LIMITS",
+      "title": "Exception scope and duration limits",
+      "user_choice": "Bound to package/finding, environment, release, expiry; no permanent or global exceptions",
+      "user_choice_ref": "Execution Plan §2.2 D11",
+      "landing": "Each exception specifies revocation method and reopen trigger. Unfilled fields remain pending.",
+      "receipt_status": "unsigned — part of overall policy receipt (H01)"
+    },
+    {
+      "id": "D12",
+      "case_id": "RECEIPT-FAIL-CLOSED",
+      "title": "Receipt validation failure policy",
+      "user_choice": "Fail closed on missing, expired, unreadable, scope/hash mismatch",
+      "user_choice_ref": "Execution Plan §2.2 D12",
+      "landing": "Scope to affected gate only; do not block unrelated engineering.",
+      "receipt_status": "unsigned — part of overall policy receipt (H01)"
+    },
+    {
+      "id": "D13",
+      "case_id": "NARROW-DENYLIST",
+      "title": "Narrow license denylist",
+      "user_choice": "AGPL/SSPL/BSL default deny; GPL case-by-case review; LGPL per individual case",
+      "user_choice_ref": "Execution Plan §2.2 D13",
+      "landing": "Company classification, not a legal conclusion for all versions or use cases.",
+      "receipt_status": "unsigned — part of overall policy receipt (H01)"
+    },
+    {
+      "id": "D14",
+      "case_id": "AUTHORITATIVE-RECEIPT",
+      "title": "Authoritative receipt requirements",
+      "user_choice": "External authoritative system with readback; includes identity, scope, release, expiry, hash/signature",
+      "user_choice_ref": "Execution Plan §2.2 D14",
+      "landing": "System, principal, and actual reference not yet provided. Hash can verify integrity but cannot alone prove approval authority.",
+      "receipt_status": "unsigned — system/principal/reference pending (H01)"
+    }
+  ]
+}
