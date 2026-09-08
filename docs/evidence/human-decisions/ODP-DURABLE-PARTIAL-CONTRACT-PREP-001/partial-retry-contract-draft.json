@@ -2,34 +2,35 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "DurableJobPartialRetryContractDraft",
   "description": "Draft schema and behavioral contract for durable batch jobs supporting JobStatus.PARTIAL, itemized receipts, and member-level idempotency/retry.",
-  "version": "1.0.0-draft.2026-09-08",
+  "version": "1.1.0-draft.2026-09-08",
   "metadata": {
     "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
     "work_package": "WP-33A",
     "target_implementation_stage": "WP-33B",
-    "inspected_commit_sha": "9048161e058becff5a53593a773d3c42238213fb",
-    "created_at": "2026-09-08T16:12:00Z"
+    "inspected_commit_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+    "created_at": "2026-09-08T16:48:00Z"
   },
   "core_principles": {
     "status_orthogonality": {
       "business_outcome": "JobStatus: QUEUED | RUNNING | SUCCEEDED | FAILED | CANCELLED | PARTIAL",
       "delivery_mechanics": "JobDeliveryState: RETRYING | DEAD_LETTER | null",
-      "rule": "Terminal business states (SUCCEEDED, FAILED, PARTIAL, CANCELLED) MUST have delivery_state = null. Transport retry states (RETRYING, DEAD_LETTER) apply only during active queue delivery and MUST NOT overwrite business outcome."
+      "rule": "JobStatus represents business outcome; JobDeliveryState represents queue delivery mechanics. In the existing system, normal success writes SUCCEEDED with delivery_state=null, active retries write QUEUED with delivery_state=RETRYING, and terminal failures write FAILED paired with delivery_state=DEAD_LETTER upon retry exhaustion or non-retryable errors. For multi-item batch jobs completing as PARTIAL, transport delivery is finished, so delivery_state is cleared (set to null), cleanly separating business partial completion from infrastructure dead-lettering without allowing transport delivery states to overwrite business outcome."
     },
     "state_transition_rules": {
       "single_item_jobs": "Must transition strictly to SUCCEEDED or FAILED (never PARTIAL).",
-      "batch_multi_item_jobs": [
-        "If succeeded_count == total_count and failed_count == 0 => JobStatus.SUCCEEDED",
-        "If succeeded_count == 0 and failed_count == total_count => JobStatus.FAILED",
-        "If succeeded_count > 0 and failed_count > 0 => JobStatus.PARTIAL",
-        "If job is aborted mid-batch by operator or system => JobStatus.CANCELLED",
-        "If total_count == 0 (empty batch) => JobStatus.SUCCEEDED with summary counts = 0"
+      "batch_multi_item_precedence_rules": [
+        "1. Empty batch precedence: If total_count == 0 => JobStatus.SUCCEEDED (with succeeded_count = 0, failed_count = 0, cancelled_count = 0, pending_count = 0).",
+        "2. Non-finalization rule: If pending_count > 0 => Job remains in active non-terminal state (JobStatus.RUNNING or JobStatus.QUEUED); pending items MUST NOT finalize the job into a terminal state.",
+        "3. Cancellation precedence: If cancelled_count > 0 or job was aborted by operator/system => JobStatus.CANCELLED (takes unambiguous precedence over partial counts).",
+        "4. All Succeeded: If succeeded_count == total_count and total_count > 0 and failed_count == 0 and cancelled_count == 0 and pending_count == 0 => JobStatus.SUCCEEDED.",
+        "5. All Failed: If failed_count == total_count and total_count > 0 and succeeded_count == 0 and cancelled_count == 0 and pending_count == 0 => JobStatus.FAILED.",
+        "6. Mixed Partial Outcome: If succeeded_count > 0 and failed_count > 0 and cancelled_count == 0 and pending_count == 0 => JobStatus.PARTIAL."
       ]
     },
     "scoped_retry_policy": {
       "default_scope": "FAILED_ONLY",
-      "execution_behavior": "Engine reads previous ItemReceipt items; items with item_status == 'SUCCEEDED' are skipped with zero downstream invocations; only items with item_status == 'FAILED' and error.retryable == true are re-executed.",
-      "convergence_rule": "Retried items that succeed update item_status to SUCCEEDED. When all items reach SUCCEEDED, the aggregate JobStatus converges from PARTIAL to SUCCEEDED."
+      "execution_behavior": "Engine reads previous ItemReceipt items; items with item_status == 'SUCCEEDED' are skipped with zero downstream invocations; items with item_status == 'FAILED' and error.retryable == false are permanent bad input and skipped with zero downstream invocations (attempt count unchanged); only items with item_status == 'FAILED' and error.retryable == true are re-executed (attempt incremented by 1).",
+      "convergence_rule": "Retried items that succeed update item_status to SUCCEEDED and increment attempt. When all originally failed items reach SUCCEEDED, the aggregate JobStatus converges from PARTIAL to SUCCEEDED. If non-retryable failed items remain, the aggregate JobStatus remains PARTIAL with updated summary counts."
     }
   },
   "definitions": {
@@ -43,7 +44,7 @@
       "properties": {
         "code": {
           "type": "string",
-          "description": "Machine-readable error code (e.g. MISSING_MANDATORY_ADDRESS, TIMEOUT_DOWNSTREAM)"
+          "description": "Machine-readable error code (e.g. MISSING_MANDATORY_ADDRESS, GEOCODING_UPSTREAM_TIMEOUT, CANCELLED_BEFORE_EXECUTION)"
         },
         "message": {
           "type": "string",
@@ -51,7 +52,7 @@
         },
         "retryable": {
           "type": "boolean",
-          "description": "True if transient failure eligible for retry; false if permanent bad input"
+          "description": "True if transient failure eligible for retry; false if permanent bad input or deterministic rejection"
         },
         "details": {
           "type": "object",
@@ -83,19 +84,19 @@
             "CANCELLED",
             "PENDING"
           ],
-          "description": "Terminal outcome for this specific member"
+          "description": "Terminal or lifecycle outcome for this specific member"
         },
         "attempt": {
           "type": "integer",
-          "minimum": 1,
-          "description": "Total execution attempts made for this item"
+          "minimum": 0,
+          "description": "Total execution attempts made for this item (0 for unstarted PENDING or pre-execution CANCELLED items; >=1 for items that executed at least once)"
         },
         "result_ref": {
           "type": [
             "string",
             "null"
           ],
-          "description": "Pointer to created resource or receipt (e.g. intake-991823)"
+          "description": "Pointer to created resource or receipt (e.g. intake-991823); null for failed, cancelled, or pending items"
         },
         "error": {
           "oneOf": [
@@ -115,8 +116,12 @@
           "description": "Per-item client idempotency key if supplied"
         },
         "last_attempt_at": {
-          "type": "string",
-          "format": "date-time"
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time",
+          "description": "Timestamp of last execution attempt, or null if attempt == 0"
         }
       },
       "additionalProperties": false
@@ -127,12 +132,14 @@
         "total_count",
         "succeeded_count",
         "failed_count",
-        "cancelled_count"
+        "cancelled_count",
+        "pending_count"
       ],
       "properties": {
         "total_count": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "Sum of succeeded_count + failed_count + cancelled_count + pending_count"
         },
         "succeeded_count": {
           "type": "integer",
@@ -148,8 +155,7 @@
         },
         "pending_count": {
           "type": "integer",
-          "minimum": 0,
-          "default": 0
+          "minimum": 0
         }
       },
       "additionalProperties": false
@@ -382,6 +388,68 @@
       "created_at": "2026-09-08T16:12:00Z",
       "started_at": "2026-09-08T16:12:00Z",
       "completed_at": "2026-09-08T16:15:05Z"
+    },
+    "cancelled_batch_receipt_sample": {
+      "job_id": "job-batch-8849a2f1-002",
+      "job_type": "batch-listing-intake",
+      "tenant_id": "tenant-tw-01",
+      "correlation_id": "corr-482a9b-20-cancel",
+      "idempotency_key": "idemp-batch-20260908-02",
+      "status": "CANCELLED",
+      "delivery_state": null,
+      "summary": {
+        "total_count": 3,
+        "succeeded_count": 1,
+        "failed_count": 0,
+        "cancelled_count": 2,
+        "pending_count": 0
+      },
+      "items": [
+        {
+          "item_id": "row-001",
+          "item_status": "SUCCEEDED",
+          "attempt": 1,
+          "result_ref": "intake-991830",
+          "error": null,
+          "idempotency_key": "row-idemp-21",
+          "last_attempt_at": "2026-09-08T16:20:01Z"
+        },
+        {
+          "item_id": "row-002",
+          "item_status": "CANCELLED",
+          "attempt": 1,
+          "result_ref": null,
+          "error": {
+            "code": "CANCELLED_MID_EXECUTION",
+            "message": "Job cancelled by operator during item execution",
+            "retryable": true,
+            "details": {
+              "cancellation_reason": "OPERATOR_ABORT"
+            }
+          },
+          "idempotency_key": "row-idemp-22",
+          "last_attempt_at": "2026-09-08T16:20:02Z"
+        },
+        {
+          "item_id": "row-003",
+          "item_status": "CANCELLED",
+          "attempt": 0,
+          "result_ref": null,
+          "error": {
+            "code": "CANCELLED_BEFORE_EXECUTION",
+            "message": "Job cancelled before item execution started",
+            "retryable": true,
+            "details": {
+              "cancellation_reason": "OPERATOR_ABORT"
+            }
+          },
+          "idempotency_key": "row-idemp-23",
+          "last_attempt_at": null
+        }
+      ],
+      "created_at": "2026-09-08T16:20:00Z",
+      "started_at": "2026-09-08T16:20:00Z",
+      "completed_at": "2026-09-08T16:20:05Z"
     }
   },
   "api_contract_specifications": {

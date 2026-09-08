@@ -3,11 +3,12 @@
   "metadata": {
     "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
     "work_package": "WP-33A",
-    "inspected_commit_sha": "9048161e058becff5a53593a773d3c42238213fb",
-    "inspection_utc": "2026-09-08T16:12:00Z",
+    "inspected_commit_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+    "inspection_utc": "2026-09-08T16:48:00Z",
     "inventory_type": "static_source_code_inventory",
     "live_runtime_receipt_status": "static_only_no_production_runtime_access",
-    "core_finding": "Zero reachable writes to JobStatus.PARTIAL exist across the codebase. All existing durable worker handlers process single entities/windows and transition directly to SUCCEEDED or FAILED/DEAD_LETTER/RETRYING."
+    "historical_evidence_reference": "ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md (date: 2026-09-03, baseline: 04e1572f802a54c2646ba678fe2975226dfbd7c4)",
+    "core_finding": "Zero reachable writes to JobStatus.PARTIAL exist across the codebase. All existing durable worker handlers process single entities/windows and transition directly to SUCCEEDED (delivery_state=NULL) or FAILED/DEAD_LETTER/RETRYING."
   },
   "canonical_vocabulary": {
     "job_status": [
@@ -22,21 +23,24 @@
       "RETRYING",
       "DEAD_LETTER"
     ],
-    "orthogonal_boundary": "JobStatus represents business outcome; JobDeliveryState represents transport delivery mechanics. Terminal JobStatus must have null delivery_state."
+    "orthogonal_boundary": "JobStatus represents business outcome; JobDeliveryState represents queue delivery mechanics. SUCCEEDED automatically clears delivery_state to NULL. Active retries set QUEUED with delivery_state=RETRYING. Terminal failed jobs set FAILED with delivery_state=DEAD_LETTER upon retry exhaustion or non-retryable error. For multi-item batch PARTIAL completion, transport delivery is finished so delivery_state is cleared to NULL, preserving outcome/delivery separation without conflating PARTIAL with DEAD_LETTER."
   },
   "default_worker_registry_jobs": [
     {
       "job_type": "forecast",
       "handler_symbol": "handle_forecast",
       "handler_source": "apps/worker/oday_worker/handlers.py:255",
-      "enqueue_source": "apps/api/oday_api/main.py:977-992",
+      "enqueue_source": "apps/api/oday_api/main.py:997-1044",
+      "queue_dispatch": "shared/jobs/queue.py:145-208, shared/infrastructure/persistence/job_queue.py:120-173",
+      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED/RETRYING or FAILED/DEAD_LETTER) -> shared/infrastructure/persistence/job_queue.py:395-436",
+      "traceability": "apps/api/oday_api/main.py:997-1044 -> shared/infrastructure/persistence/job_queue.py:120-173 -> apps/worker/oday_worker/handlers.py:255 (handle_forecast) -> apps/worker/oday_worker/main.py:141-146,210-222 -> shared/infrastructure/persistence/job_queue.py:395-436",
       "item_granularity": "single_store_timeseries",
       "current_terminal_statuses": [
         "SUCCEEDED",
         "FAILED"
       ],
       "has_partial_transition": false,
-      "delivery_state_handling": "Transport retry (RETRYING) up to 3 attempts, then DEAD_LETTER on terminal failure.",
+      "delivery_state_handling": "Transport retry (QUEUED + RETRYING) up to 3 attempts, then terminal failure writes JobStatus.FAILED paired with JobDeliveryState.DEAD_LETTER (apps/worker/oday_worker/main.py:200-218).",
       "classification": "durable_worker_job_single_item",
       "partial_assessment": "Inapplicable for canonical PARTIAL in current single-store design because each job evaluates a single store's forecast without independent sub-item aggregates."
     },
@@ -44,41 +48,61 @@
       "job_type": "external-fetch",
       "handler_symbol": "handle_external_fetch",
       "handler_source": "apps/worker/oday_worker/handlers.py:256",
-      "enqueue_source": "apps/scheduler/oday_scheduler/main.py:181",
+      "enqueue_source": "apps/scheduler/oday_scheduler/main.py:180-195 (scheduler tick) and apps/api/oday_api/main.py:1013-1044 (API route)",
+      "queue_dispatch": "shared/jobs/queue.py:145-208, shared/infrastructure/persistence/job_queue.py:120-173",
+      "durable_state_writer": "apps/worker/oday_worker/main.py:141-146 (SUCCEEDED) and apps/worker/oday_worker/main.py:210-222 (QUEUED/RETRYING or FAILED/DEAD_LETTER) -> shared/infrastructure/persistence/job_queue.py:395-436",
+      "traceability": "apps/scheduler/oday_scheduler/main.py:180-195 / apps/api/oday_api/main.py:1013-1044 -> shared/infrastructure/persistence/job_queue.py:120-173 -> apps/worker/oday_worker/handlers.py:256 (handle_external_fetch) -> apps/worker/oday_worker/main.py:141-146,210-222 -> shared/infrastructure/persistence/job_queue.py:395-436",
       "item_granularity": "single_provider_window",
       "current_terminal_statuses": [
         "SUCCEEDED",
         "FAILED"
       ],
       "has_partial_transition": false,
-      "delivery_state_handling": "Scheduler backoff and circuit breaker, queue RETRYING/DEAD_LETTER.",
+      "delivery_state_handling": "Scheduler backoff and circuit breaker; transport retry uses QUEUED + RETRYING, exhausted failure writes FAILED + DEAD_LETTER (apps/worker/oday_worker/main.py:200-218).",
       "classification": "durable_worker_job_single_item",
       "partial_assessment": "Data-level partial candidate (accepted vs quarantined records), but currently executed as a single provider/window job returning SUCCEEDED or FAILED at the queue layer without JobStatus.PARTIAL or item-level retry."
     },
     {
       "job_type": "assisted-listing-intake",
       "handler_symbol": "handle_assisted_listing_intake",
-      "handler_source": "apps/worker/oday_worker/handlers.py:257",
-      "enqueue_source": "modules/opsboard/application/network_listings.py:1210",
+      "handler_source": "apps/worker/oday_worker/handlers.py:257 (implementation: apps/worker/assisted_listing_intake/worker.py:80-221)",
+      "enqueue_source": "modules/opsboard/application/network_listings.py:1243-1249 (approved retrieval async path; line 1210 initializes correlationId in intake dictionary)",
+      "queue_dispatch": "shared/jobs/queue.py:145-208, shared/infrastructure/persistence/job_queue.py:120-173",
+      "durable_state_writer": "apps/worker/assisted_listing_intake/worker.py:210 (stage progress RUNNING), apps/worker/oday_worker/main.py:141-146 (SUCCEEDED), and apps/worker/oday_worker/main.py:210-222 (FAILED + DEAD_LETTER on NonRetryableJobError) -> shared/infrastructure/persistence/job_queue.py:395-436",
+      "traceability": "modules/opsboard/application/network_listings.py:1243-1249 -> shared/infrastructure/persistence/job_queue.py:120-173 -> apps/worker/oday_worker/handlers.py:257 / apps/worker/assisted_listing_intake/worker.py:80-221 -> apps/worker/oday_worker/main.py:141-146,210-222 -> shared/infrastructure/persistence/job_queue.py:395-436",
       "item_granularity": "single_listing_url",
       "current_terminal_statuses": [
         "SUCCEEDED",
         "FAILED"
       ],
       "has_partial_transition": false,
-      "delivery_state_handling": "Stage-level error handling, NonRetryableJobError fails job to DEAD_LETTER.",
+      "delivery_state_handling": "Stage-level error handling; NonRetryableJobError raised on unrecoverable failure, writing terminal JobStatus.FAILED paired with JobDeliveryState.DEAD_LETTER (apps/worker/oday_worker/main.py:200-218).",
       "classification": "durable_worker_job_single_item",
       "partial_assessment": "Inapplicable for canonical PARTIAL as-is because it processes a single listing intake through sequential stages. If any unrecoverable error occurs, the single intake fails."
+    }
+  ],
+  "receipt_envelope_exclusions": [
+    {
+      "job_type_pattern": "{service}.receipt",
+      "source_file": "shared/infrastructure/persistence/job_receipts.py:74-105",
+      "exclusion_rule": "shared/jobs/queue.py:10-18 (NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES / is_non_executable_receipt_job_type)",
+      "purpose": "TenantScopedJobReceiptStore writes completed receipt envelopes with JobStatus.SUCCEEDED directly for readback; excluded from worker queue leasing and execution."
+    },
+    {
+      "job_type_pattern": "{service}.command-receipt",
+      "source_file": "shared/infrastructure/persistence/command_receipts.py:70-105",
+      "exclusion_rule": "shared/jobs/queue.py:10-18 (NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES / is_non_executable_receipt_job_type)",
+      "purpose": "TenantScopedCommandReceiptStore writes completed command receipt envelopes with JobStatus.SUCCEEDED directly for idempotency replay; excluded from worker queue leasing and execution."
     }
   ],
   "synchronous_partial_operations_not_durable_jobs": [
     {
       "operation_name": "Batch Listing Intake (POST /api/v1/intake-batches)",
-      "route_source": "apps/api/app/routes/listings.py:350-363",
-      "handler_source": "apps/api/app/routes/listings.py:1730-1799",
+      "route_source": "apps/api/app/routes/listings.py:2225-2265",
+      "helper_source": "apps/api/app/routes/listings.py:1730-1799 (_execute_with_ownership_and_idempotency helper)",
       "operation_type": "synchronous_api_command_multi_item",
       "receipt_structure": "BatchIntakeReceipt (accepted_count, rejected_count, items array with ACCEPTED/REJECTED status)",
-      "http_status": "207 Multi-Status when mixed valid/invalid rows",
+      "http_status": "207 Multi-Status when mixed valid/invalid rows (202 when all accepted)",
       "is_durable_job": false,
       "has_job_status_field": false,
       "notes": "True business partial outcome, but currently synchronous API command execution without durable queue dispatch or JobStatus."
@@ -186,28 +210,28 @@
     {
       "candidate_id": "CANDIDATE-01",
       "name": "batch-listing-intake",
-      "source_operation": "POST /api/v1/intake-batches",
+      "source_operation": "POST /api/v1/intake-batches (apps/api/app/routes/listings.py:2225-2265)",
       "proposed_job_type": "batch-listing-intake",
       "item_type": "individual_listing_row",
       "business_benefit": "Allows large multi-listing uploads (100+ listings) to run asynchronously with itemized progress, durable partial completion, and retry for transient failures without re-uploading valid listings.",
       "typical_failure_scenarios": [
-        "Missing mandatory address on row 4 (non-retryable input error)",
-        "Downstream geocoding timeout on row 12 (retryable transient error)",
-        "Duplicate external listing ID on row 25 (non-retryable business rejection)"
+        "Missing mandatory address on row 4 (non-retryable permanent input error, retryable: false)",
+        "Downstream geocoding timeout on row 12 (retryable transient error, retryable: true)",
+        "Duplicate external listing ID on row 25 (non-retryable business rejection, retryable: false)"
       ],
       "architectural_fit": "High. Business already has 207 Multi-Status per-row receipts in sync API; promotes existing pattern to durable background queue."
     },
     {
       "candidate_id": "CANDIDATE-02",
       "name": "multi-partition-external-fetch",
-      "source_operation": "apps/scheduler/oday_scheduler/main.py:181",
+      "source_operation": "apps/scheduler/oday_scheduler/main.py:180-195",
       "proposed_job_type": "multi-partition-external-fetch",
       "item_type": "provider_partition_window",
       "business_benefit": "Enables scheduled external fetches across multiple geographic regions or provider partitions in one job, recording PARTIAL when one provider endpoint fails while others succeed.",
       "typical_failure_scenarios": [
-        "Provider API 503 for Region A while Region B and C succeed",
-        "Schema parse error on specific feed payload partition",
-        "Rate limit quota exceeded on secondary provider"
+        "Provider API 503 for Region A while Region B and C succeed (transient, retryable: true)",
+        "Schema parse error on specific feed payload partition (permanent, retryable: false)",
+        "Rate limit quota exceeded on secondary provider (transient, retryable: true)"
       ],
       "architectural_fit": "Medium. Requires redesign of ExternalFetchScheduler from single-provider tick to multi-partition job payload."
     },
@@ -219,11 +243,88 @@
       "item_type": "candidate_store_location",
       "business_benefit": "Evaluates 20+ store candidates in one durable job; partial score completion allows operator to inspect succeeded candidate scores while investigating failed candidates.",
       "typical_failure_scenarios": [
-        "Candidate coordinates outside valid territorial boundary",
-        "Underlying demographic cell data missing for candidate 7",
-        "Solver timeout on dense urban trade area optimization"
+        "Candidate coordinates outside valid territorial boundary (permanent, retryable: false)",
+        "Underlying demographic cell data missing for candidate 7 (permanent, retryable: false)",
+        "Solver timeout on dense urban trade area optimization (transient, retryable: true)"
       ],
       "architectural_fit": "Medium. Operator UI already has SiteScoreJobStatus component displaying PARTIAL state."
+    }
+  ],
+  "evidence_collection_receipts": [
+    {
+      "command": "rg -n --glob '*.py' --glob '*.ts' --glob '*.tsx' 'JobStatus\\s*\\.\\s*PARTIAL' apps modules shared packages",
+      "argv": [
+        "rg",
+        "-n",
+        "--glob",
+        "*.py",
+        "--glob",
+        "*.ts",
+        "--glob",
+        "*.tsx",
+        "JobStatus\\s*\\.\\s*PARTIAL",
+        "apps",
+        "modules",
+        "shared",
+        "packages"
+      ],
+      "raw_exit_code": 1,
+      "inspected_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "executed_utc": "2026-09-08T16:49:34Z",
+      "sanitized_stdout": "",
+      "notes": "Verified zero reachable writes to JobStatus.PARTIAL in application, module, shared, and package source code."
+    },
+    {
+      "command": "rg -n --glob '*.py' 'registry\\.register\\(' apps/worker",
+      "argv": [
+        "rg",
+        "-n",
+        "--glob",
+        "*.py",
+        "registry\\.register\\(",
+        "apps/worker"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "executed_utc": "2026-09-08T16:49:36Z",
+      "sanitized_stdout": "apps/worker/oday_worker/handlers.py\n255:    registry.register(FORECAST_JOB_TYPE, handle_forecast)\n256:    registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)\n257:    registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)\n",
+      "notes": "Verified exactly three job types registered in default worker registry."
+    },
+    {
+      "command": "rg -n --glob '*.py' 'JobRequest\\(' apps modules shared | rg -v '/tests?/|test_'",
+      "argv": [
+        "rg",
+        "-n",
+        "--glob",
+        "*.py",
+        "JobRequest\\(",
+        "apps",
+        "modules",
+        "shared"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "executed_utc": "2026-09-08T16:49:37Z",
+      "sanitized_stdout": "shared/infrastructure/persistence/command_receipts.py:74:                JobRequest(\nshared/infrastructure/persistence/job_receipts.py:75:            JobRequest(\nmodules/opsboard/application/network_listings.py:1244:                    JobRequest(\napps/api/oday_api/main.py:1038:                JobRequest(\napps/scheduler/oday_scheduler/main.py:181:                    JobRequest(\n",
+      "notes": "Verified production JobRequest enqueue call sites across apps, modules, and shared persistence layers."
+    },
+    {
+      "command": "rg -n --glob '*.py' 'job_queue\\.update_status\\(' apps modules shared | rg -v '/tests?/|test_'",
+      "argv": [
+        "rg",
+        "-n",
+        "--glob",
+        "*.py",
+        "job_queue\\.update_status\\(",
+        "apps",
+        "modules",
+        "shared"
+      ],
+      "raw_exit_code": 0,
+      "inspected_sha": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "executed_utc": "2026-09-08T16:49:39Z",
+      "sanitized_stdout": "apps/worker/oday_worker/main.py:141:                    self.job_queue.update_status(\napps/worker/oday_worker/main.py:210:                        self.job_queue.update_status(\napps/worker/assisted_listing_intake/worker.py:210:            job_queue.update_status(\n",
+      "notes": "Verified production durable state update call sites in worker loops."
     }
   ]
 }
