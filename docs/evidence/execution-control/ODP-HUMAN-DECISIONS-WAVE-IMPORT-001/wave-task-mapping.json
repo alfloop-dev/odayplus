@@ -1,0 +1,226 @@
+{
+  "schema_version": 1,
+  "publication_task_id": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+  "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+  "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+  "role_semantics_note": "Field \"owner\" and \"reviewer\" reflect initial canonical import assignments bound to import-receipt.json. \"initial_owner\"/\"initial_reviewer\" document the initial receipt assignments, while \"current_owner\"/\"current_reviewer\" document subsequent supervisor auto-reconciled / dispatch reassignments.",
+  "task_count": 8,
+  "tasks": [
+    {
+      "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+      "work_package": "WP-30A",
+      "title": "交品牌轉移資料契約草案、producer／consumer 差距及 H03 請求",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "initial_owner": "Claude",
+      "initial_reviewer": "Codex",
+      "current_owner": "Antigravity2",
+      "current_reviewer": "Codex",
+      "current_status": "in_progress",
+      "phase": "human decision engineering preparation",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md"
+      ],
+      "owned_paths": [
+        "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/"
+      ],
+      "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+      "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+      "mutates_canonical": true
+    },
+    {
+      "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+      "work_package": "WP-34A",
+      "title": "交 CDC 逐來源適用性／刪除傳播矩陣與 H07 請求",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "initial_owner": "Claude",
+      "initial_reviewer": "Codex",
+      "current_owner": "Antigravity2",
+      "current_reviewer": "Codex",
+      "current_status": "todo",
+      "phase": "human decision engineering preparation",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_DISPOSITION_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_INT001_CDC_SOURCE_EVIDENCE_2026-09-03.md"
+      ],
+      "owned_paths": [
+        "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/"
+      ],
+      "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+      "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+      "mutates_canonical": true
+    },
+    {
+      "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+      "work_package": "WP-33A",
+      "title": "交真實 durable job 候選與 PARTIAL／receipt／retry 契約及 H06 請求",
+      "owner": "Antigravity2",
+      "reviewer": "Codex2",
+      "initial_owner": "Antigravity2",
+      "initial_reviewer": "Codex2",
+      "current_owner": "Antigravity2",
+      "current_reviewer": "Codex2",
+      "current_status": "todo",
+      "phase": "human decision engineering preparation",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md"
+      ],
+      "owned_paths": [
+        "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/"
+      ],
+      "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+      "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+      "mutates_canonical": true
+    },
+    {
+      "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+      "work_package": "WP-31A",
+      "title": "交店型轉換事件／財務契約草案與 H04 請求",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "initial_owner": "Antigravity",
+      "initial_reviewer": "Codex2",
+      "current_owner": "Antigravity",
+      "current_reviewer": "Codex2",
+      "current_status": "in_progress",
+      "phase": "human decision engineering preparation",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_COMPONENT_DISPOSITIONS_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_SITE001_DATA_READINESS_2026-09-03.md"
+      ],
+      "owned_paths": [
+        "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/"
+      ],
+      "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+      "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+      "mutates_canonical": true
+    },
+    {
+      "task_id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+      "work_package": "WP-35A",
+      "title": "將批次 queue 視為正式需求並交只讀量測與可審查設計",
+      "owner": "Antigravity3",
+      "reviewer": "Codex2",
+      "initial_owner": "Antigravity3",
+      "initial_reviewer": "Codex2",
+      "current_owner": "Antigravity3",
+      "current_reviewer": "Codex2",
+      "current_status": "review",
+      "phase": "human decision engineering preparation",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/runbooks/dev-merge-queue.md"
+      ],
+      "owned_paths": [
+        "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/"
+      ],
+      "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+      "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+      "mutates_canonical": true
+    },
+    {
+      "task_id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+      "work_package": "WP-32A",
+      "title": "交 NetPlan 租約最小契約、solver 一致驗收方案與 H05 請求",
+      "owner": "Claude2",
+      "reviewer": "Codex",
+      "initial_owner": "Claude2",
+      "initial_reviewer": "Codex",
+      "current_owner": "Antigravity2",
+      "current_reviewer": "Codex",
+      "current_status": "todo",
+      "phase": "human decision engineering preparation",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DISPOSITION_2026-09-03.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_NET002_LEASE_DATA_READINESS_2026-09-03.md"
+      ],
+      "owned_paths": [
+        "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/"
+      ],
+      "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+      "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+      "mutates_canonical": true
+    },
+    {
+      "task_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+      "work_package": "WP-20",
+      "title": "核對 password-first／OIDC-off 證據並交 OAuth human task 待命說明",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "initial_owner": "Claude2",
+      "initial_reviewer": "Codex2",
+      "current_owner": "Antigravity2",
+      "current_reviewer": "Codex2",
+      "current_status": "in_progress",
+      "phase": "human decision engineering preparation",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/design/ODP_WEB_PASSWORD_FIRST_AUTH_CONTRACT.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+      ],
+      "owned_paths": [
+        "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/"
+      ],
+      "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+      "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+      "mutates_canonical": true
+    },
+    {
+      "task_id": "ODP-OSS-DECISION-PACK-001",
+      "work_package": "WP-10",
+      "title": "依已確認政策更新 OSS／逐資料來源審查包與未簽署 receipt 草案",
+      "owner": "Claude",
+      "reviewer": "Codex",
+      "initial_owner": "Claude",
+      "initial_reviewer": "Codex",
+      "current_owner": "Antigravity2",
+      "current_reviewer": "Codex",
+      "current_status": "in_progress",
+      "phase": "human decision engineering preparation",
+      "depends_on": [
+        "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001"
+      ],
+      "source_docs": [
+        "github://alfloop-dev/odayplus@be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "github://alfloop-dev/odayplus@04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md",
+        "github://alfloop-dev/oday-data-platform@cf5c48d60f3d33b9863b0458f44b4fd49d842b12/docs/runbooks/external-source-update-policy.md"
+      ],
+      "owned_paths": [
+        "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/"
+      ],
+      "actual_merge_sha": "be04fe7954d3414f024901e034caacd95ae81538",
+      "import_receipt_reference": "docs/evidence/execution-control/ODP-HUMAN-DECISIONS-WAVE-IMPORT-001/import-receipt.json",
+      "mutates_canonical": true
+    }
+  ]
+}

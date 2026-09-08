@@ -1,0 +1,144 @@
+{
+  "observed_at": "2026-09-08T15:06:51.900520+00:00",
+  "actor": "Codex",
+  "target_sha": "9048161e058becff5a53593a773d3c42238213fb",
+  "previous_runtime": "/home/lupin/oday-plus-supervisor-runtime-367fa6aa7e86",
+  "config_sha256": "54110ea0cef280a822484067185076b35600accf58dbb24d09adc6c64bbb6cd8",
+  "status_launcher": "#!/bin/bash\nset -euo pipefail\nstatus_root=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"\nexport PANTHEON_STATUS_ROOT=\"${PANTHEON_STATUS_ROOT:-$status_root}\"\nexport ORCH_CONFIG_PATH=/home/lupin/odayplus/.orchestrator/config.json\nexport PANTHEON_CONFIG_PATH=/home/lupin/odayplus/.orchestrator/config.json\nexec python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py \"$@\"\n",
+  "supervisor": {
+    "pid": 927301,
+    "started_at": "2026-09-08T14:49:44Z",
+    "last_heartbeat_at": "2026-09-08T15:06:49Z",
+    "lifecycle": "running",
+    "last_successful_loop_at": "2026-09-08T15:06:18Z",
+    "last_loop_started_at": "2026-09-08T15:06:49Z",
+    "last_loop_finished_at": "2026-09-08T15:06:18Z",
+    "last_loop_duration_ms": 23000,
+    "last_loop_error": null,
+    "focus_mode": "execution",
+    "mode_status": "active",
+    "mode_switch_requested": null,
+    "last_mode_switch_at": null,
+    "mode_occupancy": {
+      "planning": {
+        "running": 0,
+        "pending": 0,
+        "queued": 0
+      },
+      "execution": {
+        "running": 1,
+        "pending": 0,
+        "queued": 0
+      },
+      "coordination": {
+        "running": 0,
+        "pending": 0,
+        "queued": 0
+      }
+    },
+    "last_stage_timings_ms": {
+      "boot_and_provider": 4073,
+      "scan_coordination_and_poll": 1104,
+      "dispatch_and_queue": 2402,
+      "post_dispatch_poll": 278,
+      "github_bus": 13922,
+      "branch_drift": 777,
+      "retention_and_maintenance": 0
+    },
+    "slowest_stage": "github_bus",
+    "slowest_stage_duration_ms": 13922,
+    "branch_drift_alarms": [
+      "dev_main_diverged:2026-06-26T09:04:38+00:00",
+      "task_pr_stale:1014",
+      "task_pr_stale:1046",
+      "task_pr_stale:1052",
+      "task_pr_stale:1107",
+      "task_pr_stale:1149",
+      "task_pr_stale:1159",
+      "task_pr_stale:1205",
+      "task_pr_stale:1223",
+      "task_pr_stale:1224",
+      "task_pr_stale:1243",
+      "task_pr_stale:1245",
+      "task_pr_stale:970"
+    ],
+    "branch_drift_checked_at": "2026-09-08T10:53:04Z",
+    "code_sha": "367fa6aa7e8627762ff33ea35b57b25a9d5d1b14",
+    "config_digest": "54110ea0cef280a8",
+    "loaded_code_sha": "367fa6aa7e8627762ff33ea35b57b25a9d5d1b14",
+    "loaded_config_digest": "54110ea0cef280a8"
+  },
+  "pools": {
+    "claude_main": {
+      "state": "cooldown",
+      "effective_concurrency": 0,
+      "generation": 1,
+      "reason": "{\"type\":\"assistant\",\"message\":{\"diagnostics\":null,\"id\":\"04692caa-3d08-428b-a993-886de9b39bae\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_re",
+      "failure_kind": "quota_terminal",
+      "last_failure_at": "2026-09-08T15:00:05Z",
+      "next_probe_at": "2026-09-08T16:00:00Z",
+      "last_worker_run_id": "claude-20260908T145633Z-5701c833"
+    },
+    "antigravity_main": {
+      "state": "recovering",
+      "effective_concurrency": 1,
+      "generation": 1,
+      "reason": "Error: Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 2h49m11s.",
+      "failure_kind": "quota_terminal",
+      "last_failure_at": "2026-09-06T10:46:29Z",
+      "next_probe_at": "2026-09-06T11:01:29Z",
+      "last_worker_run_id": "antigravity-20260906T104257Z-9abd7a98",
+      "last_probe_at": "2026-09-06T11:01:30Z",
+      "probe_attempts": 1
+    },
+    "codex_bjoe": {
+      "state": "recovering",
+      "effective_concurrency": 1,
+      "generation": 13,
+      "reason": "Codex usage limit reached",
+      "failure_kind": "quota_terminal",
+      "last_failure_at": "2026-09-05T14:57:48Z",
+      "next_probe_at": "2026-09-05T15:57:48Z",
+      "last_worker_run_id": "codex-20260905T145528Z-0c8fe14e",
+      "last_probe_at": "2026-09-05T15:58:45Z",
+      "probe_attempts": 12,
+      "manual_release_at": "2026-08-22T05:43:27Z",
+      "manual_release_reason": "Operator requested immediate Codex quota cooldown release"
+    },
+    "codex_lupin": {
+      "state": "healthy",
+      "effective_concurrency": 2,
+      "generation": 2,
+      "reason": null,
+      "failure_kind": null,
+      "last_failure_at": "2026-08-27T07:29:08Z",
+      "next_probe_at": null,
+      "last_worker_run_id": "codex-20260827T064927Z-398a9b40",
+      "last_probe_at": "2026-08-21T17:34:27Z",
+      "probe_attempts": 1,
+      "manual_release_at": "2026-08-27T07:39:47Z",
+      "manual_release_reason": "False-positive quota text in task diff; operator verified no real provider quota"
+    },
+    "auto_assign": {
+      "state": "healthy",
+      "effective_concurrency": null,
+      "generation": 0
+    }
+  },
+  "workers": [
+    {
+      "run_id": "antigravity-20260908T150400Z-c0f23cc0",
+      "task_id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+      "pid": 941199,
+      "child_pid": 941203,
+      "status": "running",
+      "last_heartbeat_at": "2026-09-08T15:06:00Z"
+    }
+  ],
+  "validation": {
+    "schema": "passed",
+    "wiring_190_keys": "passed",
+    "dry_run": "passed"
+  },
+  "rollback": "Existing rollout primitive restores only runtime symlink and launcher on restart failure; do not restore board/state."
+}
