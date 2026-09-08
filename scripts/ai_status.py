@@ -8814,9 +8814,16 @@ def resolve_task_sha(
     # The record's own branch leads: a task reimported from an existing PR does
     # not follow either naming convention, and asking origin only about the
     # conventional names finds nothing and reads as "the branch is gone".
-    branch_names = [f"task/{task_id}", f"task-{task_id}"]
-    if recorded_branch and recorded_branch not in branch_names:
-        branch_names.insert(0, recorded_branch)
+    # Once a task record names a branch, that ref is authoritative. Do not
+    # also probe legacy fallbacks: an old PR branch may remain published for
+    # audit while a root-created clean replacement is active. Requiring
+    # exactly one match across both refs would reject the active branch even
+    # though its own remote SHA is unambiguous.
+    branch_names = (
+        [recorded_branch]
+        if recorded_branch
+        else [f"task/{task_id}", f"task-{task_id}"]
+    )
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
     result = subprocess.run(

@@ -490,6 +490,32 @@ class AccountPoolSchedulingTests(unittest.TestCase):
         }
         self.assertTrue(supervisor.review_submission_is_complete({"branch_workflow": {"dev_branch": "dev"}}, task))
 
+    def test_review_submission_accepts_task_scoped_replacement_suffix(self) -> None:
+        task = {
+            "id": "ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002",
+            "branch": "task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CLEAN",
+            "review_submission": {
+                "pr_number": 1243,
+                "branch": "task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CLEAN",
+                "base_branch": "dev",
+                "remote_sha": "b" * 40,
+            },
+        }
+        self.assertTrue(supervisor.review_submission_is_complete({"branch_workflow": {"dev_branch": "dev"}}, task))
+
+    def test_review_submission_rejects_unrelated_branch_containing_task_id(self) -> None:
+        task = {
+            "id": "TASK-ONE",
+            "branch": "task/unrelated-TASK-ONE-fork",
+            "review_submission": {
+                "pr_number": 1244,
+                "branch": "task/unrelated-TASK-ONE-fork",
+                "base_branch": "dev",
+                "remote_sha": "c" * 40,
+            },
+        }
+        self.assertFalse(supervisor.review_submission_is_complete({"branch_workflow": {"dev_branch": "dev"}}, task))
+
     def test_assignment_integrity_audits_non_dispatchable_actor_identity_without_dispatch_eligibility(self) -> None:
         config = self._config()
         task = {
@@ -19864,6 +19890,116 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
             self.assertIsNone(dispatch_engine.repository_has_merge_queue("", "dev"))
             self.assertIsNone(dispatch_engine.repository_has_merge_queue("noslash", "dev"))
         run_gh.assert_not_called()
+
+
+class MergeRouteRepositorySlugTests(unittest.TestCase):
+    """A declared repository must reach `gh` as an `owner/name` slug.
+
+    `task.repository` carries a *registry name*, and `pantheon` is the registry
+    id of the supervisor's own checkout. Routing passed the declared value to
+    `gh --repo` verbatim, so an approved Pantheon PR was routed with
+    `--repo pantheon`; `gh` rejects that, the task was reported
+    `merge_route_blocked` every tick, and it never reached the merge queue.
+    """
+
+    HEAD = "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee"
+    # `pantheon` has no slug of its own in the registry; it takes the one the
+    # bus is configured with, exactly as the live supervisor does.
+    CONFIG = {"github_bus": {"repo": "alfloop-dev/odayplus"}}
+
+    def _route(self, repository, *, config=None):
+        import dispatch_engine
+
+        calls = []
+        queue_probes = []
+
+        def fake_run_gh(args, **kwargs):
+            calls.append(list(args))
+            return unittest.mock.Mock(stdout="{}")
+
+        def fake_has_queue(slug, base):
+            queue_probes.append(slug)
+            return True
+
+        task = {"id": "T-1", "pr_number": 7, "approved_head": self.HEAD,
+                "repository": repository, "base_branch": "dev"}
+        with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", fake_has_queue), \
+                unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="tooling"), \
+                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value="CLEAN"), \
+                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
+                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
+                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
+            route, detail = dispatch_engine.route_approved_pr_to_merge(
+                self.CONFIG if config is None else config, task
+            )
+        return route, detail, calls, queue_probes, task
+
+    def test_a_declared_registry_id_is_resolved_to_its_slug(self) -> None:
+        """The regression: `--repo pantheon` is not a repository `gh` can reach."""
+        route, _d, calls, _probes, task = self._route("pantheon")
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(task["merge_route"]["route"], "queued")
+
+    def test_a_declared_alias_is_resolved_to_its_slug(self) -> None:
+        """Display names and aliases route through the same registry lookup."""
+        _r, _d, calls, _probes, _task = self._route("ODay Plus")
+
+        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+
+    def test_a_declared_owner_name_slug_is_preserved(self) -> None:
+        _r, _d, calls, _probes, _task = self._route("alfloop-dev/oday-data-platform")
+
+        self.assertEqual(
+            calls, [["pr", "merge", "7", "--repo", "alfloop-dev/oday-data-platform"]]
+        )
+
+    def test_a_slug_the_registry_does_not_carry_is_still_routed(self) -> None:
+        """Direct addressing survives: only a name needs the registry."""
+        _r, _d, calls, _probes, _task = self._route("some-org/some-repo")
+
+        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "some-org/some-repo"]])
+
+    def test_the_merge_queue_probe_sees_the_resolved_slug(self) -> None:
+        """The probe silently answers None for anything without a `/`, which is
+        how a registry id also picked the enqueue route by accident rather than
+        by reading the repository."""
+        _r, _d, _calls, probes, _task = self._route("pantheon")
+
+        self.assertEqual(probes, ["alfloop-dev/odayplus"])
+
+    def test_an_unresolvable_declaration_blocks_rather_than_guessing(self) -> None:
+        """Omitting `--repo` routes against the supervisor's own checkout, which
+        is the wrong-repository merge this path exists to prevent."""
+        route, detail, calls, _probes, task = self._route("not-a-registered-repo")
+
+        self.assertEqual(route, "blocked")
+        self.assertIn("not-a-registered-repo", detail)
+        self.assertEqual(calls, [])
+        self.assertNotIn("merge_route", task)
+
+    def test_a_registry_entry_without_a_slug_blocks_too(self) -> None:
+        """`runtime_platform` is registered but carries no GitHub slug."""
+        route, _d, calls, _probes, _task = self._route("runtime_platform")
+
+        self.assertEqual(route, "blocked")
+        self.assertEqual(calls, [])
+
+    def test_an_undeclared_task_keeps_the_registry_fallback(self) -> None:
+        """No declaration means artifact-prefix inference, which already answered
+        with a slug. This must not become the blocked path."""
+        route, _d, calls, _probes, _task = self._route("")
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+
+    def test_only_owner_name_counts_as_a_slug(self) -> None:
+        import dispatch_engine
+
+        self.assertTrue(dispatch_engine._is_repository_slug("owner/name"))
+        for bad in ["", None, "pantheon", "owner/", "/name", "https://github.com/o/n"]:
+            self.assertFalse(dispatch_engine._is_repository_slug(bad), bad)
 
 
 class QuarantineCrossRepositoryTests(unittest.TestCase):
