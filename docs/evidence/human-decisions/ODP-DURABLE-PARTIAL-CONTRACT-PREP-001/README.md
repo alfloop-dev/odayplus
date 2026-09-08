@@ -5,11 +5,11 @@
 - **日期**：2026-09-08
 - **任務負責人**：Claude2（初版由 Antigravity2 交付；本版依 Codex2 審查意見 R1／R2／R3 修訂）
 - **審查人**：Codex2
-- **檢驗基準代碼（Inspected HEAD SHA）**：`10113c8cd35444eea721a670dba0f978e60529c2`（交付 HEAD；探針 5～9 於此基準重新採集）
+- **檢驗基準代碼（Inspected HEAD SHA）**：`10113c8cd35444eea721a670dba0f978e60529c2`（採集基準：探針 5～9 採集當下 worktree 所在之 commit。此處刻意不稱其為「交付 HEAD」——交付本次更正的 commit 是它的後代，任何文件都無法引用承載自己的 commit SHA；該後代 commit 之改動範圍受限於本證據目錄，不含任何產品原始碼）
 - **最近一次採集時間（UTC）**：`2026-09-08T18:33:09Z`（探針 5～7 之時鐘讀值；逐條 UTC 見 `producer-inventory.json` 的 `evidence_collection_receipts`）
 - **初版檢驗基準**：`9048161e058becff5a53593a773d3c42238213fb`（初版交付 commit `7a98bef5` 之實測 parent）。初版撰寫時鐘未留收據，僅能以其所屬 commit `7a98bef5`（2026-09-08T16:14:18Z）為上界，實際時刻記為 unknown。
 - **第一次修訂基準**：`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`；探針 1～4 於 `2026-09-08T16:49:34Z`～`16:49:39Z` 在此基準採集。
-- **跨基準行號等價性（實測，非宣稱）**：`git diff --name-only 9048161e 10113c8c -- apps shared modules packages` 與 `git diff --name-only b6b729d9 10113c8c -- apps shared modules packages` 皆輸出空、raw exit code 0（收據 8、9）。故本文件引用之所有原始碼路徑與行號，在本包曾引用過的每一個基準與交付 HEAD 上皆成立。
+- **跨基準行號等價性（實測，非宣稱）**：`git diff --name-only 9048161e 10113c8c -- apps shared modules packages` 與 `git diff --name-only b6b729d9 10113c8c -- apps shared modules packages` 皆輸出空、raw exit code 0（收據 8、9）。故本文件引用之所有原始碼路徑與行號，在本包曾引用過的每一個基準與採集基準上皆成立；審查者可對 PR head 執行同一條 diff 自行複核。
 - **溯源更正（Provenance Correction）**：本版撤回兩個無收據支撐的時間宣告，並以實測值取代，不以任何新估計值填補；完整說明見 [producer-inventory.json](./producer-inventory.json) 的 `metadata.provenance_correction`，實測時序見同節 `delivered_chronology_utc`。
 - **歷史證據參照**：`ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`（基準：`04e1572f802a54c2646ba678fe2975226dfbd7c4`，日期：2026-09-03）及 `ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md`
 - **關聯需求**：`ODP-FR-SHARED-001`（所有長時間任務都能查詢 QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/PARTIAL）
@@ -214,21 +214,21 @@ if errors:
 print("Validated "+str(len(names))+" required artifacts, JSON contents, README index, and local Markdown links")'
 ```
 
-> 上述兩條為本任務宣告之 verification 命令，其收據綁定交付 exact HEAD；
+> 上述兩條為本任務宣告之 verification 命令，其收據綁定送審當下之 exact HEAD；
 > 收據編號不寫死於本文件，以免與其所綁定的 HEAD 互相循環。
-> 逐條收據請以 `delivery_toolchain` 的 `task_verification.py check` 於交付 HEAD 讀回。
+> 逐條收據請以 `delivery_toolchain` 的 `task_verification.py check` 於 PR head 讀回。
 
 ---
 
 ## 7. 溯源更正紀錄（Provenance Correction Log）
 
 本節僅記錄「證據溯源」層面的更正。**原始碼盤點結論、契約草案與 H06 決策表均未因本次更正而改變**；
-收據 8、9 已實測 `9048161e` 至交付 HEAD `10113c8c` 之間 `apps/`、`shared/`、`modules/`、`packages/`
+收據 8、9 已實測 `9048161e` 至採集基準 `10113c8c` 之間 `apps/`、`shared/`、`modules/`、`packages/`
 無任何檔案變動（輸出空、raw exit code 0），故所有原始碼路徑與行號在各基準上皆一致。
 
 | 項次 | 被撤回的宣告 | 撤回理由（實測） | 處置 |
 | --- | --- | --- | --- |
-| C1 | 探針 5～7 於 `2026-09-08T18:05:00Z` 採集 | 該宣告已存在於 commit `f641fa5a`（時間 `17:56:30Z`），採集時間晚於承載它的 commit 約九分鐘；無原始採集收據可回復 | 撤回，不以估計值取代；於交付 HEAD `10113c8c` 以時鐘讀值重新採集（`18:33:02Z`～`18:33:09Z`），原始時鐘記為 unknown |
+| C1 | 探針 5～7 於 `2026-09-08T18:05:00Z` 採集 | 該宣告已存在於 commit `f641fa5a`（時間 `17:56:30Z`），採集時間晚於承載它的 commit 約九分鐘；無原始採集收據可回復 | 撤回，不以估計值取代；於採集基準 `10113c8c` 以時鐘讀值重新採集（`18:33:02Z`～`18:33:09Z`），原始時鐘記為 unknown |
 | C2 | 初版檢驗基準為 `b6b729d9`、時間 `2026-09-08T16:48:00Z` | 五份產物首次進入 git 於 commit `7a98bef5`（`16:14:18Z`），`16:48:00Z` 晚於該 commit；且 `git merge-base --is-ancestor b6b729d9 7a98bef5` exit 1，`b6b729d9` 並非初版交付 commit 的祖先，係經 `33f2eb3d`（`16:48:50Z`）才進入本分支 | 初版基準更正為實測 parent `9048161e`；`b6b729d9` 正名為「第一次修訂基準」（探針 1～4 於 `16:49:34Z`～`16:49:39Z` 於此採集）；初版撰寫時鐘記為 unknown，上界 `16:14:18Z` |
 | C3 | `partial-retry-contract-draft.json` 的 `created_at: 2026-09-08T16:48:00Z` | 同 C2：晚於承載該檔案的 commit `7a98bef5`（`16:14:18Z`） | `created_at` 改記為 `unknown`，另存實測上界 `first_committed_at: 2026-09-08T16:14:18Z` |
 

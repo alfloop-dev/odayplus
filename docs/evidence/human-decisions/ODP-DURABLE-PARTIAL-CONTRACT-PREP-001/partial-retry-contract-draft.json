@@ -8,7 +8,7 @@
     "work_package": "WP-33A",
     "target_implementation_stage": "WP-33B",
     "inspected_commit_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
-    "inspected_commit_note": "Delivered HEAD. The original draft was written against 9048161e058becff5a53593a773d3c42238213fb (measured parent of the first delivery commit 7a98bef5) and revised against b6b729d9 and 23b94f28. Receipt 9 in producer-inventory.json measures git diff --name-only 9048161e 10113c8c -- apps shared modules packages as empty with raw exit code 0, so every source reference in this draft holds unchanged at the delivered HEAD.",
+    "inspected_commit_note": "Collection baseline 10113c8c (the commit the worktree sat at during evidence collection; the delivering commits are its docs-only descendants). The original draft was written against 9048161e058becff5a53593a773d3c42238213fb (measured parent of the first delivery commit 7a98bef5) and revised against b6b729d9 and 23b94f28. Receipt 9 in producer-inventory.json measures git diff --name-only 9048161e 10113c8c -- apps shared modules packages as empty with raw exit code 0, so every source reference in this draft holds unchanged at that baseline and at the PR head built from it.",
     "first_committed_at": "2026-09-08T16:14:18Z",
     "first_committed_at_basis": "Committer timestamp of 7a98bef5, the first commit containing this file, read with git log --date=iso-strict. This is a substantiated upper bound on the authoring time, not the authoring clock itself.",
     "created_at": "unknown",

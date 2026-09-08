@@ -7,10 +7,10 @@
 - **交付日期**：2026-09-08
 - **作者 / 任務負責人**：Claude2（初版由 Antigravity2 交付；本版依 Codex2 審查意見 R1／R2／R3 修訂）
 - **審查人**：Codex2
-- **檢驗基準代碼（Inspected HEAD SHA）**：`10113c8cd35444eea721a670dba0f978e60529c2`（交付 HEAD）
+- **檢驗基準代碼（Inspected HEAD SHA）**：`10113c8cd35444eea721a670dba0f978e60529c2`（採集基準；交付本次更正的 commit 為其後代，且僅改動本證據目錄）
 - **最近一次採集時間（UTC）**：`2026-09-08T18:33:09Z`（探針 5～7 之時鐘讀值）
 - **初版檢驗基準**：`9048161e058becff5a53593a773d3c42238213fb`（初版交付 commit `7a98bef5` 之實測 parent；初版撰寫時鐘未留收據，記為 unknown，上界為該 commit 之 2026-09-08T16:14:18Z）
-- **跨基準行號等價性（實測）**：`git diff --name-only 9048161e 10113c8c -- apps shared modules packages` 輸出空、raw exit code 0（收據 9），故本文件所引用行號於交付 HEAD 成立
+- **跨基準行號等價性（實測）**：`git diff --name-only 9048161e 10113c8c -- apps shared modules packages` 輸出空、raw exit code 0（收據 9），故本文件所引用行號於該基準及其後代 PR head 成立
 - **溯源更正（Provenance Correction）**：本版撤回兩個無收據支撐的時間宣告，並以實測值取代，不以任何新估計值填補；完整說明見 [producer-inventory.json](./producer-inventory.json) 的 `metadata.provenance_correction`，實測時序見同節 `delivered_chronology_utc`。
 - **歷史證據參照**：`ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`（基準：`04e1572f802a54c2646ba678fe2975226dfbd7c4`，日期：2026-09-03）
 - **關聯產物索引**：
