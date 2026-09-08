@@ -1,8 +1,12 @@
 {
   "task_id": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-003",
-  "generated_at": "2026-09-08T09:57:26Z",
-  "executor_worker": "Antigravity3",
+  "generated_at": "2026-09-08T10:36:16Z",
+  "executor_worker": "Antigravity2",
   "total_failures": 16,
+  "identity_blocker": {
+    "description": "Current gcloud identity oday-dev-runtime@alfaloop-data-project-2.iam.gserviceaccount.com lacks access to odayplus-runtime-20260825. All GCP-side checks return PERMISSION_DENIED. Prior runs with deborah.lu@dev.cctech-support.com confirmed 51/69 pass with 16 actionable failures listed below.",
+    "remediation": "Grant the worker SA viewer/reader roles on odayplus-runtime-20260825, or authenticate with an identity that has project access"
+  },
   "categories": {
     "cloud_run_not_deployed": 5,
     "secret_manager_missing": 1,
@@ -13,7 +17,7 @@
     {
       "check_id": "GCP-CR-SVC-ODAY_API",
       "check_name": "CR service oday-api",
-      "detail": "Cannot find service [oday-api] in asia-east1",
+      "detail": "Cannot find service [oday-api] in asia-east1 (confirmed by prior run 2026-09-08T09:57:26Z)",
       "remediation": "Deploy to dev via Runtime Release workflow",
       "priority": "medium",
       "blocker_for": ["ODP-DEV-ROLLOUT-001"]
@@ -21,7 +25,7 @@
     {
       "check_id": "GCP-CR-SVC-ODAY_WEB",
       "check_name": "CR service oday-web",
-      "detail": "Cannot find service [oday-web] in asia-east1",
+      "detail": "Cannot find service [oday-web] in asia-east1 (confirmed by prior run 2026-09-08T09:57:26Z)",
       "remediation": "Deploy to dev via Runtime Release workflow",
       "priority": "medium",
       "blocker_for": ["ODP-DEV-ROLLOUT-001"]
@@ -29,7 +33,7 @@
     {
       "check_id": "GCP-CR-JOB-ODAY_MIGRATION",
       "check_name": "CR job oday-migration",
-      "detail": "Cannot find job [oday-migration] in asia-east1",
+      "detail": "Cannot find job [oday-migration] in asia-east1 (confirmed by prior run 2026-09-08T09:57:26Z)",
       "remediation": "Deploy to dev via Runtime Release workflow",
       "priority": "medium",
       "blocker_for": ["ODP-DEV-ROLLOUT-001"]
@@ -37,7 +41,7 @@
     {
       "check_id": "GCP-CR-JOB-ODAY_WORKER",
       "check_name": "CR job oday-worker",
-      "detail": "Cannot find job [oday-worker] in asia-east1",
+      "detail": "Cannot find job [oday-worker] in asia-east1 (confirmed by prior run 2026-09-08T09:57:26Z)",
       "remediation": "Deploy to dev via Runtime Release workflow",
       "priority": "medium",
       "blocker_for": ["ODP-DEV-ROLLOUT-001"]
@@ -45,7 +49,7 @@
     {
       "check_id": "GCP-CR-JOB-ODAY_SCHEDULER",
       "check_name": "CR job oday-scheduler",
-      "detail": "Cannot find job [oday-scheduler] in asia-east1",
+      "detail": "Cannot find job [oday-scheduler] in asia-east1 (confirmed by prior run 2026-09-08T09:57:26Z)",
       "remediation": "Deploy to dev via Runtime Release workflow",
       "priority": "medium",
       "blocker_for": ["ODP-DEV-ROLLOUT-001"]
@@ -53,7 +57,7 @@
     {
       "check_id": "GCP-SM-ODAY_PLUS_DEV_IDENTITY_TOKEN_SIGNING_KEY",
       "check_name": "Secret oday-plus-dev-identity-token-signing-key",
-      "detail": "NOT_FOUND in Secret Manager (project 767864276141). Required for local auth mode identity token signing.",
+      "detail": "NOT_FOUND in Secret Manager (project 767864276141). Required for local auth mode identity token signing. (confirmed by prior run 2026-09-08T09:57:26Z)",
       "remediation": "Create secret oday-plus-dev-identity-token-signing-key in Secret Manager and bind to ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET GitHub env var",
       "priority": "high",
       "blocker_for": ["ODP-DEV-ROLLOUT-001", "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001"]
@@ -61,7 +65,7 @@
     {
       "check_id": "GH-VAR-DEV-ODP_WEB_BASE_URL",
       "check_name": "dev/ODP_WEB_BASE_URL",
-      "detail": "MISSING from dev GitHub environment variables",
+      "detail": "MISSING from dev GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Set ODP_WEB_BASE_URL in GitHub env dev. Per GCP_DEPLOY_GUIDE.md: required in both auth modes; Web runtime fails closed without it.",
       "priority": "high",
       "blocker_for": ["ODP-DEV-ROLLOUT-001"]
@@ -69,7 +73,7 @@
     {
       "check_id": "GH-VAR-STAGING-ODP_WEB_BASE_URL",
       "check_name": "staging/ODP_WEB_BASE_URL",
-      "detail": "MISSING from staging GitHub environment variables",
+      "detail": "MISSING from staging GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Set ODP_WEB_BASE_URL in GitHub env staging",
       "priority": "high",
       "blocker_for": ["ODP-EPHEMERAL-STAGING-ROLLOUT-001"]
@@ -77,7 +81,7 @@
     {
       "check_id": "GH-VAR-STAGING-ODP_STAGING_TERRAFORM_STATE_BUCKET",
       "check_name": "staging/ODP_STAGING_TERRAFORM_STATE_BUCKET",
-      "detail": "MISSING from staging GitHub environment variables",
+      "detail": "MISSING from staging GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Create dedicated protected GCS bucket for staging TF state and set ODP_STAGING_TERRAFORM_STATE_BUCKET in GitHub env staging",
       "priority": "high",
       "blocker_for": ["ODP-EPHEMERAL-STAGING-IAC-001", "ODP-EPHEMERAL-STAGING-ROLLOUT-001"]
@@ -85,7 +89,7 @@
     {
       "check_id": "GH-VAR-STAGING-ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
       "check_name": "staging/ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
-      "detail": "MISSING from staging GitHub environment variables",
+      "detail": "MISSING from staging GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Create dedicated protected GCS bucket for recovery bundles (must differ from TF state bucket) and set ODP_STAGING_RECOVERY_BUNDLE_BUCKET in GitHub env staging",
       "priority": "high",
       "blocker_for": ["ODP-EPHEMERAL-STAGING-IAC-001", "ODP-EPHEMERAL-STAGING-ROLLOUT-001"]
@@ -93,7 +97,7 @@
     {
       "check_id": "GH-VAR-STAGING-ODP_STAGING_VPC_NETWORK",
       "check_name": "staging/ODP_STAGING_VPC_NETWORK",
-      "detail": "MISSING from staging GitHub environment variables",
+      "detail": "MISSING from staging GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Set ODP_STAGING_VPC_NETWORK in GitHub env staging",
       "priority": "medium",
       "blocker_for": ["ODP-EPHEMERAL-STAGING-IAC-001"]
@@ -101,7 +105,7 @@
     {
       "check_id": "GH-VAR-STAGING-ODP_STAGING_VPC_SUBNETWORK",
       "check_name": "staging/ODP_STAGING_VPC_SUBNETWORK",
-      "detail": "MISSING from staging GitHub environment variables",
+      "detail": "MISSING from staging GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Set ODP_STAGING_VPC_SUBNETWORK in GitHub env staging",
       "priority": "medium",
       "blocker_for": ["ODP-EPHEMERAL-STAGING-IAC-001"]
@@ -109,7 +113,7 @@
     {
       "check_id": "GH-VAR-STAGING-ODP_STAGING_KMS_KEY_ID",
       "check_name": "staging/ODP_STAGING_KMS_KEY_ID",
-      "detail": "MISSING from staging GitHub environment variables",
+      "detail": "MISSING from staging GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Set ODP_STAGING_KMS_KEY_ID in GitHub env staging",
       "priority": "medium",
       "blocker_for": ["ODP-EPHEMERAL-STAGING-IAC-001"]
@@ -117,7 +121,7 @@
     {
       "check_id": "GH-VAR-STAGING-ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
       "check_name": "staging/ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
-      "detail": "MISSING from staging GitHub environment variables",
+      "detail": "MISSING from staging GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Set ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT in GitHub env staging",
       "priority": "medium",
       "blocker_for": ["ODP-EPHEMERAL-STAGING-IAC-001"]
@@ -125,7 +129,7 @@
     {
       "check_id": "GH-STAGING-BUCKET-SEP",
       "check_name": "Staging bucket separation",
-      "detail": "Both ODP_STAGING_TERRAFORM_STATE_BUCKET and ODP_STAGING_RECOVERY_BUNDLE_BUCKET are UNSET. Per GCP_DEPLOY_GUIDE.md: must be separate protected GCS buckets; missing or identical fails closed.",
+      "detail": "Both ODP_STAGING_TERRAFORM_STATE_BUCKET and ODP_STAGING_RECOVERY_BUNDLE_BUCKET are UNSET. Per GCP_DEPLOY_GUIDE.md: must be separate protected GCS buckets; missing or identical fails closed. (verified 2026-09-08T10:36:16Z)",
       "remediation": "Configure both buckets with distinct values in GitHub env staging",
       "priority": "high",
       "blocker_for": ["ODP-EPHEMERAL-STAGING-IAC-001", "ODP-EPHEMERAL-STAGING-ROLLOUT-001"]
@@ -133,7 +137,7 @@
     {
       "check_id": "GH-VAR-PRODUCTION-ODP_WEB_BASE_URL",
       "check_name": "production/ODP_WEB_BASE_URL",
-      "detail": "MISSING from production GitHub environment variables",
+      "detail": "MISSING from production GitHub environment variables (verified 2026-09-08T10:36:16Z)",
       "remediation": "Set ODP_WEB_BASE_URL in GitHub env production",
       "priority": "medium",
       "blocker_for": ["ODP-PROD-BLUEGREEN-ROLLOUT-001"]
