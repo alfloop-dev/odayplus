@@ -6059,6 +6059,64 @@ class QuotaPlanningAndCoordinationPollOrderTests(unittest.TestCase):
         pool_entry = state.get("account_pool_runtime", {}).get("antigravity_main", {})
         self.assertEqual(pool_entry.get("state"), "cooldown")
 
+    def test_quota_failure_on_owner_task_worker_refences_a_recovering_pool(self) -> None:
+        # The canary probe itself can fail. When it does, the pool must be
+        # fenced again rather than restored to configured capacity.
+        log_path = self._write_log("402 You have no quota\n")
+        task = {
+            "id": "ODP-CANARY-001",
+            "status": "in_progress",
+            "owner": "Antigravity",
+            "reviewer": "Antigravity2",
+            "next": "Continue implementation",
+            "depends_on": [],
+        }
+        state = {
+            "queue": {"events": {"evt-owner-1": {"status": "started"}}},
+            "workers": {
+                "run-owner-1": {
+                    "run_id": "run-owner-1",
+                    "task_id": "ODP-CANARY-001",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "logical_agent_id": "antigravity",
+                    "status": "running",
+                    "queue_event_id": "evt-owner-1",
+                    "pid": 999999,
+                    "exit_code": 1,
+                    "log_path": log_path,
+                    "last_event_at": "2026-09-08T09:00:00Z",
+                    "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                }
+            },
+            "account_pool_runtime": {
+                "antigravity_main": {
+                    "state": "recovering",
+                    "effective_concurrency": 1,
+                    "generation": 3,
+                    "probe_attempts": 1,
+                }
+            },
+            "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "record_account_pool_canary_success") as canary_success,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.poll_workers(self.config, state))
+
+        self.assertEqual(state["workers"]["run-owner-1"]["status"], "failed")
+        pool_entry = state["account_pool_runtime"]["antigravity_main"]
+        self.assertEqual(pool_entry.get("state"), "cooldown")
+        self.assertEqual(pool_entry.get("effective_concurrency"), 0)
+        canary_success.assert_not_called()
+
     def test_exit_code_0_planning_and_coordination_workers_succeed(self) -> None:
         log_path = self._write_log("Normal execution log with no error.\n")
         state = {
@@ -16180,6 +16238,192 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
                     self.assertFalse(self._poll(state, task, current_head="b" * 40))
                 self.assertEqual(worker["status"], historical_status)
                 self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    @staticmethod
+    def _recovering_pools() -> dict[str, Any]:
+        """Two independently fenced pools mid-probe, as poll_workers sees them."""
+        return {
+            "antigravity_main": {
+                "state": "recovering",
+                "effective_concurrency": 1,
+                "generation": 2,
+                "reason": "provider quota exhausted",
+                "probe_attempts": 1,
+            },
+            "codex_lupin": {
+                "state": "recovering",
+                "effective_concurrency": 1,
+                "generation": 1,
+                "reason": "provider quota exhausted",
+                "probe_attempts": 1,
+            },
+        }
+
+    def _assert_pool_recovered(self, state: dict[str, Any], pool_id: str, *, configured: int) -> None:
+        entry = state["account_pool_runtime"][pool_id]
+        self.assertEqual(entry["state"], "healthy")
+        self.assertEqual(entry["effective_concurrency"], configured)
+        self.assertIsNone(entry["reason"])
+
+    def _assert_pool_still_recovering(self, state: dict[str, Any], pool_id: str) -> None:
+        entry = state["account_pool_runtime"][pool_id]
+        self.assertEqual(entry["state"], "recovering")
+        self.assertEqual(entry["effective_concurrency"], 1)
+
+    def test_poll_owner_lifecycle_completion_recovers_only_its_own_pool(self) -> None:
+        task = self._task(status="done", next_step="Merged and closed")
+        worker = self._worker(task, reason="owned_ready_dispatch")
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "account_pool_runtime": self._recovering_pools(),
+        }
+        accepted = supervisor.WorkerHandoffSeal(True, "", "", "a" * 40, None)
+        with mock.patch.object(supervisor, "seal_worker_handoff", return_value=accepted) as seal:
+            self.assertTrue(self._poll(state, task, current_head="a" * 40))
+
+        seal.assert_called_once()
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "lifecycle_complete")
+        self._assert_pool_recovered(state, "antigravity_main", configured=3)
+        self._assert_pool_still_recovering(state, "codex_lupin")
+        self.assertEqual(
+            supervisor.account_pool_effective_concurrency(self.config, state, "antigravity4"), 3
+        )
+
+    def test_poll_owner_incremental_progress_recovers_recovering_pool(self) -> None:
+        task = self._task()
+        worker = self._worker(task, reason="owned_in_progress_dispatch")
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "account_pool_runtime": self._recovering_pools(),
+        }
+        accepted = supervisor.WorkerHandoffSeal(True, "", "", "b" * 40, None)
+        with mock.patch.object(supervisor, "seal_worker_handoff", return_value=accepted):
+            self.assertTrue(self._poll(state, task, current_head="b" * 40))
+
+        self.assertEqual(worker["progress_outcome"], "incremental_progress")
+        self._assert_pool_recovered(state, "antigravity_main", configured=3)
+        self._assert_pool_still_recovering(state, "codex_lupin")
+
+    def test_poll_reviewer_decision_recovers_the_reviewer_pool(self) -> None:
+        dispatch_task = self._task(status="review", next_step="Independent review required")
+        dispatch_task["reviewer"] = "Codex2"
+        worker = self._worker(dispatch_task, reason="review_ready_dispatch", agent_id="codex2")
+        current_task = self._task(status="in_progress", next_step="Fix review finding B1")
+        current_task["reviewer"] = "Codex2"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "account_pool_runtime": self._recovering_pools(),
+        }
+        with mock.patch.object(supervisor, "seal_worker_handoff") as seal:
+            self.assertTrue(self._poll(state, current_task, current_head="a" * 40))
+
+        # A reviewer exit is not an owner handoff, so the seal stays out of it
+        # while the account that actually ran the probe still recovers.
+        seal.assert_not_called()
+        self.assertEqual(worker["progress_outcome"], "review_decided")
+        self._assert_pool_recovered(state, "codex_lupin", configured=2)
+        self._assert_pool_still_recovering(state, "antigravity_main")
+
+    def test_poll_zero_exit_without_progress_leaves_pool_recovering(self) -> None:
+        task = self._task()
+        worker = self._worker(task, reason="owned_in_progress_dispatch")
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {}},
+            "account_pool_runtime": self._recovering_pools(),
+        }
+        self.assertTrue(self._poll(state, task, current_head="a" * 40))
+
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
+        self._assert_pool_still_recovering(state, "antigravity_main")
+        self._assert_pool_still_recovering(state, "codex_lupin")
+
+    def test_poll_rejected_handoff_seal_leaves_pool_recovering(self) -> None:
+        task = self._task(status="review", next_step="Independent review required")
+        worker = self._worker(task, reason="owned_ready_dispatch")
+        worker.update(
+            {
+                "workspace_mode": "isolated_worktree",
+                "workspace_path": "/tmp/owner-worktree",
+                "workspace_branch": "task/ODP-POSTCONDITION-001",
+            }
+        )
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "account_pool_runtime": self._recovering_pools(),
+        }
+        rejected = supervisor.WorkerHandoffSeal(
+            False,
+            "owner_dirty",
+            "1 dirty change (1 untracked): fix_probe.py",
+            "a" * 40,
+            "dirt-fingerprint",
+        )
+        with (
+            mock.patch.object(supervisor, "seal_worker_handoff", return_value=rejected),
+            mock.patch.object(
+                supervisor.status_transition,
+                "reject_unsealed_worker_handoff",
+                return_value=True,
+            ),
+            mock.patch.object(supervisor, "record_unsealed_worker_handoff"),
+        ):
+            self.assertTrue(self._poll(state, task, current_head="a" * 40))
+
+        self.assertEqual(worker["progress_outcome"], "handoff_seal_rejected")
+        self._assert_pool_still_recovering(state, "antigravity_main")
+
+    def test_poll_signal_terminated_worker_leaves_pool_recovering(self) -> None:
+        task = self._task()
+        worker = self._worker(task, reason="owned_in_progress_dispatch")
+        worker.update({"runner_status": "completed", "exit_code": 0, "runner_signal": 15})
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"dispatch_pauses": {}, "task_failure_streaks": {}},
+            "account_pool_runtime": self._recovering_pools(),
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.poll_workers(self.config, state))
+
+        self.assertEqual(worker["status"], "failed")
+        self._assert_pool_still_recovering(state, "antigravity_main")
+
+    def test_poll_historical_terminal_run_never_recovers_pool(self) -> None:
+        task = self._task(status="done", next_step="Merged and closed")
+        for historical_status in ("completed", "failed", "superseded", "reassigned"):
+            with self.subTest(historical_status=historical_status):
+                worker = self._worker(task, reason="owned_ready_dispatch")
+                worker.update({"status": historical_status})
+                state = {
+                    "queue": {"events": {worker["queue_event_id"]: {"status": "completed"}}},
+                    "workers": {worker["run_id"]: worker},
+                    "account_pool_runtime": self._recovering_pools(),
+                }
+                with mock.patch.object(
+                    supervisor,
+                    "seal_worker_handoff",
+                    side_effect=AssertionError("historical run must not be re-sealed"),
+                ):
+                    self.assertFalse(self._poll(state, task, current_head="a" * 40))
+                self.assertEqual(worker["status"], historical_status)
+                self._assert_pool_still_recovering(state, "antigravity_main")
+                self._assert_pool_still_recovering(state, "codex_lupin")
 
     def test_boot_reconciliation_applies_same_no_progress_threshold(self) -> None:
         task = self._task()

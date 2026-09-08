@@ -1923,6 +1923,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "progress_outcome": success_outcome,
                     },
                 )
+                # A real task run that reached its postcondition is the
+                # authenticated canary the cooldown was waiting for. Without
+                # this, only a discussion-planning exit could ever end a
+                # `recovering` pool, so an account whose next dispatch happened
+                # to be ordinary task work stayed capped at one slot forever.
+                # The failure branches above all `continue` before reaching
+                # here, so a non-zero exit, a signal termination, a quota
+                # fence, or a rejected handoff seal can never restore capacity.
+                record_account_pool_canary_success(config, state, worker)
                 finalize_queue_event_record(config, state, worker, "completed")
             elif task_status in redispatch_statuses:
                 failure_reason = NO_PROGRESS_WORKER_EXIT_REASON
