@@ -28,7 +28,10 @@
     "password_first_security_e2e_002_pr": "#1096",
     "password_first_security_e2e_002_pr_head_sha": "69422d71e8d5ac572ade58562c0aeca28d123648",
     "password_first_security_e2e_002_merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
-    "password_first_security_e2e_002_merged_at": "2026-09-01T08:51:28Z",
+    "password_first_security_e2e_002_merged_at": "2026-09-01T09:10:24Z",
+    "password_first_security_e2e_002_merged_at_source": "matrix receipt R31 (gh pr view 1096 --json number,url,state,headRefOid,mergeCommit,mergedAt)",
+    "password_first_security_e2e_002_merge_commit_created_at": "2026-09-01T08:51:28Z",
+    "password_first_security_e2e_002_merge_commit_created_at_source": "matrix receipt R07 (git log -1 --format=%H %P %cI %s 2377168c)",
     "password_first_security_e2e_002_merged_into_dev": true,
     "password_first_security_e2e_002_canonical_record": "absent -- ai-status.sh show returned exit 1 'Unknown task'",
     "e2e_receipt_verdict": "pass",
@@ -37,7 +40,7 @@
     "e2e_receipt_composition_merge_sha": "f3095a0ee3ca3dde63d98f35ae8cfedf090fd529",
     "e2e_receipt_run_head_sha": "unknown",
     "e2e_receipt_original_exit_codes": "unknown",
-    "sha_correction_note": "The previous revision of this handoff recorded the composition base as d0c81635df8e48dc803272e5ee6fc1fca3fa32cb and treated merge commit 2377168c as the verified run HEAD. Both were wrong. The receipt abbreviates its SHAs ('d0c81635df8e...', 'f3095a0e') and records a date, a composition base/merge and prose outcomes -- not a run HEAD and not exit codes. The full SHAs above come from object resolution, not from expanding the abbreviations. 2377168c cannot be the run head: the pass text was committed in d3e6d64a at 2026-09-01T08:13:31Z, before 2377168c was created at 2026-09-01T08:51:28Z."
+    "sha_correction_note": "The previous revision of this handoff recorded the composition base as d0c81635df8e48dc803272e5ee6fc1fca3fa32cb and treated merge commit 2377168c as the verified run HEAD. Both were wrong. The receipt abbreviates its SHAs ('d0c81635df8e...', 'f3095a0e') and records a date, a composition base/merge and prose outcomes -- not a run HEAD and not exit codes. The full SHAs above come from object resolution, not from expanding the abbreviations. 2377168c cannot be the run head: the pass text was committed in d3e6d64a at 2026-09-01T08:13:31Z, before 2377168c was created at 2026-09-01T08:51:28Z. The prior revision also labelled that creation timestamp as the PR merged_at; GitHub records mergedAt as 2026-09-01T09:10:24Z (matrix receipt R31), and the two values are now recorded under separate keys."
   },
   "updated_next_recommendation": "Prerequisite implementation work is merged into dev: ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 (PR #1074, merge 840081001084ad9586421de908530a41f3a17333) and ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 (PR #1096, merge 2377168c2cc07cd2470dd8f43de0486fe8d8fc08), after the throttle remediation in PR #1085 (merge 595e7501e73ff4cbb5894c27e199e02a06c2a509). Static inspection at 95646a5c2bd598b7e219ee51efa7e410cb9fe0f4 confirms password-first / OIDC-off resolver precedence, an OIDC-button-free login page and a fail-closed callback, and the product CI job at that exact head is green (run 34252508138, job 102150167268). The historical E2E-002 receipt is dated 2026-09-01 and records a pass; its run HEAD and original exit codes are unknown. Live deployment readback and OAuth provider readiness remain unknown -- neither was probed. This Human OAuth task therefore moves from 'deployment blocker' to 'standby for explicit OIDC enablement'. Execute it only when the business decides to enable Google OIDC login; it is not done, not waived, and not superseded.",
   "condition_dependencies": [

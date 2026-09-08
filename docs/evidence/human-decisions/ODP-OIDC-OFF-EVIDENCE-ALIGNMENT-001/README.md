@@ -20,8 +20,11 @@ It delivers three things:
 
 1. A control-by-control evidence matrix for the auth-mode resolvers, the login UI,
    the callback route, session / CSRF / throttle integrity, the API boundary and the
-   conditional deployment path, each observation backed by a read-only collection
-   receipt that records its own argv, source SHA, UTC timestamp and **original exit code**.
+   conditional deployment path. Each observation is bound to read-only collection receipts
+   that record their own argv, source SHA, UTC timestamp, **original exit code** and the
+   output they collected — and that actually read the source the observation describes.
+   Probes that merely establish a test file exists are kept separately and are never
+   presented as source evidence.
 2. An honest separation between four different kinds of evidence: dated historical
    receipts, static inspection at the inspected head, exact-head CI status, and live
    deployment / provider state that was never probed and is recorded as `unknown`.
@@ -32,14 +35,45 @@ It delivers three things:
 
 | File | Purpose |
 |---|---|
-| [auth-mode-evidence-matrix.json](auth-mode-evidence-matrix.json) | 15-control evidence matrix (12 pass, 3 unknown, 0 fail) plus 35 read-only collection receipts with original exit codes |
+| [auth-mode-evidence-matrix.json](auth-mode-evidence-matrix.json) | 15-control evidence matrix (12 pass, 3 unknown, 0 fail) plus 62 read-only collection receipts with original exit codes |
 | [human-task-handoff.json](human-task-handoff.json) | HUMAN-GCP-WEB-OAUTH-CLIENTS-001 standby handoff: condition dependencies, regression evidence, true gaps, entry criteria |
 
 ## Corrections In This Revision
 
-The previous revision of this package (PR #1253 at head `5871c1dd`) was rejected on five
-findings. All five are addressed here; each correction is backed by receipts in
+This package has been through two reviews. Each correction below is backed by receipts in
 `auth-mode-evidence-matrix.json` → `collection_receipts`.
+
+### Second review (PR #1253 at head `1391d788`)
+
+The blocking finding was that per-observation collection provenance was still incomplete:
+two controls carried `status: pass` with **empty** `receipt_refs`, and four others cited
+receipts that did not read the source their observation described.
+
+| # | Defect | Correction | Receipts |
+|---|---|---|---|
+| F6 | `terraform_conditional_oidc_checks` and `password_login_no_google_secret_dependency` were `pass` with no receipts; `deployment_validation_conditional_oidc` cited R21, which never reads the validator; `session_csrf_throttle_integrity_in_local_mode` cited R16/R17/R19, which only probe test-file existence; the login and callback controls cited R26, a grep of the `WEB_AUTH_PROVIDER_DISABLED` constant that carries no status, ordering or unreachability evidence; `ops_test_conditional_oidc_deployment_exists` cited R33, a CI job query with no size, marker or parametrisation observation. | 27 narrowly scoped pinned-source receipts were collected at `95646a5c` and every `pass` control is now bound to the receipts that contain its own evidence. Test-file existence probes moved to `regression_reference_existence_receipts`; the three `unknown` controls still cite no receipt asserting a measurement, because none was taken. | R36–R62 |
+| F7 | `2026-09-01T08:51:28Z` was labelled PR #1096 `merged_at`. | That is the merge commit's creation timestamp (R07). `merged_at` is now `2026-09-01T09:10:24Z` from this package's own GitHub receipt R31; the earlier value is kept under `merge_commit_created_at`. Applied in both the matrix and the handoff. | R07, R31 |
+| F8 | The Terraform observation said every *other* assertion in `checks.tf` uses `!local.is_prod`. | Narrowed to the production-gated assertions. `checks.tf` also carries assertions that are not production-gated: the unconditional `var.api_max_instances >= var.api_min_instances` (:213) and `var.web_max_instances >= var.web_min_instances` (:218), and the `setintersection` checks at :9, :17, :25, :150, :169 and :177. | R36, R61 |
+
+One previously recorded receipt was also corrected for fidelity rather than content: R12's
+stdout had lost the leading space of its first line. The byte-exact output is now recorded,
+with the change noted in the receipt itself; its argv, exit code and figures are unchanged.
+All 54 `git` receipts in this package were re-run and reproduce their recorded exit code,
+stdout and stderr byte-for-byte.
+
+Collecting the source changed one substantive claim rather than merely citing it. The
+previous revision asserted that *none* of the session / CSRF / throttle paths reads an
+auth-mode variable. That is not true as stated: `session.ts`:249 passes
+`ODP_WEB_OIDC_ISSUER` to `store.resolveOidcAccount`. The read sits inside the legacy
+sealed-OIDC-cookie migration branch `if (!value.sid)` (`session.ts`:219) and is an
+account-lookup key rather than a mode resolution, and the password path seals sessions
+through the sid-bearing `sealWebSessionReference` (`login/route.ts`:623,
+`auth/password/route.ts`:264), so a password-first session never reaches it. The claim is
+narrowed to exactly that in the matrix (receipts R45, R57, R58) instead of being restated.
+
+### First review (PR #1253 at head `5871c1dd`)
+
+That revision was rejected on five findings, all addressed in the revision before this one.
 
 | # | Defect in the previous revision | Correction | Receipts |
 |---|---|---|---|
@@ -47,13 +81,15 @@ findings. All five are addressed here; each correction is backed by receipts in
 | F2 | Merge commit `2377168c` was labelled the historical "verified run HEAD". | The receipt records a date, a composition base/merge and prose outcomes — not a run HEAD and not exit codes. Run HEAD and original exit codes are now `unknown`; the merge lineage is recorded separately. | R05–R07, R31 |
 | F3 | Cited `securityE2E.test.ts` and `apps/web/src/app/auth/callback/route.test.ts`, neither of which exists. | Replaced with tests that exist at the inspected head; every JSON source ref was probed against the pinned tree. | R14–R20 |
 | F4 | Listed `ODP_OIDC_ISSUER` / `ODP_GCP_OIDC_ISSUER` as resolver inputs, said both resolvers raise, and described the local provider rejection as "404 / 503". | Per-consumer issuer inputs corrected; Python returns `(mode, error)` and never raises while TypeScript throws; the local rejection is a fixed HTTP 503. | R21–R26 |
-| F5 | Observations carried prose/SHA/UTC but no original exit code, and asserted exact-head CI evidence with no run or job URL. | 35 collection receipts with original exit codes are attached, and the CI claim now names a run, a job, a measured head and a workflow-sourced command scope. | R33–R34 |
+| F5 | Observations carried prose/SHA/UTC but no original exit code, and asserted exact-head CI evidence with no run or job URL. | Collection receipts with original exit codes were attached, and the CI claim now names a run, a job, a measured head and a workflow-sourced command scope. | R33–R34 |
 
-Non-zero exits among the receipts are deliberate and are reported as-is: R02/R04/R08
+Non-zero exits among the 62 receipts are deliberate and are reported as-is: R02/R04/R08
 (exit 128) prove the previously recorded SHAs are invalid, R19/R20 (exit 128) prove the
 previously cited test files do not exist, R22/R23 (exit 1) prove two environment variables
-are absent from the tree, and R27/R28 (exit 1) are the canonical-archive lookups that
-return `Unknown task`. None of these blocks A-stage delivery, and none is presented as a
+are absent from the tree, R27/R28 (exit 1) are the canonical-archive lookups that return
+`Unknown task`, R38 (exit 1) proves `localAuth.ts` mentions no `OIDC`, `GOOGLE` or
+`CLIENT_SECRET` string, and R54 (exit 1) proves the three password-first suites carry no
+CI-excluding marker. None of these blocks A-stage delivery, and none is presented as a
 scan, runtime, provider or security gate pass.
 
 ## Prior Task History & Lineage
@@ -190,7 +226,9 @@ fails closed across lines 47–88:
     }
   }
   ```
-  This happens before any query parameter is read and before any cookie is opened.
+  That return precedes every input the OIDC flow would need: the first query-parameter
+  read is at line 90, the first request-cookie read at line 100, and the code exchange at
+  line 104 (receipts R50, R51).
 - Lines 76–88: an incomplete OIDC configuration is rejected with HTTP 503 `WEB_AUTH_NOT_CONFIGURED`.
 - Line 104: `exchangeAuthorizationCode` — unreachable while `authMode` is `local`.
 
@@ -215,7 +253,7 @@ HTTP 503 `WEB_AUTH_PROVIDER_DISABLED` — there is no 404 path and no provider c
 | 5 | Deployment validation: conditional OIDC (`validate_cloud_run_live_deployment.py`:44, 1422–1434) | Static code inspection | ✅ pass |
 | 6 | Terraform checks: conditional OIDC (`infra/terraform/checks.tf`:76, 238, 275) | Static code inspection | ✅ pass |
 | 7 | Password login: no Google secret dependency (`localAuth.ts`:127–313) | Static code inspection | ✅ pass |
-| 8 | Session / CSRF / throttle integrity (`session.ts`:395–412, `runtime.ts`:157–204) | Static code inspection | ✅ pass |
+| 8 | Session / CSRF / throttle integrity (`session.ts`:396–407, `runtime.ts`:157, `login/route.ts`:471–520) | Static code inspection | ✅ pass |
 | 9 | API boundary fail-closed on OIDC tokens (`modules/opsboard/auth/config.py`:23, 302) | Static code inspection | ✅ pass |
 | 10 | Conditional-OIDC ops test present (`tests/ops/test_conditional_oidc_deployment.py`) | Static code inspection | ✅ pass |
 | 11 | Historical E2E receipt evidence (2026-09-01, composition base `d0c81635df8e842f…`) | Historical receipt reference | ✅ pass |
