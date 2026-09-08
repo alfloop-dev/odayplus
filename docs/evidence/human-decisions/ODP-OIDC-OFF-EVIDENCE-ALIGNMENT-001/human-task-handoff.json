@@ -1,7 +1,7 @@
 {
   "handoff_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
   "title": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001 Standby Handoff Update",
-  "created_at": "2026-09-08T15:28:00Z",
+  "created_at": "2026-09-08T16:33:00Z",
   "created_by": "Antigravity2",
   "decision_ref": "D15",
   "target_human_task": "HUMAN-GCP-WEB-OAUTH-CLIENTS-001",
@@ -9,18 +9,21 @@
   "current_owner_of_target": "Human/Ops",
   "recommendation": "standby",
   "context": {
-    "decision_d15": "Google OIDC disabled; password-first is default. OIDC becomes optional provider, only needed when explicitly enabled.",
+    "decision_d15": "Google OIDC disabled; password-first is default. OIDC is optional provider, required only when explicitly enabled.",
     "prior_next_field": "2026-08-30 產品決策已改為「帳密為預設、OIDC 可選」。此 human OAuth task 暫不再是 dev/staging/prod 部署前置；待 ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 合併並由 ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001 驗證後，改為僅在啟用 Google OIDC 時才需執行。不得在新機制完成前將其標記完成或略過 provider 驗證。",
     "oidc_optional_deployment_done": true,
     "oidc_optional_deployment_pr": "#1074",
     "oidc_optional_deployment_merge_sha": "840081001084ad9586421de908530a41f3a17333",
-    "password_first_security_e2e_done": true,
-    "password_first_security_e2e_pr": "#1096",
-    "password_first_security_e2e_merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+    "password_first_security_e2e_001_branch": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001",
+    "password_first_security_e2e_001_status": "superseded_after_discovering_throttle_blockers",
+    "password_first_security_e2e_002_done": true,
+    "password_first_security_e2e_002_pr": "#1096",
+    "password_first_security_e2e_002_merge_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
     "e2e_receipt_verdict": "pass",
-    "e2e_receipt_date": "2026-09-01"
+    "e2e_receipt_date": "2026-09-01 UTC",
+    "e2e_receipt_pinned_base_sha": "d0c81635df8e48dc803272e5ee6fc1fca3fa32cb"
   },
-  "updated_next_recommendation": "Both prerequisite tasks (ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 PR#1074 and ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 PR#1096) have been merged into dev. The password-first mechanism is verified operational. This Human OAuth task transitions from 'deployment blocker' to 'standby for explicit OIDC enablement'. Execute only when the business decides to enable Google OIDC login, not as a deployment gate.",
+  "updated_next_recommendation": "Prerequisite implementation tasks (ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 PR #1074, ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 PR #1096) are merged into dev. Static code inspection confirms that password-first / OIDC-off resolver precedence and fail-closed callback routes are intact. Historical E2E suite passed at merge commit 2377168c (receipt date 2026-09-01). Live deployment readback and OAuth provider readiness remain unknown without live environment probing. This Human OAuth task transitions from 'deployment blocker' to 'standby for explicit OIDC enablement'. Execute only when the business decides to enable Google OIDC login.",
   "condition_dependencies": [
     {
       "condition": "Business decides to enable Google OIDC login",
@@ -41,6 +44,7 @@
   "what_this_handoff_does_not_do": [
     "Does not mark HUMAN-GCP-WEB-OAUTH-CLIENTS-001 as done or waived",
     "Does not claim OAuth provider has been verified or is ready",
+    "Does not claim live deployment D15 compliance is operational without live readback",
     "Does not modify the human task's acceptance criteria",
     "Does not create, read, or store any OAuth client secrets",
     "Does not change any deployment configuration or infrastructure",
@@ -64,22 +68,48 @@
       "description": "Login throttle wiring verification",
       "last_known_result": "Part of E2E receipt (151 passed, 22 skipped)",
       "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
+    },
+    {
+      "suite": "apps/web/src/app/auth/callback/route.test.ts",
+      "description": "Callback fail-closed route unit tests",
+      "last_known_result": "Part of Web test suite (53 files, 474 passed)",
+      "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md"
     }
   ],
   "true_gaps": [
     {
       "gap": "canonical_task_archive_missing",
-      "description": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 and ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 are not in the current ai-task-archive. Their completion is evidenced only by merged PR commits on dev.",
+      "description": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001, ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001, and E2E-002 are not in active ai-status.json or ai-task-archive/. Their completion is evidenced by merged PR commits on dev and preserved git objects.",
       "severity": "documentation",
-      "mitigation": "PR merge commits are cryptographically verifiable ancestors of current HEAD."
+      "mitigation": "PR #1074 and #1096 merge commits are cryptographically verifiable ancestors of current HEAD."
     },
     {
-      "gap": "e2e_receipt_not_exact_head",
-      "description": "The E2E receipt base (d0c81635df8e) predates current HEAD (9048161e). No auth-surface code changes detected between receipt and HEAD, but exact-head re-verification has not been re-run.",
+      "gap": "auth_surface_drift_after_e2e_002",
+      "description": "git diff --stat 2377168c cf04c046 -- modules/opsboard/auth shared/auth shows 5 changed files (379 insertions, 25 deletions: claims.py, __init__.py, abac.py, rbac.py, tenant.py). Core auth-mode resolution and login routes are untouched; subsequent PRs passed dev CI, but exact-head standalone E2E suite was not re-executed in this doc task.",
+      "severity": "medium",
+      "mitigation": "Drift represents tenant context enhancements; static code inspection confirms resolver and callback fail-closed gates remain intact."
+    },
+    {
+      "gap": "live_deployment_readback_unknown",
+      "description": "Live environment configuration (whether ODP_AUTH_MODE=local or legacy issuer vars are present in Cloud Run / staging / prod) is not verified via live readback.",
+      "severity": "medium",
+      "mitigation": "Documented as unknown; live compliance verification is assigned to Release / Ops during deployment readback."
+    },
+    {
+      "gap": "oauth_provider_readiness_unknown",
+      "description": "Google OAuth provider credentials and live callback verification are unperformed and deferred to B-stage.",
       "severity": "low",
-      "mitigation": "Auth module files have not been modified since receipt base. Re-verification is not in this task's scope."
+      "mitigation": "D15 disables OIDC; provider verification is only needed if business explicitly activates OIDC."
     }
   ],
+  "handoff_and_entry_conditions": {
+    "wp90_canonical_writer_handoff": "Upon A-stage review approval, WP-90 / canonical writer updates HUMAN-GCP-WEB-OAUTH-CLIENTS-001 standby instructions on the orchestrator board.",
+    "oauth_enablement_entry_conditions": [
+      "1. Product Authority issues explicit business decision to enable Google OIDC login.",
+      "2. Human/Ops executes HUMAN-GCP-WEB-OAUTH-CLIENTS-001 to create GCP OAuth 2.0 Web Client credentials and store secrets in Secret Manager.",
+      "3. Release / Ops Engineer deploys with explicit ODP_AUTH_MODE=oidc, performs live environment readback, and conducts live OAuth provider validation."
+    ]
+  },
   "code_defects_found": [],
   "minimum_repair_handoff": []
 }

@@ -3,8 +3,8 @@
   "title": "Password-first / OIDC-off Auth Mode Evidence Matrix",
   "decision_ref": "D15",
   "decision_summary": "Google OIDC disabled; password-first is default. Google login must not be presented or callable when OIDC is off; password login must not depend on Google client secret.",
-  "inspected_head": "9048161e058becff5a53593a773d3c42238213fb",
-  "inspected_at": "2026-09-08T15:27:00Z",
+  "inspected_head": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+  "inspected_at": "2026-09-08T16:33:00Z",
   "contract_ref": {
     "doc_id": "ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001",
     "pinned_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
@@ -17,9 +17,23 @@
       "merge_commit": "840081001084ad9586421de908530a41f3a17333",
       "merged_into_dev": true,
       "is_ancestor_of_head": true,
-      "scope": "Terraform/deploy conditional OIDC; auth mode resolver; deployment validation conditional OIDC secret",
+      "scope": "Terraform/deploy conditional OIDC; auth mode resolver (shared/auth/mode.py, runtime.ts); deployment validation conditional OIDC secret requirement",
       "status": "done",
-      "canonical_history_gap": "Task not present in active ai-status.json or ai-task-archive; PR merge commit is verifiable ancestor of current dev HEAD."
+      "canonical_lookup": "ai-status.sh show returns exit 1 (Unknown task); gh pr view 1074 returns exit 0 confirming MERGED state into dev.",
+      "canonical_history_gap": "Task record missing from active ai-status.json and ai-task-archive; verified via dev commit ancestry and GitHub PR #1074 merge receipt."
+    },
+    {
+      "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001",
+      "branch": "task/ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001",
+      "commit_shas": [
+        "ea64f02e0366a48df2bcfda8f23f418d7f7e34b2",
+        "46077fe886417473189b11331e119daa66f1c50a"
+      ],
+      "status": "superseded",
+      "scope": "Initial password-first security E2E verification; discovered architecture blockers B1 (LoginThrottleService missing production caller in /login POST) and B2 (missing SQL throttle repository in identity.login_attempts).",
+      "relationship_to_e2e_002": "Blockers triggered remediation task ODP-WEB-LOGIN-THROTTLE-REMEDIATION-001 (PR #1085, merge 3f8eb309), which implemented PostgresLoginThrottleStore and TypeScript throttle wiring. Superseded by ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 upon remediation completion.",
+      "canonical_lookup": "ai-status.sh show returns exit 1 (Unknown task); branch commits preserved in git object database.",
+      "canonical_history_gap": "Pre-remediation trial task; not merged directly as standalone PR, superseded by E2E-002."
     },
     {
       "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
@@ -30,143 +44,265 @@
       "scope": "Security E2E receipt covering password login, throttle, OIDC-off boundary, RBAC tenant isolation, secret redaction",
       "status": "done",
       "receipt_ref": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
+      "receipt_pinned_base_sha": "d0c81635df8e48dc803272e5ee6fc1fca3fa32cb",
+      "receipt_base_merge_sha": "f3095a0eb3f03aa788a10747cf3721ae54a1be70",
       "receipt_verdict": "pass",
-      "receipt_verification_date": "2026-09-01",
-      "canonical_history_gap": "Task not present in active ai-status.json or ai-task-archive; PR merge commit is verifiable ancestor of current dev HEAD. Receipt exists on tree."
+      "receipt_verification_date": "2026-09-01 UTC",
+      "canonical_lookup": "ai-status.sh show returns exit 1 (Unknown task); gh pr view 1096 returns exit 0 confirming MERGED state into dev.",
+      "canonical_history_gap": "Task not present in active ai-status.json or ai-task-archive; PR merge commit 2377168c is verifiable ancestor of dev. Immutable receipt exists in repo tree."
     }
   ],
+  "auth_surface_drift": {
+    "drift_base_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+    "drift_head_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+    "command": "git diff --stat 2377168c2cc07cd2470dd8f43de0486fe8d8fc08 cf04c0467f2f03017301838268d5f3f055f29ed3 -- modules/opsboard/auth shared/auth",
+    "summary": "5 files changed, 379 insertions(+), 25 deletions(-)",
+    "files": [
+      {
+        "file": "modules/opsboard/auth/claims.py",
+        "diff": "22 ++-"
+      },
+      {
+        "file": "shared/auth/__init__.py",
+        "diff": "24 +++"
+      },
+      {
+        "file": "shared/auth/abac.py",
+        "diff": "17 ---"
+      },
+      {
+        "file": "shared/auth/rbac.py",
+        "diff": "13 +-"
+      },
+      {
+        "file": "shared/auth/tenant.py",
+        "diff": "328 +++"
+      }
+    ],
+    "impact_assessment": "Drift consists of subsequent multi-tenant context, claims parsing, and RBAC/ABAC consolidation additions merged after E2E-002. Core auth mode resolution (shared/auth/mode.py, apps/web/src/lib/auth/runtime.ts), login route (apps/web/src/app/login/route.ts), and callback route (apps/web/src/app/auth/callback/route.ts) had 0 diff lines. Subsequent PRs passed required CI checks on dev; exact-head standalone E2E suite was not re-executed in this documentation-only evidence task."
+  },
   "evidence_items": [
     {
-      "control": "auth_mode_resolver",
-      "description": "Single authoritative resolver for OIDC on/off decision at shared/auth/mode.py; default is 'local' (password-first)",
+      "control": "auth_mode_resolver_precedence",
+      "description": "Authoritative authentication mode resolution logic in shared/auth/mode.py",
       "source_file": "shared/auth/mode.py",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:30Z",
-      "observation": "Module docstring references ODP-WEB-PASSWORD-FIRST-AUTH-CONTRACT-001 and ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001. AUTH_MODES = ('local', 'oidc'). Default is local (password-first). Three consumers pinned: auth_mode.sh, validate deployment, API auth boundary.",
-      "verified_by_prior_task": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+      "lines": "70-111",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "precedence_rules": [
+        "1. ODP_AUTH_MODE: authoritative ('local' | 'oidc'); invalid value raises error; conflict with legacy flag raises error.",
+        "2. ODP_AUTH_OIDC_ENABLED: legacy boolean alias ('true' -> 'oidc', 'false' -> 'local'); invalid boolean string raises error.",
+        "3. DEPLOYMENT_OIDC_ISSUER_VARS: if any issuer variable (ODP_WEB_OIDC_ISSUER, ODP_OIDC_ISSUER, ODP_GCP_OIDC_ISSUER, etc.) is configured with a non-placeholder value, resolves to 'oidc' for backwards compatibility with pre-contract deployments.",
+        "4. Unconfigured default: when no mode, no legacy flag, and no issuer variable are present, resolves to 'local'."
+      ],
+      "explicit_vs_unset_notes": "Explicit ODP_AUTH_MODE=local or ODP_AUTH_OIDC_ENABLED=false forces 'local' even if legacy issuer variables are populated. Unset mode flags with a configured legacy issuer resolve to 'oidc'. Do not infer live D15 compliance from unset mode flags alone without live environment readback.",
       "status": "pass"
     },
     {
-      "control": "web_runtime_oidc_gate",
-      "description": "Web runtime resolves ODP_AUTH_MODE / ODP_AUTH_OIDC_ENABLED; OIDC enabled only when mode=oidc and all OIDC vars present",
+      "control": "web_runtime_oidc_gate_precedence",
+      "description": "Web runtime resolver and OIDC enablement gate at apps/web/src/lib/auth/runtime.ts",
       "source_file": "apps/web/src/lib/auth/runtime.ts",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:34Z",
-      "observation": "isOidcEnabled() function at line 131; resolves ODP_AUTH_MODE and legacy ODP_AUTH_OIDC_ENABLED flag; conflicts between mode and legacy flag raise error; default without either var is local (OIDC disabled).",
-      "verified_by_prior_task": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+      "lines": "83-145",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "precedence_rules": [
+        "1. ODP_AUTH_MODE: 'local' | 'oidc' (throws error if invalid or conflicting with legacy flag).",
+        "2. ODP_AUTH_OIDC_ENABLED: 'true' -> 'oidc', 'false' -> 'local' (throws error if invalid boolean).",
+        "3. ODP_WEB_OIDC_ISSUER: if configured and non-placeholder, resolves to 'oidc'.",
+        "4. Default: returns 'local'."
+      ],
+      "gate_behavior": "isOidcEnabled() returns false when resolveAuthMode() === 'local'. When mode === 'oidc', requires complete configuration (ODP_WEB_OIDC_ISSUER, ODP_WEB_OIDC_CLIENT_ID, ODP_WEB_OIDC_CLIENT_SECRET) or throws Error. Fail-closed on misconfiguration.",
       "status": "pass"
     },
     {
       "control": "login_route_no_google_when_oidc_off",
-      "description": "Login route conditionally shows OIDC button only when authMode === 'oidc'",
+      "description": "Login route conditionally suppresses OIDC UI and rejects OIDC provider requests when authMode is local",
       "source_file": "apps/web/src/app/login/route.ts",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:34Z",
-      "observation": "Line 342: const showOidc = authMode === 'oidc'; OIDC button HTML only rendered when showOidc is true. provider=oidc request returns 404/503 when authMode !== 'oidc' (line 303-308).",
-      "verified_by_prior_task": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "lines": "303-342",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "observation": "Line 342 sets const showOidc = authMode === 'oidc'; Google login button is omitted from HTML when showOidc is false. Lines 303-308 return 404 / 503 error when provider=oidc request is received in local mode.",
+      "regression_references": [
+        "apps/web/src/lib/auth/__tests__/securityE2E.test.ts",
+        "tests/e2e/test_password_first_security_e2e.py"
+      ],
       "status": "pass"
     },
     {
       "control": "callback_fail_closed_when_oidc_off",
-      "description": "OIDC callback route fail-closed when OIDC is disabled",
-      "source_file": "apps/web/src/app/login/route.ts",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:34Z",
-      "observation": "When provider=oidc but authMode is not oidc, error WEB_AUTH_PROVIDER_DISABLED is returned. No OIDC provider is contacted.",
-      "verified_by_prior_task": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "description": "OIDC callback route fail-closed rejection at apps/web/src/app/auth/callback/route.ts",
+      "source_file": "apps/web/src/app/auth/callback/route.ts",
+      "lines": "47-87",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "observation": "GET handler resolves authMode (lines 49-62). If authMode === 'local', lines 64-73 immediately return HTTP 503 { error: { code: 'WEB_AUTH_PROVIDER_DISABLED', summary: 'OIDC authentication provider is disabled.' } } with cache-control: no-store, without parsing credentials or contacting any identity provider. Authorization code exchange at line 104 is completely unreachable when authMode is local.",
+      "regression_references": [
+        "apps/web/src/app/auth/callback/route.test.ts",
+        "apps/web/src/lib/auth/__tests__/securityE2E.test.ts",
+        "tests/e2e/test_password_first_security_e2e.py"
+      ],
       "status": "pass"
     },
     {
       "control": "deployment_validation_conditional_oidc",
       "description": "Deployment validation only requires OIDC vars when auth_mode=oidc",
       "source_file": "product_ops/deployment/validate_cloud_run_live_deployment.py",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:34Z",
-      "observation": "Line 44 imports resolve_auth_mode; line 1426 resolves auth mode; line 1434 conditionally checks OIDC vars only when auth_mode=='oidc'. Password-first deployments pass validation without any OIDC variables.",
-      "verified_by_prior_task": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+      "lines": "44, 1426-1434",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "observation": "Line 44 imports resolve_auth_mode; line 1426 resolves auth mode; line 1434 conditionally checks OIDC variables only when auth_mode == 'oidc'. Deployments in local mode pass validation without any OIDC secrets.",
       "status": "pass"
     },
     {
       "control": "terraform_conditional_oidc_checks",
-      "description": "Terraform checks only enforce OIDC settings when oidc_enabled is true",
+      "description": "Terraform checks gate OIDC variable enforcement behind local.is_prod && local.oidc_enabled",
       "source_file": "infra/terraform/checks.tf",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:34Z",
-      "observation": "Lines 76, 238, 275: conditions gate OIDC checks behind local.is_prod && local.oidc_enabled. Password-first default does not require OIDC variables for terraform validate/plan.",
-      "verified_by_prior_task": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+      "lines": "76, 238, 275",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "observation": "Conditions gate OIDC validation behind local.is_prod && local.oidc_enabled. Default password-first deployments do not require OIDC variables for terraform validate/plan.",
       "status": "pass"
     },
     {
       "control": "password_login_no_google_secret_dependency",
-      "description": "Password login path does not require Google OAuth client secret",
+      "description": "Password login path operates without Google OAuth client secrets",
       "source_file": "apps/web/src/lib/auth/localAuth.ts",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:34Z",
-      "observation": "localAuth.ts handles password credential verification against identity store. No OIDC client secret referenced. Session created via sessionStore.ts using ODP_WEB_SESSION_SECRET (not OIDC secret).",
-      "verified_by_prior_task": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "observation": "localAuth.ts verifies password credentials against the identity store using Argon2id. No Google OAuth client secret or external provider is referenced. Session creation uses ODP_WEB_SESSION_SECRET.",
       "status": "pass"
     },
     {
       "control": "session_csrf_callback_not_weakened",
-      "description": "Session, CSRF, and callback validation not weakened when OIDC is off",
+      "description": "Session, CSRF, and throttle mechanisms maintain full integrity in password-first mode",
       "source_file": "apps/web/src/lib/auth/session.ts",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:34Z",
-      "observation": "Session uses __Host- prefix with HttpOnly, Secure, SameSite=Lax. Login throttle persists in identity.login_attempts (loginThrottle.ts, 29KB). CSRF via Origin check in route.ts. These mechanisms are independent of OIDC provider state.",
-      "verified_by_prior_task": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "observation": "Sessions use __Host- prefix with HttpOnly, Secure, SameSite=Lax. CSRF via Origin checks in route.ts. Login throttle persists in identity.login_attempts (loginThrottle.ts) before credential verification. Mechanisms operate completely independently of OIDC state.",
+      "regression_references": [
+        "tests/security/test_login_throttle_wiring.py",
+        "apps/web/src/lib/auth/__tests__/securityE2E.test.ts"
+      ],
       "status": "pass"
     },
     {
-      "control": "e2e_receipt_regression_evidence",
-      "description": "Formal E2E receipt from ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 covering T26-T30 matrix items",
+      "control": "historical_e2e_receipt_evidence",
+      "description": "Immutable historical verification receipt from ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
       "source_file": "docs/evidence/e2e/ODP_WEB_PASSWORD_FIRST_SECURITY_E2E_RECEIPT.md",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:27:07Z",
-      "observation": "Receipt verdict=pass, date 2026-09-01. Covers: password login success/fail, account/IP threshold, production fail-closed, local default/OIDC disabled, complete OIDC optional path, RBAC tenant isolation, secret exclusion. Python auth suite: 151 passed, 22 skipped. Web suite: 474 tests passed across 53 files.",
-      "verified_by_prior_task": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "receipt_source_sha": "04e1572f802a54c2646ba678fe2975226dfbd7c4",
+      "receipt_date": "2026-09-01 UTC",
+      "verified_run_head_sha": "2377168c2cc07cd2470dd8f43de0486fe8d8fc08",
+      "composition_base_sha": "d0c81635df8e48dc803272e5ee6fc1fca3fa32cb",
+      "composition_merge_sha": "f3095a0eb3f03aa788a10747cf3721ae54a1be70",
+      "observation_method": "historical_receipt_reference",
+      "recorded_commands": [
+        {
+          "layer": "Web tests",
+          "argv": "npm --prefix apps/web run test",
+          "recorded_outcome": "53 files, 474 tests passed"
+        },
+        {
+          "layer": "Web typecheck",
+          "argv": "npm --prefix apps/web run typecheck",
+          "recorded_outcome": "pass"
+        },
+        {
+          "layer": "Web lint",
+          "argv": "npm --prefix apps/web run lint",
+          "recorded_outcome": "pass; no warnings/errors"
+        },
+        {
+          "layer": "Python auth/security/identity/ops",
+          "argv": "uv run --python 3.12 pytest tests/e2e/test_password_first_security_e2e.py tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/identity",
+          "recorded_outcome": "151 passed, 22 skipped"
+        },
+        {
+          "layer": "Python lint",
+          "argv": "uv run --python 3.12 ruff check shared tests/identity tests/security/test_login_throttle_wiring.py tests/ops/test_conditional_oidc_deployment.py tests/e2e/test_password_first_security_e2e.py",
+          "recorded_outcome": "pass"
+        },
+        {
+          "layer": "Terraform contract",
+          "argv": "python3 infra/terraform/validate_contract.py",
+          "recorded_outcome": "pass; 14 files checked"
+        },
+        {
+          "layer": "Terraform unit tests",
+          "argv": "python3 -m unittest discover -s infra/terraform/tests -p 'test_*.py'",
+          "recorded_outcome": "32 tests OK"
+        }
+      ],
+      "receipt_verdict": "pass",
       "status": "pass",
-      "note": "Receipt pinned to base d0c81635df8e (merge commit f3095a0e). This is prior to current HEAD; receipt evidence applies to the capabilities verified at that point. No code changes to auth surfaces between receipt base and current HEAD have been detected in this inspection, but exact-head re-verification has not been re-run in this task."
+      "note": "Historical pass applies to verified merge commit 2377168c on composition base d0c81635df8e. Standalone E2E suite re-execution was not performed in this documentation-only task."
     },
     {
       "control": "api_boundary_multi_issuer",
-      "description": "API AuthenticationBoundary supports multi-issuer: local, oidc, service",
+      "description": "API AuthenticationBoundary multi-issuer support and fail-closed OIDC enforcement",
       "source_file": "modules/opsboard/auth/config.py",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:25Z",
-      "observation": "config.py references ODP_AUTH_MODE / ODP_AUTH_OIDC_ENABLED as authoritative OIDC gate (lines 70, 186, 285). When OIDC disabled, OIDC tokens are not verifiable by the boundary.",
-      "verified_by_prior_task": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "observation": "config.py references ODP_AUTH_MODE / ODP_AUTH_OIDC_ENABLED as authoritative OIDC gate. When mode is local, OIDC tokens are rejected fail-closed by the API boundary.",
       "status": "pass"
     },
     {
       "control": "ops_test_conditional_oidc_deployment",
-      "description": "Ops test that validates deployment with and without OIDC",
+      "description": "Ops test validating deployment with and without OIDC",
       "source_file": "tests/ops/test_conditional_oidc_deployment.py",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:26:12Z",
-      "observation": "File exists (35344 bytes). Validates conditional OIDC deployment across environment matrix. Part of E2E receipt verification suite.",
-      "verified_by_prior_task": "ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001",
+      "inspected_sha": "cf04c0467f2f03017301838268d5f3f055f29ed3",
+      "inspected_at": "2026-09-08T16:33:00Z",
+      "observation_method": "static_code_inspection",
+      "observation": "File exists (35344 bytes) and contains test matrix validating conditional OIDC deployments across environments. Verified in historical receipt (151 passed suite).",
       "status": "pass"
     },
     {
-      "control": "oauth_provider_verification",
-      "description": "Live Google OAuth provider availability and credential verification",
-      "inspected_sha": "9048161e058becff5a53593a773d3c42238213fb",
-      "inspected_at": "2026-09-08T15:27:00Z",
-      "observation": "Not inspected. No live GCP or external OIDC provider is contacted by the existing receipt. The HUMAN-GCP-WEB-OAUTH-CLIENTS-001 task remains in 'todo' status, owned by Human/Ops. Provider verification is not required for password-first operation.",
+      "control": "live_deployment_auth_mode_readback",
+      "description": "Live environment configuration and D15 compliance verification across deployed services (Cloud Run / staging / prod)",
+      "observation_method": "live_environment_readback",
+      "observation": "Not inspected. Live environment readback is not accessible to this documentation-only evidence task. Live D15 compliance (ensuring ODP_AUTH_MODE=local or absence of legacy issuer vars) cannot be assumed from static code alone.",
       "status": "unknown",
+      "responsible_party": "Release / Ops Engineer during deployment readback",
+      "note": "Documented as unknown; live environment state requires runtime inspection."
+    },
+    {
+      "control": "oauth_provider_verification",
+      "description": "Live Google OAuth provider availability and credential verification (B-Stage)",
+      "observation_method": "live_provider_probe",
+      "observation": "Not inspected. No live GCP or external OIDC provider is contacted. HUMAN-GCP-WEB-OAUTH-CLIENTS-001 task remains in 'todo' status under Human/Ops ownership. Provider verification is not required for password-first operation.",
+      "status": "unknown",
+      "entry_conditions": "Requires explicit business decision to enable Google OIDC -> Human/Ops executes HUMAN-GCP-WEB-OAUTH-CLIENTS-001 -> Ops executes live provider handshake and OIDC-enabled deployment validation.",
+      "responsible_party": "Human/Ops",
       "note": "Provider verification is a B-stage concern; this A-stage evidence package does not claim provider readiness."
     }
   ],
   "summary": {
-    "total_controls": 12,
+    "total_controls": 13,
     "pass": 11,
-    "unknown": 1,
+    "unknown": 2,
     "fail": 0,
-    "verdict": "A-stage evidence sufficient for password-first / OIDC-off deployment alignment",
+    "verdict": "A-stage evidence sufficient for password-first / OIDC-off deployment alignment; live readback and provider verification correctly documented as unknown.",
     "gaps": [
-      "OAuth provider verification (HUMAN-GCP-WEB-OAUTH-CLIENTS-001) is not done and not needed for password-first; remains as B-stage standby.",
-      "Task archive does not contain ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001 or ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002 records; canonical history gap documented. PR merge commits are verifiable.",
-      "E2E receipt base (d0c81635df8e) is not exact current HEAD; no auth-surface code changes detected between receipt base and HEAD, but exact-head re-verification not re-run."
-    ]
+      "OAuth provider verification (HUMAN-GCP-WEB-OAUTH-CLIENTS-001) is not done and not needed for password-first; remains on standby for B-stage.",
+      "Live deployment auth-mode/password compliance remains unknown without live environment readback.",
+      "Task archive lacks ODP-WEB-OIDC-OPTIONAL-DEPLOYMENT-001, ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-001, and E2E-002 records; canonical history gap documented. PR merge commits are cryptographically verifiable ancestors of dev.",
+      "Auth-surface code drift (5 files, 379 insertions, 25 deletions) documented between E2E-002 merge (2377168c) and current HEAD (cf04c046). Unqualified 'verified operational' claim removed in favor of explicit separation between historical pass, static inspection, exact-head CI, and live unknown."
+    ],
+    "handoff_and_entry_conditions": {
+      "wp90_canonical_writer_handoff": "Upon A-stage evidence alignment approval, WP-90 / canonical writer updates HUMAN-GCP-WEB-OAUTH-CLIENTS-001 standby instructions on the orchestrator board without unblocking or auto-closing it.",
+      "oauth_enablement_entry_conditions": [
+        "1. Product Authority issues explicit business decision to enable Google OIDC login.",
+        "2. Human/Ops executes HUMAN-GCP-WEB-OAUTH-CLIENTS-001 to create GCP OAuth 2.0 Web Client credentials and store secrets in Secret Manager.",
+        "3. Release / Ops Engineer deploys with explicit ODP_AUTH_MODE=oidc, performs live environment readback, and conducts live OAuth provider validation."
+      ]
+    }
   }
 }
