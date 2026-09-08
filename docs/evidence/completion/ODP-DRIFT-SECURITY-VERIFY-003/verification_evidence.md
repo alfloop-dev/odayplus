@@ -3,14 +3,14 @@ evidence_id: ODP-DRIFT-SECURITY-VERIFY-003
 title: "NLTK Dependency Removal & Native Monitoring Security Evidence"
 date: 2026-09-08
 status: PENDING_INDEPENDENT_REVIEW
-owner: Claude2
-previous_owner: Antigravity4
+owner: Antigravity3
+previous_owner: Claude2
 reviewer: Codex
-review_round: 4
+review_round: 5
 repository: alfloop-dev/odayplus
 task: ODP-DRIFT-SECURITY-VERIFY-003
 verified_ref: c4bf87d81d55180d6d6769daf5358992b3bc6620
-base_ref: d6d579ec2c4770ec9afc7e50765c21da6347d265
+base_ref: af7ded0315d298465efada4cc87d404175027e5d
 measurement_ref: d6514b049996747aba378a9380851f98594c12af
 upstream_pr_chain:
   - PR_1218: ODP-NLTK-MONITORING-BASELINE-001
@@ -44,7 +44,7 @@ actual stdout/stderr redirection at execution time.
 ### 1.1 SHA Relationship
 
 - **Integration SHA** (`origin/dev` tip at branch creation): `c4bf87d81d55180d6d6769daf5358992b3bc6620`
-- **Current base** (`origin/dev` tip at round-4 submission): `d6d579ec2c4770ec9afc7e50765c21da6347d265`
+- **Current base** (`origin/dev` tip at round-5 submission): `af7ded0315d298465efada4cc87d404175027e5d`
 - **Measurement SHA** (every round-4 run below): `d6514b049996747aba378a9380851f98594c12af`
 - **Task branch HEAD**: see PR head at submission time
 - The integration SHA already contains all upstream PR merges (#1217, #1218, #1219, #1222, #1188).
@@ -53,28 +53,29 @@ actual stdout/stderr redirection at execution time.
   dependencies, or lock files.
 
 **The base advances did not move the thing under test.** `origin/dev` advanced
-twice while this round was being measured, and the branch was composed onto each
+three times while this task was being prepared, and the branch was composed onto each
 new base through a normal merge — no rebase, no force push, no history rewrite:
 
 | Advance | dev moved | Incoming delta | Touches the measured surface? |
 |---|---|---|---|
 | 1 | `c4bf87d8` → `8c570a56` (PR #1229) | one file, `docs/evidence/execution-control/ODP_CODEX_ULTRA_DRIFT_REPAIR_20260906.md` | no |
 | 2 | `8c570a56` → `d6d579ec` (PR #1242, cold-start route-table fix) | `apps/api/oday_api/main.py`, new `shared/api/route_table_safety.py`, new `tests/reliability/test_cold_start_route_table.py`, its evidence note, and the boundary inventory | no |
+| 3 | `d6d579ec` → `af7ded03` (PR #1237, build artifact handoff) | one file, `docs/evidence/runtime/ODP-DEV-BUILD-ARTIFACT-HANDOFF-003/build-dispatch-evidence.md` | no |
 
 "Measured surface" is meant literally here, not as a judgement call: `uv.lock`,
 `pyproject.toml`, `delivery_toolchain/security/pip_audit_gate.py`, both
 `modules/learninghub/infrastructure/` monitoring modules, both drift test
-modules and the entire `tests/models/fixtures/` tree are unchanged by both
+modules and the entire `tests/models/fixtures/` tree are unchanged by all three
 merges. So the dependency graph the audit scanned and the code the monitoring
 suites exercised are the same at the submitted head as they were at the
 measurement SHA. A reviewer can confirm this with
-`git diff --name-only c4bf87d8..d6d579ec`.
+`git diff --name-only c4bf87d8..af7ded03`.
 
 **Measurement SHA versus submitted head.** `d6514b04` is an ancestor of the
 submitted head. Everything between them is either evidence — this document, the
-receipts, the regenerated index — or the second base advance above. Stated
+receipts, the regenerated index — or the base advances above. Stated
 precisely, `git diff --name-only d6514b04..<head>` returns paths under
-`docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/` plus exactly the five
+`docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/` plus exactly the
 base-advance paths in the table, and
 
 ```
