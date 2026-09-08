@@ -26,6 +26,7 @@ from modules.external_data.connectors import (
     validate_external_providers_or_raise,
 )
 from shared.api.errors import ApiError, error_response_body, install_error_handlers
+from shared.api.route_table_safety import ensure_atomic_route_table_publication
 from shared.api.versioning import install_deprecation_headers, mount_versioned
 from shared.audit import AuditEvent, InMemoryAuditLog
 from shared.jobs import InMemoryJobQueue, JobRequest
@@ -138,6 +139,13 @@ else:
         market_intelligence_repository: Any = None,
         telemetry: Any = None,
     ) -> FastAPI:
+        # Included routers resolve their route table lazily on the first request
+        # that walks them, and FastAPI 0.138 publishes that table while it is
+        # still being filled. Two cold-start requests then race and one of them
+        # matches against a table with routes missing -- the intermittent
+        # POST /jobs 404 (ODP-API-COLD-ROUTE-RACE-001). Fix the publication
+        # before any router is mounted; raises if the framework internals moved.
+        ensure_atomic_route_table_publication()
         # Defaults come from the persistence factory, including the production
         # PostgreSQL runtime. Explicit arguments still win so tests can inject
         # hand-built doubles. See ODP-PV-009.
