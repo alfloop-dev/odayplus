@@ -37,7 +37,7 @@
 | 17 | `closure_start_date` | string \| null | ISO date | Date store stops trading (may precede physical remodeling). | Store Operations | Defaults to `conversion_start_date` if not separate |
 | 18 | `closure_end_date` | string \| null | ISO date | Date store resumes trading in new format. | Store Operations | May differ from `conversion_completed_date` if soft-launch |
 | 19 | `ramp_months` | integer \| null | ≥ 0 | Months for converted store to reach steady-state revenue. | Site Economics model | Null means ramp unknown — must be requested via H04 |
-| 20 | `ramp_curve_id` | string \| null | — | Reference to applicable `RampCurveSpec`. | Site Economics model | Falls back to `to_format_code` default ramp if null |
+| 20 | `ramp_curve_id` | string \| null | — | Reference to applicable `RampCurveSpec`. **Null means curve unknown**: MUST NOT default to greenfield target format ramp; remains unquantified unless an explicit approved conversion-compatible curve reference is provided. | Site Economics model | Requires approved conversion ramp curve; null means unquantified |
 | 21 | `daily_baseline_revenue` | number \| null | ≥ 0 | Pre-conversion average daily revenue for loss calculation. | Historical revenue data | Null if historical data unavailable — loss unquantified |
 | 22 | `conversion_reason` | string \| null | — | Business justification (UPGRADE, DOWNSIZE, REBRAND, etc.). | Store Operations | Informational; not used in financial calculation |
 | 23 | `approved_by` | string \| null | — | Identity of approving human authority. | Governance | Required in Stage B production; null in draft |
@@ -58,21 +58,23 @@
 
 ### Missing vs. Zero Semantics
 
-- **`null`** = unknown, not measured, not yet provided. Consumers MUST NOT substitute zero or any default.
+- **`null`** = unknown, not measured, not yet provided. Consumers MUST NOT substitute zero or any greenfield/system default. Appears on `residual_value`, `disposal_cost`, `ramp_months`, `ramp_curve_id`, and `daily_baseline_revenue`.
 - **`0`** = explicitly measured and confirmed to be zero. Legitimate for `residual_value` (e.g., fully depreciated equipment) and `downtime_days` (e.g., overnight swap).
 
 ## Source Inventory Summary
 
-Inspected at `origin/dev` tip `9048161e` (2026-09-08T15:22Z):
+Inspected at `origin/dev` tip `cf04c046` (2026-09-08T16:32Z):
 
 | Source Path | What Exists | What Is Missing for FORMAT_CONVERSION |
 |-------------|-------------|--------------------------------------|
-| `infra/db/migrations/000001_baseline_canonical_schema.sql` | `core.stores.store_format_code` (static) | No `core.store_format_conversions` table |
-| `infra/db/migrations/000004_durable_product_domain.sql` | `stores.store_format_code` (static, SQLite) | No conversion event table |
+| `infra/db/migrations/000001_baseline_canonical_schema.sql` | `core.stores.store_format_code` (static column) | No `core.store_format_conversions` table |
+| `infra/db/migrations/000002_data_domain_canonical_entities.sql` | `core.stores.store_format_code` (static column) | No conversion event table |
+| `infra/db/migrations/000004_durable_product_domain.sql` | `stores.store_format_code` (static column, SQLite) | No conversion event table |
+| `infra/db/migrations/000001`–`000023` (all 27 SQL migrations) | Static format code in 000001, 000002, 000004 | Zero conversion event tables across all migrations |
 | `modules/site_economics/domain/formats.py` | `TargetFormatRegistry` (ODAY_G2, G3_COMPACT, FLAGSHIP) | No conversion matrix or transition rules |
 | `modules/site_economics/domain/simulator.py` | `SimulationInput` — greenfield only | No `ConversionSimulationInput`, no downtime/residual model |
 | `modules/sitescore/domain/scoring.py` | SiteScore feature input | No format conversion impact fields |
 | `delivery_toolchain/governance/set_valued_requirements.json` | FORMAT_CONVERSION status: `absent`, disposition: `BLOCKED_BY_EVIDENCE` | As expected for Stage A |
 
 > [!NOTE]
-> The `rg -n "FORMAT_CONVERSION|format_conversion|Brownfield|brownfield" modules models solver pipelines` search returned **no matches** in production code paths, confirming the repo-wide absence documented in `ODP_SITE001_DATA_READINESS_2026-09-03.md`.
+> The inspection command `rg -n "FORMAT_CONVERSION|format_conversion|Brownfield|brownfield" modules models solver pipelines` returned **zero matches (exit code 1)** across the 4 inspected production directories (`modules/`, `models/`, `solver/`, `pipelines/`), confirming absence within inspected production code paths as documented in `ODP_SITE001_DATA_READINESS_2026-09-03.md`. Scope is restricted to the inspected directories and does not assert absence in unsearched areas without separate inspection.

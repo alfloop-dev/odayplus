@@ -7,7 +7,7 @@
 - **Reviewer**: Codex2
 - **Stage**: A（工程準備） — 獨立證據目錄交付
 - **Date**: 2026-09-08
-- **Inspected Head**: `9048161e`
+- **Inspected Head**: `cf04c046`
 
 ---
 

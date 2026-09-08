@@ -4,15 +4,15 @@
   "requirement": "ODP-FR-SITE-001 / FORMAT_CONVERSION",
   "status": "DRAFT_STAGE_A",
   "date": "2026-09-08",
-  "inspected_head": "9048161e",
-  "inspected_at": "2026-09-08T15:22:00Z",
+  "inspected_head": "cf04c046",
+  "inspected_at": "2026-09-08T16:32:00Z",
   "event_type": "FORMAT_CONVERSION",
   "sources": [
     {
       "source_id": "STORE_OPS_ERP",
       "description": "Store Operations ERP or equivalent system that tracks physical store remodeling projects",
       "current_status": "NOT_AVAILABLE_IN_REPO",
-      "evidence": "No producer, connector, or ingestion pipeline for store conversion events exists in the repository. Confirmed by rg search across modules/, models/, solver/, pipelines/ — zero hits for format_conversion or brownfield in production code.",
+      "evidence": "Zero matches within the 4 inspected production directories (modules/, models/, solver/, pipelines/) via rg; no producer, connector, or ingestion pipeline for store conversion events exists in inspected code paths.",
       "provides_fields": [
         "store_id",
         "from_format_code",
@@ -49,13 +49,13 @@
         "ramp_curve_id",
         "daily_baseline_revenue"
       ],
-      "stage_b_requirement": "Determine whether conversion ramp differs from greenfield ramp. If yes, define ConversionRampCurveSpec and register per format transition pair."
+      "stage_b_requirement": "Determine whether conversion ramp differs from greenfield ramp. If yes, define ConversionRampCurveSpec and register per format transition pair. If unknown, curve remains null/unquantified — do NOT fallback to greenfield defaults."
     },
     {
       "source_id": "CORE_STORES_TABLE",
       "description": "PostgreSQL core.stores and SQLite stores tables",
       "current_status": "EXISTS_STATIC_ONLY",
-      "evidence": "core.stores in 000001_baseline_canonical_schema.sql and stores in 000004_durable_product_domain.sql both have store_format_code as static column. No conversion history or event log table.",
+      "evidence": "core.stores in 000001_baseline_canonical_schema.sql / 000002_data_domain_canonical_entities.sql and stores in 000004_durable_product_domain.sql both have store_format_code as static column. No conversion history or event table exists across all 27 migrations (000001–000023).",
       "provides_fields": [
         "store_id",
         "tenant_id"
@@ -99,9 +99,9 @@
     },
     {
       "consumer_id": "PERSISTENCE_LAYER",
-      "description": "PostgreSQL core.store_format_conversions table (to be created)",
+      "description": "PostgreSQL core.store_format_conversions table (to be created in Stage B)",
       "current_status": "TABLE_DOES_NOT_EXIST",
-      "evidence": "No store_format_conversions table in any migration (000001–000013). Only static store_format_code column exists.",
+      "evidence": "No store_format_conversions or conversion event table exists in any migration (inspected all 27 SQL migration files 000001–000023). Only static store_format_code column exists in 000001, 000002, 000004.",
       "consumes_fields": [
         "event_id",
         "event_type",
@@ -131,16 +131,15 @@
       "current_status": "ACTIVE_BLOCKED",
       "evidence": "set_valued_requirements.json records FORMAT_CONVERSION as absent/BLOCKED_BY_EVIDENCE with formal_handback_ref to ODP_SITE001_COMPONENT_DISPOSITIONS. check_requirement_members.py validates this state.",
       "consumes_fields": [],
-      "stage_b_action": "Update FORMAT_CONVERSION status from absent/BLOCKED_BY_EVIDENCE to satisfied/VERIFIED only after real producer, migration, and simulator integration are completed and tested.",
+      "stage_b_action": "Provide verified evidence and scoped handoff to WP-90 for centralized disposition update from absent/BLOCKED_BY_EVIDENCE to satisfied/VERIFIED after real producer, migration, and simulator integration are completed and tested.",
       "acceptance_tests": [
         "check_requirement_members.py passes in both Stage A (BLOCKED) and Stage B (VERIFIED) states"
       ]
     }
   ],
   "stage_b_entry_conditions": [
-    "H04 human input provides real conversion events, financial parameters, and operational playbook",
-    "Cross-source/consumer contract review completed (event schema, persistence migration, simulator input)",
-    "Store Operations formally approves brownfield conversion playbook with cost schedules and downtime parameters",
-    "Schema migration for core.store_format_conversions created and reviewed"
+    "H04 human input provides real conversion events (or planned-event specifications), financial parameters, and operational playbook with acquisition owner and timing",
+    "Cross-source/consumer contract review completed (event schema, persistence migration design, simulator input)",
+    "Store Operations formally approves brownfield conversion playbook with cost schedules and downtime parameters"
   ]
 }

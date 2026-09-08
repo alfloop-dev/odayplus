@@ -111,7 +111,7 @@
     },
     "ramp_curve_id": {
       "type": ["string", "null"],
-      "description": "Reference to the applicable RampCurveSpec for the post-conversion ramp-up period. If null, the default ramp curve for to_format_code is used when ramp_months is specified."
+      "description": "Reference to the applicable RampCurveSpec for the post-conversion ramp-up period. Optional — null means the conversion ramp curve is unknown/unspecified and MUST NOT default to greenfield curves. Missing curve remains unquantified unless an explicit approved conversion-compatible curve reference is provided."
     },
     "daily_baseline_revenue": {
       "type": ["number", "null"],
@@ -155,7 +155,7 @@
   "_design_notes": {
     "new_store_vs_conversion": "This contract is strictly for brownfield format conversion of EXISTING stores. New store openings (greenfield) use the existing SimulationInput contract in modules/site_economics/domain/simulator.py. The two MUST NOT be conflated.",
     "replay_idempotency": "Replaying the same event_id must not cause duplicate cost entries, duplicate revenue loss calculations, or duplicate ramp applications. Consumers must implement at-least-once idempotent processing keyed on event_id.",
-    "missing_vs_zero": "Null/missing values mean 'unknown — do not assume any value'. Zero means 'explicitly measured and confirmed to be zero'. This distinction is critical for residual_value and disposal_cost.",
-    "stage_b_prerequisites": "Before this contract can be used in production: (1) H04 real conversion events and financial parameters must be provided, (2) core.store_format_conversions migration must be created, (3) simulator.py must support ConversionSimulationInput, (4) event replay tests must pass."
+    "missing_vs_zero": "Null/missing values mean 'unknown — do not assume any value or substitute any greenfield/system default'. Zero means 'explicitly measured and confirmed to be zero'. This distinction applies to residual_value, disposal_cost, ramp_months, ramp_curve_id, and daily_baseline_revenue.",
+    "stage_b_prerequisites": "Before this contract can be used in production: (1) H04 real conversion events (or planned-event specifications) and financial parameters must be provided, (2) cross-source/consumer contract review completed, (3) simulator.py must support ConversionSimulationInput, (4) core.store_format_conversions migration created in Stage B, (5) event replay tests must pass."
   }
 }
