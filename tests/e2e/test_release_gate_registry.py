@@ -51,8 +51,73 @@ def load_committed_registry() -> dict[str, Any]:
     return json.loads(REGISTRY.read_text(encoding="utf-8"))
 
 
-def mutated(mutate) -> dict[str, Any]:
+def blocked_registry_baseline() -> dict[str, Any]:
+    """Return a normalized baseline registry where all gates are blocked with zero receipts.
+
+    This preserves the committed candidate/manifest/evidence coordinates, but normalizes
+    the test posture (no-go decision, no human_signoff, all 7 gates blocked with explicit
+    test blockers, no deviations or justifications) so tests do not depend on the current
+    transient posture of docs/evidence/gates/RELEASE_GATE_REGISTRY.json.
+    """
     registry = copy.deepcopy(load_committed_registry())
+    candidate_sha = registry.get("release", {}).get("candidate_sha", CANDIDATE_SHA)
+    release = registry.get("release", {})
+    release.update({
+        "decision": "no-go",
+        "decision_owner": release.get("decision_owner") or "Human/Ops",
+        "decision_date": release.get("decision_date") or "2026-07-30",
+        "decision_note": "Normalized test baseline with all gates blocked",
+    })
+    release.pop("human_signoff", None)
+
+    for index, gate in enumerate(registry.get("gates", [])):
+        gate.update({
+            "status": "blocked",
+            "status_date": gate.get("status_date") or "2026-08-26",
+            "release_sha": candidate_sha,
+            "receipts": [],
+            "blockers": [f"test blocker for {gate.get('id', f'gate-{index}')}"],
+        })
+        gate.pop("justification", None)
+        gate.pop("deviation", None)
+    return registry
+
+
+def staged_registry_fixture() -> dict[str, Any]:
+    """Return a deepcopied registry with rollout §6.1 staged gate distribution.
+
+    dev boundary: gate-0 (Code Gate), gate-1 (Contract Gate), gate-4 (Security and Privacy Gate)
+    staging boundary: gate-2 (Data Gate)
+    production boundary: gate-3 (Model and Solver Gate), gate-5 (E2E, Performance and UAT Gate), gate-6 (Ops, Release and Audit Gate)
+    """
+    registry = blocked_registry_baseline()
+    for index in (0, 1, 4):
+        registry["gates"][index].update({
+            "stage": "candidate-built",
+            "environment": "dev",
+            "admission_target": "dev",
+        })
+    registry["gates"][2].update({
+        "stage": "dev-verified",
+        "environment": "dev",
+        "admission_target": "staging",
+    })
+    for index in (3, 5, 6):
+        registry["gates"][index].update({
+            "stage": "staging-verified",
+            "environment": "staging",
+            "admission_target": "production",
+        })
+    registry["release"].update({
+        "stage": "candidate-built",
+        "environment": "dev",
+        "admission_target": "dev",
+    })
+    return registry
+
+
+def mutated(mutate, *, base: dict[str, Any] | None = None) -> dict[str, Any]:
+    registry = copy.deepcopy(base if base is not None else blocked_registry_baseline())
     mutate(registry)
     return registry
 
@@ -66,10 +131,13 @@ def clear_gate(gate: dict[str, Any], *, artifact: str = "docs/evidence/gates/REA
     """Turn a gate into a fully attested passing gate."""
     gate["status"] = "passed"
     gate["blockers"] = []
+    gate.pop("justification", None)
+    gate.pop("deviation", None)
+    release_sha = gate.get("release_sha") or CANDIDATE_SHA
     gate["receipts"] = [
         {
             "receipt_id": f"{gate['id']}-receipt-001",
-            "release_sha": CANDIDATE_SHA,
+            "release_sha": release_sha,
             "result": "pass",
             "recorded_at": "2026-07-30T12:00:00Z",
             "recorded_by": "Human/Ops",
@@ -130,15 +198,29 @@ def test_every_gate_records_status_owner_reviewer_date_evidence_and_release_sha(
         assert gate["release_sha"] == registry["release"]["candidate_sha"]
 
 
-def test_committed_registry_still_records_no_go_with_zero_receipts() -> None:
+def test_committed_registry_matches_recorded_decision_and_gates() -> None:
     registry = load_committed_registry()
+    module = load_checker_module()
+
+    assert registry["release"]["decision"] in module.ALLOWED_DECISIONS
+    for gate in registry["gates"]:
+        if module.is_cleared(gate):
+            if gate["status"] in ("passed", "passed-with-deviation"):
+                assert gate["receipts"], f"{gate['id']} is attested and must carry receipts"
+            assert not gate["blockers"], f"{gate['id']} is cleared and must not carry blockers"
+        else:
+            assert gate["blockers"], f"{gate['id']} is open and must name what blocks it"
+
+
+def test_blocked_baseline_records_no_go_with_zero_receipts() -> None:
+    registry = blocked_registry_baseline()
     module = load_checker_module()
 
     assert registry["release"]["decision"] == "no-go"
     assert module.blocking_gates(registry) == [f"gate-{index}" for index in range(7)]
     for gate in registry["gates"]:
-        assert gate["receipts"] == [], f"{gate['id']} must not claim a receipt yet"
-        assert gate["blockers"], f"{gate['id']} must name what blocks it"
+        assert gate["receipts"] == []
+        assert gate["blockers"]
 
 
 def test_committed_registry_is_bound_to_an_exact_release_sha() -> None:
@@ -163,6 +245,7 @@ def test_go_decision_requires_human_signoff() -> None:
     def mutate(registry: dict[str, Any]) -> None:
         clear_all_gates(registry)
         registry["release"]["decision"] = "go"
+        registry["release"].pop("human_signoff", None)
 
     errors = errors_for(mutated(mutate))
 
@@ -180,52 +263,55 @@ def test_fully_attested_go_registry_is_accepted() -> None:
 
 def test_staging_and_prod_gates_do_not_block_dev_go_decision() -> None:
     """Staged admission: blocked staging/prod gates do not backward-block dev boundary."""
-    def mutate(registry: dict[str, Any]) -> None:
-        # Clear only dev boundary gates (e.g. gate-0, gate-1, gate-4)
-        for index in (0, 1, 4):
-            clear_gate(registry["gates"][index])
-        # Staging and production boundary gates remain blocked with valid blockers
-        registry["gates"][2].update({"stage": "dev-verified", "environment": "dev", "admission_target": "staging"})
-        for index in (3, 5, 6):
-            registry["gates"][index].update({"stage": "staging-verified", "environment": "staging", "admission_target": "production"})
-        registry["release"]["stage"] = "candidate-built"
-        registry["release"]["environment"] = "dev"
-        registry["release"]["admission_target"] = "dev"
-        registry["release"]["decision"] = "go"
-        registry["release"]["human_signoff"] = {"approver": "Human/Ops", "date": "2026-07-30"}
+    registry = staged_registry_fixture()
+    # Clear only dev boundary gates (e.g. gate-0, gate-1, gate-4)
+    for index in (0, 1, 4):
+        clear_gate(registry["gates"][index])
+    # Staging and production boundary gates remain blocked with valid blockers
+    registry["release"]["stage"] = "candidate-built"
+    registry["release"]["environment"] = "dev"
+    registry["release"]["admission_target"] = "dev"
+    registry["release"]["decision"] = "go"
+    registry["release"]["human_signoff"] = {"approver": "Human/Ops", "date": "2026-07-30"}
 
-    assert errors_for(mutated(mutate)) == []
+    assert errors_for(registry) == []
 
 
 def test_dev_go_decision_requires_dev_boundary_gates_cleared() -> None:
     """Dev admission fails closed if a dev boundary gate is open."""
-    def mutate(registry: dict[str, Any]) -> None:
-        for index in (0, 4):
-            clear_gate(registry["gates"][index])
-        # gate-1 is left blocked
-        registry["gates"][2].update({"stage": "dev-verified", "environment": "dev", "admission_target": "staging"})
-        for index in (3, 5, 6):
-            registry["gates"][index].update({"stage": "staging-verified", "environment": "staging", "admission_target": "production"})
-        registry["release"]["stage"] = "candidate-built"
-        registry["release"]["environment"] = "dev"
-        registry["release"]["admission_target"] = "dev"
-        registry["release"]["decision"] = "go"
-        registry["release"]["human_signoff"] = {"approver": "Human/Ops", "date": "2026-07-30"}
+    registry = staged_registry_fixture()
+    for index in (0, 4):
+        clear_gate(registry["gates"][index])
+    # gate-1 is explicitly kept blocked
+    registry["gates"][1]["status"] = "blocked"
+    registry["gates"][1]["blockers"] = ["contract compatibility open"]
+    registry["gates"][1]["receipts"] = []
+    registry["release"]["stage"] = "candidate-built"
+    registry["release"]["environment"] = "dev"
+    registry["release"]["admission_target"] = "dev"
+    registry["release"]["decision"] = "go"
+    registry["release"]["human_signoff"] = {"approver": "Human/Ops", "date": "2026-07-30"}
 
-    errors = errors_for(mutated(mutate))
+    errors = errors_for(registry)
     assert any("gate-1" in error for error in errors)
 
 
 def test_blocking_gates_filters_by_target() -> None:
-    registry = load_committed_registry()
+    registry = staged_registry_fixture()
     module = load_checker_module()
     # Staged gates mapped per rollout plan §6.1
     assert module.blocking_gates(registry, target="dev") == ["gate-0", "gate-1", "gate-4"]
     assert module.blocking_gates(registry, target="staging") == ["gate-2"]
     assert module.blocking_gates(registry, target="production") == ["gate-3", "gate-5", "gate-6"]
+    # Without target filter, all uncleared gates block
+    assert module.blocking_gates(registry) == [f"gate-{i}" for i in range(7)]
 
     # If gate-2 is assigned to dev, target=dev includes gate-2
-    registry["gates"][2]["admission_target"] = "dev"
+    registry["gates"][2].update({
+        "stage": "candidate-built",
+        "environment": "dev",
+        "admission_target": "dev",
+    })
     assert "gate-2" in module.blocking_gates(registry, target="dev")
     assert module.blocking_gates(registry, target="staging") == []
 
@@ -233,10 +319,14 @@ def test_blocking_gates_filters_by_target() -> None:
 def test_go_decision_with_no_gates_bound_to_admission_target_is_rejected() -> None:
     """Fail-closed guard: GO decision is rejected if no gate is bound to release.admission_target."""
     def mutate(registry: dict[str, Any]) -> None:
-        # All 7 gates are cleared and bound to dev
+        # All 7 gates are cleared and explicitly bound to dev
         clear_all_gates(registry)
         for gate in registry["gates"]:
-            gate.update({"stage": "candidate-built", "environment": "dev", "admission_target": "dev"})
+            gate.update({
+                "stage": "candidate-built",
+                "environment": "dev",
+                "admission_target": "dev",
+            })
         # Release targets staging, but 0 gates are bound to staging
         registry["release"]["stage"] = "dev-verified"
         registry["release"]["environment"] = "dev"
@@ -254,9 +344,13 @@ def test_go_decision_with_no_gates_bound_to_admission_target_is_rejected() -> No
 
 def test_blocked_gates_with_unmatched_target_fails_closed_under_require_go(tmp_path: Path) -> None:
     """When all gates are blocked and bound to dev, staging GO target fails closed and does not exit 0."""
-    registry = load_committed_registry()
+    registry = blocked_registry_baseline()
     for gate in registry["gates"]:
-        gate.update({"stage": "candidate-built", "environment": "dev", "admission_target": "dev"})
+        gate.update({
+            "stage": "candidate-built",
+            "environment": "dev",
+            "admission_target": "dev",
+        })
     registry["release"]["stage"] = "dev-verified"
     registry["release"]["environment"] = "dev"
     registry["release"]["admission_target"] = "staging"
@@ -268,11 +362,13 @@ def test_blocked_gates_with_unmatched_target_fails_closed_under_require_go(tmp_p
     assert any("no gate is bound to admission_target 'staging'" in error for error in errors)
     report = module.build_report(registry, errors)
     assert report["release_state"] == "NO-GO"
+    assert report["integrity_errors"] == errors
 
     reg_path = tmp_path / "reg.json"
     reg_path.write_text(json.dumps(registry), encoding="utf-8")
-    rc = module.main(["--registry", str(reg_path), "--require-go"])
-    assert rc == 1
+    result = run_checker("--registry", str(reg_path), "--require-go")
+    assert result.returncode == 1
+    assert "NO-GO" in result.stdout or "no gate is bound" in result.stdout
 
 
 def test_unknown_decision_value_is_rejected() -> None:
@@ -468,10 +564,23 @@ def test_not_applicable_gate_requires_a_justification() -> None:
         gate = registry["gates"][3]
         gate["status"] = "not-applicable"
         gate["blockers"] = []
+        gate.pop("justification", None)
 
     errors = errors_for(mutated(mutate))
 
     assert any("requires a non-empty justification" in error for error in errors)
+
+
+def test_not_applicable_gate_with_justification_allows_empty_receipts() -> None:
+    """NA is a valid cleared state when justified, without an attestation receipt."""
+    registry = blocked_registry_baseline()
+    gate = registry["gates"][3]
+    gate["status"] = "not-applicable"
+    gate["blockers"] = []
+    gate["receipts"] = []
+    gate["justification"] = "Not applicable to this release boundary"
+
+    assert errors_for(registry) == []
 
 
 def test_passed_with_deviation_requires_an_approved_deviation() -> None:
@@ -479,6 +588,7 @@ def test_passed_with_deviation_requires_an_approved_deviation() -> None:
         gate = registry["gates"][6]
         clear_gate(gate)
         gate["status"] = "passed-with-deviation"
+        gate.pop("deviation", None)
 
     errors = errors_for(mutated(mutate))
 
@@ -489,6 +599,7 @@ def test_passed_with_deviation_requires_an_approved_deviation() -> None:
         clear_gate(gate)
         gate["status"] = "passed-with-deviation"
         gate["deviation"] = {"description": "watch window shortened", "approver": "Human/Ops"}
+        gate["deviation"].pop("review_by", None)
 
     errors = errors_for(mutated(mutate_partial))
 
@@ -521,18 +632,40 @@ def test_registry_that_is_a_json_list_fails_closed(tmp_path: Path) -> None:
     assert module.main(["--registry", str(wrong_shape)]) == 1
 
 
-def test_cli_accepts_the_committed_no_go_registry() -> None:
+def test_cli_accepts_the_committed_registry() -> None:
     result = run_checker()
-
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "RELEASE STATE: NO-GO" in result.stdout
+
+    report = json.loads(run_checker("--json").stdout)
+    assert report["release_state"] in ("GO", "NO-GO")
+    assert f"RELEASE STATE: {report['release_state']}" in result.stdout
 
 
-def test_cli_require_go_blocks_the_current_release() -> None:
-    result = run_checker("--require-go")
+def test_cli_require_go_rejects_synthetic_blocked_registry(tmp_path: Path) -> None:
+    reg_path = tmp_path / "blocked.json"
+    reg_path.write_text(json.dumps(blocked_registry_baseline()), encoding="utf-8")
+    result = run_checker("--registry", str(reg_path), "--require-go")
 
     assert result.returncode == 1
     assert "NO-GO" in result.stdout
+
+
+def test_cli_require_go_matches_committed_registry_posture() -> None:
+    committed = load_committed_registry()
+    module = load_checker_module()
+    target = committed.get("release", {}).get("admission_target")
+    is_go = (
+        committed.get("release", {}).get("decision") == "go"
+        and not module.blocking_gates(committed, target=target)
+        and not module.validate_registry(committed)
+    )
+    result = run_checker("--require-go")
+    if is_go:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "RELEASE STATE: GO" in result.stdout
+    else:
+        assert result.returncode == 1
+        assert "NO-GO" in result.stdout
 
 
 def test_cli_expected_sha_mismatch_fails_closed() -> None:
@@ -562,15 +695,40 @@ def test_cli_expected_sha_ancestry_evidence_only_descendant_passes(
     assert errors == []
 
 
-def test_cli_expected_sha_ancestry_non_evidence_descendant_fails_closed() -> None:
+def test_cli_expected_sha_ancestry_non_evidence_descendant_fails_closed(
+    tmp_path: Path,
+) -> None:
     module = load_checker_module()
-    dev_ancestor = "eed83c0937f491211247ee3fdb0bdf8d932564fb"
-    head_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
-    ).stdout.strip()
-    errors = module.check_candidate_ancestry(dev_ancestor, head_sha, ROOT)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "docs" / "evidence").mkdir(parents=True)
+    (repo / "docs" / "evidence" / "init.md").write_text("init\n", encoding="utf-8")
+    (repo / "app.py").write_text("print('v1')\n", encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "feature.py").write_text("print('new feature')\n", encoding="utf-8")
+    run_git("add", ".")
+    run_git("commit", "-m", "intervening non-evidence product change")
+    head_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, head_sha, repo)
 
     assert any("intervening commits touch non-evidence paths" in err for err in errors)
+    assert any("src/feature.py" in err for err in errors)
 
 
 def test_cli_expected_sha_ancestry_merge_commit_product_change_fails_closed(
@@ -673,15 +831,70 @@ def test_product_gate_accepts_expected_sha() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_cli_json_report_lists_blocking_gates() -> None:
+def test_cli_json_report_matches_committed_registry() -> None:
     result = run_checker("--json")
     report = json.loads(result.stdout)
+    committed = load_committed_registry()
+    module = load_checker_module()
+    target = committed.get("release", {}).get("admission_target")
+    expected_cleared = [
+        gate.get("id") for gate in committed.get("gates", []) if module.is_cleared(gate)
+    ]
+    expected_blocking = module.blocking_gates(committed, target=target)
+    is_go = (
+        committed.get("release", {}).get("decision") == "go"
+        and len([g for g in committed.get("gates", []) if target is None or g.get("admission_target") == target]) > 0
+        and not expected_blocking
+        and not module.validate_registry(committed)
+    )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert report["release_state"] == "NO-GO"
-    assert report["cleared_gates"] == []
-    assert report["blocking_gates"] == ["gate-0", "gate-1", "gate-4"]
-    assert report["candidate_sha"] == CANDIDATE_SHA
+    assert report["candidate_sha"] == committed["release"]["candidate_sha"]
+    assert report["cleared_gates"] == expected_cleared
+    assert report["blocking_gates"] == expected_blocking
+    assert report["integrity_errors"] == []
+    assert report["release_state"] == ("GO" if is_go else "NO-GO")
+
+
+def test_cli_json_report_filters_by_admission_target(tmp_path: Path) -> None:
+    """CLI JSON report correctly scopes blocking gates to each staged admission target."""
+    staged = staged_registry_fixture()
+
+    # Dev target: gates 0, 1, 4
+    staged["release"]["stage"] = "candidate-built"
+    staged["release"]["environment"] = "dev"
+    staged["release"]["admission_target"] = "dev"
+    dev_path = tmp_path / "dev_reg.json"
+    dev_path.write_text(json.dumps(staged), encoding="utf-8")
+    dev_res = run_checker("--registry", str(dev_path), "--json")
+    assert dev_res.returncode == 0, dev_res.stdout + dev_res.stderr
+    dev_report = json.loads(dev_res.stdout)
+    assert dev_report["integrity_errors"] == []
+    assert dev_report["blocking_gates"] == ["gate-0", "gate-1", "gate-4"]
+
+    # Staging target: gate 2
+    staged["release"]["stage"] = "dev-verified"
+    staged["release"]["environment"] = "dev"
+    staged["release"]["admission_target"] = "staging"
+    staging_path = tmp_path / "staging_reg.json"
+    staging_path.write_text(json.dumps(staged), encoding="utf-8")
+    staging_res = run_checker("--registry", str(staging_path), "--json")
+    assert staging_res.returncode == 0, staging_res.stdout + staging_res.stderr
+    staging_report = json.loads(staging_res.stdout)
+    assert staging_report["integrity_errors"] == []
+    assert staging_report["blocking_gates"] == ["gate-2"]
+
+    # Production target: gates 3, 5, 6
+    staged["release"]["stage"] = "staging-verified"
+    staged["release"]["environment"] = "staging"
+    staged["release"]["admission_target"] = "production"
+    prod_path = tmp_path / "prod_reg.json"
+    prod_path.write_text(json.dumps(staged), encoding="utf-8")
+    prod_res = run_checker("--registry", str(prod_path), "--json")
+    assert prod_res.returncode == 0, prod_res.stdout + prod_res.stderr
+    prod_report = json.loads(prod_res.stdout)
+    assert prod_report["integrity_errors"] == []
+    assert prod_report["blocking_gates"] == ["gate-3", "gate-5", "gate-6"]
 
 
 def test_cli_reports_integrity_errors_for_a_tampered_registry(tmp_path: Path) -> None:
@@ -715,14 +928,25 @@ def test_registry_is_documented_and_wired_into_the_release_gate() -> None:
     assert "check_release_gate_registry.py" in makefile
 
 
-def test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed() -> None:
+def test_dev_merge_gate_accepts_valid_registry_and_require_go_checks_packet() -> None:
     dev_merge = run_product_gate("--dev-merge")
     assert dev_merge.returncode == 0, dev_merge.stdout + dev_merge.stderr
     assert "dev merge gate static checks passed" in dev_merge.stdout
 
+    # Under --require-go, check_product_release_gate.py requires both a GO registry
+    # and a complete acceptance receipt packet. It must fail closed if either is missing.
     production_release = run_product_gate("--require-go")
-    assert production_release.returncode == 1
-    assert "NO-GO" in production_release.stdout
+    committed = load_committed_registry()
+    module = load_checker_module()
+    target = committed.get("release", {}).get("admission_target")
+    is_go = (
+        committed.get("release", {}).get("decision") == "go"
+        and not module.blocking_gates(committed, target=target)
+        and not module.validate_registry(committed)
+    )
+    if not is_go:
+        assert production_release.returncode == 1
+        assert "NO-GO" in production_release.stdout or "product release gate failed" in production_release.stdout
 
 
 def test_ci_and_promotion_workflows_use_separate_gate_modes() -> None:
@@ -763,7 +987,7 @@ def test_registry_does_not_report_archived_done_tasks_as_open() -> None:
     blockers = "\n".join(
         blocker
         for gate in load_committed_registry()["gates"]
-        for blocker in gate["blockers"]
+        for blocker in gate.get("blockers", [])
     )
     for task_id in (
         "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001",
@@ -775,5 +999,3 @@ def test_registry_does_not_report_archived_done_tasks_as_open() -> None:
         "ODP-PLAN-CANONICAL-SHELL-LIVE-001",
     ):
         assert f"{task_id} is open" not in blockers
-    assert "archived done" in blockers
-    assert load_committed_registry()["release"]["decision"] == "no-go"

@@ -17,6 +17,7 @@ from dispatch_policy import (
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
     REASON_REVIEW_READY,
+    dispatch_priority_reason,
     dispatch_reason_priority,
     is_execution_dispatch_reason,
     normalized_status_set,
@@ -2291,12 +2292,20 @@ def _run_recovery(
     status=None,
     busy_task_ids=frozenset(),
     commit_ok=True,
+    timeline=None,
 ):
     """Drive the recovery over one task and report what it did.
 
     `reads` is the sequence of `gh pr view` answers: a dict is a JSON payload,
     a str is raw stdout, and None makes `gh` fail. The last entry repeats, so a
     single-element list means both reads agree.
+
+    `ci` and `ci_error` take the same shape: a bare answer applies to every CI
+    read, and a list walks the reads in order with its last entry repeating, so
+    a two-entry list is "the cached verdict said one thing and the live one says
+    another". `timeline`, if given, collects `("gh", selector)` and
+    `("ci", max_age_seconds)` in call order, which is how the ordering of the
+    two PR reads around the authorising CI read is asserted.
     """
     import github_bus
 
@@ -2319,9 +2328,11 @@ def _run_recovery(
 
     remaining = list(reads if reads is not None else [_pr_facts()])
     gh_calls: list[list[str]] = []
+    events = timeline if timeline is not None else []
 
     def fake_run_gh(args, **_kwargs):
         gh_calls.append(list(args))
+        events.append(("gh", args[2] if len(args) > 2 else ""))
         answer = remaining.pop(0) if len(remaining) > 1 else (remaining[0] if remaining else {})
         if answer is None:
             raise github_bus.GitHubBusOffline("gh could not reach api.github.com")
@@ -2330,10 +2341,15 @@ def _run_recovery(
             args=["gh", *args], returncode=0, stdout=stdout, stderr=""
         )
 
-    def fake_ci(_task_id, *_args, **_kwargs):
-        if ci_error is not None:
-            raise ci_error
-        return ci
+    ci_answers = list(ci) if isinstance(ci, list) else [ci]
+    ci_errors = list(ci_error) if isinstance(ci_error, list) else [ci_error]
+
+    def fake_ci(_task_id, *_args, **kwargs):
+        events.append(("ci", kwargs.get("max_age_seconds")))
+        error = ci_errors.pop(0) if len(ci_errors) > 1 else ci_errors[0]
+        if error is not None:
+            raise error
+        return ci_answers.pop(0) if len(ci_answers) > 1 else ci_answers[0]
 
     logged: list[dict] = []
     record = lambda _cfg, event: logged.append(event)  # noqa: E731
@@ -2462,6 +2478,76 @@ def test_recovery_declines_when_the_facts_change_between_the_two_reads() -> None
         assert task["status"] == "review"
         assert dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD not in task
         assert len(gh_calls) == 2
+
+
+def test_the_authorising_ci_read_is_taken_fresh_and_after_the_first_pr_read() -> None:
+    """The premise of this repair cannot be served from a cache.
+
+    `task_pr_ci_status` answers from a ten-second cache by default, so the
+    verdict that opened this lane may describe a moment before the PR reads
+    that follow it. That first read stays -- it is the cheap way to drop the
+    tasks that are not this shape -- but the transition is authorised by a
+    second read taken with the cache bypassed, after the PR facts and before
+    they are confirmed unchanged.
+    """
+    task = _conflicted_review_task()
+    timeline: list[tuple[str, object]] = []
+
+    changed, gh_calls, _logged, _status = _run_recovery(task, timeline=timeline)
+
+    assert changed is True
+    assert len(gh_calls) == 2
+    assert timeline == [
+        # Cheap disqualifier: whatever the reader already knows.
+        ("ci", None),
+        # PR facts A.
+        ("gh", "1170"),
+        # The read the transition actually rests on, cache bypassed.
+        ("ci", 0),
+        # PR facts B, confirming nothing moved while CI was asked.
+        ("gh", "1170"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        # The conflict was resolved a moment ago and GitHub has started the
+        # checks. Requeueing now pulls a review out from under a live run.
+        ("checks_started", {"ci": [("OPEN", "none"), ("OPEN", "pending")]}),
+        ("checks_finished_green", {"ci": [("OPEN", "none"), ("OPEN", "success")]}),
+        ("checks_finished_red", {"ci": [("OPEN", "none"), ("OPEN", "failure")]}),
+        # `gh` could not answer the second time; an unreadable state is not a
+        # confirmed empty one.
+        ("ci_unknown", {"ci": [("OPEN", "none"), ("OPEN", "unknown")]}),
+        ("pr_unreadable", {"ci": [("OPEN", "none"), (None, "unknown")]}),
+        # The PR stopped being an open review between the two reads.
+        ("pr_closed", {"ci": [("OPEN", "none"), ("CLOSED", "none")]}),
+        ("pr_merged", {"ci": [("OPEN", "none"), ("MERGED", "none")]}),
+        # The live read itself failed.
+        ("fresh_read_raises", {"ci_error": [None, RuntimeError("gh unreachable")]}),
+    ],
+)
+def test_ci_that_starts_after_the_cached_verdict_stops_the_recovery(
+    label: str, kwargs: dict
+) -> None:
+    """The race the single cached read could not see."""
+    task = _conflicted_review_task()
+    timeline: list[tuple[str, object]] = []
+
+    changed, gh_calls, logged, status = _run_recovery(task, timeline=timeline, **kwargs)
+
+    assert changed is False, label
+    assert task["status"] == "review", label
+    # No marker: this head is unresolved, not recovered, and a later tick that
+    # finds it genuinely checkless must still be able to act on it.
+    assert dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD not in task, label
+    assert task["waiting_for"] == "Codex", label
+    assert status["handoffs"][0]["status"] == "pending", label
+    assert logged == [], label
+    # It stopped at the fresh read: PR facts A was taken, PR facts B never was.
+    assert timeline == [("ci", None), ("gh", "1170"), ("ci", 0)], label
+    assert len(gh_calls) == 1, label
 
 
 @pytest.mark.parametrize(
@@ -2723,3 +2809,316 @@ def test_dispatch_ready_tasks_recovers_a_conflicted_review_without_a_reviewer_sl
     assert task["owner"] == "Claude"
     assert task[dispatch_engine.REVIEW_CONFLICT_RECOVERY_HEAD_FIELD] == CONFLICT_HEAD
     assert status["handoffs"][0]["status"] == "done"
+
+
+# --- Preemption readiness ----------------------------------------------------
+#
+# `higher_priority_ready_task_exists` decides whether a running worker is killed
+# so a better-ranked candidate can have its slot. Between 2026-09-06 11:01Z and
+# 2026-09-07 04:03Z it killed one Codex2 review worker 286 consecutive times:
+# its review fast path scored any review-status task naming the agent as
+# reviewer as priority 0 on status and role alone, and the three P0 reviews that
+# outranked it -- ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001 (`non_dispatchable`),
+# ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 and ODP-CODEX-ULTRA-DRIFT-REPAIR-001
+# (both CI failure) -- could never be dispatched into the slot they emptied.
+# These cover the shrunk incident, and the preemptions that must still happen.
+
+PREEMPT_REVIEW_HEAD = "a1b2c3d4" * 5
+PREEMPT_OTHER_HEAD = "f9e8d7c6" * 5
+
+
+def _preemption_config(slot_count: int = 1) -> dict:
+    """Codex2 with `slot_count` worker slots, reviewing an independent pool."""
+    cfg = _base_test_config()
+    cfg["schema"] = {
+        "tasks_path": "tasks",
+        "task_id_field": "id",
+        "assignee_field": "owner",
+        "reviewer_field": "reviewer",
+    }
+    slots = [f"codex2_slot_{index}" for index in range(1, slot_count + 1)]
+    cfg["agents"]["codex2"] = {
+        "id": "codex2",
+        "display_name": "Codex2",
+        "provider": "codex",
+        "account_pool": "codex2",
+        "worker_slots": slots,
+    }
+    for slot in slots:
+        cfg["agents"][slot] = {
+            "id": slot,
+            "display_name": "Codex2",
+            "provider": "codex",
+            "dispatch_slot_for": "codex2",
+        }
+    return cfg
+
+
+def _codex2_review_worker() -> dict:
+    now_iso = supervisor.utc_now()
+    return {
+        "run_id": "run-codex2-review",
+        "task_id": "P1-REVIEW-001",
+        "provider": "codex",
+        "agent_id": "codex2_slot_1",
+        "logical_agent_id": "codex2",
+        "status": "running",
+        "queue_event_id": "evt-codex2-review",
+        "pid": 4242,
+        "last_event_at": now_iso,
+        "last_heartbeat_at": now_iso,
+        "request_snapshot": {"reason": REASON_REVIEW_READY},
+    }
+
+
+def _codex2_state(worker: dict) -> dict:
+    return {
+        "queue": {
+            "events": {
+                worker["queue_event_id"]: {
+                    "status": "started",
+                    "run_id": worker["run_id"],
+                }
+            }
+        },
+        "workers": {worker["run_id"]: worker},
+    }
+
+
+def _review_task(task_id: str, priority: str, *, head: str = PREEMPT_REVIEW_HEAD, **extra) -> dict:
+    task = {
+        "id": task_id,
+        "status": "review",
+        "owner": "Claude",
+        "reviewer": "Codex2",
+        "priority": priority,
+        "depends_on": [],
+        "review_submission": {"pr_number": 4100, "remote_sha": head},
+    }
+    task.update(extra)
+    return task
+
+
+def _readiness_probe(
+    ci_by_task: dict[str, tuple[str, str]],
+    sha_by_task: dict[str, str],
+) -> tuple[mock.Mock, mock.Mock]:
+    """Stand-ins for the two exact-head readers, recording who was asked."""
+
+    def fake_sha(task_id, *_args, **_kwargs):
+        return sha_by_task.get(str(task_id))
+
+    def fake_ci(task_id, *_args, **_kwargs):
+        return ci_by_task.get(str(task_id), ("OPEN", "unknown"))
+
+    return mock.Mock(side_effect=fake_sha), mock.Mock(side_effect=fake_ci)
+
+
+def test_dispatch_priority_reason_round_trips_every_lane() -> None:
+    for reason in (
+        REASON_REVIEW_READY,
+        REASON_OWNED_FINALIZE,
+        REASON_OWNED_IN_PROGRESS,
+        REASON_OWNED_READY,
+        REASON_HELPER_CLAIM,
+    ):
+        assert dispatch_priority_reason(dispatch_reason_priority(reason)) == reason
+    assert dispatch_priority_reason(None) is None
+    assert dispatch_priority_reason(99) is None
+    # True == 1 in Python, and a boolean reaching here is a caller bug, not the
+    # finalize lane.
+    assert dispatch_priority_reason(True) is None
+
+
+def test_undispatchable_p0_reviews_do_not_preempt_a_running_p1_review() -> None:
+    """The 286-loop, shrunk: no P0 candidate here can take the slot it frees."""
+    cfg = _preemption_config()
+    worker = _codex2_review_worker()
+    state = _codex2_state(worker)
+
+    task_map = {
+        "P1-REVIEW-001": _review_task("P1-REVIEW-001", "P1"),
+        # ODP-ROLE-PROVIDER-CODEX-LIVE-ROLLOUT-001: parked for a human decision.
+        "P0-NON-DISPATCHABLE": _review_task(
+            "P0-NON-DISPATCHABLE", "P0", non_dispatchable=True
+        ),
+        # ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 / ODP-CODEX-ULTRA-DRIFT-REPAIR-001.
+        "P0-CI-FAILED": _review_task("P0-CI-FAILED", "P0"),
+        "P0-CI-PENDING": _review_task("P0-CI-PENDING", "P0"),
+        # `gh` could not answer: no evidence is not evidence of readiness.
+        "P0-CI-UNKNOWN": _review_task("P0-CI-UNKNOWN", "P0"),
+        # Reviewed head no longer on origin: the submission is stale.
+        "P0-HEAD-DRIFTED": _review_task("P0-HEAD-DRIFTED", "P0"),
+        # Already approved, so the reviewer lane is finished with it.
+        "P0-ALREADY-APPROVED": _review_task(
+            "P0-ALREADY-APPROVED", "P0", approved_head=PREEMPT_REVIEW_HEAD
+        ),
+    }
+    ci_by_task = {
+        "P0-CI-FAILED": ("OPEN", "failure"),
+        "P0-CI-PENDING": ("OPEN", "pending"),
+        "P0-CI-UNKNOWN": ("OPEN", "unknown"),
+        "P0-HEAD-DRIFTED": ("OPEN", "success"),
+        "P0-NON-DISPATCHABLE": ("OPEN", "success"),
+        "P0-ALREADY-APPROVED": ("OPEN", "success"),
+    }
+    sha_by_task = dict.fromkeys(task_map, PREEMPT_REVIEW_HEAD)
+    sha_by_task["P0-HEAD-DRIFTED"] = PREEMPT_OTHER_HEAD
+    resolve_sha, pr_ci_status = _readiness_probe(ci_by_task, sha_by_task)
+
+    with (
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", resolve_sha),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", pr_ci_status),
+    ):
+        assert (
+            supervisor.higher_priority_ready_task_exists(cfg, worker, task_map, state)
+            is False
+        )
+
+    # A task the control plane never hands to a worker is refused before any
+    # exact-head read: probing it would be a call with no reachable outcome.
+    probed = {call.args[0] for call in resolve_sha.call_args_list}
+    assert "P0-NON-DISPATCHABLE" not in probed
+    assert "P1-REVIEW-001" not in probed
+
+
+def test_dispatchable_p0_review_still_preempts_when_no_slot_is_free() -> None:
+    cfg = _preemption_config()
+    worker = _codex2_review_worker()
+    state = _codex2_state(worker)
+
+    task_map = {
+        "P1-REVIEW-001": _review_task("P1-REVIEW-001", "P1"),
+        "P0-READY": _review_task("P0-READY", "P0"),
+    }
+    resolve_sha, pr_ci_status = _readiness_probe(
+        {"P0-READY": ("OPEN", "success")},
+        dict.fromkeys(task_map, PREEMPT_REVIEW_HEAD),
+    )
+
+    with (
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", resolve_sha),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", pr_ci_status),
+    ):
+        assert (
+            supervisor.higher_priority_ready_task_exists(cfg, worker, task_map, state)
+            is True
+        )
+
+
+def test_a_free_slot_is_used_before_a_running_worker_is_killed() -> None:
+    """Capacity comes first: the same ready P0 goes to the idle slot."""
+    cfg = _preemption_config(slot_count=2)
+    worker = _codex2_review_worker()
+    state = _codex2_state(worker)
+
+    task_map = {
+        "P1-REVIEW-001": _review_task("P1-REVIEW-001", "P1"),
+        "P0-READY": _review_task("P0-READY", "P0"),
+    }
+    resolve_sha, pr_ci_status = _readiness_probe(
+        {"P0-READY": ("OPEN", "success")},
+        dict.fromkeys(task_map, PREEMPT_REVIEW_HEAD),
+    )
+
+    with (
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", resolve_sha),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", pr_ci_status),
+    ):
+        assert (
+            supervisor.higher_priority_ready_task_exists(cfg, worker, task_map, state)
+            is False
+        )
+
+
+def test_role_policy_that_excludes_the_reviewer_lane_is_not_a_preemption_reason() -> None:
+    """A P0 review this agent may not hold cannot be why its worker dies."""
+    cfg = _preemption_config()
+    cfg["ready_dispatcher"]["role_provider_policy"] = {
+        "enabled": True,
+        "rules": [{"roles": ["reviewer"], "providers": ["claude"]}],
+    }
+    worker = _codex2_review_worker()
+    state = _codex2_state(worker)
+
+    task_map = {
+        "P1-REVIEW-001": _review_task("P1-REVIEW-001", "P1"),
+        "P0-READY": _review_task("P0-READY", "P0"),
+    }
+    resolve_sha, pr_ci_status = _readiness_probe(
+        {"P0-READY": ("OPEN", "success")},
+        dict.fromkeys(task_map, PREEMPT_REVIEW_HEAD),
+    )
+
+    with (
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor.runtime_ai_status, "resolve_task_sha", resolve_sha),
+        mock.patch.object(supervisor.runtime_ai_status, "task_pr_ci_status", pr_ci_status),
+    ):
+        assert (
+            supervisor.higher_priority_ready_task_exists(cfg, worker, task_map, state)
+            is False
+        )
+
+
+def test_p0_owned_work_preempts_only_once_its_dependencies_are_done() -> None:
+    """Blocked and dependency-incomplete P0 work is not executable work."""
+    cfg = _preemption_config()
+    now_iso = supervisor.utc_now()
+    worker = {
+        "run_id": "run-codex2-owned",
+        "task_id": "P1-OWNED-001",
+        "provider": "codex",
+        "agent_id": "codex2_slot_1",
+        "logical_agent_id": "codex2",
+        "status": "running",
+        "queue_event_id": "evt-codex2-owned",
+        "pid": 4243,
+        "last_event_at": now_iso,
+        "last_heartbeat_at": now_iso,
+        "request_snapshot": {"reason": REASON_OWNED_IN_PROGRESS},
+    }
+    state = _codex2_state(worker)
+
+    current = {
+        "id": "P1-OWNED-001",
+        "status": "in_progress",
+        "owner": "Codex2",
+        "reviewer": "Claude",
+        "priority": "P1",
+        "depends_on": [],
+    }
+    blocker = {
+        "id": "P0-BLOCKER",
+        "status": "in_progress",
+        "owner": "Claude",
+        "reviewer": "Codex2",
+        "priority": "P0",
+        "depends_on": [],
+    }
+    waiting = {
+        "id": "P0-WAITING",
+        "status": "todo",
+        "owner": "Codex2",
+        "reviewer": "Claude",
+        "priority": "P0",
+        "depends_on": ["P0-BLOCKER"],
+    }
+    task_map = {t["id"]: t for t in (current, blocker, waiting)}
+
+    with mock.patch.object(supervisor, "load_event_queue", return_value=[]):
+        assert (
+            supervisor.higher_priority_ready_task_exists(cfg, worker, task_map, state)
+            is False
+        )
+
+        # Positive control: the same P0 becomes a preemption reason the moment
+        # its dependency is done and it can actually be started.
+        blocker["status"] = "done"
+        assert (
+            supervisor.higher_priority_ready_task_exists(cfg, worker, task_map, state)
+            is True
+        )

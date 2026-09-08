@@ -1,0 +1,1476 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002",
+  "generated_at_utc": "2026-09-07T16:03:04Z",
+  "repository": "alfloop-dev/odayplus",
+  "bound_commit_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+  "executed_by": "Claude (helper execution lease; canonical owner Antigravity4, reviewer Codex)",
+  "scope_note": "讀取式 preflight。未建立、修改或刪除任何 GCP/GitHub 資源，未變更 IAM，未發起互動登入，未替換 credential。",
+  "gcp_identity": {
+    "active_account": "deborah.lu@dev.cctech-support.com",
+    "configured_project": "odayplus-runtime-20260825",
+    "credential_store_last_modified_utc": "2026-09-01T12:44:38Z",
+    "application_default_credentials_present": false,
+    "credential_status": "expired_requires_reauthentication",
+    "root_cause_class": "authentication",
+    "root_cause_detail": "Reauthentication failed. cannot prompt during non-interactive execution.",
+    "evidence": "docs/evidence/runtime/ODP-GCP-STAGING-EXECUTION-PREFLIGHT-002/raw/*.err",
+    "not_root_cause": [
+      "authorization_permission_denied",
+      "resource_absent",
+      "network_unreachable",
+      "quota"
+    ],
+    "tokens_recorded": false
+  },
+  "gcp_readback": {
+    "attempted": 13,
+    "succeeded": 0,
+    "failed_authentication": 13,
+    "failed_permission_denied": 0,
+    "returned_not_found": 0,
+    "conclusion": "無法對任何 GCP 目標作存在性或 IAM 判定。所有 12 次讀取在送出 API 請求前即因 token refresh 失敗中止，因此不得推論資源缺失。",
+    "targets_not_verified": [
+      "dev/staging Cloud Run services (oday-api, oday-web / oday-staging-api, oday-staging-web)",
+      "dev/staging Cloud Run jobs (migration, worker, scheduler)",
+      "VPC network / subnetwork / firewall default-deny egress",
+      "Terraform state bucket metadata + IAM (CMEK, versioning, retention, public-access-prevention)",
+      "recovery bundle bucket metadata + IAM",
+      "Cloud SQL instances (oday-dev-sql, oday-staging-sql)",
+      "KMS keyrings/keys, Artifact Registry repos, Secret Manager secret names",
+      "WIF pool provider github-actions + deployer service account"
+    ],
+    "commands": [
+      {
+        "label": "projects-describe-runtime",
+        "command": [
+          "gcloud",
+          "projects",
+          "describe",
+          "odayplus-runtime-20260825",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:56:49Z",
+        "ended_at_utc": "2026-09-07T15:56:50Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 380,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.projects.describe) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "run-services-list",
+        "command": [
+          "gcloud",
+          "run",
+          "services",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--region=asia-east1",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:12Z",
+        "ended_at_utc": "2026-09-07T15:57:14Z",
+        "duration_seconds": 2,
+        "exit_code": 1,
+        "stderr_bytes": 380,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.run.services.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "run-jobs-list",
+        "command": [
+          "gcloud",
+          "run",
+          "jobs",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--region=asia-east1",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:14Z",
+        "ended_at_utc": "2026-09-07T15:57:16Z",
+        "duration_seconds": 2,
+        "exit_code": 1,
+        "stderr_bytes": 376,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.run.jobs.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "compute-networks-list",
+        "command": [
+          "gcloud",
+          "compute",
+          "networks",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:16Z",
+        "ended_at_utc": "2026-09-07T15:57:18Z",
+        "duration_seconds": 2,
+        "exit_code": 1,
+        "stderr_bytes": 384,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.compute.networks.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "compute-subnets-list",
+        "command": [
+          "gcloud",
+          "compute",
+          "networks",
+          "subnets",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--filter=region:asia-east1",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:18Z",
+        "ended_at_utc": "2026-09-07T15:57:19Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 392,
+        "stdout_bytes": 3,
+        "stderr_head": "ERROR: (gcloud.compute.networks.subnets.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "compute-firewall-list",
+        "command": [
+          "gcloud",
+          "compute",
+          "firewall-rules",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:19Z",
+        "ended_at_utc": "2026-09-07T15:57:20Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 390,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.compute.firewall-rules.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "sql-instances-list",
+        "command": [
+          "gcloud",
+          "sql",
+          "instances",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:20Z",
+        "ended_at_utc": "2026-09-07T15:57:22Z",
+        "duration_seconds": 2,
+        "exit_code": 1,
+        "stderr_bytes": 381,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.sql.instances.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "storage-buckets-list",
+        "command": [
+          "gcloud",
+          "storage",
+          "buckets",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:22Z",
+        "ended_at_utc": "2026-09-07T15:57:23Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 383,
+        "stdout_bytes": 3,
+        "stderr_head": "ERROR: (gcloud.storage.buckets.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "kms-keyrings-list",
+        "command": [
+          "gcloud",
+          "kms",
+          "keyrings",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--location=asia-east1",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:23Z",
+        "ended_at_utc": "2026-09-07T15:57:24Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 380,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.kms.keyrings.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "artifacts-repos-list",
+        "command": [
+          "gcloud",
+          "artifacts",
+          "repositories",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--location=asia-east1",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:25Z",
+        "ended_at_utc": "2026-09-07T15:57:26Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 175,
+        "stdout_bytes": 0,
+        "stderr_head": "Listing items under project odayplus-runtime-20260825, location asia-east1.\n\nERROR: (gcloud.artifacts.repositories.list) 'TokenRefreshError' object has no attribute 'content'\n"
+      },
+      {
+        "label": "secrets-list",
+        "command": [
+          "gcloud",
+          "secrets",
+          "list",
+          "--project=odayplus-runtime-20260825",
+          "--format=value(name)"
+        ],
+        "started_at_utc": "2026-09-07T15:57:26Z",
+        "ended_at_utc": "2026-09-07T15:57:27Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 375,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.secrets.list) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "wif-pool-describe",
+        "command": [
+          "gcloud",
+          "iam",
+          "workload-identity-pools",
+          "describe",
+          "github-actions",
+          "--project=odayplus-runtime-20260825",
+          "--location=global",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:27Z",
+        "ended_at_utc": "2026-09-07T15:57:28Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 399,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.iam.workload-identity-pools.describe) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      },
+      {
+        "label": "sa-describe-deployer",
+        "command": [
+          "gcloud",
+          "iam",
+          "service-accounts",
+          "describe",
+          "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+          "--project=odayplus-runtime-20260825",
+          "--format=json"
+        ],
+        "started_at_utc": "2026-09-07T15:57:28Z",
+        "ended_at_utc": "2026-09-07T15:57:29Z",
+        "duration_seconds": 1,
+        "exit_code": 1,
+        "stderr_bytes": 392,
+        "stdout_bytes": 0,
+        "stderr_head": "ERROR: (gcloud.iam.service-accounts.describe) There was a problem refreshing your current auth tokens: Reauthentication failed. cannot prompt during non-interactive execution.\nPlease run:\n\n  $ gcloud auth login\n\nto obtain new credentials.\n\nIf you have already logged in with a different account, run:\n\n  $ gcloud config set account ACCOUNT\n\nto select an already authenticated account to use.\n"
+      }
+    ]
+  },
+  "github_readback": {
+    "authenticated_as": "ajoe734",
+    "token_scopes": [
+      "gist",
+      "read:org",
+      "repo",
+      "workflow"
+    ],
+    "environments": [
+      "dev",
+      "dev-build",
+      "production",
+      "production-build",
+      "staging",
+      "staging-build"
+    ],
+    "protection": {
+      "dev": "none",
+      "staging": "required_reviewers: Alien-alfaloop, ajoe734",
+      "production": "required_reviewers: Alien-alfaloop, ajoe734",
+      "dev-build": "none",
+      "staging-build": "none",
+      "production-build": "none"
+    },
+    "variable_counts": {
+      "dev": 41,
+      "staging": 44,
+      "production": 42,
+      "dev-build": 12,
+      "staging-build": 9,
+      "production-build": 9
+    },
+    "environment_secret_counts": {
+      "dev": 0,
+      "staging": 0,
+      "production": 0,
+      "dev-build": 0,
+      "staging-build": 0,
+      "production-build": 0
+    },
+    "repository_level_variable_count": 0,
+    "pagination_note": "以 gh api --paginate 取回；total_count 與實際筆數逐一核對相符，未受單頁 30 筆截斷影響。"
+  },
+  "required_variable_matrix": {
+    "dev": [
+      {
+        "script_env_name": "GCP_PROJECT",
+        "github_variable_name": "GCP_PROJECT_ID",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "odayplus-runtime-20260825",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_REGION",
+        "github_variable_name": "GCP_REGION",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "asia-east1",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_AR_REPO",
+        "github_variable_name": "GCP_AR_REPO",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-plus-dev",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_CLOUD_SQL_INSTANCE",
+        "github_variable_name": "GCP_CLOUD_SQL_INSTANCE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "odayplus-runtime-20260825:asia-east1:oday-dev-sql",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "API_SERVICE",
+        "github_variable_name": "ODP_CLOUD_RUN_API_SERVICE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-api",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WEB_SERVICE",
+        "github_variable_name": "ODP_CLOUD_RUN_WEB_SERVICE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-web",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "MIGRATION_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_MIGRATION_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-migration",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WORKER_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_WORKER_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-worker",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "SCHEDULER_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-scheduler",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WORKER_SCHEDULE_NAME",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-worker-trigger",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "SCHEDULER_SCHEDULE_NAME",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-scheduler-trigger",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_WORKER_CRON",
+        "github_variable_name": "ODP_WORKER_CRON",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "*/5 * * * *",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SCHEDULER_CRON",
+        "github_variable_name": "ODP_SCHEDULER_CRON",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "0 * * * *",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SCHEDULER_TIME_ZONE",
+        "github_variable_name": "ODP_SCHEDULER_TIME_ZONE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "Asia/Taipei",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SNAPSHOT_BUCKET",
+        "github_variable_name": "ODP_SNAPSHOT_BUCKET",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-dev-source-snapshots-odayplus-runtime-20260825",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "MLFLOW_TRACKING_URI",
+        "github_variable_name": "MLFLOW_TRACKING_URI",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-mlflow-767864276141.asia-east1.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+        "github_variable_name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-mlflow-767864276141.asia-east1.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_FORECAST_ENGINE",
+        "github_variable_name": "ODP_FORECAST_ENGINE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "statsforecast",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_FORECAST_MODEL",
+        "github_variable_name": "ODP_FORECAST_MODEL",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "seasonal_naive",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_ISSUER",
+        "github_variable_name": "ODP_AUTH_ISSUER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://accounts.google.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_AUDIENCES",
+        "github_variable_name": "ODP_AUTH_AUDIENCES",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-api-767864276141.asia-east1.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_JWKS_URI",
+        "github_variable_name": "ODP_AUTH_JWKS_URI",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://www.googleapis.com/oauth2/v3/certs",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_WEB_BASE_URL",
+        "github_variable_name": "ODP_WEB_BASE_URL",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_OPERATOR_SMOKE_ROLE",
+        "github_variable_name": "ODP_OPERATOR_SMOKE_ROLE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "operations_manager,model_owner,data_owner",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODAY_DATABASE_URL_SECRET",
+        "github_variable_name": "ODAY_DATABASE_URL_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "github_variable_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "github_variable_name": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "github_variable_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "github_variable_name": "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "requirement_group": "sources_off_vpc",
+        "required_by": "product_ops/deployment/deploy_cloud_run_waji.sh:81-95 (sources-off gate)",
+        "status": "present",
+        "value": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_RUN_VPC_EGRESS",
+        "github_variable_name": "ODP_CLOUD_RUN_VPC_EGRESS",
+        "requirement_group": "sources_off_vpc",
+        "required_by": "product_ops/deployment/deploy_cloud_run_waji.sh:81-95 (sources-off gate)",
+        "status": "present",
+        "value": "all-traffic",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      }
+    ],
+    "staging": [
+      {
+        "script_env_name": "ODP_STAGING_VPC_NETWORK",
+        "github_variable_name": "ODP_STAGING_VPC_NETWORK",
+        "requirement_group": "staging_foundation",
+        "required_by": "'.github/workflows/deploy-dev.yml':1204-1250 (staging handoff + staging_lifecycle create)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_STAGING_VPC_SUBNETWORK",
+        "github_variable_name": "ODP_STAGING_VPC_SUBNETWORK",
+        "requirement_group": "staging_foundation",
+        "required_by": "'.github/workflows/deploy-dev.yml':1204-1250 (staging handoff + staging_lifecycle create)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_STAGING_KMS_KEY_ID",
+        "github_variable_name": "ODP_STAGING_KMS_KEY_ID",
+        "requirement_group": "staging_foundation",
+        "required_by": "'.github/workflows/deploy-dev.yml':1204-1250 (staging handoff + staging_lifecycle create)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+        "requirement_group": "staging_foundation",
+        "required_by": "'.github/workflows/deploy-dev.yml':1204-1250 (staging handoff + staging_lifecycle create)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+        "github_variable_name": "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+        "requirement_group": "staging_foundation",
+        "required_by": "'.github/workflows/deploy-dev.yml':1204-1250 (staging handoff + staging_lifecycle create)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+        "github_variable_name": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+        "requirement_group": "staging_foundation",
+        "required_by": "'.github/workflows/deploy-dev.yml':1204-1250 (staging handoff + staging_lifecycle create)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
+        "github_variable_name": "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
+        "requirement_group": "staging_closeout",
+        "required_by": "'.github/workflows/deploy-dev.yml':1476-1482 (staging closeout)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "GCP_PROJECT",
+        "github_variable_name": "GCP_PROJECT_ID",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "odayplus-runtime-20260825",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_REGION",
+        "github_variable_name": "GCP_REGION",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "asia-east1",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_AR_REPO",
+        "github_variable_name": "GCP_AR_REPO",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-plus-dev",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_CLOUD_SQL_INSTANCE",
+        "github_variable_name": "GCP_CLOUD_SQL_INSTANCE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "API_SERVICE",
+        "github_variable_name": "ODP_CLOUD_RUN_API_SERVICE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-api",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WEB_SERVICE",
+        "github_variable_name": "ODP_CLOUD_RUN_WEB_SERVICE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-web",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "MIGRATION_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_MIGRATION_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-migration",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WORKER_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_WORKER_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-worker",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "SCHEDULER_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-scheduler",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WORKER_SCHEDULE_NAME",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-worker-trigger",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "SCHEDULER_SCHEDULE_NAME",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-scheduler-trigger",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_WORKER_CRON",
+        "github_variable_name": "ODP_WORKER_CRON",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "*/5 * * * *",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SCHEDULER_CRON",
+        "github_variable_name": "ODP_SCHEDULER_CRON",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "0 * * * *",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SCHEDULER_TIME_ZONE",
+        "github_variable_name": "ODP_SCHEDULER_TIME_ZONE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "Asia/Taipei",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SNAPSHOT_BUCKET",
+        "github_variable_name": "ODP_SNAPSHOT_BUCKET",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-staging-source-snapshots-odayplus-runtime-20260825",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "MLFLOW_TRACKING_URI",
+        "github_variable_name": "MLFLOW_TRACKING_URI",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-staging-mlflow-767864276141.asia-east1.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+        "github_variable_name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-staging-mlflow-767864276141.asia-east1.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_FORECAST_ENGINE",
+        "github_variable_name": "ODP_FORECAST_ENGINE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "statsforecast",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_FORECAST_MODEL",
+        "github_variable_name": "ODP_FORECAST_MODEL",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "seasonal_naive",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_ISSUER",
+        "github_variable_name": "ODP_AUTH_ISSUER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://accounts.google.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_AUDIENCES",
+        "github_variable_name": "ODP_AUTH_AUDIENCES",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-staging-api-767864276141.asia-east1.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_JWKS_URI",
+        "github_variable_name": "ODP_AUTH_JWKS_URI",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://www.googleapis.com/oauth2/v3/certs",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_WEB_BASE_URL",
+        "github_variable_name": "ODP_WEB_BASE_URL",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_OPERATOR_SMOKE_ROLE",
+        "github_variable_name": "ODP_OPERATOR_SMOKE_ROLE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "operations_manager,model_owner,data_owner",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODAY_DATABASE_URL_SECRET",
+        "github_variable_name": "ODAY_DATABASE_URL_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "github_variable_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "github_variable_name": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "github_variable_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      }
+    ],
+    "production": [
+      {
+        "script_env_name": "GCP_PROJECT",
+        "github_variable_name": "GCP_PROJECT_ID",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "odayplus-prod-20260826",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_REGION",
+        "github_variable_name": "GCP_REGION",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "asia-east1",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_AR_REPO",
+        "github_variable_name": "GCP_AR_REPO",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-plus",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "GCP_CLOUD_SQL_INSTANCE",
+        "github_variable_name": "GCP_CLOUD_SQL_INSTANCE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "odayplus-prod-20260826:asia-east1:oday-prod-sql",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "API_SERVICE",
+        "github_variable_name": "ODP_CLOUD_RUN_API_SERVICE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-api",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WEB_SERVICE",
+        "github_variable_name": "ODP_CLOUD_RUN_WEB_SERVICE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-web",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "MIGRATION_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_MIGRATION_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-migration",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WORKER_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_WORKER_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-worker",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "SCHEDULER_JOB",
+        "github_variable_name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-scheduler",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "WORKER_SCHEDULE_NAME",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-worker-trigger",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "SCHEDULER_SCHEDULE_NAME",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-scheduler-trigger",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-prod-scheduler@odayplus-prod-20260826.iam.gserviceaccount.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_WORKER_CRON",
+        "github_variable_name": "ODP_WORKER_CRON",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "*/5 * * * *",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SCHEDULER_CRON",
+        "github_variable_name": "ODP_SCHEDULER_CRON",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "0 * * * *",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SCHEDULER_TIME_ZONE",
+        "github_variable_name": "ODP_SCHEDULER_TIME_ZONE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "Asia/Taipei",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_SNAPSHOT_BUCKET",
+        "github_variable_name": "ODP_SNAPSHOT_BUCKET",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "odayplus-prod-20260826-source-snapshots",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "MLFLOW_TRACKING_URI",
+        "github_variable_name": "MLFLOW_TRACKING_URI",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+        "github_variable_name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_FORECAST_ENGINE",
+        "github_variable_name": "ODP_FORECAST_ENGINE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "statsforecast",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_FORECAST_MODEL",
+        "github_variable_name": "ODP_FORECAST_MODEL",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "seasonal_naive",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_ISSUER",
+        "github_variable_name": "ODP_AUTH_ISSUER",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://accounts.google.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_AUDIENCES",
+        "github_variable_name": "ODP_AUTH_AUDIENCES",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://oday-api-365886461656.asia-east1.run.app",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_JWKS_URI",
+        "github_variable_name": "ODP_AUTH_JWKS_URI",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "https://www.googleapis.com/oauth2/v3/certs",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_WEB_BASE_URL",
+        "github_variable_name": "ODP_WEB_BASE_URL",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+        "github_variable_name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "oday-prod-smoke-operator@odayplus-prod-20260826.iam.gserviceaccount.com",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_OPERATOR_SMOKE_ROLE",
+        "github_variable_name": "ODP_OPERATOR_SMOKE_ROLE",
+        "requirement_group": "deploy_preflight_public",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:70-99 (REQUIRED_PUBLIC_CONFIG)",
+        "status": "present",
+        "value": "operations_manager,model_owner,data_owner",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODAY_DATABASE_URL_SECRET",
+        "github_variable_name": "ODAY_DATABASE_URL_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "github_variable_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "github_variable_name": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "github_variable_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "requirement_group": "deploy_preflight_secret_reference",
+        "required_by": "product_ops/deployment/validate_cloud_run_live_deployment.py:106-114 (REQUIRED_SECRET_REFERENCES)",
+        "status": "present",
+        "value": "<present:not-recorded>",
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": null
+      },
+      {
+        "script_env_name": "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "github_variable_name": "ODP_CLOUD_RUN_VPC_CONNECTOR",
+        "requirement_group": "sources_off_vpc",
+        "required_by": "product_ops/deployment/deploy_cloud_run_waji.sh:81-95 (sources-off gate)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      },
+      {
+        "script_env_name": "ODP_CLOUD_RUN_VPC_EGRESS",
+        "github_variable_name": "ODP_CLOUD_RUN_VPC_EGRESS",
+        "requirement_group": "sources_off_vpc",
+        "required_by": "product_ops/deployment/deploy_cloud_run_waji.sh:81-95 (sources-off gate)",
+        "status": "absent",
+        "value": null,
+        "live_resource_readback": "unavailable_gcp_reauth_required",
+        "gap": "absent: fail-closed before any Cloud Run mutation"
+      }
+    ]
+  },
+  "missing_by_environment": {
+    "dev": [
+      "ODP_WEB_BASE_URL",
+      "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET"
+    ],
+    "staging": [
+      "ODP_STAGING_VPC_NETWORK",
+      "ODP_STAGING_VPC_SUBNETWORK",
+      "ODP_STAGING_KMS_KEY_ID",
+      "ODP_STAGING_DEPLOYER_SERVICE_ACCOUNT",
+      "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+      "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+      "ODP_PRODUCTION_WATCH_CLOSEOUT_URI",
+      "ODP_WEB_BASE_URL",
+      "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
+      "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET"
+    ],
+    "production": [
+      "ODP_WEB_BASE_URL",
+      "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET",
+      "ODP_CLOUD_RUN_VPC_CONNECTOR",
+      "ODP_CLOUD_RUN_VPC_EGRESS"
+    ]
+  },
+  "prior_claim_reverification": {
+    "claim": "staging 僅缺 5 項 vars",
+    "still_accurate": false,
+    "measured_at_utc": "2026-09-07T16:03:04Z",
+    "measured_shortfall": {
+      "staging": 10,
+      "dev": 2,
+      "production": 4
+    },
+    "explanation": "以 HEAD 已合併的 release/foundation contract 逐項重算，staging 缺 10 項（6 項 foundation + closeout URI + ODP_WEB_BASE_URL + ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT + ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET）。dev 與 production 亦各自有 fail-closed 缺口，先前結論僅涵蓋 staging 且低估數量。"
+  },
+  "recovery_bundle_separation": {
+    "terraform_state_bucket_var": "ODP_STAGING_TERRAFORM_STATE_BUCKET",
+    "recovery_bundle_bucket_var": "ODP_STAGING_RECOVERY_BUNDLE_BUCKET",
+    "both_absent": true,
+    "separation_gate_evaluable": false,
+    "reason": "兩個變數皆未設定，workflow 的 identical-bucket 分離檢查（deploy-dev.yml:1207-1212 與 1476-1481）在取得值之前就會 fail-closed，因此目前無法產生分離性、CMEK、權限或隔離證據。",
+    "cmek_evidence": "unavailable_gcp_reauth_required",
+    "iam_evidence": "unavailable_gcp_reauth_required",
+    "forbidden_substitutes_present_in_staging_env": [
+      {
+        "name": "ODP_SNAPSHOT_BUCKET",
+        "value": "oday-staging-source-snapshots-odayplus-runtime-20260825",
+        "note": "snapshot bucket，依 GCP_DEPLOY_GUIDE §5 嚴禁挪用為 state 或 recovery bundle 目的地"
+      },
+      {
+        "name": "ODP_RELEASE_LEASE_STATE_URI",
+        "value": "gs://odayplus-runtime-20260825-release-leases/leases",
+        "note": "release lease bucket，同樣不得挪用"
+      }
+    ],
+    "conclusion": "必須新建兩個各自獨立的受保護 bucket；不得以現有 snapshot/lease bucket 充當。"
+  },
+  "merged_iac_readback": {
+    "bound_commit_sha": "596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+    "infra/terraform/bootstrap/": "absent",
+    "infra/terraform/modules/runtime_foundation/": "absent",
+    "docs/deployment/STAGING_FOUNDATION_BOOTSTRAP.md": "absent",
+    "infra/terraform/main.tf backend": "backend \"gcs\" {} (partial config; bucket 於 init 時以 -backend-config 提供)",
+    "infra/terraform/modules/ephemeral_staging/main.tf": "present; 五個 Cloud Run 資源硬編 egress = ALL_TRAFFIC",
+    "implication": "ODP-STAGING-FOUNDATION-IAC-REMEDIATION-001 宣告的 artifacts 尚未合併到 dev。6 項 staging foundation 變數目前沒有可指向的 live resource，因此修復順序必須是「先 IaC/bootstrap，再由人設定變數」，不可倒置。"
+  },
+  "advisories": [
+    {
+      "id": "ADV-1",
+      "severity": "medium",
+      "finding": "staging 環境的 ODP_CLOUD_RUN_VPC_EGRESS = private-ranges-only，與 rollout plan / GCP_DEPLOY_GUIDE 要求的 ALL_TRAFFIC 受控 VPC 相衝突。",
+      "actual_effect": "目前無實害：staging 不執行 deploy_cloud_run_waji.sh（deploy-dev.yml:1200 `if: inputs.environment != 'staging'`），ephemeral_staging module 硬編 ALL_TRAFFIC 且 staging_lifecycle.py:2694/2736/2793 逐一 live 驗證 ALL_TRAFFIC。",
+      "risk": "此變數對 staging 是誤導性死值；若日後 staging 被接回一般 deploy 路徑會直接違反 sources-off 閘（deploy_cloud_run_waji.sh:88-94）。",
+      "recommended_action": "由 staging 環境刪除該變數，或改為 all-traffic；屬設定治理決定，非本任務可自行執行。"
+    },
+    {
+      "id": "ADV-2",
+      "severity": "medium",
+      "finding": "ODP_IDENTITY_TOKEN_SIGNING_KEY_SECRET 在 dev/staging/production 三個環境皆不存在，但屬 REQUIRED_SECRET_REFERENCES。",
+      "risk": "Web 簽發、API 驗證的 local access token 缺共用簽章金鑰，preflight 會 fail-closed；三環境一致缺失代表這是契約新增後未回填，不是單一環境漂移。",
+      "recommended_action": "由人類在 Secret Manager 建立並釘住版本後，於三個環境各自設定 secret reference。"
+    },
+    {
+      "id": "ADV-3",
+      "severity": "high",
+      "finding": "ODP_WEB_BASE_URL 在三個環境皆不存在，且無 fallback（deploy-dev.yml:1042 直接綁 vars；deploy_cloud_run_waji.sh:863 以 os.environ[\"ODP_WEB_BASE_URL\"] 硬取）。",
+      "risk": "dev 與 production 的 deploy 會在任何 Cloud Run 變更之前 fail-closed。各環境已有 ODP_DEV_DEPLOY_URL / ODP_STAGING_DEPLOY_URL / ODP_PROD_DEPLOY_URL，但程式不讀這些名稱。",
+      "recommended_action": "需先由 code owner 裁決：是設定新變數 ODP_WEB_BASE_URL，還是修改綁定去讀既有的 *_DEPLOY_URL。兩者不可由本任務逕行決定。"
+    }
+  ],
+  "explicitly_not_established": [
+    "任何 GCP 資源的存在或缺失",
+    "任何 IAM 綁定或權限結果",
+    "bucket 的 CMEK / versioning / retention / public-access-prevention 狀態",
+    "remote state 內容或 state 與 live resource 的對應",
+    "dev / staging / production 是否已實際部署"
+  ],
+  "completion_meaning": "本收據僅代表 2026-09-07 當下的只讀實測已完成，不構成任何部署驗收，不解除任何 release gate，不變更任何 task 的 blocked 狀態。"
+}

@@ -1303,6 +1303,11 @@ PR_MERGE_QUEUE_GRAPHQL_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
+      number
+      state
+      merged
+      mergedAt
+      headRefOid
       isInMergeQueue
       mergeQueueEntry {
         position
@@ -1329,10 +1334,18 @@ def auto_merge_request_present(pr: Any) -> bool:
 
 
 def fetch_pr_merge_queue_status(repo: str, number: int) -> dict[str, Any] | None:
-    """Query GitHub GraphQL API for the PR's merge queue status.
+    """Query GitHub GraphQL API for the PR's merge queue status and head facts.
 
     `gh pr view --json` does not support `isInMergeQueue` or `mergeQueueEntry`;
     GraphQL repository.pullRequest is the canonical source for queue enrollment.
+    The same node also carries `state`, `merged`/`mergedAt` and `headRefOid`, so
+    every consumer that needs "is this PR still open on the reviewed head, and is
+    it queued" reads one node from one reader. A second CLI-side PR reader would
+    answer the same question from a weaker source that cannot see the queue at
+    all, and the two would drift.
+
+    Returns None whenever GitHub's answer is unusable. None means unknown, never
+    "not queued" and never "not open".
     """
 
     owner, _, name = repo.partition("/")

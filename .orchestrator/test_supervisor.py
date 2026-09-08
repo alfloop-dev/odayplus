@@ -38,6 +38,7 @@ import common
 import github_bus
 import runtime_state
 import supervisor
+import task_archive
 import watch_events
 import worker_failure_policy
 import worker_workspace
@@ -4610,12 +4611,61 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
 
 class DispatchStatusSyncTests(unittest.TestCase):
+    """Both supervisor sync callers must reach the runtime code authority.
+
+    `scripts/ai_status.py` is only whatever revision a checkout happens to hold,
+    so these tests install a deliberately failing legacy script next to a
+    recording `scripts/ai-status.sh` launcher and assert the launcher is what
+    actually runs.
+    """
+
+    LAUNCHER_TEMPLATE = """#!/bin/bash
+: > {record}
+printf 'cwd=%s\\n' "$PWD" >> {record}
+printf 'AI_NAME=%s\\n' "${{AI_NAME-}}" >> {record}
+printf 'PANTHEON_STATUS_ROOT=%s\\n' "${{PANTHEON_STATUS_ROOT-}}" >> {record}
+printf 'ORCH_STATUS_ROOT=%s\\n' "${{ORCH_STATUS_ROOT-}}" >> {record}
+for arg in "$@"; do printf 'arg=%s\\n' "$arg" >> {record}; done
+{tail}
+"""
+
+    # Runs inside the fixture launcher, exactly where the real `ai-status.sh`
+    # execs the runtime writer. It asks the shipped resolver where the write
+    # belongs and lands a marker there, so a root the supervisor failed to pin
+    # shows up as a file under the wrong board rather than as a passing
+    # assertion about an environment string nobody consulted.
+    LAUNCHER_RUNTIME_WRITE_TAIL = """python3 - <<'PY'
+import os
+import sys
+
+sys.path.insert(0, {scripts_dir!r})
+import ai_status
+
+root = ai_status.resolve_status_root(os.environ)
+(root / {marker_name!r}).write_text("runtime writer landed here", encoding="utf-8")
+PY
+"""
+
+    RUNTIME_WRITE_MARKER = "runtime-writer-landed.txt"
+
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmpdir.cleanup)
         self.root = Path(self.tmpdir.name)
         (self.root / "scripts").mkdir(parents=True, exist_ok=True)
-        (self.root / "scripts" / "ai_status.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        self.launcher_path = self.root / "scripts" / "ai-status.sh"
+        self.launcher_record = self.root / "launcher-record.txt"
+        self.legacy_marker = self.root / "legacy-ai-status-executed.txt"
+        self.write_launcher("exit 0")
+        # The legacy in-checkout writer must never be reached again; if it is,
+        # it fails loudly instead of silently writing through a stale schema.
+        (self.root / "scripts" / "ai_status.py").write_text(
+            "#!/usr/bin/env python3\n"
+            "import pathlib, sys\n"
+            f"pathlib.Path({str(self.legacy_marker)!r}).write_text('executed', encoding='utf-8')\n"
+            "sys.exit(17)\n",
+            encoding="utf-8",
+        )
         (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
         self.status_path = self.root / "ai-status.json"
         self.status_path.write_text(
@@ -4651,24 +4701,123 @@ class DispatchStatusSyncTests(unittest.TestCase):
                 "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
             },
         }
-
-    def test_sync_dispatched_task_status_starts_owned_todo_task(self) -> None:
-        event = {
+        self.dispatch_event = {
             "task_id": "APP-002-W1-FRONT-HANDOFF",
             "target_agent": "copilot",
             "target_display_name": "Copilot",
             "reason": "owned_ready_dispatch",
         }
 
-        with mock.patch.object(supervisor.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run_mock:
-            changed = supervisor.sync_dispatched_task_status(self.config, event)
+    def write_launcher(self, tail: str) -> None:
+        self.launcher_path.write_text(
+            self.LAUNCHER_TEMPLATE.format(record=json.dumps(str(self.launcher_record)), tail=tail),
+            encoding="utf-8",
+        )
+        self.launcher_path.chmod(0o755)
+
+    def launcher_invocation(self) -> dict[str, Any]:
+        self.assertTrue(self.launcher_record.exists(), "canonical launcher was never executed")
+        record: dict[str, Any] = {"args": []}
+        for line in self.launcher_record.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            if key == "arg":
+                record["args"].append(value)
+            else:
+                record[key] = value
+        return record
+
+    def arm_runtime_write_launcher(self) -> None:
+        self.write_launcher(
+            self.LAUNCHER_RUNTIME_WRITE_TAIL.format(
+                scripts_dir=str(SCRIPTS_DIR),
+                marker_name=self.RUNTIME_WRITE_MARKER,
+            )
+        )
+
+    def inherit_conflicting_status_root(self) -> Path:
+        """Give the supervisor process a root every config in this test rejects.
+
+        Reproduces a supervisor that inherited another board's coordination
+        root: both root names arrive pointing away from the configured status
+        file, so a caller that pins only one of them leaves the runtime writer
+        resolving the other.
+        """
+
+        decoy = Path(tempfile.mkdtemp(prefix="pantheon-decoy-status-root-"))
+        self.addCleanup(shutil.rmtree, decoy, ignore_errors=True)
+        patcher = mock.patch.dict(
+            os.environ,
+            {"ORCH_STATUS_ROOT": str(decoy), "PANTHEON_STATUS_ROOT": str(decoy)},
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return decoy
+
+    def assert_runtime_write_landed_on(self, selected: Path, decoy: Path) -> None:
+        invocation = self.launcher_invocation()
+        for name in ("PANTHEON_STATUS_ROOT", "ORCH_STATUS_ROOT"):
+            self.assertEqual(
+                invocation[name],
+                str(selected),
+                f"{name} was not pinned to the configured status root",
+            )
+        self.assertEqual(
+            ai_status.resolve_status_root({name: invocation[name] for name in ("ORCH_STATUS_ROOT", "PANTHEON_STATUS_ROOT")}),
+            selected.resolve(),
+            "the shipped runtime resolver disagrees with the root the launcher was pinned to",
+        )
+        self.assertTrue(
+            (selected / self.RUNTIME_WRITE_MARKER).exists(),
+            "the runtime writer did not commit to the configured status root",
+        )
+        self.assertEqual(
+            sorted(entry.name for entry in decoy.iterdir()),
+            [],
+            "the runtime writer committed to the inherited root instead of the configured one",
+        )
+
+    def assert_legacy_writer_untouched(self) -> None:
+        self.assertFalse(
+            self.legacy_marker.exists(),
+            "supervisor executed the in-checkout scripts/ai_status.py instead of the launcher",
+        )
+
+    def events(self, event_type: str) -> list[dict[str, Any]]:
+        lines = (self.root / "activity-log.jsonl").read_text(encoding="utf-8").splitlines()
+        entries = [json.loads(line) for line in lines if line.strip()]
+        return [entry for entry in entries if entry.get("type") == event_type]
+
+    def test_sync_dispatched_task_status_starts_owned_todo_task_via_launcher(self) -> None:
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
 
         self.assertTrue(changed)
-        command = run_mock.call_args.args[0]
-        self.assertEqual(command[2], "start")
-        self.assertEqual(command[3], "APP-002-W1-FRONT-HANDOFF")
-        self.assertIn("Supervisor auto-started", command[4])
-        self.assertEqual(run_mock.call_args.kwargs["env"]["AI_NAME"], "Copilot")
+        self.assert_legacy_writer_untouched()
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"][0], "start")
+        self.assertEqual(invocation["args"][1], "APP-002-W1-FRONT-HANDOFF")
+        self.assertIn("Supervisor auto-started", invocation["args"][2])
+        self.assertEqual(invocation["AI_NAME"], "Copilot")
+        self.assertEqual(invocation["PANTHEON_STATUS_ROOT"], str(self.root))
+        self.assertEqual(invocation["ORCH_STATUS_ROOT"], str(self.root))
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(len(self.events("task_dispatch_synced")), 1)
+
+    def test_sync_dispatched_task_status_pins_runtime_root_over_inherited_root(self) -> None:
+        decoy = self.inherit_conflicting_status_root()
+        self.arm_runtime_write_launcher()
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertTrue(changed)
+        self.assert_legacy_writer_untouched()
+        self.assert_runtime_write_landed_on(self.root, decoy)
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"][0], "start")
+        self.assertEqual(invocation["args"][1], "APP-002-W1-FRONT-HANDOFF")
+        self.assertIn("Supervisor auto-started", invocation["args"][2])
+        self.assertEqual(invocation["AI_NAME"], "Copilot")
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(len(self.events("task_dispatch_synced")), 1)
 
     def test_sync_dispatched_task_status_skips_review_dispatch(self) -> None:
         event = {
@@ -4678,11 +4827,128 @@ class DispatchStatusSyncTests(unittest.TestCase):
             "reason": "review_ready_dispatch",
         }
 
-        with mock.patch.object(supervisor.subprocess, "run") as run_mock:
-            changed = supervisor.sync_dispatched_task_status(self.config, event)
+        changed = supervisor.sync_dispatched_task_status(self.config, event)
 
         self.assertFalse(changed)
-        run_mock.assert_not_called()
+        self.assertFalse(self.launcher_record.exists())
+        self.assert_legacy_writer_untouched()
+
+    def test_sync_dispatched_task_status_fails_closed_when_launcher_missing(self) -> None:
+        self.launcher_path.unlink()
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertFalse(changed)
+        self.assert_legacy_writer_untouched()
+        failures = self.events("task_dispatch_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("launcher not found", failures[0]["message"])
+        self.assertEqual(failures[0]["task_id"], "APP-002-W1-FRONT-HANDOFF")
+        self.assertEqual(self.events("task_dispatch_synced"), [])
+
+    def test_sync_dispatched_task_status_fails_closed_when_launcher_not_executable(self) -> None:
+        self.launcher_path.chmod(0o644)
+        if os.access(self.launcher_path, os.X_OK):
+            self.skipTest("filesystem or euid ignores the executable bit")
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertFalse(changed)
+        self.assert_legacy_writer_untouched()
+        failures = self.events("task_dispatch_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("is not executable", failures[0]["message"])
+        self.assertEqual(self.events("task_dispatch_synced"), [])
+
+    def test_sync_dispatched_task_status_fails_closed_when_launcher_exits_non_zero(self) -> None:
+        self.write_launcher('echo "runtime writer refused" >&2\nexit 3')
+
+        changed = supervisor.sync_dispatched_task_status(self.config, self.dispatch_event)
+
+        self.assertFalse(changed)
+        failures = self.events("task_dispatch_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["message"], "runtime writer refused")
+        self.assertEqual(failures[0]["target_agent"], "Copilot")
+        self.assertEqual(failures[0]["dispatch_reason"], "owned_ready_dispatch")
+        self.assertEqual(self.events("task_dispatch_synced"), [])
+
+    def test_sync_dispatched_task_status_fails_closed_on_launcher_timeout(self) -> None:
+        self.write_launcher("sleep 30")
+        config = dict(self.config, supervisor={"external_command_timeout_seconds": 0.5})
+
+        changed = supervisor.sync_dispatched_task_status(config, self.dispatch_event)
+
+        self.assertFalse(changed)
+        failures = self.events("task_dispatch_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("timed out", failures[0]["message"])
+        self.assertEqual(self.events("task_dispatch_synced"), [])
+
+    def test_sync_status_pipeline_runs_launcher_sync(self) -> None:
+        self.assertTrue(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"], ["sync"])
+        self.assertEqual(invocation["PANTHEON_STATUS_ROOT"], str(self.root))
+        self.assertEqual(invocation["ORCH_STATUS_ROOT"], str(self.root))
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(self.events("task_reassignment_sync_failed"), [])
+
+    def test_sync_status_pipeline_pins_runtime_root_over_inherited_root(self) -> None:
+        decoy = self.inherit_conflicting_status_root()
+        self.arm_runtime_write_launcher()
+
+        self.assertTrue(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        self.assert_runtime_write_landed_on(self.root, decoy)
+        invocation = self.launcher_invocation()
+        self.assertEqual(invocation["args"], ["sync"])
+        self.assertEqual(Path(invocation["cwd"]).resolve(), self.root.resolve())
+        self.assertEqual(self.events("task_reassignment_sync_failed"), [])
+
+    def test_sync_status_pipeline_fails_closed_when_launcher_missing(self) -> None:
+        self.launcher_path.unlink()
+
+        self.assertFalse(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        failures = self.events("task_reassignment_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("launcher not found", failures[0]["message"])
+
+    def test_sync_status_pipeline_fails_closed_when_launcher_not_executable(self) -> None:
+        self.launcher_path.chmod(0o644)
+        if os.access(self.launcher_path, os.X_OK):
+            self.skipTest("filesystem or euid ignores the executable bit")
+
+        self.assertFalse(supervisor.sync_status_pipeline(self.config))
+
+        self.assert_legacy_writer_untouched()
+        failures = self.events("task_reassignment_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("is not executable", failures[0]["message"])
+
+    def test_sync_status_pipeline_fails_closed_when_launcher_exits_non_zero(self) -> None:
+        self.write_launcher('echo "sync refused" >&2\nexit 4')
+
+        self.assertFalse(supervisor.sync_status_pipeline(self.config))
+
+        failures = self.events("task_reassignment_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("sync refused", failures[0]["message"])
+
+    def test_sync_status_pipeline_fails_closed_on_launcher_timeout(self) -> None:
+        self.write_launcher("sleep 30")
+        config = dict(self.config, supervisor={"external_command_timeout_seconds": 0.5})
+
+        self.assertFalse(supervisor.sync_status_pipeline(config))
+
+        failures = self.events("task_reassignment_sync_failed")
+        self.assertEqual(len(failures), 1)
+        self.assertIn("timed out", failures[0]["message"])
 
 
 class RunOnceSupervisorStateTests(unittest.TestCase):
@@ -10926,6 +11192,14 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertIsNone(kwargs["new_status"])
 
 
+#: Exact remote head for review candidates that are meant to be genuinely
+#: dispatchable. Preemption asks the same eligibility question the review
+#: dispatcher asks, so a review candidate is only a lawful reason to end a
+#: running worker when it carries a submission whose head resolves and whose CI
+#: has concluded green -- the two mocks paired with this constant.
+DISPATCHABLE_REVIEW_HEAD = "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee"
+
+
 class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
@@ -11134,6 +11408,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "status": "review",
                 "owner": "Codex",
                 "reviewer": "Antigravity",
+                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
                 "depends_on": [],
             },
         }
@@ -11145,6 +11420,8 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
             mock.patch.object(supervisor, "retry_due_workers", return_value=False),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value=DISPATCHABLE_REVIEW_HEAD),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
             mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve_worktree,
             mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True),
@@ -11196,6 +11473,7 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "status": "review",
                 "owner": "Codex",
                 "reviewer": "Antigravity",
+                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
                 "depends_on": [],
             },
         }
@@ -11212,6 +11490,8 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_provider_report", return_value={}),
             mock.patch.object(supervisor, "retry_due_workers", return_value=False),
             mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value=DISPATCHABLE_REVIEW_HEAD),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
             mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
             mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
             mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True) as sync_preempted,
@@ -11511,10 +11791,15 @@ class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
                 "owner": "Codex",
                 "reviewer": "Antigravity",
                 "priority": "P1",
+                "review_submission": {"remote_sha": DISPATCHABLE_REVIEW_HEAD},
                 "depends_on": [],
             },
         }
-        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch("ai_status.resolve_task_sha", return_value=DISPATCHABLE_REVIEW_HEAD),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
+        ):
             self.assertTrue(
                 supervisor.higher_priority_ready_task_exists(config, finalize_worker, task_map_p1_rev, state)
             )
@@ -14424,26 +14709,60 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             555,
         )
 
+        approved_head = "abc123450000000000000000000000000000dead"
         task = {
             "id": "ODP-SUP-MG-001",
             "status": "review_approved",
             "owner": "Antigravity5",
             "reviewer": "Claude2",
             "pr_number": 555,
+            "approved_head": approved_head,
         }
         status = {"tasks": [task], "handoffs": []}
         bus_state = {"processed_merge_group_run_ids": [], "tasks": {}}
+        # A merge group head is the temporary merge commit GitHub builds for the
+        # queue entry, never the PR head itself.
         run = {
             "id": 999111,
             "head_branch": "gh-readonly-queue/dev/pr-555-abc",
-            "head_sha": "abc12345",
+            "head_sha": "77aa11bb0000000000000000000000000000c0de",
             "conclusion": "failure",
             "status": "completed",
+            "name": "CI",
+            "workflow_id": 100,
+        }
+        pr_node = {
+            "number": 555,
+            "state": "OPEN",
+            "merged": False,
+            "mergedAt": None,
+            "headRefOid": approved_head,
+            "isInMergeQueue": False,
+            "mergeQueueEntry": None,
         }
 
+        def fake_gh_json(args, **kwargs):
+            if args[:2] == ["api", "graphql"]:
+                return {"data": {"repository": {"pullRequest": pr_node}}}
+            if args[:1] == ["api"] and "actions/runs" in str(args[1]):
+                return {"total_count": 1, "workflow_runs": [run]}
+            if args[:1] == ["api"] and "/commits/" in str(args[1]):
+                return {
+                    "sha": run["head_sha"],
+                    "parents": [
+                        {"sha": "base000000000000000000000000000000000000"},
+                        {"sha": approved_head},
+                    ],
+                }
+            return None
+
         with (
+            unittest.mock.patch("github_bus.gh_json", side_effect=fake_gh_json),
             unittest.mock.patch("github_reconciliation.write_activity_log") as log,
             unittest.mock.patch("status_transition.commit_canonical_task_transition", return_value=True),
+            unittest.mock.patch(
+                "github_reconciliation.runtime_ai_status.emit_task_review_status_check"
+            ),
         ):
             changed = supervisor.reconcile_merge_group_runs(
                 {"github_bus": {"enabled": True}},
@@ -19547,6 +19866,116 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         run_gh.assert_not_called()
 
 
+class MergeRouteRepositorySlugTests(unittest.TestCase):
+    """A declared repository must reach `gh` as an `owner/name` slug.
+
+    `task.repository` carries a *registry name*, and `pantheon` is the registry
+    id of the supervisor's own checkout. Routing passed the declared value to
+    `gh --repo` verbatim, so an approved Pantheon PR was routed with
+    `--repo pantheon`; `gh` rejects that, the task was reported
+    `merge_route_blocked` every tick, and it never reached the merge queue.
+    """
+
+    HEAD = "aaaaaaaabbbbbbbbccccccccddddddddeeeeeeee"
+    # `pantheon` has no slug of its own in the registry; it takes the one the
+    # bus is configured with, exactly as the live supervisor does.
+    CONFIG = {"github_bus": {"repo": "alfloop-dev/odayplus"}}
+
+    def _route(self, repository, *, config=None):
+        import dispatch_engine
+
+        calls = []
+        queue_probes = []
+
+        def fake_run_gh(args, **kwargs):
+            calls.append(list(args))
+            return unittest.mock.Mock(stdout="{}")
+
+        def fake_has_queue(slug, base):
+            queue_probes.append(slug)
+            return True
+
+        task = {"id": "T-1", "pr_number": 7, "approved_head": self.HEAD,
+                "repository": repository, "base_branch": "dev"}
+        with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", fake_has_queue), \
+                unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="tooling"), \
+                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value="CLEAN"), \
+                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
+                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
+                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
+            route, detail = dispatch_engine.route_approved_pr_to_merge(
+                self.CONFIG if config is None else config, task
+            )
+        return route, detail, calls, queue_probes, task
+
+    def test_a_declared_registry_id_is_resolved_to_its_slug(self) -> None:
+        """The regression: `--repo pantheon` is not a repository `gh` can reach."""
+        route, _d, calls, _probes, task = self._route("pantheon")
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(task["merge_route"]["route"], "queued")
+
+    def test_a_declared_alias_is_resolved_to_its_slug(self) -> None:
+        """Display names and aliases route through the same registry lookup."""
+        _r, _d, calls, _probes, _task = self._route("ODay Plus")
+
+        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+
+    def test_a_declared_owner_name_slug_is_preserved(self) -> None:
+        _r, _d, calls, _probes, _task = self._route("alfloop-dev/oday-data-platform")
+
+        self.assertEqual(
+            calls, [["pr", "merge", "7", "--repo", "alfloop-dev/oday-data-platform"]]
+        )
+
+    def test_a_slug_the_registry_does_not_carry_is_still_routed(self) -> None:
+        """Direct addressing survives: only a name needs the registry."""
+        _r, _d, calls, _probes, _task = self._route("some-org/some-repo")
+
+        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "some-org/some-repo"]])
+
+    def test_the_merge_queue_probe_sees_the_resolved_slug(self) -> None:
+        """The probe silently answers None for anything without a `/`, which is
+        how a registry id also picked the enqueue route by accident rather than
+        by reading the repository."""
+        _r, _d, _calls, probes, _task = self._route("pantheon")
+
+        self.assertEqual(probes, ["alfloop-dev/odayplus"])
+
+    def test_an_unresolvable_declaration_blocks_rather_than_guessing(self) -> None:
+        """Omitting `--repo` routes against the supervisor's own checkout, which
+        is the wrong-repository merge this path exists to prevent."""
+        route, detail, calls, _probes, task = self._route("not-a-registered-repo")
+
+        self.assertEqual(route, "blocked")
+        self.assertIn("not-a-registered-repo", detail)
+        self.assertEqual(calls, [])
+        self.assertNotIn("merge_route", task)
+
+    def test_a_registry_entry_without_a_slug_blocks_too(self) -> None:
+        """`runtime_platform` is registered but carries no GitHub slug."""
+        route, _d, calls, _probes, _task = self._route("runtime_platform")
+
+        self.assertEqual(route, "blocked")
+        self.assertEqual(calls, [])
+
+    def test_an_undeclared_task_keeps_the_registry_fallback(self) -> None:
+        """No declaration means artifact-prefix inference, which already answered
+        with a slug. This must not become the blocked path."""
+        route, _d, calls, _probes, _task = self._route("")
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "7", "--repo", "alfloop-dev/odayplus"]])
+
+    def test_only_owner_name_counts_as_a_slug(self) -> None:
+        import dispatch_engine
+
+        self.assertTrue(dispatch_engine._is_repository_slug("owner/name"))
+        for bad in ["", None, "pantheon", "owner/", "/name", "https://github.com/o/n"]:
+            self.assertFalse(dispatch_engine._is_repository_slug(bad), bad)
+
+
 class QuarantineCrossRepositoryTests(unittest.TestCase):
     """Quarantine must judge a worktree against its own repository.
 
@@ -19882,10 +20311,48 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
 
 
 class CapacityControllerReconciliationTests(unittest.TestCase):
-    def _config(self) -> dict[str, Any]:
+    def setUp(self) -> None:
+        # task_archive resolves its archive paths once, at import time, and this
+        # module is not always the first importer: the capacity suite imports it
+        # first and binds those globals to whatever root that caller had, then
+        # restores exactly that root when its scoped fixture unwinds. Clearing
+        # the globals in place would therefore clear a real canonical archive.
+        # These tests own a private archive root instead, so the worst they can
+        # delete is their own temporary directory.
+        handle = tempfile.TemporaryDirectory(prefix="pantheon-capacity-reconcile-")
+        self.addCleanup(handle.cleanup)
+        archive_root = Path(handle.name).resolve()
+        archive_dir = archive_root / "ai-task-archive"
+        tasks_dir = archive_dir / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        for attribute, value in (
+            ("STATUS_ROOT", archive_root),
+            ("ARCHIVE_DIR", archive_dir),
+            ("ARCHIVE_TASKS_DIR", tasks_dir),
+            ("ARCHIVE_INDEX_FILE", archive_dir / "index.json"),
+        ):
+            patcher = mock.patch.object(task_archive, attribute, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.archive_root = archive_root
+
+    def _config(self, slot_count: int = 2) -> dict[str, Any]:
         return {
             "schema": {"tasks_path": "tasks"},
             "agents": {
+                "claude": {"provider": "claude", "slot_id": "slot-0"},
+                "codex": {"provider": "codex", "slot_id": "slot-1"},
+                "claude2": {"provider": "claude", "slot_id": "slot-2"},
+                "antigravity": {"provider": "antigravity", "slot_id": "slot-3"},
+                "antigravity2": {"provider": "antigravity", "slot_id": "slot-4"},
+                "antigravity3": {"provider": "antigravity", "slot_id": "slot-5"},
+                "antigravity4": {"provider": "antigravity", "slot_id": "slot-6"},
+                "gemini": {"provider": "gemini", "slot_id": "slot-7"},
+                **{
+                    f"slot-{index}": {"slot_id": f"slot-{index}"}
+                    for index in range(8, slot_count)
+                },
+            } if slot_count >= 8 else {
                 "claude": {"slot_id": "slot-0"},
                 "codex": {"slot_id": "slot-1"},
             },
@@ -20072,6 +20539,249 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             self.assertEqual(snapshot.get("configured_slot_total"), 2)
             self.assertEqual(snapshot.get("slot_total"), 1)
             self.assertEqual(snapshot.get("available_slots"), 1)
+
+    def test_reconcile_capacity_controller_excludes_archived_sidecars_and_writes_no_logs(self) -> None:
+        """Archived sidecars are excluded in reconcile_capacity_controller under valid chair & positive budget."""
+        parent_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
+        sidecar_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549"
+        tasks = [
+            {"id": parent_id, "status": "blocked", "blocked_reason": "staging validation", "owner": "claude"},
+        ]
+        task_archive.archive_task_snapshot(
+            {
+                "id": sidecar_id,
+                "status": "done",
+                "owner": "claude",
+                "reviewer": "codex",
+                "title": f"Diagnose and verify blocker for {parent_id}",
+                "task_class": "sidecar",
+                "helper_parent": parent_id,
+                "helper_kind": "blocked_task_diagnostics",
+            }
+        )
+        # 8 slots * 0.25 ratio = 2 sidecar budget (positive budget)
+        config = self._config(slot_count=8)
+        now = datetime.now(UTC)
+        valid_until_str = (now + timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
+        state: dict[str, Any] = {
+            "workers": {},
+            "capacity_controller": {
+                "underutilization_since": "2020-01-01T00:00:00Z",
+                "chair_decision": {
+                    "issued_at": now.isoformat().replace("+00:00", "Z"),
+                    "valid_until": valid_until_str,
+                    "sidecar_wave": {"approved": True},
+                },
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit_mock,
+            mock.patch.object(supervisor, "write_activity_log") as log_mock,
+        ):
+            supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertNotIn(sidecar_id, [t.get("id") for t in tasks])
+        commit_mock.assert_not_called()
+        sidecar_created_logs = [
+            call for call in log_mock.call_args_list
+            if isinstance(call.args, tuple) and len(call.args) > 1 and isinstance(call.args[1], dict) and call.args[1].get("type") == "capacity_sidecar_created"
+        ]
+        self.assertEqual(len(sidecar_created_logs), 0)
+
+    def test_reconcile_capacity_controller_generates_and_commits_sidecar_when_not_archived(self) -> None:
+        """Control test: under the exact same valid chair & positive budget conditions,
+
+        if the sidecar is NOT archived, reconcile_capacity_controller MUST generate,
+        commit to status, and record capacity_sidecar_created activity log.
+        """
+        parent_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-001"
+        sidecar_id = "ODP-EPHEMERAL-STAGING-ROLLOUT-0-SIDECAR-C1E25549"
+        tasks = [
+            {"id": parent_id, "status": "blocked", "blocked_reason": "staging validation", "owner": "claude"},
+        ]
+        # sidecar is NOT archived
+        config = self._config(slot_count=8)
+        now = datetime.now(UTC)
+        valid_until_str = (now + timedelta(seconds=1800)).isoformat().replace("+00:00", "Z")
+        state: dict[str, Any] = {
+            "workers": {},
+            "capacity_controller": {
+                "underutilization_since": "2020-01-01T00:00:00Z",
+                "chair_decision": {
+                    "issued_at": now.isoformat().replace("+00:00", "Z"),
+                    "valid_until": valid_until_str,
+                    "sidecar_wave": {"approved": True},
+                },
+            },
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit_mock,
+            mock.patch.object(supervisor, "write_activity_log") as log_mock,
+        ):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(len(tasks), 2)
+        created_task = tasks[1]
+        self.assertEqual(created_task.get("id"), sidecar_id)
+        self.assertEqual(created_task.get("task_class"), "sidecar")
+        self.assertEqual(created_task.get("helper_parent"), parent_id)
+        commit_mock.assert_called_once()
+        sidecar_created_logs = [
+            call for call in log_mock.call_args_list
+            if isinstance(call.args, tuple) and len(call.args) > 1 and isinstance(call.args[1], dict) and call.args[1].get("type") == "capacity_sidecar_created"
+        ]
+        self.assertEqual(len(sidecar_created_logs), 1)
+        self.assertEqual(sidecar_created_logs[0].args[1].get("task_id"), sidecar_id)
+
+    def test_reconcile_capacity_controller_filters_sidecar_archived_before_cas_commit(self) -> None:
+        """Race condition: candidate generated by sidecar_candidates is archived before CAS commit.
+
+        reconcile_capacity_controller must filter it out, not commit it to status, and not write activity log.
+        """
+        candidate = {
+            "id": "RACE-SIDECAR-001",
+            "title": "Diagnose race condition",
+            "task_class": "sidecar",
+            "status": "todo",
+            "owner": "AUTO_ASSIGN",
+            "helper_parent": "BLOCKED-PARENT-001",
+        }
+        tasks = [
+            {"id": "BLOCKED-PARENT-001", "status": "blocked", "blocked_reason": "api defect", "owner": "claude"},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+
+        # Archive the candidate right after sidecar_candidates returns it
+        def fake_sidecar_candidates(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+            task_archive.archive_task_snapshot(
+                {
+                    "id": "RACE-SIDECAR-001",
+                    "status": "done",
+                    "owner": "claude",
+                    "reviewer": "codex",
+                    "title": "Diagnose race condition",
+                    "task_class": "sidecar",
+                    "helper_parent": "BLOCKED-PARENT-001",
+                }
+            )
+            return [candidate]
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor.capacity_controller, "evaluate_chair", return_value=({}, False)),
+            mock.patch.object(supervisor.capacity_controller, "sidecar_candidates", side_effect=fake_sidecar_candidates),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True) as commit_mock,
+            mock.patch.object(supervisor, "write_activity_log") as log_mock,
+        ):
+            supervisor.reconcile_capacity_controller(config, state)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertNotIn("RACE-SIDECAR-001", [t.get("id") for t in tasks])
+        commit_mock.assert_not_called()
+        sidecar_created_logs = [
+            call for call in log_mock.call_args_list
+            if isinstance(call.args, tuple) and len(call.args) > 1 and isinstance(call.args[1], dict) and call.args[1].get("type") == "capacity_sidecar_created"
+        ]
+        self.assertEqual(len(sidecar_created_logs), 0)
+
+
+
+class CanonicalArchiveTestIsolationTests(unittest.TestCase):
+    """The orchestration suites must not destroy the archive they are pointed at.
+
+    `task_archive` binds ARCHIVE_* once, at import time, from the ambient status
+    root, and the capacity suite gets there first: by the time this module's
+    import-time isolation runs, task_archive is already in sys.modules and keeps
+    the earlier binding. That makes "which root do the archive globals point at"
+    an import-order property rather than a per-module one, which no assertion
+    inside a single module can observe. So this runs the real ordering in a
+    separate interpreter against a throwaway canonical root, and checks that an
+    archive which was already there is still byte-identical afterwards.
+    """
+
+    def test_capacity_then_supervisor_reconcile_leaves_a_preexisting_archive_intact(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-archive-isolation-") as raw_root:
+            status_root = Path(raw_root).resolve()
+            archive_dir = status_root / "ai-task-archive"
+            tasks_dir = archive_dir / "tasks"
+            tasks_dir.mkdir(parents=True)
+            sentinel = tasks_dir / "ARCHIVE-ISOLATION-SENTINEL-001.json"
+            sentinel.write_text(
+                json.dumps(
+                    {
+                        "task_id": "ARCHIVE-ISOLATION-SENTINEL-001",
+                        "terminal_outcome": "completed",
+                        "task": {"id": "ARCHIVE-ISOLATION-SENTINEL-001", "status": "done"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            index_file = archive_dir / "index.json"
+            index_file.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "counts": {"total": 1, "completed": 1, "superseded": 0},
+                        "recent_terminal_ids": ["ARCHIVE-ISOLATION-SENTINEL-001"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            before = (sentinel.read_bytes(), index_file.read_bytes())
+
+            env = {key: value for key, value in os.environ.items() if not key.startswith("PYTEST_")}
+            env["PANTHEON_STATUS_ROOT"] = str(status_root)
+            env["ORCH_STATUS_ROOT"] = str(status_root)
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+
+            capacity_case = (
+                f"{THIS_DIR / 'test_capacity_controller.py'}"
+                "::test_sidecar_candidates_excludes_archived_three_exact_ids_across_multiple_rounds"
+            )
+            reconcile_case = (
+                f"{THIS_DIR / 'test_supervisor.py'}"
+                "::CapacityControllerReconciliationTests"
+                "::test_reconcile_capacity_controller_excludes_archived_sidecars_and_writes_no_logs"
+            )
+            completed = subprocess.run(
+                [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", capacity_case, reconcile_case],
+                cwd=str(ROOT_DIR),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=600,
+                check=False,
+            )
+
+            self.assertEqual(
+                completed.returncode,
+                0,
+                f"archive dedup subset must pass in an isolated root\n{completed.stdout}\n{completed.stderr}",
+            )
+            self.assertTrue(
+                tasks_dir.is_dir(),
+                "the capacity suites deleted the archive tasks directory of the root they were pointed at",
+            )
+            self.assertTrue(
+                sentinel.is_file(),
+                "an unrelated archived task was deleted by the capacity suites",
+            )
+            self.assertTrue(
+                index_file.is_file(),
+                "the archive index was deleted by the capacity suites",
+            )
+            self.assertEqual(
+                (sentinel.read_bytes(), index_file.read_bytes()),
+                before,
+                "the capacity suites rewrote a canonical archive they do not own",
+            )
 
 
 class WorkerPromptContractTests(unittest.TestCase):

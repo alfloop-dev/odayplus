@@ -1,0 +1,22 @@
+============================= test session starts ==============================
+collected 171 items
+
+tests/models/test_evidently_monitor_baseline.py ........................ [ 14%]
+........................................................................ [ 56%]
+........................................................................ [ 98%]
+...                                                                      [100%]
+
+=============================== warnings summary ===============================
+tests/models/test_evidently_monitor_baseline.py::test_case_reproduces_the_recorded_baseline[numeric_infinity_cleaned_to_1001_wasserstein]
+  /tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003/.venv/lib/python3.12/site-packages/pandas/core/nanops.py:1016: RuntimeWarning: invalid value encountered in subtract
+    sqr = _ensure_numeric((avg - values) ** 2)
+
+tests/models/test_evidently_monitor_baseline.py::test_case_reproduces_the_recorded_baseline[categorical_new_label_chisquare]
+tests/models/test_evidently_monitor_baseline.py::test_case_reproduces_the_recorded_baseline[categorical_new_label_chisquare]
+tests/models/test_evidently_monitor_baseline.py::test_case_reproduces_the_recorded_baseline[prediction_categorical_new_class_drifted]
+tests/models/test_evidently_monitor_baseline.py::test_case_reproduces_the_recorded_baseline[prediction_categorical_new_class_drifted]
+  /tmp/pantheon-worker-worktrees/pantheon/odp-drift-security-verify-003/.venv/lib/python3.12/site-packages/scipy/stats/_stats_py.py:7277: RuntimeWarning: divide by zero encountered in divide
+    terms = (f_obs - f_exp)**2 / f_exp
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================= 171 passed, 5 warnings in 153.09s (0:02:33) ==================

@@ -294,7 +294,7 @@ jobs:
       IMAGE_TAG: release-${{ inputs.release_sha }}
       # `generate_sbom.py` writes here by default; it is the CycloneDX document
       # attested onto every published image below.
-      SBOM_PATH: docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json
+      SBOM_PATH: docs/evidence/sbom.json
       HANDOFF_DIR: .odp_data/release/runtime-release-handoff
     steps:
       - uses: actions/checkout@v4

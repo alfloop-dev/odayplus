@@ -1,0 +1,12 @@
+{
+  "case_id": "failure_prediction_duplicate_columns",
+  "description": "The same output column is requested twice.",
+  "failure": {
+    "exception_message": "prediction_columns must not contain duplicates",
+    "exception_module": "builtins",
+    "exception_type": "ValueError"
+  },
+  "kind": "prediction_drift",
+  "outcome": "raised",
+  "routing_expectation": "_normalize_prediction_columns guard"
+}
