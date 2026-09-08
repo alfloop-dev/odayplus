@@ -3,139 +3,133 @@
 - **Task**: ODP-MERGE-QUEUE-BATCH-DESIGN-001 (A-stage)
 - **Date**: 2026-09-08
 - **Author**: Antigravity3
+- **Reviewer**: Codex2
 - **Target**: WP-35B/C implementation task
+- **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](../../../../.orchestrator/source-doc-cache/alfloop-dev__odayplus/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
 
 ## 1. Purpose
 
-This document specifies the entry conditions, scope, and verification
-requirements for the B-stage (engineering) and C-stage (live activation)
-of the merge queue batch requirement.
+This document specifies the entry conditions, scope, automated verification matrix,
+and live activation / rollback procedures for the B-stage (engineering) and
+C-stage (live activation) of the merge queue batch requirement.
 
 ## 2. A-Stage Deliverables (This Task)
 
-| Deliverable | Status | Location |
-|---|---|---|
-| Queue observations with full provenance | ✅ Complete | [queue-observations.json](queue-observations.json) |
-| Batch requirement specification | ✅ Complete | [batch-requirement.md](batch-requirement.md) |
-| Configuration options with tradeoffs | ✅ Complete | [configuration-options.md](configuration-options.md) |
-| Governance handoff for WP-90 | ✅ Complete | [governance-handoff.md](governance-handoff.md) |
-| This implementation handoff | ✅ Complete | this file |
+| Deliverable | Status | Location | Description |
+|---|---|---|---|
+| Queue observations & telemetry | ✅ Complete | [queue-observations.json](queue-observations.json) | Read-only measurements of CI duration, merge interval, configuration readback, and per-SHA required checks evidence |
+| Batch requirement specification | ✅ Complete | [batch-requirement.md](batch-requirement.md) | Formal requirement specification aligned with D21 and official GitHub ruleset parameters |
+| Configuration options with tradeoffs | ✅ Complete | [configuration-options.md](configuration-options.md) | Three comparable options for H08 human review with full baseline rollback procedure |
+| Governance handoff for WP-90 | ✅ Complete | [governance-handoff.md](governance-handoff.md) | D21 `IMPLEMENTATION_READY` disposition update fragment for shared registry |
+| Implementation handoff | ✅ Complete | this file | Acceptance criteria, verification matrix, entry conditions, and operational procedures for WP-35B/C |
 
-## 3. B-Stage Entry Conditions
+## 3. B-Stage Entry Conditions & Engineering Scope (WP-35B)
 
 The B-stage implementation task may start when **all** of the following are met:
 
-1. **H08 parameter decision**: Human has reviewed the configuration options
-   and selected specific values for `min_entries_to_merge` and
-   `min_entries_to_merge_wait_minutes`, or has delegated the choice to a
-   specific range
-
-2. **Sustained queue depth justification**: Either:
-   - Evidence that queue depth regularly exceeds 1, making batching
-     valuable, OR
-   - Human explicit instruction to enable batching proactively regardless
-     of current depth
-
-3. **This A-stage task merged**: This evidence package is available on `dev`
+1. **H08 parameter decision**: Human has reviewed [configuration-options.md](configuration-options.md)
+   and confirmed selected values for `min_entries_to_merge` and
+   `min_entries_to_merge_wait_minutes`.
+2. **This A-stage task merged**: This evidence package is available on `dev`.
 
 ### 3.1 B-Stage Scope
 
-- Modify `.github/branch-protection/policy.json` with the approved parameter
-  values
-- Update `docs/runbooks/dev-merge-queue.md` to document the batch
-  configuration and its rationale
-- Ensure `delivery_toolchain/github/apply_branch_protection.py` correctly
-  applies the new values (it already supports all parameters)
-- Verify that `merge_group` CI triggers work correctly with batch-size > 1
-  by reviewing existing workflow configuration
+- Modify `.github/branch-protection/policy.json` with the approved parameter values.
+- Update `docs/runbooks/dev-merge-queue.md` to document the batch configuration and rationale.
+- Add or update policy validation tests in `tests/` or `delivery_toolchain/`.
+- Preserve `grouping_strategy = ALLGREEN`, all 4 required status contexts, and `merge_method = MERGE`.
 
-### 3.2 B-Stage Verification
+### 3.2 B-Stage Automated Verification Matrix
 
-```bash
-# 1. Policy JSON is valid and contains the approved values
-python3 -c "import json; p=json.load(open('.github/branch-protection/policy.json')); assert p['branches']['dev']['merge_queue']['min_entries_to_merge'] > 1"
+The B-stage deliverable must satisfy and verify the following 6 core acceptance scenarios:
 
-# 2. Runbook is updated
-grep -q 'min_entries_to_merge' docs/runbooks/dev-merge-queue.md
+| # | Scenario | Expected Result | Verification / Evidence Method |
+|---|---|---|---|
+| 1 | **Multiple qualified PRs form batch** | When 2+ PRs with passing checks and approvals enter queue, queue forms a combined batch up to `max_entries_to_merge` | Policy assertions and workflow simulation tests proving batch formation rules |
+| 2 | **Solo-PR bounded wait timeout** | When a solo PR is queued without companion PRs, it is released to merge alone after `min_entries_to_merge_wait_minutes` expires | Bounded wait timeout contract verification in policy and runbook documentation |
+| 3 | **Unapproved / failing PR exclusion** | PR lacking `task-review-gate` or failing required checks cannot be admitted to or merged in a green batch | `merge-queue-review-gate.yml` assertion tests ensuring fail-closed rejection on group SHA |
+| 4 | **Head change re-validation** | If a queued PR's head SHA changes, prior approval and CI are not reused; candidate must re-verify all checks | Contract tests on review-gate and CI triggers for renewed head SHAs |
+| 5 | **Failure isolation under ALLGREEN** | When a candidate PR in a batch fails CI, `ALLGREEN` isolates the failed PR and re-queues non-failing PRs | Verification that `grouping_strategy == "ALLGREEN"` is strictly retained across all policy files |
+| 6 | **Actual required checks on group SHA** | `orchestrator`, `product`, `product-e2e-gate`, `task-review-gate` all execute and report against the merge group commit | CI workflow triggers (`ci.yml`, `merge-queue-review-gate.yml`) match `merge_group` event requirements |
 
-# 3. git diff --check passes
-git diff --check
+### 3.3 Clarification on Latency and Wait Bounds
 
-# 4. apply_branch_protection.py dry-run (if supported)
-# python3 delivery_toolchain/github/apply_branch_protection.py --verify-only
-```
+- `min_entries_to_merge_wait_minutes` bounds **only the accumulation period** waiting for companion PRs to reach the minimum batch size.
+- **Total enqueue-to-merge latency** = Accumulation wait (0 to `wait_minutes`) + CI check execution duration (~15–25 min) + queue scheduling latency.
 
-### 3.3 B-Stage Forbidden
+### 3.4 B-Stage Forbidden
 
-- Do not apply the configuration change to the live repository (that is C-stage)
-- Do not remove or weaken any required check
-- Do not change `merge_method` from MERGE
-- Do not remove the `task-review-gate` check
-- Do not use `--ignore-vuln`, `--force`, or environment variable bypasses
+- Do not apply configuration changes directly to the live GitHub repository (reserved for C-stage).
+- Do not change `grouping_strategy` to `HEADGREEN` or `NONE`.
+- Do not remove or weaken any required status check context (`orchestrator`, `product`, `product-e2e-gate`, `task-review-gate`).
+- Do not alter `merge_method` from `MERGE`.
 
-## 4. C-Stage Entry Conditions
+## 4. C-Stage Entry Conditions & Live Activation (WP-35C)
 
-The C-stage live activation may proceed when **all** of the following are met:
+Live activation (WP-35C) proceeds only after WP-35B PR is merged and formal operator authorization is received.
 
-1. **B-stage PR merged**: The policy.json change is on `dev`
-2. **Human/Ops approval**: Explicit authorization to apply the configuration
-   to the live repository
-3. **Rollback plan confirmed**: The rollback procedure in the runbook is
-   reviewed and ready
-
-### 4.1 C-Stage Scope
+### 4.1 C-Stage Scope & Execution
 
 ```bash
-# Apply the configuration
+# 1. Apply reviewed policy to live repository
 python3 delivery_toolchain/github/apply_branch_protection.py
 
-# Readback verification
+# 2. Perform post-activation readback verification
 gh api graphql -f query='{repository(owner:"alfloop-dev",name:"odayplus"){mergeQueue(branch:"dev"){id configuration{mergeMethod mergingStrategy checkResponseTimeout maximumEntriesToBuild maximumEntriesToMerge minimumEntriesToMerge minimumEntriesToMergeWaitTime}}}}'
-
-# Branch protection readback
 gh api repos/alfloop-dev/odayplus/branches/dev/protection/required_status_checks --jq '{strict,contexts}'
 ```
 
-### 4.2 C-Stage Verification
+### 4.2 C-Stage Verification Criteria
 
-- Pre/post readback comparison confirms only the intended parameters changed
-- All 4 required checks still report on `merge_group` events
-- `strict` remains `false` on `dev`
-- Queue processes at least one PR successfully after activation
-- Observation period (suggested: 7 days) to confirm batch behavior
+- Remote GraphQL readback matches approved `policy.json` configuration exactly.
+- Branch protection confirms `strict == false` and all 4 contexts present.
+- All 4 required checks report and pass on subsequent `merge_group` workflow runs.
+- Continuous queue telemetry and observation window (7 days) to monitor queue occupancy and batch merges.
 
-### 4.3 C-Stage Rollback
+### 4.3 Full Baseline Rollback Procedure
 
-Per `docs/runbooks/dev-merge-queue.md`:
+If queue stalls, speculative build timeouts, or unexpected candidate ejections occur, rollback immediately to the full reviewed baseline:
 
 ```bash
-# Revert to single-PR behavior
-# In policy.json: set min_entries_to_merge=1, min_entries_to_merge_wait_minutes=5
+# Primary rollback: restore baseline policy.json and apply
 python3 delivery_toolchain/github/apply_branch_protection.py
 ```
 
-Or manual equivalent:
+Manual REST API alternative:
 
 ```bash
-gh api graphql -f query='mutation { updateMergeQueueConfig(...) { ... } }'
+RULESET_ID=$(gh api repos/alfloop-dev/odayplus/rulesets --jq '.[] | select(.name=="dev-merge-queue") | .id')
+gh api -X PUT "repos/alfloop-dev/odayplus/rulesets/$RULESET_ID" --input - <<'JSON'
+{
+  "name": "dev-merge-queue",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/heads/dev"], "exclude": [] } },
+  "rules": [{
+    "type": "merge_queue",
+    "parameters": {
+      "merge_method": "MERGE",
+      "grouping_strategy": "ALLGREEN",
+      "min_entries_to_merge": 1,
+      "min_entries_to_merge_wait_minutes": 5,
+      "max_entries_to_merge": 5,
+      "max_entries_to_build": 5,
+      "check_response_timeout_minutes": 60
+    }
+  }]
+}
+JSON
 ```
 
-## 5. Dependencies
+Or full queue disable (fallback to direct auto-merge):
 
-| Dependency | Status | Notes |
-|---|---|---|
-| ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001 | ✅ done | Provides D21 decision |
-| ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 | ✅ done | Provides prior audit evidence |
-| ODP-ORCH-MERGE-QUEUE-ACTIVATION-001 | ✅ done | Original queue activation |
-| H08 (human parameter decision) | ❌ pending | Required before B-stage |
-| WP-90 governance update | ❌ pending | Parallel; not blocking B-stage |
+```bash
+python3 delivery_toolchain/github/apply_branch_protection.py --disable-merge-queue
+```
 
-## 6. Risk Assessment
+## 5. Summary of Stage Boundaries
 
-| Risk | Mitigation |
-|---|---|
-| Batch includes a bad PR that poisons the group | ALLGREEN strategy (recommended Option A) verifies each PR independently |
-| Wait time delays legitimate PRs | Bounded by `min_entries_to_merge_wait_minutes`; worst case = configured minutes |
-| Configuration drift between policy.json and live | Readback verification in `apply_branch_protection.py` |
-| Rollback needed urgently | One-value change in policy.json + reapply; or manual `gh api` commands |
-| CI not reporting on `merge_group` event | Existing `ci.yml` and `merge-queue-review-gate.yml` already have triggers; no change needed |
+- **A-stage (This Task)**: Formalize requirement, deliver read-only observations, propose options with tradeoffs, define verification matrix and rollback procedure. **No live changes or tests executed.**
+- **H08 Decision**: Human selects batch parameters.
+- **B-stage (Engineering)**: PR modifying `policy.json`, runbook, and automated verification tests.
+- **C-stage (Live Activation)**: Apply approved ruleset, verify readback, monitor live telemetry.

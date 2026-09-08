@@ -1,18 +1,18 @@
 {
   "_metadata": {
     "task_id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
-    "collected_at": "2026-09-08T15:06:00Z",
+    "collected_at": "2026-09-08T15:50:00Z",
     "collector": "Antigravity3",
     "repository": "alfloop-dev/odayplus",
     "branch": "dev",
-    "collection_method": "read-only GitHub CLI and GraphQL API queries",
-    "sampling_limits": "merge_group runs limited to 100 most recent; merged PRs limited to 50 most recent"
+    "collection_method": "read-only GitHub CLI (gh v2.97.0), GraphQL API, and REST API queries",
+    "sampling_limits": "merge_group runs limited to 100 most recent; merged PRs limited to 50 most recent; open PRs targeting dev queried via gh pr list"
   },
   "queue_configuration_readback": {
     "source": "GraphQL mergeQueue(branch:\"dev\") readback",
     "command": "gh api graphql -f query='{repository(owner:\"alfloop-dev\",name:\"odayplus\"){mergeQueue(branch:\"dev\"){id configuration{mergeMethod mergingStrategy checkResponseTimeout maximumEntriesToBuild maximumEntriesToMerge minimumEntriesToMerge minimumEntriesToMergeWaitTime}}}}'",
     "exit_code": 0,
-    "collected_at": "2026-09-08T15:06:04Z",
+    "collected_at": "2026-09-08T15:50:03Z",
     "result": {
       "queue_id": "MQ_kwDOTFqC4s4AA7KM",
       "merge_method": "MERGE",
@@ -26,9 +26,9 @@
   },
   "branch_protection_readback": {
     "source": "REST branch protection required_status_checks",
-    "command": "gh api repos/alfloop-dev/odayplus/branches/dev/protection/required_status_checks --jq '{strict,contexts}'",
+    "command": "gh api repos/alfloop-dev/odayplus/branches/dev/protection/required_status_checks",
     "exit_code": 0,
-    "collected_at": "2026-09-08T15:06:05Z",
+    "collected_at": "2026-09-08T15:50:05Z",
     "result": {
       "strict": false,
       "contexts": [
@@ -36,21 +36,52 @@
         "product",
         "product-e2e-gate",
         "task-review-gate"
+      ],
+      "checks": [
+        {"context": "orchestrator", "app_id": 15368},
+        {"context": "product", "app_id": 15368},
+        {"context": "product-e2e-gate", "app_id": 15368},
+        {"context": "task-review-gate", "app_id": null}
       ]
     }
   },
   "local_policy_readback": {
     "source": ".github/branch-protection/policy.json in worktree",
-    "inspected_sha": "HEAD of task/ODP-MERGE-QUEUE-BATCH-DESIGN-001",
-    "collected_at": "2026-09-08T15:04:54Z",
+    "inspected_sha": "1346f3beb39f1c0338541d350f09a4c4cbc709f0",
+    "base_sha": "9048161e058b8d96efb297ee4e55fc92716e2eb9",
+    "collected_at": "2026-09-08T15:50:00Z",
     "matches_remote": true,
-    "note": "Local policy.json values match remote readback for all merge_queue fields"
+    "note": "Local policy.json values match remote readback for all merge_queue fields and required status checks contexts."
+  },
+  "merge_group_check_runs_and_status_evidence": {
+    "description": "Per-SHA check runs and commit status evidence for a sampled merge_group commit ref, demonstrating how required contexts report on merge_group events",
+    "inspected_commit_sha": "74530caf5bbf8ee3802df658e21a3ffdfca56f25",
+    "check_runs_query": "gh api repos/alfloop-dev/odayplus/commits/74530caf5bbf8ee3802df658e21a3ffdfca56f25/check-runs",
+    "check_runs_exit_code": 0,
+    "check_runs_summary": [
+      "orchestrator (GitHub Actions: completed/success)",
+      "product (GitHub Actions: completed/success)",
+      "product-e2e-gate (GitHub Actions: completed/success)",
+      "performance-gate (GitHub Actions: completed/success)",
+      "change-scope (GitHub Actions: completed/success)",
+      "review-gate (GitHub Actions: completed/success)"
+    ],
+    "commit_status_query": "gh api repos/alfloop-dev/odayplus/commits/74530caf5bbf8ee3802df658e21a3ffdfca56f25/status",
+    "commit_status_exit_code": 0,
+    "commit_statuses": [
+      {
+        "context": "task-review-gate",
+        "state": "success",
+        "description": "PR #1206 approved by its assigned reviewer"
+      }
+    ],
+    "conclusion": "All 4 branch protection required contexts (orchestrator, product, product-e2e-gate via Actions check runs, and task-review-gate via commit status) report and pass on merge_group commits under ALLGREEN strategy."
   },
   "merge_group_ci_analysis": {
-    "source": "gh run list --repo alfloop-dev/odayplus --event merge_group --limit 100",
-    "command": "gh run list --repo alfloop-dev/odayplus --event merge_group --limit 100 --json databaseId,headSha,status,conclusion,createdAt,updatedAt,url",
+    "source": "gh run list --repo alfloop-dev/odayplus --event merge_group --limit 100 --json databaseId,name,headSha,status,conclusion,createdAt,updatedAt,url",
+    "command": "gh run list --repo alfloop-dev/odayplus --event merge_group --limit 100 --json databaseId,name,headSha,status,conclusion,createdAt,updatedAt,url",
     "exit_code": 0,
-    "collected_at": "2026-09-08T15:06:01Z",
+    "collected_at": "2026-09-08T15:50:06Z",
     "sample_size": 100,
     "time_range": {
       "earliest": "2026-09-04T11:43:09Z",
@@ -58,33 +89,29 @@
       "span_days": 4.1
     },
     "unique_merge_group_shas": 50,
+    "workflow_breakdown": {
+      "CI_workflow_runs": 50,
+      "merge_queue_review_gate_runs": 50
+    },
     "conclusions": {
       "success": 99,
       "cancelled": 1,
       "failure": 0
     },
     "ci_duration_minutes": {
-      "note": "Computed from runs with duration >1 min (excludes review-gate-only stamps)",
-      "count": 50,
+      "calculation_method": "Duration computed between createdAt and updatedAt for completed CI workflow runs excluding review-gate-only stamps (<1 min)",
+      "sample_count": 50,
       "min": 2.8,
       "max": 48.0,
       "avg": 14.5,
       "median": 20.6
-    },
-    "concurrency_observations": {
-      "max_concurrent_runs_same_minute": 4,
-      "minutes_with_gt2_concurrent": [
-        {"minute": "2026-09-04T11:43", "runs": 4},
-        {"minute": "2026-09-06T01:29", "runs": 4},
-        {"minute": "2026-09-06T03:11", "runs": 4}
-      ],
-      "note": "4 runs in the same minute corresponds to 2 unique merge-group SHAs × 2 workflow triggers each (ci.yml + merge-queue-review-gate.yml). This indicates max observed queue depth of 2 PRs processed concurrently."
     }
   },
   "merge_throughput_analysis": {
-    "source": "gh pr list --repo alfloop-dev/odayplus --base dev --state merged --limit 50",
+    "source": "gh pr list --repo alfloop-dev/odayplus --base dev --state merged --limit 50 --json number,headRefOid,mergedAt,createdAt,title",
+    "command": "gh pr list --repo alfloop-dev/odayplus --base dev --state merged --limit 50 --json number,headRefOid,mergedAt,createdAt,title",
     "exit_code": 0,
-    "collected_at": "2026-09-08T15:08:33Z",
+    "collected_at": "2026-09-08T15:50:12Z",
     "sample_size": 50,
     "time_range": {
       "earliest_merge": "2026-09-04T04:50:30Z",
@@ -93,30 +120,26 @@
     },
     "merge_rate_per_hour": 0.47,
     "inter_merge_gap_minutes": {
+      "count": 49,
       "min": 0.0,
       "max": 621.4,
       "avg": 129.7,
       "median": 50.1
     },
-    "note": "Rate of 0.47 merges/hour across a 4.4-day sample. Runbook states ~1.5 merges/hour; this sample spans a weekend period which may undercount active-hours throughput. Median gap of 50 min between consecutive merges."
+    "note": "Calculated from mergedAt timestamps across 50 consecutive merged PRs spanning 4.4 days (including weekend). Median interval between successive merges is 50.1 minutes."
   },
   "open_pr_snapshot": {
-    "source": "gh pr list --repo alfloop-dev/odayplus --base dev --state open",
+    "source": "gh pr list --repo alfloop-dev/odayplus --base dev --state open --json number,headRefOid,statusCheckRollup,createdAt,updatedAt,title",
+    "command": "gh pr list --repo alfloop-dev/odayplus --base dev --state open --json number,headRefOid,statusCheckRollup,createdAt,updatedAt,title",
     "exit_code": 0,
-    "collected_at": "2026-09-08T15:05:59Z",
-    "open_prs_targeting_dev": 4,
-    "pr_summary": [
-      {"number": 1014, "status": "all checks passed except task-review-gate FAILURE", "age_days": 14},
-      {"number": 986, "status": "all checks passed", "age_days": 16},
-      {"number": 970, "status": "boundary/product/product-e2e-gate FAILURE", "age_days": 17},
-      {"number": 607, "status": "all checks passed (no task-review-gate)", "age_days": 36}
-    ],
-    "note": "4 open PRs, 2 with passing checks, 2 with failures. None currently in the merge queue based on age and status."
+    "collected_at": "2026-09-08T15:50:19Z",
+    "open_prs_count": 20,
+    "note": "Point-in-time snapshot of open PRs targeting dev. Note that PR age or check status does NOT establish whether a PR is actively queued in mergeQueue; instantaneous queue membership requires live GraphQL mergeQueue polling or webhook event streams."
   },
-  "queue_depth_assessment": {
-    "observed_max_concurrent_shas": 2,
-    "typical_depth": "1 (single PR processed at a time)",
-    "deep_queue_frequency": "Rare; only 3 minutes in 4.1-day sample had >2 concurrent workflow runs",
-    "assessment": "Queue depth is consistently low. The runbook observation that queue is 'rarely deeper than 2' is confirmed by this sample. With min_entries_to_merge=1, batching has no effect at current throughput."
+  "queue_occupancy_and_wait_time_telemetry_status": {
+    "instantaneous_queue_depth": "UNMEASURED_STATICALLY (Retrospective GitHub REST/run lists do not record continuous queue occupancy over time; workflow creation timestamps cannot be used to infer queue concurrency).",
+    "enqueue_to_merge_wait_time": "UNMEASURED_STATICALLY (GitHub does not expose enqueue timestamp in pr/run list API).",
+    "assigned_collection_stage": "WP-35B/C implementation and live observation window must collect continuous queue occupancy and enqueue-to-merge latency via active GraphQL polling or webhook telemetry.",
+    "measurement_conclusion": "Retrospective data establishes that CI takes ~20.6 min (median) and merges occur on average every ~50 min (median gap). Instantaneous queue depth and waiting times remain unmeasured statically and are assigned to WP-35B/C."
   }
 }
