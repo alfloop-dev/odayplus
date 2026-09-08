@@ -394,3 +394,217 @@ config 的治理或工具都會在這裡硬失敗。
      消除 §9.5 的 schema 假紅。
 - 本輪同樣**未**跑測試 suite、**未**改任何 config、**未**操作 supervisor、
   **未**發動任何真實模型 probe。
+
+---
+
+## 10. 第三輪（2026-09-08）：回應 CI performance-gate 退回
+
+本節回應 Codex 於 2026-09-08T00:51:21Z 的 reopen：PR #1229 head
+`b138a820f8a3872d0e407fe67af57d38205068c1` 的 CI
+run `34046802456` / job `101523214849` performance-gate 紅，
+`tests/performance/test_load_and_soak.py:168 test_concurrency_and_soak_execution`
+出現 4 次 `Expected 202, got 404`。
+
+reopen 要求：先核對最新 dev 是否已有相同修復；若修復超出本任務 owned_paths，
+回報具體根因與最小修復範圍供另外派工，勿越界。本節依序回答這三件事。
+
+### 10.1 第一項結論：這不是本分支造成的迴歸
+
+| 量測 | 值 |
+| --- | --- |
+| 本分支 vs base `bd4fb5aa` 的 diff | 1 個新增檔案，`docs/evidence/odp_codex_ultra_drift_repair_001.md`（+396 行 Markdown） |
+| 變更的 `.py` / workflow / 依賴檔 | 0 個 |
+| 同一 job、同一 commit、同一 runner：attempt 1 | `3 passed, 4 deselected` @ 16:52:41Z（綠） |
+| 同一 job、同一 commit、同一 runner：attempt 2 | `1 failed, 2 passed, 4 deselected` @ 16:52:59Z（紅） |
+| 同一顆 branch 更早的 run `34043844236` @ 15:55Z | performance-gate 全綠 |
+
+同一顆 commit 在同一台 runner 上相隔 18 秒，一次綠一次紅。這是一個既有的
+間歇性缺陷被這次 CI 抽中，不是本任務交付物造成的。
+
+### 10.2 第二項結論：最新 dev 沒有這個缺陷的修復
+
+- `origin/dev` = `c4bf87d8`（`bd4fb5aa` 之後 40+ 個 commit）。
+- `git diff --name-only bd4fb5aa..origin/dev` 命中
+  `apps/api` / `shared/` / `tests/performance` / `.github/workflows` 的檔案：**0 個**。
+
+所以 base advance 不會讓這一關變綠，也沒有既有修復可以直接採用。
+
+### 10.3 根因：FastAPI 0.138.1 的路由候選 memo 沒有原子性
+
+**症狀性質**：回傳 body 是 `{"detail":"Not Found", ...}`，`detail` 是 router 配不到
+路由時的預設字串（envelope 由 `shared/api/errors.py:434` 的 `HTTPException` handler 包裝）。
+`apps/api/oday_api/main.py` 全檔只有兩處 404，detail 都是具體字串
+（`"job not found"` 等），所以這個 404 只可能是「當下的路由表裡沒有這條路由」。
+
+**缺陷位置**：`fastapi/routing.py::_IncludedRouter.effective_candidates()`（L1530–L1549）
+是一個沒有鎖的惰性 memo：
+
+```python
+def effective_candidates(self):                       # L1530
+    routes_version = self.original_router._get_routes_version()
+    if routes_version == self._effective_candidates_version:
+        return self._effective_candidates
+    self._effective_candidates = []                   # L1534 先把 attribute 換成空 list
+    for route in self.original_router.routes:
+        ...
+        self._effective_candidates.append(...)        # L1543 / L1547 每次重讀 attribute
+    self._effective_candidates_version = routes_version   # L1548 版本最後才寫
+    return self._effective_candidates
+```
+
+`_match()`（同檔 L1648，L1652 `for candidate in self.effective_candidates()`）就是靠這個
+回傳值逐一配路由。兩個執行緒同時進到重建區段時：
+
+1. A 判定版本不符，把 attribute 綁到新 list `L_A`，開始 append；
+2. B 也判定版本不符（A 還沒寫版本號），把 attribute 綁到另一個新 list `L_B`，`L_A` 成孤兒；
+3. A 後續的 `self._effective_candidates.append(...)` 因為每次重讀 attribute，實際寫進 `L_B`；
+4. A 回傳 `self._effective_candidates`（= `L_B`），而 `L_B` 缺了 A 先前寫進 `L_A` 的前 k 條路由。
+
+該次請求走訪到的候選清單少了 `/jobs`，`_match` 配不到，於是 404。
+
+**結構佐證（實測）**：`create_app()` 回傳的當下，app 有 47 條 top-level route，其中
+38 個是 `_IncludedRouter` 分支，且**全部**的 `_effective_candidates_version` 都是 `None`、
+`_effective_candidates` 長度為 0 —— 路由表在 `create_app()` 結束時是完全冷的，要等第一個
+請求進來才在請求處理路徑內 materialize。未版本化的 `/jobs` alias 位於 branch[3]（prefix `''`），
+`/api/v1/jobs` 位於 branch[2]。
+
+負載測試的第一波正好是 10 個執行緒同時撞進這個冷 memo，所以失敗永遠集中在最小的幾個
+task_id —— CI 那次是 `corr-load-1`/`2`/`3`/`5`，四筆全部落在 25 毫秒內
+（16:52:56.782Z ~ 16:52:56.807Z）。
+
+**因果驗證**（本機，`uv run --frozen --python 3.12`，每輪都是新 app + 10 執行緒首波）：
+
+| 模式 | 與原樣的唯一差異 | 結果 |
+| --- | --- | --- |
+| baseline（15 輪） | 無 | 145 × 202，**5 × 404** |
+| baseline（20 輪） | 無 | 200 × 202，0 × 404 |
+| locked（20 輪） | 只把 `effective_candidates` 包一把 `RLock` | 200 × 202，0 × 404 |
+| widen（8 輪） | 只在 `_build_effective_context` 插入 0.2ms 延遲以拉寬重建窗口 | 70 × 202，**10 × 404（12.5%）** |
+| widen_locked（8 輪） | 同樣的 0.2ms 延遲 **＋** `RLock` | 80 × 202，**0 × 404** |
+
+只拉寬那個函式的重建窗口，404 率就從 ~0–3% 跳到 12.5%；在同樣的延遲下只把那個函式
+序列化，404 就歸零。缺陷確實在這個 memo，不在產品程式碼、不在 SQLite、不在 runner 負載。
+
+**存在時間**：`uv.lock` 從 `445e531f`（2026-06-27）起就鎖在 `fastapi==0.138.1`，
+`pyproject.toml` 只寫 `fastapi>=0.115`（沒有上界）。這個惰性 memo 是 0.138 路由內部
+改寫後才有的結構，也就是說這個偶發缺陷已經潛伏約兩個半月，只是很少被 10 執行緒同時
+冷啟動的測試撞到。
+
+### 10.4 CI 這一關把偶發率放大三倍
+
+`.github/workflows/ci.yml` performance-gate（L296–L323）：
+
+```bash
+for attempt in 1 2 3; do
+  ...
+  if [[ "${status}" -ne 0 ]]; then
+    echo "Performance gate failed on attempt ${attempt} (exit ${status})."
+    exit "${status}"
+  fi
+done
+```
+
+成功時**沒有** `break`。所以 `attempt` 這個命名會誤導：它不是「重試 3 次、綠一次就過」，
+而是「連續 3 次都必須綠」。單次偶發率為 p 時，這一關的紅燈率是 1-(1-p)³ ≈ 3p。
+CI 那次正是 attempt 1 綠、attempt 2 紅，符合這個語意。
+
+這一點只是說明「為什麼這個潛伏兩個半月的缺陷會在這裡浮現」，**不是**建議把它改成真正的
+retry —— 那會變成抑制證據。正確的處置是修 10.3 的根因。
+
+### 10.5 最小修復範圍（超出本任務 owned_paths，建議另外派工）
+
+本任務 owned_paths 只有 `.orchestrator/config.json` 與本收據，因此以下**我沒有修改任何一個
+repo 檔案**。所有候選修復都以 monkeypatch 在記憶體中驗證，repo 未被觸碰。
+
+同一份缺陷在同一個 class 出現兩次：`effective_candidates()`（L1530–L1549）與
+`effective_low_priority_routes()`（L1551–L1571）都是「先把 attribute 換成空 list，
+再逐項 append，最後才寫版本號」。修復必須同時涵蓋這兩個方法。
+
+**方案 B（推薦）：把 memo 改成原子發布**
+
+- 作法：建到區域變數，最後一次指派回 attribute，等同上游正確的修法：
+
+  ```python
+  built = []
+  for route in self.original_router.routes:
+      ...
+      built.append(...)
+  self._effective_candidates = built          # 先發布完整清單
+  self._effective_candidates_version = routes_version
+  ```
+
+- 為什麼夠：競態的成因不是「兩個執行緒同時建」，而是「還沒建完的中間狀態被別的執行緒
+  看見」。改成原子發布之後，兩個執行緒最多各自重複建一次（一次性、只在冷啟動），
+  但任何一個讀到的都是完整清單。不需要鎖，穩定期零成本。
+- 落點：需要對 FastAPI 私有 API 上一層薄補丁（在共用模組 import 時套用，
+  例如 `shared/api/` 下新增一個模組並由 `create_app()` import），
+  或直接推上游。爆炸半徑限於路由候選的建構順序，不改變路由語意。
+- 驗證結果見下。
+
+**方案 A（已量測，不推薦）：在 `create_app()` 回傳前單執行緒暖一次路由表**
+
+深度優先走訪 `app.router.routes`，對每個 `_IncludedRouter` 呼叫一次
+`effective_candidates()` 與 `effective_low_priority_routes()`，並對回傳的子分支遞迴
+（`_match` 每次重建都會**新建**子 `_IncludedRouter`，只掃頂層不夠；實測共 68 個分支）。
+
+功能上有效（見下表），但**代價不可接受**：
+
+| 量測（本機，3 次） | create_app | 暖機 |
+| --- | --- | --- |
+| run0 | 5463.8ms | 3203.5ms |
+| run1 | 4916.2ms | 3588.5ms |
+| run2 | 4550.8ms | 3393.1ms |
+
+暖機要 ~3.3s，和 `create_app()` 本身同一量級。惰性建構原本讓測試只付「實際走到的分支」
+的成本；改成全暖會讓每一次 `create_app()` 都付完整路由表的錢，而 product 套件有
+~1900 個測試、多數會各建一個 app。所以 A 只列為備案，不建議採用。
+
+**方案 C：升級 / 為 FastAPI 加上界** —— `pyproject.toml` 目前只有 `fastapi>=0.115`
+（無上界），`uv.lock` 自 2026-06-27 起鎖在 `0.138.1`。需先確認上游是否已修此競態。
+爆炸半徑最大，建議與 B 分開評估，但「路由內部改寫可以無聲進入」這件事本身值得處理。
+
+**驗證（同樣注入 0.2ms 延遲，讓缺陷維持在近乎必現的狀態；每輪新 app + 10 執行緒首波）**：
+
+| 模式 | 8 輪 × 10 併發首波的結果 |
+| --- | --- |
+| widen（未修，對照組） | 70 × 202，**10 × 404（12.5%）** |
+| widen + 方案 A（暖機 68 個分支） | 80 × 202，**0 × 404** |
+| widen + 方案 B（原子發布，無鎖） | 80 × 202，**0 × 404** |
+
+**不建議的做法**（會變成抑制證據，違反 reopen 的「禁止抑制測試、調高預算、假報 PASS」）：
+在測試裡加暖機請求、放寬 `failure_count == 0`、把「3 次必綠」改成真 retry、或標記
+`flaky` 重跑。這些都只讓紅燈消失，正式環境第一波併發流量仍然會收到 404。
+
+### 10.6 本輪的邊界聲明與交回狀態
+
+- **未修改**任何 `apps/`、`shared/`、`tests/`、`.github/workflows/` 檔案；本輪 repo 變更
+  只有本收據一個檔案。
+- **未** base advance merge：dev 沒有相關修復（10.2），且 GitHub 的 PR CI 本來就是在
+  `Merge <head> into <base>` 的合成 ref 上跑，base 組合由 merge queue 負責。
+- **未**動 §6 的 config 修復步驟、未動 supervisor、未動 archive、未清任何 hold；
+  §1–§9 的 Astra/ultra 驗收與全部安全門檻維持原狀，`.orchestrator/config.json` 仍未被本
+  worker 修改（寫入阻塞見 §5、§9.3、§9.4）。
+- **仍然阻塞**：本任務原本的修復（把 `model_reasoning_effort` 由 `high` 還原成 `ultra`）
+  依舊需要 §9.7 列的兩項授權，本輪沒有取得，也沒有再嘗試繞過。
+- **新交回項**：10.3 的 FastAPI 路由 memo 競態需另外派工修復；在它修好之前，
+  performance-gate 對**每一個** product-scoped PR 都有同一份偶發紅燈風險，
+  與本任務無關。
+
+### 10.7 本輪實際執行的驗證（只跑受影響範圍）
+
+依 reopen「僅重跑受影響驗證和 required CI」，本輪沒有跑完整 suite。實際執行的是：
+
+| 指令 | 結果 |
+| --- | --- |
+| `uv run --frozen --python 3.12 pytest tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution -p no:randomly -m performance` | `1 passed`，25.08s，exit 0 |
+| `uv run --frozen --python 3.12 python delivery_toolchain/governance/check_code_boundaries.py` | exit 0（inventory 未變動） |
+| 上述 baseline / locked / warmed / widen / widen_locked / widen_atomic 重現實驗 | 見 10.3、10.5 表格；全部以 monkeypatch 在記憶體中進行，未修改 repo |
+
+注意事項（供後續重跑者）：`uv run --frozen` 在本機預設解析到 CPython 3.14，而
+`pgserver==0.1.4` 只有 cp312 的 wheel，會直接安裝失敗；必須帶 `--python 3.12`。
+另外此測試帶 `performance` marker，預設會被 deselect，要用 `-m performance` 才會實際執行。
+
+單次本機通過**不代表**缺陷不存在 —— 10.3 的 baseline 兩次結果就是一次 5/150 紅、
+一次 0/200 綠。判定依據請看 widen / widen_locked / widen_atomic 三組對照，
+而不是任何單次綠燈。
+
