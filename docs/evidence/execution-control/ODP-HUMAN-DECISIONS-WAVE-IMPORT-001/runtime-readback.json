@@ -15,8 +15,9 @@
   },
   "pool_capacity": {
     "configured_slots_total": 14,
-    "effective_execution_concurrency": 1,
+    "effective_execution_concurrency": 5,
     "effective_review_concurrency": 3,
+    "effective_total_concurrency": 8,
     "account_pools": {
       "claude_main": {
         "state": "cooldown",
@@ -26,7 +27,8 @@
       },
       "antigravity_main": {
         "state": "healthy",
-        "effective_concurrency": 5
+        "effective_concurrency": 5,
+        "last_recovered_at": "2026-09-08T15:21:14Z"
       },
       "codex_bjoe": {
         "state": "recovering",

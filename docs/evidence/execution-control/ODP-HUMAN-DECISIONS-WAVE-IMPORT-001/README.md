@@ -36,7 +36,7 @@ This evidence directory contains the complete verification trail:
 | [`import-receipt.json`](import-receipt.json) | Exact root execution receipt (`actor: Codex`, `status: all_eight_assigned_and_verified`, 8 assignments with exit code 0) | `c000671f04bb25b9c1bdb4d29da9d16d2559d57f7f64aadec2e0f24cadc28cd3` |
 | [`proposed-wave.json`](proposed-wave.json) | Immutable reviewed manifest defining the 8 stage-A tasks and constraints | `dca1a58c0b1e312604bcd384c8df7d0df8e8383ad93bce0c47bd69ec068a6089` |
 | [`source-hashes.json`](source-hashes.json) | Root-level key-value mapping of all input and receipt SHA256 hashes | Generated JSON |
-| [`wave-task-mapping.json`](wave-task-mapping.json) | 8-task structured mapping binding work packages, roles, dependencies, pinned sources, and merge SHA | Generated JSON |
+| [`wave-task-mapping.json`](wave-task-mapping.json) | 8-task structured mapping binding work packages, initial/current roles, dependencies, pinned sources, and merge SHA | Generated JSON |
 | [`runtime-readback.json`](runtime-readback.json) | Live supervisor observation, distinguishing running vs review vs queued tasks and effective pool capacity | Generated JSON |
 | [`runtime-rollout-before.json`](runtime-rollout-before.json) | Root runtime rollout pre-state snapshot before applying PR #1249 | `3e15ed60e76d01fae318fa99cdb49b1fcd2ef666cb3939d11c686690cfc000a6` |
 | [`runtime-rollout-after.json`](runtime-rollout-after.json) | Root runtime rollout post-state snapshot verifying Supervisor PID 945494 on code SHA `9048161e` | `2fb9ec64347737b2a8384e77be631b1f0d76525aed15de1554137a3eacf11916` |
@@ -68,23 +68,24 @@ This evidence directory contains the complete verification trail:
 ## 4. First-Wave Task Mapping Summary
 
 All 8 tasks depend strictly on `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001` and own non-overlapping evidence directories under `docs/evidence/human-decisions/<task_id>/`.
+In `wave-task-mapping.json`, `owner` and `reviewer` are bound to initial receipt assignments per acceptance requirements, with separate columns for initial vs. current observed roles.
 
-| Task ID | Work Package | Title | Initial Owner / Reviewer | Current Status |
-|---|---|---|---|---|
-| `ODP-BRAND-TRANSFER-CONTRACT-PREP-001` | WP-30A | 交品牌轉移資料契約草案、producer／consumer 差距及 H03 請求 | Claude / Codex | `in_progress` (worker running) |
-| `ODP-CDC-SOURCE-CONTRACT-PREP-001` | WP-34A | 交 CDC 逐來源適用性／刪除傳播矩陣與 H07 請求 | Claude / Codex | `todo` (queued) |
-| `ODP-DURABLE-PARTIAL-CONTRACT-PREP-001` | WP-33A | 交真實 durable job 候選與 PARTIAL／receipt／retry 契約及 H06 請求 | Antigravity2 / Codex2 | `todo` (queued) |
-| `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001` | WP-31A | 交店型轉換事件／財務契約草案與 H04 請求 | Antigravity / Codex2 | `in_progress` (worker running) |
-| `ODP-MERGE-QUEUE-BATCH-DESIGN-001` | WP-35A | 將批次 queue 視為正式需求並交只讀量測與可審查設計 | Antigravity3 / Codex2 | `review` (submitted for review) |
-| `ODP-NET002-LEASE-CONTRACT-PREP-001` | WP-32A | 交 NetPlan 租約最小契約、solver 一致驗收方案與 H05 請求 | Claude2 / Codex | `todo` (queued) |
-| `ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001` | WP-20 | 核對 password-first／OIDC-off 證據並交 OAuth human task 待命說明 | Claude2 / Codex2 | `in_progress` (worker running) |
-| `ODP-OSS-DECISION-PACK-001` | WP-10 | 依已確認政策更新 OSS／逐資料來源審查包與未簽署 receipt 草案 | Claude / Codex | `in_progress` (worker running) |
+| Task ID | Work Package | Title | Initial Owner / Reviewer | Current Owner / Reviewer | Current Status |
+|---|---|---|---|---|---|
+| `ODP-BRAND-TRANSFER-CONTRACT-PREP-001` | WP-30A | 交品牌轉移資料契約草案、producer／consumer 差距及 H03 請求 | Claude / Codex | Antigravity2 / Codex | `in_progress` (worker running) |
+| `ODP-CDC-SOURCE-CONTRACT-PREP-001` | WP-34A | 交 CDC 逐來源適用性／刪除傳播矩陣與 H07 請求 | Claude / Codex | Antigravity2 / Codex | `todo` (queued) |
+| `ODP-DURABLE-PARTIAL-CONTRACT-PREP-001` | WP-33A | 交真實 durable job 候選與 PARTIAL／receipt／retry 契約及 H06 請求 | Antigravity2 / Codex2 | Antigravity2 / Codex2 | `todo` (queued) |
+| `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001` | WP-31A | 交店型轉換事件／財務契約草案與 H04 請求 | Antigravity / Codex2 | Antigravity / Codex2 | `in_progress` (worker running) |
+| `ODP-MERGE-QUEUE-BATCH-DESIGN-001` | WP-35A | 將批次 queue 視為正式需求並交只讀量測與可審查設計 | Antigravity3 / Codex2 | Antigravity3 / Codex2 | `review` (submitted for review) |
+| `ODP-NET002-LEASE-CONTRACT-PREP-001` | WP-32A | 交 NetPlan 租約最小契約、solver 一致驗收方案與 H05 請求 | Claude2 / Codex | Antigravity2 / Codex | `todo` (queued) |
+| `ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001` | WP-20 | 核對 password-first／OIDC-off 證據並交 OAuth human task 待命說明 | Claude2 / Codex2 | Antigravity2 / Codex2 | `in_progress` (worker running) |
+| `ODP-OSS-DECISION-PACK-001` | WP-10 | 依已確認政策更新 OSS／逐資料來源審查包與未簽署 receipt 草案 | Claude / Codex | Antigravity2 / Codex | `in_progress` (worker running) |
 
 ---
 
 ## 5. Live Supervisor Runtime & Pool Observation
 
-Observation from `/home/lupin/odayplus/ai-status.json` and `/home/lupin/odayplus/.orchestrator/state.json`:
+Observation from `/home/lupin/odayplus/ai-status.json` and `/home/lupin/odayplus/.orchestrator/state.json` at snapshot timestamp `2026-09-08T15:23:43.854808+00:00`:
 
 ### 5.1 Supervisor Process State
 - **Supervisor PID**: `945494`
@@ -93,15 +94,20 @@ Observation from `/home/lupin/odayplus/ai-status.json` and `/home/lupin/odayplus
 - **Loaded Config Digest**: `54110ea0cef280a8`
 
 ### 5.2 Account Pool Runtime & Effective Capacity
+- **Observation Snapshot**: `2026-09-08T15:23:43.854808+00:00`
 - **Configured Slots Total**: 14
-- **Account Pools**:
-  - `claude_main`: state `cooldown` (effective concurrency: 0; quota resets at 16:00 UTC)
-  - `antigravity_main`: state `recovering` (effective concurrency: 1)
+- **Account Pools at Snapshot**:
+  - `claude_main`: state `cooldown` (effective concurrency: 0; quota reset at 16:00 UTC)
+  - `antigravity_main`: state `healthy` (effective concurrency: 5; recovered at 2026-09-08T15:21:14Z following canary PR #1249 completion)
   - `codex_bjoe`: state `recovering` (effective concurrency: 1)
   - `codex_lupin`: state `healthy` (effective concurrency: 2)
-- **Effective Concurrency**: Execution concurrency ~1; Review concurrency ~3.
+- **Effective Concurrency**:
+  - **Execution Concurrency**: 5 (0 from `claude_main` + 5 from `antigravity_main`)
+  - **Review Concurrency**: 3 (1 from `codex_bjoe` + 2 from `codex_lupin`)
+  - **Total Effective Concurrency**: 8 / 14 configured slots
+- **Distinction from Rollout History**: The earlier pre-rollout snapshot (`runtime-rollout-before.json` at 15:06:51Z) captured `antigravity_main` in `recovering` with 1 slot prior to rollout application. Following PR #1249 deployment and canary completion, recovery completed at 15:21:14Z to full healthy capacity (5 slots), as consistently recorded in `runtime-readback.json`.
 
-### 5.3 Task Breakdown
+### 5.3 Task Breakdown (at snapshot)
 - **Running (4)**:
   - `ODP-BRAND-TRANSFER-CONTRACT-PREP-001` (PID 959932)
   - `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001` (PID 955528)
