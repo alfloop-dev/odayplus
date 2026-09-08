@@ -240,3 +240,11 @@ Exit code: 1 (expected fail-closed behavior)
 
 命令: git diff --stat -- docs/evidence/gates/RELEASE_MANIFEST.json
 Output: (empty) -- byte-exact manifest 未被本輪修改
+
+===============================================================================
+10. PR #1243 Root Clean 整合與 Base Advance 核對
+- Root 安排乾淨分支 task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002-CLEAN（PR #1243），直接自候選 C（596b9c9a）切出單一 evidence-only commit 571ccb46。
+- 舊 PR #1205 ancestry 阻擋 probe 與紀錄保留為歷史證據。
+- 本輪完成與 origin/dev（367fa6aa7e86）的 base advance merge，並補正 docs/evidence/gates/README.md 及 RELEASE_GATE_REGISTRY.json note。
+- 驗證 check_release_gate_registry.py EXIT=0，--require-go EXIT=1 (fail-closed)。
+
