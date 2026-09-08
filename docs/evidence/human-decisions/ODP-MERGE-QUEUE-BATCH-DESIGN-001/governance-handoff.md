@@ -25,26 +25,38 @@ multi-worker write conflicts.
 
 ### 2.2 New State (per D21)
 
-- **User decision**: B — retain as formal implementation requirement
-- **Disposition**: `IMPLEMENTATION_READY` (not `DECIDED`; the user chose to
-  implement, not to waive)
+- **User decision**: B — retain as formal implementation requirement (implementation direction selected)
+- **Current disposition**: `OPEN` (pending specific evidence: H08 human parameter confirmation and B-stage execution assignment; A-stage design and measurement evidence package delivered)
+  - *Distinction between implementation direction and B-stage readiness*: D21 resolves the prior "decided not to implement" misunderstanding. However, per pinned execution plan `be04fe7:81` and `docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md:56`, advancing to `IMPLEMENTATION_READY` requires locked requirements/acceptance (including H08 batch parameter confirmation), a concrete delivery batch, and an assigned implementation owner/task (rather than an abstract work package ID like `WP-35`).
 - **Scope**: `dev` branch merge queue batching on `alfloop-dev/odayplus`
-- **Parameters**: To be determined by measurement and H08 human review
-- **Next action**: WP-35B engineering implementation after H08 parameter
-  confirmation
+- **Parameters**: Proposed via measurement in [configuration-options.md](configuration-options.md); pending H08 human confirmation
+- **Next action**: Human H08 parameter confirmation, followed by assigning a concrete B-stage engineering task (`ODP-MERGE-QUEUE-BATCH-IMPL-001` / WP-35B) to transition the requirement state to `IMPLEMENTATION_READY`
 
 ### 2.3 Governance Registry Entry (for WP-90)
 
-The following is the recommended update to item 19 in the open decisions
-register. WP-90 is responsible for the actual write:
+The following is the recommended update to item 19 in the open decisions register for WP-90 to apply in the shared manifest, reflecting D21 implementation selection and A-stage completion while awaiting H08 parameter confirmation:
 
 ```
-| 19 | merge queue 批次 | IMPLEMENTATION_READY | D21: user selected B (retain as requirement); parameters pending H08 measurement-based proposal |
+| 19 | merge queue 批次 | OPEN | D21: user selected B (implementation direction); A-stage delivered in ODP-MERGE-QUEUE-BATCH-DESIGN-001; pending H08 parameter selection & B-stage task assignment |
 ```
 
-If a `set_valued_requirements.json` member is created for this item (which
-the disposition audit recommended against for a configuration concern), it
-should carry:
+If a `set_valued_requirements.json` member is created for this item (which the disposition audit recommended against for a configuration concern), the current truthful entry is:
+
+```json
+{
+  "member_id": "MERGE_QUEUE_BATCH",
+  "status": "absent",
+  "disposition": {
+    "state": "OPEN",
+    "target_phase": "A-stage delivered; B-stage pending H08",
+    "note": "D21: user selected implementation direction. A-stage evidence package delivered in ODP-MERGE-QUEUE-BATCH-DESIGN-001. Pending H08 parameter confirmation and B-stage task assignment."
+  }
+}
+```
+
+#### Conditional IMPLEMENTATION_READY Fragment (Upon B-Stage Entry Conditions Fulfilled)
+
+Once H08 parameters are confirmed, a concrete delivery batch is scheduled, and a real execution owner/task (e.g. `ODP-MERGE-QUEUE-BATCH-IMPL-001`) is assigned per `implementation-handoff.md`, WP-90 may advance the disposition to `IMPLEMENTATION_READY`:
 
 ```json
 {
@@ -52,23 +64,21 @@ should carry:
   "status": "absent",
   "disposition": {
     "state": "IMPLEMENTATION_READY",
-    "assigned_to": "WP-35",
+    "assigned_to": "<assigned-task-id-e.g.-ODP-MERGE-QUEUE-BATCH-IMPL-001>",
     "target_phase": "B-stage",
-    "note": "D21: user selected implementation. A-stage evidence package delivered in ODP-MERGE-QUEUE-BATCH-DESIGN-001. Parameters pending H08."
+    "note": "D21: implementation selected; H08 parameters confirmed; B-stage implementation assigned."
   }
 }
 ```
 
-This task does **not** create or modify this entry; it is provided as a
-recommendation for WP-90.
+This task does **not** create or modify this entry; it is provided as a recommendation for WP-90.
 
 ## 3. What WP-90 Should Update
 
 1. **Item 19 in `ODP_OPEN_DECISIONS_2026-09-03.md`** (or its successor):
-   Change from `BLOCKED_BY_EVIDENCE` to `IMPLEMENTATION_READY` with D21
-   reference
+   Change from `BLOCKED_BY_EVIDENCE` to `OPEN` with D21 reference and A-stage completion record (pending H08 parameters and B-stage task assignment).
 2. **Governance registry** (if merge queue batch becomes a tracked member):
-   Add the entry above
+   Add the `OPEN` entry above, advancing to `IMPLEMENTATION_READY` only when B-stage entry conditions are met and a real execution task is assigned.
 3. **Cross-reference**: Link to this task's evidence package at
    `docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/`
 

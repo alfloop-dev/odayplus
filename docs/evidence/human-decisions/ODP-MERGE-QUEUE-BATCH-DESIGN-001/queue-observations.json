@@ -3525,6 +3525,6 @@
     "instantaneous_queue_depth": "UNMEASURED_STATICALLY (Retrospective GitHub REST/run lists do not record continuous queue occupancy over time; workflow creation timestamps cannot be used to infer queue concurrency).",
     "enqueue_to_merge_wait_time": "UNMEASURED_STATICALLY (GitHub does not expose enqueue timestamp in pr/run list API).",
     "assigned_collection_stage": "WP-35B/C implementation and live observation window must collect continuous queue occupancy and enqueue-to-merge latency via active GraphQL polling or webhook telemetry.",
-    "measurement_conclusion": "Retrospective data establishes that CI takes ~20.6 min (median) and merges occur on average every ~50\u201355 min (median gap) in the creation-ordered sample. Instantaneous queue depth and waiting times remain unmeasured statically and are assigned to WP-35B/C."
+    "measurement_conclusion": "Retrospective data establishes that CI takes ~20.6 min (median; range 2.8–48.0 min, avg 14.69 min across n=47 successful runs) and merges occur with a median inter-merge gap of 54.9 min (mean: 131.6 min, range: 0.0–621.4 min) in the creation-ordered sample. Instantaneous queue depth and waiting times remain unmeasured statically and are assigned to WP-35B/C."
   }
 }

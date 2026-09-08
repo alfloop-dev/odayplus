@@ -3,7 +3,7 @@
 - **Task ID**: ODP-MERGE-QUEUE-BATCH-DESIGN-001
 - **Phase**: A-stage (read-only measurement and reviewable design)
 - **Owner**: Antigravity3
-- **Reviewer**: Codex2
+- **Reviewer**: Codex
 - **Date**: 2026-09-08
 - **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](https://github.com/alfloop-dev/odayplus/blob/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
 
@@ -27,7 +27,7 @@ specifies the engineering handoffs for WP-35B/C and WP-90.
 | 1 | [queue-observations.json](queue-observations.json) | Read-only measurements of CI duration, creation-ordered sample merge intervals, configuration readbacks, per-SHA check run / status receipts with exact command argv, timestamps, exit codes, and retained raw observation rows |
 | 2 | [batch-requirement.md](batch-requirement.md) | Formal requirement specification for batch merging, including mandatory properties, dated official references, and parameter boundaries |
 | 3 | [configuration-options.md](configuration-options.md) | Three comparable configuration options (Baseline / Conservative Trial / Burst Batching) with tradeoff analysis, mandatory `ALLGREEN` preservation, and full baseline rollback for H08 review |
-| 4 | [governance-handoff.md](governance-handoff.md) | Governance update fragment for WP-90 to incorporate into the shared manifest, recording D21 disposition as `IMPLEMENTATION_READY` |
+| 4 | [governance-handoff.md](governance-handoff.md) | Governance update fragment for WP-90 to record D21 implementation-selected direction (currently OPEN pending H08) with conditional IMPLEMENTATION_READY transition criteria |
 | 5 | [implementation-handoff.md](implementation-handoff.md) | Comprehensive automated verification matrix, C-stage live behavioral acceptance scenarios with required receipt fields, entry conditions, and operational procedures |
 
 ## Key Findings
@@ -36,10 +36,13 @@ specifies the engineering handoffs for WP-35B/C and WP-90.
    `min_entries_to_merge = 1` (single-entry minimum baseline), `grouping_strategy = ALLGREEN`,
    `strict = false` on `dev`.
 2. **CI duration and throughput measured**: Median CI duration is ~20.6 minutes
-   (range: 2.8–48.0 min); in the creation-ordered sample of 50 merged PRs over a 107.5-hour
-   span (including weekend), sample merge rate is 0.47 merges/hour (median inter-merge gap: 54.9 min).
-3. **CI reliability on merge_group**: 0 failures in 100 sampled `merge_group` workflow
-   runs (99 success, 1 cancellation across 50 unique merge group SHAs).
+   (range: 2.8–48.0 min, avg: 14.7 min); in the creation-ordered sample of 50 merged PRs over a 107.5-hour
+   span (including weekend), sample merge rate is 0.47 merges/hour (median inter-merge gap: 54.9 min, mean: 131.6 min).
+3. **CI reliability on merge_group**: In the 100 sampled `merge_group` workflow
+   runs across 50 unique merge group SHAs (50 CI runs and 50 review-gate runs),
+   outcomes in the retained snapshot are 97 success, 2 in_progress, and 1 cancelled. Specifically,
+   the 50 CI runs comprise 47 success, 2 pending, and 1 cancelled; all 50 review-gate runs are
+   successful. No failures were observed in this selection, with pending outcomes unknown.
 4. **All 4 required checks report on `merge_group`**: `orchestrator`, `product`,
    `product-e2e-gate` (via GitHub Actions check runs) and `task-review-gate` (via commit
    status) verified on sampled `merge_group` commit `74530caf5bbf8ee3802df658e21a3ffdfca56f25`.

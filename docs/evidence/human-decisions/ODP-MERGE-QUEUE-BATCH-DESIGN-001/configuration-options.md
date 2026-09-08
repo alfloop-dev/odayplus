@@ -3,7 +3,7 @@
 - **Task**: ODP-MERGE-QUEUE-BATCH-DESIGN-001
 - **Date**: 2026-09-08
 - **Author**: Antigravity3
-- **Reviewer**: Codex2
+- **Reviewer**: Codex
 - **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](https://github.com/alfloop-dev/odayplus/blob/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
 
 ## 1. Platform Support Reference

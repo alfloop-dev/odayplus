@@ -39,8 +39,10 @@ requirement. This means:
 - It is **not** authorization to change `min_entries_to_merge` or any other queue
   parameter without reviewed evidence and human approval
 - It is **not** a governance-level `DECIDED` disposition (those require human
-  decider, date, and scope per `ODP_REQUIREMENT_DISPOSITIONS.md`); the disposition
-  for D21 is `IMPLEMENTATION_READY`
+  decider, date, and scope per `ODP_REQUIREMENT_DISPOSITIONS.md`). D21 selected
+  the implementation direction; its requirement disposition is recorded as `OPEN`
+  pending H08 parameter confirmation and B-stage task assignment, transitioning to
+  `IMPLEMENTATION_READY` upon meeting B-stage entry conditions
 - It is **not** deleting, bypassing, or weakening any required check or review gate
 - It is **not** substituting `grouping_strategy: HEADGREEN` (which would weaken per-entry check enforcement)
 
@@ -56,7 +58,7 @@ wait time, failure isolation under ALLGREEN strategy, and all existing required 
 |---|---|
 | Batch formation | Multiple qualifying PRs can form a batch when queue depth meets or exceeds configured minimum |
 | Bounded wait | A ready PR is never held indefinitely waiting for additional PRs; a configurable maximum wait time (`min_entries_to_merge_wait_minutes`) bounds the accumulation period |
-| Admission control | Only PRs with passing required checks AND reviewer approval (`task-review-gate`) may enter a batch; unapproved or failing PRs are excluded |
+| Admission control | Only PRs with passing required branch protection checks AND reviewer approval (`task-review-gate`) may enter a batch; unapproved or failing PRs are excluded prior to queue admission (generating no merge group SHA) or ejected upon group CI check failure |
 | Head change re-validation | If a PR's head changes after admission, the merge group must re-run CI against the updated composition and re-verify review status |
 | Failure isolation | When a batch fails CI under `ALLGREEN`, the queue isolates the failing PR and re-queues the remaining PRs for a clean attempt |
 | Required checks preserved | `orchestrator`, `product`, `product-e2e-gate`, `task-review-gate` must all report and pass on the `merge_group` SHA; no check may be removed or weakened |
@@ -109,15 +111,15 @@ See [queue-observations.json](queue-observations.json) for full provenance, exac
 |---|---|---|
 | Sample period | 2026-09-04 to 2026-09-08 (4.1 days) | 100 most recent `merge_group` workflow runs |
 | CI duration (median) | 20.6 min (range: 2.8–48.0 min, avg: 14.7 min) | Completed `CI` workflow runs (n=47) |
-| merge_group CI failure rate | 0% (99 success, 1 cancelled, 0 failure) | 100 `merge_group` workflow runs across 50 SHAs |
+| merge_group CI failure rate | 0% observed failures in sample (50 CI runs: 47 success, 2 pending, 1 cancelled; 50 review-gate runs: 50 success; pending outcomes unknown) | 100 `merge_group` workflow runs across 50 SHAs |
 | Sample merge throughput | 0.47 merges/hour (50 merged PRs over 107.5 hours) | Creation-ordered sample of 50 merged PRs from `gh pr list` (includes weekend) |
-| Inter-merge interval | Median: 54.9 min (avg: 131.6 min, range: 0.0–621.4 min) | Time between successive `dev` merge commits in sample |
+| Inter-merge interval | Median: 54.9 min, Mean: 131.6 min (range: 0.0–621.4 min) | Time between successive `dev` merge commits in sample |
 | Required status checks on `merge_group` | All 4 reporting and passing (`orchestrator`, `product`, `product-e2e-gate`, `task-review-gate`) | Sampled per-SHA check runs and commit status (`74530caf5bbf8ee3802df658e21a3ffdfca56f25`) |
 | Instantaneous queue depth & wait time | `UNMEASURED_STATICALLY` | Continuous queue telemetry assigned to WP-35B/C |
 
 ### 4.1 Assessment and Conditional H08 Recommendation
 
-1. **Measured CI duration and sample merge rate**: Retrospective observations establish that CI duration is ~20.6 minutes (median) and merges in the creation-ordered sample occurred on average every ~55 minutes (median gap).
+1. **Measured CI duration and sample merge rate**: Retrospective observations establish that CI duration is ~20.6 minutes (median, range 2.8–48.0 min, avg 14.7 min) and merges in the creation-ordered sample had a median inter-merge gap of 54.9 minutes (mean: 131.6 minutes).
 2. **Historical throughput attribution**: `docs/runbooks/dev-merge-queue.md:37` (commit `944ad12f` dated 2026-08-19) historically noted peak fleet throughput of ~1.5 merges/hour.
 3. **Queue depth & wait time remain unmeasured statically**: Retrospective GitHub API queries cannot determine instantaneous queue depth or enqueue-to-merge wait times. Continuous telemetry collection is formally assigned to the WP-35B/C next-stage collection lane.
 4. **Conditional Option B recommendation**: Subject to the missing occupancy and wait-time evidence, Option B (`min_entries_to_merge = 2`, `min_entries_to_merge_wait_minutes = 10`) is recommended as a conservative trial option for H08 human review. Because the 10-minute wait timer elapses concurrently during the ~20.6-minute CI execution (per GitHub merge queue semantics), Option B enables batching for concurrent dispatches without adding artificial serial latency to solo PRs whose CI takes longer than 10 minutes.
