@@ -3,11 +3,12 @@
 - **Task ID**: `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001`
 - **Work Package**: WP-31A（[ODP 人工決策執行規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §6）
 - **Requirement**: `ODP-FR-SITE-001 / FORMAT_CONVERSION`
-- **Owner**: Antigravity
+- **Owner**: Claude
 - **Reviewer**: Codex2
 - **Stage**: A（工程準備） — 獨立證據目錄交付
 - **Date**: 2026-09-08
-- **Inspected Head**: `cf04c046`
+- **Inspected Head**: `944f4d719b29e765605f55a5fbc366aca3430c36`（本輪重新查證；早期查證於 `cf04c046`，兩者相異處以本輪為準）
+- **Per-observation receipts**: [implementation-handoff.md](implementation-handoff.md) §5.2–§5.3（每項觀測附命令、UTC、原始 exit code 與 blob SHA）
 
 ---
 
@@ -37,7 +38,7 @@
 
 ### What Exists in the Repo (Inspected Evidence)
 
-- `core.stores.store_format_code` — static column only (000001, 000004 migrations)
+- `core.stores.store_format_code` — static column only (000001, 000002, 000004 migrations)
 - `TargetFormatRegistry` — selects new-store format by area (G2, G3_COMPACT, FLAGSHIP)
 - `SimulationInput` — greenfield-only financial simulation
 - `FORMAT_CONVERSION` governance: `absent` / `BLOCKED_BY_EVIDENCE` with formal handback `HB-SITE001-FORMAT-CONVERSION-001`
@@ -47,8 +48,9 @@
 - No `core.store_format_conversions` table
 - No conversion event producer or ingestion pipeline
 - No `ConversionSimulationInput` or brownfield financial model
-- No conversion ramp or downtime logic in `simulator.py`
-- No FORMAT_CONVERSION fields in SiteScore
+- No conversion ramp or downtime logic in `simulator.py`（該檔已有 **新店** 設備殘值／殘餘價值模型，缺的是 brownfield 舊資產路徑，不是殘值本身）
+- No conversion/from-format/downtime field in SiteScore（`SiteScoreFeatureInput` 只有 greenfield 的 `target_format_code`）
+- No conversion event table anywhere in the migrations tree（遞迴查證 50 個 migration 檔）
 
 ### New Store Selection ≠ Brownfield Conversion
 

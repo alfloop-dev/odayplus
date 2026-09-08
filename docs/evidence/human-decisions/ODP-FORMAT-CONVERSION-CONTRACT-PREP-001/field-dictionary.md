@@ -13,7 +13,7 @@
 
 | # | Field | Type | Format | Description | Source / Owner | Inspected Evidence |
 |---|-------|------|--------|-------------|---------------|-------------------|
-| 1 | `event_id` | string | UUID | Unique event identifier. Replay with same `event_id` MUST NOT cause duplicate cost/revenue entries. | System-generated | No producer exists; event identity design based on existing `core.stores` UUID pattern (000001 migration) |
+| 1 | `event_id` | string | UUID | **Primary** event identity and the always-applied dedup key. Replay with same `event_id` MUST NOT cause duplicate cost/revenue entries. Deduplication never falls back to any other field when `idempotency_key` is absent. | System-generated | No producer exists; event identity design based on existing `core.stores` UUID pattern (000001 migration) |
 | 2 | `event_type` | string | const `FORMAT_CONVERSION` | Event type discriminator for routing. | System constant | Aligns with `ODP-FR-SITE-001` member name in `set_valued_requirements.json` |
 | 3 | `store_id` | string | UUID | FK → `core.stores(store_id)`. The existing store undergoing conversion. | Store Operations ERP / manual entry | `core.stores` table in `000001_baseline_canonical_schema.sql:L79-90` |
 | 4 | `tenant_id` | string | UUID | Multi-tenant isolation key. | Tenant registry | `core.stores.tenant_id` in `000001_baseline_canonical_schema.sql:L80` |
@@ -41,7 +41,7 @@
 | 21 | `daily_baseline_revenue` | number \| null | ≥ 0 | Pre-conversion average daily revenue for loss calculation. | Historical revenue data | Null if historical data unavailable — loss unquantified |
 | 22 | `conversion_reason` | string \| null | — | Business justification (UPGRADE, DOWNSIZE, REBRAND, etc.). | Store Operations | Informational; not used in financial calculation |
 | 23 | `approved_by` | string \| null | — | Identity of approving human authority. | Governance | Required in Stage B production; null in draft |
-| 24 | `idempotency_key` | string \| null | — | Secondary dedup key for at-least-once processing. | Producer system | Some producers may not generate secondary keys |
+| 24 | `idempotency_key` | string \| null | non-empty when present | **Optional secondary** dedup key. Participates in deduplication **only** when supplied as a valid non-null, non-empty string. `null` or omitted → the event dedups on `event_id` alone and MUST stay distinct from every other event; several events carrying `null` are **never** duplicates of each other. Empty string is a validation error, not a key, and MUST NOT be normalised to `null`. | Producer system | Some producers may not generate secondary keys, so the null path is the common case and must be safe |
 | 25 | `metadata` | object \| null | — | Extensible envelope. Must not duplicate top-level fields. | Various | Future extensibility |
 
 ## Key Design Distinctions
@@ -63,17 +63,20 @@
 
 ## Source Inventory Summary
 
-Inspected at `origin/dev` tip `cf04c046` (2026-09-08T16:32Z):
+Re-inspected in the task worktree at HEAD `944f4d719b29e765605f55a5fbc366aca3430c36` (2026-09-08T17:56–17:58Z);
+per-observation commands, UTC timestamps, raw exit codes and blob SHAs are recorded in
+[implementation handoff §5.2–§5.3](implementation-handoff.md). Rows below cite those receipts.
+Earlier receipts taken at `cf04c046` (2026-09-08T16:32Z) are superseded where the two differ.
 
 | Source Path | What Exists | What Is Missing for FORMAT_CONVERSION |
 |-------------|-------------|--------------------------------------|
 | `infra/db/migrations/000001_baseline_canonical_schema.sql` | `core.stores.store_format_code` (static column) | No `core.store_format_conversions` table |
 | `infra/db/migrations/000002_data_domain_canonical_entities.sql` | `core.stores.store_format_code` (static column) | No conversion event table |
 | `infra/db/migrations/000004_durable_product_domain.sql` | `stores.store_format_code` (static column, SQLite) | No conversion event table |
-| `infra/db/migrations/000001`–`000023` (all 27 SQL migrations) | Static format code in 000001, 000002, 000004 | Zero conversion event tables across all migrations |
+| `infra/db/migrations/` — full tree, 50 files (27 top-level SQL + 6 `assisted_listing_intake/*.sql` + 17 Alembic `versions/*.py`) | Static format code in 000001, 000002, 000004 | Zero conversion event tables anywhere in the tree (recursive grep, raw exit 1) |
 | `modules/site_economics/domain/formats.py` | `TargetFormatRegistry` (ODAY_G2, G3_COMPACT, FLAGSHIP) | No conversion matrix or transition rules |
-| `modules/site_economics/domain/simulator.py` | `SimulationInput` — greenfield only | No `ConversionSimulationInput`, no downtime/residual model |
-| `modules/sitescore/domain/scoring.py` | SiteScore feature input | No format conversion impact fields |
+| `modules/site_economics/domain/simulator.py` | `SimulationInput` — greenfield only; equipment residual/salvage **is** modelled for new-store assets (`residual_spec`, `machine_mix`) | No `ConversionSimulationInput`; zero downtime/conversion/brownfield/remodel logic (raw exit 1). Residual exists but has no brownfield old-asset path |
+| `modules/sitescore/domain/scoring.py` | `SiteScoreFeatureInput.target_format_code` (L70) — greenfield target format | No conversion/from-format/downtime field (raw exit 1); consumes no conversion data |
 | `delivery_toolchain/governance/set_valued_requirements.json` | FORMAT_CONVERSION status: `absent`, disposition: `BLOCKED_BY_EVIDENCE` | As expected for Stage A |
 
 > [!NOTE]

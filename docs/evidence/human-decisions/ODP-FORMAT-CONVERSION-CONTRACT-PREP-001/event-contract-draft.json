@@ -144,7 +144,8 @@
     },
     "idempotency_key": {
       "type": ["string", "null"],
-      "description": "Optional secondary deduplication key. If present, the system MUST treat events with the same idempotency_key as duplicates regardless of event_id."
+      "minLength": 1,
+      "description": "Optional SECONDARY deduplication key. It participates in deduplication only when supplied as a valid non-null, non-empty string. An empty string is invalid and MUST be rejected at validation; it MUST NOT be treated as a key value and MUST NOT be normalised to null. When idempotency_key is null or omitted, the event is deduplicated on event_id alone and MUST remain distinct from every other event. Two events are secondary-duplicates only when BOTH carry the same valid non-null key; a shared null/omitted key NEVER makes two events duplicates."
     },
     "metadata": {
       "type": ["object", "null"],
@@ -154,7 +155,7 @@
   "additionalProperties": false,
   "_design_notes": {
     "new_store_vs_conversion": "This contract is strictly for brownfield format conversion of EXISTING stores. New store openings (greenfield) use the existing SimulationInput contract in modules/site_economics/domain/simulator.py. The two MUST NOT be conflated.",
-    "replay_idempotency": "Replaying the same event_id must not cause duplicate cost entries, duplicate revenue loss calculations, or duplicate ramp applications. Consumers must implement at-least-once idempotent processing keyed on event_id.",
+    "replay_idempotency": "Deduplication has exactly two rules and no others. (1) PRIMARY: replaying the same event_id must not cause duplicate cost entries, duplicate revenue loss calculations, or duplicate ramp applications; consumers must implement at-least-once idempotent processing keyed on event_id. (2) SECONDARY: two events with DIFFERENT event_id collapse to one only when both carry the same valid non-null, non-empty idempotency_key. Events whose idempotency_key is null, omitted, or absent do not participate in secondary deduplication and must be preserved as distinct events even when several of them carry null; collapsing them would silently discard real conversion costs. Empty-string keys are a validation error, not a dedup participant.",
     "missing_vs_zero": "Null/missing values mean 'unknown — do not assume any value or substitute any greenfield/system default'. Zero means 'explicitly measured and confirmed to be zero'. This distinction applies to residual_value, disposal_cost, ramp_months, ramp_curve_id, and daily_baseline_revenue.",
     "stage_b_prerequisites": "Before this contract can be used in production: (1) H04 real conversion events (or planned-event specifications) and financial parameters must be provided, (2) cross-source/consumer contract review completed, (3) simulator.py must support ConversionSimulationInput, (4) core.store_format_conversions migration created in Stage B, (5) event replay tests must pass."
   }

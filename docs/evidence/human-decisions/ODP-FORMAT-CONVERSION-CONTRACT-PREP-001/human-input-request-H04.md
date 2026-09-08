@@ -4,7 +4,7 @@
 - **Task**: `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001`
 - **需求**: `ODP-FR-SITE-001 / FORMAT_CONVERSION`
 - **請求日期**: 2026-09-08
-- **請求人**: Antigravity（工程準備）
+- **請求人**: Claude（工程準備；task canonical owner）
 - **目標回覆人**: Store Operations Lead / Real Estate Expansion & Finance Lead / Site Economics Lead
 - **狀態**: AWAITING_HUMAN_INPUT
 - **來源**: [ODP 人工決策執行規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §4 H04、§6 WP-31
@@ -72,8 +72,9 @@ Repo 內查證事實（`origin/dev` @ `cf04c046`，2026-09-08）：
 
 ### 3.1 停業影響驗證
 
-- 相同坪數與目標店型下，Brownfield 改裝之第一年淨現金流必須反映停業天數造成的營收損失
-- 停業 30 天 vs 停業 0 天的投資回收期差異必須可量化
+- **單一變數受控比較**：取同一件轉型案，把其餘財務輸入全部固定（改裝 Capex、殘值、處分費、ramp_months、ramp_curve_id、日均基準營收、目標店型、坪數），只改變 `downtime_days`。停業天數增加時，第一年淨現金流必須嚴格下降，投資回收期不得縮短。
+- 停業 30 天 vs 停業 0 天（其餘輸入完全相同）的投資回收期差異必須可量化。
+- **不採用**「Brownfield 必須劣於 Greenfield 零停業基準」這種跨情境比較作為驗收條件：Capex、殘值與 ramp 等輸入不同時，其效果可以合理蓋過停業損失，該條件會誤判正確的轉型經濟性。
 
 ### 3.2 成本與殘值驗證
 
@@ -87,8 +88,11 @@ Repo 內查證事實（`origin/dev` @ `cf04c046`，2026-09-08）：
 
 ### 3.4 事件回放不重複計費
 
-- 以相同 `event_id` 重複送入轉型事件，不得產生重複的成本／營收損失項目
-- 以不同 `event_id` 但相同 `idempotency_key` 送入，視為同一事件
+- **主鍵去重**：以相同 `event_id` 重複送入轉型事件，不得產生重複的成本／營收損失項目。這是唯一永遠生效的去重規則。
+- **次鍵去重（有條件）**：以不同 `event_id` 但帶有**相同且為非 null、非空字串**的有效 `idempotency_key` 送入，才視為同一事件。
+- **null／未提供不參與去重**：`idempotency_key` 為 `null` 或未提供時，該事件只依 `event_id` 去重，必須與其他事件保持相異。兩筆合法的相異事件即使都帶 `null`，也**絕不可**被判為重複而合併，否則會靜默丟失真實的轉型成本。
+- **空字串是驗證錯誤**：`idempotency_key` 為空字串時必須在驗證階段拒絕，不得當成鍵值，也不得正規化成 `null`。
+- **31B 新增案例（Stage B 驗證，Stage A 不需實作）**：送入兩筆 `event_id` 相異、`idempotency_key` 皆為 `null` 的事件，以及兩筆同樣相異但省略該欄位的事件，四筆都必須保留為相異事件、成本項目不得合併。
 
 ### 3.5 缺資料標示
 

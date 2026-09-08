@@ -68,7 +68,7 @@
       "consumer_id": "SITE_ECONOMICS_SIMULATOR",
       "description": "Financial simulation engine (modules/site_economics/domain/simulator.py)",
       "current_status": "GREENFIELD_ONLY",
-      "evidence": "SimulationInput only models new-store greenfield projections. No ConversionSimulationInput or brownfield cash flow path exists.",
+      "evidence": "SimulationInput models new-store greenfield projections only; the single entry point is SiteEconomicsSimulator.simulate(SimulationInput). No ConversionSimulationInput or brownfield cash flow path exists: grep -n -i -E 'downtime|conversion|brownfield|remodel' modules/site_economics/domain/simulator.py at HEAD 944f4d71 (blob 30844af0), UTC 2026-09-08T17:57:12Z, raw exit 1, zero matches. Correction to an earlier over-broad claim: equipment residual value and salvage ARE already modelled for new-store assets via format_spec.residual_spec and machine_mix (raw exit 0, lines 325-356 and 529-531). What is missing is the brownfield use of residual value for OLD-format assets, so Stage B extends the existing residual path rather than creating one. See implementation-handoff.md section 5.3 Observation B.",
       "consumes_fields": [
         "store_id",
         "from_format_code",
@@ -83,16 +83,17 @@
       ],
       "stage_b_action": "Extend simulator.py with ConversionSimulationInput: downtime loss = daily_baseline × downtime_days; net capex = remodeling_capex - residual_value + disposal_cost; apply conversion ramp curve.",
       "acceptance_tests": [
-        "Brownfield conversion first-year net cash flow reflects downtime revenue loss and is worse than greenfield zero-downtime baseline",
+        "Downtime is isolated: for one conversion scenario with every other financial input held fixed (remodeling_capex, residual_value, disposal_cost, ramp_months, ramp_curve_id, daily_baseline_revenue, target format, area), increasing downtime_days must strictly lower first-year net cash flow and must not shorten payback. This deliberately does NOT require a brownfield conversion to be worse than a greenfield baseline: different capex, residual and ramp inputs can outweigh downtime, so such a cross-scenario assertion would reject economically correct conversions.",
         "Residual value increase causes proportional net capex decrease",
-        "Event replay with same event_id does not duplicate cost entries"
+        "Event replay with same event_id does not duplicate cost entries",
+        "Distinct events (different event_id) that both carry a null or omitted idempotency_key remain distinct and retain both cost entries; only a shared valid non-null key may collapse them"
       ]
     },
     {
       "consumer_id": "SITESCORE_SCORING",
       "description": "SiteScore evaluation model (modules/sitescore/domain/scoring.py)",
       "current_status": "NO_FORMAT_CONVERSION_FIELDS",
-      "evidence": "SiteScoreFeatureInput and scoring logic in modules/sitescore/domain/scoring.py have no brand_transfer or format_conversion fields. SiteScore currently scores greenfield candidates only.",
+      "evidence": "SiteScoreFeatureInput carries target_format_code (L70, the greenfield target format for a candidate site) but no conversion, brownfield, from_format, downtime or brand_transfer field: grep -n -i -E 'conversion|brownfield|from_format|downtime|remodel|brand_transfer' modules/sitescore/domain/scoring.py at HEAD 944f4d71 (blob 1f8f50ab), UTC 2026-09-08T17:57:28Z, raw exit 1, zero matches. SiteScore scores greenfield candidates against a single target format and consumes no conversion data. See implementation-handoff.md section 5.3 Observation C.",
       "consumes_fields": [],
       "stage_b_action": "TBD — depends on whether SiteScore should evaluate existing-store conversion ROI or only greenfield site selection. Requires product decision.",
       "acceptance_tests": []
@@ -101,7 +102,7 @@
       "consumer_id": "PERSISTENCE_LAYER",
       "description": "PostgreSQL core.store_format_conversions table (to be created in Stage B)",
       "current_status": "TABLE_DOES_NOT_EXIST",
-      "evidence": "No store_format_conversions or conversion event table exists in any migration (inspected all 27 SQL migration files 000001–000023). Only static store_format_code column exists in 000001, 000002, 000004.",
+      "evidence": "No store_format_conversions or conversion event table exists anywhere in the migrations tree. Inspected set is the full tree, 50 files: 27 top-level SQL (000001 to 000023) plus 6 assisted_listing_intake/*.sql plus 17 Alembic versions/*.py. Receipt: grep -rn -i -e format_conversion -e store_format_conversions infra/db/migrations at HEAD 944f4d719b29e765605f55a5fbc366aca3430c36, UTC 2026-09-08T17:56:54Z, raw exit 1, zero matches; see implementation-handoff.md section 5.2. An earlier version of this entry claimed tree-wide absence from an infra/db/migrations/*.sql glob that reached only the 27 top-level files; that glob has been replaced by the recursive scan. Only the static store_format_code column exists, in 000001, 000002 and 000004.",
       "consumes_fields": [
         "event_id",
         "event_type",
