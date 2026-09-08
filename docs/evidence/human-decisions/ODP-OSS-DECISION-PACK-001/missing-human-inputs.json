@@ -1,0 +1,110 @@
+{
+  "$schema_comment": "Missing human inputs for ODP-OSS-DECISION-PACK-001. These are the specific data and authority gaps that prevent moving from engineering preparation (Stage A) to signed receipt and enforcement (Stage B). This file complements the case matrix and source decision cards.",
+  "pack_id": "ODP-OSS-DECISION-PACK-001",
+  "inspected_at": "2026-09-08T15:24:33Z",
+  "stage_a_status": "Engineering preparation deliverable — evidence pack complete",
+  "stage_b_entry_conditions": "All H01/H02 fields must be filled by authorized humans before any receipt can be signed or any policy can be enforced",
+  "missing_inputs": [
+    {
+      "id": "H01",
+      "title": "OSS formal identity and authoritative receipt source",
+      "request_ref": "Execution Plan §4 H01",
+      "required_from": "Human/Ops — named Legal/Security/Risk authority",
+      "fields_needed": [
+        {
+          "field": "approved_by.principal_id",
+          "description": "Authoritative principal ID from identity system (not repo username, not AI name, not role string)",
+          "current_value": null,
+          "why_needed": "Receipt must have a verifiable, non-ambiguous signer identity"
+        },
+        {
+          "field": "approved_by.display_name",
+          "description": "Named human with authority to sign OSS policy decisions",
+          "current_value": null,
+          "why_needed": "Cannot use Human/Ops, Legal, or AI agent names as approver"
+        },
+        {
+          "field": "approved_by.role",
+          "description": "Actual authorized role (e.g., Head of Legal, CISO, Risk Committee Chair)",
+          "current_value": null,
+          "why_needed": "Must demonstrate the signer has authority over OSS policy and risk acceptance"
+        },
+        {
+          "field": "source_system",
+          "description": "External authoritative system where receipts are stored and can be read back",
+          "current_value": null,
+          "why_needed": "Repo-internal JSON with self-calculated hash is not a verifiable authoritative source"
+        },
+        {
+          "field": "approval_reference",
+          "description": "Ticket/decision ID in the authoritative system",
+          "current_value": null,
+          "why_needed": "Must be resolvable and readable by the validation system"
+        }
+      ],
+      "blocked_decisions": ["D01", "D02", "D03", "D04", "D05", "D07", "D08", "D09", "D10", "D11", "D12", "D13", "D14"],
+      "blocked_artifacts": [
+        "Signed receipt for license_policy.json",
+        "Per-source data approval receipts",
+        "Policy enforcement activation"
+      ],
+      "engineering_can_proceed_without": true,
+      "engineering_note": "Case matrix, source cards, SBOM, and NOTICE preparation can all be completed without H01. Only signing, enforcement, and gate activation are blocked."
+    },
+    {
+      "id": "H02",
+      "title": "Dev toolchain risk acceptance per-finding details",
+      "request_ref": "Execution Plan §4 H02",
+      "required_from": "Human/Ops — named risk owner for dev scope vulnerabilities",
+      "fields_needed": [
+        {
+          "field": "current_audit_findings",
+          "description": "The specific PURL, CVE/finding ID, severity, and scope for each current dev-scope vulnerability",
+          "current_value": "Fresh un-suppressed audit completed at 2026-09-08T15:47:00Z: 0 vulnerabilities found across npm (567 dependencies) and Python pip-audit (215 dependencies). The prior '13 high' from 2026-08-08 inventory is completely remediated. No active findings exist.",
+          "why_needed": "D06 must use current un-suppressed audit results, not the old 13 high figure"
+        },
+        {
+          "field": "risk_owner_per_finding",
+          "description": "Named person responsible for each accepted risk",
+          "current_value": "N/A — zero active findings; no risk acceptance needed",
+          "why_needed": "TEMPORARY_ACCEPT requires a named owner, not a role or AI"
+        },
+        {
+          "field": "expiry_date_per_finding",
+          "description": "When each temporary acceptance expires and must be re-evaluated",
+          "current_value": "N/A — zero active findings",
+          "why_needed": "No permanent risk acceptance allowed (D11)"
+        },
+        {
+          "field": "review_date_per_finding",
+          "description": "Mandatory review checkpoint for each finding",
+          "current_value": "N/A — zero active findings",
+          "why_needed": "Must have scheduled review to prevent indefinite deferral"
+        },
+        {
+          "field": "remediation_plan_per_finding",
+          "description": "Specific upgrade path, replacement plan, or explicit deferral rationale",
+          "current_value": "Remediated in lockfile updates since 2026-08-08",
+          "why_needed": "Cannot accept risk without knowing the exit plan"
+        }
+      ],
+      "blocked_decisions": [],
+      "blocked_artifacts": [],
+      "engineering_can_proceed_without": true,
+      "engineering_note": "Current audit executed: npm audit (0 findings) and pip-audit (0 findings). Zero active findings exist. Per Execution Plan §2.2, no exception or waiver is needed."
+    }
+  ],
+  "classification_summary": {
+    "scan_findings": "0 active vulnerabilities in current un-suppressed audit (npm audit: 0 across 567 deps; pip-audit: 0 across 215 deps). Old '13 high' count from 2026-08-08 is stale/remediated.",
+    "tool_errors": "None identified. SBOM generator, pip-audit, and npm-audit executed cleanly. OSS notice generator verified for --help and --check requirements.",
+    "already_fixed": "All 13 prior high vulnerabilities from 2026-08-08 inventory have been resolved in subsequent lockfile updates. Production and dev npm audits show 0 high.",
+    "note": "Finding categories (scan findings, tool errors, already-fixed) are separated per acceptance criteria. Zero active vulnerabilities detected."
+  },
+  "stage_b_cannot_claim_without_inputs": [
+    "Security gate pass for any scope",
+    "Policy enforcement activation",
+    "Signed authoritative receipt",
+    "Provider verification for any external data source",
+    "Production capability readiness"
+  ]
+}
