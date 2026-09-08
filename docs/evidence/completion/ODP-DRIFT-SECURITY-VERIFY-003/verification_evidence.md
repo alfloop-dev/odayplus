@@ -10,7 +10,7 @@ review_round: 4
 repository: alfloop-dev/odayplus
 task: ODP-DRIFT-SECURITY-VERIFY-003
 verified_ref: c4bf87d81d55180d6d6769daf5358992b3bc6620
-base_ref: 8c570a56353abdcc8ba70fe0a3fdd9b963902391
+base_ref: d6d579ec2c4770ec9afc7e50765c21da6347d265
 measurement_ref: d6514b049996747aba378a9380851f98594c12af
 upstream_pr_chain:
   - PR_1218: ODP-NLTK-MONITORING-BASELINE-001
@@ -44,7 +44,7 @@ actual stdout/stderr redirection at execution time.
 ### 1.1 SHA Relationship
 
 - **Integration SHA** (`origin/dev` tip at branch creation): `c4bf87d81d55180d6d6769daf5358992b3bc6620`
-- **Current base** (`origin/dev` tip at round-4 submission): `8c570a56353abdcc8ba70fe0a3fdd9b963902391`
+- **Current base** (`origin/dev` tip at round-4 submission): `d6d579ec2c4770ec9afc7e50765c21da6347d265`
 - **Measurement SHA** (every round-4 run below): `d6514b049996747aba378a9380851f98594c12af`
 - **Task branch HEAD**: see PR head at submission time
 - The integration SHA already contains all upstream PR merges (#1217, #1218, #1219, #1222, #1188).
@@ -52,21 +52,37 @@ actual stdout/stderr redirection at execution time.
   task-owned capture tools in `tools/`; it does not change production code,
   dependencies, or lock files.
 
-**The base advance did not move the thing under test.** `origin/dev` advanced
-from `c4bf87d8` to `8c570a56` while this task was in review, and the branch was
-composed onto that base through a normal merge. The entire incoming delta is one
-file — `docs/evidence/execution-control/ODP_CODEX_ULTRA_DRIFT_REPAIR_20260906.md`
-— with no change to `uv.lock`, `pyproject.toml`, any production module, any
-test, any fixture or any gate. The dependency and monitoring surface measured at
-`d6514b04` is therefore the same surface the integration SHA carries, which a
-reviewer can confirm with `git diff c4bf87d8..8c570a56 --name-only`.
+**The base advances did not move the thing under test.** `origin/dev` advanced
+twice while this round was being measured, and the branch was composed onto each
+new base through a normal merge — no rebase, no force push, no history rewrite:
+
+| Advance | dev moved | Incoming delta | Touches the measured surface? |
+|---|---|---|---|
+| 1 | `c4bf87d8` → `8c570a56` (PR #1229) | one file, `docs/evidence/execution-control/ODP_CODEX_ULTRA_DRIFT_REPAIR_20260906.md` | no |
+| 2 | `8c570a56` → `d6d579ec` (PR #1242, cold-start route-table fix) | `apps/api/oday_api/main.py`, new `shared/api/route_table_safety.py`, new `tests/reliability/test_cold_start_route_table.py`, its evidence note, and the boundary inventory | no |
+
+"Measured surface" is meant literally here, not as a judgement call: `uv.lock`,
+`pyproject.toml`, `delivery_toolchain/security/pip_audit_gate.py`, both
+`modules/learninghub/infrastructure/` monitoring modules, both drift test
+modules and the entire `tests/models/fixtures/` tree are unchanged by both
+merges. So the dependency graph the audit scanned and the code the monitoring
+suites exercised are the same at the submitted head as they were at the
+measurement SHA. A reviewer can confirm this with
+`git diff --name-only c4bf87d8..d6d579ec`.
 
 **Measurement SHA versus submitted head.** `d6514b04` is an ancestor of the
-submitted head. Everything committed after it is evidence — this document, the
-receipts, and the regenerated receipt index — so no measurement below describes
-a tree that differs from the reviewed one in any way that could affect it. This
-is checkable directly: `git diff --name-only d6514b04..<head>` returns only
-paths under `docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/`.
+submitted head. Everything between them is either evidence — this document, the
+receipts, the regenerated index — or the second base advance above. Stated
+precisely, `git diff --name-only d6514b04..<head>` returns paths under
+`docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/` plus exactly the five
+base-advance paths in the table, and
+
+```
+git diff --name-only d6514b04..<head> | grep -E '^(uv\.lock|pyproject\.toml|modules/|tests/models/|delivery_toolchain/security/)'
+```
+
+returns nothing. No measurement below therefore describes a tree that differs
+from the reviewed one in any way that could affect it.
 
 ### 1.2 What round 4 adds
 
@@ -826,12 +842,14 @@ Full-length hashes are in the binding receipt. The golden tree digest is the
 ordered fold of all 77 per-file digests, so a single edited golden changes it.
 
 **Relationship between the run SHA and the submitted head.** The run SHA
-`d6514b04` is an ancestor of the head submitted for review. Everything added
-after it is evidence: this document, the receipts under `receipts/`, and the
-receipt index in §14. No production module, test, fixture, golden, gate,
-`uv.lock` or `pyproject.toml` changes between the run SHA and the submitted
-head, which a reviewer can confirm directly with
-`git diff --name-only d6514b04..<head>`.
+`d6514b04` is an ancestor of the head submitted for review. Everything between
+them is either evidence — this document, the receipts under `receipts/`, the
+index in §14 — or the second base advance recorded in §1.1, which adds the
+cold-start route-table fix under `apps/api/`, `shared/api/` and
+`tests/reliability/`. Nothing this suite reads is among them: no golden, no
+fixture, no `tests/models/` module, neither `modules/learninghub/infrastructure/`
+monitoring module, no gate, no `uv.lock` and no `pyproject.toml`. §1.1 gives the
+exact command a reviewer can run to confirm that.
 
 ### 12.1 What the 171 tests are
 
