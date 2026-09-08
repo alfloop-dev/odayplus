@@ -208,3 +208,124 @@ def test_lock_consistency() -> None:
     assert result.returncode == 0, (
         f"uv.lock is inconsistent with pyproject.toml:\n{result.stderr}"
     )
+
+
+# --- Production monitoring entry points -------------------------------------
+# Removing evidently must not be achievable by deleting the monitoring that
+# depended on it. These entries are the production surfaces the four
+# monitoring dimensions are reached through; each is pinned together with the
+# governed keyword arguments that carry the cohort, threshold and policy
+# checks, so weakening a signature fails here too.
+PRODUCTION_MONITORING_ENTRIES = {
+    "modules.learninghub.infrastructure.evidently_monitor:EvidentlyDriftMonitor.run": (
+        "reference_rows",
+        "current_rows",
+        "drift_share_threshold",
+    ),
+    "modules.learninghub.infrastructure.evidently_monitor:EvidentlyDriftMonitor.run_prediction": (
+        "cohort_key",
+        "output_types",
+        "policy",
+        "prediction_columns",
+    ),
+    "modules.learninghub.application.release:LearningHubService.monitor_prediction_drift": (
+        "cohort_key",
+        "model_version",
+        "output_types",
+        "policy",
+    ),
+    "modules.learninghub.application.release:LearningHubService.evaluate_monitoring": (
+        "baseline_metrics",
+        "observed_metrics",
+        "signal_type",
+        "thresholds",
+    ),
+    "modules.learninghub.application.release:LearningHubService.ingest_outcome_monitoring": (
+        "baseline_metrics",
+        "observed_metrics",
+        "thresholds",
+    ),
+    "modules.learninghub.application.release:LearningHubService.monitor_release": (
+        "guardrails",
+        "observed_metrics",
+        "release_id",
+    ),
+}
+
+
+def test_production_monitoring_entry_points_survive_the_removal() -> None:
+    """Every production monitoring entry must still exist with its governed inputs."""
+    import importlib
+    import inspect
+
+    for target, required_kwargs in PRODUCTION_MONITORING_ENTRIES.items():
+        module_name, _, dotted = target.partition(":")
+        class_name, _, attribute = dotted.partition(".")
+        module = importlib.import_module(module_name)
+        owner = getattr(module, class_name, None)
+        assert owner is not None, (
+            f"{module_name} no longer exposes {class_name}; the monitoring "
+            f"entry {target} was removed rather than migrated"
+        )
+        entry = getattr(owner, attribute, None)
+        assert callable(entry), (
+            f"{target} is missing or not callable; monitoring functionality "
+            f"must not be disabled as part of the dependency removal"
+        )
+        parameters = inspect.signature(entry).parameters
+        missing = sorted(set(required_kwargs) - set(parameters))
+        assert not missing, (
+            f"{target} no longer accepts {missing}; the cohort, threshold and "
+            f"policy inputs of this entry must stay observable"
+        )
+
+
+def test_prediction_and_data_drift_entries_route_to_the_native_engine() -> None:
+    """The retained public API must dispatch to the first-party engine."""
+    from modules.learninghub.infrastructure import evidently_monitor, native_drift
+
+    assert native_drift.ENGINE_NAME == "native_drift", (
+        "the native engine name is part of every monitoring receipt and must "
+        f"not change silently (got {native_drift.ENGINE_NAME!r})"
+    )
+    assert evidently_monitor.NativeDriftEngine is native_drift.NativeDriftEngine, (
+        "evidently_monitor must dispatch to the first-party NativeDriftEngine"
+    )
+    assert not native_drift.METRIC_TYPE_PREFIX.startswith("evidently:"), (
+        "metric fingerprints must be attributed to the native engine"
+    )
+
+
+# --- Reference baseline isolation -------------------------------------------
+BASELINE_MANIFEST = (
+    ROOT / "tests" / "models" / "fixtures" / "evidently_0_7_21" / "manifest.json"
+)
+
+
+def test_baseline_reference_stack_stays_out_of_the_audited_scope() -> None:
+    """The Evidently baseline is a recorded reference, never an installed one.
+
+    The equivalence fixtures pin ``evidently 0.7.21``, which still carries the
+    unpatched ``nltk``. Regenerating them is an isolated tool step. This test
+    fails if that reference stack is ever installed into the candidate
+    environment that ``pip_audit_gate.py`` audits — the one way a green audit
+    and a green equivalence run could stop being compatible claims.
+    """
+    manifest = json.loads(BASELINE_MANIFEST.read_text(encoding="utf-8"))
+    reference_packages = manifest.get("packages", {})
+    assert reference_packages.get("evidently") == "0.7.21", (
+        "the baseline manifest must keep naming the exact reference engine "
+        f"it was recorded from (got {reference_packages.get('evidently')!r})"
+    )
+
+    for package in ("evidently", "nltk"):
+        try:
+            dist = importlib.metadata.distribution(package)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        raise AssertionError(
+            f"{package} {dist.version} is installed in the candidate "
+            f"environment. The baseline reference stack must be regenerated in "
+            f"an isolated environment and must never be mixed into the scope "
+            f"the dependency audit covers."
+        )
