@@ -4,7 +4,7 @@
 - **Date**: 2026-09-08
 - **Author**: Antigravity3
 - **Reviewer**: Codex2
-- **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](../../../../.orchestrator/source-doc-cache/alfloop-dev__odayplus/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
+- **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](https://github.com/alfloop-dev/odayplus/blob/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
 
 ## 1. Platform Support Reference
 
@@ -91,9 +91,8 @@ Three options are presented for human review (H08). All preserve the required
 
 **Tradeoffs**:
 - When 2 PRs are queued concurrently, they merge in a single batch on `dev`
-- A solo PR waits up to 10 minutes for a companion before the timer expires and it merges solo
 - Under `ALLGREEN`, failure of one PR is isolated without affecting the other PR
-- Total enqueue-to-merge latency for solo PR = accumulation wait (up to 10 min) + CI duration (~20.6 min)
+- **Solo PR latency semantics**: Per official GitHub merge queue semantics, the 10-minute wait timer starts upon entry and runs concurrently with speculative CI builds. Because median CI duration is ~20.6 minutes, the 10-minute accumulation timer elapses during CI execution without adding extra elapsed hold time after checks complete. If checks complete faster than the timer (e.g. fast check runs <10 min) and no companion PR arrives, the candidate is held only for the remaining difference before merging solo.
 
 ### Option C: Higher Burst Batching
 
@@ -108,7 +107,7 @@ Three options are presented for human review (H08). All preserve the required
 
 **Tradeoffs**:
 - Targeted at high-activity fleet dispatches where 3+ PRs are submitted within 15 minutes
-- A solo PR waits up to 15 minutes before falling back to solo merge
+- **Solo PR latency semantics**: The 15-minute accumulation timer runs concurrently with CI execution. If CI finishes in ~20.6 min, the timer is already expired; for shorter check runs (<15 min), solo merge is held only until the 15-minute window completes.
 - Best suited after continuous queue depth telemetry confirms frequent queue congestion
 
 ## 3. Comparison Matrix
@@ -116,7 +115,8 @@ Three options are presented for human review (H08). All preserve the required
 | Criterion | Option A (Baseline) | Option B (Conservative Trial) | Option C (Burst Batching) |
 |---|---|---|---|
 | `min_entries_to_merge` | 1 | 2 | 3 |
-| Max accumulation delay for solo PR | 0 min | 10 min | 15 min |
+| Bounded wait ceiling (`min_entries_to_merge_wait_minutes`) | 5 min (inert) | 10 min | 15 min |
+| Extra hold after checks complete (Solo PR) | 0 min | Max(0, 10 min - CI duration) [0 min when CI ≥ 10 min] | Max(0, 15 min - CI duration) [0 min when CI ≥ 15 min] |
 | `grouping_strategy` | `ALLGREEN` | `ALLGREEN` | `ALLGREEN` |
 | Failure isolation | Full (per-entry) | Full (per-entry) | Full (per-entry) |
 | Review gate enforcement | Strict per-PR | Strict per-PR | Strict per-PR |

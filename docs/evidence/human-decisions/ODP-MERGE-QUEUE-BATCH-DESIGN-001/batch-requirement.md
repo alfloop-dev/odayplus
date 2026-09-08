@@ -1,8 +1,8 @@
 # Batch Merge Queue — Formal Requirement Specification
 
 - **Task**: ODP-MERGE-QUEUE-BATCH-DESIGN-001
-- **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](../../../../.orchestrator/source-doc-cache/alfloop-dev__odayplus/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
-- **Prior disposition audit**: [ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md](../../../../.orchestrator/source-doc-cache/alfloop-dev__odayplus/04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md) (verdict: `BLOCKED_BY_EVIDENCE` — no authoritative "not to implement" ruling existed)
+- **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](https://github.com/alfloop-dev/odayplus/blob/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
+- **Prior disposition audit**: [ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md](https://github.com/alfloop-dev/odayplus/blob/04e1572f802a54c2646ba678fe2975226dfbd7c4/docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md) (verdict: `BLOCKED_BY_EVIDENCE` — no authoritative "not to implement" ruling existed)
 - **User decision**: B — retain as a formal implementation requirement
 - **Date of this document**: 2026-09-08
 
@@ -108,17 +108,17 @@ See [queue-observations.json](queue-observations.json) for full provenance, exac
 | Metric | Measured Value | Source & Method |
 |---|---|---|
 | Sample period | 2026-09-04 to 2026-09-08 (4.1 days) | 100 most recent `merge_group` workflow runs |
-| CI duration (median) | 20.6 min (range: 2.8–48.0 min, avg: 14.5 min) | Completed `CI` workflow runs (n=50) |
+| CI duration (median) | 20.6 min (range: 2.8–48.0 min, avg: 14.7 min) | Completed `CI` workflow runs (n=47) |
 | merge_group CI failure rate | 0% (99 success, 1 cancelled, 0 failure) | 100 `merge_group` workflow runs across 50 SHAs |
-| Merge throughput | 0.47 merges/hour (50 merged PRs over 105.9 hours) | `dev` merged PR list (includes weekend) |
-| Inter-merge interval | Median: 50.1 min (avg: 129.7 min) | Time between successive `dev` merge commits |
+| Sample merge throughput | 0.47 merges/hour (50 merged PRs over 107.5 hours) | Creation-ordered sample of 50 merged PRs from `gh pr list` (includes weekend) |
+| Inter-merge interval | Median: 54.9 min (avg: 131.6 min, range: 0.0–621.4 min) | Time between successive `dev` merge commits in sample |
 | Required status checks on `merge_group` | All 4 reporting and passing (`orchestrator`, `product`, `product-e2e-gate`, `task-review-gate`) | Sampled per-SHA check runs and commit status (`74530caf5bbf8ee3802df658e21a3ffdfca56f25`) |
 | Instantaneous queue depth & wait time | `UNMEASURED_STATICALLY` | Continuous queue telemetry assigned to WP-35B/C |
 
-### 4.1 Assessment
+### 4.1 Assessment and Conditional H08 Recommendation
 
-At current throughput (~0.47 merges/hour over a 4.4-day window including weekend;
-~1.5 merges/hour in peak periods), queue depth is generally modest. Setting
-`min_entries_to_merge = 2` with `min_entries_to_merge_wait_minutes = 10`
-enables batching when concurrent dispatches occur without adding more than
-10 minutes of wait time to solo PRs.
+1. **Measured CI duration and sample merge rate**: Retrospective observations establish that CI duration is ~20.6 minutes (median) and merges in the creation-ordered sample occurred on average every ~55 minutes (median gap).
+2. **Historical throughput attribution**: `docs/runbooks/dev-merge-queue.md:37` (commit `944ad12f` dated 2026-08-19) historically noted peak fleet throughput of ~1.5 merges/hour.
+3. **Queue depth & wait time remain unmeasured statically**: Retrospective GitHub API queries cannot determine instantaneous queue depth or enqueue-to-merge wait times. Continuous telemetry collection is formally assigned to the WP-35B/C next-stage collection lane.
+4. **Conditional Option B recommendation**: Subject to the missing occupancy and wait-time evidence, Option B (`min_entries_to_merge = 2`, `min_entries_to_merge_wait_minutes = 10`) is recommended as a conservative trial option for H08 human review. Because the 10-minute wait timer elapses concurrently during the ~20.6-minute CI execution (per GitHub merge queue semantics), Option B enables batching for concurrent dispatches without adding artificial serial latency to solo PRs whose CI takes longer than 10 minutes.
+5. **No live execution in A-stage**: Continuous monitoring, live testing, and configuration activation are explicitly not required for this A-stage design repair.

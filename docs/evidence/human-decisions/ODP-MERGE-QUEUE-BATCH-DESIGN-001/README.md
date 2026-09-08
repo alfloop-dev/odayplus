@@ -5,7 +5,7 @@
 - **Owner**: Antigravity3
 - **Reviewer**: Codex2
 - **Date**: 2026-09-08
-- **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](../../../../.orchestrator/source-doc-cache/alfloop-dev__odayplus/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
+- **Decision reference**: D21 in [ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md](https://github.com/alfloop-dev/odayplus/blob/be04fe7954d3414f024901e034caacd95ae81538/docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md)
 
 ## Summary
 
@@ -24,11 +24,11 @@ specifies the engineering handoffs for WP-35B/C and WP-90.
 
 | # | File | Purpose |
 |---|---|---|
-| 1 | [queue-observations.json](queue-observations.json) | Read-only measurements of CI duration, merge interval, configuration readback, and sampled per-SHA check run evidence with complete command provenance |
+| 1 | [queue-observations.json](queue-observations.json) | Read-only measurements of CI duration, creation-ordered sample merge intervals, configuration readbacks, per-SHA check run / status receipts with exact command argv, timestamps, exit codes, and retained raw observation rows |
 | 2 | [batch-requirement.md](batch-requirement.md) | Formal requirement specification for batch merging, including mandatory properties, dated official references, and parameter boundaries |
 | 3 | [configuration-options.md](configuration-options.md) | Three comparable configuration options (Baseline / Conservative Trial / Burst Batching) with tradeoff analysis, mandatory `ALLGREEN` preservation, and full baseline rollback for H08 review |
 | 4 | [governance-handoff.md](governance-handoff.md) | Governance update fragment for WP-90 to incorporate into the shared manifest, recording D21 disposition as `IMPLEMENTATION_READY` |
-| 5 | [implementation-handoff.md](implementation-handoff.md) | Comprehensive automated verification matrix, entry conditions, and operational procedures for B-stage (engineering) and C-stage (live activation) |
+| 5 | [implementation-handoff.md](implementation-handoff.md) | Comprehensive automated verification matrix, C-stage live behavioral acceptance scenarios with required receipt fields, entry conditions, and operational procedures |
 
 ## Key Findings
 
@@ -36,8 +36,8 @@ specifies the engineering handoffs for WP-35B/C and WP-90.
    `min_entries_to_merge = 1` (single-entry minimum baseline), `grouping_strategy = ALLGREEN`,
    `strict = false` on `dev`.
 2. **CI duration and throughput measured**: Median CI duration is ~20.6 minutes
-   (range: 2.8–48.0 min); merge throughput averaged 0.47 merges/hour over a 4.4-day
-   window (median inter-merge gap: 50.1 min).
+   (range: 2.8–48.0 min); in the creation-ordered sample of 50 merged PRs over a 107.5-hour
+   span (including weekend), sample merge rate is 0.47 merges/hour (median inter-merge gap: 54.9 min).
 3. **CI reliability on merge_group**: 0 failures in 100 sampled `merge_group` workflow
    runs (99 success, 1 cancellation across 50 unique merge group SHAs).
 4. **All 4 required checks report on `merge_group`**: `orchestrator`, `product`,
@@ -45,7 +45,7 @@ specifies the engineering handoffs for WP-35B/C and WP-90.
    status) verified on sampled `merge_group` commit `74530caf5bbf8ee3802df658e21a3ffdfca56f25`.
 5. **Continuous queue occupancy unmeasured statically**: Retrospective run lists do not
    record instantaneous queue depth or enqueue-to-merge waiting time; continuous telemetry
-   collection is formally assigned to WP-35B/C.
+   collection is formally assigned to WP-35B/C next-stage collection lane.
 6. **`ALLGREEN` strategy strictly retained**: `HEADGREEN` is evaluated and rejected under
    the no-weakening policy to prevent unverified intermediate states and maintain strict
    per-PR review gate validation.
@@ -67,4 +67,4 @@ specifies the engineering handoffs for WP-35B/C and WP-90.
 3. **WP-35B**: Engineering task applies approved configuration to `policy.json`,
    updates runbook, and adds automated verification tests per
    [implementation-handoff.md](implementation-handoff.md)
-4. **WP-35C**: Live activation with readback verification and 7-day observation window
+4. **WP-35C**: Live activation with readback verification, behavioral scenario receipts, and 7-day observation window
