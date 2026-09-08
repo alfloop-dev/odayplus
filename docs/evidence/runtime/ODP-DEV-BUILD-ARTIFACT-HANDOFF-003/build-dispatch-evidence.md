@@ -1,9 +1,17 @@
 # ODP-DEV-BUILD-ARTIFACT-HANDOFF-003 Build Dispatch Evidence
 
 Task: ODP-DEV-BUILD-ARTIFACT-HANDOFF-003
-Owner: Antigravity3
+Owner: Claude2 (reassigned from Antigravity3 on 2026-09-07T17:10:27Z)
 Reviewer: Codex2
 Repository: alfloop-dev/odayplus
+
+> **Current state (2026-09-08): the handoff is COMPLETE.** Billing was restored
+> by Human/Ops, run `34179791241` succeeded at candidate C, and all five
+> previously undelivered artifact categories have been downloaded and verified.
+> **Section 13 is the authoritative delivery record.** Sections 5–11 describe the
+> earlier failed attempt (run `34140207274`) and are retained as history; their
+> "blocked" conclusions are superseded by section 13 and must not be read as the
+> current state.
 
 ## 1. Candidate Selection
 
@@ -376,7 +384,9 @@ authorised to produce.
 
 ## 8. Handoff to ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002
 
-**Handoff status: PARTIAL — the release-artifact handoff remains blocked.**
+**Handoff status: SUPERSEDED — this section records the partial handoff as of
+2026-09-07, when the build was still blocked. The complete handoff is in
+section 13.**
 
 Delivered now, directly usable by the downstream evidence-only C→E task:
 
@@ -418,7 +428,13 @@ Downstream target, unchanged:
 - ❌ Did not reimplement the egress digest algorithm; C's own function was executed
 - ❌ Did not force push or rewrite task history
 
-## 10. Canonical Blocker
+## 10. Canonical Blocker (RESOLVED 2026-09-08 — historical)
+
+> This blocker was cleared. Human/Ops restored billing on project
+> `767864276141`; the first successful push and signature under restored
+> billing is timestamped `2026-09-08T02:17:01Z` in the Rekor transparency
+> log (section 13.3). The record below is kept because it documents what
+> was blocked and why; it is no longer the task's state.
 
 **Blocker**: GCP billing disabled on project `odayplus-runtime-20260825` (project number `767864276141`)
 
@@ -496,3 +512,394 @@ checks below are read-only; no build, deploy, or test suite was run.
 | 2026-09-07T17:06:31Z | Codex2 | Reopen 2 | P1 unresolved: still no delivered artifacts. P2 (new): six-file egress contract misdefined as image/manifest/SBOM digests; real definition is six checked-in files |
 | 2026-09-07T17:10:27Z | Orchestrator | Reassignment | Ownership moved Antigravity3 → Claude2 after 2 reopens; blocker cleared by reopen |
 | 2026-09-07T17:17Z | Claude2 | Evidence correction | Fixed P2 definition and computed the real egress digest; verified raw hashes for the three CI artifacts; re-verified all inherited claims (section 11); reset the canonical billing blocker |
+| 2026-09-08T02:11:41Z | ajoe734 (Human/Ops) | Dispatch | Build re-dispatched for C under restored billing, run `34179207603`; step 19 built/pushed/signed/attested all four images, step 20 failed on the missing rollback reference (`INITIAL_RELEASE_RECOVERY: false`) |
+| 2026-09-08T02:17:01Z | GitHub Actions | Billing restored | First successful push + Rekor-logged signature at C, where the same push was denied on 2026-09-07 |
+| 2026-09-08T02:21:49Z | ajoe734 (Human/Ops) | Dispatch | Re-dispatched with the initial-release readback enabled, run `34179791241`; images reused, all 23 steps `success`, manifest and handoff artifacts published |
+| 2026-09-08T02:35:29Z | ajoe734 | Retry | `/retry` via ops issue #1236, announcing the successful run for the owner to consume |
+| 2026-09-08 | Claude2 | Delivery | Re-measured the announced run independently, downloaded and verified all six artifacts, validated the manifest with C's own validator, recomputed the egress digest, and completed the handoff (section 13) |
+
+## 13. Delivered Artifact Handoff (2026-09-08, Claude2)
+
+Billing was restored by Human/Ops and a successful build now exists at candidate
+C. This section is the authoritative delivery record and supersedes the blocked
+conclusions in sections 5–11. Every value below was measured by this owner from
+the GitHub API, the downloaded artifact bytes, or candidate C's own code — not
+copied from the ops-bus notification that announced the run.
+
+### 13.1 How this round started, and what this owner did NOT do
+
+The GitHub ops issue #1236 asserted that billing was restored and that run
+`34179791241` had succeeded. That assertion was treated as a lead, not as
+evidence, and was re-measured independently.
+
+**Neither run in this round was dispatched by this owner.** Both were dispatched
+by `ajoe734` (Human/Ops). This owner did not dispatch a build, because the
+acceptance requires re-checking for a reusable successful run at C first, and one
+already existed. No 20-minute build was repeated.
+
+### 13.2 Run identity and terminal state
+
+| Field | Value |
+|---|---|
+| Run ID | `34179791241` |
+| URL | https://github.com/alfloop-dev/odayplus/actions/runs/34179791241 |
+| Workflow | Runtime Release (`302984644`, `.github/workflows/deploy-dev.yml`) |
+| Event / actor | `workflow_dispatch` / `ajoe734` |
+| Run attempt | 1 |
+| Created / updated | `2026-09-08T02:21:49Z` / `2026-09-08T02:26:33Z` |
+| Status / conclusion | `completed` / **`success`** |
+| `head_sha` of the run | `8c570a56353abdcc8ba70fe0a3fdd9b963902391` |
+| Candidate actually built (C) | `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` |
+
+`head_sha` is the `dev` tip that supplied the *workflow definition*; it is not
+the built candidate. The built tree is pinned by the `release_sha` input and
+proved by step 3, `Assert exact release SHA is checked out`, which runs
+`git rev-parse HEAD` and exits non-zero unless it equals `ODAY_RELEASE_SHA`.
+That step passed with `ODAY_RELEASE_SHA: 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12`.
+
+Job results — build ran, nothing else did:
+
+| Job ID | Name | Conclusion |
+|---|---|---|
+| `101916378520` | Validate release phase inputs | `success` |
+| `101916404681` | Build once and publish the immutable artifact handoff | `success` |
+| `101917162346` | Verify the Supervisor lease authorises this deploy | `skipped` |
+| `101917162318` | Deploy the admitted artifact by immutable digest | `skipped` |
+| `101917162350` | Verify production watch and clean up ephemeral staging | `skipped` |
+
+All 23 steps of job `101916404681` concluded `success`, including the four steps
+that never executed in the failed attempt: step 20 `Write the build-once artifact
+handoff`, step 21 `Publish immutable image handoff`, step 22 `Publish candidate
+release manifest`, step 23 `Publish initial-release target absence readback`.
+
+### 13.3 Provenance of the images: they were built by run `34179207603`
+
+This is a material fact that the ops-bus summary did not state, and it changes
+how the run must be read. Run `34179791241` did **not** build or push the images.
+Its step 19 log reads:
+
+```
+Immutable images already exist for 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12; reusing their digests.
+```
+
+The images were built, pushed, signed and attested by an **earlier** run:
+
+| Field | Value |
+|---|---|
+| Run ID | `34179207603` |
+| Created | `2026-09-08T02:11:41Z` |
+| Conclusion | `completed` / `failure` |
+| Build job | `101914686431` |
+| Step 19 `Build, publish, sign, and attest immutable container images` | `success` |
+| Step 20 `Write the build-once artifact handoff` | **`failure`** |
+| Steps 21–23 | `skipped` |
+| Step 17 `讀回部署 target 以確認沒有既有已核准 release` | `skipped` |
+
+**First real root cause of `34179207603`** (log tail of job `101914686431`):
+
+```
+build-once artifact handoff 無法產生：
+- 缺少 rollback release 參照；build 階段必須綁定上一核准 release 與 snapshot pointer。
+  若這是該 target 的首次部署，請改以 --initial-release-readback 提供對 target 的...
+```
+
+with `INITIAL_RELEASE_RECOVERY: false` in that step's environment. This is the
+first release to the dev target, so there is no prior approved release to bind a
+rollback pointer to. **Minimal fix, and the one that was applied:** re-dispatch
+with the initial-release readback enabled. The successful run's step 20
+environment carries `INITIAL_RELEASE_RECOVERY: true`, which also un-skips step 17
+and produces the absence readback artifact. No workflow file was modified.
+
+Corroboration that the push/sign happened at `02:17–02:19Z` inside
+`34179207603`, from the Rekor transparency log entries embedded in the
+signatures (log ID `c0d23d6ad406973f9559f3ba2d1ca01f84147d8ffc5b8445c224f98b9591801d`):
+
+| Component | Rekor `logIndex` | `integratedTime` | UTC |
+|---|---|---|---|
+| api | `2754425715` | `1788833821` | `2026-09-08T02:17:01Z` |
+| worker | `2754426118` | `1788833858` | `2026-09-08T02:17:38Z` |
+| scheduler | `2754426482` | `1788833890` | `2026-09-08T02:18:10Z` |
+| web | `2754427686` | `1788833982` | `2026-09-08T02:19:42Z` |
+
+Those timestamps fall inside `34179207603` (02:11:41Z→) and before
+`34179791241` started (02:21:49Z). They are also the earliest evidence of
+**restored billing**: the same `docker push` that was denied at
+`2026-09-07T15:53:11Z` succeeded at `2026-09-08T02:17:01Z`.
+
+This reuse is not a gap — the workflow is deliberately built this way. Its own
+comment states that re-running the phase must reproduce the first run's handoff,
+and that it must not sign or attest a second time, "because a second attestation
+would change the attestation digest and with it the manifest digest an issued
+lease is bound to". The reuse path is also fail-closed on partial state: if the
+four release tags are not all present, it aborts with `release image tag set is
+incomplete; refusing to rebuild or move an existing tag`.
+
+### 13.4 Four immutable image identities
+
+Registry `asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev`,
+all digest-pinned, no tags:
+
+| Component | Immutable identity |
+|---|---|
+| api | `oday-api@sha256:5e1a152e839cbfa7a2bf422b924928b56fad89f35e44243619a3f2fe98802cee` |
+| web | `oday-web@sha256:38c716462b569b7420fe95788a84f8a1b3778e2e7c938d535a1dc13288a78971` |
+| worker | `oday-worker@sha256:b2c0e4473ad529ad71f215b76fc125115d8ba0b4e845a87e532d10ebdb8ddba3` |
+| scheduler | `oday-scheduler@sha256:f3fd22c00478d730273494c23c512a87c807de645a8b759d0af4908d82cd4cc9` |
+
+The manifest carries a fifth component, `migration`, which is not a fifth image:
+it declares `shares_image_with: worker` and reuses the worker digest.
+
+### 13.5 `RELEASE_MANIFEST.json` — verified with candidate C's own validator
+
+| Field | Value |
+|---|---|
+| Artifact ID | `10038569478` |
+| Artifact name | `runtime-release-manifest-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` |
+| Inner file SHA-256 | `8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d` |
+| `release_id` | `odp-596b9c9a1788` |
+| `release_status` | `ready` |
+| `schema_version` | `2` |
+| `manifest_digest` | `sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c` |
+| `data_contract_digest` | `sha256:05e2cb05619f1c524b0f9578e4ceba9ec863d143d5e64b0eeac97539ce8e7c73` |
+| `source_policy_digest` | `sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824` |
+| `migration_digest` | `sha256:17794de9afb84681aabff9ed0966dedde83d950aef132de519fdc193099e620b` |
+
+Reproduction — candidate C extracted read-only via `git archive`, then C's own
+manifest code applied to the downloaded bytes:
+
+```python
+from delivery_toolchain.release.release_manifest import compute_manifest_digest, validate_manifest
+m = json.load(open("RELEASE_MANIFEST.json"))
+compute_manifest_digest(m)
+# => sha256:1b5348d907643e3f3087642d8674002beec016bd16ef38b00e261e88da026e6c  (matches recorded)
+validate_manifest(m, expected_candidate_sha="596b9c9a1788d952811a2bf8d4bba8a4e4d76b12",
+                  expected_digest=m["manifest_digest"])
+# => []  (no errors)
+```
+
+The manifest is therefore self-consistent, digest-stable, and validates against
+candidate C as the expected candidate.
+
+**One apparent discrepancy, resolved:** the manifest records
+`created_at: 2026-09-07T15:29:32+00:00`, which is ~11 hours *before* the run that
+uploaded it. That is not a stale artifact — it is exactly the committer timestamp
+of candidate C (`git show -s --format=%cI 596b9c9a` → `2026-09-07T15:29:32+00:00`).
+The field is derived from the candidate, not from wall-clock time, which is what
+keeps `manifest_digest` reproducible across re-runs.
+
+### 13.6 Supply chain: SBOM attestations, Cosign signatures, provenance
+
+Cosign `v2.5.2`, installed by `sigstore/cosign-installer@v3`
+(`398d4b0eeef1380460a10c8013a76f728fb906ac`). The SBOM generated in-run has
+content digest `sha256:2b6cb89ce1e138d6b835cbabf9dd88572e6a7b2b84e78774425f5624bb7366c0`
+and is attested with `cosign attest --type cyclonedx`.
+
+SBOM attestation refs (each resolved from the `.att` tag to its own immutable digest):
+
+| Component | SBOM attestation |
+|---|---|
+| api | `oday-api@sha256:c962987fdaeaab721b5fe7f08fd70af9ee730271aff365f2d604a3f8c6ad8980` |
+| web | `oday-web@sha256:359ccfd3a2d2e41e4fd44733d5ac7138dd92acec58eff3d2be02cc1dd358f598` |
+| worker | `oday-worker@sha256:e6f6b390e9a143745fcbdd18f2e78dc7364a75d3180f2d975d3916c1f2036915` |
+| scheduler | `oday-scheduler@sha256:c6f75a41ca6433441a1d6e31de24985bae16087a470a7889fc71960bc90ae0ff` |
+
+Cosign signature refs (resolved from the `.sig` tag to its own immutable digest):
+
+| Component | Signature |
+|---|---|
+| api | `oday-api@sha256:1d27d5394eec6436b74acffac2acea3285f0bb58cdc53e8243f38ebd64c82258` |
+| web | `oday-web@sha256:7ba935dddad224e6b466fae54e8318f71ead2f352a2fcd8c8fc3d6ff125e0b3f` |
+| worker | `oday-worker@sha256:3d70e5873e12c0ab121bedd48caaf3f03292c9f36f1cbea04e621257d5386b6c` |
+| scheduler | `oday-scheduler@sha256:b57a2e39e35d23f69b926371f0ba32282c2cc0dfcfe9a07321fccdce46d65fc7` |
+
+The workflow resolves both refs itself and **fails closed** if either tag does
+not resolve (`no Cosign signature artifact resolves for ...` /
+`no SBOM attestation artifact resolves for ...`). So these are fetchable objects,
+not free-text claims.
+
+**These signatures are real, not a passing print.** This repository has a history
+of supply-chain gates that print `PASSED` when the tool is absent, so the log was
+read rather than trusted. All four `cosign verify` invocations ran
+
+```
+cosign verify --certificate-identity-regexp 'https://github.com/alfloop-dev/.*' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' <digest-ref>
+```
+
+against the live registry and each returned a full signature payload with a
+Fulcio certificate and a Rekor bundle (`SignedEntryTimestamp`, `logIndex`,
+`integratedTime`, `logID`) — the transparency-log entries tabulated in 13.3.
+An absent-tool stub cannot fabricate those.
+
+**Provenance — stated precisely.** The manifest schema at C has no `provenance`
+field, and no separate SLSA provenance attestation was produced. What exists,
+and all that may be claimed, is the provenance carried inside each signature's
+Fulcio certificate claims:
+
+| Certificate claim | Value |
+|---|---|
+| Issuer | `https://token.actions.githubusercontent.com` |
+| Subject | `https://github.com/alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@refs/heads/dev` |
+| `githubWorkflowRepository` | `alfloop-dev/odayplus` |
+| `githubWorkflowName` | `Runtime Release` |
+| `githubWorkflowRef` | `refs/heads/dev` |
+| `githubWorkflowSha` | `8c570a56353abdcc8ba70fe0a3fdd9b963902391` |
+| `githubWorkflowTrigger` | `workflow_dispatch` |
+
+Note that `githubWorkflowSha` binds the *workflow definition* commit, not the
+built candidate. The binding of the image content to candidate C rests on step 3's
+`git rev-parse HEAD` assertion (13.2) and on the
+`org.opencontainers.image.revision=596b9c9a...` label applied at build time —
+not on the certificate. A downstream consumer must not read `8c570a56` from these
+certificates as the built candidate.
+
+### 13.7 Artifact IDs with verified raw hashes
+
+All six artifacts were downloaded via
+`gh api repos/alfloop-dev/odayplus/actions/artifacts/<id>/zip`. For each one the
+SHA-256 of the received zip matches the digest GitHub reports in its artifacts
+API **and** the digest the runner printed at upload time in the job log.
+
+| Artifact ID | Name | Bytes | Raw zip SHA-256 | Inner file SHA-256 |
+|---|---|---|---|---|
+| `10038482325` | `release-phase-receipt-dev-build` | 631 | `bcfbf76667f7c5892dd4832851ec30d966aea346e054ac4b9832b84dbe3e11d5` | `af1f1d5d1be169187a054a83d09b47e5978d4018d1c366144a99fe8f88deb8c7` |
+| `10038486296` | `release-environment-receipt-dev-build` | 795 | `9180ed873afc9d08b05ff948b7d358d6bf10fc8416e2d8864c1f554c9a13a6cf` | `a5fc3cc7847bbbec3bb0dbd651428b9a6fcebb18db770ff2abd09cd2b850f9bb` |
+| `10038492941` | `release-npm-audit-receipt-dev` | 508 | `fb61bd06cfc8da6d4c4c5a495b96c7bdf5d92f5743d68c7a568a8147fd3d921a` | `49c5c659e9b08dab23ec0e9aee390d814f8d8e2c0f78c3a4d922cedb4de96224` |
+| `10038569219` | `runtime-release-images-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` | 453 | `7f0515c6d92b4351da4a5a425d0b20cc1f49c519eeda1754adcbfe996e35d05b` | `612507f59edb8e09807dfa5a9f15fafaa622fb03473e2eff4015dda64494fa12` |
+| `10038569478` | `runtime-release-manifest-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` | 2440 | `fab4a3e97c20a0fc89481a6055d97959fea37cbdc1d647cd2f3dad7d0c1fdae4` | `8bb6e72ed1306862ddb4c40d48c851b31ecf8c4ab5f361ac5cc7e1856537f56d` |
+| `10038569730` | `initial-release-absence-readback-596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` | 508 | `b76ce7a65f97baa306e4ec9bc96c5cc7e49f753143e2c1238c3604daa888aa95` | `ec316739eecd6c0438582a29c3803acad38fe283aa4167ca30db9dc481ffa283` |
+
+None are expired. Download form, usable as-is:
+
+```bash
+gh api repos/alfloop-dev/odayplus/actions/artifacts/10038569478/zip > manifest.zip
+```
+
+### 13.8 Six-file egress contract digest — recomputed at C
+
+The reviewer's P2 correction is carried forward and re-verified in this round.
+The digest is over six **checked-in source files** at C; it is a source-contract
+digest and is **not** a runtime egress readback.
+
+```
+sha256:a9ab95a01d310eb1f79e71dad74e636058d5d1f3e9150602831974e7193bba09
+```
+
+Recomputed independently by extracting C with `git archive` and calling C's own
+`compute_sources_off_egress_contract_digest(root=<C worktree>)` from
+`delivery_toolchain/release/release_manifest.py`. All six files present:
+`.github/workflows/deploy-dev.yml`, `product_ops/deployment/deploy_cloud_run_waji.sh`,
+`infra/terraform/cloud_run.tf`, `infra/terraform/network.tf`,
+`product_ops/deployment/staging_lifecycle.py`,
+`product_ops/deployment/cloud_run_job_entrypoint.py`.
+
+**This is now a two-sided match.** The value computed locally from C's sources is
+byte-identical to `sources_off_attestation.egress_evidence.contract_digest` in the
+manifest the build independently produced. The delivered manifest and the checked-in
+sources agree on the egress contract.
+
+Related digests recorded in the manifest's `sources_off_attestation`:
+`binding_digest sha256:ada473d051cdfdd9ddbb1cbee0b4a0abc222f2b6a61812b7a216ea73a71441fe`,
+16 sources audited, all `disabled`, `zero_credentials_present: true`,
+`egress_posture: default-deny`. The `initial_release_recovery` block carries
+`binding_digest sha256:77ffa2570d34fca0ddd1cc1fb87aecad4b3db0dbd85e185c8da2cfdc90b04235`
+and `prior_release_absent: true`.
+
+### 13.9 Authority proof — build-only scope was not exceeded
+
+From the downloaded phase receipt (`10038482325`), not from the log:
+
+| Field | Value |
+|---|---|
+| `phase` | `build` |
+| `environment` | `dev` |
+| `release_sha` | `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` |
+| `task_id` | `ODP-DEV-BUILD-ARTIFACT-HANDOFF-003` |
+| `lease_supplied` | **`false`** |
+| `image_handoff` | all four `null` |
+| `manifest_handoff` | `run_id: null`, `manifest_digest: null` |
+| `secret_values_redacted` | `true` |
+
+The run is bound to *this* task id. No lease was supplied, and the three
+deploy-side jobs are `skipped` (13.2). The environment receipt (`10038486296`)
+confirms binding to GitHub environment `dev-build` with 11 required variables
+resolved and `missing_variables: []`; only names and booleans are recorded, plus
+the one non-secret value the receipt itself exposes
+(`ODP_CLOUD_RUN_VPC_EGRESS: all-traffic`). The npm audit receipt (`10038492941`)
+is `pass` with 0 findings at or above `high`.
+
+The absence readback (`10038569730`) shows all five Cloud Run targets with
+`exists: false` and `serving_traffic: false`. That is a readback proving **no
+deploy has occurred** — it must not be read as a deploy result.
+
+### 13.10 Limits of this evidence — what is NOT claimed
+
+- **The images were not fetched from the registry by this owner.** An auto worker
+  has no Artifact Registry credentials and `gcloud` reauthentication fails
+  non-interactively (independently reproduced by PR#1239). Fetchability is
+  evidenced by the in-run `cosign verify` calls, which read the live registry with
+  the workflow's WIF credentials at `02:17–02:19Z`, and by the workflow's
+  fail-closed ref resolution. It is not evidenced by a local pull.
+- **No SLSA provenance attestation exists** — see 13.6. Only Fulcio certificate
+  claims plus CycloneDX SBOM attestations.
+- **No deploy, lease, GO, or traffic switch was performed or authorised.**
+- **This owner dispatched no build.** Both runs were dispatched by Human/Ops.
+- **Billing restoration was not observed directly**, only inferred from the push
+  and signature succeeding at `02:17:01Z` where the same operation was denied on
+  2026-09-07. That inference is sound for the artifacts at hand and is not
+  extended to any claim about the project's current billing configuration.
+
+### 13.11 Complete handoff to ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 (PR#1205)
+
+**Handoff status: COMPLETE.** All five previously undelivered artifact categories
+are delivered, verified, and fetchable.
+
+| Target | Value |
+|---|---|
+| Task | ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002 |
+| PR | #1205 (open, `task/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002`) |
+| Owner | Antigravity5 |
+| Reviewer | Codex2 |
+| Scope handed over | evidence-only C→E; the old PR is preserved |
+
+| Category | Status | Where |
+|---|---|---|
+| Candidate C | ✅ | `596b9c9a1788d952811a2bf8d4bba8a4e4d76b12` |
+| Successful build run | ✅ | run `34179791241`, build job `101916404681` |
+| Four immutable image identities | ✅ | 13.4; artifact `10038569219` |
+| `RELEASE_MANIFEST.json` | ✅ | 13.5; artifact `10038569478`, SHA-256 `8bb6e72e…` |
+| SBOM attestation refs | ✅ | 13.6 |
+| Cosign signature refs | ✅ | 13.6 |
+| Provenance | ✅ (scoped) | 13.6 — Fulcio claims + Rekor entries; no separate SLSA attestation |
+| Artifact IDs + raw hashes | ✅ | 13.7, all six verified |
+| Six-file egress contract digest | ✅ | 13.8, `sha256:a9ab95a0…`, two-sided match |
+| Initial-release absence readback | ✅ | artifact `10038569730` |
+| Authority proof | ✅ | 13.9, `lease_supplied: false` |
+
+Carry-forward constraints for the downstream owner: this is an **evidence-only**
+C→E continuation. Do not deploy, sign a lease, issue a GO, or switch traffic. Do
+not force push. If the PR#1205 ancestry is contaminated, handle it through a
+normal new branch/PR, preserving the existing PR.
+
+### 13.12 Verification commands actually run this round
+
+All read-only. No build, deploy, lease, test suite, lint, or security scan was
+run by this owner.
+
+```bash
+gh api repos/alfloop-dev/odayplus/actions/runs/34179791241
+gh api repos/alfloop-dev/odayplus/actions/runs/34179791241/jobs
+gh api repos/alfloop-dev/odayplus/actions/runs/34179791241/artifacts
+gh api repos/alfloop-dev/odayplus/actions/jobs/101916404681
+gh api repos/alfloop-dev/odayplus/actions/jobs/101916404681/logs --allow-escape-sequences
+gh api repos/alfloop-dev/odayplus/actions/runs/34179207603/jobs
+gh api repos/alfloop-dev/odayplus/actions/jobs/101914686431
+gh api repos/alfloop-dev/odayplus/actions/jobs/101914686431/logs --allow-escape-sequences
+gh api "repos/alfloop-dev/odayplus/actions/workflows/302984644/runs?per_page=20"
+gh api repos/alfloop-dev/odayplus/actions/artifacts/<id>/zip   # each of the 6
+sha256sum <each downloaded zip and each extracted inner file>
+git show -s --format=%cI 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12
+git archive 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12 | tar -x -C <tmp>   # read-only C
+python3 -c "...compute_sources_off_egress_contract_digest(root=<C>)..."
+python3 -c "...compute_manifest_digest / validate_manifest on the downloaded manifest..."
+```
