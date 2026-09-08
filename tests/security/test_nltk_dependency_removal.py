@@ -4,13 +4,18 @@ These tests verify that the production dependency chain no longer includes
 ``evidently``, ``nltk``, ``defusedxml``, or standalone ``regex``, and that
 the native drift monitoring engine works without them.
 
+defusedxml and regex are banned because they are sole reverse-dependencies
+of nltk in this project's uv.lock (see ODP_NLTK_UNPATCHED_DEPENDENCY_DISPOSITION
+§3.2: defusedxml has no other dependent, regex has no other dependent).
+Banning them prevents silent re-introduction via a new transitive path.
+
 Task: ODP-DRIFT-SECURITY-VERIFY-003
 Advisory: GHSA-8mgp-746c-j5xp / PYSEC-2026-3740
 """
 
 from __future__ import annotations
 
-import importlib
+import importlib.metadata
 import json
 import tomllib
 from pathlib import Path
@@ -18,20 +23,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 # --- Packages that must NOT be present in the production dependency chain ---
+# evidently / nltk: primary banned packages per acceptance criteria.
+# defusedxml / regex: sole reverse-dependencies of nltk with no other
+# dependents in uv.lock (§3.2 of ODP_NLTK_UNPATCHED_DEPENDENCY_DISPOSITION).
 BANNED_PACKAGES = frozenset({"evidently", "nltk", "defusedxml", "regex"})
 
 
-def test_banned_packages_not_importable() -> None:
-    """No banned package should be importable in the production environment."""
+def test_banned_packages_not_installed() -> None:
+    """No banned package should be installed (via importlib.metadata, not import).
+
+    Using importlib.metadata.distribution() checks installed dist-info,
+    which correctly detects packages that are installed but might fail to
+    import due to broken dependencies. Catching ImportError would falsely
+    pass a package that is installed but has an import-time crash.
+    """
     for package in BANNED_PACKAGES:
         try:
-            importlib.import_module(package)
+            dist = importlib.metadata.distribution(package)
             raise AssertionError(
-                f"{package} is importable but should have been removed "
-                f"from the production dependency chain"
+                f"{package} is installed (version={dist.version}) but should "
+                f"have been removed from the production dependency chain. "
+                f"importlib.metadata found its dist-info; this is NOT an import "
+                f"test — the package metadata is physically present."
             )
-        except ImportError:
-            pass  # expected
+        except importlib.metadata.PackageNotFoundError:
+            pass  # expected: package metadata not found
 
 
 def test_pyproject_does_not_declare_evidently() -> None:
@@ -124,21 +140,59 @@ def test_native_drift_engine_does_not_depend_on_banned_packages() -> None:
 
 
 def test_sbom_does_not_contain_banned_packages() -> None:
-    """If an SBOM exists for this task, it must not list banned packages."""
-    sbom_candidates = [
-        ROOT / "docs" / "evidence" / "completion" / "ODP-DRIFT-SECURITY-VERIFY-003" / "sbom.json",
-        ROOT / "docs" / "evidence" / "completion" / "ODP-DRIFT-DEP-REMOVE-002" / "candidate-audit.json",
-    ]
-    for sbom_path in sbom_candidates:
-        if not sbom_path.exists():
-            continue
-        data = json.loads(sbom_path.read_text(encoding="utf-8"))
-        components = data.get("components", [])
-        for component in components:
-            name = component.get("name", "").lower()
-            assert name not in BANNED_PACKAGES, (
-                f"SBOM {sbom_path.name} lists banned package: {name}"
-            )
+    """Task-scoped SBOM must exist, have components, and not list banned packages.
+
+    Fail-closed: missing SBOM or empty/missing components list is a test
+    failure, not a silent pass.
+    """
+    sbom_path = (
+        ROOT / "docs" / "evidence" / "completion"
+        / "ODP-DRIFT-SECURITY-VERIFY-003" / "sbom.json"
+    )
+    assert sbom_path.exists(), (
+        "Task-scoped SBOM must exist at "
+        "docs/evidence/completion/ODP-DRIFT-SECURITY-VERIFY-003/sbom.json"
+    )
+    data = json.loads(sbom_path.read_text(encoding="utf-8"))
+    assert data.get("bomFormat") == "CycloneDX", (
+        "SBOM bomFormat must be CycloneDX"
+    )
+    components = data.get("components")
+    assert isinstance(components, list) and len(components) > 0, (
+        "SBOM must contain a non-empty 'components' list; "
+        "an empty or missing components list cannot be treated as passing"
+    )
+    for component in components:
+        name = component.get("name", "").lower()
+        assert name not in BANNED_PACKAGES, (
+            f"SBOM lists banned package: {name}"
+        )
+
+
+def test_sbom_missing_is_failure() -> None:
+    """Verify that SBOM validation logic rejects missing/empty formats.
+
+    This is a negative test for the SBOM check itself: a dict with no
+    components key, or an empty components list, must not be silently
+    accepted as 'no banned packages found'.
+    """
+    # Case 1: no components key at all
+    data_no_components: dict = {"bomFormat": "CycloneDX", "specVersion": "1.5"}
+    components = data_no_components.get("components")
+    assert not (isinstance(components, list) and len(components) > 0), (
+        "Missing components must be rejected"
+    )
+
+    # Case 2: empty components list
+    data_empty: dict = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "components": [],
+    }
+    components = data_empty.get("components")
+    assert not (isinstance(components, list) and len(components) > 0), (
+        "Empty components must be rejected"
+    )
 
 
 def test_lock_consistency() -> None:
