@@ -121,3 +121,122 @@ Code boundary checks passed for 1126 files.
 - product_system: 522
 - verification: 383
 
+
+################################################################################
+# 第二次紀錄 (2026-09-08, Claude2 接手 owner 後)
+# 目的：修正 provenance 誤述、補齊 C04 歷史封存，並如實記錄 C->E ancestry 未達成。
+# 以下 5-9 節在 registry 被編輯「之後」重跑，因此綁定的是編輯後的內容。
+################################################################################
+
+===============================================================================
+5. C04 歷史封存的 byte-exactness（git blob id 對照）
+命令:
+  git show 972cad87:<path> > historical-run-33942097235/<archived>
+  git rev-parse 972cad87:<path>   /   git hash-object <archived>
+Output:
+  README-C04-run33942097235.md
+    source blob   6b19005d61979e8a8bcc3a0c16d883174be7270b
+    archived blob 6b19005d61979e8a8bcc3a0c16d883174be7270b   -> MATCH
+  verification-transcript-C04-run33942097235.txt
+    source blob   2e88c8fa844627c0e2e71bf65514b6289e6ad433
+    archived blob 2e88c8fa844627c0e2e71bf65514b6289e6ad433   -> MATCH
+  verify_live_artifact_binding-C04-run33942097235.sh
+    source blob   75369cbb8f1a03e574fe51dec74c685e393e4484
+    archived blob 75369cbb8f1a03e574fe51dec74c685e393e4484   -> MATCH
+結論: 三份 C04 時期文件為 byte-exact 封存，非改寫摘要。C04 的 API archive digest 表、
+artifact ID 索引與逐字命令輸出因此完整保留。
+
+===============================================================================
+6. C04 六份原始 artifact 對照 run 33942097235（該 run artifact 尚未過期）
+命令:
+  gh api repos/alfloop-dev/odayplus/actions/runs/33942097235 --jq '{conclusion,head_sha}'
+  gh run download 33942097235 --repo alfloop-dev/odayplus --dir /tmp/odp-run-33942097235
+  cmp historical-run-33942097235/<file> /tmp/odp-run-33942097235/<artifact>/<file>
+Output:
+  run 33942097235: conclusion=success, head_sha=04e1572f802a54c2646ba678fe2975226dfbd7c4
+  （注意：舊 run 的 head_sha 本身就等於候選 C04；新 run 並非如此，見第 7 節）
+  artifacts expired=false ×6
+  cmp RELEASE_MANIFEST.json                  -> EXIT=0
+  cmp runtime-release-images.json            -> EXIT=0
+  cmp initial-release-absence-readback.json  -> EXIT=0
+  cmp release-environment-receipt.json       -> EXIT=0
+  cmp npm-audit-receipt.json                 -> EXIT=0
+  cmp release-phase-receipt.json             -> EXIT=0
+  OVERALL_CMP_RC=0
+
+===============================================================================
+7. 候選 C 的 provenance 重新量測（更正先前誤述）
+命令:
+  gh api repos/alfloop-dev/odayplus/actions/runs/{34179207603,34179791241} \
+    --jq '{conclusion,head_sha,created_at,updated_at}'
+  gh api repos/alfloop-dev/odayplus/actions/runs/34179791241/artifacts \
+    --jq '.artifacts[] | {id,name,workflow_run.head_sha}'
+  gh run view --repo alfloop-dev/odayplus --job {101914686431,101916404681} --log
+Output:
+  run 34179207603  conclusion=failure  head_sha=8c570a56353abdcc8ba70fe0a3fdd9b963902391
+                   created=2026-09-08T02:11:41Z  updated=2026-09-08T02:20:27Z
+    job 101914686431 "Build once and publish the immutable artifact handoff"
+      conclusion=failure  started=02:12:00Z  completed=02:20:25Z
+      step "Build, publish, sign, and attest immutable container images":
+        02:16:58Z oday-api       digest sha256:5e1a152e839cbfa7a2bf422b924928b56fad89f35e44243619a3f2fe98802cee
+        02:17:35Z oday-worker    digest sha256:b2c0e4473ad529ad71f215b76fc125115d8ba0b4e845a87e532d10ebdb8ddba3
+        02:18:07Z oday-scheduler digest sha256:f3fd22c00478d730273494c23c512a87c807de645a8b759d0af4908d82cd4cc9
+        02:19:39Z oday-web       digest sha256:38c716462b569b7420fe95788a84f8a1b3778e2e7c938d535a1dc13288a78971
+        "Pushing signature to: ..." ×4  -> 簽章由「這個」run 產生
+      step "Write the build-once artifact handoff":
+        02:20:20Z ##[error]Process completed with exit code 1.  -> 沒有發布 manifest/handoff
+
+  run 34179791241  conclusion=success  head_sha=8c570a56353abdcc8ba70fe0a3fdd9b963902391
+                   created=2026-09-08T02:21:49Z  updated=2026-09-08T02:26:33Z
+    job 101916404681 conclusion=success  started=02:22:03Z  completed=02:26:31Z
+      02:25:47Z "Immutable images already exist for 596b9c9a1788d952811a2bf8d4bba8a4e4d76b12;
+                 reusing their digests."          -> 未重新 build / push / 簽章
+      02:25:47Z-02:26:01Z cosign verify ×4        -> 每筆皆 "Verification PASSED."
+        檢查項: cosign claims validated
+                Existence of the claims in the transparency log was verified OFFLINE
+                code-signing certificate verified using trusted CA certificates
+        憑證欄位 githubWorkflowSha = 8c570a56353abdcc8ba70fe0a3fdd9b963902391
+        oday-api Rekor logIndex=2754425715 integratedTime=1788833821
+
+  六個 artifact 的 workflow_run.head_sha 皆為 8c570a56353abdcc8ba70fe0a3fdd9b963902391
+
+更正三處:
+  (a) README 原稱六個 artifact「head SHA 596b9c9a」——誤。596b9c9a 是 release_sha 輸入所
+      checkout 的樹，run 的 head_sha 是 8c570a56。
+  (b) README 原稱「Rekor 透明日誌登錄完整」——過度宣稱。透明日誌是離線驗證，且簽章由
+      34179207603 產生，34179791241 只做 cosign verify。
+  (c) registry candidate_rebind.build_run.completed_at 原為 2026-09-08T02:22:45Z——與任何
+      實測時間都不符。已改為 run updated_at 02:26:33Z，並另記 build job completed_at
+      02:26:31Z，同時新增 producer_run(34179207603) 區塊。
+
+===============================================================================
+8. C -> E ancestry：未達成（acceptance 明列要求）
+命令與逐字輸出見:
+  docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/candidate-ancestry-probe.txt
+摘要:
+  check_candidate_ancestry("596b9c9a...", "ddf10054...") -> 1 error, 203 個非 evidence 路徑
+  Exit code: 1
+  成因: 三次 base advance merge 把 C 之後的 dev 產品碼帶進第一父鏈；validator 取
+        「最終樹差異」與「第一父鏈 -m 觸碰路徑」的聯集，補 commit 無法移除。
+  本 owner 不自行處理的理由: 重建乾淨 E 需新分支/force-push（acceptance 與 reviewer 明文
+        禁止且要求先由 root 安排）；換候選需 root 重跑 build；放寬 validator 被 acceptance
+        明文禁止，且會同時拆掉 deploy-dev.yml 的部署前 ancestry 閘門。
+  注意: 先前 transcript 第 2 節「不帶 --expected-sha、EXIT=0」並未涵蓋這項檢查。
+
+===============================================================================
+9. registry 編輯後重跑既有驗證（確認未破壞任何既有結論）
+命令: bash docs/evidence/runtime/ODP-DEV-CANDIDATE-GATE-RECONCILIATION-002/verify_live_artifact_binding.sh /tmp/odp-run-34179791241 <C worktree>
+Exit code: 0
+Output: [PASS] ×49，無 [FAIL]
+  尾行: 既有下載 artifact 與 C 的內容綁定通過；未證明獨立驗章或 runtime，release 仍為 NO-GO。
+
+命令: python3 delivery_toolchain/e2e/check_release_gate_registry.py
+Exit code: 0
+  Gates cleared: 0/7   RELEASE STATE: NO-GO   Release gate registry checks passed.
+
+命令: python3 delivery_toolchain/e2e/check_release_gate_registry.py --require-go
+Exit code: 1 (expected fail-closed behavior)
+  Release is NO-GO: --require-go was requested but the registry does not record a cleared GO state.
+
+命令: git diff --stat -- docs/evidence/gates/RELEASE_MANIFEST.json
+Output: (empty) -- byte-exact manifest 未被本輪修改
