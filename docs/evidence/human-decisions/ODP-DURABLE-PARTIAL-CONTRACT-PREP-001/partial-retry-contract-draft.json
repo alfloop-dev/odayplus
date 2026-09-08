@@ -7,8 +7,12 @@
     "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
     "work_package": "WP-33A",
     "target_implementation_stage": "WP-33B",
-    "inspected_commit_sha": "23b94f2845def9a723a5071a95363942db92007b",
-    "created_at": "2026-09-08T16:48:00Z"
+    "inspected_commit_sha": "10113c8cd35444eea721a670dba0f978e60529c2",
+    "inspected_commit_note": "Delivered HEAD. The original draft was written against 9048161e058becff5a53593a773d3c42238213fb (measured parent of the first delivery commit 7a98bef5) and revised against b6b729d9 and 23b94f28. Receipt 9 in producer-inventory.json measures git diff --name-only 9048161e 10113c8c -- apps shared modules packages as empty with raw exit code 0, so every source reference in this draft holds unchanged at the delivered HEAD.",
+    "first_committed_at": "2026-09-08T16:14:18Z",
+    "first_committed_at_basis": "Committer timestamp of 7a98bef5, the first commit containing this file, read with git log --date=iso-strict. This is a substantiated upper bound on the authoring time, not the authoring clock itself.",
+    "created_at": "unknown",
+    "created_at_note": "This field previously asserted 2026-09-08T16:48:00Z. That value is withdrawn as unsupported: it postdates first_committed_at (2026-09-08T16:14:18Z), the commit that already contained this file, and no authoring receipt exists. Per the correction policy it is recorded as unknown rather than replaced with another estimate. See metadata.provenance_correction in producer-inventory.json."
   },
   "core_principles": {
     "status_orthogonality": {

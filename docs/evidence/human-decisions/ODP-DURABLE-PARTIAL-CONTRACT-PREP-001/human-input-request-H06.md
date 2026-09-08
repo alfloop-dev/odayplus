@@ -7,9 +7,10 @@
 - **交付日期**：2026-09-08
 - **作者 / 任務負責人**：Antigravity2
 - **審查人**：Codex2
-- **檢驗基準代碼（Inspected HEAD SHA）**：`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`（本文件原始查證基準）
-- **修訂基準**：`23b94f2845def9a723a5071a95363942db92007b`（2026-09-08T18:05:00Z，依 Codex2 審查意見 R3 補充 `delivery_state` 清除語意說明）。base advance 未改動 `apps/`、`shared/`、`modules/` 任何檔案，兩基準下所引用行號一致。
-- **檢驗時間（UTC）**：`2026-09-08T16:48:00Z`
+- **檢驗基準代碼（Inspected HEAD SHA）**：`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`（第一次修訂查證基準；探針 1～4 於 `2026-09-08T16:49:34Z`～`16:49:39Z` 於此採集。本文件初版之基準為 `9048161e058becff5a53593a773d3c42238213fb`）
+- **交付基準（Delivered HEAD SHA）**：`10113c8cd35444eea721a670dba0f978e60529c2`（依 Codex2 審查意見 R3 補充 `delivery_state` 清除語意說明之內容於此交付）。實測 `git diff --name-only 9048161e 10113c8c -- apps shared modules packages` 輸出空、raw exit code 0（收據 9），故本文件所引用行號於上述各基準與交付 HEAD 一致。
+- **檢驗時間（UTC）**：本文件之查證時鐘以 `producer-inventory.json` 之逐條採集收據為準（探針 1～4：`16:49:34Z`～`16:49:39Z`；探針 5～9：`18:33:02Z`～`18:37:05Z`）。先前此處宣告的 `2026-09-08T16:48:00Z` 無收據支撐，已撤回且未以估計值取代。
+- **溯源更正（Provenance Correction）**：本版撤回兩個無收據支撐的時間宣告，並以實測值取代，不以任何新估計值填補；完整說明見 [producer-inventory.json](./producer-inventory.json) 的 `metadata.provenance_correction`，實測時序見同節 `delivered_chronology_utc`。
 - **歷史證據參照**：`ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`（基準：`04e1572f802a54c2646ba678fe2975226dfbd7c4`，日期：2026-09-03）
 - **關聯產物索引**：
   - [README.md](./README.md)
@@ -31,7 +32,7 @@
 
 ## 2. 代碼庫現況與盤點事實摘要
 
-依據對 exact HEAD（`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`）之靜態查證：
+依據對 exact HEAD（`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`，並經收據 8／9 實測等價於交付 HEAD `10113c8c`）之靜態查證：
 
 1. **現行 Default Job Registry 僅有 3 個單一實體任務**：
    - `forecast`（`apps/worker/oday_worker/handlers.py:255`，enqueue 於 `apps/api/oday_api/main.py:997-1044`）：單一門市時序預測，正常返回寫 `SUCCEEDED`（`delivery_state=None`），例外重試超限寫 `FAILED` + `DEAD_LETTER`。

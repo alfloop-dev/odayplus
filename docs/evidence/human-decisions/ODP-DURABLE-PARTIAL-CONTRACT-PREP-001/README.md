@@ -5,9 +5,12 @@
 - **日期**：2026-09-08
 - **任務負責人**：Claude2（初版由 Antigravity2 交付；本版依 Codex2 審查意見 R1／R2／R3 修訂）
 - **審查人**：Codex2
-- **檢驗基準代碼（Inspected HEAD SHA）**：`23b94f2845def9a723a5071a95363942db92007b`（本次修訂重新檢驗）
-- **檢驗時間（UTC）**：`2026-09-08T18:05:00Z`
-- **初版檢驗基準**：`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`（2026-09-08T16:48:00Z）。本次 base advance 併入 `origin/dev` `95646a5c2bd598b7e219ee51efa7e410cb9fe0f4`，僅帶入其他任務之證據目錄；`git diff --name-only b6b729d9..23b94f28` 不含 `apps/`、`shared/`、`modules/` 之任何檔案，故兩個基準下所引用之原始碼行號完全一致。
+- **檢驗基準代碼（Inspected HEAD SHA）**：`10113c8cd35444eea721a670dba0f978e60529c2`（交付 HEAD；探針 5～9 於此基準重新採集）
+- **最近一次採集時間（UTC）**：`2026-09-08T18:33:09Z`（探針 5～7 之時鐘讀值；逐條 UTC 見 `producer-inventory.json` 的 `evidence_collection_receipts`）
+- **初版檢驗基準**：`9048161e058becff5a53593a773d3c42238213fb`（初版交付 commit `7a98bef5` 之實測 parent）。初版撰寫時鐘未留收據，僅能以其所屬 commit `7a98bef5`（2026-09-08T16:14:18Z）為上界，實際時刻記為 unknown。
+- **第一次修訂基準**：`b6b729d95e575dc3b27ea9e02ce22fb128c3970b`；探針 1～4 於 `2026-09-08T16:49:34Z`～`16:49:39Z` 在此基準採集。
+- **跨基準行號等價性（實測，非宣稱）**：`git diff --name-only 9048161e 10113c8c -- apps shared modules packages` 與 `git diff --name-only b6b729d9 10113c8c -- apps shared modules packages` 皆輸出空、raw exit code 0（收據 8、9）。故本文件引用之所有原始碼路徑與行號，在本包曾引用過的每一個基準與交付 HEAD 上皆成立。
+- **溯源更正（Provenance Correction）**：本版撤回兩個無收據支撐的時間宣告，並以實測值取代，不以任何新估計值填補；完整說明見 [producer-inventory.json](./producer-inventory.json) 的 `metadata.provenance_correction`，實測時序見同節 `delivered_chronology_utc`。
 - **歷史證據參照**：`ODP_JOB_PARTIAL_PRODUCER_EVIDENCE_2026-09-03.md`（基準：`04e1572f802a54c2646ba678fe2975226dfbd7c4`，日期：2026-09-03）及 `ODP_JOB_PARTIAL_DISPOSITION_2026-09-03.md`
 - **關聯需求**：`ODP-FR-SHARED-001`（所有長時間任務都能查詢 QUEUED/RUNNING/SUCCEEDED/FAILED/CANCELLED/PARTIAL）
 - **決策依據**：使用者人工決策 D19（選項 A：實作 partial／receipt／retry）
@@ -32,7 +35,7 @@
 
 ## 2. 靜態代碼盤點核心結論（Static Inventory Findings）
 
-經針對代碼樹（SHA: `23b94f2845def9a723a5071a95363942db92007b`）進行全樹檢索與語法分析（執行期權限標記為 `static_only_no_production_runtime_access`）：
+經針對代碼樹（SHA: `10113c8cd35444eea721a670dba0f978e60529c2`）進行全樹檢索與語法分析（執行期權限標記為 `static_only_no_production_runtime_access`）：
 
 1. **無可達之 `JobStatus.PARTIAL` 寫入點**：
    - 全庫 Python、TypeScript/TSX 原始碼中，無任何 Production Worker Handler 或 Queue 狀態轉移會寫入 `JobStatus.PARTIAL`（靜態 `rg` 檢索 0 命中，exit code 1）。
@@ -143,15 +146,26 @@ grep -rn "\.enqueue(" --include=*.py apps shared modules
 # 輸出:
 # apps/scheduler/oday_scheduler/main.py:180:                self.job_queue.enqueue(
 # apps/api/oday_api/main.py:1037:            job, created = job_queue.enqueue(
-# shared/infrastructure/persistence/command_receipts.py:73:            record, created = self.queue.enqueue(
 # shared/infrastructure/persistence/job_receipts.py:74:        record, created = self.queue.enqueue(
+# shared/infrastructure/persistence/command_receipts.py:73:            record, created = self.queue.enqueue(
 # modules/opsboard/application/network_listings.py:1243:                job, created = job_queue.enqueue(
 ```
 
-> 探針 5～7 於 2026-09-08T18:05:00Z 在任務分支 HEAD `23b94f2845def9a723a5071a95363942db92007b` 執行，
-> 為本次修訂新增之採集，用於更正先前將派工歸因於 `job_queue.py:120-173`（`lease()` 內部）之錯誤。
-> 三者均為唯讀靜態檢索，未執行任何測試套件、未接觸 runtime、provider 或 production 資源；
-> 探針 5 之 exit code 1 表示「無命中」，非工具錯誤。
+> 探針 5～7 於 `2026-09-08T18:33:02Z`～`18:33:09Z` 在任務分支 HEAD
+> `10113c8cd35444eea721a670dba0f978e60529c2` 重新採集，UTC 取自同一 shell 內探針前後兩次
+> `date -u +%Y-%m-%dT%H:%M:%SZ` 讀值（兩次一致）。三者均為唯讀靜態檢索，未執行任何測試套件、
+> 未接觸 runtime、provider 或 production 資源；探針 5 之 exit code 1 表示「無命中」，非工具錯誤。
+> 其結論與先前一致：仍用於更正先前將派工歸因於 `job_queue.py:120-173`（`lease()` 內部）之錯誤。
+>
+> **撤回聲明**：先前版本宣稱這三支探針於 `2026-09-08T18:05:00Z` 執行。該宣告無原始採集收據，
+> 且已存在於 commit `f641fa5a`（author／committer 時間皆為 `2026-09-08T17:56:30Z`），
+> 即宣稱的採集時間晚於承載該宣告的 commit 約九分鐘，故予以撤回，且**不以任何新估計值取代**；
+> 原始時鐘值記為 unknown。驗證收據 `31e980105ec63604`、`2f2af3d268e82172`（`17:56:45Z`）
+> 為交付物驗證收據，刻意不重新詮釋為本節探針之採集證據。
+>
+> 探針 7 之輸出順序依本次實際 traversal 記錄，`job_receipts.py:74` 位於
+> `command_receipts.py:73` 之前，與先前抄錄順序不同；`grep -r` 之目錄走訪順序本就不保證穩定，
+> 命中集合則完全相同。
 
 ---
 
@@ -199,3 +213,32 @@ if errors:
     raise SystemExit(1)
 print("Validated "+str(len(names))+" required artifacts, JSON contents, README index, and local Markdown links")'
 ```
+
+> 上述兩條為本任務宣告之 verification 命令，其收據綁定交付 exact HEAD；
+> 收據編號不寫死於本文件，以免與其所綁定的 HEAD 互相循環。
+> 逐條收據請以 `delivery_toolchain` 的 `task_verification.py check` 於交付 HEAD 讀回。
+
+---
+
+## 7. 溯源更正紀錄（Provenance Correction Log）
+
+本節僅記錄「證據溯源」層面的更正。**原始碼盤點結論、契約草案與 H06 決策表均未因本次更正而改變**；
+收據 8、9 已實測 `9048161e` 至交付 HEAD `10113c8c` 之間 `apps/`、`shared/`、`modules/`、`packages/`
+無任何檔案變動（輸出空、raw exit code 0），故所有原始碼路徑與行號在各基準上皆一致。
+
+| 項次 | 被撤回的宣告 | 撤回理由（實測） | 處置 |
+| --- | --- | --- | --- |
+| C1 | 探針 5～7 於 `2026-09-08T18:05:00Z` 採集 | 該宣告已存在於 commit `f641fa5a`（時間 `17:56:30Z`），採集時間晚於承載它的 commit 約九分鐘；無原始採集收據可回復 | 撤回，不以估計值取代；於交付 HEAD `10113c8c` 以時鐘讀值重新採集（`18:33:02Z`～`18:33:09Z`），原始時鐘記為 unknown |
+| C2 | 初版檢驗基準為 `b6b729d9`、時間 `2026-09-08T16:48:00Z` | 五份產物首次進入 git 於 commit `7a98bef5`（`16:14:18Z`），`16:48:00Z` 晚於該 commit；且 `git merge-base --is-ancestor b6b729d9 7a98bef5` exit 1，`b6b729d9` 並非初版交付 commit 的祖先，係經 `33f2eb3d`（`16:48:50Z`）才進入本分支 | 初版基準更正為實測 parent `9048161e`；`b6b729d9` 正名為「第一次修訂基準」（探針 1～4 於 `16:49:34Z`～`16:49:39Z` 於此採集）；初版撰寫時鐘記為 unknown，上界 `16:14:18Z` |
+| C3 | `partial-retry-contract-draft.json` 的 `created_at: 2026-09-08T16:48:00Z` | 同 C2：晚於承載該檔案的 commit `7a98bef5`（`16:14:18Z`） | `created_at` 改記為 `unknown`，另存實測上界 `first_committed_at: 2026-09-08T16:14:18Z` |
+
+非阻斷性來源更正（同批處理，不影響上述結論）：
+
+- `producer-inventory.json` 先前將批次匯入的冪等機制記為 `_execute_with_ownership_and_idempotency`（`listings.py:1730-1799`）。
+  實測該符號不存在（`grep -rn "_execute_with_ownership_and_idempotency" --include=*.py apps shared modules` 無命中）。
+  實際機制為 `apps/api/app/routes/listings.py:1762-1803` 的巢狀 `replay()` closure（搭配 `:1739-1760` 的 `load_replay()`），
+  於 `listings.py:2328` 被本端點呼叫；該 closure 為此 router 中所有冪等寫入端點共用，並非批次匯入專用。
+- `BatchIntakeReceipt` 的成員陣列名稱為 `rows`（schema 於 `listings.py:357-363`，回應組裝於 `listings.py:2321`），
+  先前誤記為 `items`。同步 207／非 durable job 之邊界結論不變（端點定義於 `listings.py:2225-2265`）。
+
+**未變更事項**：H06 仍為 pending；B 階段（WP-33B）入場條件、正式核准與 production 能力均未因本次更正而前進。
