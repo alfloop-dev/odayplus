@@ -1,6 +1,7 @@
 """Shared job primitives."""
 
 from shared.jobs.queue import (
+    DELIVERY_SETTLED_JOB_STATUSES,
     InMemoryJobQueue,
     JobDeliveryState,
     JobRecord,
@@ -10,6 +11,7 @@ from shared.jobs.queue import (
 )
 
 __all__ = [
+    "DELIVERY_SETTLED_JOB_STATUSES",
     "InMemoryJobQueue",
     "JobDeliveryState",
     "JobRecord",
