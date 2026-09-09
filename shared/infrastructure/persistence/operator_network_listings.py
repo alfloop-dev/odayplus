@@ -38,23 +38,14 @@ class DurableAssistedIntakeRepository:
         return self._store.get(self._INTAKES, intake_id)
 
     def save_intake(self, intake: dict[str, Any]) -> None:
-        with self._store.engine.lock:
-            existing = self._store.get(self._INTAKES, intake["id"])
-            if existing is not None:
-                incoming_actions = [e.get("action") for e in intake.get("auditEvents", [])]
-                if incoming_actions == ["intake.batch_assisted_entry"]:
-                    return
-                if len(existing.get("auditEvents", [])) > len(intake.get("auditEvents", [])):
-                    return
-            self._store.put(self._INTAKES, intake["id"], intake)
+        self._store.put(self._INTAKES, intake["id"], intake)
 
     def create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-        with self._store.engine.lock:
-            existing = self._store.get(self._INTAKES, intake["id"])
-            if existing is not None:
-                return existing, False
-            self.save_intake(intake)
+        inserted = self._store.put_if_absent(self._INTAKES, intake["id"], intake)
+        if inserted:
             return intake, True
+        existing = self._store.get(self._INTAKES, intake["id"])
+        return (existing if existing is not None else intake), False
 
     def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]:
         return self._store.list_all(self._IDEMPOTENCY)

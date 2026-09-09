@@ -108,7 +108,7 @@ class SqliteDocumentStore:
             if existing is not None:
                 return False
             ordinal = self._engine.next_ordinal(f"documents:{collection}")
-            self._engine.execute(
+            cur = self._engine.execute(
                 "INSERT INTO durable_documents("
                 "  collection, doc_id, group_key, seq, ordinal, correlation_id, data, created_at"
                 ") VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
@@ -124,7 +124,7 @@ class SqliteDocumentStore:
                     _now(),
                 ),
             )
-            return True
+            return bool(getattr(cur, "rowcount", 0) > 0)
 
     def append_version(
         self,

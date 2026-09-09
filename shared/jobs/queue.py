@@ -408,7 +408,15 @@ class InMemoryJobQueue:
             if status == JobStatus.CANCELLED and isinstance(resolved_payload, dict):
                 from shared.jobs.receipts import settle_cancelled_batch_receipt
 
-                resolved_payload = settle_cancelled_batch_receipt(resolved_payload)
+                resolved_payload = settle_cancelled_batch_receipt(
+                    resolved_payload,
+                    job_id=record.job_id,
+                    job_type=record.job_type,
+                    tenant_id=resolved_payload.get("tenant_id"),
+                    correlation_id=record.correlation_id,
+                    idempotency_key=record.idempotency_key,
+                    created_at=record.created_at.isoformat() if hasattr(record.created_at, "isoformat") else str(record.created_at),
+                )
 
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,

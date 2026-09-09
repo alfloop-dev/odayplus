@@ -1033,6 +1033,9 @@ else:
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from modules.listing.application.intake_authorization import authorize_intake_action
+
             payload = body.payload
             idempotency_tenant_id: str | None = None
             idempotency_scope = ""
@@ -1090,6 +1093,7 @@ else:
                     if k not in ("receipt", "summary", "delivery_state", "status", "_retry_count")
                 }
                 raw_items = payload.get("items") or payload.get("rows")
+                principal = principal_from_headers(request.headers)
                 if isinstance(raw_items, list):
                     seen_ids: set[str] = set()
                     for idx, raw_item in enumerate(raw_items):
@@ -1104,7 +1108,34 @@ else:
                                     },
                                 )
                             seen_ids.add(item_id)
-                payload = {**payload, "tenant_id": active_tenant_id}
+                            authorize_intake_action(
+                                principal,
+                                "submit_csv",
+                                collection_scope={
+                                    "heatZoneId": raw_item.get("heatZoneId") or raw_item.get("heat_zone_id"),
+                                    "assignedAreaId": raw_item.get("assignedAreaId") or raw_item.get("assigned_area_id"),
+                                    "regionId": raw_item.get("regionId") or raw_item.get("region_id"),
+                                    "brandId": raw_item.get("brandId") or raw_item.get("brand_id"),
+                                },
+                                tenant_id=active_tenant_id,
+                                correlation_id=getattr(request.state, "correlation_id", None),
+                            )
+                actor_role_val = "expansion_user"
+                if principal.roles:
+                    first_r = next(iter(principal.roles))
+                    actor_role_val = getattr(first_r, "value", str(first_r))
+                actor_name_val = (
+                    getattr(principal, "name", None)
+                    or (principal.attributes.get("name") if hasattr(principal, "attributes") and isinstance(principal.attributes, dict) else None)
+                    or principal.subject_id
+                )
+                payload = {
+                    **payload,
+                    "tenant_id": active_tenant_id,
+                    "submitter": principal.subject_id,
+                    "actor_name": actor_name_val,
+                    "actor_role_id": actor_role_val,
+                }
                 idempotency_tenant_id = active_tenant_id
                 idempotency_scope = "batch-listing-intake:v1"
 
@@ -1174,6 +1205,39 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+                principal = principal_from_headers(request.headers)
+                from modules.listing.application.intake_authorization import authorize_intake_action
+                from shared.auth import Role
+
+                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
+                is_staff = (
+                    principal.has_role(Role.EXPANSION_USER)
+                    or any(r in ("expansion_user", "expansion-user", "expansionStaff", "expansion-staff") for r in [r.value for r in principal.roles])
+                ) and not is_manager
+
+                if is_staff:
+                    submitter = job.payload.get("submitter") or job.payload.get("owner")
+                    if submitter and submitter != principal.subject_id:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="OWNERSHIP_REQUIRED",
+                        )
+
+                raw_items = job.payload.get("items") or job.payload.get("rows") or []
+                if isinstance(raw_items, list):
+                    for raw_item in raw_items:
+                        if isinstance(raw_item, dict):
+                            authorize_intake_action(
+                                principal,
+                                "view",
+                                collection_scope={
+                                    "heatZoneId": raw_item.get("heatZoneId") or raw_item.get("heat_zone_id"),
+                                    "assignedAreaId": raw_item.get("assignedAreaId") or raw_item.get("assigned_area_id"),
+                                    "regionId": raw_item.get("regionId") or raw_item.get("region_id"),
+                                    "brandId": raw_item.get("brandId") or raw_item.get("brand_id"),
+                                },
+                                tenant_id=active_tenant_id,
+                            )
             elif job_tenant:
                 principal = principal_from_headers(request.headers)
                 if not principal.authenticated:
@@ -1238,6 +1302,38 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
+                from modules.listing.application.intake_authorization import authorize_intake_action
+                from shared.auth import Role
+
+                is_manager = principal.has_role(Role.SITE_REVIEWER, Role.EXECUTIVE, Role.DATA_OWNER)
+                is_staff = (
+                    principal.has_role(Role.EXPANSION_USER)
+                    or any(r in ("expansion_user", "expansion-user", "expansionStaff", "expansion-staff") for r in [r.value for r in principal.roles])
+                ) and not is_manager
+
+                if is_staff:
+                    submitter = job.payload.get("submitter") or job.payload.get("owner")
+                    if submitter and submitter != principal.subject_id:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="OWNERSHIP_REQUIRED",
+                        )
+
+                raw_items = job.payload.get("items") or job.payload.get("rows") or []
+                if isinstance(raw_items, list):
+                    for raw_item in raw_items:
+                        if isinstance(raw_item, dict):
+                            authorize_intake_action(
+                                principal,
+                                "submit_csv",
+                                collection_scope={
+                                    "heatZoneId": raw_item.get("heatZoneId") or raw_item.get("heat_zone_id"),
+                                    "assignedAreaId": raw_item.get("assignedAreaId") or raw_item.get("assigned_area_id"),
+                                    "regionId": raw_item.get("regionId") or raw_item.get("region_id"),
+                                    "brandId": raw_item.get("brandId") or raw_item.get("brand_id"),
+                                },
+                                tenant_id=active_tenant_id,
+                            )
             else:
                 principal = principal_from_headers(request.headers)
                 if not principal.authenticated:

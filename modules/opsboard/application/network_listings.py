@@ -104,13 +104,6 @@ class InMemoryAssistedIntakeRepository:
         return copy.deepcopy(item) if item is not None else None
 
     def save_intake(self, intake: dict[str, Any]) -> None:
-        existing = self.intakes.get(intake["id"])
-        if existing is not None:
-            incoming_actions = [e.get("action") for e in intake.get("auditEvents", [])]
-            if incoming_actions == ["intake.batch_assisted_entry"]:
-                return
-            if len(existing.get("auditEvents", [])) > len(intake.get("auditEvents", [])):
-                return
         self.intakes[intake["id"]] = copy.deepcopy(intake)
 
     def create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -836,6 +829,19 @@ class NetworkListingService:
     def _save_intake(self, intake: dict[str, Any]) -> None:
         self._save_intake_to_state(intake)
         self._intakes.save_intake(intake)
+
+    def _create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        if hasattr(self._intakes, "create_intake_if_absent"):
+            stored, created = self._intakes.create_intake_if_absent(intake)
+        else:
+            existing = self._intakes.get_intake(intake["id"])
+            if existing is not None:
+                stored, created = existing, False
+            else:
+                self._intakes.save_intake(intake)
+                stored, created = intake, True
+        self._save_intake_to_state(stored)
+        return stored, created
 
     def reset(self) -> dict[str, Any]:
         self._state = (
@@ -1729,8 +1735,8 @@ class NetworkListingService:
         ]
         intake["auditEvents"].append(audit_evt)
 
-        self._save_intake(intake)
-        return _copy(intake)
+        stored_intake, _ = self._create_intake_if_absent(intake)
+        return _copy(stored_intake)
 
     def decide_intake(
         self,

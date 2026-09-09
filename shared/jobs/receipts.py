@@ -293,6 +293,12 @@ def apply_item_result(
 def settle_cancelled_batch_receipt(
     payload: dict[str, Any],
     *,
+    job_id: str | None = None,
+    job_type: str | None = None,
+    tenant_id: str | None = None,
+    correlation_id: str | None = None,
+    idempotency_key: str | None = None,
+    created_at: str | None = None,
     completed_at: str | None = None,
 ) -> dict[str, Any]:
     """If payload contains a batch receipt or batch items, settle any unresolved/unstarted items to CANCELLED."""
@@ -338,10 +344,17 @@ def settle_cancelled_batch_receipt(
 
         _, summary = derive_batch_status_and_summary(updated_items)
         receipt_dict = dict(receipt)
+        receipt_dict["job_id"] = str(job_id or receipt_dict.get("job_id") or payload.get("job_id") or "")
+        receipt_dict["job_type"] = str(job_type or receipt_dict.get("job_type") or payload.get("job_type") or "")
+        receipt_dict["tenant_id"] = str(tenant_id or receipt_dict.get("tenant_id") or payload.get("tenant_id") or "")
+        receipt_dict["correlation_id"] = correlation_id or receipt_dict.get("correlation_id") or payload.get("correlation_id")
+        receipt_dict["idempotency_key"] = idempotency_key or receipt_dict.get("idempotency_key") or payload.get("idempotency_key")
         receipt_dict["status"] = JobStatus.CANCELLED.value.upper()
         receipt_dict["completed_at"] = completed_iso
         receipt_dict["items"] = updated_items
         receipt_dict["summary"] = summary.to_dict()
+        if created_at or not receipt_dict.get("created_at"):
+            receipt_dict["created_at"] = created_at or receipt_dict.get("created_at") or payload.get("created_at") or completed_iso
     else:
         updated_items = []
         for idx, raw_it in enumerate(raw_payload_items):
@@ -363,18 +376,19 @@ def settle_cancelled_batch_receipt(
             updated_items.append(cancelled_rec.to_dict())
 
         _, summary = derive_batch_status_and_summary(updated_items)
-        created_at_str = payload.get("created_at") or completed_iso
+        created_at_str = created_at or payload.get("created_at") or completed_iso
         receipt_dict = {
-            "job_id": payload.get("job_id"),
-            "tenant_id": payload.get("tenant_id"),
+            "job_id": job_id or payload.get("job_id"),
+            "job_type": job_type or payload.get("job_type", ""),
+            "tenant_id": tenant_id or payload.get("tenant_id", ""),
             "status": JobStatus.CANCELLED.value.upper(),
             "items": updated_items,
             "summary": summary.to_dict(),
             "created_at": created_at_str,
             "started_at": payload.get("started_at"),
             "completed_at": completed_iso,
-            "correlation_id": payload.get("correlation_id"),
-            "idempotency_key": payload.get("idempotency_key"),
+            "correlation_id": correlation_id or payload.get("correlation_id"),
+            "idempotency_key": idempotency_key or payload.get("idempotency_key"),
         }
 
     new_payload = dict(payload)

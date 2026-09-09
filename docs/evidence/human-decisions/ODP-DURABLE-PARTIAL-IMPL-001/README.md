@@ -5,7 +5,7 @@
 - **前置任務**：
   - `ODP-DURABLE-PARTIAL-CONTRACT-PREP-001`（WP-33A：工程準備、盤點與契約草案）
   - `ODP-JOB-DELIVERY-STATE-CLEAR-001`（修正 PARTIAL／CANCELLED 終態殘留重試狀態並保持兩種佇列一致）
-- **任務負責人**：Claude（前 owner Antigravity6 因 provider quota 終止被改派，非因完成）
+- **任務負責人**：Antigravity7（承接並完成 R1–R5 審查意見修復與 Test 5 整合測試）
 - **審查人**：Codex
 - **依據規範**：
   - `docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md`
@@ -59,17 +59,15 @@ handoff §3.0／§3.3 以 `GET /platform/jobs/{job_id}` 與 `POST /platform/jobs
 
 ---
 
-## 2. 對 Codex 前一輪 review 的處置
+## 2. 對 Codex 審查意見（R1–R5）的處置
 
-| Codex 指出的缺陷 | 本輪處置 | 對應測試 |
+| 審查意見（Finding） | 本輪處置 | 對應測試 |
 |---|---|---|
-| default executor 信任呼叫端 `intake_id`，在共用 repository upsert，不同租戶送同一 id 只會剩後寫的一筆 | 記錄鍵改由 `(tenant_id, job_id, item_id)` 推導，提交端的 `intake_id` 不再參與定址；寫入前另做 `tenantId` 擁有權檢查 | `test_7_same_submitted_intake_id_cannot_cross_tenants` |
-| 業務寫入成功但 receipt checkpoint 前崩潰，重放後同一成員產生兩個隨機 intake id，job 仍 succeeded | 同上的穩定 id 使重放定址到同一筆；另加開始 attempt 的 checkpoint，讓重放看得到「這次 attempt 已開始」 | `test_7_crash_between_business_write_and_receipt_leaves_one_record` |
-| checkpoint `except Exception: pass` 吞例外繼續 | 移除。fence 位移／離開 RUNNING 直接拋；僅對本 job heartbeat 造成的 version 競爭重讀重試 | `test_4_live_operator_cancellation_during_execution`、`test_4_restart_re_readability_and_cancellation` |
-| 取消只讀 payload 的 `cancelled_*` 旗標，沒查真實取消狀態 | 旗標分支移除，取消一律讀佇列 job 狀態 | `test_4_restart_re_readability_and_cancellation`、`test_4_live_operator_cancellation_during_execution` |
-| 隨機 ID／硬寫 `READY`／缺資料填 0 偽裝業務完成 | 走既有協助輸入業務規則決定 stage，缺必填欄位停在 `AWAITING_ASSISTED_ENTRY`，不填 0、不造 URL | `test_1_state_transition_and_itemized_receipt`、`test_7_*` |
-| `tests/architecture/test_external_data_boundary.py` 六項失敗：fixture 內出現未申報的 provider host | 測試 fixture 的 `details` 不再寫入 provider host（該欄位對斷言無作用） | `tests/architecture/test_external_data_boundary.py` |
-| `test_alias_and_versioned_surfaces_are_exactly_paired` 失敗：新增 `/platform/jobs` 別名未配對 | 三條 `/platform/jobs/...` 路徑全部移除，見 §1.4 | `tests/contract/test_api_versioning.py` |
+| **R1**: `save_intake` 使用盲目的 `UPSERT`，在 multi-worker / stale worker 競態下會覆寫人工已修正的房源資料 | `DocumentStore.put_if_absent` 改為利用 SQLite `INSERT ... ON CONFLICT DO NOTHING` 並檢查 `cur.rowcount > 0` 確保跨連線原子性；`NetworkListingService.record_batch_assisted_entry` 改採 `_create_intake_if_absent`，已存在則回傳既有記錄，不覆寫 | `test_review_finding_r1_distinct_engine_stale_worker_cannot_overwrite_correction`、`test_7_crash_between_business_write_and_receipt_leaves_one_record` |
+| **R2**: `DurableJobQueue.update_status` 在取消時直接寫入 DB，缺乏 CAS 重試，與執行完畢 worker 的 `SUCCEEDED` 競爭時可能造成 lost update | `DurableJobQueue.update_status` 加入內部 CAS 重試循環（最多 10 次），每次重新讀取 row version 並驗證受影響行數，確保取消與終態更新不被丟棄 | `test_review_finding_r2_cancellation_race_distinct_engine` |
+| **R3**: `batch-listing-intake` 缺少 `heatZoneId` 階層式範圍授權檢查，任何具備 `listing` 權限的角色可提交任意 scope | `POST /jobs` 加入 `authorize_intake_action(principal, "submit_csv", collection_scope=...)` 逐項校驗，非允許 heat zone 立即拒絕並回傳 403 `SCOPE_DENIED`；`GET` 與 `retries` 端點一併檢驗 staff ownership 與 scope 授權 | `test_review_finding_r3_r4_scope_and_submitter_preservation` |
+| **R4**: `submitter` 欄位被呼叫端任意偽造，且未保留操作者主體資訊 | `POST /jobs` 強制從經過驗證的 `principal_from_headers` 提取 `submitter`、`actor_name` 及 `actor_role_id` 寫入 payload，不可由 client 偽造；worker handler 執行時完整傳遞該主體資訊至業務層 | `test_review_finding_r3_r4_scope_and_submitter_preservation` |
+| **R5**: 執行前取消（Pre-execution cancellation）產生了缺失 `job_id`/`tenant_id`/`correlation_id`/`idempotency_key` 的 placeholder envelope | `settle_cancelled_batch_receipt` 與佇列 `update_status` 重構，由資料庫 row 取得正規 envelope 元資料，生成完整的 canonical `DurableJobReceipt` | `test_review_finding_r5_pre_execution_cancellation_canonical_envelope` |
 
 ---
 
@@ -84,13 +82,17 @@ handoff §3.0／§3.3 以 `GET /platform/jobs/{job_id}` 與 `POST /platform/jobs
 | `test_4_restart_re_readability_and_cancellation` | §4 測試 4 | 重啟後完整回讀收據；取消情境以真實崩潰＋真實 DB 取消驅動：第 1 筆 `SUCCEEDED`(attempt=1)、第 2 筆 `CANCELLED`(attempt=1, `CANCELLED_MID_EXECUTION`)、第 3 筆 `CANCELLED`(attempt=0, `CANCELLED_BEFORE_EXECUTION`) |
 | `test_4_mid_batch_interruption_and_resumption` | §4 測試 4 | 中途崩潰後重啟續跑，已完成項不重跑 |
 | `test_4_live_operator_cancellation_during_execution` | §4 測試 4 | 執行中由 operator 在 DB 取消，已落地結果保留、未執行項 `attempt=0` |
-| `test_5_duplicate_delivery_and_out_of_order` | §4 測試 5 | 重複投遞同一 attempt、重複 enqueue 同一 idempotency key、舊 attempt 失敗後到不得覆寫 `SUCCEEDED`、對 `attempt=0` 取消項的後到結果不復活、重排順序後聚合不變 |
+| `test_5_duplicate_delivery_and_out_of_order` | §4 測試 5 | 真實持久化 SQLite 整合測試（Subcases 5.1–5.5）：重複投遞同一 attempt、重複 enqueue 同一 idempotency key、舊 attempt 失敗後到不得覆寫 `SUCCEEDED`、對 `attempt=0` 取消項的後到結果不復活、重排順序後聚合不變 |
 | `test_6_auth_and_tenant_isolation_guards` | §3.3／隔離要求 | 401（未認證）、403（角色與租戶不符）、404（跨租戶）、409（QUEUED/RUNNING 重試）、400（SUCCEEDED 與 0 可重試項） |
 | `test_7_same_submitted_intake_id_cannot_cross_tenants` | 本輪 review 反例 | 兩租戶各送同一 `intake_id`：留下兩筆記錄、各自租戶、各自資料，且皆非提交端給的那個 id |
 | `test_7_crash_between_business_write_and_receipt_leaves_one_record` | 本輪 review 反例 | 業務寫入成功後崩潰、重放後只有一筆業務記錄，且等於收據的 `result_ref` |
 | `test_7_row_completeness_decides_stage_without_zero_fill` | 本輪 review 反例 | 齊備的一列跑既有 matcher 落在 `READY` 並保留真實租金／坪數；只有地址的一列停在 `AWAITING_ASSISTED_ENTRY`，缺的欄位被列名而非填 0，兩列都不造 URL 或快照 |
+| `test_review_finding_r1_distinct_engine_stale_worker_cannot_overwrite_correction` | R1 驗證 | 跨獨立 engine 連線模擬過期 worker 重試寫入，確認不會覆寫人工修正 |
+| `test_review_finding_r2_cancellation_race_distinct_engine` | R2 驗證 | 跨獨立 engine 連線模擬取消與工作者成功提交之 CAS 競爭 |
+| `test_review_finding_r3_r4_scope_and_submitter_preservation` | R3/R4 驗證 | 驗證 heatZoneId 越權拒絕（403 `SCOPE_DENIED`）與主體身分防偽保存 |
+| `test_review_finding_r5_pre_execution_cancellation_canonical_envelope` | R5 驗證 | 驗證執行前取消生成正規 Envelope 與欄位完整性 |
 
-三項 `test_7_*` 皆完全走 default registry、不注入 executor 替身，讀回的是持久層中的業務實體而非收據。
+三項 `test_7_*` 及 `test_review_finding_*` 皆走 default registry 與持久化 SQLite，讀回的是持久層中的業務實體而非僅記憶體收據。
 
 ---
 

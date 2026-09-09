@@ -322,6 +322,7 @@ def _default_batch_listing_item_executor(
     item_id: str,
     correlation_id: str | None = None,
     service: Any | None = None,
+    actor_name: str | None = None,
 ) -> tuple[str | None, Any | None]:
     """Land one batch listing row through the assisted-intake business path.
 
@@ -352,6 +353,7 @@ def _default_batch_listing_item_executor(
             source_id=BATCH_LISTING_INTAKE_SOURCE_ID,
             correlation_id=correlation_id,
             idempotency_key=item.get("idempotency_key"),
+            actor_name=actor_name,
         )
     except NetworkListingPolicyError as exc:
         return None, ItemError(
@@ -620,6 +622,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         current_items = candidate_items
 
         try:
+            actor_name = payload.get("actor_name") or payload.get("submitter") or "批次匯入"
             result_ref, error = _default_batch_listing_item_executor(
                 raw_item,
                 tenant_id,
@@ -628,6 +631,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
                 item_id=item_id,
                 correlation_id=job.correlation_id,
                 service=service,
+                actor_name=actor_name,
             )
             if error is not None:
                 item_result = ItemReceipt(
