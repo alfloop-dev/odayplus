@@ -97,7 +97,8 @@
 ### 10. `PARTIAL` 沒有生產者（`ODP-FR-SHARED-001`）
 
 - **現況**：詞彙已備好、`shared/jobs/queue.py` 已改用它，但沒有任何 job 會設定它。清單誠實記為 `absent`。
-- **建議**：先回答「**哪些 job 真的會半成功**」。答案是「目前沒有」就維持 absent 並記下來，那是誠實的。**不要為了讓清單好看而硬接。**
+- **建議（2026-09-03 歷史評估）**：先回答「**哪些 job 真的會半成功**」。答案是「目前沒有」就維持 absent 並記下來，那是誠實的。**不要為了讓清單好看而硬接。**
+- **更新（2026-09-08 決策 D19，WP-33）**：使用者選定實作 durable PARTIAL、逐項 receipt 與 retry 契約（非 waiver/amendment）。A 階段成果已由 `ODP-DURABLE-PARTIAL-CONTRACT-PREP-001` (PR #1257) 交付 producer 盤點與契約草案；前置修正任務 `ODP-JOB-DELIVERY-STATE-CLEAR-001` (PR #1280) 審查中；B 階段實作任務 `ODP-DURABLE-PARTIAL-IMPL-001` (WP-33B) 處於 `blocked`，等待 H06 業務 job 選定。原始需求維持 `BLOCKED_BY_EVIDENCE` / `OPEN`，待真實 runtime / 業務 job 驗證，不冒稱 VERIFIED。見 [`docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/README.md`](../evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/README.md)。
 
 ---
 
@@ -107,15 +108,15 @@
 
 | # | 項目 | 建議 |
 |---:|---|---|
-| 11 | `SITE-001` Brand Transfer / Format Conversion | **先花半天確認資料源與業務事件是否存在**；再轉實作，或用正式 amendment／waiver 處置 |
-| 12 | `NET-002` 租約限制 | 先確認 per-option 檔期／解約金資料；存在才設計可行性檢查，不存在則正式修訂／豁免，不能只改 note |
+| 11 | `SITE-001` Brand Transfer / Format Conversion | 先花半天確認資料源與業務事件是否存在；再轉實作，或用正式 amendment／waiver 處置。<br><br>**更新（2026-09-08 決策 D16/D17，WP-30/WP-31）：** 使用者選定實作路線（非 waiver/amendment）。A 階段契約草案已由 `ODP-BRAND-TRANSFER-CONTRACT-PREP-001` (PR #1254) 與 `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001` (PR #1252) 交付；B 階段實作任務 `ODP-BRAND-TRANSFER-IMPLEMENTATION-001` (WP-30B) 與 `ODP-FORMAT-CONVERSION-IMPLEMENTATION-001` (WP-31B) 目前處於 `blocked` 狀態，分別等待 H03（真實品牌轉移資料源）與 H04（改裝轉型事件/財務定義）。原始需求維持 `BLOCKED_BY_EVIDENCE` / `OPEN`，未獲真實資料前不標記 VERIFIED。見 [`ODP-BRAND-TRANSFER-CONTRACT-PREP-001`](../evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/README.md) 與 [`ODP-FORMAT-CONVERSION-CONTRACT-PREP-001`](../evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/README.md) |
+| 12 | `NET-002` 租約限制 | 先確認 per-option 檔期／解約金資料；存在才設計可行性檢查，不存在則正式修訂／豁免，不能只改 note。<br><br>**更新（2026-09-08 決策 D18，WP-32）：** 使用者選定實作 NetPlan 租約最小契約與雙求解器一致驗收方案（非 waiver/amendment）。A 階段成果已由 `ODP-NET002-LEASE-CONTRACT-PREP-001` (PR #1256) 交付；B 階段實作任務 `ODP-NET002-LEASE-IMPLEMENTATION-001` (WP-32B) 目前處於 `blocked` 狀態，等待 H05（門市租約起迄/解約金主檔與候選檔期）。原始需求維持 `BLOCKED_BY_EVIDENCE` / `OPEN`，未獲真實資料前不標記 VERIFIED。見 [`docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/README.md`](../evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/README.md) |
 | 13 | `HZ-006` 熱區合併／拆分 | 唯一會隨時間惡化的一項，但建議等 `HZ-004` 吸收數字累積幾個月 |
 | 14 | `PRICE-006` Bandit + Gate | 目前沒有所以安全。**只出 bandit 不出 gate 是獨特風險**，兩者必須同批 |
-| 15 | `INT-001` CDC 接入 | 先問有沒有來源系統真的需要。若批次與 API 夠用，標為不適用 |
+| 15 | `INT-001` CDC 接入 | 先問有沒有來源系統真的需要。若批次與 API 夠用，標為不適用。<br><br>**更新（2026-09-08 決策 D20，WP-34）：** 使用者選定實作 CDC 逐來源適用性與刪除傳播（非標為不適用）。A 階段成果已由 `ODP-CDC-SOURCE-CONTRACT-PREP-001` (PR #1258) 交付來源適用性矩陣與刪除契約；跟進任務 `ODP-DATA-PLANE-DELETE-PROPAGATION-001`、`ODP-SCHEMA-STORE-OPENING-AUTHORITY-001`、`ODP-DATA-CATALOG-METADATA-ALIGNMENT-001` 處於 `todo`；B 階段實作任務 `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` (WP-34B) 目前處於 `blocked` 狀態，等待 H07（CDC 來源與 SLA 裁決）。原始需求維持 `OPEN`，未獲真實接入前不標記 VERIFIED。見 [`docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/README.md`](../evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/README.md) |
 | 16 | `INTV-006` Adjust | 先問實務：現在要調整的介入人是怎麼做的 |
 | 17 | `LH-003` Backtest 當發布閘 | 低。Shadow／Canary／Rollback／Champion-Challenger 已覆蓋大部分 |
 | 18 | `OPS-002` 留言 | 純缺功能。價值在把討論與決策綁在一起，不在提供溝通管道 |
-| 19 | merge queue 批次 | **更正（2026-09-03）：`BLOCKED_BY_EVIDENCE`，不是 `DECIDED`。** `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 查證後確認查無權威裁決——本欄先前的「已裁決不做」轉述自一個可調的組態預設值（`min_entries_to_merge: 1`），該預設值由 AI 代理人在實作 commit 內設定，無人類簽署。已阻擋至 Human/Ops；在裁決做成前不得補簽 decider 與日期。見 [`docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md`](../evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md) |
+| 19 | merge queue 批次 | **OPEN（2026-09-08 決策 D21 轉為正式實作需求）：** 使用者選定選項 B（保留為正式實作需求，不裁決不做、不建立 Waiver）；A 階段只讀量測與配置方案已由 `ODP-MERGE-QUEUE-BATCH-DESIGN-001` (PR #1250) 交付；B 階段工程任務 `ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001` 待 H08 參數確認後入場。見 [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md) |
 
 ---
 

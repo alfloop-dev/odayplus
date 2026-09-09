@@ -15,6 +15,7 @@ from typing import Any
 
 from shared.infrastructure.persistence.engine import SqliteEngine
 from shared.jobs.queue import (
+    DELIVERY_SETTLED_JOB_STATUSES,
     NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES,
     JobDeliveryState,
     JobRecord,
@@ -392,6 +393,25 @@ class DurableJobQueue:
         fence_token: int | None = None,
         error_message: str | None = None,
     ) -> None:
+        """Write a job's outcome, and settle its delivery state alongside it.
+
+        ``delivery_state`` keeps its existing three-way meaning for callers:
+
+        - omitted / ``None`` on a non-settled status (``QUEUED``, ``RUNNING``,
+          ``FAILED``) leaves the stored delivery state untouched;
+        - an explicit value writes that value, so the worker's
+          ``FAILED`` + ``DEAD_LETTER`` and ``QUEUED`` + ``RETRYING`` writes in
+          ``apps/worker/oday_worker/main.py`` are unchanged;
+        - any status in :data:`DELIVERY_SETTLED_JOB_STATUSES` clears it to
+          ``None``, because the work is finished and no delivery attempt is
+          still owed.
+
+        The settled-status rule wins over an explicit ``delivery_state``. That
+        is the pre-existing behaviour for ``SUCCEEDED``, now extended to
+        ``PARTIAL`` and ``CANCELLED``; no call site has to change and no
+        signature changes.
+        """
+
         with self._engine.lock:
             assignments = [
                 "status = ?",
@@ -399,7 +419,10 @@ class DurableJobQueue:
                 "error_message = ?",
             ]
             params: list[Any] = [status.value, error_message]
-            if status == JobStatus.SUCCEEDED:
+            if status in DELIVERY_SETTLED_JOB_STATUSES:
+                # Without this, writing PARTIAL/CANCELLED with delivery_state=None
+                # emitted no delivery_state assignment at all and the row kept the
+                # RETRYING left by the previous attempt.
                 assignments.append("delivery_state = NULL")
             elif delivery_state is not None:
                 assignments.append("delivery_state = ?")
