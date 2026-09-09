@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "type": "control_plane_remediation_blocker",
+  "recorded_at": "2026-09-09T01:15:00Z",
+  "recorded_by": "Antigravity3",
+  "reviewer": "Codex",
+  "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+  "blocker_title": "Control Plane Limitation: Reopen/Mutation Refusal on Archived Task Snapshots",
+  "problem_statement": "現有 canonical writer (scripts/ai_status.py:6546-6550) 明確拒絕針對已 archived 任務執行 reopen（提示：Task <task_id> is archived and cannot be reopened in place. Create a new follow-up task that references <task_id>.）。此外，ai-status.sh 無撤銷/修改 ai-task-archive/tasks/*.json 的子命令。依據 Pantheon 治理與驗收規範，嚴禁 worker 手寫 archive/board/index 或重跑已套用 batch，因此針對 P1/P2 兩筆已落 archive 的任務，worker 無法透過既有 CLI 單方執行在位 (in-place) 撤回或狀態退回。",
+  "affected_tasks": [
+    {
+      "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+      "current_archive_status": "done",
+      "current_evidence_tier": "reconstructable_done",
+      "required_correction": "撤銷無缺口 done 完成聲明；真實狀態為 blocked waiting Human/Ops，gaps 包含 human_authority_missing 與 acceptance_gap_blocked_by_evidence",
+      "dependent_board_task": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001"
+    },
+    {
+      "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+      "current_archive_status": "done",
+      "current_evidence_tier": "reconstructable_done",
+      "required_correction": "撤銷無缺口 done 完成聲明；保留 acceptance_gap_production_entry_test_unverified 缺口，待下游 cutover 任務補齊 production-shaped 缺值測試",
+      "dependent_board_task": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001"
+    }
+  ],
+  "governance_constraints_enforced": [
+    "保留已套用 recovery_batch_20260908_applied.json、maintenance_hold_20260908_applied.json 與 recovery_apply_checkpoint_20260908T235531Z.json 原始 bytes，不私自修改",
+    "不手寫修改 ai-status.json、ai-task-archive/tasks/*.json 或 ai-task-archive/index.json",
+    "不重跑已套用的 batch，不偽造 CAS 寫入",
+    "不以 base advance 或更改統計數字代替實質審查意見修復"
+  ],
+  "recommended_remediation_options_for_coordinator": [
+    {
+      "option": "A_GOVERNANCE_EVIDENCE_DOCKET_AND_DOWNSTREAM_GATE_LOCK",
+      "summary": "以版控證據檔案（recovery_disposition_corrections_20260909.json 等）作為法定更正記錄，在既有 archive bytes 不動的前提下，由 Codex 與下游任務（ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001 及 ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001）之執行者/審查者將上述缺口納入前置阻擋條件，嚴格防止缺口被冒充為完成。",
+      "risk": "低。完全符合不可變歷史與稽核可追溯性，不需額外停機窗口。"
+    },
+    {
+      "option": "B_CONTROL_PLANE_MIGRATION_UNDER_MAINTENANCE_HOLD",
+      "summary": "由前景協調者建立正式維護窗口並簽署 hold，透過受控控制面修復工具或 migration 腳本，將 2 筆 snapshot 的 evidence_tier 修正為 merge_verified 並寫入明確 gaps，或自 archive 移回 board 成為 blocked recovery_placeholder。",
+      "risk": "中。需再次建立維護窗口、暫停派工並更新 archive index。"
+    }
+  ],
+  "conclusion": "本任務已完成全部可執行的查證、證據量測、更正記錄登錄及控制面 blocker 提報，嚴守資料契約與治理邊界，交由指定審查者 Codex 獨立審核。"
+}

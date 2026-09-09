@@ -1,0 +1,874 @@
+{
+  "summary": {
+    "measured_at": "2026-09-09T01:15:00Z",
+    "measured_by": "Antigravity3",
+    "reviewer": "Codex",
+    "archive_readback": {
+      "count": 23,
+      "all_on_disk": true,
+      "all_terminal_done": true,
+      "all_labelled_reconstructed": true,
+      "corrections_logged_for_findings": [
+        "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+        "ODP-MODELREADY-QUALITY-NULLABLE-001"
+      ]
+    },
+    "board_readback": {
+      "count": 15,
+      "all_blocked": true,
+      "all_non_dispatchable": true,
+      "all_waiting_human": true
+    },
+    "board_file": {
+      "path": "/home/lupin/odayplus/ai-status.json",
+      "sha256": "f8c235a6c9c3fe27cab76fb0c2146278ba4e5288c426496473668df45bf3f944",
+      "revision": "f3b7127943074df4ab0ecf0cee375196",
+      "active_task_count": 48
+    }
+  },
+  "archive_rows": [
+    {
+      "task_id": "ODP-AVM-DEPRECIATION-CONTRACT-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "aac3dcc725f6747123b20054c179bb24db09d6ae8123ef6f7639041cbf89b565",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-04T11:45:27+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-CANONICAL-LEGACY-LINEAGE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "4f0fbc242345dbe9dc4ffc05c74707907d42be22cdcf5e613d6d5a492a49d48e",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T15:13:24+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-DRIFT-DEP-REMOVE-002",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "3fe71f40c756d10c22cafae4174c5d00ab6f3597b3157f6b21c544c4fb8d06b5",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-06T05:31:37+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-FIRST-RELEASE-ROLLBACK-RECOVERY-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "e301e34584b136a9ac2376b4ce65d42e0302b72ed4cc33e29d7b4bd6c3b57863",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-02T13:56:05+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-HZ006-MERGE-SPLIT-IMPLEMENTATION-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "b03e462447e3ce6c0270fe2ef9b51cb3c58e94cf8a374924520eed7629de88b6",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-05T15:43:25+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-INT-MANUAL-CORRECTION-AUDIT-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "1a7335b0b5007237740b034b57397d0cb93319dfc8c5b8a4dc8ffdecda99bd4e",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-05T03:33:41+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-LH-PREDICTION-DRIFT-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "31eee5dfcb14f600670fd5d18bda755ce484aa7d0794657d56e5b2ed46e1ebca",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T12:43:20+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-LH003-BACKTEST-RELEASE-GATE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "727303eac509fa586e5ca7afb4162091ebf199480335d3dbede9f74608a04b7c",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T21:28:18+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-MEASUREMENT-CROSSLAYER-GATE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "bff31e0e24eaf77594b58e05412f5551fa681e5fbbbb0d0f8145c02afbc4c6f5",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T12:29:15+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "2f1436d107dd1b13111db3550b1b7566c2db69e90bd8a757cf33a085a1237114",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T17:48:49+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": true
+    },
+    {
+      "task_id": "ODP-MODELREADY-QUALITY-NULLABLE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "d70d96a8acae775d9babb277d033760062c84a702210d68827455fdfa1be73ea",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T19:54:30+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": true
+    },
+    {
+      "task_id": "ODP-NETPLAN-DISCLOSURE-UI-E2E-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "d88b30c072338c6c6ae04197cce0133195c378528f9d6cf3ea8c606f74a1bb84",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-04T05:00:06+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-OPS002-DECISION-COMMENTS-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "7e2a976dd88a87ba6f6abf3f3301cb06815abb1b753f47a8b27ab51bec14f175",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T14:09:21+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-PRICE006-BANDIT-GATED-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "fa9f70257e250f85049918deaa86a034f3e3f59f8ec69c36fa7a9a2b97afe2eb",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-04T02:50:10+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-RELEASE-BUILD-HANDOFF-SNAPSHOT-ROLLBACK-WIRING-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "e6fc92432c3550ab058c2046727a6b7d654f1f97c2ccb4e19214ee9f2bbd6cf2",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-01T14:29:30+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-RELEASE-GATE-FIXTURE-STAGING-002",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "ae3ecc8ce084e70e4de9e517fe635993ba9eada3ecaa7ee65a6cd39d545b515f",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-06T01:29:43+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-RELEASE-MANIFEST-LIVE-ARTIFACT-RECONCILE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "1b35059496b0541e59cb9049867ac05ca7f8ef3ef74b632da79fab066fa48340",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-08-26T20:02:36+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-RELEASE-ROLLBACK-DATA-HANDOFF-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "3e79613b50fd408ee8e420bc8db8a920df26841a6201649143d2f2088c2e6c8f",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-08-27T15:15:45+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-REQ-DISPOSITION-GOVERNANCE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "c306deecf0a9c4b449a23bc970d8a9d3d74773c0847e3c8ac00ba98a36ae067b",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T13:03:52+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-DISPATCH-CLI-INTEGRATION-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "3cef429545c1ef06ecd6babc4836c1bff8b90c76df663a3b978c9f671e33dcb9",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-05T05:35:24+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-SITESCORE-QUALITY-NULLABLE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "ef6c499e23d4349c5f6b5c624ad3c4f0ae5be921309c5aaf4514337c15699478",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T18:04:38+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-SPEC-SOURCE-PROVENANCE-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "bb63787648120e917021b7d08a093a42df74ccedec722ce15342bdf543e4c83c",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-03T14:39:46+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    },
+    {
+      "task_id": "ODP-TENANT-PLATFORM-ADMIN-FAILCLOSED-001",
+      "snapshot_on_disk": true,
+      "snapshot_sha256": "04fb5506932c8c38690b55948e428cfc549efddf4472f62c60e0e35360a3198a",
+      "terminal_status": "done",
+      "terminal_outcome": "completed",
+      "archived_at": "2026-09-04T13:08:45+00:00",
+      "record_kind": "reconstructed_done",
+      "reconstructed": true,
+      "evidence_tier": "reconstructable_done",
+      "gaps": [],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      },
+      "has_finding_correction": false
+    }
+  ],
+  "board_rows": [
+    {
+      "task_id": "DPF-EMGI-LIVE-ROLLOUT-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_claimed",
+      "gaps": [
+        "merge_not_verifiable_on_ref",
+        "acceptance",
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-DEV-ROLLOUT-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "acceptance",
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-DEV-STAGED-GATE-RECONCILIATION-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "acceptance"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-EPHEMERAL-STAGING-IAC-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "acceptance"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "acceptance",
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-INT001-CDC-DISPOSITION-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-JOB-PARTIAL-DISPOSITION-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-NET002-LEASE-DISPOSITION-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-ROLE-PROVIDER-CODEX-REVIEW-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "acceptance"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-SINGLE-PATH-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "acceptance"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-RUNTIME-RELEASE-STAGING-LIFECYCLE-INTEGRATION-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "acceptance"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-SITE001-MISSING-COMPONENTS-DISPOSITION-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-STAGING-RECOVERY-BUNDLE-STORAGE-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "ODP-WEB-PASSWORD-FIRST-SECURITY-E2E-002",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_verified",
+      "gaps": [
+        "acceptance"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    },
+    {
+      "task_id": "XR-EXT-OSS-FINAL-AUDIT-001",
+      "present_on_board": true,
+      "status": "blocked",
+      "non_dispatchable": true,
+      "waiting_for": "Human/Ops",
+      "record_kind": "recovery_placeholder",
+      "reconstructed": true,
+      "evidence_tier": "merge_claimed",
+      "gaps": [
+        "merge_not_verifiable_on_ref",
+        "runtime"
+      ],
+      "historical_actors": {
+        "owner": "UNKNOWN-HISTORICAL",
+        "reviewer": "UNKNOWN-HISTORICAL",
+        "human_go": "UNKNOWN-HISTORICAL"
+      },
+      "recovery_actors": {
+        "owner": "Claude2",
+        "reviewer": "Codex"
+      }
+    }
+  ]
+}
