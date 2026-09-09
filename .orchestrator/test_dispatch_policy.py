@@ -2812,6 +2812,383 @@ def test_dispatch_ready_tasks_recovers_a_conflicted_review_without_a_reviewer_sl
     assert status["handoffs"][0]["status"] == "done"
 
 
+# --- Review CI failure recovery -----------------------------------------------
+#
+# An unapproved review PR whose required CI fails is suppressed from reviewer
+# dispatch, but without recovery it sits in `review` indefinitely: the reviewer
+# will not review a red PR, and the owner is never re-dispatched.
+# `recover_failed_ci_review_prs` recovers these back to `in_progress` under
+# `control_plane_recovery`.
+
+FAILED_CI_HEAD = "a964c83d66103444953e4ed2e8741b8e484a0f42"
+FAILED_CI_REPO = "alfloop-dev/odayplus"
+FAILED_CI_TASK_ID = "ODP-DATA-PLANE-DELETE-PROPAGATION-001"
+
+
+def _failed_ci_review_task(**overrides) -> dict:
+    """A review task whose PR CI has failed."""
+    task = {
+        "id": FAILED_CI_TASK_ID,
+        "status": "review",
+        "owner": "Antigravity",
+        "reviewer": "Codex2",
+        "repository": FAILED_CI_REPO,
+        "branch": f"task/{FAILED_CI_TASK_ID}",
+        "pr_number": 1282,
+        "depends_on": [],
+        "acceptance": ["the original acceptance must survive recovery"],
+        "review_reopen_count": 1,
+        "review_churn_reassigned_at_count": 1,
+        "human_continuation_approval_history": [
+            {"approval_id": "hc-1", "status": "consumed"}
+        ],
+        "waiting_for": "Codex2",
+        "review_submission": {
+            "pr_number": 1282,
+            "branch": f"task/{FAILED_CI_TASK_ID}",
+            "base_branch": "dev",
+            "remote_sha": FAILED_CI_HEAD,
+            "pr_url": f"https://github.com/{FAILED_CI_REPO}/pull/1282",
+        },
+    }
+    task.update(overrides)
+    return task
+
+
+def _run_ci_failure_recovery(
+    task,
+    *,
+    ci=("OPEN", "failure"),
+    ci_error=None,
+    reads=None,
+    status=None,
+    busy_task_ids=frozenset(),
+    commit_ok=True,
+    timeline=None,
+):
+    import github_bus
+
+    cfg = _base_test_config()
+    if status is None:
+        status = {
+            "tasks": [task],
+            "handoffs": [
+                {
+                    "task_id": task["id"],
+                    "from": task.get("owner"),
+                    "to": task.get("reviewer"),
+                    "status": "pending",
+                }
+            ],
+        }
+    dispatch_engine._sync_supervisor_scope()
+
+    head = task.get("review_submission", {}).get("remote_sha", FAILED_CI_HEAD)
+    remaining = list(reads if reads is not None else [_pr_facts(head=head)])
+    gh_calls: list[list[str]] = []
+    events = timeline if timeline is not None else []
+
+    def fake_run_gh(args, **_kwargs):
+        gh_calls.append(list(args))
+        events.append(("gh", args[2] if len(args) > 2 else ""))
+        answer = remaining.pop(0) if len(remaining) > 1 else (remaining[0] if remaining else {})
+        if answer is None:
+            raise github_bus.GitHubBusOffline("gh could not reach api.github.com")
+        stdout = answer if isinstance(answer, str) else json.dumps(answer)
+        return subprocess.CompletedProcess(
+            args=["gh", *args], returncode=0, stdout=stdout, stderr=""
+        )
+
+    ci_answers = list(ci) if isinstance(ci, list) else [ci]
+    ci_errors = list(ci_error) if isinstance(ci_error, list) else [ci_error]
+
+    def fake_ci(_task_id, *_args, **kwargs):
+        events.append(("ci", kwargs.get("max_age_seconds")))
+        error = ci_errors.pop(0) if len(ci_errors) > 1 else ci_errors[0]
+        if error is not None:
+            raise error
+        return ci_answers.pop(0) if len(ci_answers) > 1 else ci_answers[0]
+
+    logged: list[dict] = []
+    record = lambda _cfg, event: logged.append(event)  # noqa: E731
+
+    with (
+        mock.patch.object(github_bus, "run_gh", side_effect=fake_run_gh),
+        mock.patch.object(
+            supervisor.runtime_ai_status, "task_pr_ci_status", side_effect=fake_ci
+        ),
+        mock.patch.object(
+            supervisor, "commit_canonical_task_transition", return_value=commit_ok
+        ),
+        mock.patch.object(supervisor, "write_activity_log", side_effect=record),
+        mock.patch.object(dispatch_engine, "write_activity_log", create=True, side_effect=record),
+    ):
+        changed = dispatch_engine.recover_failed_ci_review_prs(
+            cfg, status, {"review"}, busy_task_ids=set(busy_task_ids)
+        )
+    return changed, gh_calls, logged, status
+
+
+def test_failed_ci_review_is_returned_to_its_owner() -> None:
+    """An unapproved review task with CI failure is returned to its owner."""
+    task = _failed_ci_review_task()
+
+    changed, gh_calls, logged, status = _run_ci_failure_recovery(task)
+
+    assert changed is True
+    assert task["status"] == "in_progress"
+    assert task["owner"] == "Antigravity"
+    assert task["reviewer"] == "Codex2"
+    assert task["acceptance"] == ["the original acceptance must survive recovery"]
+    assert task["review_reopen_count"] == 1
+    assert task["review_churn_reassigned_at_count"] == 1
+    assert task["human_continuation_approval_history"] == [
+        {"approval_id": "hc-1", "status": "consumed"}
+    ]
+    assert task["review_submission"]["remote_sha"] == FAILED_CI_HEAD
+    assert task[dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] == FAILED_CI_HEAD
+    assert "waiting_for" not in task
+    assert status["handoffs"][0]["status"] == "done"
+    assert "failed required CI checks" in task["next"]
+    assert FAILED_CI_HEAD[:8] in task["next"]
+    assert "task_finalize.sh" in task["next"]
+
+    requeued = [event for event in logged if event["type"] == "ci_repair_requeued"]
+    assert len(requeued) == 1
+    assert requeued[0]["entry"] == "review_ci_failure"
+    assert requeued[0]["category"] == "control_plane_recovery"
+    assert requeued[0]["approval_cleared"] is False
+    recovered = [event for event in logged if event["type"] == "review_ci_failure_recovered"]
+    assert len(recovered) == 1
+    assert recovered[0]["pr_number"] == 1282
+    assert recovered[0]["head"] == FAILED_CI_HEAD
+    assert len(gh_calls) == 2
+    for call in gh_calls:
+        assert call[:3] == ["pr", "view", "1282"]
+        assert call[call.index("--repo") + 1] == FAILED_CI_REPO
+
+
+@pytest.mark.parametrize(
+    ("label", "kwargs"),
+    [
+        ("ci_pending", {"ci": ("OPEN", "pending")}),
+        ("ci_success", {"ci": ("OPEN", "success")}),
+        ("ci_none", {"ci": ("OPEN", "none")}),
+        ("ci_unknown", {"ci": ("OPEN", "unknown")}),
+        ("ci_unreadable_pr", {"ci": (None, "unknown")}),
+        ("ci_probe_raises", {"ci_error": RuntimeError("gh unreachable")}),
+        ("pr_closed_by_ci_probe", {"ci": ("CLOSED", "failure")}),
+        ("pr_closed", {"reads": [_pr_facts(state="CLOSED", head=FAILED_CI_HEAD)]}),
+        ("pr_merged", {"reads": [_pr_facts(state="MERGED", head=FAILED_CI_HEAD)]}),
+        ("gh_offline", {"reads": [None]}),
+        ("gh_malformed_json", {"reads": ["not json"]}),
+        ("gh_empty_payload", {"reads": [{}]}),
+        ("missing_head", {"reads": [_pr_facts(head=None)]}),
+        ("missing_state", {"reads": [_pr_facts(state=None, head=FAILED_CI_HEAD)]}),
+        ("head_drift", {"reads": [_pr_facts(head="b" * 40)]}),
+    ],
+)
+def test_failed_ci_recovery_declines_every_unconfirmable_reading(
+    label: str, kwargs: dict
+) -> None:
+    task = _failed_ci_review_task()
+    changed, _gh_calls, logged, _status = _run_ci_failure_recovery(task, **kwargs)
+
+    assert changed is False, label
+    assert task["status"] == "review", label
+    assert dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD not in task, label
+    assert logged == [], label
+
+
+def test_repeated_tick_on_same_failed_ci_head_is_idempotent() -> None:
+    """Repeated ticks on the same head recover exactly once."""
+    task = _failed_ci_review_task(
+        **{dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD: FAILED_CI_HEAD}
+    )
+
+    changed, gh_calls, logged, _status = _run_ci_failure_recovery(task)
+
+    assert changed is False
+    assert gh_calls == []
+    assert logged == []
+    assert task["status"] == "review"
+
+
+def test_resubmitted_new_head_with_ci_failure_can_recover_again() -> None:
+    """When the owner pushes a new head and resubmits, a new failure can recover."""
+    new_head = "e1f2a3b4" * 5
+    task = _failed_ci_review_task(
+        **{
+            dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD: FAILED_CI_HEAD,
+            "review_submission": {
+                "pr_number": 1282,
+                "branch": f"task/{FAILED_CI_TASK_ID}",
+                "base_branch": "dev",
+                "remote_sha": new_head,
+                "pr_url": f"https://github.com/{FAILED_CI_REPO}/pull/1282",
+            },
+        }
+    )
+
+    changed, gh_calls, logged, _status = _run_ci_failure_recovery(
+        task, reads=[_pr_facts(head=new_head)]
+    )
+
+    assert changed is True
+    assert task["status"] == "in_progress"
+    assert task[dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] == new_head
+    assert len(logged) == 2
+
+
+def test_canonical_ci_repair_transition_allows_failed_ci_review_and_keeps_guard() -> None:
+    """The canonical transition accepts allow_failed_ci_review only for valid reviews."""
+    cfg = _base_test_config()
+
+    def _requeue(task, **kwargs):
+        status = {"tasks": [task], "handoffs": []}
+        logged: list[dict] = []
+        with (
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(
+                supervisor, "write_activity_log", side_effect=lambda _c, e: logged.append(e)
+            ),
+        ):
+            return supervisor.requeue_task_for_ci_repair(
+                cfg, status, task, message="repair", **kwargs
+            ), logged
+
+    task = _failed_ci_review_task()
+    changed, logged = _requeue(task, clear_approval=False, allow_failed_ci_review=True)
+    assert changed is True
+    assert task["status"] == "in_progress"
+    assert logged[0]["entry"] == "review_ci_failure"
+    assert logged[0]["category"] == "control_plane_recovery"
+
+
+@pytest.mark.parametrize(
+    ("label", "overrides"),
+    [
+        ("frozen_approved_head", {"approved_head": FAILED_CI_HEAD}),
+        ("queued_merge_route", {"merge_route": {"head": FAILED_CI_HEAD, "route": "queued"}}),
+        ("unsubmitted_review", {"review_submission": None}),
+        ("human_gate", {"task_class": "human_gate"}),
+        ("non_dispatchable", {"non_dispatchable": True}),
+        ("wrong_status", {"status": "in_progress"}),
+    ],
+)
+def test_failed_ci_review_entry_still_refuses_invalid_review_states(
+    label: str, overrides: dict
+) -> None:
+    cfg = _base_test_config()
+    task = _failed_ci_review_task(**overrides)
+    original_status = task["status"]
+    status = {"tasks": [task], "handoffs": []}
+
+    with (
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+    ):
+        changed = supervisor.requeue_task_for_ci_repair(
+            cfg,
+            status,
+            task,
+            message="repair",
+            clear_approval=False,
+            allow_failed_ci_review=True,
+        )
+
+    assert changed is False, label
+    assert task["status"] == original_status, label
+
+
+def test_dispatch_ready_tasks_recovers_failed_ci_review_without_reviewer_slot() -> None:
+    """Review CI failure recovery runs during reconciliation without a reviewer slot."""
+    import github_bus
+
+    cfg = _base_test_config()
+    task = _failed_ci_review_task()
+    status = {
+        "tasks": [task],
+        "handoffs": [
+            {"task_id": FAILED_CI_TASK_ID, "from": "Antigravity", "to": "Codex2", "status": "pending"}
+        ],
+    }
+    state = {"workers": {}, "queue": {"events": {}}}
+    queued_events: list[dict] = []
+
+    def fake_run_gh(args, **_kwargs):
+        return subprocess.CompletedProcess(
+            args=["gh", *args], returncode=0, stdout=json.dumps(_pr_facts(head=FAILED_CI_HEAD)), stderr=""
+        )
+
+    with (
+        mock.patch.object(github_bus, "run_gh", side_effect=fake_run_gh),
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "task_pr_ci_status",
+            return_value=("OPEN", "failure"),
+        ),
+        mock.patch.object(supervisor, "load_status", return_value=status),
+        mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+        mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+        mock.patch.object(supervisor, "write_activity_log"),
+        mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+        mock.patch.object(
+            dispatch_engine, "task_reality_reconcile_is_due", return_value=False
+        ),
+        mock.patch.object(
+            supervisor,
+            "queue_delivery_event",
+            side_effect=lambda _c, evt: queued_events.append(evt) or True,
+        ),
+    ):
+        changed = supervisor.dispatch_ready_tasks(cfg, state, agent_ids_override=["antigravity7"])
+
+    assert changed is True
+    assert queued_events == []
+    assert task["status"] == "in_progress"
+    assert task["owner"] == "Antigravity"
+    assert task[dispatch_engine.REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] == FAILED_CI_HEAD
+    assert status["handoffs"][0]["status"] == "done"
+
+
+def test_failed_ci_review_recovery_then_success_reaches_review_dispatch() -> None:
+    """When a task is resubmitted and CI succeeds, reviewer is dispatch eligible."""
+    cfg = _base_test_config()
+    fixed_head = "c3d4e5f6" * 5
+    task = _failed_ci_review_task(
+        review_submission={
+            "pr_number": 1282,
+            "branch": f"task/{FAILED_CI_TASK_ID}",
+            "base_branch": "dev",
+            "remote_sha": fixed_head,
+            "pr_url": f"https://github.com/{FAILED_CI_REPO}/pull/1282",
+        }
+    )
+
+    with (
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "resolve_task_sha",
+            return_value=fixed_head,
+        ),
+        mock.patch.object(
+            supervisor.runtime_ai_status,
+            "task_pr_ci_status",
+            return_value=("OPEN", "success"),
+        ),
+    ):
+        eligible = supervisor.is_task_review_dispatch_eligible(
+            cfg,
+            task,
+            "Codex2",
+            review_statuses={"review"},
+            finalize_statuses={"review_approved"},
+        )
+
+    assert eligible is True
+
+
 # --- Preemption readiness ----------------------------------------------------
 #
 # `higher_priority_ready_task_exists` decides whether a running worker is killed

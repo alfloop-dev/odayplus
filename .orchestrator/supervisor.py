@@ -5072,6 +5072,7 @@ def requeue_task_for_ci_repair(
     requeued_head: str | None = None,
     now_ts: float | None = None,
     allow_conflicted_review: bool = False,
+    allow_failed_ci_review: bool = False,
 ) -> bool:
     return status_transition.requeue_task_for_ci_repair(
         config,
@@ -5082,6 +5083,7 @@ def requeue_task_for_ci_repair(
         requeued_head=requeued_head,
         now_ts=now_ts,
         allow_conflicted_review=allow_conflicted_review,
+        allow_failed_ci_review=allow_failed_ci_review,
     )
 
 

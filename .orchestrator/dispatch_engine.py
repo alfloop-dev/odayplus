@@ -55,6 +55,8 @@ def _sync_supervisor_scope() -> None:
         'escalated_lease_block', 
         'build_dispatch_event', 
         'dispatch_discussion_planning', 
+        'recover_conflicted_review_prs',
+        'recover_failed_ci_review_prs',
         'dispatch_ready_tasks'
     }
     # Skip only dunders. The four copies of this function used to disagree --
@@ -92,6 +94,11 @@ TASK_REALITY_RECONCILE_INTERVAL_SECONDS = 900.0
 #: on. Written by the same canonical commit that moves the status, so repeated
 #: polls and supervisor restarts recover one head exactly once.
 REVIEW_CONFLICT_RECOVERY_HEAD_FIELD = "review_conflict_recovery_head"
+
+#: Records the exact submitted head a review CI failure recovery already acted
+#: on. Written by the same canonical commit that moves the status, so repeated
+#: polls and supervisor restarts recover one head exactly once.
+REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD = "review_ci_failure_recovery_head"
 
 #: GitHub stating outright that a head cannot be merged because it conflicts
 #: with its base. Deliberately not BLOCKED, BEHIND or UNKNOWN: those describe a
@@ -883,6 +890,138 @@ def recover_conflicted_review_prs(
                 "pr_number": pr_number,
                 "head": submitted_sha,
                 "merge_state": merge_state,
+                "message": message,
+            },
+        )
+    return changed
+
+
+def recover_failed_ci_review_prs(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    review_statuses: set[str],
+    *,
+    busy_task_ids: set[str],
+) -> bool:
+    """Return an unapproved review whose PR CI checks have failed back to its owner.
+
+    When an unapproved review PR experiences a required CI failure, reviewer
+    dispatch is suppressed, but without recovery the task stalls: the reviewer
+    cannot review a failing PR and the owner is not re-dispatched.
+
+    This repairs the gap by returning the task to its owner under
+    control_plane_recovery so the owner can repair the CI failure and resubmit
+    via task_finalize.sh.
+
+    Only the owner can advance/fix the branch, and a wrong recovery discards a
+    real review, so this repairs only what GitHub confirms: an OPEN PR at exactly
+    the submitted head, with a conclusive CI failure. Anything unreadable,
+    drifting, pending, or already closed/approved/queued keeps waiting.
+    """
+    changed = False
+    for task in list(status.get("tasks", []) or []):
+        if not isinstance(task, dict):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if not task_id or task_id in busy_task_ids:
+            continue
+        if str(task.get("status") or "").strip().lower() not in review_statuses:
+            continue
+        # Human gates and non-dispatchable tasks are never handed to an owner by
+        # the control plane; the transition refuses them too, but asking GitHub
+        # about them first would be a probe with no reachable outcome.
+        if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+            continue
+        # An approved or queued head is frozen, and a live helper lease means
+        # someone already holds this branch.
+        if task.get("approved_head") or task.get("merge_route") is not None:
+            continue
+        if helper_claim_is_live(task.get("helper_execution_lease")):
+            continue
+        # A review with no verified remote PR belongs to
+        # `repair_unsubmitted_review_tasks`; without that provenance there is no
+        # PR number or submitted head worth asking GitHub about.
+        if not review_submission_is_complete(config, task):
+            continue
+        submission = task.get("review_submission") or {}
+        submitted_sha = str(submission.get("remote_sha") or "").strip().lower()
+        try:
+            pr_number = int(submission.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            continue
+        if pr_number <= 0 or not submitted_sha:
+            continue
+        # One recovery per head. Repeated polls and supervisor restarts see the
+        # marker the transition's own commit persisted; an owner who resubmits
+        # the identical failing head is not bounced a second time.
+        if str(task.get(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD) or "").strip().lower() == submitted_sha:
+            continue
+        slug = _task_repository_slug(config, task)
+        if not slug:
+            continue
+
+        # Cheapest disqualifier first, through the canonical CI reader.
+        # Any answer other than conclusive failure on an open PR ends this lane's business.
+        try:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        except Exception:
+            continue
+        if ci_status != "failure" or str(pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        before = _review_pr_facts(slug, pr_number)
+        if before is None:
+            continue
+        state, merge_state, head = before
+        if state != "OPEN":
+            continue
+        if head != submitted_sha:
+            # Head drift: the branch has moved past what was reviewed, and what
+            # GitHub is describing is not the submission this task recorded.
+            continue
+
+        # Fresh uncached CI read to ensure CI failure is current.
+        try:
+            fresh_pr_status, fresh_ci_status = runtime_ai_status.task_pr_ci_status(
+                task_id, max_age_seconds=0
+            )
+        except Exception:
+            continue
+        if fresh_ci_status != "failure" or str(fresh_pr_status or "").strip().upper() != "OPEN":
+            continue
+
+        # Re-read the PR to ensure the head/state did not change while probing CI.
+        if _review_pr_facts(slug, pr_number) != before:
+            continue
+
+        message = (
+            f"Review PR #{pr_number} for task {task_id} failed required CI checks on "
+            f"submitted head {submitted_sha[:8]}; review dispatch cannot proceed. "
+            "Returned to owner to repair CI and resubmit via task_finalize.sh."
+        )
+        previous_marker = task.get(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD, _MARKER_UNSET)
+        task[REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] = submitted_sha
+        if not requeue_task_for_ci_repair(
+            config,
+            status,
+            task,
+            message=message,
+            clear_approval=False,
+            allow_failed_ci_review=True,
+        ):
+            if previous_marker is _MARKER_UNSET:
+                task.pop(REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD, None)
+            else:
+                task[REVIEW_CI_FAILURE_RECOVERY_HEAD_FIELD] = previous_marker
+            continue
+        changed = True
+        write_activity_log(
+            config,
+            {
+                "type": "review_ci_failure_recovered",
+                "task_id": task_id,
+                "pr_number": pr_number,
+                "head": submitted_sha,
                 "message": message,
             },
         )
@@ -2309,6 +2448,17 @@ def dispatch_ready_tasks(
     # recovers is waiting on its reviewer's slot, so gating it by that slot
     # would make the wait its own cause.
     if recover_conflicted_review_prs(
+        config,
+        status,
+        review_statuses,
+        busy_task_ids=active_task_ids | pending_task_ids,
+    ):
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
+    if recover_failed_ci_review_prs(
         config,
         status,
         review_statuses,

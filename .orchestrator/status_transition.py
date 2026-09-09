@@ -602,6 +602,7 @@ def requeue_task_for_ci_repair(
     requeued_head: str | None = None,
     now_ts: float | None = None,
     allow_conflicted_review: bool = False,
+    allow_failed_ci_review: bool = False,
 ) -> bool:
     sv = _supervisor_module()
     task_id = str(task.get("id") or "")
@@ -625,7 +626,7 @@ def requeue_task_for_ci_repair(
         # only while the review is still unapproved and unqueued: an approved or
         # queued head is frozen and may only be moved by an explicit re-review.
         if not (
-            allow_conflicted_review
+            (allow_conflicted_review or allow_failed_ci_review)
             and task_status == "review"
             and sv.review_submission_is_complete(config, task)
             and not str(task.get("approved_head") or "").strip()
@@ -664,6 +665,11 @@ def requeue_task_for_ci_repair(
                 handoff["resolved_at"] = task["last_update"]
     if not _supervisor_module().commit_canonical_task_transition(config, status):
         return False
+    entry = (
+        "review_ci_failure"
+        if allow_failed_ci_review
+        else ("conflicted_review" if allow_conflicted_review else "review_approved")
+    )
     sv.write_activity_log(
         config,
         {
@@ -674,7 +680,7 @@ def requeue_task_for_ci_repair(
             "category": REOPEN_CATEGORY_CONTROL_PLANE_RECOVERY,
             "approval_cleared": clear_approval,
             "stale_merge_route_cleared": bool(stale_route),
-            "entry": "conflicted_review" if from_review else "review_approved",
+            "entry": entry,
         },
     )
     return True
