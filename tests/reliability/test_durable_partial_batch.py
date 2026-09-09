@@ -1925,22 +1925,25 @@ def test_review_finding_r4_heartbeat_collision_memory_and_durable(db_path: str) 
         original_update = queue.update_status
         injected = False
 
-        def race(job_id, status, *args, **kwargs):
-            nonlocal injected
-            receipt = (kwargs.get("payload") or {}).get("receipt", {})
-            receipt_items = receipt.get("items", [])
-            if (
-                not injected
-                and status == JobStatus.RUNNING
-                and receipt_items
-                and receipt_items[0]["item_status"] == "SUCCEEDED"
-            ):
-                injected = True
-                before = queue.get(job_id)
-                queue.heartbeat(job_id, expected_version=before.version, fence_token=before.fence_token)
-            return original_update(job_id, status, *args, **kwargs)
+        def make_race(target_queue, orig_update):
+            def race(job_id, status, *args, **kwargs):
+                nonlocal injected
+                receipt = (kwargs.get("payload") or {}).get("receipt", {})
+                receipt_items = receipt.get("items", [])
+                if (
+                    not injected
+                    and status == JobStatus.RUNNING
+                    and receipt_items
+                    and receipt_items[0]["item_status"] == "SUCCEEDED"
+                ):
+                    injected = True
+                    before = target_queue.get(job_id)
+                    target_queue.heartbeat(job_id, expected_version=before.version, fence_token=before.fence_token)
+                return orig_update(job_id, status, *args, **kwargs)
 
-        with patch.object(queue, "update_status", side_effect=race), patch(
+            return race
+
+        with patch.object(queue, "update_status", side_effect=make_race(queue, original_update)), patch(
             "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
             return_value=("synthetic-intake", None),
         ):

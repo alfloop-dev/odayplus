@@ -24,7 +24,6 @@ from shared.jobs.queue import (
     JobStatus,
 )
 
-
 _LEGACY_RETRYING_STATUS_VALUES = (JobDeliveryState.RETRYING.value, "RETRYING")
 
 
