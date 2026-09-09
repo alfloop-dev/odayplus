@@ -173,12 +173,15 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertEqual(tenant_label_value(tenant_id), "custom_tenant")
 
     def test_terraform_standalone_plan_guards_future_timestamp_and_accepts_valid(self) -> None:
+        import os
         import shutil
         import subprocess
         import tempfile
         from datetime import UTC, datetime
 
         if not shutil.which("terraform"):
+            if os.environ.get("CI"):
+                self.fail("terraform binary not available in CI environment")
             self.skipTest("terraform binary not available in environment")
 
         valid_now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -279,11 +282,14 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
+        import os
         import shutil
         import subprocess
         import tempfile
 
         if not shutil.which("terraform"):
+            if os.environ.get("CI"):
+                raise AssertionError("terraform binary not available in CI environment")
             raise unittest.SkipTest("terraform binary not available in environment")
 
         cls._tmpdir = tempfile.TemporaryDirectory()
@@ -307,7 +313,7 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
         )
         if init_res.returncode != 0:
             cls._tmpdir.cleanup()
-            raise unittest.SkipTest(f"terraform init unavailable: {init_res.stderr}")
+            raise AssertionError(f"terraform init failed with code {init_res.returncode}: {init_res.stderr}\n{init_res.stdout}")
 
     @classmethod
     def tearDownClass(cls) -> None:

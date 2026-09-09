@@ -89,6 +89,12 @@ testpaths = [
     "apps",
     "shared",
     "models",
+    "infra",
+]
+norecursedirs = [
+    ".orchestrator/source-doc-cache",
+    ".venv",
+    "node_modules",
 ]
 python_files = ["test_*.py"]
 addopts = "-q"
