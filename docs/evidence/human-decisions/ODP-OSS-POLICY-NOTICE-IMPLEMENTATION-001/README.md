@@ -1,8 +1,8 @@
 # ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001: 第一方 UNLICENSED 標示與 NOTICE／SBOM 工程
 
 - **Task ID**: `ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001`
-- **Owner / Reviewer**: Claude / Codex
-- **Base**: `dev` @ `ef76cf6d295ce7a8a470fe6e5f0eab20a0439169`
+- **Owner / Reviewer**: Antigravity4 (接手自 Antigravity2 / Claude) / Codex
+- **Base**: `dev` @ `fe8168db15d16a571004e91bd4d1b08c3161dbeb`（已合併最新 `origin/dev` base advance）
 - **Depends on**: `ODP-OSS-DECISION-PACK-001`（Stage A 盤點與 case matrix）
 - **對應規畫**: `ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md` WP-11 階段一
 - **本文件的效力**: 這是工程落地的證據紀錄。**它不是核准，也不代表任何 OSS 政策已生效。**
@@ -102,46 +102,49 @@ NOTICE 產物**完全沒有變動**（相對 base 的 diff 為空），`--check`
 
 ### 3.5 測試
 
-新增七項回歸測試，全部落在本 task 已宣告的兩個測試檔內：八個 manifest 的名稱與標示、
-lockfile 與 manifest 一致、`is_first_party` 的邊界、lookalike 第三方的端到端行為、
-SBOM 不再收錄第一方與撞名 purl、第三方宣告 `UNLICENSED` 仍 fail closed、第一方節點排除後
-workspace 第三方依賴仍正確解析並保留於 root 節點（合成 fixture 驗證）。
+新增七項回歸測試，全部落在本 task 已宣告的兩個測試檔內：
+1. `tests/security/test_oss_notice.py::test_the_eight_first_party_manifests_declare_unlicensed`：驗證八個第一方 manifest 的名稱與 `license: UNLICENSED` 標示。
+2. `tests/security/test_oss_notice.py::test_lockfile_workspace_metadata_matches_manifests`：驗證 `package-lock.json` 與 manifest 宣告一致。
+3. `tests/security/test_oss_notice.py::test_is_first_party_boundary_does_not_mask_lookalikes`：驗證 `is_first_party` 邊界邏輯（精確匹配與 scope 匹配，非裸字串前綴）。
+4. `tests/security/test_oss_notice.py::test_notice_generator_does_not_mask_lookalike_third_party`：驗證 NOTICE generator 對 lookalike 第三方套件的端到端行為。
+5. `tests/security/test_oss_license_gate.py::test_sbom_does_not_contain_first_party_or_colliding_purls`：驗證 SBOM 不收錄第一方套件與撞名公開 purl。
+6. `tests/security/test_oss_license_gate.py::test_unlicensed_third_party_fails_closed`：驗證第三方宣告 `UNLICENSED` 仍 fail closed。
+7. `tests/security/test_oss_license_gate.py::test_sbom_workspace_third_party_dependencies_retained_in_root_synthetic`（commit `4c992108` 新增）：驗證第一方 workspace component 排除後，workspace 的第三方依賴仍能正確解析真實 purl 並保留於 application root 節點（合成 fixture 驗證）。
 
 測試中的 `node_modules` 與 lockfile 是**合成 fixture**，不是安裝樹，
 只證明程式邏輯，不證明任何真實套件的授權狀態。
+
+測試總數：39 passed（base 為 32 項，初版實作新增 6 項至 38 項，後續補上 workspace 依賴回歸測試至 39 項）。
 
 ---
 
 ## 4. 實測到的缺口（不是預防性修改）
 
-### 4.1 SBOM 把八個自家套件當成第三方發布，且撞上公開 purl
+### 4.1 SBOM 第一方判定、workspace 依賴掛接與巢狀 node_modules purl 解析修正
 
-`generate_sbom.py` 以 lockfile 的**路徑**推導 npm 元件名稱。workspace 成員在 lockfile 中
-以目錄為 key（`packages/ui`），路徑被切開後名稱變成 `ui`，於是：
+在 `generate_sbom.py` 實測中發現兩項與 CycloneDX SBOM 產生相關的缺口並予以修復：
 
-1. 名稱不再符合第一方判定，八個自家套件被寫進第三方元件目錄；
-2. 產生的 purl 是 `pkg:npm/ui@0.1.0` —— 這個 purl 指向公開 registry 上**不相干**的套件。
+1. **第一方 workspace 元件排除與 workspace 第三方依賴掛接至 root**：
+   - `generate_sbom.py` 原以 lockfile 的**路徑**切開推導 npm 元件名稱（`packages/ui` 變成 `ui`），導致名稱不符第一方判定而被誤列為第三方元件，產生撞名公開 registry 之 purl（例如 `pkg:npm/ui@0.1.0` 等 8 個套件，授權全標 `UNKNOWN`）。
+   - 修法：workspace 成員改由 lockfile 條目自身的 `name` 欄位取得完整名稱（`@oday-plus/*`），精確辨識第一方身分並自第三方 components 排除。
+   - 同時，在排除第一方 component 的同時，收集 workspace（如 `apps/web`）宣告的直接第三方依賴（12 條依賴：`next`, `react`, `react-dom`, `@maplibre/maplibre-gl-vector-text`, `argon2`, `csv-parse`, `d3-scale`, `lucide-react`, `maplibre-gl`, `pg`, `tailwind-merge`, `zod`），解析其於 `package-lock.json` 中的真實 purl 並接入 application root 節點（`pkg:generic/alfloop-dev/odayplus@{git_sha}`），確保 root dependsOn 完整記錄直接使用關係。
 
-這不是推論：base 的 `docs/evidence/sbom.json` 實際就含有這八個元件，
-授權全部標為 `UNKNOWN`。若只同步 lockfile 而不修這個缺口，這八個撞名 purl 會被
-重新標成 `UNLICENSED`，等於對外宣稱那些公開套件是我們的未授權碼。
-
-修法：
-1. workspace 成員的名稱改由 lockfile 條目自身的 `name` 欄位取得，精確辨識第一方身分（`@oday-plus/*`）並排除於第三方 components 之外；
-2. 在排除第一方 component 的同時，收集 workspace（如 `apps/web`）的直接第三方依賴，解析其於 `package-lock.json` 中的真實 purl（如 `next`, `react`, `argon2`, `maplibre-gl`, `pg` 等 12 條依賴），並接入 application root 節點（`pkg:generic/alfloop-dev/odayplus@{git_sha}`），確保 SBOM 完整記錄第三方使用關係；
-3. `node_modules/` 底下的路徑推導邏輯（含巢狀）完全未動，傳遞依賴邊維持完整。
+2. **巢狀 `node_modules/` 路徑推導邏輯修正與 14 筆第三方 purl 更正**：
+   - `generate_sbom.py:302-305` 原使用 `pkg_path.startswith("node_modules/")` 搭配 `pkg_path.replace("node_modules/", "")`。在存在巢狀依賴路徑時（例如 `node_modules/@maplibre/vt-pbf/node_modules/pbf` 或 `node_modules/@types/node/node_modules/node`），`replace("node_modules/", "")` 會移除所有路徑片段中的 `node_modules/`，產生如 `pkg:npm/@maplibre/vt-pbf/pbf@5.1.2` 或 `pkg:npm/node@20.14.10` 等非標準或損毀的 purl。
+   - 修法：改為 `if "node_modules/" in pkg_path: pkg_name = pkg_path.split("node_modules/")[-1]` 並對無 scope 套件處理 slash，精確截取最內層真實套件名稱。這項修正修正了 14 筆巢狀第三方套件的 purl 名稱及其在 dependency graph 的 reference/dependsOn（例如 `@maplibre/vt-pbf/pbf@5.1.2` -> `pbf@5.1.2`、`node@20.14.10` -> `@types/node@20.14.10`、`@typescript-eslint/typescript-estree/minimatch@10.2.5` -> `minimatch@10.2.5`、`@typescript-eslint/visitor-keys/eslint-visitor-keys@5.0.1` -> `eslint-visitor-keys@5.0.1` 等）。
 
 重產後的實測差異：
 
 | 項目 | 修正前 | 修正後 |
 |---|---|---|
 | SBOM 元件總數 | 775 | 767 |
-| 被移除的元件 | `design-tokens`, `domain-types`, `openapi-client`, `schemas`, `testkit`, `ui`, `ui-domain`, `web`（皆為 `0.1.0`／`UNKNOWN`） | — |
-| 新增的元件 | — | 無 |
+| 被移除的第一方元件 | `design-tokens`, `domain-types`, `openapi-client`, `schemas`, `testkit`, `ui`, `ui-domain`, `web`（皆為 `0.1.0`／`UNKNOWN`） | — |
+| 新增的元件 | — | 無（總套件數因排除 8 個第一方由 775 降至 767） |
+| 巢狀第三方 purl 修正 | 14 筆路徑損毀 purl | 14 筆修正為標準 purl 及對應 graph edge |
 | root 節點 direct dependsOn | 39（僅 Python） | 51（39 Python + 12 npm workspace 依賴） |
 | dependency graph 懸空引用 | 0 | 0 |
 
-除了這八個元件、workspace 第三方依賴掛接至 root 與依 commit 變動的 root git-sha 之外，SBOM 沒有其他差異。
+除了排除 8 個第一方元件、掛接 12 個 workspace 第三方依賴至 root、修正 14 筆巢狀第三方 purl 名稱與 edge，以及隨 commit 變更的 root git-sha 之外，SBOM 無其他差異。
 
 ### 4.2 第一方判定用裸字串前綴，會吞掉第三方
 
@@ -202,23 +205,35 @@ D05 列舉的是八個 npm workspace 套件。以下第一方 manifest 不在該
 | `npm ci` | `0` | NOTICE／SBOM 的授權欄位讀自安裝樹，缺 `node_modules` 會判成 partial install |
 | `uv sync --frozen --python 3.12` | `0` | 釘 3.12：`pgserver` 沒有 cp314 wheel |
 
-task 宣告的 verification（在 `98a1ed1ba5c2770990eba3fc0526498045afa9e0` 的工作樹上量測；
-本文件是之後才加入的純文件檔案，不會進入這三個命令的判定路徑）：
+### 7.1 歷史提交量測紀錄（Historical Receipts）
 
-| 命令 | Exit | 耗時 | 備註 |
-|---|---|---|---|
-| `git diff --check` | `0` | <1s | |
-| `uv run pytest tests/security/test_oss_notice.py tests/security/test_oss_license_gate.py -q` | `0` | ~35s | 39 passed（base 為 32，本次新增 7） |
-| `uv run python delivery_toolchain/security/generate_oss_notice.py --check` | `0` | 1s | NOTICE 與安裝樹一致 |
+保留任務推進過程中的歷史量測與原始收據：
 
-額外量測（非宣告項，用於證明 §4.1 的修正沒有留下不一致）：
+1. **Commit `98a1ed1ba5c2770990eba3fc0526498045afa9e0`**（初版實作，38 passed）：
+   - `git diff --check`：exit `0`，耗時 `<1s`
+   - `uv run pytest tests/security/test_oss_notice.py tests/security/test_oss_license_gate.py -q`：exit `0`，耗時 `52s`（38 passed：base 32 + 本次新增 6）
+   - `uv run python delivery_toolchain/security/generate_oss_notice.py --check`：exit `0`，耗時 `1s`
 
-| 命令 | base 的 exit | 本分支的 exit |
-|---|---|---|
-| `uv run python delivery_toolchain/security/generate_sbom.py --check` | `0` | `0` |
+2. **Commit `0dd3e6e2c23a82751a842d6b33bd30f53e268e43`**（第一次 dev base advance merge，PR #1279 第一輪審查）：
+   - `git diff --check`：exit `0`，耗時 `0.017s`，收據 ID `d42f5c992a979656`
+   - `uv run pytest tests/security/test_oss_notice.py tests/security/test_oss_license_gate.py -q`：exit `0`，耗時 `34.334s`（38 passed），收據 ID `034f71c3833b11eb`
+   - `uv run python delivery_toolchain/security/generate_oss_notice.py --check`：exit `0`，耗時 `1.257s`，收據 ID `6adc57ccadfc191d`
 
-綁定 head 的權威收據由 `delivery_toolchain/git/task_verification.py` 在最終 head 上產生，
-並由 `task_finalize.sh` 檢查；上表是同一組命令在交付過程中的實測結果。
+3. **Commit `4c992108962437a3f8a0265b95690737d5900777`**（SBOM workspace 邊與 14 筆巢狀 purl 修正，新增第 39 個測試，PR #1279 第二輪審查）：
+   - `git diff --check`：exit `0`，耗時 `0.017s`，收據 ID `87a2f956d87abb6a`
+   - `uv run pytest tests/security/test_oss_notice.py tests/security/test_oss_license_gate.py -q`：exit `0`，耗時 `29.889s`（39 passed：base 32 + 新增 7），收據 ID `84b5dc73e65bb23a`
+   - `uv run python delivery_toolchain/security/generate_oss_notice.py --check`：exit `0`，耗時 `1.182s`，收據 ID `1860bc84f7ce26f0`
+
+### 7.2 本輪送審 Head 實測收據
+
+本輪完成第二輪 `origin/dev` base advance merge（`fe8168db15d1`）並修正本證據文件後，由 `delivery_toolchain/git/task_verification.py run` 針對送審 commit 執行並產出權威收據：
+
+- `git diff --check`：exit `0`
+- `uv run pytest tests/security/test_oss_notice.py tests/security/test_oss_license_gate.py -q`：exit `0`（39 passed）
+- `uv run python delivery_toolchain/security/generate_oss_notice.py --check`：exit `0`
+- 額外量測 `uv run python delivery_toolchain/security/generate_sbom.py --check`：exit `0`
+
+綁定 head 的權威收據由 `delivery_toolchain/git/task_verification.py` 記錄於 `.orchestrator/evidence/` 並由 `task_finalize.sh` 於送審前核驗。
 
 ---
 
