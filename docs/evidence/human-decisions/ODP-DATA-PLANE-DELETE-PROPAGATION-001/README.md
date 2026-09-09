@@ -4,7 +4,7 @@
 - **Work Package**: WP-34 Follow-up ([ODP 人工決策落地規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §6 WP-34 & [Phase 34A Implementation Handoff](../ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md) §4 跟進項目 1)
 - **決策依據**: 決策編號 `D20`（A：實作／補齊 CDC 適用性與契約）
 - **查證基準 SHA**: `3958385788ba` (aligned with latest `origin/dev` tip)
-- **負責人 (Owner)**: Antigravity4
+- **負責人 (Owner)**: Claude（2026-09-09 由 Antigravity4 因 dispatch 暫停自動改派；P1 缺陷修復由 Antigravity4 於 `cc7bdb0b` 完成，本輪由 Claude 接手補 SAST 修正、缺陷綁定驗證與收據）
 - **審查人 (Reviewer)**: Codex2
 - **交付狀態**: `IMPLEMENTATION_DELIVERED` (修復審查 5 項 P1 缺陷、推進 dev 基準、30 項回歸測試與邊界/SAST 驗證全數通過)
 
@@ -35,6 +35,7 @@
    - 修正 `_guard_deleted`，在各來源投影解析出 `tenant_id` 後，依 `(tenant_id, entity_type, entity_id)` 進行精確查詢，防止租戶 A 之 absent tombstone 錯誤隔離租戶 B 之合法資料。
 4. **[P1-4] 原子事務內墓碑檢核 (Atomic In-Transaction Tombstone Guard)**：
    - 將墓碑防護移至每個 envelope 的 `with connection.transaction():` 內，在寫入投影前直接自資料庫讀取最新墓碑狀態，消除快取窗口導致的幽靈復活競態條件。
+   - 一併移除 `apply_batch()` 開頭已無讀者的批次墓碑預讀 `_deleted_versions()`：防護改為逐 envelope 於事務內讀取後，該查詢的回傳值不再被使用，僅剩每批一次的多餘 round trip。對應的競態回歸測試改錨在 `_project_one`，於 envelope 事務已開啟後才在第二條連線提交刪除，較原先的批次預讀點更貼近缺陷本身。
 5. **[P1-5] 刪除漂移對帳版本感知 (Version-Aware Delete Drift Reconciliation)**：
    - 修正 `store.py` 之 `reconcile()` 漂移檢測 SQL，改為判定 `(lineage.source_version IS NULL OR lineage.source_version <= tomb.source_version)`。
    - 允許在墓碑之後合法新建之較新版本 (`lineage.source_version > tomb.source_version`) 通過對帳，不再誤報 `sink_delete_drift=1`。
@@ -86,13 +87,31 @@
 
 ---
 
-## 6. 驗證命令與結果收據 (Verification Receipts)
+## 6. SAST 迴歸修正 (SAST Regression Repair)
 
-所有驗證命令均在當前 task branch exact HEAD 執行且 exit code 為 0：
+`cc7bdb0b` 修復 5 項 P1 缺陷時，新增的測試在 `test_delete_propagation.py:323` 重新引入 f-string 組裝的 SQL 片段，被 Bandit `B608 hardcoded_sql_expressions` 判定為 Medium 風險，導致 PR #1282 的 required `product` job 失敗（`1 failed, 5542 passed`，`SAST scan failed with exit code 1`）。
 
-1. **`git diff --check`**
-   - 狀態：通過（Exit Code: 0）
-2. **`uv run pytest apps/data_platform/tests/test_delete_propagation.py apps/data_platform/tests/test_pipeline.py -q`**
-   - 狀態：通過（Exit Code: 0，30 passed）
-3. **`uv run ruff check apps/data_platform/`**
-   - 狀態：通過（Exit Code: 0）
+該行並非真正執行的 SQL，而是對假連線 `_ScriptedConnection` 已錄語句做子字串比對；同一測試內其餘比對（含 `_ScriptedConnection` 的 `DELETE FROM data_plane.domain_inputs` 回應註冊）本來就使用字面值。修正為字面值以與周邊寫法一致，不改變測試語意。
+
+---
+
+## 7. 驗證命令與結果收據 (Verification Receipts)
+
+量測基準：本 README 所屬 commit 的工作樹（parent `cc7bdb0b`）。執行環境 Python 3.12.14；`apps.data_platform` 經確認解析至本 task worktree 而非主 checkout。所有指令均獨立執行並保留原始 exit code（未 pipe、未 `|| true`、未背景化即判定）。綁定 exact head 的正式收據由 `delivery_toolchain/git/task_verification.py run` 於交付 head 產生並存入 `.orchestrator/evidence`。
+
+| # | 命令 | Exit Code | 時間 | 結果 |
+|---|---|---|---|---|
+| 1 | `git diff --check` | 0 | — | 通過 |
+| 2 | `uv run --frozen pytest apps/data_platform/tests/test_delete_propagation.py apps/data_platform/tests/test_pipeline.py -q` | 0 | 8s（pytest 自報 5.15s） | 30 passed, 9 warnings |
+| 3 | `uv run --frozen pytest tests/security/test_supply_chain_security_gate.py::test_sast_scan_passes -q` | 0 | 24s | 1 passed（修正前於 CI 為 FAILURE） |
+| 4 | `uv run --frozen ruff check apps/data_platform/` | 0 | — | All checks passed |
+
+### 7.1 缺陷綁定負向對照 (Negative Control)
+
+為證明 5 項回歸測試確實綁在缺陷路徑上、而非在未修正的程式上也會通過，另行執行負向對照：保留本輪測試檔，僅將 `store.py`、`deletion.py`、`sql/control_schema.sql` 還原為缺陷版本（`02119f74`），再跑同一組 5 項選擇。
+
+- 命令：`uv run --frozen pytest apps/data_platform/tests/test_delete_propagation.py -q -k "<5 項回歸測試選擇>"`
+- 缺陷版結果：**Exit Code 1，5 failed, 19 deselected**（5 項全數重現對應 P1 缺陷）
+- 修正版結果：**Exit Code 0，30 passed**
+
+對照後三個原始檔已還原，`git status` 僅保留本輪實際改動（`store.py`、`test_delete_propagation.py`）。此對照為離線合成 fixture 上的診斷程序，不屬於宣告的 verification 命令。

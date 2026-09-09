@@ -320,7 +320,7 @@ def test_sink_delete_emits_only_tenant_scoped_statements_and_a_version_guard() -
     assert result.outcome is DeleteOutcome.APPLIED
     assert result.purged_row_count == 1
     assert result.retained_targets == ("core.stores",)
-    domain_deletes = connection.sql_containing(f"DELETE FROM {CONTROL_SCHEMA}.domain_inputs")
+    domain_deletes = connection.sql_containing("DELETE FROM data_plane.domain_inputs")
     assert len(domain_deletes) == 1, "the other tenant's lineage row must not be purged"
     assert domain_deletes[0][1] == (snapshot, TENANT_A)
     for statement, params in connection.sql_containing("DELETE FROM "):
@@ -830,20 +830,24 @@ def test_legitimate_recreation_is_not_delete_drift(live_store: Any) -> None:
 
 
 @pytest.mark.requires_live_env
-def test_delete_committed_after_guard_read_blocks_stale_upsert(
+def test_delete_committed_after_projection_opens_blocks_stale_upsert(
     live_store: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tenant, _ = _seed_two_tenants(live_store)
     store = live_store.store
     event = _event_for(tenant, "campaign-a", datetime(2026, 7, 22, tzinfo=UTC), _begin_helper(store))
-    original = store._deleted_versions
+    original = store._project_one
 
-    def interleave_delete(connection: Any, source_kind: SourceKind, envelopes: Any) -> dict[str, int]:
-        versions = original(connection, source_kind, envelopes)
+    def interleave_delete(
+        connection: Any, lookup: Any, source_kind: SourceKind, envelope: Any
+    ) -> None:
+        # Commit the delete on a second connection once this envelope's
+        # transaction is already open. A guard that consulted tombstones
+        # before the transaction started would never observe it.
         live_store.build().delete_record(event)
-        return versions
+        original(connection, lookup, source_kind, envelope)
 
-    monkeypatch.setattr(store, "_deleted_versions", interleave_delete)
+    monkeypatch.setattr(store, "_project_one", interleave_delete)
     _, _, result = _land(
         store,
         SourceKind.CAMPAIGN,

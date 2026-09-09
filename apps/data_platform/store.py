@@ -300,7 +300,6 @@ class PsycopgCanonicalStore:
         reason_counts: dict[str, int] = {}
         with self._connect() as connection:
             lookup = _PostgresLookup(connection)
-            self._deleted_versions(connection, source_kind, envelopes)
             for envelope in envelopes:
                 try:
                     with connection.transaction():
@@ -319,25 +318,6 @@ class PsycopgCanonicalStore:
                             reason_detail=str(exc),
                         )
         return ProjectionBatchResult(tuple(valid), reason_counts)
-
-    def _deleted_versions(
-        self,
-        connection: Any,
-        source_kind: SourceKind,
-        envelopes: Sequence[SourceEnvelope],
-    ) -> dict[str, int]:
-        """Return the newest tombstone version per source id in this batch."""
-        source_ids = sorted({envelope.source_id for envelope in envelopes})
-        rows = connection.execute(
-            f"""
-            SELECT entity_id, MAX(source_version)
-            FROM {self._schema}.tombstones
-            WHERE entity_type = %s AND entity_id = ANY(%s)
-            GROUP BY entity_id
-            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
-            (source_kind.value, source_ids),
-        ).fetchall()
-        return {str(row[0]): int(row[1]) for row in rows}
 
     def _guard_deleted(
         self,
