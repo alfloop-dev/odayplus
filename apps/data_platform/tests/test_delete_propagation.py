@@ -24,6 +24,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1409,3 +1410,272 @@ def test_shared_transaction_same_rank_different_source_id_interleaving(
         assert row is not None
         auth = conn.execute("SELECT source_kind, source_snapshot_id FROM data_plane.transaction_authority WHERE transaction_id = %s", (canonical_id,)).fetchone()
         assert auth == ("transaction", UUID(newer_txn.source_snapshot_id))
+
+
+@pytest.mark.requires_live_env
+@pytest.mark.parametrize("upsert_day, survives", [(21, False), (23, True)])
+def test_delete_first_mid_lock_serialises_upsert_without_deadlock(
+    live_store: Any, monkeypatch: pytest.MonkeyPatch, upsert_day: int, survives: bool
+) -> None:
+    """Delete starts first and acquires locks; concurrent upsert waits on Level 1 scope lock without deadlock.
+
+    When scope lock key exceeds canonical lock key numerically (e.g. TRANSACTION gateway-txn-1
+    mapping to shared-order-1), a non-hierarchical lock acquisition would allow upsert to take
+    canonical target lock and then wait on scope lock while delete held scope lock and waited on
+    canonical lock, causing DeadlockDetected in PostgreSQL.
+
+    With the strict Level 1 (Scope) -> Level 2 (Canonical) hierarchy, upsert blocks on Level 1
+    scope lock before taking canonical lock, preventing the deadlock cycle.
+    """
+    tenant, _ = _seed_two_tenants(live_store)
+    writer = live_store.store
+    deleter = live_store.build()
+    original_connect = live_store.connect
+
+    def bounded_connect():
+        connection = original_connect()
+        connection.execute("SET statement_timeout = '8s'")
+        connection.commit()
+        return connection
+
+    monkeypatch.setattr(writer, "_connect", bounded_connect)
+    monkeypatch.setattr(deleter, "_connect", bounded_connect)
+
+    place = store_id_for_place("place-del-first")
+    with live_store.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, brand_id, source_store_id) VALUES (%s, %s, %s, %s)",
+            (place, tenant, brand_id_for_merchant("merchant-a"), "place-del-first"),
+        )
+        conn.execute("""
+            ALTER TABLE core.transactions
+                ADD COLUMN IF NOT EXISTS source_transaction_id TEXT,
+                ADD COLUMN IF NOT EXISTS member_id UUID,
+                ADD COLUMN IF NOT EXISTS event_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS observation_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS payment_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS gross_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS discount_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS net_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS currency TEXT,
+                ADD COLUMN IF NOT EXISTS payment_method TEXT,
+                ADD COLUMN IF NOT EXISTS transaction_status TEXT,
+                ADD COLUMN IF NOT EXISTS refund_of_transaction_id UUID,
+                ADD COLUMN IF NOT EXISTS price_schedule_id UUID,
+                ADD COLUMN IF NOT EXISTS promotion_id UUID,
+                ADD COLUMN IF NOT EXISTS source_system TEXT,
+                ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMPTZ
+        """)
+
+    base = {
+        "orderId": "shared-order-del-first", "merchant": "merchant-a", "place": "place-del-first",
+        "amount": 100, "amountPaid": 100, "currency": "TWD",
+        "payGateway": "card", "status": "succeeded",
+    }
+    _, seed_envelope, seed_landed = _land(
+        writer,
+        SourceKind.TRANSACTION,
+        {
+            **base, "_id": "mongo-txn-seed", "transactionId": "gateway-txn-1",
+            "createdAt": "2026-07-20T00:00:00Z", "updatedAt": "2026-07-20T00:00:00Z",
+        },
+    )
+    assert seed_landed.valid_loaded == 1
+
+    canonical_target = transaction_id_for_source("shared-order-del-first")
+    scope_key = scope_lock_key(tenant, SourceKind.TRANSACTION, seed_envelope.source_id)
+    canonical_key = canonical_lock_key(tenant, "core.transactions", canonical_target)
+    assert canonical_key < scope_key
+
+    moment = datetime(2026, 7, 22, tzinfo=UTC)
+    del_run = _begin_helper(deleter, SourceKind.TRANSACTION)
+    delete_event = DeleteEvent(
+        scope=DeleteScope(SourceKind.TRANSACTION, seed_envelope.source_id, tenant),
+        source_version=version_from_timestamp(moment),
+        purged_at=moment,
+        source_snapshot_id=str(uuid.uuid4()),
+        tombstone_hash="d" * 64,
+        run_id=del_run,
+    )
+
+    delete_held_mid_lock = Event()
+    release_deleter = Event()
+    upsert_connected = Event()
+    upsert_pid: list[int] = []
+
+    original_deleter_lock_keys = deleter._lock_keys
+    original_writer_connect = writer._connect
+
+    def held_deleter_lock_keys(connection: Any, keys: Iterable[int]) -> None:
+        original_deleter_lock_keys(connection, keys)
+        if scope_key in list(keys):
+            delete_held_mid_lock.set()
+            assert release_deleter.wait(10), "test cleanup failed to release deleter"
+
+    def recorded_writer_connect() -> Any:
+        conn = original_writer_connect()
+        upsert_pid.append(conn.info.backend_pid)
+        upsert_connected.set()
+        return conn
+
+    monkeypatch.setattr(deleter, "_lock_keys", held_deleter_lock_keys)
+    monkeypatch.setattr(writer, "_connect", recorded_writer_connect)
+
+    up_run = _begin_helper(writer, SourceKind.TRANSACTION)
+    up_envelope = envelope_for_document(
+        SourceKind.TRANSACTION,
+        {
+            **base, "_id": "mongo-txn-upsert", "transactionId": "gateway-txn-1",
+            "createdAt": f"2026-07-{upsert_day:02d}T00:00:00Z",
+            "updatedAt": f"2026-07-{upsert_day:02d}T00:00:00Z",
+        },
+        run_id=up_run,
+        observed_at=OBSERVED_AT,
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        deletion = executor.submit(deleter.delete_record, delete_event)
+        assert delete_held_mid_lock.wait(5), "deleter never acquired initial scope lock"
+
+        upsert = executor.submit(
+            writer.apply_batch,
+            SourceKind.TRANSACTION,
+            [up_envelope],
+            partition_key="2026-07-23",
+        )
+        try:
+            assert upsert_connected.wait(5), "upsert never opened connection"
+            observed = None
+            deadline = time.monotonic() + 5
+            with live_store.connect() as observer:
+                observer.autocommit = True
+                while time.monotonic() < deadline:
+                    if upsert.done():
+                        observed = "upsert_finished_early"
+                        break
+                    waiting = observer.execute(
+                        "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s",
+                        (upsert_pid[-1],),
+                    ).fetchone()
+                    if waiting and waiting[0] == "Lock":
+                        observed = "upsert_waiting_on_database_lock"
+                        break
+                    time.sleep(0.02)
+            assert observed == "upsert_waiting_on_database_lock", (
+                f"upsert was not serialized against deleter holding scope lock: {observed}"
+            )
+        finally:
+            release_deleter.set()
+
+        del_res = deletion.result(timeout=10)
+        up_res = upsert.result(timeout=10)
+
+    assert del_res.outcome is DeleteOutcome.APPLIED
+    if survives:
+        assert len(up_res.valid_snapshot_checksums) == 1
+        with live_store.connect() as conn:
+            assert conn.execute(
+                "SELECT 1 FROM core.transactions WHERE transaction_id = %s",
+                (canonical_target,),
+            ).fetchone() is not None
+    else:
+        assert len(up_res.valid_snapshot_checksums) == 0
+        assert up_res.quarantine_reason_counts.get(QuarantineReason.SOURCE_DELETED.value, 0) == 1
+        with live_store.connect() as conn:
+            assert conn.execute(
+                "SELECT 1 FROM core.transactions WHERE transaction_id = %s",
+                (canonical_target,),
+            ).fetchone() is None
+
+
+@pytest.mark.requires_live_env
+def test_undeclared_tenant_delete_and_upsert_lock_hierarchy(live_store: Any) -> None:
+    """Delete with undeclared tenant infers candidate and acquires locks without deadlock."""
+    tenant, _ = _seed_two_tenants(live_store)
+    writer = live_store.store
+    deleter = live_store.build()
+
+    place = store_id_for_place("place-del-inferred")
+    with live_store.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id, brand_id, source_store_id) VALUES (%s, %s, %s, %s)",
+            (place, tenant, brand_id_for_merchant("merchant-a"), "place-del-inferred"),
+        )
+        conn.execute("""
+            ALTER TABLE core.transactions
+                ADD COLUMN IF NOT EXISTS source_transaction_id TEXT,
+                ADD COLUMN IF NOT EXISTS member_id UUID,
+                ADD COLUMN IF NOT EXISTS event_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS observation_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS payment_time TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS gross_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS discount_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS net_amount NUMERIC,
+                ADD COLUMN IF NOT EXISTS currency TEXT,
+                ADD COLUMN IF NOT EXISTS payment_method TEXT,
+                ADD COLUMN IF NOT EXISTS transaction_status TEXT,
+                ADD COLUMN IF NOT EXISTS refund_of_transaction_id UUID,
+                ADD COLUMN IF NOT EXISTS price_schedule_id UUID,
+                ADD COLUMN IF NOT EXISTS promotion_id UUID,
+                ADD COLUMN IF NOT EXISTS source_system TEXT,
+                ADD COLUMN IF NOT EXISTS ingested_at TIMESTAMPTZ
+        """)
+
+    base = {
+        "orderId": "shared-order-inferred", "merchant": "merchant-a", "place": "place-del-inferred",
+        "amount": 100, "amountPaid": 100, "currency": "TWD",
+        "payGateway": "card", "status": "succeeded",
+    }
+    _, envelope, landed = _land(
+        writer,
+        SourceKind.TRANSACTION,
+        {
+            **base, "_id": "mongo-txn-inferred", "transactionId": "gateway-txn-inferred",
+            "createdAt": "2026-07-20T00:00:00Z", "updatedAt": "2026-07-20T00:00:00Z",
+        },
+    )
+    assert landed.valid_loaded == 1
+    canonical_target = transaction_id_for_source("shared-order-inferred")
+
+    moment = datetime(2026, 7, 22, tzinfo=UTC)
+    del_run = _begin_helper(deleter, SourceKind.TRANSACTION)
+    delete_event = DeleteEvent(
+        scope=DeleteScope(SourceKind.TRANSACTION, envelope.source_id, tenant_id=None),
+        source_version=version_from_timestamp(moment),
+        purged_at=moment,
+        source_snapshot_id=str(uuid.uuid4()),
+        tombstone_hash="d" * 64,
+        run_id=del_run,
+    )
+
+    del_res = deleter.delete_record(delete_event)
+    assert del_res.outcome is DeleteOutcome.APPLIED
+    assert del_res.tenant_id == tenant
+
+    # Stale upsert at day 21 must be quarantined
+    _, _, up_res = _land(
+        writer,
+        SourceKind.TRANSACTION,
+        {
+            **base, "_id": "mongo-txn-inferred-stale", "transactionId": "gateway-txn-inferred",
+            "createdAt": "2026-07-21T00:00:00Z", "updatedAt": "2026-07-21T00:00:00Z",
+        },
+    )
+    assert up_res.valid_loaded == 0
+    assert up_res.quarantine_reason_counts.get(QuarantineReason.SOURCE_DELETED.value, 0) == 1
+
+    # Newer upsert at day 23 must succeed
+    _, _, up_res_newer = _land(
+        writer,
+        SourceKind.TRANSACTION,
+        {
+            **base, "_id": "mongo-txn-inferred-newer", "transactionId": "gateway-txn-inferred",
+            "createdAt": "2026-07-23T00:00:00Z", "updatedAt": "2026-07-23T00:00:00Z",
+        },
+    )
+    assert up_res_newer.valid_loaded == 1
+    with live_store.connect() as conn:
+        assert conn.execute(
+            "SELECT 1 FROM core.transactions WHERE transaction_id = %s",
+            (canonical_target,),
+        ).fetchone() is not None

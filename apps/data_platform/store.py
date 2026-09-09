@@ -349,11 +349,19 @@ class PsycopgCanonicalStore:
         caller's transaction and released by its commit or rollback -- a caller
         cannot leak it, and cannot drop it while its own writes are still
         pending.
+
+        Lock hierarchy invariant:
+        Level 1: Scope advisory lock (scope_lock_key)
+        Level 2: Canonical target advisory locks (canonical_lock_key, sorted)
+        All paths strictly acquire Level 1 locks before Level 2 locks.
         """
-        keys = [scope_lock_key(tenant_id, source_kind, source_id)]
-        for table, target_id in canonical_targets:
-            keys.append(canonical_lock_key(tenant_id, table, target_id))
-        self._lock_keys(connection, keys)
+        self._lock_keys(connection, [scope_lock_key(tenant_id, source_kind, source_id)])
+        if canonical_targets:
+            target_keys = [
+                canonical_lock_key(tenant_id, table, target_id)
+                for table, target_id in canonical_targets
+            ]
+            self._lock_keys(connection, target_keys)
 
     def _guard_deleted(
         self,
@@ -461,6 +469,12 @@ class PsycopgCanonicalStore:
         decision. Once a tenant is known its lock is taken and the lineage is
         read again, so the owner, the purge targets and the currently applied
         version the caller decides on all come from inside the coordination.
+
+        Lock hierarchy invariant:
+        Level 1: Scope advisory lock (scope_lock_key)
+        Level 2: Canonical target advisory locks (canonical_lock_key, sorted)
+        All paths (upsert and delete, declared and inferred tenant) strictly
+        acquire Level 1 locks before Level 2 locks to prevent deadlocks.
         """
         locked_tenants: set[UUID] = set()
         locked_targets: set[tuple[str, str]] = set()
@@ -471,24 +485,37 @@ class PsycopgCanonicalStore:
             "no tenant declared and nothing landed downstream for this identity",
         )
         for _ in range(_DELETE_SCOPE_LOCK_ATTEMPTS):
-            keys: list[int] = []
+            # Level 1: Scope lock for declared tenant
             if scope.tenant_id is not None and scope.tenant_id not in locked_tenants:
-                keys.append(scope_lock_key(scope.tenant_id, scope.source_kind, scope.source_id))
+                self._lock_keys(
+                    connection,
+                    [scope_lock_key(scope.tenant_id, scope.source_kind, scope.source_id)],
+                )
                 locked_tenants.add(scope.tenant_id)
-            if keys:
-                self._lock_keys(connection, keys)
 
+            # Read lineage and tombstones under held scope lock (or initial discovery)
             lineage = self._read_lineage(connection, scope)
             tombstone_tenants = self._read_tombstone_tenants(connection, scope)
             all_owners = [UUID(str(row[0])) for row in lineage] + tombstone_tenants
             resolution = resolve_delete_tenant(scope.tenant_id, all_owners)
             candidate = resolution.tenant_id if resolution.resolved else None
 
-            new_keys: list[int] = []
+            # Level 1: Scope lock for inferred candidate tenant
             if candidate is not None and candidate not in locked_tenants:
-                new_keys.append(scope_lock_key(candidate, scope.source_kind, scope.source_id))
+                self._lock_keys(
+                    connection,
+                    [scope_lock_key(candidate, scope.source_kind, scope.source_id)],
+                )
                 locked_tenants.add(candidate)
+                # Re-read lineage under candidate's scope lock
+                lineage = self._read_lineage(connection, scope)
+                tombstone_tenants = self._read_tombstone_tenants(connection, scope)
+                all_owners = [UUID(str(row[0])) for row in lineage] + tombstone_tenants
+                resolution = resolve_delete_tenant(scope.tenant_id, all_owners)
+                candidate = resolution.tenant_id if resolution.resolved else None
 
+            # Level 2: Canonical target locks for the candidate tenant
+            new_target_keys: list[int] = []
             if candidate is not None:
                 for row in lineage:
                     if UUID(str(row[0])) == candidate:
@@ -496,12 +523,17 @@ class PsycopgCanonicalStore:
                         canonical_id = str(row[2])
                         pair = (canonical_table, canonical_id)
                         if pair not in locked_targets:
-                            new_keys.append(canonical_lock_key(candidate, canonical_table, canonical_id))
+                            new_target_keys.append(
+                                canonical_lock_key(candidate, canonical_table, canonical_id)
+                            )
                             locked_targets.add(pair)
 
-            if not new_keys:
+            if new_target_keys:
+                self._lock_keys(connection, new_target_keys)
+                # Re-read lineage under full lock coverage
+                lineage = self._read_lineage(connection, scope)
+            else:
                 break
-            self._lock_keys(connection, new_keys)
 
         return lineage, resolution
 

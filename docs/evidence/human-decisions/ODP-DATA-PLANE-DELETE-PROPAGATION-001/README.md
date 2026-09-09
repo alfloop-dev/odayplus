@@ -190,3 +190,29 @@
   3. 保留跨重放與重啟時 `retained_targets` 的合併與持久化防護。
   4. 新增回歸測試 `test_retained_targets_preserved_across_replay_and_restart` 與 `test_shared_transaction_current_authority_and_audit` 斷言 readback 審計一致性。
 
+---
+
+## 10. 審查缺陷修復：鎖定階層與死鎖消除 (Lock Hierarchy & Deadlock Elimination)
+
+在 PR #1282 (`9c4def48`) Codex2 獨立審查重現之 P1 缺陷：
+
+### 10.1 缺陷機制 (Deadlock Cycle)
+
+- `store.py` 原先在 `_guard_deleted()`（upsert 落地防護）中將 `scope_lock_key` 與 `canonical_lock_key` 混合於單一陣列並依數值大小排序；而 `_enter_delete_scope()` 則先取得 delete scope lock，進行 target discovery 後再取得 canonical target lock。
+- 當租戶 `merchant-a` 之 `TRANSACTION` 事件（`gateway-txn-1`，對應 orderId `shared-order-1`）之 `scope_lock_key` (7624276358244460319) 大於 `canonical_lock_key` (5171774965790505522) 時：
+  - Delete 先取 `scope_lock_key`，隨後請求 `canonical_lock_key`；
+  - 同源 Upsert 依數值排序先取 `canonical_lock_key`，隨後請求 `scope_lock_key`；
+  - 兩交易形成循環等待，PostgreSQL 偵測到死鎖並觸發 `psycopg.errors.DeadlockDetected`，導致較新之 upsert 失敗中止。
+
+### 10.2 修復實作 (Strict 2-Level Lock Hierarchy)
+
+1. **嚴格兩層鎖定階層不變量 (Lock Hierarchy Invariant)**：
+   - **Level 1 (Scope Lock)**: `scope_lock_key(tenant_id, source_kind, source_id)`
+   - **Level 2 (Canonical Lock)**: `canonical_lock_key(tenant_id, canonical_table, canonical_id)`（若有多個 canonical targets，僅在 Level 2 內部排序）
+2. **統一各路徑鎖定順序**：
+   - `_lock_delete_scope()`：一律先以 `_lock_keys([scope_lock_key])` 取得 Level 1 鎖，再以 `_lock_keys(target_keys)` 取得 Level 2 鎖。
+   - `_enter_delete_scope()`：一律先取得 Level 1 鎖（包括宣告租戶與推導候選租戶路徑），再取得 Level 2 鎖，並在取得 Level 2 鎖後重新讀取 lineage 確保完整鎖定覆蓋。
+3. **回歸測試覆蓋**：
+   - `test_delete_first_mid_lock_serialises_upsert_without_deadlock`：在 `scope_key > canonical_key` 之真實 ID 下，模擬 Delete 率先持有 Level 1 鎖並停留在 mid-lock 視窗，驗證 concurrent upsert 在 Level 1 鎖上等待而非取 Level 2 鎖造成死鎖，且 Delete 釋放後 upsert 按版本正確存續或隔離。
+   - `test_undeclared_tenant_delete_and_upsert_lock_hierarchy`：驗證 undeclared/inferred tenant 路徑下的鎖定階層與版本防護。
+
