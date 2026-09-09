@@ -7643,6 +7643,13 @@ class ArchiveRecoveryPreview(SystemExit):
     """
 
 
+class ArchiveRecoveryInvalidationPreview(SystemExit):
+    """`archive_recovery_invalidate` without `--confirm`: preview printed, nothing written.
+
+    Raised rather than returned so `main()` unwinds before `sync_all()`.
+    """
+
+
 ARCHIVE_RECOVERY_USAGE = (
     "Usage: archive_recovery_apply --batch <file> --maintenance-hold <hold-file> "
     "[--checkpoint <file>] [--confirm]"
@@ -8905,53 +8912,71 @@ def command_archive_recovery_invalidate(state: dict[str, Any], args: list[str]) 
     correction_path = archive_correction_path(target_id)
     if correction_path.exists():
         try:
-            existing_correction = json.loads(correction_path.read_text(encoding="utf-8"))
-        except Exception:
-            existing_correction = None
-
-        if isinstance(existing_correction, dict):
-            is_same_op = (
-                existing_correction.get("task_id") == target_id
-                and existing_correction.get("snapshot_sha256") == actual_sha256
-                and existing_correction.get("coordination_task_id") == coord_task_id
-                and existing_correction.get("reason") == reason
-                and existing_correction.get("evidence_ref") == evidence_ref
+            raw_corr_bytes = correction_path.read_bytes()
+            existing_correction = json.loads(raw_corr_bytes.decode("utf-8"))
+        except Exception as exc:
+            raise SystemExit(
+                f"Task {target_id!r} already has an unreadable correction record at {correction_path} ({exc}); "
+                "refusing to overwrite."
             )
-            if is_same_op:
-                if not confirm:
-                    print(
-                        json.dumps(
-                            {
-                                "status": "dry_run_already_invalidated",
-                                "task_id": target_id,
-                                "coordination_task_id": coord_task_id,
-                                "existing_correction": existing_correction,
-                                "message": "Task already invalidated with identical correction parameters.",
-                            },
-                            indent=2,
-                            ensure_ascii=False,
-                        )
-                    )
-                    return
+        if not isinstance(existing_correction, dict):
+            raise SystemExit(
+                f"Task {target_id!r} already has a non-object correction record at {correction_path}; "
+                "refusing to overwrite."
+            )
+
+        existing_problems = validate_archive_correction_record(
+            existing_correction, target_id, snapshot_bytes
+        )
+        if existing_problems:
+            err_summary = "; ".join(existing_problems)
+            raise SystemExit(
+                f"Task {target_id!r} already has an invalid/corrupt correction record at {correction_path} "
+                f"({err_summary}); refusing to overwrite."
+            )
+
+        is_same_op = (
+            existing_correction.get("task_id") == target_id
+            and str(existing_correction.get("snapshot_sha256") or "").strip().lower() == actual_sha256.lower()
+            and existing_correction.get("coordination_task_id") == coord_task_id
+            and existing_correction.get("reason") == reason
+            and existing_correction.get("evidence_ref") == evidence_ref
+        )
+        if is_same_op:
+            if not confirm:
                 print(
                     json.dumps(
                         {
-                            "status": "already_invalidated",
+                            "status": "dry_run_already_invalidated",
                             "task_id": target_id,
                             "coordination_task_id": coord_task_id,
-                            "correction": existing_correction,
-                            "message": "Task already invalidated with identical correction parameters (idempotent retry).",
+                            "existing_correction": existing_correction,
+                            "message": "Task already invalidated with identical correction parameters.",
                         },
                         indent=2,
                         ensure_ascii=False,
                     )
                 )
-                return
-            else:
-                raise SystemExit(
-                    f"Task {target_id!r} already has a different correction record at {correction_path}; "
-                    "cannot overwrite with conflicting invalidation."
+                raise ArchiveRecoveryInvalidationPreview(0)
+            print(
+                json.dumps(
+                    {
+                        "status": "already_invalidated",
+                        "task_id": target_id,
+                        "coordination_task_id": coord_task_id,
+                        "correction": existing_correction,
+                        "message": "Task already invalidated with identical correction parameters (idempotent retry).",
+                    },
+                    indent=2,
+                    ensure_ascii=False,
                 )
+            )
+            return
+        else:
+            raise SystemExit(
+                f"Task {target_id!r} already has a different correction record at {correction_path}; "
+                "cannot overwrite with conflicting invalidation."
+            )
 
     # 5. Dry run
     if not confirm:
@@ -8970,7 +8995,7 @@ def command_archive_recovery_invalidate(state: dict[str, Any], args: list[str]) 
             "message": "Dry run succeeded with zero mutations. Re-run with --confirm to write correction record.",
         }
         print(json.dumps(dry_run_receipt, indent=2, ensure_ascii=False))
-        return
+        raise ArchiveRecoveryInvalidationPreview(0)
 
     # 6. Apply invalidation
     now_ts = iso_now()

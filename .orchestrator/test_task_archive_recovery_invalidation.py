@@ -67,6 +67,7 @@ class ArchiveRecoveryInvalidationTests(unittest.TestCase):
         self.index_file = self.archive_dir / "index.json"
         self.log_file = self.status_root / "ai-activity-log.jsonl"
         self.status_file = self.status_root / "ai-status.json"
+        self.current_work_file = self.status_root / "current-work.md"
 
         # Coordination task on active board: Owner=Antigravity3, Reviewer=Codex
         self.coord_task = {
@@ -99,6 +100,7 @@ class ArchiveRecoveryInvalidationTests(unittest.TestCase):
         }
 
         self.state = {
+            "_status_write_revision": 1,
             "tasks": [
                 deepcopy(self.coord_task),
                 deepcopy(self.downstream_task_1),
@@ -113,6 +115,10 @@ class ArchiveRecoveryInvalidationTests(unittest.TestCase):
             "handoffs": [],
             "blockers": [],
         }
+
+        # Write board state to ai-status.json
+        self.status_file.write_text(json.dumps(self.state, indent=2), encoding="utf-8")
+        self.status_file_bytes = self.status_file.read_bytes()
 
         # Reconstructed archive snapshot 1
         self.snap_1 = {
@@ -223,14 +229,44 @@ class ArchiveRecoveryInvalidationTests(unittest.TestCase):
             mock.patch.object(task_archive, "ARCHIVE_CORRECTIONS_DIR", self.corrections_dir),
             mock.patch.object(task_archive, "ARCHIVE_INDEX_FILE", self.index_file),
             mock.patch.object(ai_status, "STATUS_ROOT", self.status_root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
             mock.patch.object(ai_status, "LOG_FILE", self.log_file),
+            mock.patch.object(ai_status, "CURRENT_WORK_FILE", self.current_work_file),
             mock.patch("sys.stdout", out),
         ):
             try:
                 ai_status.command_archive_recovery_invalidate(current_state, args)
                 return 0, out.getvalue()
             except SystemExit as exc:
-                return (exc.code if isinstance(exc.code, int) else 1), str(exc)
+                code = exc.code if isinstance(exc.code, int) else 1
+                return (code, out.getvalue() if code == 0 else str(exc))
+
+    def _run_main(
+        self,
+        args: list[str],
+        actor: str = "Codex",
+    ) -> tuple[int, str]:
+        out = io.StringIO()
+        with (
+            canonical_test_environment(self.status_root),
+            mock.patch.dict(os.environ, {"AI_NAME": actor}, clear=False),
+            mock.patch.object(task_archive, "STATUS_ROOT", self.status_root),
+            mock.patch.object(task_archive, "ARCHIVE_DIR", self.archive_dir),
+            mock.patch.object(task_archive, "ARCHIVE_TASKS_DIR", self.tasks_dir),
+            mock.patch.object(task_archive, "ARCHIVE_CORRECTIONS_DIR", self.corrections_dir),
+            mock.patch.object(task_archive, "ARCHIVE_INDEX_FILE", self.index_file),
+            mock.patch.object(ai_status, "STATUS_ROOT", self.status_root),
+            mock.patch.object(ai_status, "STATUS_FILE", self.status_file),
+            mock.patch.object(ai_status, "LOG_FILE", self.log_file),
+            mock.patch.object(ai_status, "CURRENT_WORK_FILE", self.current_work_file),
+            mock.patch("sys.stdout", out),
+        ):
+            try:
+                code = ai_status.main(["ai_status.py", *args])
+                return code, out.getvalue()
+            except SystemExit as exc:
+                code = exc.code if isinstance(exc.code, int) else 1
+                return (code, out.getvalue() if code == 0 else str(exc))
 
     def test_authorization_requires_coordination_task_reviewer(self) -> None:
         # Actor is Antigravity3 (owner, not reviewer) -> must be rejected
@@ -365,6 +401,38 @@ class ArchiveRecoveryInvalidationTests(unittest.TestCase):
         self.assertEqual(self.snap_1_path.read_bytes(), self.snap_1_bytes)
         self.assertEqual(self.index_file.read_bytes(), self.initial_index_bytes)
 
+    def test_main_cli_dry_run_zero_writes(self) -> None:
+        """Verify that running full main() in dry run mode does not trigger sync_all or any disk mutations."""
+        code, output = self._run_main(
+            [
+                "archive_recovery_invalidate",
+                "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+                "--coordination-task",
+                "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+                "--reason",
+                "CLI dry run zero write verification",
+                "--evidence-ref",
+                "docs/evidence/gap.json",
+                "--expected-sha256",
+                self.snap_1_sha256,
+            ],
+            actor="Codex",
+        )
+        self.assertEqual(code, 0)
+        parsed = json.loads(output)
+        self.assertEqual(parsed["status"], "dry_run")
+        self.assertEqual(parsed["effective_status"], "blocked")
+        self.assertFalse(parsed["dependency_satisfied"])
+
+        # Complete zero write check across the whole status root
+        corr_file = self.corrections_dir / "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json"
+        self.assertFalse(corr_file.exists())
+        self.assertFalse(self.log_file.exists())
+        self.assertFalse(self.current_work_file.exists())
+        self.assertEqual(self.status_file.read_bytes(), self.status_file_bytes)
+        self.assertEqual(self.snap_1_path.read_bytes(), self.snap_1_bytes)
+        self.assertEqual(self.index_file.read_bytes(), self.initial_index_bytes)
+
     def test_confirm_writes_correction_and_audit_log_without_touching_snapshot_or_index(self) -> None:
         code, output = self._run_invalidate(
             [
@@ -430,12 +498,27 @@ class ArchiveRecoveryInvalidationTests(unittest.TestCase):
         self.assertEqual(code1, 0)
         self.assertEqual(json.loads(out1)["status"], "applied")
 
-        # 2nd run with same args: already_invalidated
+        # 2nd run with same args via CLI main without confirm (dry run idempotent):
+        dry_args = [
+            "archive_recovery_invalidate",
+            "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "--coordination-task",
+            "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+            "--reason",
+            "Human/Ops decision missing",
+            "--evidence-ref",
+            "docs/evidence/blocker.json",
+        ]
+        code_dry, out_dry = self._run_main(dry_args, actor="Codex")
+        self.assertEqual(code_dry, 0)
+        self.assertEqual(json.loads(out_dry)["status"], "dry_run_already_invalidated")
+
+        # 3rd run with same args: already_invalidated
         code2, out2 = self._run_invalidate(args, actor="Codex")
         self.assertEqual(code2, 0)
         self.assertEqual(json.loads(out2)["status"], "already_invalidated")
 
-        # 3rd run with conflicting reason: rejected
+        # 4th run with conflicting reason: rejected
         conflict_args = [
             "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
             "--coordination-task",
@@ -449,6 +532,61 @@ class ArchiveRecoveryInvalidationTests(unittest.TestCase):
         code3, err3 = self._run_invalidate(conflict_args, actor="Codex")
         self.assertNotEqual(code3, 0)
         self.assertIn("cannot overwrite with conflicting invalidation", err3)
+
+    def test_refuse_overwrite_corrupt_existing_correction_and_preserve_bytes(self) -> None:
+        corr_path = self.corrections_dir / "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json"
+        corrupt_bytes = b"{ broken json bytes not closed"
+        corr_path.write_bytes(corrupt_bytes)
+
+        # Attempt to run invalidation command with --confirm
+        code, err = self._run_invalidate(
+            [
+                "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+                "--coordination-task",
+                "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+                "--reason",
+                "Try overwrite corrupt",
+                "--evidence-ref",
+                "docs/evidence/blocker.json",
+                "--confirm",
+            ],
+            actor="Codex",
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("unreadable", err)
+
+        # Preserved on disk byte for byte
+        self.assertEqual(corr_path.read_bytes(), corrupt_bytes)
+
+    def test_refuse_overwrite_invalid_schema_existing_correction_and_preserve_bytes(self) -> None:
+        corr_path = self.corrections_dir / "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001.json"
+        invalid_record = {
+            "schema_version": 999,
+            "type": "wrong_type",
+            "task_id": "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+        }
+        invalid_bytes = json.dumps(invalid_record).encode("utf-8")
+        corr_path.write_bytes(invalid_bytes)
+
+        # Attempt to run invalidation command with --confirm
+        code, err = self._run_invalidate(
+            [
+                "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+                "--coordination-task",
+                "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+                "--reason",
+                "Try overwrite invalid schema",
+                "--evidence-ref",
+                "docs/evidence/blocker.json",
+                "--confirm",
+            ],
+            actor="Codex",
+        )
+        self.assertNotEqual(code, 0)
+        self.assertIn("invalid/corrupt correction record", err)
+
+        # Preserved on disk byte for byte
+        self.assertEqual(corr_path.read_bytes(), invalid_bytes)
 
     def test_resolver_and_show_semantics_for_corrected_and_uncorrected_tasks(self) -> None:
         with (
