@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "type": "task_history_recovery_disposition_corrections",
-  "recorded_at": "2026-09-09T16:24:34Z",
+  "recorded_at": "2026-09-09T16:44:00Z",
   "recorded_by": "Antigravity3",
   "reviewer": "Codex",
   "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
@@ -11,8 +11,8 @@
     "applied_hold_sha256": "e88435aecada1b7b84f4811c3144a54afdb9e428299430e6f6766d4b1ec60348",
     "purpose": "依據 Codex 獨立審查意見（review_finding P1 與 P2），記錄逐筆審查意見核實、批次分級缺陷，以及 2026-09-09 維護窗口內透過 canonical archive_recovery_invalidate 完成之失效處置。磁碟上 ai-task-archive/tasks/ 內之原始 snapshot 維持 done/completed 且 bytes 不變；TaskResolver 透過 ai-task-archive/corrections/ 正式讀入 invalidation 記錄，有效狀態回讀為 blocked，dependency_satisfied 正式更正為 false。",
     "timing_disclosure": {
-      "round_3_4_timestamps": "原第 3/4 輪量測紀錄所載 01:15Z–01:25Z 為手動觀察整理時間，其原始命令終端 exit receipt/timestamp 無法恢復，已明列 unknown 並標記為沿用舊觀察。",
-      "round_5_invalidation_timestamps": "本輪控制面 invalidation 相關時間（2026-09-09T16:22:55Z – 16:23:46Z）皆有不可變原始 UTC 命令收據（confirm-1.json, confirm-2.json, maintenance-window.json, after-apply.json 等）支持。"
+      "round_3_4_timestamps": "原第 3/4 輪量測紀錄所載 01:15Z–01:25Z 來源/量測時間無法核實 (unknown)，不能推定為手動觀察整理時間，已標記為來源未知之歷史舊記錄。",
+      "codex_operation_receipt_timestamps": "前景協調者 Codex 之維護窗口與 invalidation 操作收據時間為 2026-09-09T16:22:55Z – 16:24:04Z（包含 confirm-1/2, show-1/2, maintenance-window, post-restart-health 等不可變原始 UTC 收據）。"
     }
   },
   "corrections": [
@@ -88,8 +88,6 @@
         "dependent_task_id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
         "dependent_board_status": "todo",
         "dependent_phase": "ODP Remediation · Final Verification",
-        "dependent_owner": "Claude",
-        "dependent_reviewer": "Codex2",
         "downstream_declares_target_dependency": true,
         "downstream_admission_before_invalidation": false,
         "downstream_admission_after_invalidation": false,
@@ -167,8 +165,6 @@
         "dependent_task_id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
         "dependent_board_status": "todo",
         "dependent_phase": "ODP Remediation · W3 Atomic Cutover",
-        "dependent_owner": "Claude",
-        "dependent_reviewer": "Codex",
         "downstream_declares_target_dependency": true,
         "downstream_admission_before_invalidation": false,
         "downstream_admission_after_invalidation": false,

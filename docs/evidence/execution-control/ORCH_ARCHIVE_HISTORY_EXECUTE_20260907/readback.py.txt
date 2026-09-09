@@ -5,7 +5,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path('/home/lupin/odayplus')
@@ -86,7 +86,7 @@ def collect():
             'waiting_for': task.get('waiting_for') if task else None,
         })
     return {
-        'observed_at': datetime.now(UTC).isoformat(),
+        'observed_at': datetime.now(timezone.utc).isoformat(),
         'observed_by': 'Codex',
         'runtime_path': str(RUNTIME),
         'runtime_sha': subprocess.check_output(['git', '-C', str(RUNTIME), 'rev-parse', 'HEAD'], text=True).strip(),

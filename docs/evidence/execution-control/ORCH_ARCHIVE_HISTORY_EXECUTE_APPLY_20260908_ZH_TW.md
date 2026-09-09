@@ -3,8 +3,8 @@
 - 產出者：Claude2（owner・第 2 輪）／Antigravity3（owner・第 3–5 輪）／維護窗口與 invalidation 協調者：Codex／指定審查者：Codex（reviewer）
 - apply 執行時間：2026-09-08T23:56:44Z – 23:57:20Z（canonical checkpoint 所載，actor Claude2）
 - 第 2 輪量測時間：2026-09-09T00:14:59Z – 00:21:02Z
-- 第 3/4 輪更正與審查記錄時間：commit 064f475f（01:12:43Z），送審（01:14:09Z），Codex 審查退回（01:21:54Z）。原更正記錄文件中所載 01:15Z–01:25Z 為手動觀察整理時間，原命令終端量測時間不可恢復，明列 unknown。
-- 第 5 輪控制面修復、invalidation 實測與收尾時間：2026-09-09T16:22:55Z – 16:24:34Z（維護窗口 16:22:55Z–16:23:46Z，supervisor 重啟與健康回讀 16:24:04Z–16:24:23Z，reopen/assign 16:24:12Z–16:24:55Z）。
+- 第 3/4 輪更正與審查記錄時間：commit 064f475f（01:12:43Z），送審（01:14:09Z），Codex 審查退回（01:21:54Z）。原第 3/4 輪量測紀錄所載 01:15Z–01:25Z 來源/量測時間無法核實（unknown），不能推定為手動觀察整理時間，已標記為來源未知之歷史舊記錄。
+- 第 5 輪控制面修復、invalidation 實測與收尾時間：Codex 操作收據時間 2026-09-09T16:22:55Z – 16:24:23Z（維護窗口 16:22:55Z–16:23:46Z，supervisor 重啟與健康回讀 16:24:04Z–16:24:23Z，reopen 16:24:12Z–16:24:55Z）；本輪證據整理與收尾記錄時間以真實目前 UTC 時間 2026-09-09T16:44:00Z 記錄。
 - 交付分支：`task/ORCH-ARCHIVE-HISTORY-EXECUTE-003`，base `origin/dev` tip `50581b3b180aedaf76fbe4aaffb3bf7e2d120050`（PR #1287 merge commit）
 
 > **核心事實與邊界聲明**：
@@ -165,7 +165,7 @@ canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/his
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/RECOVERY_APPLY_CHECKPOINT_20260907.json` | `c7c003d9c2000c78a1515d352b4462972635be582e85d76043079e7012fc2ad9` | RECOVERY_APPLY_CHECKPOINT_20260907.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/after-apply.json` | `ad69bef2d23657d99117f836cf25f95d4a320462e39ce44708510a437f005350` | **維護窗口 Invalidation 後 TaskResolver 讀回** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/after-readback-command.json` | `7321b3dca8b64a6b3720cb19e504ca3c2a394e5ea83b983acbc69c63748bcb8e` | **Invalidation 後讀回命令收據** |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/apply_window.py` | `b50487b738272d62c8f80f0f30c5a8d0c18f30bf775e5ca5b5194928d842ee2f` | **維護窗口 Invalidation 自動化執行腳本** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/apply_window.py.txt` | `e79fab35c00b0a2a44c028b71cbfefeef29a379f4773d974dbb6e2e649da0e55` | **維護窗口 Invalidation 自動化執行腳本（原始 bytes 保存）** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_readback_20260908_post_apply.json` | `cc252dd693eec6f5a8a1e67e54756b7e00a1c880ac3f4e43e37c3491217fa4aa` | archive_readback_20260908_post_apply.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_readback_20260909_post_findings.json` | `773a32b494434113cdaa42b3942b0e2cfb6e78b92f1014a62627cc9904ed7a4e` | archive_readback_20260909_post_findings.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/archive_snapshots_untouched_20260907_close.json` | `8389552aabbb0c4671aa718d53653d2b47dd6c772ef556c1a13dbf7100ba6b09` | archive_snapshots_untouched_20260907_close.json |
@@ -178,7 +178,7 @@ canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/his
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/canonical-show-2.json` | `341f8addde5a74004c950e0d14aaea604b87acc28a3c9e10660b4be11b4a404c` | **ODP-MODELREADY-QUALITY-NULLABLE-001 Canonical Show 讀回收據** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/confirm-1.json` | `3ceb6a46cab3cf23c235d38297ffe6180e9327e26b6a8411649d0866373e59a3` | **ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 Invalidation 執行收據** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/confirm-2.json` | `5eb66cad0532ad20a939ae04f5d2f223af80b28534299d7fecec275f9969e19b` | **ODP-MODELREADY-QUALITY-NULLABLE-001 Invalidation 執行收據** |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/control_plane_remediation_blocker_20260909.json` | `84e6c6045f00f1cab7af3d3bbf93135ffef31ce9cd17e8135fedc8ce0981ce6c` | **控制面 Blocker 解除報告** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/control_plane_remediation_blocker_20260909.json` | `be51e2324a69226dc5d5c61a46b919b787700c92ef8eaec53a6b62028754a453` | **控制面 Blocker 解除報告** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_analysis_20260907_execute.json` | `91c7cd64483a714a3ae8b270aa485d89b77c8c2730ba49a197ee73cbcd796993` | dependency_release_analysis_20260907_execute.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_analysis_20260907_execute_live_runtime.json` | `383ee36004458edc36062ecbb64f6a0bb364bf11c35e44d112f43f737bf845f5` | dependency_release_analysis_20260907_execute_live_runtime.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dependency_release_analysis_20260908_post_apply.json` | `72567991fe37d1222da753ac012d8f6c5c64f9b8a511661fd75d54baa615a9d1` | dependency_release_analysis_20260908_post_apply.json |
@@ -187,7 +187,7 @@ canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/his
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/dry-run-2.json` | `99a5c27f6fa55fe5aa880ba085f04f6f53fcac307c101acdb98342e54e67dee6` | **Invalidation Dry Run 2 收據** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/history-closeout-metadata.json` | `d770514360743574e7f2993898384f974fbd1a48c191dfad523ca837f79f2fb2` | **歷史收尾指派 Metadata** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/history-closeout-reopen.json` | `63b4688c8eef367ca78d1c1b6048d92293fa819c713a42ce56812223bb24beae` | **歷史收尾 Reopen 狀態收據** |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/live-evidence-manifest.json` | `1f8409f41862056030e244bd9a773977dd0620b54a7b7b979a7308b95228b3a1` | **Live Invalidation 證據清單** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/live-evidence-manifest.json` | `9cfa3829230a65412e7cf45dafbea5dff09a1fe3d7a4115283e4b52885ed8dc8` | **Live Invalidation 證據清單（原始 bytes 還原）** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance-window.json` | `fe681d1b81dc704c626c5b6cbe1ed3a1d60f127e6f9f3aeb8b4144db2a848d14` | **2026-09-09 Invalidation 維護窗口記錄** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance_hold_20260908_applied.json` | `e88435aecada1b7b84f4811c3144a54afdb9e428299430e6f6766d4b1ec60348` | 原始 Apply hold 副本（bytes 不動） |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/maintenance_hold_template_NOT_A_HOLD.json` | `459940b255b0e85ebaff4468010afee666a87eaa9462a1218363f1c896e83f0f` | maintenance_hold_template_NOT_A_HOLD.json |
@@ -199,17 +199,30 @@ canonical checkpoint：`/home/lupin/odayplus/.orchestrator/recovery-receipts/his
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/preadmission_check_20260907.json` | `dc48073589b0ad99d7b9a42498107a02ca53ff0d8d9f8f9117c3bfcdd449a05a` | preadmission_check_20260907.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/priority_two_local_recheck_20260907.txt` | `dd2de6c573553bfa05808b7bba0d43e8259b1a74eeafbf562275844e5ea10813` | priority_two_local_recheck_20260907.txt |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/priority_two_reverification_20260907.txt` | `8315265533fdfe855ee46d1c5b9d61393823a2459b864cd2065158e561ec9630` | priority_two_reverification_20260907.txt |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/readback.py` | `e6a1aea78a3a544fd97ec1e689f8c063dd53e0c061bc2aaf456712e0ddf98507` | **維護窗口 TaskResolver 讀回探針指令碼** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/readback.py.txt` | `99ed1d2c328d4867220ca4ab7bde9e83d9317e2ccb6ee26e4653eaccc7161041` | **維護窗口 TaskResolver 讀回探針指令碼（原始 bytes 保存）** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_checkpoint_20260908T235531Z.json` | `cee66fee0de0fd9ed39d1d7ed8abc9a176b3cc96065f2004cc7efe02a2de8f40` | 原始 Apply checkpoint 副本（bytes 不動） |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_apply_receipt_20260908.json` | `1f50ed25765d18c4f6a4815335a5d6c1c29af646534124ecd185141b156755fd` | 2026-09-08 Apply 執行收據 |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260907_scenarioA_as_documented.json` | `3c7f5928db956bb6fd49840a09ab9e27de85fa5f550b15773327ec1988ab71c5` | recovery_batch_20260907_scenarioA_as_documented.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260907_scenarioB.json` | `639059236692d8b0fc32d9b6cb1f0210f84068c023c0fdcf90c7760875f674a6` | recovery_batch_20260907_scenarioB.json |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_batch_20260908_applied.json` | `1833ca8656ae30efc34d6ade6437ba850c5a53f9fcda67bb1cd4f7c8c70b34fe` | 原始 Apply batch 副本（bytes 不動） |
-| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json` | `e4c04640395b45d609b5b2cfcd648a52e35c1060b9fb5a4b894aa198164e3231` | **P1/P2 實質更正與 Invalidation 記錄** |
+| `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/recovery_disposition_corrections_20260909.json` | `f45de053a0ccb35d748d59556b55df5645d1f688e401b580c66d5ea7461785ca` | **P1/P2 實質更正與 Invalidation 記錄** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/rollout-preflight.json` | `cd805edf4c1b5fce602c36e2f05360c1ceb7915ab02874c21968803e1eff31c6` | **Runtime Rollout 預檢收據** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/rollout-result.json` | `fbfa8cdf843b35d0a9db4648f717a8d9d89110d5b52c7fc34217974c79713e91` | **Runtime Rollout 執行結果收據** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/supervisor-restart.json` | `71af05961963fab4793c10230ccebcb472276f5db0f228e74396c11b4b2eb21f` | **Supervisor 重啟命令收據** |
 | `ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/supervisor_dispatch_recovery_20260909.json` | `275daa15cf0c096f189289282312b2eef8e090911345b9e385cbba6734336524` | supervisor_dispatch_recovery_20260909.json |
 | `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_APPLY_20260908_ZH_TW.md` | — | 本收據主文件 |
+
+### 10.1 原始來源與版本庫副本路徑映射及後綴變更說明
+
+為嚴格維持原始收據 byte-for-byte 完全一致，並避免可執行 `.py` 檔案進入版本庫需要登記 `docs/audits/code-boundary-inventory.csv` 或被 linter 修改原始 bytes：
+1. 原始 `apply_window.py` 與 `readback.py` 以 exact bytes 儲存為 `apply_window.py.txt` 與 `readback.py.txt`。
+2. 原始 `live-evidence-manifest.json` 完整還原 exact bytes（SHA-256 `9cfa3829230a65412e7cf45dafbea5dff09a1fe3d7a4115283e4b52885ed8dc8`）。
+3. 移除兩份可執行 `.py` 副本，並同步移除因其增加之 2 行 `code-boundary-inventory.csv` 記錄。
+4. 不對原始收據進行 lint 改寫，不重跑腳本或 live operation。
+
+路徑映射清單：
+- 來源 `/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/apply_window.py`（SHA `e79fab35c00b0a2a44c028b71cbfefeef29a379f4773d974dbb6e2e649da0e55`）→ Repo 副本 `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/apply_window.py.txt`
+- 來源 `/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/readback.py`（SHA `99ed1d2c328d4867220ca4ab7bde9e83d9317e2ccb6ee26e4653eaccc7161041`）→ Repo 副本 `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/readback.py.txt`
+- 來源 `/home/lupin/odayplus-handoffs/archive-invalidation-live-20260909/live-evidence-manifest.json`（SHA `9cfa3829230a65412e7cf45dafbea5dff09a1fe3d7a4115283e4b52885ed8dc8`）→ Repo 副本 `docs/evidence/execution-control/ORCH_ARCHIVE_HISTORY_EXECUTE_20260907/live-evidence-manifest.json`
 
 交付物由指定審查者 Codex 獨立審查。

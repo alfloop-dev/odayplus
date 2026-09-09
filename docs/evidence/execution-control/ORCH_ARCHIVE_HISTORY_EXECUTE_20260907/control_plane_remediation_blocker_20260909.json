@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "type": "control_plane_remediation_blocker",
-  "recorded_at": "2026-09-09T16:24:34Z",
+  "recorded_at": "2026-09-09T16:44:00Z",
   "recorded_by": "Antigravity3",
   "reviewer": "Codex",
   "task_id": "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
@@ -10,8 +10,8 @@
   "problem_statement": "原審查發現控制面缺少可稽核撤回錯誤歷史完成判定之機制。現有 canonical writer 拒絕 in-place reopen 已 archived 任務，且 task_archive.py:136-137 僅以 status=done 判定依賴成立。此問題已透過 PR #1287 交付唯一 canonical TaskResolver invalidation 擴充及 ai_status.py archive_recovery_invalidate 工具徹底解決。",
   "closure_summary": "控制面 blocker 已由前景協調者 Codex 於維護窗口（2026-09-09T16:22:55Z – 16:23:46Z）實際解除：工具 PR #1287 合併至 dev（merge commit 50581b3b180aedaf76fbe4aaffb3bf7e2d120050），新 runtime 部署至 /home/lupin/oday-plus-supervisor-runtime-50581b3b180a。Codex 於維護窗口內執行 canonical archive_recovery_invalidate 將 ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001 與 ODP-MODELREADY-QUALITY-NULLABLE-001 之有效狀態撤回至 blocked，dependency_satisfied 轉為 false。Supervisor 以 PID 1789757 重啟並於 16:24:04Z 完成健康 loop。",
   "timing_disclosure": {
-    "round_3_4_timestamps": "原第 3/4 輪量測紀錄所載 01:15Z–01:25Z 為手動觀察整理時間，其原始命令終端 exit receipt/timestamp 無法恢復，已明列 unknown 並標記為沿用舊觀察。",
-    "round_5_invalidation_timestamps": "本輪控制面 invalidation 相關時間（2026-09-09T16:22:55Z – 16:23:46Z）皆有不可變原始 UTC 命令收據（confirm-1.json, confirm-2.json, maintenance-window.json, after-apply.json, post-restart-health.json 等）支持。"
+    "round_3_4_timestamps": "原第 3/4 輪量測紀錄所載 01:15Z–01:25Z 來源/量測時間無法核實 (unknown)，不能推定為手動觀察整理時間，已標記為來源未知之歷史舊記錄。",
+    "codex_operation_receipt_timestamps": "前景協調者 Codex 之維護窗口與 invalidation 操作收據時間為 2026-09-09T16:22:55Z – 16:24:04Z（包含 confirm-1/2, show-1/2, maintenance-window, after-apply.json, post-restart-health.json 等不可變原始 UTC 收據）。"
   },
   "affected_tasks": [
     {
@@ -28,8 +28,6 @@
         "id": "ODP-STRUCTURAL-REMEDIATION-CLOSEOUT-001",
         "board_status": "todo",
         "phase": "ODP Remediation · Final Verification",
-        "owner": "Claude",
-        "reviewer": "Codex2",
         "downstream_declares_target_dependency": true,
         "downstream_admission_before_invalidation": false,
         "downstream_admission_after_invalidation": false
@@ -50,8 +48,6 @@
         "id": "ODP-CANONICAL-MEASUREMENT-NULLABLE-CUTOVER-001",
         "board_status": "todo",
         "phase": "ODP Remediation · W3 Atomic Cutover",
-        "owner": "Claude",
-        "reviewer": "Codex",
         "downstream_declares_target_dependency": true,
         "downstream_admission_before_invalidation": false,
         "downstream_admission_after_invalidation": false
