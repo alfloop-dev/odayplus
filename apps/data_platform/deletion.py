@@ -311,6 +311,12 @@ def decide_delete(
 # built from a table name that came out of the database.
 _LEAF_PURGE_TEMPLATES: dict[str, tuple[str, ...]] = {
     "core.transactions": (
+        # The data-plane authority row references the transaction, so it goes first.
+        "DELETE FROM {schema}.transaction_authority AS auth "
+        "USING core.transactions AS target, core.stores AS scope "
+        "WHERE auth.transaction_id = target.transaction_id "
+        "AND target.transaction_id = %s AND target.store_id = scope.store_id "
+        "AND scope.tenant_id = %s",
         "DELETE FROM core.transactions AS target USING core.stores AS scope "
         "WHERE target.transaction_id = %s AND target.store_id = scope.store_id "
         "AND scope.tenant_id = %s",

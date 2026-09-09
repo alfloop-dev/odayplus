@@ -54,8 +54,11 @@ CREATE TABLE IF NOT EXISTS {{control_schema}}.canonical_lineage (
     canonical_table TEXT NOT NULL,
     canonical_id UUID NOT NULL,
     projected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source_version BIGINT,
     PRIMARY KEY (source_snapshot_id, canonical_table, canonical_id)
 );
+ALTER TABLE {{control_schema}}.canonical_lineage
+    ADD COLUMN IF NOT EXISTS source_version BIGINT;
 CREATE INDEX IF NOT EXISTS ix_data_plane_lineage_run
     ON {{control_schema}}.canonical_lineage(run_id, source_kind);
 CREATE INDEX IF NOT EXISTS ix_data_plane_lineage_tenant

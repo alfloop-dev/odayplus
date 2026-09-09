@@ -320,9 +320,12 @@ def test_sink_delete_emits_only_tenant_scoped_statements_and_a_version_guard() -
     assert result.outcome is DeleteOutcome.APPLIED
     assert result.purged_row_count == 1
     assert result.retained_targets == ("core.stores",)
-    deletes = connection.sql_containing("DELETE FROM ")
-    assert len(deletes) == 1, "the other tenant's lineage row must not be purged"
-    assert deletes[0][1] == (snapshot, TENANT_A)
+    domain_deletes = connection.sql_containing(f"DELETE FROM {CONTROL_SCHEMA}.domain_inputs")
+    assert len(domain_deletes) == 1, "the other tenant's lineage row must not be purged"
+    assert domain_deletes[0][1] == (snapshot, TENANT_A)
+    for statement, params in connection.sql_containing("DELETE FROM "):
+        assert TENANT_A in params
+        assert TENANT_B not in params
     upsert = connection.sql_containing("INSERT INTO data_plane.tombstones")[0][0]
     assert (
         "WHERE EXCLUDED.source_version >= data_plane.tombstones.source_version" in upsert
@@ -390,7 +393,10 @@ def test_an_unknown_tenant_is_refused_before_any_write() -> None:
 def test_batch_projection_quarantines_a_record_a_newer_delete_already_removed() -> None:
     deleted_version = _version(datetime(2026, 7, 22, tzinfo=UTC))
     connection = _ScriptedConnection(
-        [("FROM data_plane.tombstones", _Cursor([("campaign-1", deleted_version)]))]
+        [
+            ("FROM core.tenants", _Cursor([(TENANT_A, UUID("00000000-0000-4000-8000-000000000001"))])),
+            ("FROM data_plane.tombstones", _Cursor([("campaign-1", deleted_version)])),
+        ]
     )
     envelope = envelope_for_document(
         SourceKind.CAMPAIGN,
@@ -770,3 +776,113 @@ def test_reconcile_flags_a_reprojection_that_bypassed_the_delete_guard(live_stor
     assert clean.sink_delete_drift == 0
     assert drifted.sink_delete_drift == 1
     assert not drifted.reconciled
+
+
+def _begin_helper(store: PsycopgCanonicalStore, kind: SourceKind = SourceKind.CAMPAIGN) -> str:
+    run = str(uuid.uuid4())
+    store.begin_run(run, kind, "2026-07-23", None, OBSERVED_AT)
+    return run
+
+
+def _recreate_helper(live_store: Any) -> tuple[PsycopgCanonicalStore, DeleteEvent]:
+    tenant, _ = _seed_two_tenants(live_store)
+    store = live_store.store
+    run = _begin_helper(store)
+    event = _event_for(tenant, "campaign-a", datetime(2026, 7, 22, tzinfo=UTC), run)
+    store.delete_record(event)
+    _, _, result = _land(
+        store,
+        SourceKind.CAMPAIGN,
+        _campaign_document("campaign-a", "merchant-a", datetime(2026, 7, 23, tzinfo=UTC)),
+    )
+    assert result.valid_loaded == 1
+    return store, event
+
+
+@pytest.mark.requires_live_env
+def test_replayed_delete_preserves_newer_recreation(live_store: Any) -> None:
+    store, event = _recreate_helper(live_store)
+    store.delete_record(event)
+    assert len(_domain_input_rows(live_store.connect, "campaign-a")) == 1
+
+
+@pytest.mark.requires_live_env
+def test_tenant_a_absent_tombstone_does_not_block_tenant_b(live_store: Any) -> None:
+    tenant_a, _ = _seed_two_tenants(live_store)
+    store = live_store.store
+    event = _event_for(tenant_a, "same-source-id", datetime(2026, 7, 22, tzinfo=UTC), _begin_helper(store))
+    store.delete_record(event)
+    _, _, result = _land(
+        store,
+        SourceKind.CAMPAIGN,
+        _campaign_document("same-source-id", "merchant-b", datetime(2026, 7, 21, tzinfo=UTC)),
+    )
+    assert result.valid_loaded == 1, result.quarantine_reason_counts
+
+
+@pytest.mark.requires_live_env
+def test_legitimate_recreation_is_not_delete_drift(live_store: Any) -> None:
+    store, _ = _recreate_helper(live_store)
+    empty = aggregate_checksum([])
+    result = store.reconcile(_begin_helper(store), SourceKind.CAMPAIGN, 0, empty, empty)
+    assert result.sink_delete_drift == 0
+    assert result.reconciled
+
+
+@pytest.mark.requires_live_env
+def test_delete_committed_after_guard_read_blocks_stale_upsert(
+    live_store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tenant, _ = _seed_two_tenants(live_store)
+    store = live_store.store
+    event = _event_for(tenant, "campaign-a", datetime(2026, 7, 22, tzinfo=UTC), _begin_helper(store))
+    original = store._deleted_versions
+
+    def interleave_delete(connection: Any, source_kind: SourceKind, envelopes: Any) -> dict[str, int]:
+        versions = original(connection, source_kind, envelopes)
+        live_store.build().delete_record(event)
+        return versions
+
+    monkeypatch.setattr(store, "_deleted_versions", interleave_delete)
+    _, _, result = _land(
+        store,
+        SourceKind.CAMPAIGN,
+        _campaign_document("campaign-a", "merchant-a", datetime(2026, 7, 21, 1, tzinfo=UTC)),
+    )
+    assert result.valid_loaded == 0
+    assert _domain_input_rows(live_store.connect, "campaign-a") == []
+
+
+@pytest.mark.requires_live_env
+def test_transaction_delete_handles_existing_authority_reference(live_store: Any) -> None:
+    tenant, _ = _seed_two_tenants(live_store)
+    store = live_store.store
+    run = _begin_helper(store, SourceKind.ORDERS)
+    store_id, txn_id, snapshot = (uuid.uuid4() for _ in range(3))
+    with live_store.connect() as conn:
+        conn.execute("INSERT INTO core.stores (store_id, tenant_id) VALUES (%s, %s)", (store_id, tenant))
+        conn.execute("INSERT INTO core.transactions (transaction_id, store_id) VALUES (%s, %s)", (txn_id, store_id))
+        conn.execute(
+            "INSERT INTO data_plane.transaction_authority (transaction_id, source_kind, authority_rank, source_snapshot_id) "
+            "VALUES (%s, 'orders', 1, %s)",
+            (txn_id, snapshot),
+        )
+        conn.execute(
+            "INSERT INTO data_plane.canonical_lineage (source_snapshot_id, source_kind, source_id, content_sha256, run_id, tenant_id, canonical_table, canonical_id) "
+            "VALUES (%s, 'orders', 'order-1', %s, %s, %s, 'core.transactions', %s)",
+            (snapshot, "a" * 64, run, tenant, txn_id),
+        )
+    moment = datetime(2026, 7, 22, tzinfo=UTC)
+    result = store.delete_record(
+        DeleteEvent(
+            scope=DeleteScope(SourceKind.ORDERS, "order-1", tenant),
+            source_version=version_from_timestamp(moment),
+            purged_at=moment,
+            source_snapshot_id=str(uuid.uuid4()),
+            tombstone_hash="d" * 64,
+            run_id=run,
+        )
+    )
+    assert not result.rejected
+    with live_store.connect() as conn:
+        assert conn.execute("SELECT 1 FROM core.transactions WHERE transaction_id = %s", (txn_id,)).fetchone() is None

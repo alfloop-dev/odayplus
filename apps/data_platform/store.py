@@ -300,11 +300,10 @@ class PsycopgCanonicalStore:
         reason_counts: dict[str, int] = {}
         with self._connect() as connection:
             lookup = _PostgresLookup(connection)
-            deleted_versions = self._deleted_versions(connection, source_kind, envelopes)
+            self._deleted_versions(connection, source_kind, envelopes)
             for envelope in envelopes:
                 try:
                     with connection.transaction():
-                        self._guard_deleted(envelope, deleted_versions)
                         self._project_one(connection, lookup, source_kind, envelope)
                         self._resolve_quarantine(connection, envelope)
                     valid.append(f"{envelope.source_snapshot_id}:{envelope.content_sha256}")
@@ -340,17 +339,29 @@ class PsycopgCanonicalStore:
         ).fetchall()
         return {str(row[0]): int(row[1]) for row in rows}
 
-    @staticmethod
     def _guard_deleted(
+        self,
+        connection: Any,
+        tenant_id: UUID,
+        source_kind: SourceKind,
         envelope: SourceEnvelope,
-        deleted_versions: dict[str, int],
     ) -> None:
-        """Refuse an upsert that would resurrect an already deleted entity.
+        """Refuse an upsert that would resurrect an already deleted entity for this tenant.
 
         An envelope with no ``source_updated_at`` has no orderable version, so
         it is treated as older than the tombstone rather than allowed through.
         """
-        recorded = deleted_versions.get(envelope.source_id)
+        row = connection.execute(
+            f"""
+            SELECT source_version
+            FROM {self._schema}.tombstones
+            WHERE tenant_id = %s AND entity_type = %s AND entity_id = %s
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+            (tenant_id, source_kind.value, envelope.source_id),
+        ).fetchone()
+        if row is None:
+            return
+        recorded = int(row[-1])
         if not suppresses_upsert(recorded, envelope_version(envelope)):
             return
         candidate = envelope_version(envelope)
@@ -393,7 +404,7 @@ class PsycopgCanonicalStore:
             with connection.transaction():
                 lineage = connection.execute(
                     f"""
-                    SELECT DISTINCT tenant_id, canonical_table, canonical_id
+                    SELECT DISTINCT tenant_id, canonical_table, canonical_id, source_version
                     FROM {self._schema}.canonical_lineage
                     WHERE source_kind = %s AND source_id = %s
                     """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -423,12 +434,26 @@ class PsycopgCanonicalStore:
                     for row in lineage
                     if UUID(str(row[0])) == tenant_id
                 )
+                applied_versions = [
+                    int(row[3])
+                    for row in lineage
+                    if UUID(str(row[0])) == tenant_id and len(row) > 3 and row[3] is not None
+                ]
+                latest_applied_version = max(applied_versions) if applied_versions else None
                 recorded = self._read_tombstone(
                     connection, tenant_id, scope, for_update=True
                 )
+                recorded_version = None if recorded is None else recorded.source_version
+
+                effective_recorded_version = recorded_version
+                if latest_applied_version is not None:
+                    if effective_recorded_version is None or latest_applied_version > effective_recorded_version:
+                        if event.source_version is not None and event.source_version < latest_applied_version:
+                            effective_recorded_version = latest_applied_version
+
                 decision = decide_delete(
                     requested_version=event.source_version,
-                    recorded_version=None if recorded is None else recorded.source_version,
+                    recorded_version=effective_recorded_version,
                     downstream_target_count=len(targets),
                 )
                 if not decision.records_tombstone:
@@ -444,6 +469,14 @@ class PsycopgCanonicalStore:
                         cursor = connection.execute(statement, params)
                         purged += max(int(getattr(cursor, "rowcount", 0) or 0), 0)
                     retained = plan.retained_targets
+                    connection.execute(
+                        f"""
+                        DELETE FROM {self._schema}.canonical_lineage
+                        WHERE tenant_id = %s AND source_kind = %s AND source_id = %s
+                          AND (source_version IS NULL OR source_version <= %s)
+                        """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+                        (tenant_id, scope.source_kind.value, scope.source_id, event.source_version),
+                    )
                 else:
                     retained = tuple(sorted({table for table, _ in targets}))
                 row = self._upsert_tombstone(
@@ -602,6 +635,7 @@ class PsycopgCanonicalStore:
     ) -> None:
         if source_kind is SourceKind.MERCHANT:
             projection = project_merchant(envelope, self._status_contract)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_merchant(connection, projection)
             self._lineage(
                 connection,
@@ -619,6 +653,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.PLACE:
             projection = project_place(envelope, lookup, self._status_contract)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_place(connection, projection)
             self._upsert_place_geography(connection, envelope, projection)
             if projection.address_id is not None:
@@ -638,6 +673,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.DEVICE:
             projection = project_device(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_device(connection, projection)
             self._lineage(
                 connection,
@@ -652,6 +688,7 @@ class PsycopgCanonicalStore:
             SourceKind.TRADE,
         }:
             projection = project_transaction(envelope, lookup, self._status_contract)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_transaction(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -662,6 +699,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.DEVICE_DAILY_STATISTICS:
             projection = project_daily_statistic(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_daily_statistic(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -672,6 +710,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.AI_REVENUE_STATS:
             projection = project_forecast_input(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_forecast_input(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -682,6 +721,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.AI_CONSUMER_KMEANS_V1:
             projection = project_learning_import(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_learning_import(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -692,6 +732,7 @@ class PsycopgCanonicalStore:
             )
         elif source_kind is SourceKind.DEVICE_LOG:
             projection = project_machine_status_event(envelope, lookup, self._status_contract)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_machine_status_event(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -707,6 +748,7 @@ class PsycopgCanonicalStore:
             SourceKind.PROMOTIONS,
         }:
             projection = project_domain_input(envelope, lookup)
+            self._guard_deleted(connection, projection.tenant_id, source_kind, envelope)
             self._upsert_domain_input(connection, envelope, projection)
             self._lineage(
                 connection,
@@ -1305,12 +1347,13 @@ class PsycopgCanonicalStore:
         canonical_table: str,
         canonical_id: UUID,
     ) -> None:
+        version = envelope_version(envelope)
         connection.execute(
             f"""
             INSERT INTO {self._schema}.canonical_lineage (
                 source_snapshot_id, source_kind, source_id, content_sha256,
-                run_id, tenant_id, canonical_table, canonical_id
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                run_id, tenant_id, canonical_table, canonical_id, source_version
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (source_snapshot_id, canonical_table, canonical_id)
             DO NOTHING
             """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
@@ -1323,6 +1366,7 @@ class PsycopgCanonicalStore:
                 tenant_id,
                 canonical_table,
                 canonical_id,
+                version,
             ),
         )
 
@@ -1425,7 +1469,8 @@ class PsycopgCanonicalStore:
                   ON lineage.tenant_id = tomb.tenant_id
                  AND lineage.source_kind = tomb.entity_type
                  AND lineage.source_id = tomb.entity_id
-                WHERE tomb.entity_type = %s AND lineage.projected_at > tomb.updated_at
+                WHERE tomb.entity_type = %s
+                  AND (lineage.source_version IS NULL OR lineage.source_version <= tomb.source_version)
                 """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
                 (source_kind.value,),
             ).fetchone()
