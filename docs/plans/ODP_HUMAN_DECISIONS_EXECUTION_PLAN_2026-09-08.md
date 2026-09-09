@@ -2,7 +2,7 @@
 
 - 文件日期：2026-09-08。
 - 編製者：Codex；決策來源：本對話使用者逐項回覆。
-- 文件狀態：工作規畫與決策轉錄，已依使用者授權提交獨立審查（task `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001`，PR 目標 `dev`，reviewer：Codex）。合併只代表本規畫文件通過文件審查；11 個工作包仍未匯入派工佇列，本文件也仍不是權威法務 receipt，不構成任何 exception、waiver 或人類簽署。
+- 文件狀態：工作規畫與決策轉錄，已依使用者授權提交獨立審查（task `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001`，PR #1247，merge `be04fe79`，approved head `c7d97358`，reviewer：Codex）。**2026-09-09 更新**：11 個工作包已由 `ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001`（WP-90）完成正式匯入與派工映射（見 §9 執行登錄表）；Stage A 準備任務已全數完成合併，Stage B 與 follow-up 實作任務已建立（部分依 H01–H08 處於 blocked/todo）。本文件仍不是權威法務 receipt，不構成任何 exception、waiver 或人類簽署；各項目未獲真實資料/runtime 前仍保留未完成實作與 live 邊界。
 - 編製時 canonical checkout：`9054479a776dce41e8a144c12032a85471a91f1b`。此為編製當下本機 canonical checkout 的 `dev` 指標，本輪實測**不存在於任何 remote branch**（`git branch -r --contains` 無結果），僅供追溯編製環境，不得當成 remote 可解析的證據引用。
 - 本文件實際提交基準（task base）：`00c0347383806e8aa6679ed78215b4ac31b1da57`，即本輪 `origin/dev` tip。執行時重新解析最新基準，不固定使用上述任一 SHA。
 - 適用範圍：OSS 使用政策、Google OIDC 關閉決策、六項原始需求的實作交付。
@@ -278,7 +278,7 @@ flowchart TD
 
 | 工作包 | Canonical task／PR 映射 | 正式 owner／reviewer | 當前階段／blocker | 驗收收據 |
 |---|---|---|---|---|
-| WP-00 | `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001` (PR #1247, merge `be04fe79`, head `00c03473`) | Codex / Codex | `done` (archived) | 本規畫文件 (`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md`) |
+| WP-00 | `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001` (PR #1247, merge `be04fe79`, head `c7d97358`) | Claude / Codex | `done` (archived) | 本規畫文件 (`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md`) |
 | WP-10 | `ODP-OSS-DECISION-PACK-001` (PR #1255, merge `b6b729d9`, head `21a5e783`) | Antigravity2 / Codex | Stage A `done` (archived)；Stage B 等 H01/H02 簽署 | `docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/` (SBOM `sbom.cdx.json`, `npm-audit-receipt.json`, 16 來源決策卡) |
 | WP-11 | `ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001` (PR #1279) | Antigravity2 / Codex | `review`；8 個第一方套件 `UNLICENSED` 與 NOTICE 落地；生效另等 H01 | PR #1279 head SHA & CI 收據 |
 | WP-20 | `ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001` (PR #1253, merge `0af51e04`, head `9fc7e2a8`) | Claude / Codex2 | `done` (archived)；`HUMAN-GCP-WEB-OAUTH-CLIENTS-001` 轉待命 | `docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/` (`auth-mode-evidence-matrix.json` 15 controls, `human-task-handoff.json`) |

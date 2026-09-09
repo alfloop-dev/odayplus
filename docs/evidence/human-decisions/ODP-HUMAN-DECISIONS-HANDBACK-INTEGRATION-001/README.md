@@ -6,7 +6,7 @@
 - **Owner**: `Antigravity`
 - **Reviewer**: `Codex2`
 - **Date**: `2026-09-09`
-- **Inspected Base HEAD SHA**: `c42b734ca81bcbbdf9a63321db81f6d3bfef3ea3`
+- **Inspected Base HEAD SHA**: `c42b734ca26e165eabc6f8244787bc46d192f0f9`
 - **Base References**:
   - [ODP 人工決策落地與 Supervisor／Auto Worker 執行規畫 2026-09-08](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) (`WP-00` / PR #1247)
   - [需求處置治理清單](../../../../delivery_toolchain/governance/set_valued_requirements.json)
@@ -184,7 +184,7 @@ flowchart TD
    - 更新 §4 需求成員登錄表，詳載 D16–D20 人工決策記錄、A 階段交付物與 Stage B 接續條件。
 3. **`docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md`**：
    - 第 19 項更新為 `OPEN`（D21 選定實作方向，A 階段量測已交付，B 階段等待 H08 參數選擇）。
-   - 第 10、11、12、15 項更新決策參照。
+   - 第 10（PARTIAL）、11（SITE-001）、12（NET-002）、15（INT-001）項新增 2026-09-08 / 2026-09-09 實作決策（D16–D20）與 Stage B / 跟進任務映射之更新備註，同時保留 2026-09-03 歷史評估與安全邊界。
 4. **`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md`**：
    - 完整填妥 §9 執行登錄表之所有 11 個工作包（`WP-00` 至 `WP-90`），綁定 canonical task ID、PR 編號、Approved HEAD SHA、Owner、Reviewer 與收據參照。
 
@@ -200,9 +200,6 @@ git diff --check
 
 # 2. 驗證集合型需求成員門禁與結構化處置（47 個成員全數通過）
 uv run python delivery_toolchain/governance/check_requirement_members.py
-
-# 3. 執行治理模組完整單元與回歸測試套件（68 passed）
-uv run pytest delivery_toolchain/governance/test_check_requirement_members.py
 ```
 
 ### 邊界與誠實宣告

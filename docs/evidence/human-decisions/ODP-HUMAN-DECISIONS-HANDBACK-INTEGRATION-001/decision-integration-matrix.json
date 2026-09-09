@@ -3,7 +3,7 @@
   "task_id": "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001",
   "generated_at": "2026-09-09T00:37:00Z",
   "integration_phase": "confirmed decisions implementation follow-up",
-  "base_ref": "c42b734ca81bcbbdf9a63321db81f6d3bfef3ea3",
+  "base_ref": "c42b734ca26e165eabc6f8244787bc46d192f0f9",
   "summary": "Full cross-mapping of 21 confirmed human decisions (D01-D21) to 8 Stage A completed packages, 3 human standby tasks, follow-up implementation tasks, and human input requests (H01-H08).",
   "decisions": [
     {
