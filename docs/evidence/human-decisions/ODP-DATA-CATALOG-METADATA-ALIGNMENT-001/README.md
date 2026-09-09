@@ -2,7 +2,7 @@
 
 - **Task ID**: `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`
 - **Work Package**: WP-34 Follow-up ([ODP 人工決策落地規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §6 WP-34; [ODP-CDC-SOURCE-CONTRACT-PREP-001 Implementation Handoff](../ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md) §4 跟進項目 3)
-- **實作交付 (Implementation by)**: Antigravity5（commit `adc8d96a`、`a038e308`）
+- **實作交付 (Implementation by)**: Antigravity5（commit `adc8d96a`、`a038e308`）；reviewer finding F1/P2 之修正由 Claude2 實作（commit `4579ab26`，見 §5）
 - **現任負責人 (Current Owner)**: Claude2 — 原 owner Antigravity5 於 2026-09-09T03:15:35Z 因 dispatch-paused 由 orchestrator 自動改派，Claude2 接手驗證與收尾送審，未重寫其實作
 - **審查人 (Reviewer)**: Codex2
 - **交付狀態**: `IMPLEMENTATION_COMPLETED`
@@ -30,7 +30,7 @@
   - `contact_channel: str = "unconfirmed"`：聯繫窗口（如 `slack:#data-ops` 或 `email:ops@example.com`），同時提供 `contact_ref` 與 `contact_reference` 別名屬性。
   - `runtime_capability: str = "unverified"`：機讀執行能力標記，列舉值涵蓋 `unverified`、`unconfirmed`、`verified`、`supported`、`batch_watermark_only`、`batch_only`、`streaming_supported`、`manual_attestation`、`simulated_only`、`unsupported`。
 - **嚴格校驗規則 (Validation Enforcement)**：
-  - `_validate_data_owner`：強拒絕空白字元假 owner（如 `"   "`）或非字串型別，拋出 `ContractError`。
+  - `_validate_data_owner`：僅「欄位省略」或「明確 `null`」採用 `"unconfirmed"` 預設；任何 present-but-blank 值（空字串 `""`、`"   "`、`"\t\n "`）與非字串型別一律拋出 `ContractError`。空字串一度被吞成 `unconfirmed`，該缺陷與其修正記於 §5。
   - `_validate_target_latency_sla`：以正規表達式校驗延遲規格，要求 ISO duration 必須具備至少一個合法數值單位（強拒絕空 duration `P`、`PT`、`P1`、`PT1`、負數時長 `-5s`、空白字串或無效關鍵字 `asap`、`fast`），拋出 `ContractError`。
   - `_validate_contact_channel`：強拒絕空白字元或非字串型別。
   - `_validate_runtime_capability`：僅允許預定義 `RUNTIME_CAPABILITIES` 詞彙。
@@ -64,7 +64,7 @@
   1. 所有註冊契約均具備中繼資料欄位與合法型別。
   2. 缺欄向後相容性與預設值正確性。
   3. 未確認 (`unconfirmed`/`unknown`/`unspecified`) 與已確認值的判別屬性測試。
-  4. 空白假 owner (`"   "`) 與非字串型別之拒絕測試。
+  4. 空白假 owner（空字串 `""`、`"   "`、`"\t\n "`）與非字串型別之拒絕測試；另有正例測試確保「省略欄位」與「明確 `null`」仍為 `unconfirmed`、具名 owner 仍為 confirmed。
   5. 非法延遲值（`P`、`PT`、`P1`、`PT1`、`-5s`、`asap`、`fast`、`12345`、空白字元）之拒絕測試與合法延遲格式（含完整 ISO 時長如 `PT1H30M`, `P1DT12H`）接受測試。
   6. 空白 ISO duration (`P`, `PT`) 拒絕回歸測試。
   7. 空白聯繫窗口之拒絕與別名 (`contact_ref`) 支援測試。
@@ -80,7 +80,7 @@
 | 驗收條款 | 達成方式與驗證結果 |
 |---|---|
 | **1. 接續 CDC handoff §4 metadata 缺口，在現有 SourceContract/loader 增加向後相容欄位，舊契約缺欄以明確 unknown/unconfirmed 表示** | `SourceContract` 擴充 `data_owner`, `target_latency_sla`, `contact_channel` (及別名 `contact_ref`)，缺欄預設為 `"unconfirmed"`，通過 `test_all_registered_contracts_have_catalog_metadata` 與 `test_backward_compatibility_omitted_metadata`。 |
-| **2. 不猜測姓名、SLA、來源授權或連線方式；補驗證拒絕非法延遲值、空白假 owner，保留 unknown 與已確認的區別，對既有契約可正常載入** | 實作 `_validate_data_owner` 與 `_validate_target_latency_sla`，拒絕空白字串、非法格式與空 ISO 時長（`P`/`PT`）；既有契約與 fixture 正常載入，通過 `test_validation_rejects_blank_fake_owner`、`test_validation_rejects_illegal_latency_sla` 與 `test_validation_rejects_empty_iso_duration`。 |
+| **2. 不猜測姓名、SLA、來源授權或連線方式；補驗證拒絕非法延遲值、空白假 owner，保留 unknown 與已確認的區別，對既有契約可正常載入** | 實作 `_validate_data_owner` 與 `_validate_target_latency_sla`，拒絕空白字串、非法格式與空 ISO 時長（`P`/`PT`）；既有契約與 fixture 正常載入，通過 `test_validation_rejects_blank_fake_owner`、`test_omitted_or_null_owner_stays_unconfirmed`、`test_validation_rejects_illegal_latency_sla` 與 `test_validation_rejects_empty_iso_duration`。**此條在 head `99ab7ec7` 之前並未真正成立**：`data_owner=""` 會被吞成 `unconfirmed`，僅 `"   "` 被拒。commit `4579ab26` 修正後才符合驗收，詳見 §5。 |
 | **3. 同時在可機讀欄位區分宣告的 integration_mode 與尚未驗證的 runtime capability，不能把 machine_status_event 宣告的 event_stream 當成現有批次路徑已支援 streaming；不把原 requirement 改為不做 CDC** | `machine_status_event` 維持 `integration_mode="event_stream"`，同時標註 `runtime_capability="batch_watermark_only"`；`has_streaming_runtime` 與 `runtime_matches_declared_mode` 斷言為 `False`，明確 capability × mode 對應通過 `test_machine_status_event_decoupling_event_stream_vs_batch_runtime` 與 `test_runtime_matches_declared_mode_matrix`。 |
 | **4. 因會寫 source_contracts/index，等 store-opening schema 任務合併後接續** | 確認已以最新 `dev`（含 `ODP-SCHEMA-STORE-OPENING-AUTHORITY-001`）為基準，`store_opening_authority_snapshot` 完整保留並附帶 catalog 中繼資料。 |
 | **5. 沿最新 dev 乾淨 task worktree 與既有流程交付** | 使用 `task_start.sh`、`worker_commit.py`、`task_finalize.sh` 進行交付。 |
@@ -97,9 +97,25 @@
 1. `git diff --check`
 2. `uv run pytest tests/contract/test_source_contract_metadata.py tests/contract/test_ingestion_contracts.py -q`
 
-### 執行收據：
+### 4.1 執行收據（修正後最新程式 head）
 
-量測 head SHA：`a038e30854dcc0b98c6744e8090856158b6de761`（本收據所綁定之 exact head）
+量測 head SHA：`4579ab260c5bd0e11714cafaa0099cd45042d324`（§5 修正 commit；本收據所綁定之 exact head）
+
+以 `python3 delivery_toolchain/git/task_verification.py run --task-id ODP-DATA-CATALOG-METADATA-ALIGNMENT-001` 執行兩條宣告指令，收據落在 `.orchestrator/evidence/`（該目錄不在本 repo 追蹤範圍內）：
+
+| 指令 | Exit code | Duration | 收據 ID |
+|---|---|---|---|
+| `git diff --check` | 0 | 0.021s | `0266c84da54c6218` |
+| `uv run pytest tests/contract/test_source_contract_metadata.py tests/contract/test_ingestion_contracts.py -q` | 0 | 9.687s | `d029f016dd12b0ab` |
+
+- 兩筆皆為 `run_kind=baseline`、`attempt=1`、`signal=None`、`timed_out=false`，非重跑，故無 retry reason。
+- pytest 收據的 `output_tail` 為 166 個 `.`（72 + 72 + 22），對應 §5 新增 1 個測試函式後由 165 增為 166。與先前一致，`addopts = "-q"` 疊加宣告指令的 `-q` 成 `-qq`，故無 `N passed in Xs` 摘要行；通過判定依據為收據記載之 **exit code 0**。
+- `duration_seconds` 為 task_verification 量測之牆鐘時間，包含 `uv` 解析環境的開銷，不等同純測試執行時間。
+- 本文件之後不再有程式或測試變更；記錄本節的 evidence-only commit 會產生新的 head，該 head 於送審前依同一 selection 重跑 task_verification，其 exit code 以 `.orchestrator/evidence/` 之收據為準。
+
+### 4.2 執行收據（修正前 head，保留為歷史）
+
+量測 head SHA：`a038e30854dcc0b98c6744e8090856158b6de761`（此收據綁定之 exact head；**早於** §5 的缺陷修正）
 
 | 指令 | Exit code | 結果 |
 |---|---|---|
@@ -128,3 +144,49 @@ uv run --frozen pytest tests/integration/test_int001_cdc_disposition.py \
 
 - Exit code 0，`234 passed in 77.69s`。
 - 範圍聲明：以上皆為離線契約／單元／架構測試，使用 repo 既有 fixture 與合成資料。**不代表**真實上游資料已提供、CDC 串流已建置，或任何 live 執行能力已驗證；`machine_status_event` 的 `runtime_capability` 仍如實記為 `batch_watermark_only`。
+- 這份補充回歸是在 head `a038e308` 量的，**早於** §5 的修正，未在 `4579ab26` 重跑。就此次修正而言其涵蓋性未受影響：`4579ab26` 只讓 `data_owner` 的 present-but-blank 值由「被吞成 unconfirmed」改為 `ContractError`，而 repo 內沒有任何契約或 fixture 宣告空字串 `data_owner`（見 §5 掃描結果），故上述 selection 的載入路徑不變。
+
+---
+
+## 5. Reviewer Finding F1/P2：空字串 data_owner 被吞成 unconfirmed（已修正）
+
+### 5.1 缺陷
+
+`modules/integration/domain/contracts.py::_validate_data_owner` 原本以
+
+```python
+if raw is None or raw == "":
+    return UNCONFIRMED_METADATA
+```
+
+同時處理「欄位不存在」與「欄位存在但為空字串」。後者是 present-but-blank——契約明確寫了 `"data_owner": ""`——卻被讀回成 `"unconfirmed"`，抹掉本任務要保護的「未確認 vs. 假填」區別。只有 `"   "` 這種純空白會落到既有的 stripped 空值拒絕。
+
+head `99ab7ec7` 的文件修訂記錄了此 finding，但沒有改到程式；§3 驗收條款 2 因此在該 head 上並不成立。
+
+### 5.2 修正前的複驗（head `99ab7ec7`，純合成 contract dict，未觸及任何外部來源）
+
+| 輸入 | 結果 |
+|---|---|
+| 省略 `data_owner` | accepted，`unconfirmed`，`is_data_owner_confirmed=False` |
+| `null` | accepted，`unconfirmed`，`is_data_owner_confirmed=False` |
+| `""`（空字串） | **accepted，`unconfirmed`** ← 缺陷 |
+| `"   "` | rejected，`ContractError` |
+| `"unconfirmed"` | accepted，`unconfirmed`，`is_data_owner_confirmed=False` |
+| `"Store Operations Team"` | accepted，`is_data_owner_confirmed=True` |
+
+### 5.3 修正（commit `4579ab26`）
+
+- 移除 `raw == ""` 的 default 分支：只有 `raw is None`（欄位省略或明確 null）採用 `unconfirmed` 預設，空字串落入既有 `stripped` 空值拒絕。
+- 錯誤訊息改為指名 blank 情況並說明兩種合法的「尚無 owner」表示法（省略欄位或 `null`），仍保留 `fake blank owner` 字樣。
+- `tests/contract/test_source_contract_metadata.py::test_validation_rejects_blank_fake_owner` 新增 `""` 與 `"\t\n "` 回歸；新增 `test_omitted_or_null_owner_stays_unconfirmed` 保留 omitted／null 正例與具名 owner 的 confirmed 判定。
+- `packages/schemas/source_contracts/README.md` 原文只寫「Empty whitespace fake owners are rejected」，低估了規則範圍，改為明述僅省略或 `null` 走 unconfirmed 預設。
+
+修正後同一組合成輸入：`""` 由 accepted 轉為 rejected（`ContractError`），其餘五列不變。
+
+### 5.4 相容性
+
+`grep` 全 repo（排除 `.git/`、`.orchestrator/`）後，宣告 `data_owner` 的只有 `packages/schemas/source_contracts/` 下 16 個契約與 `index.json`，值皆為 `"unconfirmed"`，無任何空字串；其餘命中的 `data_owner` 是 API 測試的 `x-roles` 角色名稱，與本 loader 無關。故 16 個註冊契約載入行為不變，`test_all_registered_contracts_have_catalog_metadata` 續為綠。
+
+### 5.5 未一併修改的相鄰處（明確聲明）
+
+`_validate_target_latency_sla` 與 `_validate_contact_channel` 有相同的 `raw == ""` default 分支，本次**未**更動：finding 與本任務驗收條款只針對 `data_owner`，而改動 SLA／contact 的解析語意會動到 reviewer 已審過的行為。若要一併收斂，應以獨立 task 處理。
