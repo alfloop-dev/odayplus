@@ -272,7 +272,14 @@ class ODayWorker:
 
                     # Retry behavior
                     is_retryable = not isinstance(exc, NonRetryableJobError)
-                    payload = dict(job.payload)
+                    payload = (
+                        dict(latest_job.payload)
+                        if latest_job is not None and isinstance(latest_job.payload, dict)
+                        else dict(job.payload)
+                    )
+                    expected_ver = (
+                        latest_job.version if latest_job is not None else current_version
+                    )
                     retries = payload.get("_retry_count", 0)
                     if is_retryable and retries < 3:
                         payload["_retry_count"] = retries + 1
@@ -289,7 +296,7 @@ class ODayWorker:
                                 if target_status == JobStatus.QUEUED
                                 else JobDeliveryState.DEAD_LETTER
                             ),
-                            expected_version=current_version,
+                            expected_version=expected_ver,
                             fence_token=job.fence_token,
                             error_message=str(exc),
                         )

@@ -18,16 +18,11 @@ from shared.jobs.queue import (
     DELIVERY_SETTLED_JOB_STATUSES,
     NON_EXECUTABLE_RECEIPT_JOB_TYPE_SUFFIXES,
     JobDeliveryState,
+    JobFenceRejectedError,
     JobRecord,
     JobRequest,
     JobStatus,
 )
-
-
-class JobFenceRejectedError(ValueError):
-    """Raised when a job write/checkpoint fails due to stale fence_token or version."""
-
-    pass
 
 
 _LEGACY_RETRYING_STATUS_VALUES = (JobDeliveryState.RETRYING.value, "RETRYING")
@@ -425,7 +420,7 @@ class DurableJobQueue:
                     if curr_row and curr_row["payload_json"]:
                         try:
                             curr_p = json.loads(curr_row["payload_json"])
-                            if isinstance(curr_p, dict) and "receipt" in curr_p:
+                            if isinstance(curr_p, dict):
                                 resolved_payload = settle_cancelled_batch_receipt(curr_p)
                         except Exception:
                             pass

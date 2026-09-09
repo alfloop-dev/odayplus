@@ -40,6 +40,12 @@ class NonRetryableJobError(RuntimeError):
     pass
 
 
+class JobFenceRejectedError(ValueError):
+    """Raised when a job status update or heartbeat is rejected due to version or fence token mismatch."""
+
+    pass
+
+
 JOB_FEATURE_FLAG_MAP: dict[str, str] = {
     "priceops.execute": "high_risk.priceops.execute",
     "priceops_job": "high_risk.priceops.execute",
@@ -383,11 +389,11 @@ class InMemoryJobQueue:
                 raise ValueError(f"Job {job_id} not found")
             record = self._jobs[job_id]
             if expected_version is not None and record.version != expected_version:
-                raise ValueError(
+                raise JobFenceRejectedError(
                     f"Job version mismatch: expected {expected_version}, got {record.version}"
                 )
             if fence_token is not None and record.fence_token != fence_token:
-                raise ValueError(
+                raise JobFenceRejectedError(
                     f"Job fence token mismatch: expected {fence_token}, got {record.fence_token}"
                 )
 
@@ -432,7 +438,7 @@ class InMemoryJobQueue:
                 or record.version != expected_version
                 or record.fence_token != fence_token
             ):
-                raise ValueError("Fence/version mismatch")
+                raise JobFenceRejectedError("Fence/version mismatch")
             new_version = expected_version + 1
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,
@@ -458,6 +464,7 @@ __all__ = [
     "DELIVERY_SETTLED_JOB_STATUSES",
     "InMemoryJobQueue",
     "JobDeliveryState",
+    "JobFenceRejectedError",
     "JobRecord",
     "JobRequest",
     "JobStatus",

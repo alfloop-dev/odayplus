@@ -55,7 +55,11 @@ class AssistedIntakeRepository(Protocol):
 
     def list_intakes(self) -> list[dict[str, Any]]: ...
 
+    def get_intake(self, intake_id: str) -> dict[str, Any] | None: ...
+
     def save_intake(self, intake: dict[str, Any]) -> None: ...
+
+    def create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]: ...
 
     def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]: ...
 
@@ -95,8 +99,25 @@ class InMemoryAssistedIntakeRepository:
     def list_intakes(self) -> list[dict[str, Any]]:
         return [copy.deepcopy(item) for item in self.intakes.values()]
 
+    def get_intake(self, intake_id: str) -> dict[str, Any] | None:
+        item = self.intakes.get(intake_id)
+        return copy.deepcopy(item) if item is not None else None
+
     def save_intake(self, intake: dict[str, Any]) -> None:
+        existing = self.intakes.get(intake["id"])
+        if existing is not None:
+            incoming_actions = [e.get("action") for e in intake.get("auditEvents", [])]
+            if incoming_actions == ["intake.batch_assisted_entry"]:
+                return
+            if len(existing.get("auditEvents", [])) > len(intake.get("auditEvents", [])):
+                return
         self.intakes[intake["id"]] = copy.deepcopy(intake)
+
+    def create_intake_if_absent(self, intake: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        if intake["id"] in self.intakes:
+            return copy.deepcopy(self.intakes[intake["id"]]), False
+        self.intakes[intake["id"]] = copy.deepcopy(intake)
+        return copy.deepcopy(intake), True
 
     def list_idempotency_records(self) -> list[IntakeIdempotencyRecord]:
         return list(self.idempotency.values())
@@ -804,17 +825,16 @@ class NetworkListingService:
             IntakeIdempotencyRecord(action=action, key=key, response=_copy(response))
         )
 
-    def _save_intake(self, intake: dict[str, Any]) -> None:
+    def _save_intake_to_state(self, intake: dict[str, Any]) -> None:
         self._state.setdefault("assistedIntakes", [])
-        found = False
         for idx, item in enumerate(self._state["assistedIntakes"]):
             if item["id"] == intake["id"]:
                 self._state["assistedIntakes"][idx] = intake
-                found = True
-                break
-        if not found:
-            self._state["assistedIntakes"].append(intake)
+                return
+        self._state["assistedIntakes"].append(intake)
 
+    def _save_intake(self, intake: dict[str, Any]) -> None:
+        self._save_intake_to_state(intake)
         self._intakes.save_intake(intake)
 
     def reset(self) -> dict[str, Any]:
@@ -1597,6 +1617,8 @@ class NetworkListingService:
             existing = self._listing_intake(intake_id)
         except NetworkListingNotFound:
             existing = None
+        if existing is None and hasattr(self._intakes, "get_intake"):
+            existing = self._intakes.get_intake(intake_id)
 
         if existing is not None and str(existing.get("tenantId") or "") != tenant_id:
             # Defence in depth: the id is already tenant-derived, so reaching

@@ -295,50 +295,87 @@ def settle_cancelled_batch_receipt(
     *,
     completed_at: str | None = None,
 ) -> dict[str, Any]:
-    """If payload contains a batch receipt, settle any unresolved PENDING items to CANCELLED."""
+    """If payload contains a batch receipt or batch items, settle any unresolved/unstarted items to CANCELLED."""
     if not isinstance(payload, dict):
         return payload
     receipt = payload.get("receipt")
-    if not isinstance(receipt, dict) or "items" not in receipt:
+    has_receipt = isinstance(receipt, dict) and "items" in receipt
+    raw_payload_items = payload.get("items") or payload.get("rows")
+    if not has_receipt and not isinstance(raw_payload_items, list):
         return payload
 
     from datetime import UTC, datetime
 
     completed_iso = completed_at or datetime.now(UTC).isoformat()
-    raw_items = receipt.get("items", [])
-    updated_items: list[dict[str, Any]] = []
-    for it in raw_items:
-        rec = it if isinstance(it, ItemReceipt) else ItemReceipt.from_dict(it)
-        if rec.item_status == ItemStatus.PENDING.value:
-            started = rec.attempt >= 1
+    if has_receipt:
+        raw_items = receipt.get("items", [])
+        updated_items: list[dict[str, Any]] = []
+        for it in raw_items:
+            rec = it if isinstance(it, ItemReceipt) else ItemReceipt.from_dict(it)
+            if rec.item_status == ItemStatus.PENDING.value:
+                started = rec.attempt >= 1
+                cancelled_rec = ItemReceipt(
+                    item_id=rec.item_id,
+                    item_status=ItemStatus.CANCELLED.value,
+                    attempt=rec.attempt,
+                    result_ref=None,
+                    error=ItemError(
+                        code="CANCELLED_MID_EXECUTION" if started else "CANCELLED_BEFORE_EXECUTION",
+                        message=(
+                            "Job cancelled after the item attempt started"
+                            if started
+                            else "Job cancelled before item execution started"
+                        ),
+                        retryable=True,
+                        details={"cancellation_reason": "OPERATOR_ABORT"},
+                    ),
+                    idempotency_key=rec.idempotency_key,
+                    last_attempt_at=rec.last_attempt_at,
+                )
+                updated_items.append(cancelled_rec.to_dict())
+            else:
+                updated_items.append(rec.to_dict() if isinstance(rec, ItemReceipt) else dict(it))
+
+        _, summary = derive_batch_status_and_summary(updated_items)
+        receipt_dict = dict(receipt)
+        receipt_dict["status"] = JobStatus.CANCELLED.value.upper()
+        receipt_dict["completed_at"] = completed_iso
+        receipt_dict["items"] = updated_items
+        receipt_dict["summary"] = summary.to_dict()
+    else:
+        updated_items = []
+        for idx, raw_it in enumerate(raw_payload_items):
+            item_id = str(raw_it.get("item_id") or f"row-{idx+1:03d}").strip()
             cancelled_rec = ItemReceipt(
-                item_id=rec.item_id,
+                item_id=item_id,
                 item_status=ItemStatus.CANCELLED.value,
-                attempt=rec.attempt,
+                attempt=0,
                 result_ref=None,
                 error=ItemError(
-                    code="CANCELLED_MID_EXECUTION" if started else "CANCELLED_BEFORE_EXECUTION",
-                    message=(
-                        "Job cancelled after the item attempt started"
-                        if started
-                        else "Job cancelled before item execution started"
-                    ),
+                    code="CANCELLED_BEFORE_EXECUTION",
+                    message="Job cancelled before item execution started",
                     retryable=True,
                     details={"cancellation_reason": "OPERATOR_ABORT"},
                 ),
-                idempotency_key=rec.idempotency_key,
-                last_attempt_at=rec.last_attempt_at,
+                idempotency_key=raw_it.get("idempotency_key"),
+                last_attempt_at=None,
             )
             updated_items.append(cancelled_rec.to_dict())
-        else:
-            updated_items.append(rec.to_dict() if isinstance(rec, ItemReceipt) else dict(it))
 
-    _, summary = derive_batch_status_and_summary(updated_items)
-    receipt_dict = dict(receipt)
-    receipt_dict["status"] = JobStatus.CANCELLED.value.upper()
-    receipt_dict["completed_at"] = completed_iso
-    receipt_dict["items"] = updated_items
-    receipt_dict["summary"] = summary.to_dict()
+        _, summary = derive_batch_status_and_summary(updated_items)
+        created_at_str = payload.get("created_at") or completed_iso
+        receipt_dict = {
+            "job_id": payload.get("job_id"),
+            "tenant_id": payload.get("tenant_id"),
+            "status": JobStatus.CANCELLED.value.upper(),
+            "items": updated_items,
+            "summary": summary.to_dict(),
+            "created_at": created_at_str,
+            "started_at": payload.get("started_at"),
+            "completed_at": completed_iso,
+            "correlation_id": payload.get("correlation_id"),
+            "idempotency_key": payload.get("idempotency_key"),
+        }
 
     new_payload = dict(payload)
     new_payload["receipt"] = receipt_dict

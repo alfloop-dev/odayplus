@@ -898,53 +898,66 @@ def test_5_duplicate_delivery_and_out_of_order(db_path: str) -> None:
         assert created2 is False
         assert rec2.job_id == rec1.job_id
 
-        # 5.1 & 5.3 & 5.4: Message level replay & stale result fencing
-        # Initialize items
-        items: list[ItemReceipt] = [
-            ItemReceipt(
-                item_id="item-X",
-                item_status=ItemStatus.SUCCEEDED.value,
-                attempt=2,
-                result_ref="intake-X2",
-                last_attempt_at="2026-09-08T16:15:00Z",
-            ),
-            ItemReceipt(
-                item_id="item-Y",
-                item_status=ItemStatus.SUCCEEDED.value,
-                attempt=2,
-                result_ref="intake-Y2",
-                last_attempt_at="2026-09-08T16:15:00Z",
-            ),
-            ItemReceipt(
-                item_id="item-Z",
-                item_status=ItemStatus.CANCELLED.value,
-                attempt=0,
-                error=ItemError(
-                    code="CANCELLED_BEFORE_EXECUTION",
-                    message="Job cancelled before execution",
-                    retryable=True,
-                ),
-                last_attempt_at=None,
-            ),
-        ]
+        # Run attempt 1 where X succeeds, Y fails (retryable), Z fails (retryable)
+        calls_by_item: dict[str, int] = {}
+        original_executor = _default_batch_listing_item_executor
 
-        # 5.1: Duplicate delivery of same attempt (item-X, attempt=2)
+        def executor_pass1(raw_item, *args, **kwargs):
+            iid = raw_item.get("item_id")
+            calls_by_item[iid] = calls_by_item.get(iid, 0) + 1
+            if iid in ("item-Y", "item-Z"):
+                return None, ItemError(
+                    code="GEOCODING_UPSTREAM_TIMEOUT",
+                    message="Timeout on attempt 1",
+                    retryable=True,
+                )
+            return original_executor(raw_item, *args, **kwargs)
+
+        with patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=executor_pass1,
+        ):
+            worker = ODayWorker(
+                persistence=bundle,
+                registry=build_default_registry(),
+                heartbeat_interval_seconds=60.0,
+            )
+            assert worker.run_once() is True
+
+        job_p1 = bundle.job_queue.get(rec1.job_id)
+        assert job_p1.status == JobStatus.PARTIAL
+        receipt_p1 = DurableJobReceipt.from_dict(job_p1.payload["receipt"])
+        assert receipt_p1.summary.succeeded_count == 1
+        assert receipt_p1.summary.failed_count == 2
+        assert calls_by_item == {"item-X": 1, "item-Y": 1, "item-Z": 1}
+
+        # 5.1 & 5.3 & 5.4: Message level replay & stale result fencing on durable receipts
+        persisted_items = list(receipt_p1.items)
+
+        # 5.1: Duplicate delivery of same attempt (item-X, attempt=1)
         duplicate_msg = ItemReceipt(
             item_id="item-X",
             item_status=ItemStatus.SUCCEEDED.value,
-            attempt=2,
-            result_ref="intake-X2",
+            attempt=1,
+            result_ref=persisted_items[0].result_ref,
             last_attempt_at="2026-09-08T16:20:00Z",  # later timestamp
         )
-        items, applied = apply_item_result(items, duplicate_msg)
+        items_after_dup, applied = apply_item_result(persisted_items, duplicate_msg)
         assert applied is False
-        # attempt unchanged, timestamp unchanged
-        item_x = next(it for it in items if it.item_id == "item-X")
-        assert item_x.attempt == 2
-        assert item_x.last_attempt_at == "2026-09-08T16:15:00Z"
+        item_x = next(it for it in items_after_dup if it.item_id == "item-X")
+        assert item_x.attempt == 1
+        assert item_x.last_attempt_at == persisted_items[0].last_attempt_at
 
-        # 5.3: Out-of-order stale result (attempt=1 failure arriving for item-Y when attempt=2 already SUCCEEDED)
-        stale_msg = ItemReceipt(
+        # 5.3: Out-of-order stale result: suppose item-Y had attempt=2 SUCCEEDED
+        item_y_v2 = ItemReceipt(
+            item_id="item-Y",
+            item_status=ItemStatus.SUCCEEDED.value,
+            attempt=2,
+            result_ref="intake-Y2",
+            last_attempt_at="2026-09-08T16:15:00Z",
+        )
+        items_with_y2, _ = apply_item_result(persisted_items, item_y_v2)
+        stale_y1 = ItemReceipt(
             item_id="item-Y",
             item_status=ItemStatus.FAILED.value,
             attempt=1,
@@ -956,75 +969,100 @@ def test_5_duplicate_delivery_and_out_of_order(db_path: str) -> None:
             ),
             last_attempt_at="2026-09-08T16:10:00Z",
         )
-        items, applied = apply_item_result(items, stale_msg)
+        items_after_stale, applied = apply_item_result(items_with_y2, stale_y1)
         assert applied is False
-        item_y = next(it for it in items if it.item_id == "item-Y")
-        # Must NOT roll back to FAILED, must NOT null out result_ref, must NOT populate error
+        item_y = next(it for it in items_after_stale if it.item_id == "item-Y")
         assert item_y.item_status == ItemStatus.SUCCEEDED.value
         assert item_y.result_ref == "intake-Y2"
         assert item_y.error is None
         assert item_y.attempt == 2
 
         # 5.4: Stale result for cancelled unstarted item-Z (attempt=0)
-        stale_cancel_res = ItemReceipt(
+        items_with_z0 = [
+            it
+            if it.item_id != "item-Z"
+            else ItemReceipt(
+                item_id="item-Z",
+                item_status=ItemStatus.CANCELLED.value,
+                attempt=0,
+                error=ItemError(
+                    code="CANCELLED_BEFORE_EXECUTION",
+                    message="Job cancelled before execution",
+                    retryable=True,
+                ),
+                last_attempt_at=None,
+            )
+            for it in items_after_stale
+        ]
+        stale_z1 = ItemReceipt(
             item_id="item-Z",
             item_status=ItemStatus.SUCCEEDED.value,
             attempt=1,
             result_ref="intake-Z1",
         )
-        items, applied = apply_item_result(items, stale_cancel_res)
+        items_after_z1, applied = apply_item_result(items_with_z0, stale_z1)
         assert applied is False
-        item_z = next(it for it in items if it.item_id == "item-Z")
+        item_z = next(it for it in items_after_z1 if it.item_id == "item-Z")
         assert item_z.item_status == ItemStatus.CANCELLED.value
         assert item_z.attempt == 0
 
         # 5.5: Pure-function aggregate derivation and consistency
-        status_before, summary_before = derive_batch_status_and_summary(items)
-        assert status_before == JobStatus.CANCELLED  # item-Z is cancelled
+        status_before, summary_before = derive_batch_status_and_summary(items_after_z1)
+        assert status_before == JobStatus.CANCELLED
         assert summary_before.total_count == 3
         assert summary_before.succeeded_count == 2
         assert summary_before.failed_count == 0
         assert summary_before.cancelled_count == 1
 
         # Reordering items does not alter summary or aggregate status
-        reversed_items = list(reversed(items))
+        reversed_items = list(reversed(items_after_z1))
         status_after, summary_after = derive_batch_status_and_summary(reversed_items)
         assert status_after == status_before
         assert summary_after == summary_before
 
-        # Durable Worker End-to-End Integration Verification for Test 5
-        # Run real batch job and verify business write counts and durable DB reload
-        calls_by_item: dict[str, int] = {}
-        original_executor = _default_batch_listing_item_executor
+        # Now execute retry pass for real on the durable job
+        # Submit FAILED_ONLY retry request
+        app = create_app(job_queue=bundle.job_queue, audit_log=bundle.audit_log, persistence=bundle)
+        client = TestClient(app)
+        retry_resp = client.post(
+            f"/jobs/{rec1.job_id}/retries",
+            json={"retry_scope": "FAILED_ONLY"},
+            headers=_auth_headers(tenant_id),
+        )
+        assert retry_resp.status_code == 202
 
-        def spy_executor(raw_item, *args, **kwargs):
+        # Re-execute FAILED_ONLY on the job: item-Y and item-Z succeed
+        def executor_pass2(raw_item, *args, **kwargs):
             iid = raw_item.get("item_id")
             calls_by_item[iid] = calls_by_item.get(iid, 0) + 1
             return original_executor(raw_item, *args, **kwargs)
 
         with patch(
             "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
-            side_effect=spy_executor,
+            side_effect=executor_pass2,
         ):
-            worker = ODayWorker(
-                persistence=bundle,
-                registry=build_default_registry(),
-                heartbeat_interval_seconds=60.0,
-            )
             assert worker.run_once() is True
-        assert calls_by_item.get("item-X") == 1
-        assert calls_by_item.get("item-Y") == 1
-        assert calls_by_item.get("item-Z") == 1
 
-        # Reload DB to verify persisted state
+        job_p2 = bundle.job_queue.get(rec1.job_id)
+        assert job_p2.status == JobStatus.SUCCEEDED
+        receipt_p2 = DurableJobReceipt.from_dict(job_p2.payload["receipt"])
+        assert receipt_p2.summary.succeeded_count == 3
+        # item-X was not re-executed during pass 2
+        assert calls_by_item["item-X"] == 1
+        assert calls_by_item["item-Y"] == 2
+        assert calls_by_item["item-Z"] == 2
+
+        # Reload DB to verify persisted state matches pure function derivation
         bundle.engine.close()
         reloaded_bundle = _durable_bundle(db_path)
         persisted_job = reloaded_bundle.job_queue.get(rec1.job_id)
         assert persisted_job is not None
         assert persisted_job.status == JobStatus.SUCCEEDED
         reloaded_receipt = DurableJobReceipt.from_dict(persisted_job.payload["receipt"])
-        assert reloaded_receipt.summary.succeeded_count == 3
-        assert len(reloaded_receipt.items) == 3
+        derived_status, derived_summary = derive_batch_status_and_summary(reloaded_receipt.items)
+        assert persisted_job.status == derived_status
+        assert reloaded_receipt.summary.to_dict() == derived_summary.to_dict()
+        assert len(reloaded_bundle.operator_intake_repository.list_intakes()) == 3
         reloaded_bundle.engine.close()
 
     finally:
@@ -1688,3 +1726,230 @@ def test_review_finding_5_crash_replay_preserves_operator_corrections(db_path: s
         restarted.engine.close()
     finally:
         pass
+
+
+def test_review_finding_r1_checkpoint_failure_preserves_receipt(db_path: str) -> None:
+    """R1: Checkpoint storage failure triggers queue retry with latest persisted receipt preserved."""
+    bundle = _durable_bundle(db_path)
+    queue = bundle.job_queue
+    job, _ = queue.enqueue(
+        JobRequest(
+            job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+            payload={
+                "tenant_id": "review-synthetic",
+                "items": [
+                    {"item_id": "a", "address_raw": "台北市大安區1號"},
+                    {"item_id": "b", "address_raw": "台北市大安區2號"},
+                ],
+            },
+        ),
+        correlation_id="review-checkpoint-failure",
+    )
+    original_update = queue.update_status
+    calls: list[str] = []
+    checkpoints_before_failure: list[dict[str, Any]] = []
+    failed = False
+
+    def update(job_id, status, *args, **kwargs):
+        nonlocal failed
+        receipt = (kwargs.get("payload") or {}).get("receipt") or {}
+        rows = receipt.get("items", [])
+        if (
+            not failed
+            and status == JobStatus.RUNNING
+            and any(r["item_id"] == "b" and r["item_status"] == "SUCCEEDED" for r in rows)
+        ):
+            failed = True
+            checkpoints_before_failure.append(queue.get(job_id).payload["receipt"])
+            raise OSError("synthetic transient checkpoint write failure")
+        return original_update(job_id, status, *args, **kwargs)
+
+    def executor(item, *args, **kwargs):
+        calls.append(item["item_id"])
+        return _default_batch_listing_item_executor(item, *args, **kwargs)
+
+    with patch.object(queue, "update_status", side_effect=update), patch(
+        "apps.worker.oday_worker.handlers._default_batch_listing_item_executor", side_effect=executor
+    ):
+        assert ODayWorker(persistence=bundle, heartbeat_interval_seconds=60.0).run_once()
+
+    after_retry_queue = queue.get(job.job_id)
+    assert checkpoints_before_failure[0]["items"][0]["item_status"] == "SUCCEEDED"
+    assert after_retry_queue.status == JobStatus.QUEUED
+    assert after_retry_queue.payload.get("receipt") is not None
+    assert after_retry_queue.payload["receipt"]["items"][0]["item_status"] == "SUCCEEDED"
+    assert after_retry_queue.payload["_retry_count"] == 1
+    bundle.engine.close()
+
+    restarted = _durable_bundle(db_path)
+    with patch(
+        "apps.worker.oday_worker.handlers._default_batch_listing_item_executor", side_effect=executor
+    ):
+        assert ODayWorker(persistence=restarted, heartbeat_interval_seconds=60.0).run_once()
+
+    final = restarted.job_queue.get(job.job_id)
+    assert calls == ["a", "b", "b"]
+    assert final.status == JobStatus.SUCCEEDED
+    assert final.payload["receipt"]["items"][0]["item_id"] == "a"
+    assert final.payload["receipt"]["items"][0]["attempt"] == 1
+    assert final.payload["receipt"]["items"][1]["item_id"] == "b"
+    assert final.payload["receipt"]["items"][1]["attempt"] == 2
+    assert len(restarted.operator_intake_repository.list_intakes()) == 2
+    restarted.engine.close()
+
+
+def test_review_finding_r2_stale_worker_reclaim_race_preserves_correction(db_path: str) -> None:
+    """R2: Stale lease worker cannot overwrite committed operator correction on delayed resumption."""
+    from datetime import UTC, datetime, timedelta
+
+    from modules.opsboard.application.network_listings import NetworkListingService
+
+    bundle = _durable_bundle(db_path)
+    tenant = "review-replay-race-tenant"
+    try:
+        record, _ = bundle.job_queue.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": tenant,
+                    "items": [
+                        {
+                            "item_id": "one",
+                            "address_raw": "台北市大安區1號",
+                            "rent_per_month": 10000,
+                            "area_ping": 30,
+                            "floor": "1F",
+                        }
+                    ],
+                },
+            ),
+            correlation_id="review-replay-race",
+        )
+        original_save = NetworkListingService._save_intake
+        injected = False
+
+        def racing_save(service, intake):
+            nonlocal injected
+            if not injected:
+                injected = True
+                bundle.engine.execute(
+                    "UPDATE durable_jobs SET lease_expires_at = ? WHERE job_id = ?",
+                    ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), record.job_id),
+                )
+                assert ODayWorker(
+                    persistence=bundle, worker_id="review-new", heartbeat_interval_seconds=60.0
+                ).run_once()
+                assert bundle.job_queue.get(record.job_id).status == JobStatus.SUCCEEDED
+                build_batch_listing_intake_service(tenant, bundle).correct_intake(
+                    intake_id=intake["id"],
+                    fields={"address": "台北市大安區99號"},
+                    reason="Operator verified the door number",
+                    risk_summary="Identity checked",
+                    risk_acknowledged=True,
+                    actor_role_id="expansion_user",
+                    actor_name="Review operator",
+                    idempotency_key="review-race-correction",
+                    correlation_id="review-race-correction",
+                )
+            return original_save(service, intake)
+
+        with patch.object(NetworkListingService, "_save_intake", new=racing_save):
+            assert ODayWorker(
+                persistence=bundle, worker_id="review-old", heartbeat_interval_seconds=60.0
+            ).run_once()
+
+        intake_id = batch_listing_intake_id(tenant, record.job_id, "one")
+        final = build_batch_listing_intake_service(tenant, bundle).get_intake(intake_id)
+        final_job = bundle.job_queue.get(record.job_id)
+        assert final["parsedFields"]["address"]["correctedValue"] == "台北市大安區99號"
+        assert any(e["action"] == "intake.correct" for e in final["auditEvents"])
+        assert final_job.status == JobStatus.SUCCEEDED
+        assert final_job.payload["receipt"]["items"][0]["attempt"] == 2
+    finally:
+        bundle.engine.close()
+
+
+def test_review_finding_r3_pre_execution_cancellation_persists_receipt(db_path: str) -> None:
+    """R3: Cancelling a queued batch before first checkpoint creates durable CANCELLED receipt with attempt=0."""
+    bundle = _durable_bundle(db_path)
+    record, _ = bundle.job_queue.enqueue(
+        JobRequest(
+            job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+            payload={
+                "tenant_id": "synthetic-review",
+                "items": [{"item_id": "row-a", "address_raw": "synthetic address"}],
+            },
+        ),
+        correlation_id="synthetic-pre-execution-cancel",
+    )
+    bundle.job_queue.update_status(record.job_id, JobStatus.CANCELLED)
+    bundle.engine.close()
+
+    reopened = _durable_bundle(db_path)
+    executed = ODayWorker(persistence=reopened, heartbeat_interval_seconds=60.0).run_once()
+    final = reopened.job_queue.get(record.job_id)
+    assert executed is False
+    assert final.status == JobStatus.CANCELLED
+    receipt = final.payload.get("receipt")
+    assert receipt is not None
+    assert receipt["status"] == "CANCELLED"
+    assert len(receipt["items"]) == 1
+    assert receipt["items"][0]["item_id"] == "row-a"
+    assert receipt["items"][0]["attempt"] == 0
+    assert receipt["items"][0]["item_status"] == "CANCELLED"
+    assert receipt["items"][0]["error"]["code"] == "CANCELLED_BEFORE_EXECUTION"
+    reopened.engine.close()
+
+
+def test_review_finding_r4_heartbeat_collision_memory_and_durable(db_path: str) -> None:
+    """R4: Heartbeat version race between get and checkpoint write succeeds on both in-memory and durable queues."""
+    from shared.infrastructure.persistence.factory import _memory_bundle
+
+    for kind in ("memory", "durable"):
+        bundle = (
+            _memory_bundle()
+            if kind == "memory"
+            else _durable_bundle(db_path + f".{kind}.sqlite3")
+        )
+        queue = bundle.job_queue
+        record, _ = queue.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": "synthetic-review",
+                    "items": [{"item_id": "row-a", "address_raw": "synthetic address"}],
+                },
+            ),
+            correlation_id="synthetic-heartbeat-collision",
+        )
+        original_update = queue.update_status
+        injected = False
+
+        def race(job_id, status, *args, **kwargs):
+            nonlocal injected
+            receipt = (kwargs.get("payload") or {}).get("receipt", {})
+            receipt_items = receipt.get("items", [])
+            if (
+                not injected
+                and status == JobStatus.RUNNING
+                and receipt_items
+                and receipt_items[0]["item_status"] == "SUCCEEDED"
+            ):
+                injected = True
+                before = queue.get(job_id)
+                queue.heartbeat(job_id, expected_version=before.version, fence_token=before.fence_token)
+            return original_update(job_id, status, *args, **kwargs)
+
+        with patch.object(queue, "update_status", side_effect=race), patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            return_value=("synthetic-intake", None),
+        ):
+            assert ODayWorker(persistence=bundle, heartbeat_interval_seconds=60.0).run_once() is True
+
+        final = queue.get(record.job_id)
+        assert final.status == JobStatus.SUCCEEDED
+        assert injected is True
+        assert final.payload.get("receipt") is not None
+        assert final.payload["receipt"]["items"][0]["item_status"] == "SUCCEEDED"
+        if bundle.engine is not None:
+            bundle.engine.close()

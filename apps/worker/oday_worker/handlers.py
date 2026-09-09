@@ -471,7 +471,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         payload["receipt"] = receipt.to_dict()
         payload["summary"] = receipt_summary.to_dict()
 
-        rejection: JobFenceRejectedError | None = None
+        rejection: Exception | None = None
         for _ in range(_CHECKPOINT_WRITE_ATTEMPTS):
             latest = persistence.job_queue.get(job.job_id)
             if latest is None:
@@ -499,7 +499,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
                     expected_version=latest.version,
                     fence_token=job.fence_token,
                 )
-            except JobFenceRejectedError as exc:
+            except (JobFenceRejectedError, ValueError) as exc:
                 rejection = exc
                 continue
             return

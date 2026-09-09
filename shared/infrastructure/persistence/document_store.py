@@ -85,6 +85,47 @@ class SqliteDocumentStore:
                 ),
             )
 
+    def put_if_absent(
+        self,
+        collection: str,
+        doc_id: str,
+        obj: Any,
+        *,
+        group_key: str | None = None,
+        seq: int | None = None,
+        correlation_id: str | None = None,
+    ) -> bool:
+        """Insert ``obj`` under ``(collection, doc_id)`` only if it does not exist.
+
+        Returns True if inserted, False if already exists.
+        """
+        blob = pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+        with self._engine.lock:
+            existing = self._engine.query_one(
+                "SELECT ordinal FROM durable_documents WHERE collection = ? AND doc_id = ?",
+                (collection, doc_id),
+            )
+            if existing is not None:
+                return False
+            ordinal = self._engine.next_ordinal(f"documents:{collection}")
+            self._engine.execute(
+                "INSERT INTO durable_documents("
+                "  collection, doc_id, group_key, seq, ordinal, correlation_id, data, created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(collection, doc_id) DO NOTHING",
+                (
+                    collection,
+                    doc_id,
+                    group_key,
+                    seq,
+                    ordinal,
+                    correlation_id,
+                    blob,
+                    _now(),
+                ),
+            )
+            return True
+
     def append_version(
         self,
         collection: str,
