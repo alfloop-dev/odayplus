@@ -9,6 +9,10 @@
   "mapping_id": "MAP-INT-CYCLE-v1",
   "integration_mode": "incremental_batch",
   "envelope": "batch",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "unverified",
   "invariants": [
     {"rule": "time_order", "earlier": "cycle_start_time", "later": "cycle_end_time", "code": "invalid_time"}
   ],

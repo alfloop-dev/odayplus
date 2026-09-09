@@ -10,6 +10,10 @@
   "integration_mode": "batch_snapshot",
   "envelope": "batch",
   "acquisition_method": "manual",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "unverified",
   "fields": [
     {"name": "source_competitor_id", "type": "string", "required": true, "description": "Source competitor id."},
     {"name": "brand_name", "type": "string", "required": false, "description": "Competitor brand."},
