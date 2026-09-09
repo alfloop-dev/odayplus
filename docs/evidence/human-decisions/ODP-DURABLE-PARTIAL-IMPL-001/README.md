@@ -5,9 +5,8 @@
 - **前置任務**：
   - `ODP-DURABLE-PARTIAL-CONTRACT-PREP-001`（WP-33A：工程準備、盤點與契約草案）
   - `ODP-JOB-DELIVERY-STATE-CLEAR-001`（修正 PARTIAL／CANCELLED 終態殘留重試狀態並保持兩種佇列一致）
-- **任務負責人**：Antigravity6
+- **任務負責人**：Claude（前 owner Antigravity6 因 provider quota 終止被改派，非因完成）
 - **審查人**：Codex
-- **交付日期**：2026-09-09
 - **依據規範**：
   - `docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md`
   - `docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/implementation-handoff.md`
@@ -15,81 +14,103 @@
 
 ---
 
-## 1. 執行概述與工程交付
+## 1. 交付內容
 
-本任務接續 WP-33A 已審定之契約規範及工程推薦預設（`batch-listing-intake`），完成實體批次任務之 Durable Batch Job Handler、逐項明細收據持久化（`DurableJobReceipt` / `ItemReceipt`）、差異化冪等重試（`retry_scope="FAILED_ONLY"`）與訊息防禦機制。
+`batch-listing-intake` 是 WP-33A 推薦、Codex 於本輪採為工程預設的批次業務。本任務把它做成可執行的實體批次任務：逐項收據持久化、逐項 checkpoint、`FAILED_ONLY` 差異化重試，以及重複投遞／亂序結果的 fencing。
 
-### 1.1 核心交付模組
+### 1.1 明細收據與聚合推導（`shared/jobs/receipts.py`）
 
-1. **明細收據與聚合狀態模型 (`shared/jobs/receipts.py`)**：
-   - 實作 `ItemStatus` (`SUCCEEDED`, `FAILED`, `CANCELLED`, `PENDING`)。
-   - 實作 `ItemError`（包含 `code`, `message`, `retryable`, `details`）。
-   - 實作 `ItemReceipt`（支援 `attempt >= 0`、`result_ref`、`last_attempt_at`）。
-   - 實作 `JobSummary`（包含 `total_count`, `succeeded_count`, `failed_count`, `cancelled_count`, `pending_count`）。
-   - 實作 `DurableJobReceipt`（持久化收據信封，支援跨程序重啟回讀）。
-   - 實作 `derive_batch_status_and_summary`：嚴格依照優先級規則純函數推導整體 `JobStatus` 與計數。
-   - 實作 `apply_item_result`：實施 `(job_id, item_id, attempt)` 三元組 fencing token，過濾重複投遞、舊 attempt 後到與取消未執行防護。
+- `ItemStatus`、`ItemError`、`ItemReceipt`、`JobSummary`、`DurableJobReceipt`。
+- `derive_batch_status_and_summary`：純函式，由持久化 items 依優先級規則重新推導聚合狀態與計數，不由訊息逐次累加。
+- `apply_item_result`：以 `(job_id, item_id, attempt)` 三元組 fencing 套用結果。本輪修正其 attempt 判定：結果只能「完成目前記錄為執行中（`PENDING`）的該次 attempt」或「回報更後面的 attempt」；已有結果的 attempt 再收到同號結果一律丟棄。原本的「attempt 必須嚴格遞增」在導入開始 checkpoint 後會把該次 attempt 自己的結果誤判為 stale。
 
-2. **持久層收據擴展 (`shared/infrastructure/persistence/job_receipts.py`)**：
-   - 擴充 `TenantScopedJobReceiptStore` 支援 `get_durable_receipt`，保障跨租戶隔離。
+### 1.2 真實業務路徑（`modules/opsboard/application/network_listings.py`）
 
-3. **批次任務處理器與註冊 (`apps/worker/oday_worker/handlers.py`)**：
-   - 定義 `BATCH_LISTING_INTAKE_JOB_TYPE = "batch-listing-intake"`。
-   - 實作 `_default_batch_listing_item_executor`：接入真實 `DurableAssistedIntakeRepository` 持久化，驗證地址格式並回傳持久化的真實 `result_ref`（`intake_id`）；完全移除生產程式碼中的 `simulate_*` 測試分支。
-   - 實作 `handle_batch_listing_intake`：支援逐項即時 Checkpointing（每項執行後呼叫 `apply_item_result` 並透過 `job_queue.update_status` 保存至資料庫），即時檢測佇列取消狀態並將未開始項目標記為 `attempt=0`。
-   - 於 `build_default_registry()` 註冊 `BATCH_LISTING_INTAKE_JOB_TYPE`。
+新增 `NetworkListingService.record_batch_assisted_entry`，把一列批次匯入資料落成既有的協助輸入（assisted entry）intake 記錄：
 
-4. **Worker 執行迴圈調度 (`apps/worker/oday_worker/main.py`)**：
-   - 在 `ODayWorker.run_once` 增強終態判定：若 Handler 已完成業務聚合終態寫入（如 `JobStatus.PARTIAL` / `SUCCEEDED` / `FAILED` / `CANCELLED`），保留該狀態並正確記錄指標與日誌，不以無明細之 `SUCCEEDED` 覆寫。
+- **記錄鍵由呼叫端以租戶＋任務＋成員推導，不採用提交端提供的 `intake_id`**。這同時解決兩件事：不同租戶送出同一個 `intake_id` 會落在不同記錄，彼此不可覆寫；崩潰後重放會定址到上一次未完成 attempt 寫過的那一筆，而不是新增第二筆。
+- 寫入前先讀既有記錄，若 `tenantId` 不符則拒絕（`NetworkListingPolicyError`），作為 id 推導被繞過時的第二道防線。
+- 階段（stage）由該列資料自己決定，規則與既有 `correct_intake` 相同（抽出共用的 `_missing_assisted_entry_fields`）：缺任一必填協助輸入欄位就停在 `AWAITING_ASSISTED_ENTRY`，齊備才跑既有 `match_listing` 並依比對結果落在 `NEEDS_REVIEW` 或 `READY`。**不以 `0` 補缺漏的租金／坪數，也不硬寫 `READY`**。
+- 批次列沒有來源 URL 與快照，`originalUrl`／`canonicalUrl`／`rawSnapshot`／`snapshotId` 均為 `None`，不填造出來的網址。
 
-5. **平台 API 端點 (`apps/api/oday_api/main.py`)**：
-   - `POST /jobs`：批次 Enqueue 綁定可信 Principal 之租戶 (`tenant_id`) 與 tenant-scoped idempotency key。
-   - `GET /platform/jobs/{job_id}` 與 `GET /jobs/{job_id}`：嚴格執行 Principal 驗證與租戶隔離（未認證 401、跨租戶 404）。
-   - `GET /platform/jobs/{job_id}/receipt`：回傳租戶隔離之 `DurableJobReceipt`。
-   - `POST /platform/jobs/{job_id}/retry`：接收 `retry_scope="FAILED_ONLY"`，限定支援工作類型與終態（拒絕 `RUNNING`/`QUEUED` 409 Conflict，拒絕 `SUCCEEDED` 與 0 可重試項 400 Bad Request），並使用 `expected_version` 執行樂觀鎖 CAS 更新。
+### 1.3 批次處理器（`apps/worker/oday_worker/handlers.py`）
 
----
+- `batch_listing_intake_id(tenant_id, job_id, item_id)`：穩定、租戶綁定的 intake id。
+- `build_batch_listing_intake_service`：每個 job 建一次既有 `NetworkListingService`，listing 語料優先取該租戶的 scoped repository（與 operator API 同一取法），避免跨租戶比對。
+- `_default_batch_listing_item_executor`：走上述真實業務路徑，回傳可回讀的 `result_ref`；production 程式碼中沒有任何 `simulate_*` 分支，測試替身只在測試注入。
+- `handle_batch_listing_intake`：每一項有三次持久寫入——**開始 attempt 的 checkpoint、業務寫入、結果 checkpoint**。開始 checkpoint 讓崩潰後可分辨「沒跑過」與「跑到一半」，也讓取消時能分辨 `attempt=0` 與 `attempt>=1`。
+- checkpoint 失敗不再被 `except Exception: pass` 吞掉。fence token 位移或 job 離開 `RUNNING` 直接拋出；只有本 job 自己的 lease heartbeat 會合法地推進 row version，因此僅對「純 version 不符」重讀重試（上限 3 次）。
+- 取消一律以佇列中的真實 job 狀態判定，payload 內的 `cancelled_before_execution` / `cancelled_mid_execution` 旗標分支已移除。取消結算會保留已落地的結果，未執行成員記為 `attempt=0`，已開始但無結果的成員記為 `attempt>=1`。
 
-## 2. Codex Review P1 阻擋缺陷修復對照
+### 1.4 平台 API（`apps/api/oday_api/main.py`）
 
-針對 Codex 對前一 head（`41ec9474`）審查提出的 4 項 P1 阻擋意見，本交付完成以下修復與驗證：
+- `POST /jobs`（batch enqueue）：以 `principal_from_headers` + RBAC 驗證身分與 `listing` 權限，租戶取自可信 principal；payload 帶不同租戶則 403；idempotency key 以租戶作用域。
+- `GET /jobs/{job_id}`：批次任務要求已認證 principal 且租戶相符，否則 401／404。**durable 收據隨 job payload 一併回傳，這就是收據讀取端點**。
+- `POST /jobs/{job_id}/retries`：`retry_scope="FAILED_ONLY"`，限定支援的工作類型與終態（`RUNNING`/`QUEUED` → 409；`SUCCEEDED` → 400；可重試項為 0 → 400），並以 `expected_version` 做 CAS 更新。
 
-| 缺陷項目 | 問題成因 | 修復與防禦措施 | 驗證測試 |
-|---|---|---|---|
-| **P1.1 真實業務持久化路徑** | 原 `_default_batch_listing_item_executor` 僅生成隨機 ID 且依賴 `simulate_*` payload 分支，未寫入 `DurableAssistedIntakeRepository`。 | 接入 `DurableAssistedIntakeRepository.create_intake()`，寫入完整 intake 模型並以真實 `intake_id` 作為 `result_ref`；移除所有 production simulate 分支，測試替身一律在測試注入。 | `test_1`、`test_2`、`test_4` 均斷言重啟後資料庫中可回讀真實 intake 記錄（`repo.list_intakes() == 8`）。 |
-| **P1.2 API 認證與租戶隔離** | API 依賴 `x-tenant-id` header 且缺失時略過隔離，無 auth header 時可任意讀取/重派。 | 引入 `batch_intake_job_tenant`，以 `principal_from_headers` 驗證 `listing` 權限與租戶邊界；`GET /jobs/{id}`、`GET /platform/jobs/{id}/receipt`、`POST /platform/jobs/{id}/retry` 及 `POST /jobs` 全面強制 401/403/404 防禦。 | `test_6_auth_and_tenant_isolation_guards`（涵蓋 401/403/404 與 role/tenant 防禦）。 |
-| **P1.3 逐項 Checkpointing 與真實取消** | 原實作僅在迴圈結束後寫入狀態；程序中斷導致已完成項丟失；取消僅依賴 raw payload flag。 | 每處理一項即透過 `apply_item_result` 計算最新收據並以 `expected_version` 寫入 RUNNING checkpoint；每項開始前查詢佇列真實狀態，已取消則直接終止並將未執行項記錄為 `attempt=0`。 | `test_4_mid_batch_interruption_and_resumption`（中途中斷不重複執行已完成項）與 `test_4_live_operator_cancellation_during_execution`（即時取消未執行項 `attempt=0`）。 |
-| **P1.4 重試終態限制與 CAS 併發防護** | `_retry_job_response` 無條件重派任意狀態（包含 RUNNING / SUCCEEDED / 0 可重試項）且無 CAS。 | 限定僅支援批次工作類型之 `PARTIAL`/`FAILED`；檢查可重試項總數（為 0 則 400）；RUNNING/QUEUED 回傳 409；使用 `expected_version=job.version` 進行原子更新防範併發重試。 | `test_6_auth_and_tenant_isolation_guards` 斷言 409（QUEUED/RUNNING）、400（SUCCEEDED）、400（0 retryable）。 |
+#### 與 handoff 端點命名的差異（明列，非默默改動）
+
+handoff §3.0／§3.3 以 `GET /platform/jobs/{job_id}` 與 `POST /platform/jobs/{job_id}/retry` 稱呼這兩個端點。本 repo 的實際平台介面不是這兩條路徑：
+
+1. `platform_router` 經 `mount_versioned` 掛在 `/api/v1/...` 與不帶版本的相容別名，平台 job 的既有路徑是 `/api/v1/jobs/{job_id}`。前一版新增的 `/platform/jobs/...` 是額外的第三條路徑，且以 `include_in_schema=False` 掛上，會讓 `test_alias_and_versioned_surfaces_are_exactly_paired` 的別名／版本配對失衡。本輪已全數移除。
+2. `/jobs/{job_id}/retry` 與 `/jobs/{job_id}/receipt` 已屬 `apps/api/app/routes/listings.py` 的 assisted-listing-intake router（operation `retryJob`／`getJobReceipt`，走 checkpoint replay 與 `Idempotency-Key`/`If-Match` 契約）。在 `platform_router` 上再掛同名路徑會 shadow 既有端點而非復用它，因此批次重試改用 `POST /api/v1/jobs/{job_id}/retries`（在該 job 底下建立一次重試），收據讀取則復用既有的 `GET /api/v1/jobs/{job_id}`，不另開端點。
+
+`packages/openapi-client/openapi.json` 與產生的 client 已依此重新輸出。
 
 ---
 
-## 3. 反事實驗收標準（Counterfactual Acceptance Verification）
+## 2. 對 Codex 前一輪 review 的處置
 
-本任務依據 `implementation-handoff.md` §4 實作反事實驗證測試套件於 `tests/reliability/test_durable_partial_batch.py`：
-
-| 測試編號 | 測試項目 | 驗證行為與斷言 | 結果 |
-|---|---|---|---|
-| **測試 1** | 狀態轉移精確性與成員明細驗證 | 10 筆工作項目（8 筆正常、1 筆永久缺少地址、1 筆暫態超時）；初次執行全部 `attempt=1`，8 筆 `SUCCEEDED`、2 筆 `FAILED`；整體狀態精確為 `JobStatus.PARTIAL`，`delivery_state IS NULL`，摘要計數完全正確，8 筆房源真實寫入持久層。 | PASS |
-| **測試 2** | 差異化重試與收斂驗證 | 對上述 `PARTIAL` 發起 `FAILED_ONLY` 重試：Mock/Spy 驗證 8 筆成功項目底層調用次數為 **0**；1 筆永久失敗項目調用次數為 **0**（`attempt` 維持 1）；1 筆暫態失敗項目精確調用 **1** 次並轉為 `SUCCEEDED`（`attempt=2`）；全成功子測試中，重試後自動收斂為 `JobStatus.SUCCEEDED`。 | PASS |
-| **測試 3** | 交付狀態與業務結果正交分離 | 實測暫態重試中佇列設置 `JobDeliveryState.RETRYING`；實體終態失敗寫入 `JobStatus.FAILED + DEAD_LETTER`；強制子案例：將 Job 先置於 `RETRYING`，隨後以 `JobStatus.PARTIAL` 終結，自 SQLite 底層與 API 直接讀回 `delivery_state IS NULL`，且 in-memory 與 durable queue parity 成立。 | PASS |
-| **測試 4** | 重啟回讀與取消／未執行項目 | 模擬 Worker Crash 重啟，自持久層讀回 100% 完整收據明細；中途取消情境：第 1 筆 `SUCCEEDED`（`attempt=1`）、第 2 筆 `CANCELLED`（`attempt=1`, `code="CANCELLED_MID_EXECUTION"`）、第 3 筆 `CANCELLED`（`attempt=0`, `code="CANCELLED_BEFORE_EXECUTION"`），整體狀態轉移為 `JobStatus.CANCELLED`。 | PASS |
-| **測試 4.2** | 中途中斷與續跑不重複執行 | 執行 5 筆後觸發中斷，檢查 Checkpoint 已落地 5 筆；重啟 Worker 後續跑，已完成之 5 筆執行調用為 0，剩餘 5 筆精確調用 1 次。 | PASS |
-| **測試 4.3** | 即時佇列取消與未執行項標記 | 批次執行中由 Operator 取消佇列任務，執行中項記錄為 CANCELLED (`attempt=1`)，未執行項記錄為 CANCELLED (`attempt=0`)。 | PASS |
-| **測試 5** | 重複投遞與亂序結果冪等 | 5.1 重複投遞同一 attempt 訊息被丟棄，底層調用次數不增加；5.2 重複 enqueue 同一 `idempotency_key` 回傳 `created=False` 且不重置明細；5.3 `attempt=1` 失敗訊息在 `attempt=2` 成功後送達被判定為 stale 丟棄，嚴禁覆寫 `SUCCEEDED`；5.4 對 `attempt=0` 取消項目之後到訊息不予復活；5.5 重啟後由持久化 items 重建聚合結果完全一致。 | PASS |
-| **測試 6** | API 認證、租戶隔離與狀態保護 | 驗證 401（未認證）、403（角色/租戶不符）、404（跨租戶隔離）、409（QUEUED/RUNNING 併發重試衝突）、400（SUCCEEDED 重試拒絕）、400（0 可重試項拒絕）。 | PASS |
+| Codex 指出的缺陷 | 本輪處置 | 對應測試 |
+|---|---|---|
+| default executor 信任呼叫端 `intake_id`，在共用 repository upsert，不同租戶送同一 id 只會剩後寫的一筆 | 記錄鍵改由 `(tenant_id, job_id, item_id)` 推導，提交端的 `intake_id` 不再參與定址；寫入前另做 `tenantId` 擁有權檢查 | `test_7_same_submitted_intake_id_cannot_cross_tenants` |
+| 業務寫入成功但 receipt checkpoint 前崩潰，重放後同一成員產生兩個隨機 intake id，job 仍 succeeded | 同上的穩定 id 使重放定址到同一筆；另加開始 attempt 的 checkpoint，讓重放看得到「這次 attempt 已開始」 | `test_7_crash_between_business_write_and_receipt_leaves_one_record` |
+| checkpoint `except Exception: pass` 吞例外繼續 | 移除。fence 位移／離開 RUNNING 直接拋；僅對本 job heartbeat 造成的 version 競爭重讀重試 | `test_4_live_operator_cancellation_during_execution`、`test_4_restart_re_readability_and_cancellation` |
+| 取消只讀 payload 的 `cancelled_*` 旗標，沒查真實取消狀態 | 旗標分支移除，取消一律讀佇列 job 狀態 | `test_4_restart_re_readability_and_cancellation`、`test_4_live_operator_cancellation_during_execution` |
+| 隨機 ID／硬寫 `READY`／缺資料填 0 偽裝業務完成 | 走既有協助輸入業務規則決定 stage，缺必填欄位停在 `AWAITING_ASSISTED_ENTRY`，不填 0、不造 URL | `test_1_state_transition_and_itemized_receipt`、`test_7_*` |
+| `tests/architecture/test_external_data_boundary.py` 六項失敗：fixture 內出現未申報的 provider host | 測試 fixture 的 `details` 不再寫入 provider host（該欄位對斷言無作用） | `tests/architecture/test_external_data_boundary.py` |
+| `test_alias_and_versioned_surfaces_are_exactly_paired` 失敗：新增 `/platform/jobs` 別名未配對 | 三條 `/platform/jobs/...` 路徑全部移除，見 §1.4 | `tests/contract/test_api_versioning.py` |
 
 ---
 
-## 4. 驗證執行收據（Verification Receipts）
+## 3. 反事實驗收測試（`tests/reliability/test_durable_partial_batch.py`）
 
-- `git diff --check`: Exit Code 0
-- `uv run pytest tests/reliability/test_durable_partial_batch.py -q`: Exit Code 0 (9 passed)
-- `uv run pytest tests/contract/test_platform_api.py -q`: Exit Code 0 (7 passed)
-- `uv run ruff check shared/ apps/ tests/`: Exit Code 0 (All checks passed)
+| 測試 | 對應 handoff | 內容 |
+|---|---|---|
+| `test_1_state_transition_and_itemized_receipt` | §4 測試 1 | 10 筆（8 成功／1 永久缺地址／1 暫態超時）→ `JobStatus.PARTIAL`、`delivery_state` 為 `None`、摘要計數精確；8 筆房源以 default registry 真實寫入持久層，重開 bundle 仍可回讀 |
+| `test_2_scoped_retry_and_zero_duplication` | §4 測試 2 | `FAILED_ONLY` 重試：8 筆已成功與 1 筆永久失敗底層調用 0 次，1 筆可重試項精確 1 次、`attempt` 遞增為 2 |
+| `test_2_full_convergence_subtest` | §4 測試 2 子測試 | 2 筆暫態失敗重試後整體收斂為 `SUCCEEDED` |
+| `test_3_orthogonality_and_delivery_state_clear` | §4 測試 3 | 先實際進入 `RETRYING` 再寫 `PARTIAL`，自 SQLite 與 API 皆讀回 `delivery_state` 為 `null`；`FAILED` + `DEAD_LETTER` 行為保留；in-memory 與 durable 各跑一次 |
+| `test_4_restart_re_readability_and_cancellation` | §4 測試 4 | 重啟後完整回讀收據；取消情境以真實崩潰＋真實 DB 取消驅動：第 1 筆 `SUCCEEDED`(attempt=1)、第 2 筆 `CANCELLED`(attempt=1, `CANCELLED_MID_EXECUTION`)、第 3 筆 `CANCELLED`(attempt=0, `CANCELLED_BEFORE_EXECUTION`) |
+| `test_4_mid_batch_interruption_and_resumption` | §4 測試 4 | 中途崩潰後重啟續跑，已完成項不重跑 |
+| `test_4_live_operator_cancellation_during_execution` | §4 測試 4 | 執行中由 operator 在 DB 取消，已落地結果保留、未執行項 `attempt=0` |
+| `test_5_duplicate_delivery_and_out_of_order` | §4 測試 5 | 重複投遞同一 attempt、重複 enqueue 同一 idempotency key、舊 attempt 失敗後到不得覆寫 `SUCCEEDED`、對 `attempt=0` 取消項的後到結果不復活、重排順序後聚合不變 |
+| `test_6_auth_and_tenant_isolation_guards` | §3.3／隔離要求 | 401（未認證）、403（角色與租戶不符）、404（跨租戶）、409（QUEUED/RUNNING 重試）、400（SUCCEEDED 與 0 可重試項） |
+| `test_7_same_submitted_intake_id_cannot_cross_tenants` | 本輪 review 反例 | 兩租戶各送同一 `intake_id`：留下兩筆記錄、各自租戶、各自資料，且皆非提交端給的那個 id |
+| `test_7_crash_between_business_write_and_receipt_leaves_one_record` | 本輪 review 反例 | 業務寫入成功後崩潰、重放後只有一筆業務記錄，且等於收據的 `result_ref` |
+
+後兩項不使用任何 executor 替身或只跑一次；`test_7_same_submitted_intake_id_cannot_cross_tenants` 完全走 default registry，讀回的是業務實體而非收據。
 
 ---
 
-## 5. 邊界與非目標聲明
+## 4. 驗證
 
-1. **環境與資料範圍**：本階段所有驗證均於獨立 worktree、合成 Fixture 與暫時性 SQLite DB 上執行。
-2. **非目標**：不宣稱真實生產環境已啟用或上線；未讀取任何外部秘密、未修改 IAM 權限、未啟用外部即時抓取來源。真實上線驗收屬後續獨立營運階段。
+任務宣告的 verification 命令：
+
+- `git diff --check`
+- `uv run pytest tests/reliability/test_durable_partial_batch.py -q`
+- `uv run pytest tests/contract/test_platform_api.py -q`
+- `uv run pytest tests/architecture/test_external_data_boundary.py tests/contract/test_api_versioning.py tests/contract/test_assisted_listing_operations.py tests/contract/test_assisted_listing_promotion_api.py tests/contract/test_openapi_artifact_and_client.py -q`
+
+具約束力的收據由 `delivery_toolchain/git/task_verification.py` 在交付 head 上產生，內含 head SHA、原始命令、真實 exit code 與耗時，存於 `.orchestrator/evidence/`（不在本 repo 追蹤範圍）。本文件不重述那些數字，以免文件宣稱的結果早於它自己所在的 commit。
+
+額外於同一工作樹執行、非任務宣告命令：`uv run ruff check`（涵蓋本次變更的五個檔案）exit 0。
+
+---
+
+## 5. 範圍與非目標
+
+1. **資料與環境**：所有驗證在隔離 worktree、合成 fixture 與暫時性 SQLite 上執行。批次列資料為合成資料。
+2. **非目標**：不宣稱生產環境已啟用或已上線；未讀取任何秘密、未連線 production、未修改 IAM／release lease／provider 設定、未降低任何 required check。
+3. **未由本任務取證**：真實來源資料匯入、live 佇列政策套用、production 驗收，仍屬後續獨立階段。
+4. H06 未被本任務視為已由使用者逐項回覆；`batch-listing-intake` 是 Codex 採用的可調整工程預設，不記為 Human 簽署。

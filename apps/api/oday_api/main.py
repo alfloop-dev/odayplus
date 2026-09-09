@@ -1180,66 +1180,6 @@ else:
         def get_job(job_id: str, request: Request) -> dict[str, Any]:
             return _get_job_response(job_id, request)
 
-        @platform_router.get("/platform/jobs/{job_id}", tags=["jobs"], include_in_schema=False)
-        def get_platform_job(job_id: str, request: Request) -> dict[str, Any]:
-            return _get_job_response(job_id, request)
-
-        def _get_job_receipt_response(job_id: str, request: Request) -> dict[str, Any]:
-            from apps.api.oday_api.security.dependencies import principal_from_headers
-
-            job = job_queue.get(job_id)
-            if job is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job receipt not found")
-
-            job_tenant = str(job.payload.get("tenant_id") or "").strip()
-            if job.job_type in ("batch-listing-intake", "assisted-listing-intake"):
-                active_tenant_id = batch_intake_job_tenant(request, action="view")
-                if not job_tenant or job_tenant != active_tenant_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="job receipt not found",
-                    )
-            elif job_tenant:
-                principal = principal_from_headers(request.headers)
-                if not principal.authenticated:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={
-                            "code": "AUTHENTICATION_REQUIRED",
-                            "message": "Authentication required to read job receipt",
-                        },
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-                active_tenant_id = str(principal.tenant_id or "").strip()
-                if not active_tenant_id or job_tenant != active_tenant_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="job receipt not found",
-                    )
-            else:
-                principal = principal_from_headers(request.headers)
-                if not principal.authenticated:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={
-                            "code": "AUTHENTICATION_REQUIRED",
-                            "message": "Authentication required to read job receipt",
-                        },
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-            receipt = job.payload.get("receipt")
-            if receipt is None or not isinstance(receipt, dict):
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="job receipt not found or not a multi-item batch job",
-                )
-            return dict(receipt)
-
-        @platform_router.get("/platform/jobs/{job_id}/receipt", tags=["jobs"], include_in_schema=False)
-        def get_platform_job_receipt(job_id: str, request: Request) -> dict[str, Any]:
-            return _get_job_receipt_response(job_id, request)
-
         def _retry_job_response(
             job_id: str,
             body: JobRetryPayload | None,
@@ -1400,8 +1340,14 @@ else:
                 "retried_items_count": retried_count,
             }
 
-        @platform_router.post("/platform/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"], include_in_schema=False)
-        def retry_platform_job(
+        # A retry attempt is created under the job it belongs to. The sibling
+        # ``/jobs/{job_id}/retry`` already belongs to the assisted-listing-intake
+        # router's checkpoint replay (operation ``retryJob``); mounting a second
+        # handler on that path would shadow it rather than reuse it.
+        @platform_router.post(
+            "/jobs/{job_id}/retries", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"]
+        )
+        def create_job_retry(
             job_id: str,
             request: Request,
             body: JobRetryPayload | None = None,

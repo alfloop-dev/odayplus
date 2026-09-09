@@ -210,6 +210,34 @@ def _first_present(data: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _missing_assisted_entry_fields(values: dict[str, Any]) -> list[str]:
+    """Which mandatory assisted-entry fields ``values`` still does not supply.
+
+    Matching may only run once every mandatory field carries a real value, so a
+    blank or non-positive ``rent``/``areaPing`` counts as missing rather than
+    being coerced to ``0`` -- a zero rent would otherwise present an incomplete
+    submission as a complete one.
+    """
+
+    from modules.external_data.application.assisted_intake import (
+        ASSISTED_ENTRY_REQUIRED_FIELDS,
+    )
+
+    missing: list[str] = []
+    for field_name in ASSISTED_ENTRY_REQUIRED_FIELDS:
+        value = values.get(field_name)
+        if value in (None, ""):
+            missing.append(field_name)
+            continue
+        if field_name in ("rent", "areaPing"):
+            try:
+                if float(value) <= 0:
+                    missing.append(field_name)
+            except (ValueError, TypeError):
+                missing.append(field_name)
+    return missing
+
+
 def _optional_float(value: Any, *, default: float) -> float:
     if value is None or value == "":
         return default
@@ -1469,23 +1497,7 @@ class NetworkListingService:
 
         effective_vals = effective_fields(intake["parsedFields"])
 
-        from modules.external_data.application.assisted_intake import ASSISTED_ENTRY_REQUIRED_FIELDS
-        has_all_required = True
-        for rf in ASSISTED_ENTRY_REQUIRED_FIELDS:
-            val = effective_vals.get(rf)
-            if val in (None, ""):
-                has_all_required = False
-                break
-            if rf in ("rent", "areaPing"):
-                try:
-                    if float(val) <= 0:
-                        has_all_required = False
-                        break
-                except (ValueError, TypeError):
-                    has_all_required = False
-                    break
-
-        if has_all_required:
+        if not _missing_assisted_entry_fields(effective_vals):
             fingerprint = content_fingerprint(effective_vals)
             match_res = match_listing(
                 values=effective_vals,
@@ -1524,6 +1536,177 @@ class NetworkListingService:
         intake["auditEvents"].append(audit_evt)
         self._save_intake(intake)
         self._save_idempotency("correct_intake", governed_key, intake)
+        return _copy(intake)
+
+    # A batch import row carries operator-supplied values, so it enters the
+    # pipeline through the assisted-entry field table rather than through
+    # retrieval. Each entry maps one assisted-entry field to the column names a
+    # batch row may use for it.
+    BATCH_ROW_FIELD_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+        ("address", ("address_raw", "addressRaw", "address")),
+        ("rent", ("rent_per_month", "rentPerMonth", "rent")),
+        ("areaPing", ("area_ping", "areaPing", "area")),
+        ("floor", ("floor",)),
+        ("listingType", ("listing_type", "listingType")),
+        ("providerListingId", ("provider_listing_id", "providerListingId")),
+    )
+
+    def record_batch_assisted_entry(
+        self,
+        *,
+        intake_id: str,
+        tenant_id: str,
+        row: dict[str, Any],
+        source_id: str,
+        correlation_id: str | None = None,
+        idempotency_key: str | None = None,
+        actor_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Land one batch-import row as an assisted-entry intake record.
+
+        The caller owns ``intake_id`` and must derive it from the tenant and the
+        batch member rather than from anything the submitter supplies -- see
+        :func:`apps.worker.oday_worker.handlers.batch_listing_intake_id`. That is
+        what makes this write durably idempotent: replaying a row after a crash
+        addresses the record the interrupted attempt wrote instead of creating a
+        second one, and one tenant cannot address another tenant's record.
+
+        Stage comes from the row's own data under the same rules
+        :meth:`correct_intake` applies -- a row missing a mandatory
+        assisted-entry field stops at ``AWAITING_ASSISTED_ENTRY`` instead of
+        being reported as a complete listing. Nothing is retrieved from a
+        source: a batch row has no URL and no snapshot, and those fields stay
+        ``None`` rather than being filled with a placeholder.
+        """
+
+        from modules.external_data.application.assisted_intake import (
+            IDENTITY_FIELDS,
+            content_fingerprint,
+            effective_fields,
+            match_listing,
+        )
+
+        tenant_id = str(tenant_id or "").strip()
+        if not tenant_id:
+            raise NetworkListingPolicyError(
+                "batch assisted entry requires an authenticated tenant scope"
+            )
+
+        self._load_intakes()
+        try:
+            existing = self._listing_intake(intake_id)
+        except NetworkListingNotFound:
+            existing = None
+
+        if existing is not None and str(existing.get("tenantId") or "") != tenant_id:
+            # Defence in depth: the id is already tenant-derived, so reaching
+            # here means the id scheme was bypassed. Refuse rather than
+            # overwrite another tenant's record.
+            raise NetworkListingPolicyError(
+                f"assisted intake record {intake_id} belongs to another tenant"
+            )
+
+        now = _now()
+        if existing is None:
+            intake: dict[str, Any] = {
+                "id": intake_id,
+                "tenantId": tenant_id,
+                "originalUrl": None,
+                "canonicalUrl": None,
+                "submitter": actor_name or "批次匯入",
+                "owner": actor_name or "批次匯入",
+                "heatZoneId": _first_present(row, "heat_zone_id", "heatZoneId"),
+                "intakeMethod": "BATCH_ASSISTED_ENTRY",
+                "stage": "SUBMITTED",
+                "sourceId": source_id,
+                "policy": "ASSISTED_ENTRY_ONLY",
+                "policyLabel": "僅限人工協助輸入",
+                "policyReason": "批次匯入的既有房源由營運方提供，未經來源檢索。",
+                "rawSnapshot": None,
+                "snapshotId": None,
+                "capturedAt": None,
+                "parserVersion": None,
+                "correlationId": correlation_id,
+                "parsedFields": {},
+                "matchResult": None,
+                "auditEvents": [],
+                "idempotencyKey": idempotency_key,
+                "createdAt": now,
+                "version": 1,
+            }
+        else:
+            intake = existing
+            intake["version"] = int(intake.get("version") or 1) + 1
+
+        parsed_fields: dict[str, Any] = dict(intake.get("parsedFields") or {})
+        for field_name, columns in self.BATCH_ROW_FIELD_COLUMNS:
+            raw_value = _first_present(row, *columns)
+            if raw_value is None or (isinstance(raw_value, str) and not raw_value.strip()):
+                continue
+            normalized = raw_value.strip() if isinstance(raw_value, str) else raw_value
+            parsed_fields[field_name] = {
+                "key": field_name,
+                "label": field_name,
+                "sourceValue": raw_value,
+                "normalizedValue": normalized,
+                "correctedValue": None,
+                "correctionReason": None,
+                "identity": field_name in IDENTITY_FIELDS,
+                "lowConfidence": False,
+            }
+        intake["parsedFields"] = parsed_fields
+        intake["updatedAt"] = now
+
+        effective_vals = effective_fields(parsed_fields)
+        missing = _missing_assisted_entry_fields(effective_vals)
+        if missing:
+            intake["stage"] = "AWAITING_ASSISTED_ENTRY"
+            intake["matchResult"] = None
+            intake["contentFingerprint"] = None
+            intake["missingRequiredFields"] = missing
+        else:
+            intake.pop("missingRequiredFields", None)
+            fingerprint = content_fingerprint(effective_vals)
+            match_res = match_listing(
+                values=effective_vals,
+                canonical_url="",
+                source_id=source_id,
+                fingerprint=fingerprint,
+                listings=self._get_match_listings(),
+            )
+            intake["contentFingerprint"] = fingerprint
+            intake["matchResult"] = match_res.to_dict()
+            intake["stage"] = (
+                "NEEDS_REVIEW" if match_res.outcome == "POSSIBLE_MATCH" else "READY"
+            )
+
+        # A deterministic audit id keeps a replay from growing a second entry
+        # for the same batch member.
+        audit_evt = {
+            "id": f"AUD-INTAKE-BATCH-{intake_id}",
+            "occurredAt": now,
+            "actorRoleId": "system",
+            "actorName": actor_name or "批次匯入",
+            "action": "intake.batch_assisted_entry",
+            "targetId": intake_id,
+            "message": f"批次匯入建立協助輸入待辦，階段 {intake['stage']}。",
+            "correlationId": correlation_id,
+            "metadata": {
+                "fields": sorted(parsed_fields),
+                "stage": intake["stage"],
+                "missingRequiredFields": missing,
+                "matchOutcome": (
+                    intake["matchResult"]["outcome"] if intake["matchResult"] else None
+                ),
+                "idempotencyKey": idempotency_key,
+            },
+        }
+        intake["auditEvents"] = [
+            evt for evt in intake.get("auditEvents", []) if evt.get("id") != audit_evt["id"]
+        ]
+        intake["auditEvents"].append(audit_evt)
+
+        self._save_intake(intake)
         return _copy(intake)
 
     def decide_intake(

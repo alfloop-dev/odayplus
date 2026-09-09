@@ -269,8 +269,16 @@ def apply_item_result(
     if existing.item_status == ItemStatus.CANCELLED.value and existing.attempt == 0:
         return current_items, False
 
-    # Duplicate / Stale attempt number check (attempt must be strictly increasing)
-    if new_result.attempt <= existing.attempt:
+    # A result may only carry the item forward: it either completes the attempt
+    # currently recorded as in flight, or reports a later one. An attempt whose
+    # outcome is already recorded rejects a second result for that same attempt,
+    # which is what makes a duplicate delivery a no-op.
+    if new_result.attempt < existing.attempt:
+        return current_items, False
+    if (
+        new_result.attempt == existing.attempt
+        and existing.item_status != ItemStatus.PENDING.value
+    ):
         return current_items, False
 
     # Apply new result
