@@ -326,6 +326,12 @@ def decide_delete(
     )
 
 
+TRANSACTION_AUTHORITY_RANKS: dict[SourceKind, int] = {
+    SourceKind.ORDERS: 1,
+    SourceKind.TRANSACTION: 2,
+    SourceKind.TRADE: 3,
+}
+
 # Tenant-scoped purge statements, keyed by the ``canonical_lineage`` table name.
 # Every statement binds ``(canonical_id, tenant_id)`` in that order, and every
 # statement carries the tenant predicate itself so a wrong lineage row can never
@@ -335,14 +341,17 @@ def decide_delete(
 _LEAF_PURGE_TEMPLATES: dict[str, tuple[str, ...]] = {
     "core.transactions": (
         # The data-plane authority row references the transaction, so it goes first.
+        # Only remove authority when the deleting source is at least as authoritative
+        # (lower or equal numeric rank) as the recorded authority.
         "DELETE FROM {schema}.transaction_authority AS auth "
         "USING core.transactions AS target, core.stores AS scope "
         "WHERE auth.transaction_id = target.transaction_id "
         "AND target.transaction_id = %s AND target.store_id = scope.store_id "
-        "AND scope.tenant_id = %s",
+        "AND scope.tenant_id = %s AND auth.authority_rank >= {authority_rank}",
         "DELETE FROM core.transactions AS target USING core.stores AS scope "
         "WHERE target.transaction_id = %s AND target.store_id = scope.store_id "
-        "AND scope.tenant_id = %s",
+        "AND scope.tenant_id = %s AND NOT EXISTS ("
+        "SELECT 1 FROM {schema}.transaction_authority AS auth WHERE auth.transaction_id = target.transaction_id)",
     ),
     "core.machine_status_events": (
         # The data-plane evidence row references the event, so it goes first.
@@ -406,11 +415,16 @@ def plan_purge(
     *,
     tenant_id: UUID,
     control_schema: str,
+    source_kind: SourceKind | None = None,
 ) -> PurgePlan:
     """Build the tenant-scoped purge plan for one identity's lineage targets."""
+    authority_rank = (
+        TRANSACTION_AUTHORITY_RANKS.get(source_kind, 1) if source_kind is not None else 1
+    )
     templates = {
         table.format(schema=control_schema): tuple(
-            statement.format(schema=control_schema) for statement in statements
+            statement.format(schema=control_schema, authority_rank=authority_rank)
+            for statement in statements
         )
         for table, statements in _LEAF_PURGE_TEMPLATES.items()
     }

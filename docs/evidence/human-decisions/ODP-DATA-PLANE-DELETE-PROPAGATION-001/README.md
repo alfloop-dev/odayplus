@@ -3,10 +3,10 @@
 - **Task ID**: `ODP-DATA-PLANE-DELETE-PROPAGATION-001`
 - **Work Package**: WP-34 Follow-up ([ODP 人工決策落地規畫](../../../plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md) §6 WP-34 & [Phase 34A Implementation Handoff](../ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md) §4 跟進項目 1)
 - **決策依據**: 決策編號 `D20`（A：實作／補齊 CDC 適用性與契約）
-- **查證基準 SHA**: `3958385788ba` (aligned with latest `origin/dev` tip)
-- **負責人 (Owner)**: Claude（2026-09-09 由 Antigravity4 因 dispatch 暫停自動改派；P1 缺陷修復由 Antigravity4 於 `cc7bdb0b` 完成，本輪由 Claude 接手補 SAST 修正、缺陷綁定驗證與收據）
+- **查證基準 SHA**: `aa8e54cf1e99` (aligned with latest `origin/dev` tip)
+- **負責人 (Owner)**: Antigravity6（修復 Codex2 兩項審查缺陷：保護交易權威免受 stale TRANSACTION 刪除影響、保留 core.brands/core.tenants 審計目標跨重放與重啟）
 - **審查人 (Reviewer)**: Codex2
-- **交付狀態**: `IMPLEMENTATION_DELIVERED` (修復審查 5 項 P1 缺陷、推進 dev 基準、30 項回歸測試與邊界/SAST 驗證全數通過)
+- **交付狀態**: `IMPLEMENTATION_DELIVERED` (推進 dev 基準 `aa8e54cf1e99`、修復兩項審查缺陷、35 項回歸測試與邊界/SAST 驗證全數通過)
 
 ---
 
@@ -160,3 +160,29 @@
 - 這把鎖序列化的是**同一 tenant / source-kind / source-id** 的 delete 與 upsert。不同 scope 不互相阻擋，這是刻意的：協調範圍與 delete 得以作用的範圍一致，不因此把租戶之間序列化。
 - `domain_inputs` 以 `source_snapshot_id` 為主鍵，同一 `source_id` 多次落地會保留多列快照。因此 v23 情境的斷言是「新落地的 snapshot 仍在」，v21 情境的斷言是「該身分的**每一個** snapshot 都已消失」，而非單純的列數比較。
 - 本節仍屬離線落地層語意：未開啟任何 change stream、未讀取任何憑證、未在生產環境刪除任何資料。與 Phase 34B / H07 的區隔同 §5，不因本修復升格為「完整 CDC 已 VERIFIED」。
+
+---
+
+## 9. 審查缺陷修復：交易權威保護與保留主檔重放審計 (Review Defect Repairs)
+
+在 PR #1282 (`4a4aa4a6`) Codex2 獨立審查重現的兩項缺陷，在本輪交付中完成修復並納入回歸測試：
+
+### 9.1 保護共用 Canonical Transaction / Current Authority 免受 Stale TRANSACTION 刪除影響
+
+- **缺陷機制**：`core.transactions` 與 `data_plane.transaction_authority` 為 `ORDERS`（權威等級 1）、`TRANSACTION`（權威等級 2）與 `TRADE`（權威等級 3）共用之落地目標。原 `_LEAF_PURGE_TEMPLATES["core.transactions"]` 在刪除時無條件清除 `transaction_authority` 與 `core.transactions`，導致權威較低或過期之 `TRANSACTION` 刪除事件抵達時，誤刪已由權威較高之 `ORDERS` 落地的交易記錄。
+- **修復實作**：
+  1. 在 `apps/data_platform/deletion.py` 定義 `TRANSACTION_AUTHORITY_RANKS`（`ORDERS: 1`, `TRANSACTION: 2`, `TRADE: 3`），並將 `source_kind` 傳入 `plan_purge()`。
+  2. `_LEAF_PURGE_TEMPLATES["core.transactions"]` 調整為：
+     - `DELETE FROM {schema}.transaction_authority ... WHERE ... AND auth.authority_rank >= {authority_rank}`（僅在刪除事件之權威等級小於等於現有權威數值時才刪除 authority）。
+     - `DELETE FROM core.transactions ... WHERE ... AND NOT EXISTS (SELECT 1 FROM {schema}.transaction_authority AS auth WHERE auth.transaction_id = target.transaction_id)`（若權威記錄因等級較高而未被刪除，則 `core.transactions` 亦受到保護不予刪除，且避免外鍵衝突）。
+  3. 新增回歸測試 `test_stale_transaction_delete_does_not_purge_authoritative_orders` 驗證權威保護行為。
+
+### 9.2 保留 core.brands / core.tenants 審計目標跨冪等重放與重啟 (Retained Targets Preservation)
+
+- **缺陷機制**：`core.tenants`、`core.brands` 等層級主檔屬於 `RETAINED_CANONICAL_TABLES`，首次刪除時記錄於墓碑之 `retained_targets` 並清除 `canonical_lineage`。當該刪除事件於重啟後或於後續流程中進行冪等重放時，由於 `canonical_lineage` 已無記錄，`targets` 計算為空，原 `_upsert_tombstone` 之 `ON CONFLICT DO UPDATE SET retained_targets = EXCLUDED.retained_targets` 會將既有 `retained_targets` 覆寫為空陣列，破壞審計回讀一致性。
+- **修復實作**：
+  1. `_enter_delete_scope` 在解析租戶時，將 `_read_lineage` 與既有 `_read_tombstone_tenants` 合併，確保即使 lineage 已清理仍能正確綁定並鎖定租戶範疇。
+  2. `_propagate_delete` 在計算 `retained` 時，若 `recorded.retained_targets` 已存在，則將現有與已記錄之 retained targets 做 union 合併。
+  3. `_upsert_tombstone` 的 `ON CONFLICT DO UPDATE` 加入 `CASE WHEN cardinality(EXCLUDED.retained_targets) > 0 THEN EXCLUDED.retained_targets ELSE {self._schema}.tombstones.retained_targets END` 防護，並透過 `RETURNING ..., retained_targets` 確保回傳與持久化一致。
+  4. 新增回歸測試 `test_retained_targets_preserved_across_replay_and_restart` 驗證首次刪除、冪等重放、跨 store 重啟與無明確租戶重放之 retained targets 完整性。
+

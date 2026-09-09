@@ -1020,3 +1020,164 @@ def test_a_delete_and_an_upsert_are_serialised_by_the_database(
         # domain_inputs keeps one row per landed snapshot, so "not resurrected"
         # means every snapshot of this identity is gone, not just the last one.
         assert rows == []
+
+
+@pytest.mark.requires_live_env
+def test_stale_transaction_delete_does_not_purge_authoritative_orders(live_store: Any) -> None:
+    """A delete from a lower-authority source (e.g. transaction/trade) must not purge authoritative orders."""
+    tenant, _ = _seed_two_tenants(live_store)
+    store = live_store.store
+    run_orders = _begin_helper(store, SourceKind.ORDERS)
+    run_txn = _begin_helper(store, SourceKind.TRANSACTION)
+    store_id, txn_id, snapshot_orders, snapshot_txn = (uuid.uuid4() for _ in range(4))
+    with live_store.connect() as conn:
+        conn.execute(
+            "INSERT INTO core.stores (store_id, tenant_id) VALUES (%s, %s)",
+            (store_id, tenant),
+        )
+        conn.execute(
+            "INSERT INTO core.transactions (transaction_id, store_id) VALUES (%s, %s)",
+            (txn_id, store_id),
+        )
+        conn.execute(
+            "INSERT INTO data_plane.transaction_authority (transaction_id, source_kind, authority_rank, source_snapshot_id) "
+            "VALUES (%s, 'orders', 1, %s)",
+            (txn_id, snapshot_orders),
+        )
+        conn.execute(
+            "INSERT INTO data_plane.canonical_lineage (source_snapshot_id, source_kind, source_id, content_sha256, run_id, tenant_id, canonical_table, canonical_id, source_version) "
+            "VALUES (%s, 'orders', 'shared-txn-1', %s, %s, %s, 'core.transactions', %s, 100)",
+            (snapshot_orders, "a" * 64, run_orders, tenant, txn_id),
+        )
+        conn.execute(
+            "INSERT INTO data_plane.canonical_lineage (source_snapshot_id, source_kind, source_id, content_sha256, run_id, tenant_id, canonical_table, canonical_id, source_version) "
+            "VALUES (%s, 'transaction', 'shared-txn-1', %s, %s, %s, 'core.transactions', %s, 90)",
+            (snapshot_txn, "b" * 64, run_txn, tenant, txn_id),
+        )
+
+    moment = datetime(2026, 7, 22, tzinfo=UTC)
+    # Stale delete from lower authority source_kind = TRANSACTION (rank 2)
+    stale_result = store.delete_record(
+        DeleteEvent(
+            scope=DeleteScope(SourceKind.TRANSACTION, "shared-txn-1", tenant),
+            source_version=version_from_timestamp(moment),
+            purged_at=moment,
+            source_snapshot_id=str(uuid.uuid4()),
+            tombstone_hash="t" * 64,
+            run_id=run_txn,
+        )
+    )
+    assert not stale_result.rejected
+    assert stale_result.purged_row_count == 0
+
+    # Ensure transaction and authority are intact and still point to orders (rank 1)
+    with live_store.connect() as conn:
+        txn_row = conn.execute(
+            "SELECT transaction_id FROM core.transactions WHERE transaction_id = %s",
+            (txn_id,),
+        ).fetchone()
+        assert txn_row is not None
+        auth_row = conn.execute(
+            "SELECT source_kind, authority_rank FROM data_plane.transaction_authority WHERE transaction_id = %s",
+            (txn_id,),
+        ).fetchone()
+        assert auth_row == ("orders", 1)
+
+    # Now authoritative delete from SourceKind.ORDERS (rank 1)
+    orders_result = store.delete_record(
+        DeleteEvent(
+            scope=DeleteScope(SourceKind.ORDERS, "shared-txn-1", tenant),
+            source_version=version_from_timestamp(moment),
+            purged_at=moment,
+            source_snapshot_id=str(uuid.uuid4()),
+            tombstone_hash="o" * 64,
+            run_id=run_orders,
+        )
+    )
+    assert not orders_result.rejected
+    with live_store.connect() as conn:
+        assert conn.execute(
+            "SELECT 1 FROM core.transactions WHERE transaction_id = %s",
+            (txn_id,),
+        ).fetchone() is None
+        assert conn.execute(
+            "SELECT 1 FROM data_plane.transaction_authority WHERE transaction_id = %s",
+            (txn_id,),
+        ).fetchone() is None
+
+
+@pytest.mark.requires_live_env
+def test_retained_targets_preserved_across_replay_and_restart(live_store: Any) -> None:
+    """Retained targets like core.brands/core.tenants must be preserved across replay and restart."""
+    store = live_store.store
+    # Land a merchant
+    _, _, landed = _land(store, SourceKind.MERCHANT, _merchant_document("merchant-retained-test"))
+    assert landed.valid_loaded == 1
+
+    from apps.data_platform.identifiers import tenant_id_for_merchant
+    tenant_id = tenant_id_for_merchant("merchant-retained-test")
+    moment = datetime(2026, 7, 22, tzinfo=UTC)
+    run_id = _begin_helper(store, SourceKind.MERCHANT)
+
+    # First delete
+    first_event = DeleteEvent(
+        scope=DeleteScope(SourceKind.MERCHANT, "merchant-retained-test", tenant_id),
+        source_version=version_from_timestamp(moment),
+        purged_at=moment,
+        source_snapshot_id=str(uuid.uuid4()),
+        tombstone_hash="m" * 64,
+        run_id=run_id,
+    )
+    result = store.delete_record(first_event)
+    assert result.outcome is DeleteOutcome.APPLIED
+    assert set(result.retained_targets) == {"core.brands", "core.tenants"}
+
+    tombstone = store.get_tombstone(tenant_id, SourceKind.MERCHANT, "merchant-retained-test")
+    assert tombstone is not None
+    assert set(tombstone.retained_targets) == {"core.brands", "core.tenants"}
+
+    # Idempotent replay
+    replay_event = DeleteEvent(
+        scope=DeleteScope(SourceKind.MERCHANT, "merchant-retained-test", tenant_id),
+        source_version=version_from_timestamp(moment),
+        purged_at=moment,
+        source_snapshot_id=str(uuid.uuid4()),
+        tombstone_hash="m" * 64,
+        run_id=run_id,
+    )
+    replay_result = store.delete_record(replay_event)
+    assert replay_result.outcome is DeleteOutcome.REPLAYED
+    assert set(replay_result.retained_targets) == {"core.brands", "core.tenants"}
+
+    tombstone_after_replay = store.get_tombstone(
+        tenant_id, SourceKind.MERCHANT, "merchant-retained-test"
+    )
+    assert tombstone_after_replay is not None
+    assert set(tombstone_after_replay.retained_targets) == {"core.brands", "core.tenants"}
+
+    # Simulate restart by instantiating a fresh PsycopgCanonicalStore
+    fresh_store = live_store.build()
+    restarted_tombstone = fresh_store.get_tombstone(
+        tenant_id, SourceKind.MERCHANT, "merchant-retained-test"
+    )
+    assert restarted_tombstone is not None
+    assert set(restarted_tombstone.retained_targets) == {"core.brands", "core.tenants"}
+
+    # Replay on fresh store (even without explicit tenant_id in scope)
+    replay_fresh_event = DeleteEvent(
+        scope=DeleteScope(SourceKind.MERCHANT, "merchant-retained-test", None),
+        source_version=version_from_timestamp(moment),
+        purged_at=moment,
+        source_snapshot_id=str(uuid.uuid4()),
+        tombstone_hash="m" * 64,
+        run_id=run_id,
+    )
+    replay_fresh_result = fresh_store.delete_record(replay_fresh_event)
+    assert replay_fresh_result.outcome is DeleteOutcome.REPLAYED
+    assert set(replay_fresh_result.retained_targets) == {"core.brands", "core.tenants"}
+
+    final_tombstone = fresh_store.get_tombstone(
+        tenant_id, SourceKind.MERCHANT, "merchant-retained-test"
+    )
+    assert final_tombstone is not None
+    assert set(final_tombstone.retained_targets) == {"core.brands", "core.tenants"}

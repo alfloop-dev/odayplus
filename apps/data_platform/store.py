@@ -422,6 +422,18 @@ class PsycopgCanonicalStore:
             (scope.source_kind.value, scope.source_id),
         ).fetchall()
 
+    def _read_tombstone_tenants(self, connection: Any, scope: DeleteScope) -> list[UUID]:
+        """Read any tenant that has already recorded a tombstone for this identity."""
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT tenant_id
+            FROM {self._schema}.tombstones
+            WHERE entity_type = %s AND entity_id = %s
+            """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
+            (scope.source_kind.value, scope.source_id),
+        ).fetchall()
+        return [UUID(str(r[0])) for r in rows]
+
     def _enter_delete_scope(
         self,
         connection: Any,
@@ -450,9 +462,9 @@ class PsycopgCanonicalStore:
                 )
                 locked.add(scope.tenant_id)
             lineage = self._read_lineage(connection, scope)
-            resolution = resolve_delete_tenant(
-                scope.tenant_id, [UUID(str(row[0])) for row in lineage]
-            )
+            tombstone_tenants = self._read_tombstone_tenants(connection, scope)
+            all_owners = [UUID(str(row[0])) for row in lineage] + tombstone_tenants
+            resolution = resolve_delete_tenant(scope.tenant_id, all_owners)
             candidate = resolution.tenant_id if resolution.resolved else None
             if candidate is None or candidate in locked:
                 break
@@ -522,7 +534,10 @@ class PsycopgCanonicalStore:
                 purged = 0
                 if mode is DeletePropagationMode.SINK_DELETE and decision.purges_rows:
                     plan = plan_purge(
-                        targets, tenant_id=tenant_id, control_schema=self._schema
+                        targets,
+                        tenant_id=tenant_id,
+                        control_schema=self._schema,
+                        source_kind=scope.source_kind,
                     )
                     for statement, params in plan.statements:
                         cursor = connection.execute(statement, params)
@@ -538,6 +553,10 @@ class PsycopgCanonicalStore:
                     )
                 else:
                     retained = tuple(sorted({table for table, _ in targets}))
+
+                if recorded is not None and recorded.retained_targets:
+                    retained = tuple(sorted(set(retained) | set(recorded.retained_targets)))
+
                 row = self._upsert_tombstone(
                     connection, event, tenant_id, mode, purged, retained
                 )
@@ -561,7 +580,7 @@ class PsycopgCanonicalStore:
                     tenant_id=tenant_id,
                     source_version=int(row[0]),
                     purged_row_count=int(row[2]),
-                    retained_targets=retained,
+                    retained_targets=tuple(row[3] or ()) if len(row) > 3 else retained,
                     replay_count=int(row[1]),
                 )
 
@@ -662,12 +681,15 @@ class PsycopgCanonicalStore:
                 run_id = EXCLUDED.run_id,
                 purged_row_count = {self._schema}.tombstones.purged_row_count
                     + EXCLUDED.purged_row_count,
-                retained_targets = EXCLUDED.retained_targets,
+                retained_targets = CASE
+                    WHEN cardinality(EXCLUDED.retained_targets) > 0 THEN EXCLUDED.retained_targets
+                    ELSE {self._schema}.tombstones.retained_targets
+                END,
                 context = EXCLUDED.context,
                 replay_count = {self._schema}.tombstones.replay_count + 1,
                 updated_at = CURRENT_TIMESTAMP
             WHERE EXCLUDED.source_version >= {self._schema}.tombstones.source_version
-            RETURNING source_version, replay_count, purged_row_count
+            RETURNING source_version, replay_count, purged_row_count, retained_targets
             """,  # nosec B608 -- DataPlaneConfig validates the schema identifier.
             (
                 tenant_id,
