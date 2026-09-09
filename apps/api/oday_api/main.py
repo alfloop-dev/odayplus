@@ -12,6 +12,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzone_router
 from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
@@ -29,7 +30,7 @@ from shared.api.errors import ApiError, error_response_body, install_error_handl
 from shared.api.route_table_safety import ensure_atomic_route_table_publication
 from shared.api.versioning import install_deprecation_headers, mount_versioned
 from shared.audit import AuditEvent, InMemoryAuditLog
-from shared.jobs import InMemoryJobQueue, JobRequest
+from shared.jobs import InMemoryJobQueue, JobRequest, JobStatus
 from shared.observability import CORRELATION_ID_HEADER, CorrelationContext
 
 API_VERSION = "0.1.0"
@@ -103,6 +104,9 @@ else:
         job_type: str = Field(min_length=1)
         payload: dict[str, Any] = Field(default_factory=dict)
         idempotency_key: str | None = None
+
+    class JobRetryPayload(BaseModel):
+        retry_scope: str = Field(default="FAILED_ONLY")
 
     def create_app(
         *,
@@ -1064,8 +1068,7 @@ else:
                 "audit_event_id": audit_event.event_id,
             }
 
-        @platform_router.get("/jobs/{job_id}", tags=["jobs"])
-        def get_job(job_id: str, request: Request) -> dict[str, Any]:
+        def _get_job_response(job_id: str, request: Request) -> dict[str, Any]:
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
@@ -1085,7 +1088,144 @@ else:
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="job not found",
                     )
-            return job.to_dict()
+            elif job.payload.get("tenant_id"):
+                req_tenant = request.headers.get("x-tenant-id") or getattr(request.state, "tenant_id", None)
+                if req_tenant and str(job.payload["tenant_id"]) != req_tenant:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job not found",
+                    )
+
+            res = job.to_dict()
+            if "summary" in job.payload and "summary" not in res:
+                res["summary"] = job.payload["summary"]
+            return res
+
+        @platform_router.get("/jobs/{job_id}", tags=["jobs"])
+        def get_job(job_id: str, request: Request) -> dict[str, Any]:
+            return _get_job_response(job_id, request)
+
+        @platform_router.get("/platform/jobs/{job_id}", tags=["jobs"], include_in_schema=False)
+        def get_platform_job(job_id: str, request: Request) -> dict[str, Any]:
+            return _get_job_response(job_id, request)
+
+        def _get_job_receipt_response(job_id: str, request: Request) -> dict[str, Any]:
+            job = job_queue.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job receipt not found")
+            if job.payload.get("tenant_id"):
+                req_tenant = request.headers.get("x-tenant-id") or getattr(request.state, "tenant_id", None)
+                if req_tenant and str(job.payload["tenant_id"]) != req_tenant:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job receipt not found",
+                    )
+            receipt = job.payload.get("receipt")
+            if receipt is None or not isinstance(receipt, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="job receipt not found or not a multi-item batch job",
+                )
+            return dict(receipt)
+
+        @platform_router.get("/jobs/{job_id}/receipt", tags=["jobs"])
+        def get_job_receipt(job_id: str, request: Request) -> dict[str, Any]:
+            return _get_job_receipt_response(job_id, request)
+
+        @platform_router.get("/platform/jobs/{job_id}/receipt", tags=["jobs"], include_in_schema=False)
+        def get_platform_job_receipt(job_id: str, request: Request) -> dict[str, Any]:
+            return _get_job_receipt_response(job_id, request)
+
+        def _retry_job_response(
+            job_id: str,
+            body: JobRetryPayload | None,
+            request: Request,
+        ) -> dict[str, Any]:
+            job = job_queue.get(job_id)
+            if job is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            if job.payload.get("tenant_id"):
+                req_tenant = request.headers.get("x-tenant-id") or getattr(request.state, "tenant_id", None)
+                if req_tenant and str(job.payload["tenant_id"]) != req_tenant:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job not found",
+                    )
+
+            retry_scope = (body.retry_scope if body else "FAILED_ONLY") or "FAILED_ONLY"
+            if retry_scope not in ("FAILED_ONLY", "FAILED_RETRYABLE_ONLY"):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid retry_scope: {retry_scope}",
+                )
+
+            payload = dict(job.payload)
+            receipt = payload.get("receipt")
+            items = []
+            if isinstance(receipt, dict) and "items" in receipt:
+                items = receipt["items"]
+            elif "items" in payload:
+                items = payload["items"]
+            elif "rows" in payload:
+                items = payload["rows"]
+
+            retried_count = 0
+            for it in items:
+                status_val = it.get("item_status") if isinstance(it, dict) else getattr(it, "item_status", None)
+                err = it.get("error") if isinstance(it, dict) else getattr(it, "error", None)
+                is_retryable = True
+                if isinstance(err, dict):
+                    is_retryable = bool(err.get("retryable", False))
+                elif err is not None:
+                    is_retryable = bool(getattr(err, "retryable", False))
+
+                if status_val == "FAILED" and is_retryable:
+                    retried_count += 1
+
+            payload["_retry_scope"] = retry_scope
+            job_queue.update_status(
+                job.job_id,
+                JobStatus.QUEUED,
+                payload=payload,
+                delivery_state=None,
+            )
+
+            correlation_id = getattr(getattr(request, "state", None), "correlation_id", None) or request.headers.get("x-correlation-id") or f"corr-retry-{uuid4().hex[:8]}"
+            audit_log.record(
+                AuditEvent(
+                    event_type="job.retry",
+                    actor="system",
+                    action="retry",
+                    resource=f"job/{job.job_type}",
+                    outcome="accepted",
+                    correlation_id=correlation_id,
+                    job_id=job.job_id,
+                    metadata={"retry_scope": retry_scope, "retried_items_count": retried_count},
+                )
+            )
+
+            return {
+                "job_id": job.job_id,
+                "status": "queued",
+                "retry_scope": retry_scope,
+                "retried_items_count": retried_count,
+            }
+
+        @platform_router.post("/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
+        def retry_job(
+            job_id: str,
+            request: Request,
+            body: JobRetryPayload | None = None,
+        ) -> dict[str, Any]:
+            return _retry_job_response(job_id, body, request)
+
+        @platform_router.post("/platform/jobs/{job_id}/retry", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"], include_in_schema=False)
+        def retry_platform_job(
+            job_id: str,
+            request: Request,
+            body: JobRetryPayload | None = None,
+        ) -> dict[str, Any]:
+            return _retry_job_response(job_id, body, request)
 
         @platform_router.get("/audit/events", tags=["audit"])
         def list_audit_events(

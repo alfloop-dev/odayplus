@@ -137,6 +137,29 @@ class ODayWorker:
                     self._record_stale_worker(job, heartbeat_failure)
                     return True
                 duration = time.monotonic() - start_time
+                latest_job = self.job_queue.get(job.job_id)
+                if latest_job and latest_job.status in (
+                    JobStatus.SUCCEEDED,
+                    JobStatus.PARTIAL,
+                    JobStatus.FAILED,
+                    JobStatus.CANCELLED,
+                ):
+                    status_label = latest_job.status.value
+                    self.telemetry.metrics.observe(
+                        "job_duration_seconds",
+                        duration,
+                        labels={"job_type": job.job_type, "status": status_label},
+                    )
+                    self.telemetry.logger.info(
+                        f"Job {job.job_id} completed with status {status_label}",
+                        correlation_id=job.correlation_id,
+                        actor="worker",
+                        resource=f"job/{job.job_type}",
+                        action="execute",
+                        result=status_label,
+                    )
+                    return True
+
                 try:
                     self.job_queue.update_status(
                         job.job_id,

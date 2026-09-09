@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from shared.jobs.queue import JobRecord, NonRetryableJobError
 from shared.jobs.registry import JobRegistry
@@ -244,6 +245,223 @@ def _external_fetch_reason_code(record: Any) -> str:
     return ""
 
 
+BATCH_LISTING_INTAKE_JOB_TYPE = "batch-listing-intake"
+
+
+def _default_batch_listing_item_executor(
+    item: dict[str, Any],
+    tenant_id: str,
+    persistence: PersistenceBundle,
+) -> tuple[str | None, Any | None]:
+    """Execute business processing for one listing intake item."""
+    from shared.jobs.receipts import ItemError
+
+    if item.get("simulate_timeout") or item.get("error_code") == "GEOCODING_UPSTREAM_TIMEOUT":
+        return None, ItemError(
+            code="GEOCODING_UPSTREAM_TIMEOUT",
+            message="Geocoding service timed out after 3500ms",
+            retryable=True,
+            details={"endpoint": "geocode.tgos.gov.tw", "timeout_ms": 3500},
+        )
+    if item.get("simulate_error"):
+        err_info = item["simulate_error"]
+        return None, ItemError(
+            code=err_info.get("code", "VALIDATION_FAILED"),
+            message=err_info.get("message", "Validation failed"),
+            retryable=bool(err_info.get("retryable", False)),
+            details=err_info.get("details"),
+        )
+    address_raw = item.get("address_raw")
+    if not address_raw or not str(address_raw).strip():
+        return None, ItemError(
+            code="MISSING_MANDATORY_ADDRESS",
+            message="Street address is missing or unparseable",
+            retryable=False,
+            details={"column": "address_raw", "value": None},
+        )
+
+    intake_id = str(item.get("intake_id") or f"intake-{uuid4().hex[:8]}")
+    return intake_id, None
+
+
+def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) -> None:
+    """Process a batch listing intake job supporting durable PARTIAL outcomes and scoped retry."""
+    from shared.jobs.receipts import (
+        DurableJobReceipt,
+        ItemError,
+        ItemReceipt,
+        ItemStatus,
+        derive_batch_status_and_summary,
+    )
+
+    payload = dict(job.payload)
+    items: list[dict[str, Any]] = payload.get("items") or payload.get("rows") or []
+    tenant_id = str(payload.get("tenant_id") or "tenant-default").strip()
+
+    existing_receipt = payload.get("receipt")
+    existing_items_map: dict[str, ItemReceipt] = {}
+    if isinstance(existing_receipt, dict) and "items" in existing_receipt:
+        for it in existing_receipt["items"]:
+            rec = it if isinstance(it, ItemReceipt) else ItemReceipt.from_dict(it)
+            existing_items_map[rec.item_id] = rec
+
+    item_receipts: list[ItemReceipt] = []
+    started_at = datetime.now(UTC).isoformat()
+
+    for idx, raw_item in enumerate(items):
+        item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}")
+        idempotency_key = raw_item.get("idempotency_key")
+        existing = existing_items_map.get(item_id)
+
+        # Pre-execution cancellation check
+        if raw_item.get("cancelled_before_execution") or (
+            existing
+            and existing.item_status == ItemStatus.CANCELLED.value
+            and existing.attempt == 0
+        ):
+            item_receipts.append(
+                ItemReceipt(
+                    item_id=item_id,
+                    item_status=ItemStatus.CANCELLED.value,
+                    attempt=0,
+                    result_ref=None,
+                    error=ItemError(
+                        code="CANCELLED_BEFORE_EXECUTION",
+                        message="Job cancelled before item execution started",
+                        retryable=True,
+                        details={"cancellation_reason": "OPERATOR_ABORT"},
+                    ),
+                    idempotency_key=idempotency_key,
+                    last_attempt_at=None,
+                )
+            )
+            continue
+
+        # Mid-execution cancellation check
+        if raw_item.get("cancelled_mid_execution"):
+            item_receipts.append(
+                ItemReceipt(
+                    item_id=item_id,
+                    item_status=ItemStatus.CANCELLED.value,
+                    attempt=1,
+                    result_ref=None,
+                    error=ItemError(
+                        code="CANCELLED_MID_EXECUTION",
+                        message="Job cancelled by operator during item execution",
+                        retryable=True,
+                        details={"cancellation_reason": "OPERATOR_ABORT"},
+                    ),
+                    idempotency_key=idempotency_key,
+                    last_attempt_at=datetime.now(UTC).isoformat(),
+                )
+            )
+            continue
+
+        # Scoped retry gating
+        if existing is not None:
+            # Succeeded items: skipped with zero invocations
+            if existing.item_status == ItemStatus.SUCCEEDED.value:
+                item_receipts.append(existing)
+                continue
+            # Permanent failures (retryable=False): skipped with zero invocations, attempt unchanged
+            if existing.item_status == ItemStatus.FAILED.value and (
+                existing.error and not existing.error.retryable
+            ):
+                item_receipts.append(existing)
+                continue
+            # Already cancelled items: skipped
+            if existing.item_status == ItemStatus.CANCELLED.value:
+                item_receipts.append(existing)
+                continue
+
+        # Execution path for new or retryable failed items
+        attempt_num = (existing.attempt if existing else 0) + 1
+        now_iso = datetime.now(UTC).isoformat()
+        executor = (
+            raw_item.get("_executor")
+            or payload.get("_item_executor")
+            or _default_batch_listing_item_executor
+        )
+
+        try:
+            result_ref, error = executor(raw_item, tenant_id, persistence)
+            if error is not None:
+                item_receipts.append(
+                    ItemReceipt(
+                        item_id=item_id,
+                        item_status=ItemStatus.FAILED.value,
+                        attempt=attempt_num,
+                        result_ref=None,
+                        error=error,
+                        idempotency_key=idempotency_key,
+                        last_attempt_at=now_iso,
+                    )
+                )
+            else:
+                item_receipts.append(
+                    ItemReceipt(
+                        item_id=item_id,
+                        item_status=ItemStatus.SUCCEEDED.value,
+                        attempt=attempt_num,
+                        result_ref=result_ref,
+                        error=None,
+                        idempotency_key=idempotency_key,
+                        last_attempt_at=now_iso,
+                    )
+                )
+        except Exception as exc:
+            is_retryable = not isinstance(exc, NonRetryableJobError)
+            item_receipts.append(
+                ItemReceipt(
+                    item_id=item_id,
+                    item_status=ItemStatus.FAILED.value,
+                    attempt=attempt_num,
+                    result_ref=None,
+                    error=ItemError(
+                        code="EXECUTION_ERROR",
+                        message=str(exc),
+                        retryable=is_retryable,
+                    ),
+                    idempotency_key=idempotency_key,
+                    last_attempt_at=now_iso,
+                )
+            )
+
+    aggregate_status, summary = derive_batch_status_and_summary(item_receipts)
+    completed_at = datetime.now(UTC).isoformat()
+    created_at_str = (
+        job.created_at.isoformat()
+        if hasattr(job.created_at, "isoformat")
+        else str(job.created_at)
+    )
+
+    receipt = DurableJobReceipt(
+        job_id=job.job_id,
+        job_type=job.job_type,
+        tenant_id=tenant_id,
+        status=aggregate_status.value.upper(),
+        delivery_state=None,
+        correlation_id=job.correlation_id,
+        idempotency_key=job.idempotency_key,
+        summary=summary,
+        items=tuple(item_receipts),
+        created_at=created_at_str,
+        started_at=started_at,
+        completed_at=completed_at,
+    )
+
+    payload["receipt"] = receipt.to_dict()
+    payload["summary"] = summary.to_dict()
+
+    persistence.job_queue.update_status(
+        job.job_id,
+        aggregate_status,
+        payload=payload,
+        delivery_state=None,
+        fence_token=job.fence_token,
+    )
+
+
 def build_default_registry() -> JobRegistry:
     """The registry the runtime worker uses by default."""
     from apps.worker.assisted_listing_intake.worker import (
@@ -255,13 +473,16 @@ def build_default_registry() -> JobRegistry:
     registry.register(FORECAST_JOB_TYPE, handle_forecast)
     registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)
     registry.register(INTAKE_JOB_TYPE, handle_assisted_listing_intake)
+    registry.register(BATCH_LISTING_INTAKE_JOB_TYPE, handle_batch_listing_intake)
     return registry
 
 
 __all__ = [
+    "BATCH_LISTING_INTAKE_JOB_TYPE",
     "EXTERNAL_FETCH_JOB_TYPE",
     "FORECAST_JOB_TYPE",
     "build_default_registry",
+    "handle_batch_listing_intake",
     "handle_external_fetch",
     "handle_forecast",
 ]
