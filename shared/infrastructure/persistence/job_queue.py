@@ -413,6 +413,25 @@ class DurableJobQueue:
         """
 
         with self._engine.lock:
+            resolved_payload = payload
+            if status == JobStatus.CANCELLED:
+                from shared.jobs.receipts import settle_cancelled_batch_receipt
+
+                if resolved_payload is None:
+                    curr_row = self._engine.query_one(
+                        "SELECT payload_json FROM durable_jobs WHERE job_id = ?",
+                        (job_id,),
+                    )
+                    if curr_row and curr_row["payload_json"]:
+                        try:
+                            curr_p = json.loads(curr_row["payload_json"])
+                            if isinstance(curr_p, dict) and "receipt" in curr_p:
+                                resolved_payload = settle_cancelled_batch_receipt(curr_p)
+                        except Exception:
+                            pass
+                else:
+                    resolved_payload = settle_cancelled_batch_receipt(resolved_payload)
+
             assignments = [
                 "status = ?",
                 "version = version + 1",
@@ -427,9 +446,9 @@ class DurableJobQueue:
             elif delivery_state is not None:
                 assignments.append("delivery_state = ?")
                 params.append(delivery_state.value)
-            if payload is not None:
+            if resolved_payload is not None:
                 assignments.append("payload_json = ?")
-                params.append(json.dumps(payload))
+                params.append(json.dumps(resolved_payload))
             if status != JobStatus.RUNNING:
                 assignments.extend(
                     [

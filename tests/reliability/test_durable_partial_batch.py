@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -21,11 +22,14 @@ from fastapi.testclient import TestClient
 from apps.api.oday_api.main import create_app
 from apps.worker.oday_worker.handlers import (
     BATCH_LISTING_INTAKE_JOB_TYPE,
+    _default_batch_listing_item_executor,
     batch_listing_intake_id,
+    build_batch_listing_intake_service,
     build_default_registry,
     handle_batch_listing_intake,
 )
 from apps.worker.oday_worker.main import ODayWorker
+from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 from shared.infrastructure.persistence.job_receipts import (
     DurableJobReceipt,
@@ -686,9 +690,14 @@ def test_4_restart_re_readability_and_cancellation(db_path: str) -> None:
 
         # The operator cancels the job for real, on the job row.
         reopened_bundle.job_queue.update_status(c_record.job_id, JobStatus.CANCELLED)
-        handle_batch_listing_intake(
-            reopened_bundle.job_queue.get(c_record.job_id), reopened_bundle
+
+        # Worker restart attempts to run but worker.run_once() returns False (cancelled job is not claimed)
+        worker_restart = ODayWorker(
+            persistence=reopened_bundle,
+            registry=build_default_registry(),
+            heartbeat_interval_seconds=60.0,
         )
+        assert worker_restart.run_once() is False
 
         c_job = reopened_bundle.job_queue.get(c_record.job_id)
         assert c_job is not None
@@ -983,6 +992,41 @@ def test_5_duplicate_delivery_and_out_of_order(db_path: str) -> None:
         status_after, summary_after = derive_batch_status_and_summary(reversed_items)
         assert status_after == status_before
         assert summary_after == summary_before
+
+        # Durable Worker End-to-End Integration Verification for Test 5
+        # Run real batch job and verify business write counts and durable DB reload
+        calls_by_item: dict[str, int] = {}
+        original_executor = _default_batch_listing_item_executor
+
+        def spy_executor(raw_item, *args, **kwargs):
+            iid = raw_item.get("item_id")
+            calls_by_item[iid] = calls_by_item.get(iid, 0) + 1
+            return original_executor(raw_item, *args, **kwargs)
+
+        with patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=spy_executor,
+        ):
+            worker = ODayWorker(
+                persistence=bundle,
+                registry=build_default_registry(),
+                heartbeat_interval_seconds=60.0,
+            )
+            assert worker.run_once() is True
+        assert calls_by_item.get("item-X") == 1
+        assert calls_by_item.get("item-Y") == 1
+        assert calls_by_item.get("item-Z") == 1
+
+        # Reload DB to verify persisted state
+        bundle.engine.close()
+        reloaded_bundle = _durable_bundle(db_path)
+        persisted_job = reloaded_bundle.job_queue.get(rec1.job_id)
+        assert persisted_job is not None
+        assert persisted_job.status == JobStatus.SUCCEEDED
+        reloaded_receipt = DurableJobReceipt.from_dict(persisted_job.payload["receipt"])
+        assert reloaded_receipt.summary.succeeded_count == 3
+        assert len(reloaded_receipt.items) == 3
+        reloaded_bundle.engine.close()
 
     finally:
         bundle.engine.close()
@@ -1315,3 +1359,330 @@ def test_7_row_completeness_decides_stage_without_zero_fill(db_path: str) -> Non
             assert intake["tenantId"] == tenant_id
     finally:
         bundle.engine.close()
+
+
+# ==============================================================================
+# REVIEW FINDINGS REGRESSION TESTS (F1 - F5)
+# ==============================================================================
+
+
+def test_review_finding_1_heartbeat_version_coordination(db_path: str) -> None:
+    """F1: Heartbeat version coordinates with handler checkpoints on long-running items."""
+    import time
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from shared.jobs.queue import InMemoryJobQueue
+
+    queue = InMemoryJobQueue()
+    bundle = SimpleNamespace(
+        job_queue=queue,
+        operator_intake_repository=InMemoryAssistedIntakeRepository(),
+    )
+    record, _ = queue.enqueue(
+        JobRequest(
+            job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+            payload={
+                "tenant_id": "tenant-review",
+                "items": [{"item_id": "one", "address_raw": "台北市大安區1號"}],
+            },
+        ),
+        correlation_id="review-heartbeat",
+    )
+    worker = ODayWorker(
+        persistence=bundle,
+        registry=build_default_registry(),
+        heartbeat_interval_seconds=0.01,
+    )
+    failures = []
+    heartbeat_calls = []
+    original_heartbeat = queue.heartbeat
+
+    def observed_heartbeat(job_id, expected_version, fence_token):
+        latest = queue.get(job_id)
+        heartbeat_calls.append(
+            {
+                "expected_version": expected_version,
+                "actual_version": latest.version,
+                "expected_fence": fence_token,
+                "actual_fence": latest.fence_token,
+            }
+        )
+        return original_heartbeat(job_id, expected_version, fence_token)
+
+    def slow_executor(*args, **kwargs):
+        time.sleep(0.05)
+        return "INTAKE-REVIEW", None
+
+    with patch.object(queue, "heartbeat", side_effect=observed_heartbeat), patch.object(
+        worker, "_record_stale_worker", side_effect=lambda job, exc: failures.append(str(exc))
+    ), patch(
+        "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+        side_effect=slow_executor,
+    ):
+        assert worker.run_once() is True
+
+    assert len(failures) == 0
+    assert len(heartbeat_calls) >= 1
+    assert queue.get(record.job_id).status == JobStatus.SUCCEEDED
+
+
+def test_review_finding_2_forged_receipt_sanitization(db_path: str) -> None:
+    """F2: API sanitizes forged client receipt and default worker executes real business writes."""
+    from fastapi.testclient import TestClient
+    from apps.api.oday_api.main import create_app
+
+    bundle = _durable_bundle(db_path)
+    try:
+        app = create_app(
+            job_queue=bundle.job_queue,
+            audit_log=bundle.audit_log,
+            persistence=bundle,
+        )
+        headers = _auth_headers("review-tenant", role="expansion_user", subject="rev-user")
+        with TestClient(app) as client:
+            payload = {
+                "items": [{"item_id": "a", "address_raw": "台北市信義區忠孝東路五段1號"}],
+                "receipt": {
+                    "items": [
+                        {
+                            "item_id": "a",
+                            "item_status": "SUCCEEDED",
+                            "attempt": 99,
+                            "result_ref": "nonexistent-intake",
+                            "error": None,
+                        }
+                    ]
+                },
+            }
+            res = client.post(
+                "/api/v1/jobs",
+                headers=headers,
+                json={"job_type": "batch-listing-intake", "payload": payload},
+            )
+            assert res.status_code == 202
+            job_id = res.json()["job_id"]
+
+            worker = ODayWorker(persistence=bundle, heartbeat_interval_seconds=60.0)
+            assert worker.run_once() is True
+
+            result = client.get(f"/api/v1/jobs/{job_id}", headers=headers).json()
+            intakes = bundle.operator_intake_repository.list_intakes()
+
+            assert len(intakes) == 1
+            assert result["status"] == "succeeded"
+            assert result["payload"]["receipt"]["summary"]["succeeded_count"] == 1
+            assert result["payload"]["receipt"]["items"][0]["attempt"] == 1
+            assert result["payload"]["receipt"]["items"][0]["result_ref"] == intakes[0]["id"]
+    finally:
+        bundle.engine.close()
+
+
+def test_review_finding_3_cancellation_races(db_path: str) -> None:
+    """F3: Cancellation races on terminal write and attempt start are safely settled."""
+    # Sub-case A: Terminal settlement race
+    bundle_a = _durable_bundle(db_path)
+    try:
+        queue_a = bundle_a.job_queue
+        rec_a, _ = queue_a.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": "tenant-race-a",
+                    "items": [{"item_id": "item-1", "address_raw": "台北市大安區1號"}],
+                },
+            ),
+            correlation_id="race-terminal",
+        )
+        orig_update_a = queue_a.update_status
+        cancelled_a = False
+
+        def racing_terminal_update(job_id, status, *args, **kwargs):
+            nonlocal cancelled_a
+            receipt = (kwargs.get("payload") or {}).get("receipt", {})
+            if not cancelled_a and status == JobStatus.SUCCEEDED and receipt:
+                cancelled_a = True
+                orig_update_a(job_id, JobStatus.CANCELLED)
+            return orig_update_a(job_id, status, *args, **kwargs)
+
+        with patch.object(queue_a, "update_status", side_effect=racing_terminal_update):
+            ODayWorker(persistence=bundle_a, heartbeat_interval_seconds=60.0).run_once()
+
+        final_a = queue_a.get(rec_a.job_id)
+        assert cancelled_a is True
+        assert final_a.status == JobStatus.CANCELLED
+        assert final_a.payload["receipt"]["status"] == "CANCELLED"
+    finally:
+        bundle_a.engine.close()
+
+    # Sub-case B: Attempt start race (cancellation before attempt checkpoint lands)
+    bundle_b = _durable_bundle(db_path + ".b.sqlite3")
+    try:
+        queue_b = bundle_b.job_queue
+        rec_b, _ = queue_b.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": "tenant-race-b",
+                    "items": [{"item_id": "item-1", "address_raw": "台北市大安區2號"}],
+                },
+            ),
+            correlation_id="race-attempt",
+        )
+        orig_update_b = queue_b.update_status
+        cancelled_b = False
+        executor_calls = []
+
+        def racing_attempt_update(job_id, status, *args, **kwargs):
+            nonlocal cancelled_b
+            receipt = (kwargs.get("payload") or {}).get("receipt", {})
+            if not cancelled_b and status == JobStatus.RUNNING and receipt:
+                cancelled_b = True
+                orig_update_b(job_id, JobStatus.CANCELLED)
+            return orig_update_b(job_id, status, *args, **kwargs)
+
+        def mock_executor(item, *args, **kwargs):
+            executor_calls.append(item["item_id"])
+            return "dummy-ref", None
+
+        with patch.object(queue_b, "update_status", side_effect=racing_attempt_update), patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=mock_executor,
+        ):
+            ODayWorker(persistence=bundle_b, heartbeat_interval_seconds=60.0).run_once()
+
+        final_b = queue_b.get(rec_b.job_id)
+        assert cancelled_b is True
+        assert executor_calls == []
+        assert final_b.status == JobStatus.CANCELLED
+        item_b0 = final_b.payload["receipt"]["items"][0]
+        assert item_b0["attempt"] == 0
+        assert item_b0["error"]["code"] == "CANCELLED_BEFORE_EXECUTION"
+    finally:
+        bundle_b.engine.close()
+
+
+def test_review_finding_4_duplicate_item_id_validation(db_path: str) -> None:
+    """F4: API and handler reject duplicate item IDs in batch payload."""
+    from fastapi.testclient import TestClient
+    from apps.api.oday_api.main import create_app
+
+    bundle = _durable_bundle(db_path)
+    try:
+        app = create_app(
+            job_queue=bundle.job_queue,
+            audit_log=bundle.audit_log,
+            persistence=bundle,
+        )
+        headers = _auth_headers("review-tenant", role="expansion_user", subject="rev-user")
+        with TestClient(app) as client:
+            payload = {
+                "items": [
+                    {"item_id": "same-id", "address_raw": "台北市大安區1號"},
+                    {"item_id": "same-id", "address_raw": "台北市大安區2號"},
+                ],
+            }
+            res = client.post(
+                "/api/v1/jobs",
+                headers=headers,
+                json={"job_type": "batch-listing-intake", "payload": payload},
+            )
+            assert res.status_code == 422
+            assert "DUPLICATE_ITEM_ID" in res.text
+
+        # Handler also raises NonRetryableJobError if duplicate IDs bypass API
+        dup_req = JobRequest(
+            job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+            payload={
+                "tenant_id": "review-tenant",
+                "items": [
+                    {"item_id": "dup", "address_raw": "台北市大安區1號"},
+                    {"item_id": "dup", "address_raw": "台北市大安區2號"},
+                ],
+            },
+        )
+        rec, _ = bundle.job_queue.enqueue(dup_req, correlation_id="corr-dup")
+        worker = ODayWorker(persistence=bundle, heartbeat_interval_seconds=60.0)
+        assert worker.run_once() is True
+        job_record = bundle.job_queue.get(rec.job_id)
+        assert job_record.status == JobStatus.FAILED
+    finally:
+        bundle.engine.close()
+
+
+def test_review_finding_5_crash_replay_preserves_operator_corrections(db_path: str) -> None:
+    """F5: Crash replay preserves operator corrections without destructive upsert."""
+    from datetime import UTC, datetime, timedelta
+
+    bundle = _durable_bundle(db_path)
+    tenant = "tenant-review"
+    original_address = "台北市大安區1號"
+    corrected_address = "台北市大安區99號"
+    try:
+        record, _ = bundle.job_queue.enqueue(
+            JobRequest(
+                job_type=BATCH_LISTING_INTAKE_JOB_TYPE,
+                payload={
+                    "tenant_id": tenant,
+                    "items": [
+                        {
+                            "item_id": "one",
+                            "address_raw": original_address,
+                            "rent_per_month": 10000,
+                            "area_ping": 30,
+                            "floor": "1F",
+                        }
+                    ],
+                },
+            ),
+            correlation_id="review-replay-correction",
+        )
+        worker = ODayWorker(persistence=bundle, heartbeat_interval_seconds=60.0)
+
+        def crash_after_write(*args, **kwargs):
+            _default_batch_listing_item_executor(*args, **kwargs)
+            raise KeyboardInterrupt("crash after business write")
+
+        with patch(
+            "apps.worker.oday_worker.handlers._default_batch_listing_item_executor",
+            side_effect=crash_after_write,
+        ):
+            with pytest.raises(KeyboardInterrupt):
+                worker.run_once()
+
+        intake_id = batch_listing_intake_id(tenant, record.job_id, "one")
+        service = build_batch_listing_intake_service(tenant, bundle)
+        corrected = service.correct_intake(
+            intake_id=intake_id,
+            fields={"address": corrected_address},
+            reason="Operator verified the door number",
+            risk_summary="Operator checked identity",
+            risk_acknowledged=True,
+            actor_role_id="expansion_user",
+            actor_name="Review operator",
+            idempotency_key="review-correction-key",
+            correlation_id="review-correction",
+        )
+        assert corrected["parsedFields"]["address"]["correctedValue"] == corrected_address
+
+        # Expire lease
+        bundle.engine.execute(
+            "UPDATE durable_jobs SET lease_expires_at = ? WHERE job_id = ?",
+            ((datetime.now(UTC) - timedelta(seconds=1)).isoformat(), record.job_id),
+        )
+        bundle.engine.close()
+
+        # Restart worker and replay
+        restarted = _durable_bundle(db_path)
+        worker2 = ODayWorker(persistence=restarted, heartbeat_interval_seconds=60.0)
+        assert worker2.run_once() is True
+        replayed = build_batch_listing_intake_service(tenant, restarted).get_intake(intake_id)
+        final_job = restarted.job_queue.get(record.job_id)
+
+        assert final_job.status == JobStatus.SUCCEEDED
+        assert replayed["parsedFields"]["address"]["correctedValue"] == corrected_address
+        assert replayed["parsedFields"]["address"]["correctionReason"] == "Operator verified the door number"
+        assert replayed["parsedFields"]["address"]["normalizedValue"] == original_address
+        assert any(e["action"] == "intake.correct" for e in replayed["auditEvents"])
+        restarted.engine.close()
+    finally:
+        pass

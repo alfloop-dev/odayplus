@@ -1606,37 +1606,38 @@ class NetworkListingService:
                 f"assisted intake record {intake_id} belongs to another tenant"
             )
 
+        if existing is not None:
+            # Crash replay / idempotency: reuse the existing intake without destructive
+            # upsert, preserving any operator corrections and current stage.
+            return _copy(existing)
+
         now = _now()
-        if existing is None:
-            intake: dict[str, Any] = {
-                "id": intake_id,
-                "tenantId": tenant_id,
-                "originalUrl": None,
-                "canonicalUrl": None,
-                "submitter": actor_name or "批次匯入",
-                "owner": actor_name or "批次匯入",
-                "heatZoneId": _first_present(row, "heat_zone_id", "heatZoneId"),
-                "intakeMethod": "BATCH_ASSISTED_ENTRY",
-                "stage": "SUBMITTED",
-                "sourceId": source_id,
-                "policy": "ASSISTED_ENTRY_ONLY",
-                "policyLabel": "僅限人工協助輸入",
-                "policyReason": "批次匯入的既有房源由營運方提供，未經來源檢索。",
-                "rawSnapshot": None,
-                "snapshotId": None,
-                "capturedAt": None,
-                "parserVersion": None,
-                "correlationId": correlation_id,
-                "parsedFields": {},
-                "matchResult": None,
-                "auditEvents": [],
-                "idempotencyKey": idempotency_key,
-                "createdAt": now,
-                "version": 1,
-            }
-        else:
-            intake = existing
-            intake["version"] = int(intake.get("version") or 1) + 1
+        intake: dict[str, Any] = {
+            "id": intake_id,
+            "tenantId": tenant_id,
+            "originalUrl": None,
+            "canonicalUrl": None,
+            "submitter": actor_name or "批次匯入",
+            "owner": actor_name or "批次匯入",
+            "heatZoneId": _first_present(row, "heat_zone_id", "heatZoneId"),
+            "intakeMethod": "BATCH_ASSISTED_ENTRY",
+            "stage": "SUBMITTED",
+            "sourceId": source_id,
+            "policy": "ASSISTED_ENTRY_ONLY",
+            "policyLabel": "僅限人工協助輸入",
+            "policyReason": "批次匯入的既有房源由營運方提供，未經來源檢索。",
+            "rawSnapshot": None,
+            "snapshotId": None,
+            "capturedAt": None,
+            "parserVersion": None,
+            "correlationId": correlation_id,
+            "parsedFields": {},
+            "matchResult": None,
+            "auditEvents": [],
+            "idempotencyKey": idempotency_key,
+            "createdAt": now,
+            "version": 1,
+        }
 
         parsed_fields: dict[str, Any] = dict(intake.get("parsedFields") or {})
         for field_name, columns in self.BATCH_ROW_FIELD_COLUMNS:

@@ -290,6 +290,62 @@ def apply_item_result(
     return updated, True
 
 
+def settle_cancelled_batch_receipt(
+    payload: dict[str, Any],
+    *,
+    completed_at: str | None = None,
+) -> dict[str, Any]:
+    """If payload contains a batch receipt, settle any unresolved PENDING items to CANCELLED."""
+    if not isinstance(payload, dict):
+        return payload
+    receipt = payload.get("receipt")
+    if not isinstance(receipt, dict) or "items" not in receipt:
+        return payload
+
+    from datetime import UTC, datetime
+
+    completed_iso = completed_at or datetime.now(UTC).isoformat()
+    raw_items = receipt.get("items", [])
+    updated_items: list[dict[str, Any]] = []
+    for it in raw_items:
+        rec = it if isinstance(it, ItemReceipt) else ItemReceipt.from_dict(it)
+        if rec.item_status == ItemStatus.PENDING.value:
+            started = rec.attempt >= 1
+            cancelled_rec = ItemReceipt(
+                item_id=rec.item_id,
+                item_status=ItemStatus.CANCELLED.value,
+                attempt=rec.attempt,
+                result_ref=None,
+                error=ItemError(
+                    code="CANCELLED_MID_EXECUTION" if started else "CANCELLED_BEFORE_EXECUTION",
+                    message=(
+                        "Job cancelled after the item attempt started"
+                        if started
+                        else "Job cancelled before item execution started"
+                    ),
+                    retryable=True,
+                    details={"cancellation_reason": "OPERATOR_ABORT"},
+                ),
+                idempotency_key=rec.idempotency_key,
+                last_attempt_at=rec.last_attempt_at,
+            )
+            updated_items.append(cancelled_rec.to_dict())
+        else:
+            updated_items.append(rec.to_dict() if isinstance(rec, ItemReceipt) else dict(it))
+
+    _, summary = derive_batch_status_and_summary(updated_items)
+    receipt_dict = dict(receipt)
+    receipt_dict["status"] = JobStatus.CANCELLED.value.upper()
+    receipt_dict["completed_at"] = completed_iso
+    receipt_dict["items"] = updated_items
+    receipt_dict["summary"] = summary.to_dict()
+
+    new_payload = dict(payload)
+    new_payload["receipt"] = receipt_dict
+    new_payload["summary"] = summary.to_dict()
+    return new_payload
+
+
 __all__ = [
     "DurableJobReceipt",
     "ItemError",
@@ -298,4 +354,5 @@ __all__ = [
     "JobSummary",
     "apply_item_result",
     "derive_batch_status_and_summary",
+    "settle_cancelled_batch_receipt",
 ]

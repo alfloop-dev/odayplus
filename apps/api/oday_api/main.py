@@ -1083,6 +1083,27 @@ else:
                             ),
                         },
                     )
+                # Strip server-owned receipt/summary/state fields from payload
+                payload = {
+                    k: v
+                    for k, v in payload.items()
+                    if k not in ("receipt", "summary", "delivery_state", "status", "_retry_count")
+                }
+                raw_items = payload.get("items") or payload.get("rows")
+                if isinstance(raw_items, list):
+                    seen_ids: set[str] = set()
+                    for idx, raw_item in enumerate(raw_items):
+                        if isinstance(raw_item, dict):
+                            item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
+                            if item_id in seen_ids:
+                                raise HTTPException(
+                                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    detail={
+                                        "code": "DUPLICATE_ITEM_ID",
+                                        "message": f"Duplicate item_id '{item_id}' in batch items",
+                                    },
+                                )
+                            seen_ids.add(item_id)
                 payload = {**payload, "tenant_id": active_tenant_id}
                 idempotency_tenant_id = active_tenant_id
                 idempotency_scope = "batch-listing-intake:v1"

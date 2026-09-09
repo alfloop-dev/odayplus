@@ -398,9 +398,15 @@ class InMemoryJobQueue:
                 # record's RETRYING.
                 resolved_delivery = None
 
+            resolved_payload = payload if payload is not None else record.payload
+            if status == JobStatus.CANCELLED and isinstance(resolved_payload, dict):
+                from shared.jobs.receipts import settle_cancelled_batch_receipt
+
+                resolved_payload = settle_cancelled_batch_receipt(resolved_payload)
+
             self._jobs[job_id] = JobRecord(
                 job_type=record.job_type,
-                payload=payload if payload is not None else record.payload,
+                payload=resolved_payload,
                 correlation_id=record.correlation_id,
                 idempotency_key=record.idempotency_key,
                 status=status,

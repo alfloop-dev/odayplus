@@ -51,25 +51,74 @@ class _LeaseHeartbeat:
         self._stop.set()
         self._thread.join()
         with self._state_lock:
+            try:
+                latest = self._queue.get(self._job_id)
+                if latest is not None:
+                    self._version = latest.version
+            except Exception:
+                pass
             return self._version, self._failure
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_seconds):
-            with self._state_lock:
-                expected_version = self._version
-            try:
-                new_version = self._queue.heartbeat(
-                    self._job_id,
-                    expected_version=expected_version,
-                    fence_token=self._fence_token,
-                )
-            except BaseException as exc:
-                with self._state_lock:
-                    self._failure = exc
-                self._stop.set()
-                return
-            with self._state_lock:
-                self._version = new_version
+            for _ in range(3):
+                try:
+                    latest = self._queue.get(self._job_id)
+                except BaseException as exc:
+                    with self._state_lock:
+                        self._failure = exc
+                    self._stop.set()
+                    return
+
+                if latest is None:
+                    with self._state_lock:
+                        self._failure = ValueError(f"Job {self._job_id} not found")
+                    self._stop.set()
+                    return
+                if latest.status != JobStatus.RUNNING:
+                    with self._state_lock:
+                        self._failure = ValueError(
+                            f"Job {self._job_id} is no longer RUNNING (now {latest.status.value})"
+                        )
+                    self._stop.set()
+                    return
+                if latest.fence_token != self._fence_token:
+                    with self._state_lock:
+                        self._failure = JobFenceRejectedError(
+                            f"Job {self._job_id} fence moved: expected {self._fence_token}, got {latest.fence_token}"
+                        )
+                    self._stop.set()
+                    return
+
+                try:
+                    new_version = self._queue.heartbeat(
+                        self._job_id,
+                        expected_version=latest.version,
+                        fence_token=self._fence_token,
+                    )
+                    with self._state_lock:
+                        self._version = new_version
+                    break
+                except (JobFenceRejectedError, ValueError) as exc:
+                    try:
+                        latest_check = self._queue.get(self._job_id)
+                    except Exception:
+                        latest_check = None
+                    if (
+                        latest_check is not None
+                        and latest_check.status == JobStatus.RUNNING
+                        and latest_check.fence_token == self._fence_token
+                    ):
+                        continue
+                    with self._state_lock:
+                        self._failure = exc
+                    self._stop.set()
+                    return
+                except BaseException as exc:
+                    with self._state_lock:
+                        self._failure = exc
+                    self._stop.set()
+                    return
 
 
 class ODayWorker:
@@ -133,9 +182,6 @@ class ODayWorker:
             try:
                 self.execute_job(job)
                 current_version, heartbeat_failure = heartbeat.stop()
-                if heartbeat_failure is not None:
-                    self._record_stale_worker(job, heartbeat_failure)
-                    return True
                 duration = time.monotonic() - start_time
                 latest_job = self.job_queue.get(job.job_id)
                 if latest_job and latest_job.status in (
@@ -158,6 +204,10 @@ class ODayWorker:
                         action="execute",
                         result=status_label,
                     )
+                    return True
+
+                if heartbeat_failure is not None:
+                    self._record_stale_worker(job, heartbeat_failure)
                     return True
 
                 try:

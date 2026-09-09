@@ -389,6 +389,15 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
     if not tenant_id:
         raise NonRetryableJobError("Batch listing intake job payload missing authenticated tenant scope")
 
+    seen_ids: set[str] = set()
+    for idx, raw_item in enumerate(items):
+        item_id = str(raw_item.get("item_id") or f"row-{idx+1:03d}").strip()
+        if not item_id or item_id in seen_ids:
+            raise NonRetryableJobError(
+                f"Batch listing intake contains duplicate item_id '{item_id}'"
+            )
+        seen_ids.add(item_id)
+
     started_at = payload.get("started_at") or datetime.now(UTC).isoformat()
     payload["started_at"] = started_at
     created_at_str = (
@@ -476,7 +485,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
                     f"Job fence token moved: expected {job.fence_token}, "
                     f"got {latest.fence_token}"
                 )
-            if require_running and latest.status != JobStatus.RUNNING:
+            if job_status != JobStatus.CANCELLED and latest.status != JobStatus.RUNNING:
                 raise JobFenceRejectedError(
                     f"Job {job.job_id} left RUNNING mid-batch "
                     f"(now {latest.status.value})"
@@ -588,7 +597,7 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
         # 2. Checkpoint that this attempt started, before the business write.
         # Without it, a crash mid-item is indistinguishable from a member that
         # never ran, and a cancellation cannot tell attempt 0 from attempt >= 1.
-        current_items = [
+        candidate_items = [
             ItemReceipt(
                 item_id=item_id,
                 item_status=ItemStatus.PENDING.value,
@@ -603,11 +612,12 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
             for it in current_items
         ]
         try:
-            _write_receipt(current_items, JobStatus.RUNNING, require_running=True)
+            _write_receipt(candidate_items, JobStatus.RUNNING, require_running=True)
         except JobFenceRejectedError:
             if _settle_if_cancelled():
                 return
             raise
+        current_items = candidate_items
 
         try:
             result_ref, error = _default_batch_listing_item_executor(
@@ -676,11 +686,16 @@ def handle_batch_listing_intake(job: JobRecord, persistence: PersistenceBundle) 
     ]
 
     aggregate_status, _ = derive_batch_status_and_summary(current_items)
-    _write_receipt(
-        current_items,
-        aggregate_status,
-        completed_at=datetime.now(UTC).isoformat(),
-    )
+    try:
+        _write_receipt(
+            current_items,
+            aggregate_status,
+            completed_at=datetime.now(UTC).isoformat(),
+        )
+    except JobFenceRejectedError:
+        if _settle_if_cancelled():
+            return
+        raise
 
 
 def build_default_registry() -> JobRegistry:
