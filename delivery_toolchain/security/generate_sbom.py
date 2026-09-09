@@ -299,8 +299,8 @@ def generate_sbom() -> dict[str, Any]:
             for pkg_path, pkg_info in packages.items():
                 if not pkg_path:  # Root workspace
                     continue
-                if pkg_path.startswith("node_modules/"):
-                    pkg_name = pkg_path.replace("node_modules/", "")
+                if "node_modules/" in pkg_path:
+                    pkg_name = pkg_path.split("node_modules/")[-1]
                     if "/" in pkg_name and not pkg_name.startswith("@"):
                         pkg_name = pkg_name.split("/")[-1]
                 else:
@@ -368,13 +368,24 @@ def generate_sbom() -> dict[str, Any]:
 
                 components.append(comp)
 
-            # Direct dependencies of root npm packages
-            root_npm = packages.get("", {})
-            for d in root_npm.get("dependencies", {}):
-                if not is_first_party(d):
-                    for p_path, p_url in npm_purls_by_pkg_path.items():
-                        if p_path == f"node_modules/{d}":
-                            root_depends_on.add(p_url)
+            def _resolve_npm_purl(dep_name: str, requester_path: str = "") -> str | None:
+                if requester_path and f"{requester_path}/node_modules/{dep_name}" in npm_purls_by_pkg_path:
+                    return npm_purls_by_pkg_path[f"{requester_path}/node_modules/{dep_name}"]
+                if f"node_modules/{dep_name}" in npm_purls_by_pkg_path:
+                    return npm_purls_by_pkg_path[f"node_modules/{dep_name}"]
+                for p_path, p_url in npm_purls_by_pkg_path.items():
+                    if p_path.endswith(f"node_modules/{dep_name}"):
+                        return p_url
+                return None
+
+            # Direct dependencies of root npm package and workspace members
+            for pkg_path, pkg_info in packages.items():
+                if not pkg_path or "node_modules" not in pkg_path:
+                    for d in pkg_info.get("dependencies", {}):
+                        if not is_first_party(d):
+                            resolved_purl = _resolve_npm_purl(d, pkg_path)
+                            if resolved_purl:
+                                root_depends_on.add(resolved_purl)
         except Exception as e:
             print(f"Warning: Failed to parse package-lock.json: {e}", file=sys.stderr)
 

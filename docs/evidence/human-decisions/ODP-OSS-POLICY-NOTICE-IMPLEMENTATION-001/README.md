@@ -102,9 +102,10 @@ NOTICE 產物**完全沒有變動**（相對 base 的 diff 為空），`--check`
 
 ### 3.5 測試
 
-新增六項回歸測試，全部落在本 task 已宣告的兩個測試檔內：八個 manifest 的名稱與標示、
+新增七項回歸測試，全部落在本 task 已宣告的兩個測試檔內：八個 manifest 的名稱與標示、
 lockfile 與 manifest 一致、`is_first_party` 的邊界、lookalike 第三方的端到端行為、
-SBOM 不再收錄第一方與撞名 purl、第三方宣告 `UNLICENSED` 仍 fail closed。
+SBOM 不再收錄第一方與撞名 purl、第三方宣告 `UNLICENSED` 仍 fail closed、第一方節點排除後
+workspace 第三方依賴仍正確解析並保留於 root 節點（合成 fixture 驗證）。
 
 測試中的 `node_modules` 與 lockfile 是**合成 fixture**，不是安裝樹，
 只證明程式邏輯，不證明任何真實套件的授權狀態。
@@ -125,8 +126,10 @@ SBOM 不再收錄第一方與撞名 purl、第三方宣告 `UNLICENSED` 仍 fail
 授權全部標為 `UNKNOWN`。若只同步 lockfile 而不修這個缺口，這八個撞名 purl 會被
 重新標成 `UNLICENSED`，等於對外宣稱那些公開套件是我們的未授權碼。
 
-修法：workspace 成員的名稱改由 lockfile 條目自身的 `name` 欄位取得；
-`node_modules/` 底下的路徑推導邏輯（含巢狀）完全未動。
+修法：
+1. workspace 成員的名稱改由 lockfile 條目自身的 `name` 欄位取得，精確辨識第一方身分（`@oday-plus/*`）並排除於第三方 components 之外；
+2. 在排除第一方 component 的同時，收集 workspace（如 `apps/web`）的直接第三方依賴，解析其於 `package-lock.json` 中的真實 purl（如 `next`, `react`, `argon2`, `maplibre-gl`, `pg` 等 12 條依賴），並接入 application root 節點（`pkg:generic/alfloop-dev/odayplus@{git_sha}`），確保 SBOM 完整記錄第三方使用關係；
+3. `node_modules/` 底下的路徑推導邏輯（含巢狀）完全未動，傳遞依賴邊維持完整。
 
 重產後的實測差異：
 
@@ -135,9 +138,10 @@ SBOM 不再收錄第一方與撞名 purl、第三方宣告 `UNLICENSED` 仍 fail
 | SBOM 元件總數 | 775 | 767 |
 | 被移除的元件 | `design-tokens`, `domain-types`, `openapi-client`, `schemas`, `testkit`, `ui`, `ui-domain`, `web`（皆為 `0.1.0`／`UNKNOWN`） | — |
 | 新增的元件 | — | 無 |
+| root 節點 direct dependsOn | 39（僅 Python） | 51（39 Python + 12 npm workspace 依賴） |
 | dependency graph 懸空引用 | 0 | 0 |
 
-除了這八個元件與依 commit 變動的 root git-sha 之外，SBOM 沒有其他差異。
+除了這八個元件、workspace 第三方依賴掛接至 root 與依 commit 變動的 root git-sha 之外，SBOM 沒有其他差異。
 
 ### 4.2 第一方判定用裸字串前綴，會吞掉第三方
 
@@ -204,7 +208,7 @@ task 宣告的 verification（在 `98a1ed1ba5c2770990eba3fc0526498045afa9e0` 的
 | 命令 | Exit | 耗時 | 備註 |
 |---|---|---|---|
 | `git diff --check` | `0` | <1s | |
-| `uv run pytest tests/security/test_oss_notice.py tests/security/test_oss_license_gate.py -q` | `0` | 52s | 38 passed（base 為 32，本次新增 6） |
+| `uv run pytest tests/security/test_oss_notice.py tests/security/test_oss_license_gate.py -q` | `0` | ~35s | 39 passed（base 為 32，本次新增 7） |
 | `uv run python delivery_toolchain/security/generate_oss_notice.py --check` | `0` | 1s | NOTICE 與安裝樹一致 |
 
 額外量測（非宣告項，用於證明 §4.1 的修正沒有留下不一致）：
