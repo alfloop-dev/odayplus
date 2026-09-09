@@ -67,18 +67,34 @@ RUNTIME_CAPABILITIES = {
 }
 
 # Supported SLA formats: unconfirmed/unknown, standard frequency keywords,
-# ISO 8601 durations (e.g. PT5S, PT15M, PT1H, P1D), and unit-qualified durations (e.g. 5s, 15m, 24h).
+# ISO 8601 durations with at least one component (e.g. PT5S, PT15M, PT1H, PT1H30M, P1D, P1Y2M3D, P1DT12H),
+# and unit-qualified durations (e.g. 5s, 15m, 24h, 7d).
 _LATENCY_SLA_REGEX = re.compile(
     r"^(?:"
     r"unconfirmed|unknown|unspecified|"
     r"realtime|subsecond|near_realtime|streaming|"
     r"hourly|daily|weekly|monthly|on_demand|batch_hourly|batch_daily|"
-    r"PT(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?|"
-    r"P(?:\d+Y)?(?:\d+M)?(?:\d+W)?(?:\d+D)?|"
+    r"PT(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?|"
+    r"P(?=\d)(?:\d+Y)?(?:\d+M)?(?:\d+W)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?|"
     r"\d+\s*(?:s|sec|seconds?|m|min|minutes?|h|hr|hours?|d|days?|w|weeks?|mo|months?|y|yrs?|years?)"
     r")$",
     re.IGNORECASE,
 )
+
+# Mapping of runtime execution capabilities to the declared integration modes they can satisfy.
+# Capabilities unverified, unconfirmed, unsupported, and simulated_only never match any real mode.
+_CAPABILITY_SUPPORTED_MODES: dict[str, set[str]] = {
+    "unverified": set(),
+    "unconfirmed": set(),
+    "unsupported": set(),
+    "simulated_only": set(),
+    "verified": {"batch_snapshot", "incremental_batch", "event_stream", "backfill", "api_lookup"},
+    "supported": {"batch_snapshot", "incremental_batch", "backfill", "api_lookup"},
+    "streaming_supported": {"event_stream"},
+    "batch_only": {"batch_snapshot", "incremental_batch", "backfill"},
+    "batch_watermark_only": {"batch_snapshot", "incremental_batch", "backfill"},
+    "manual_attestation": {"backfill", "batch_snapshot", "api_lookup"},
+}
 
 
 def _validate_data_owner(raw: Any) -> str:
@@ -317,11 +333,8 @@ class SourceContract:
     @property
     def runtime_matches_declared_mode(self) -> bool:
         """True if the runtime capability matches or fully supports the declared integration mode."""
-        if self.runtime_capability in {"unverified", "unconfirmed"}:
-            return False
-        if self.integration_mode == "event_stream":
-            return self.has_streaming_runtime
-        return True
+        supported_modes = _CAPABILITY_SUPPORTED_MODES.get(self.runtime_capability, set())
+        return self.integration_mode in supported_modes
 
     def field_map(self) -> dict[str, FieldSpec]:
         return {f.name: f for f in self.fields}

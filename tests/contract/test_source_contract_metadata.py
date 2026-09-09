@@ -154,14 +154,22 @@ def test_validation_rejects_blank_fake_owner() -> None:
         "PT15M",
         "PT1H",
         "PT24H",
+        "PT1H30M",
+        "PT0.5S",
         "P1D",
         "P7D",
+        "P1W",
+        "P1M",
+        "P1Y",
+        "P1Y2M3D",
+        "P1DT12H",
         "5s",
         "15m",
         "1h",
         "24h",
         "1d",
         "7d",
+        "2 weeks",
         "realtime",
         "subsecond",
         "near_realtime",
@@ -184,6 +192,12 @@ def test_validation_accepts_valid_latency_sla(valid_sla: str) -> None:
     "invalid_sla",
     [
         "   ",
+        "P",
+        "PT",
+        "P1",
+        "PT1",
+        "PTM",
+        "PS",
         "-5s",
         "-PT1H",
         "asap",
@@ -197,6 +211,13 @@ def test_validation_accepts_valid_latency_sla(valid_sla: str) -> None:
 def test_validation_rejects_illegal_latency_sla(invalid_sla: str) -> None:
     with pytest.raises(ContractError, match="Invalid target_latency_sla format|empty whitespace"):
         SourceContract.from_dict(_sample_raw_contract_dict(target_latency_sla=invalid_sla))
+
+
+def test_validation_rejects_empty_iso_duration() -> None:
+    """Empty ISO duration markers 'P' and 'PT' without numeric components must be rejected."""
+    for empty_val in ("P", "PT", "p", "pt"):
+        with pytest.raises(ContractError, match="Invalid target_latency_sla format"):
+            SourceContract.from_dict(_sample_raw_contract_dict(target_latency_sla=empty_val))
 
 
 def test_validation_rejects_non_string_latency_sla() -> None:
@@ -277,3 +298,64 @@ def test_index_registry_taxonomy_and_contract_metadata_consistency() -> None:
         assert entry["target_latency_sla"] == contract.target_latency_sla
         assert entry["contact_channel"] == contract.contact_channel
         assert entry["runtime_capability"] == contract.runtime_capability
+
+
+# --- 10. Capability x Declared-Mode matching matrix --------------------------
+
+
+def test_runtime_matches_declared_mode_matrix() -> None:
+    """Verifies that runtime_matches_declared_mode correctly evaluates capabilities against declared modes:
+
+    - unsupported and simulated_only never match any declared mode.
+    - unverified and unconfirmed never match any declared mode.
+    - batch_only and batch_watermark_only match batch modes (batch_snapshot, incremental_batch, backfill)
+      but never match api_lookup or event_stream.
+    - supported matches batch and api_lookup modes, but not event_stream.
+    - streaming_supported matches event_stream, but not batch or api_lookup.
+    - verified matches all declared modes.
+    - manual_attestation matches manual / backfill / batch modes, but not event_stream.
+    """
+    all_modes = ["batch_snapshot", "incremental_batch", "event_stream", "backfill", "api_lookup"]
+
+    # 1. Capabilities that NEVER match real runtime for any mode
+    for cap in ("unsupported", "simulated_only", "unverified", "unconfirmed"):
+        for mode in all_modes:
+            c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode=mode, runtime_capability=cap))
+            assert c.runtime_matches_declared_mode is False, f"Expected {cap} with {mode} to not match"
+
+    # 2. Batch-only capabilities (batch_only, batch_watermark_only)
+    for cap in ("batch_only", "batch_watermark_only"):
+        for mode in ("batch_snapshot", "incremental_batch", "backfill"):
+            c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode=mode, runtime_capability=cap))
+            assert c.runtime_matches_declared_mode is True, f"Expected {cap} with {mode} to match"
+        for mode in ("api_lookup", "event_stream"):
+            c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode=mode, runtime_capability=cap))
+            assert c.runtime_matches_declared_mode is False, f"Expected {cap} with {mode} to not match"
+
+    # 3. Supported capability
+    for mode in ("batch_snapshot", "incremental_batch", "backfill", "api_lookup"):
+        c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode=mode, runtime_capability="supported"))
+        assert c.runtime_matches_declared_mode is True, f"Expected supported with {mode} to match"
+    c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode="event_stream", runtime_capability="supported"))
+    assert c.runtime_matches_declared_mode is False, "Expected supported with event_stream to require streaming_supported/verified"
+
+    # 4. Streaming-supported capability
+    c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode="event_stream", runtime_capability="streaming_supported"))
+    assert c.runtime_matches_declared_mode is True
+    assert c.has_streaming_runtime is True
+
+    for mode in ("batch_snapshot", "incremental_batch", "backfill", "api_lookup"):
+        c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode=mode, runtime_capability="streaming_supported"))
+        assert c.runtime_matches_declared_mode is False
+
+    # 5. Verified capability matches all modes
+    for mode in all_modes:
+        c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode=mode, runtime_capability="verified"))
+        assert c.runtime_matches_declared_mode is True, f"Expected verified with {mode} to match"
+
+    # 6. Manual attestation
+    for mode in ("backfill", "batch_snapshot", "api_lookup"):
+        c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode=mode, runtime_capability="manual_attestation"))
+        assert c.runtime_matches_declared_mode is True
+    c = SourceContract.from_dict(_sample_raw_contract_dict(integration_mode="event_stream", runtime_capability="manual_attestation"))
+    assert c.runtime_matches_declared_mode is False
