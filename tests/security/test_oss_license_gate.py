@@ -31,6 +31,20 @@ RELEASE_BINDINGS_PATH = ROOT / "docs/security/release_bindings.json"
 NOTICE_PATH = ROOT / "NOTICE-THIRD-PARTY.md"
 SBOM_PATH = ROOT / "docs/evidence/sbom.json"
 
+# The directory basenames of the eight first-party workspace members named by
+# D05. Each is also a real package name on the public npm registry, which is
+# why deriving a component name from the lockfile path collided with one.
+FIRST_PARTY_WORKSPACE_DIRS = (
+    "ui",
+    "design-tokens",
+    "testkit",
+    "ui-domain",
+    "domain-types",
+    "schemas",
+    "web",
+    "openapi-client",
+)
+
 
 # -----------------------------------------------------------------------------
 # Acceptance 1: CycloneDX SBOM with licenses, purls, suppliers, hashes, graph, scopes, digests
@@ -138,6 +152,43 @@ def test_no_unidentified_or_unknown_third_party_licenses() -> None:
 
     unknowns = [c for c in all_comps if c.license.strip().upper() == "UNKNOWN"]
     assert len(unknowns) == 0, f"Third party packages with UNKNOWN license: {unknowns}"
+
+
+def test_sbom_catalogues_no_first_party_workspace_package() -> None:
+    """The SBOM keys npm components off lockfile paths. A workspace member is
+    keyed by its directory, so deriving the name from the path renamed
+    `@oday-plus/ui` to `ui` and minted `pkg:npm/ui@0.1.0` -- a purl that
+    belongs to an unrelated public package. That both hid our own packages
+    from the first-party filter and published eight of them as third parties.
+    """
+    components = generate_sbom()["components"]
+
+    first_party = [c for c in components if c["name"].startswith("@oday-plus/")]
+    assert not first_party, (
+        f"first-party packages must not be catalogued as third party: {first_party}"
+    )
+
+    collided = [
+        c
+        for c in components
+        if c["purl"] in {f"pkg:npm/{name}@0.1.0" for name in FIRST_PARTY_WORKSPACE_DIRS}
+    ]
+    assert not collided, (
+        "these purls name unrelated public packages, not our workspace members: "
+        f"{[c['purl'] for c in collided]}"
+    )
+
+
+def test_third_party_unlicensed_is_not_admitted_by_the_first_party_marker() -> None:
+    """D05 marks our own packages UNLICENSED. That marker is a first-party
+    identity claim, so it must not become a licence any third party can declare
+    to walk through the gate."""
+    result = evaluate_policy(
+        components=[Component("npm", "some-third-party-pkg", "1.0.0", "UNLICENSED")]
+    )
+    assert result["status"] == "FAIL"
+    assert result["violations"], "an unrecognised licence string must fail closed"
+    assert not result["allowed"] and not result["allowed_with_obligations"]
 
 
 def test_license_policy_evaluation_fails_on_unadjudicated_cases() -> None:
