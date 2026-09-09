@@ -10,6 +10,10 @@
   "integration_mode": "backfill",
   "envelope": "batch",
   "acquisition_method": "manual",
+  "data_owner": "unconfirmed",
+  "target_latency_sla": "unconfirmed",
+  "contact_channel": "unconfirmed",
+  "runtime_capability": "manual_attestation",
   "fields": [
     {"name": "source_id", "type": "string", "required": true, "enum": ["APPROVED_GOVERNMENT_REGISTRY", "AUDITED_MERCHANT_RECORD", "SRC-AUTH-STORE-OPENING", "SRC-GOVT-STORE-REGISTRY", "SRC-MERCHANT-OPENING-AUDIT", "store_opening.official_registry", "store_opening_authority"], "description": "Approved authority identity; mirrors APPROVED_STORE_OPENING_SOURCES in apps/data_platform/store_opening.py. An identity outside the allowlist is quarantined, never accepted as authority."},
     {"name": "snapshot_id", "type": "string", "required": true, "description": "Immutable source snapshot id (intake.source_snapshots.source_snapshot_id). Replay identity: corrections arrive as a new snapshot, never as an in-place edit."},
