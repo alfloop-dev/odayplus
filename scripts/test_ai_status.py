@@ -5219,6 +5219,15 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
             "--maintenance-hold",
             "ORCH-ARCHIVE-HISTORY-RECOVERY-001",
         ],
+        "archive_recovery_invalidate": [
+            "ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001",
+            "--coordination-task",
+            "ORCH-ARCHIVE-HISTORY-EXECUTE-003",
+            "--reason",
+            "invalidating reconstructed recovery completion",
+            "--evidence-ref",
+            "docs/evidence/control_plane_remediation_blocker.json",
+        ],
         "wave open": ["open", "W-2026-07-29"],
         "wave close": ["close"],
     }
