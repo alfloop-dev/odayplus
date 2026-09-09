@@ -115,7 +115,7 @@
 | 16 | `INTV-006` Adjust | 先問實務：現在要調整的介入人是怎麼做的 |
 | 17 | `LH-003` Backtest 當發布閘 | 低。Shadow／Canary／Rollback／Champion-Challenger 已覆蓋大部分 |
 | 18 | `OPS-002` 留言 | 純缺功能。價值在把討論與決策綁在一起，不在提供溝通管道 |
-| 19 | merge queue 批次 | **更正（2026-09-03）：`BLOCKED_BY_EVIDENCE`，不是 `DECIDED`。** `ODP-MERGE-QUEUE-DISPOSITION-AUDIT-001` 查證後確認查無權威裁決——本欄先前的「已裁決不做」轉述自一個可調的組態預設值（`min_entries_to_merge: 1`），該預設值由 AI 代理人在實作 commit 內設定，無人類簽署。已阻擋至 Human/Ops；在裁決做成前不得補簽 decider 與日期。見 [`docs/evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md`](../evidence/ODP_MERGE_QUEUE_DISPOSITION_2026-09-03.md) |
+| 19 | merge queue 批次 | **OPEN（2026-09-08 決策 D21 轉為正式實作需求）：** 使用者選定選項 B（保留為正式實作需求，不裁決不做、不建立 Waiver）；A 階段只讀量測與配置方案已由 `ODP-MERGE-QUEUE-BATCH-DESIGN-001` (PR #1250) 交付；B 階段工程任務 `ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001` 待 H08 參數確認後入場。見 [`docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md`](../evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md) |
 
 ---
 

@@ -1,0 +1,298 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "task_id": "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001",
+  "plan_ref": "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+  "generated_at": "2026-09-09T00:37:30Z",
+  "work_packages": [
+    {
+      "wp_id": "WP-00",
+      "title": "決策轉錄、重複任務盤點與交接",
+      "canonical_task_id": "ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001",
+      "pr_number": 1247,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1247",
+      "approved_sha": "00c0347383806e8aa6679ed78215b4ac31b1da57",
+      "merge_commit": "be04fe7954d3414f024901e034caacd95ae81538",
+      "owner": "Codex",
+      "reviewer": "Codex",
+      "status": "done",
+      "phase": "Wave 1 - Execution Planning",
+      "deliverables": [
+        "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md"
+      ]
+    },
+    {
+      "wp_id": "WP-10",
+      "title": "OSS 現況盤點、來源審查包與 receipt 準備",
+      "canonical_task_id": "ODP-OSS-DECISION-PACK-001",
+      "pr_number": 1255,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1255",
+      "approved_sha": "21a5e783544aaf14b25bb7ef00eeffe4c1ca49b6",
+      "merge_commit": "b6b729d95e575dc3b27ea9e02ce22fb128c3970b",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "status": "done",
+      "phase": "confirmed decisions execution",
+      "deliverables": [
+        "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/case-matrix.json",
+        "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/source-decision-cards.json",
+        "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/unsigned-receipt-template.json",
+        "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/missing-human-inputs.json",
+        "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/sbom.cdx.json",
+        "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/npm-audit-receipt.json",
+        "docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/README.md"
+      ]
+    },
+    {
+      "wp_id": "WP-11",
+      "title": "OSS 政策、第一方標示與自動聲明落地",
+      "canonical_task_id": "ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001",
+      "pr_number": 1279,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1279",
+      "owner": "Antigravity2",
+      "reviewer": "Codex",
+      "status": "review",
+      "phase": "confirmed decisions implementation follow-up",
+      "deliverables": [
+        "8 workspace packages package.json license field update to UNLICENSED",
+        "docs/security/license_policy.json",
+        "NOTICE generation and reconciliation pipeline"
+      ]
+    },
+    {
+      "wp_id": "WP-20",
+      "title": "Password-first／OIDC-off 證據與待辦對齊",
+      "canonical_task_id": "ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001",
+      "pr_number": 1253,
+      "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1253",
+      "approved_sha": "9fc7e2a8a59085a02ea030f02fdfb3dfb4eee47d",
+      "merge_commit": "0af51e04ea5cb6a0a5266b84bc8f7a606d3cb993",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "done",
+      "phase": "confirmed decisions execution",
+      "deliverables": [
+        "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/auth-mode-evidence-matrix.json",
+        "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/human-task-handoff.json",
+        "docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/README.md"
+      ]
+    },
+    {
+      "wp_id": "WP-30",
+      "title": "BRAND_TRANSFER 契約與實作",
+      "stage_a": {
+        "task_id": "ODP-BRAND-TRANSFER-CONTRACT-PREP-001",
+        "pr_number": 1254,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1254",
+        "approved_sha": "961225f63afc462cd55e474eda7fc4b0e300faa9",
+        "merge_commit": "7a25dfea3959387e9d1ff5fa896fb07c2fbc493d",
+        "owner": "Antigravity2",
+        "reviewer": "Codex",
+        "status": "done",
+        "deliverables": [
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/contract-draft.json",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/field-dictionary.md",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/source-consumer-map.json",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/human-input-request-H03.md",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/implementation-handoff.md",
+          "docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/README.md"
+        ]
+      },
+      "stage_b": {
+        "task_id": "ODP-BRAND-TRANSFER-IMPLEMENTATION-001",
+        "owner": "Claude",
+        "reviewer": "Codex",
+        "status": "blocked",
+        "blocker": "Waiting for H03 human input (cross-brand transaction/panel dataset location, owner, auth scope)"
+      }
+    },
+    {
+      "wp_id": "WP-31",
+      "title": "FORMAT_CONVERSION 契約與實作",
+      "stage_a": {
+        "task_id": "ODP-FORMAT-CONVERSION-CONTRACT-PREP-001",
+        "pr_number": 1252,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1252",
+        "approved_sha": "a64b26c4b11a8cc8d3170eda9dd9e970ff4538d3",
+        "merge_commit": "ae2472a4861d4dd768e1b9dfcb6c25e361c18364",
+        "owner": "Claude",
+        "reviewer": "Codex2",
+        "status": "done",
+        "deliverables": [
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/event-contract-draft.json",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/field-dictionary.md",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/source-consumer-map.json",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/human-input-request-H04.md",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/implementation-handoff.md",
+          "docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/README.md"
+        ]
+      },
+      "stage_b": {
+        "task_id": "ODP-FORMAT-CONVERSION-IMPLEMENTATION-001",
+        "owner": "Claude2",
+        "reviewer": "Codex2",
+        "status": "blocked",
+        "blocker": "Waiting for H04 human input (real conversion events, capex, downtime loss, salvage parameters)"
+      }
+    },
+    {
+      "wp_id": "WP-32",
+      "title": "NET-002 租約資料與硬限制",
+      "stage_a": {
+        "task_id": "ODP-NET002-LEASE-CONTRACT-PREP-001",
+        "pr_number": 1256,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1256",
+        "approved_sha": "d70563166e344e2d560ea7cac2eb236ddd118892",
+        "merge_commit": "95646a5c2bd598b7e219ee51efa7e410cb9fe0f4",
+        "owner": "Antigravity2",
+        "reviewer": "Codex",
+        "status": "done",
+        "deliverables": [
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/lease-contract-draft.json",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/field-dictionary.md",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/solver-acceptance-matrix.md",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/human-input-request-H05.md",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/implementation-handoff.md",
+          "docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/README.md"
+        ]
+      },
+      "stage_b": {
+        "task_id": "ODP-NET002-LEASE-IMPLEMENTATION-001",
+        "owner": "Claude",
+        "reviewer": "Codex2",
+        "status": "blocked",
+        "blocker": "Waiting for H05 human input (authorized per-store lease export, break clauses, signing deadlines)"
+      }
+    },
+    {
+      "wp_id": "WP-33",
+      "title": "SHARED-001 durable PARTIAL 與逐項重試",
+      "stage_a": {
+        "task_id": "ODP-DURABLE-PARTIAL-CONTRACT-PREP-001",
+        "pr_number": 1257,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1257",
+        "approved_sha": "57019d8d94ab1df9111046061b4be04190dce7bf",
+        "merge_commit": "1c7bb1829210339ebc334bc52cfc30a8e20fbbfa",
+        "owner": "Claude2",
+        "reviewer": "Codex2",
+        "status": "done",
+        "deliverables": [
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/producer-inventory.json",
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/partial-retry-contract-draft.json",
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/human-input-request-H06.md",
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/implementation-handoff.md",
+          "docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/README.md"
+        ]
+      },
+      "prerequisite": {
+        "task_id": "ODP-JOB-DELIVERY-STATE-CLEAR-001",
+        "pr_number": 1280,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1280",
+        "owner": "Antigravity",
+        "reviewer": "Codex2",
+        "status": "review"
+      },
+      "stage_b": {
+        "task_id": "ODP-DURABLE-PARTIAL-IMPL-001",
+        "owner": "Claude2",
+        "reviewer": "Codex",
+        "status": "blocked",
+        "blocker": "Waiting for H06 human input (business long-running job designation, e.g. batch-listing-intake)"
+      }
+    },
+    {
+      "wp_id": "WP-34",
+      "title": "INT-001 CDC 適用性、刪除傳播與實作",
+      "stage_a": {
+        "task_id": "ODP-CDC-SOURCE-CONTRACT-PREP-001",
+        "pr_number": 1258,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1258",
+        "approved_sha": "ec3a218805ff1ccbd176262c3c76d70a62034eac",
+        "merge_commit": "414b5c17927edf3b123bce942b49ccf7580152af",
+        "owner": "Antigravity2",
+        "reviewer": "Codex",
+        "status": "done",
+        "deliverables": [
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/source-applicability-matrix.json",
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/event-contract-draft.json",
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/human-input-request-H07.md",
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/implementation-handoff.md",
+          "docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/README.md"
+        ]
+      },
+      "follow_ups": [
+        {
+          "task_id": "ODP-DATA-PLANE-DELETE-PROPAGATION-001",
+          "owner": "Antigravity3",
+          "reviewer": "Codex2",
+          "status": "todo"
+        },
+        {
+          "task_id": "ODP-SCHEMA-STORE-OPENING-AUTHORITY-001",
+          "owner": "Antigravity2",
+          "reviewer": "Codex",
+          "status": "todo"
+        },
+        {
+          "task_id": "ODP-DATA-CATALOG-METADATA-ALIGNMENT-001",
+          "owner": "Claude",
+          "reviewer": "Codex2",
+          "status": "todo"
+        }
+      ],
+      "stage_b": {
+        "task_id": "ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001",
+        "owner": "Claude",
+        "reviewer": "Codex2",
+        "status": "blocked",
+        "blocker": "Waiting for H07 human input (streaming source candidates, acceptable latency, delete SLA)"
+      }
+    },
+    {
+      "wp_id": "WP-35",
+      "title": "Merge queue 批次正式需求與交付",
+      "stage_a": {
+        "task_id": "ODP-MERGE-QUEUE-BATCH-DESIGN-001",
+        "pr_number": 1250,
+        "pr_url": "https://github.com/alfloop-dev/odayplus/pull/1250",
+        "approved_sha": "1ed3f7a94a03411cf6b0b8ec6a038473ced36439",
+        "merge_commit": "7a2caa0a7ebe7d8f43064d346f033ad37f58a05a",
+        "owner": "Claude2",
+        "reviewer": "Codex",
+        "status": "done",
+        "deliverables": [
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/queue-observations.json",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/batch-requirement.md",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/configuration-options.md",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/governance-handoff.md",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/implementation-handoff.md",
+          "docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/README.md"
+        ]
+      },
+      "stage_b": {
+        "task_id": "ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001",
+        "owner": "Claude2",
+        "reviewer": "Codex",
+        "status": "blocked",
+        "blocker": "Waiting for H08 human input (batch parameter selection: min_entries=2, max_wait=10m)"
+      }
+    },
+    {
+      "wp_id": "WP-90",
+      "title": "集中整合、需求狀態與 Structural Closeout",
+      "canonical_task_id": "ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001",
+      "owner": "Antigravity",
+      "reviewer": "Codex2",
+      "status": "in_progress",
+      "phase": "confirmed decisions implementation follow-up",
+      "deliverables": [
+        "docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md",
+        "delivery_toolchain/governance/set_valued_requirements.json",
+        "docs/governance/ODP_REQUIREMENT_DISPOSITIONS.md",
+        "docs/plans/ODP_OPEN_DECISIONS_2026-09-03.md",
+        "docs/evidence/human-decisions/ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001/README.md",
+        "docs/evidence/human-decisions/ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001/decision-integration-matrix.json",
+        "docs/evidence/human-decisions/ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001/work-package-task-map.json"
+      ]
+    }
+  ]
+}

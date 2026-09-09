@@ -272,23 +272,23 @@ flowchart TD
 
 本次規畫不包含 production deploy／GO／lease、啟用外部來源、提前清除 retention 資料或清除此對話平台告警。這些各有既有執行路徑；六項需求未完成也不一概增加為 sources-off dev 基礎部署前置。
 
-## 9. 尚待填妥的執行登錄表
+## 9. 執行登錄表 (已於 WP-90 完成映射)
 
-以下空欄由正式匯入／派工結果填寫，不先假定已啟動。Human receipt 欄位也不借用系統使用者名稱或 SSH 帳號填值。
+本表已由 `ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001` (WP-90) 完成正式匯入與映射，真實記錄各工作包之 canonical 任務 ID、PR 編號、Approved HEAD SHA、Owner、Reviewer、目前狀態與驗收收據。
 
 | 工作包 | Canonical task／PR 映射 | 正式 owner／reviewer | 當前階段／blocker | 驗收收據 |
 |---|---|---|---|---|
-| WP-00 | 待建立映射 | 待派工確認 | 規畫已交付 | 本文件 |
-| WP-10 | 待查重／接續 | 待派工確認 | 可先做盤點 | 待產生 |
-| WP-11 | 待查重／接續 | 待派工確認 | 依賴 WP-10；生效另等 H01 | 待產生 |
-| WP-20 | 待核對原 OIDC 任務 | 待派工確認 | 可先核對既有證據 | 待產生 |
-| WP-30 | 待查重／接續 | 待派工確認 | A 可先行；B 等 H03 | 待產生 |
-| WP-31 | 待查重／接續 | 待派工確認 | A 可先行；B 等 H04 | 待產生 |
-| WP-32 | 待查重／接續 | 待派工確認 | A 可先行；B 等 H05 | 待產生 |
-| WP-33 | 待查重／接續 | 待派工確認 | A 可先行；B 等 H06 | 待產生 |
-| WP-34 | 待查重／接續 | 待派工確認 | A 可先行；B 等 H07 | 待產生 |
-| WP-35 | 待查重／接續 | 待派工確認 | A 可先行；live 規格與操作另核 | 待產生 |
-| WP-90 | 對齊既有 structural closeout | 待派工確認 | 可增量登錄，全案等驗收 | 待產生 |
+| WP-00 | `ODP-HUMAN-DECISIONS-EXECUTION-PLAN-001` (PR #1247, merge `be04fe79`, head `00c03473`) | Codex / Codex | `done` (archived) | 本規畫文件 (`docs/plans/ODP_HUMAN_DECISIONS_EXECUTION_PLAN_2026-09-08.md`) |
+| WP-10 | `ODP-OSS-DECISION-PACK-001` (PR #1255, merge `b6b729d9`, head `21a5e783`) | Antigravity2 / Codex | Stage A `done` (archived)；Stage B 等 H01/H02 簽署 | `docs/evidence/human-decisions/ODP-OSS-DECISION-PACK-001/` (SBOM `sbom.cdx.json`, `npm-audit-receipt.json`, 16 來源決策卡) |
+| WP-11 | `ODP-OSS-POLICY-NOTICE-IMPLEMENTATION-001` (PR #1279) | Antigravity2 / Codex | `review`；8 個第一方套件 `UNLICENSED` 與 NOTICE 落地；生效另等 H01 | PR #1279 head SHA & CI 收據 |
+| WP-20 | `ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001` (PR #1253, merge `0af51e04`, head `9fc7e2a8`) | Claude / Codex2 | `done` (archived)；`HUMAN-GCP-WEB-OAUTH-CLIENTS-001` 轉待命 | `docs/evidence/human-decisions/ODP-OIDC-OFF-EVIDENCE-ALIGNMENT-001/` (`auth-mode-evidence-matrix.json` 15 controls, `human-task-handoff.json`) |
+| WP-30 | Stage 30A: `ODP-BRAND-TRANSFER-CONTRACT-PREP-001` (PR #1254, merge `7a25dfea`, head `961225f6`)；Stage 30B: `ODP-BRAND-TRANSFER-IMPLEMENTATION-001` | 30A: Antigravity2 / Codex；30B: Claude / Codex | Stage 30A `done` (archived)；Stage 30B `blocked` (等 H03 真實資料) | `docs/evidence/human-decisions/ODP-BRAND-TRANSFER-CONTRACT-PREP-001/` (`contract-draft.json`, `field-dictionary.md`, `human-input-request-H03.md`) |
+| WP-31 | Stage 31A: `ODP-FORMAT-CONVERSION-CONTRACT-PREP-001` (PR #1252, merge `ae2472a4`, head `a64b26c4`)；Stage 31B: `ODP-FORMAT-CONVERSION-IMPLEMENTATION-001` | 31A: Claude / Codex2；31B: Claude2 / Codex2 | Stage 31A `done` (archived)；Stage 31B `blocked` (等 H04 事件與財務定義) | `docs/evidence/human-decisions/ODP-FORMAT-CONVERSION-CONTRACT-PREP-001/` (`event-contract-draft.json`, `field-dictionary.md`, `human-input-request-H04.md`) |
+| WP-32 | Stage 32A: `ODP-NET002-LEASE-CONTRACT-PREP-001` (PR #1256, merge `95646a5c`, head `d7056316`)；Stage 32B: `ODP-NET002-LEASE-IMPLEMENTATION-001` | 32A: Antigravity2 / Codex；32B: Claude / Codex2 | Stage 32A `done` (archived)；Stage 32B `blocked` (等 H05 租約匯出與檔期) | `docs/evidence/human-decisions/ODP-NET002-LEASE-CONTRACT-PREP-001/` (`lease-contract-draft.json`, `solver-acceptance-matrix.md`, `human-input-request-H05.md`) |
+| WP-33 | Stage 33A: `ODP-DURABLE-PARTIAL-CONTRACT-PREP-001` (PR #1257, merge `1c7bb182`, head `57019d8d`)；前置修正: `ODP-JOB-DELIVERY-STATE-CLEAR-001` (PR #1280)；Stage 33B: `ODP-DURABLE-PARTIAL-IMPL-001` | 33A: Claude2 / Codex2；前置: Antigravity / Codex2；33B: Claude2 / Codex | Stage 33A `done` (archived)；前置 PR #1280 `review`；Stage 33B `blocked` (等 H06 業務 job 選定) | `docs/evidence/human-decisions/ODP-DURABLE-PARTIAL-CONTRACT-PREP-001/` (`producer-inventory.json`, `partial-retry-contract-draft.json`, `human-input-request-H06.md`) |
+| WP-34 | Stage 34A: `ODP-CDC-SOURCE-CONTRACT-PREP-001` (PR #1258, merge `414b5c17`, head `ec3a2188`)；跟進: `ODP-DATA-PLANE-DELETE-PROPAGATION-001`, `ODP-SCHEMA-STORE-OPENING-AUTHORITY-001`, `ODP-DATA-CATALOG-METADATA-ALIGNMENT-001`；Stage 34B: `ODP-CDC-SCOPED-ADAPTER-IMPLEMENTATION-001` | 34A: Antigravity2 / Codex；跟進 1: Antigravity3 / Codex2；跟進 2: Antigravity2 / Codex；跟進 3: Claude / Codex2；34B: Claude / Codex2 | Stage 34A `done` (archived)；三個跟進任務 `todo`；Stage 34B `blocked` (等 H07 來源與 SLA) | `docs/evidence/human-decisions/ODP-CDC-SOURCE-CONTRACT-PREP-001/` (`source-applicability-matrix.json`, `event-contract-draft.json`, `human-input-request-H07.md`) |
+| WP-35 | Stage 35A: `ODP-MERGE-QUEUE-BATCH-DESIGN-001` (PR #1250, merge `7a2caa0a`, head `1ed3f7a9`)；Stage 35B: `ODP-MERGE-QUEUE-BATCH-IMPLEMENTATION-001` | 35A: Claude2 / Codex；35B: Claude2 / Codex | Stage 35A `done` (archived)；Stage 35B `blocked` (等 H08 參數選擇) | `docs/evidence/human-decisions/ODP-MERGE-QUEUE-BATCH-DESIGN-001/` (`queue-observations.json`, `configuration-options.md`, `governance-handoff.md`) |
+| WP-90 | `ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001` | Antigravity / Codex2 | `in_progress`；集中整合 21 決策、8 項 A 階段成果與後續實作映射 | `docs/evidence/human-decisions/ODP-HUMAN-DECISIONS-HANDBACK-INTEGRATION-001/README.md` |
 
 ## 10. 證據來源與時效限制
 
